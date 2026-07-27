@@ -1,5 +1,5 @@
 {
-  "name": "rscad",
+  "name": "kupcad",
   "license": "AGPL-3.0-only",
   "scripts": {
     "build:core:wasm": "cd core && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseFast",

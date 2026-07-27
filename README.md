@@ -1,19 +1,19 @@
-# RSCAD (Rapid Solid Computer-Aided Design)
+# Kupcad (Kup Computer-Aided Design)
 
 ```
-rscad/
+kupcad/
 ├── pnpm-workspace.yaml          # pnpm workspace configuration
 ├── package.json                 # Root scripts for running web, desktop, lsp
 │
 ├── apps/                        # --- APPLICATION TARGETS ---
 │   ├── web/                     # Svelte 5 Web Application (PWA)
 │   │   ├── src/                 # Svelte 5 App (Canvas, Editor, UI)
-│   │   ├── static/wasm/         # Linked rscad.wasm build artifact
+│   │   ├── static/wasm/         # Linked kupcad.wasm build artifact
 │   │   └── package.json
 │   │
 │   ├── desktop/                 # Electron Desktop Application
 │   │   ├── src/
-│   │   │   ├── main/            # Electron Main Process (Loads native rscad dynamic lib)
+│   │   │   ├── main/            # Electron Main Process (Loads native kupcad dynamic lib)
 │   │   │   ├── preload/         # Electron Preload script
 │   │   │   └── renderer/        # Shared/Imported Svelte UI components
 │   │   ├── native/              # Symlinked/built native .so / .dll / .dylib
@@ -21,7 +21,7 @@ rscad/
 │   │
 │   └── vscode-extension/        # VS Code Extension (LSP Client)
 │       ├── src/                 # Extension host code
-│       ├── bin/                 # Bundled rscad-lsp executable
+│       ├── bin/                 # Bundled kupcad-lsp executable
 │       └── package.json
 │
 ├── core/                        # --- ZIG CORE CAD ENGINE ---
@@ -33,39 +33,39 @@ rscad/
 │   │   ├── wasm_api.zig         # WebAssembly C-API (for apps/web)
 │   │   ├── ffi_api.zig          # C-FFI / N-API (for apps/desktop)
 │   │   ├── core/                # Value types, symbol pool, memory
-│   │   ├── parsers/             # Dual Parsers (.rscad & .scad)
+│   │   ├── parsers/             # Dual Parsers (.kupcad & .scad)
 │   │   ├── evaluator/           # VM Interpreter & Scope
 │   │   ├── kernel/              # GeometryKernel VTable (Manifold3D / OCCT)
 │   │   ├── exporters/           # STL, STEP, SVG, DXF, 3MF
 │   │   └── lsp/                 # Language Server Protocol logic
 │   │
-│   └── std/                    # Embedded Standard Library (.rscad files)
-│       ├── hardware.rscad
-│       ├── mechanics.rscad
-│       └── colors.rscad
+│   └── std/                    # Embedded Standard Library (.kupcad files)
+│       ├── hardware.kupcad
+│       ├── mechanics.kupcad
+│       └── colors.kupcad
 │
 ├── packages/                    # --- SHARED PACKAGES & TS LIBRARIES ---
 │   ├── ui/                      # Shared Svelte 5 CAD Editor UI components
 │   │   ├── Viewport.svelte      # Three.js / WebGL 3D Canvas
-│   │   ├── CodeEditor.svelte    # Monaco Editor configured for .rscad
+│   │   ├── CodeEditor.svelte    # Monaco Editor configured for .kupcad
 │   │   └── package.json
 │   │
-│   ├── wasm-bridge/             # TypeScript wrapper around rscad.wasm
+│   ├── wasm-bridge/             # TypeScript wrapper around kupcad.wasm
 │   │   ├── src/index.ts         # Type-safe TS calls into WebAssembly
 │   │   └── package.json
 │   │
 │   └── native-bridge/           # Node.js N-API / C-FFI bindings
-│       ├── src/index.ts         # Type-safe TS calls into rscad_native.dll/so
+│       ├── src/index.ts         # Type-safe TS calls into kupcad_native.dll/so
 │       └── package.json
 │
 └── shared/                      # --- SHARED ASSETS & CAD DATA ---
-    ├── std-lib/                 # Source of truth for .rscad std modules
-    ├── test-models/             # Shared CAD models (.rscad / .scad) for E2E tests
+    ├── std-lib/                 # Source of truth for .kupcad std modules
+    ├── test-models/             # Shared CAD models (.kupcad / .scad) for E2E tests
     └── schemas/                 # Shared JSON schemas (LSP configs, Settings)
 ```
 
 ```
-rscad/
+kupcad/
 ├── build.zig                   # Multi-target build script (Native CLI, WASM, LSP)
 ├── build.zig.zon               # Zig dependencies (manifoldc, opencascade-c, etc.)
 │
@@ -84,8 +84,8 @@ rscad/
 │   │   │   ├── ast.zig         # Standard Geometry AST representation
 │   │   │   └── token.zig       # Source Code Spans (Line, Col, File)
 │   │   │
-│   │   ├── rscad/              # Native .rscad Parser (Ruby-style syntax)
-│   │   │   ├── lexer.zig       # Tokenizer for .rscad
+│   │   ├── kupcad/              # Native .kupcad Parser (Ruby-style syntax)
+│   │   │   ├── lexer.zig       # Tokenizer for .kupcad
 │   │   │   └── parser.zig      # Pratt Parser (emits Universal AST)
 │   │   │
 │   │   └── openscad/           # Legacy .scad Parser (OpenSCAD compatibility)
@@ -128,23 +128,23 @@ rscad/
 │   │       └── svg.zig         # Scalable Vector Graphics Writer
 │   │
 │   ├── lsp/                    # --- LSP SERVER ---
-│   │   ├── main.zig            # rscad-lsp binary entry
+│   │   ├── main.zig            # kupcad-lsp binary entry
 │   │   ├── server.zig          # JSON-RPC Protocol handler
 │   │   └── diagnostics.zig     # Real-time AST error reporter
 │   │
 │   └── std/                    # --- EMBEDDED STANDARD LIBRARY ---
-│       ├── hardware.rscad      # Embedded std/hardware module
-│       ├── mechanics.rscad     # Embedded std/mechanics module
-│       ├── colors.rscad        # Embedded std/colors module
-│       └── math.rscad          # Embedded std/math module
+│       ├── hardware.kupcad      # Embedded std/hardware module
+│       ├── mechanics.kupcad     # Embedded std/mechanics module
+│       ├── colors.kupcad        # Embedded std/colors module
+│       └── math.kupcad          # Embedded std/math module
 │
 ├── tests/                      # Integration Test Suite
-│   ├── rscad_tests/            # .rscad language unit tests
+│   ├── kupcad_tests/            # .kupcad language unit tests
 │   ├── openscad_tests/         # .scad compatibility unit tests
 │   ├── kernel_tests/           # Manifold vs. OCCT consistency tests
 │   └── exporter_tests/         # STL, STEP, and DXF validity checks
 │
 └── examples/                   # Sample CAD models
-    ├── parametric_box.rscad
-    └── cnc_milled_bracket.rscad
+    ├── parametric_box.kupcad
+    └── cnc_milled_bracket.kupcad
 ```
