@@ -1,4 +1,4 @@
-# RScad (Rapid Solid Computer-Aided Design)
+# RSCAD (Rapid Solid Computer-Aided Design)
 
 ```
 rscad/
