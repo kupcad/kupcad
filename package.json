@@ -1,0 +1,7 @@
+{
+  "name": "zscad",
+  "scripts": {
+    "build:core:wasm": "cd core && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseFast",
+    "build:core:native": "cd core && zig build -Doptimize=ReleaseFast"
+  }
+}
