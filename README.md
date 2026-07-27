@@ -1,19 +1,19 @@
-# Zscad
+# Rscad (Rapid/Ruby SCAD)
 
 ```
-zscad/
+rscad/
 ├── pnpm-workspace.yaml          # pnpm workspace configuration
 ├── package.json                 # Root scripts for running web, desktop, lsp
 │
 ├── apps/                        # --- APPLICATION TARGETS ---
 │   ├── web/                     # Svelte 5 Web Application (PWA)
 │   │   ├── src/                 # Svelte 5 App (Canvas, Editor, UI)
-│   │   ├── static/wasm/         # Linked zscad.wasm build artifact
+│   │   ├── static/wasm/         # Linked rscad.wasm build artifact
 │   │   └── package.json
 │   │
 │   ├── desktop/                 # Electron Desktop Application
 │   │   ├── src/
-│   │   │   ├── main/            # Electron Main Process (Loads native zscad dynamic lib)
+│   │   │   ├── main/            # Electron Main Process (Loads native rscad dynamic lib)
 │   │   │   ├── preload/         # Electron Preload script
 │   │   │   └── renderer/        # Shared/Imported Svelte UI components
 │   │   ├── native/              # Symlinked/built native .so / .dll / .dylib
@@ -21,7 +21,7 @@ zscad/
 │   │
 │   └── vscode-extension/        # VS Code Extension (LSP Client)
 │       ├── src/                 # Extension host code
-│       ├── bin/                 # Bundled zscad-lsp executable
+│       ├── bin/                 # Bundled rscad-lsp executable
 │       └── package.json
 │
 ├── core/                        # --- ZIG CORE CAD ENGINE ---
@@ -33,39 +33,39 @@ zscad/
 │   │   ├── wasm_api.zig         # WebAssembly C-API (for apps/web)
 │   │   ├── ffi_api.zig          # C-FFI / N-API (for apps/desktop)
 │   │   ├── core/                # Value types, symbol pool, memory
-│   │   ├── parsers/             # Dual Parsers (.zscad & .scad)
+│   │   ├── parsers/             # Dual Parsers (.rscad & .scad)
 │   │   ├── evaluator/           # VM Interpreter & Scope
 │   │   ├── kernel/              # GeometryKernel VTable (Manifold3D / OCCT)
 │   │   ├── exporters/           # STL, STEP, SVG, DXF, 3MF
 │   │   └── lsp/                 # Language Server Protocol logic
 │   │
-│   └── std/                    # Embedded Standard Library (.zscad files)
-│       ├── hardware.zscad
-│       ├── mechanics.zscad
-│       └── colors.zscad
+│   └── std/                    # Embedded Standard Library (.rscad files)
+│       ├── hardware.rscad
+│       ├── mechanics.rscad
+│       └── colors.rscad
 │
 ├── packages/                    # --- SHARED PACKAGES & TS LIBRARIES ---
 │   ├── ui/                      # Shared Svelte 5 CAD Editor UI components
 │   │   ├── Viewport.svelte      # Three.js / WebGL 3D Canvas
-│   │   ├── CodeEditor.svelte    # Monaco Editor configured for .zscad
+│   │   ├── CodeEditor.svelte    # Monaco Editor configured for .rscad
 │   │   └── package.json
 │   │
-│   ├── wasm-bridge/             # TypeScript wrapper around zscad.wasm
+│   ├── wasm-bridge/             # TypeScript wrapper around rscad.wasm
 │   │   ├── src/index.ts         # Type-safe TS calls into WebAssembly
 │   │   └── package.json
 │   │
 │   └── native-bridge/           # Node.js N-API / C-FFI bindings
-│       ├── src/index.ts         # Type-safe TS calls into zscad_native.dll/so
+│       ├── src/index.ts         # Type-safe TS calls into rscad_native.dll/so
 │       └── package.json
 │
 └── shared/                      # --- SHARED ASSETS & CAD DATA ---
-    ├── std-lib/                 # Source of truth for .zscad std modules
-    ├── test-models/             # Shared CAD models (.zscad / .scad) for E2E tests
+    ├── std-lib/                 # Source of truth for .rscad std modules
+    ├── test-models/             # Shared CAD models (.rscad / .scad) for E2E tests
     └── schemas/                 # Shared JSON schemas (LSP configs, Settings)
 ```
 
 ```
-zscad/
+rscad/
 ├── build.zig                   # Multi-target build script (Native CLI, WASM, LSP)
 ├── build.zig.zon               # Zig dependencies (manifoldc, opencascade-c, etc.)
 │
@@ -84,8 +84,8 @@ zscad/
 │   │   │   ├── ast.zig         # Standard Geometry AST representation
 │   │   │   └── token.zig       # Source Code Spans (Line, Col, File)
 │   │   │
-│   │   ├── zscad/              # Native .zscad Parser (Ruby-style syntax)
-│   │   │   ├── lexer.zig       # Tokenizer for .zscad
+│   │   ├── rscad/              # Native .rscad Parser (Ruby-style syntax)
+│   │   │   ├── lexer.zig       # Tokenizer for .rscad
 │   │   │   └── parser.zig      # Pratt Parser (emits Universal AST)
 │   │   │
 │   │   └── openscad/           # Legacy .scad Parser (OpenSCAD compatibility)
@@ -128,23 +128,23 @@ zscad/
 │   │       └── svg.zig         # Scalable Vector Graphics Writer
 │   │
 │   ├── lsp/                    # --- LSP SERVER ---
-│   │   ├── main.zig            # zscad-lsp binary entry
+│   │   ├── main.zig            # rscad-lsp binary entry
 │   │   ├── server.zig          # JSON-RPC Protocol handler
 │   │   └── diagnostics.zig     # Real-time AST error reporter
 │   │
 │   └── std/                    # --- EMBEDDED STANDARD LIBRARY ---
-│       ├── hardware.zscad      # Embedded std/hardware module
-│       ├── mechanics.zscad     # Embedded std/mechanics module
-│       ├── colors.zscad        # Embedded std/colors module
-│       └── math.zscad          # Embedded std/math module
+│       ├── hardware.rscad      # Embedded std/hardware module
+│       ├── mechanics.rscad     # Embedded std/mechanics module
+│       ├── colors.rscad        # Embedded std/colors module
+│       └── math.rscad          # Embedded std/math module
 │
 ├── tests/                      # Integration Test Suite
-│   ├── zscad_tests/            # .zscad language unit tests
+│   ├── rscad_tests/            # .rscad language unit tests
 │   ├── openscad_tests/         # .scad compatibility unit tests
 │   ├── kernel_tests/           # Manifold vs. OCCT consistency tests
 │   └── exporter_tests/         # STL, STEP, and DXF validity checks
 │
 └── examples/                   # Sample CAD models
-    ├── parametric_box.zscad
-    └── cnc_milled_bracket.zscad
+    ├── parametric_box.rscad
+    └── cnc_milled_bracket.rscad
 ```
