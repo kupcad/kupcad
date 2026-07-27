@@ -1,4 +1,4 @@
-# Rscad (Rapid/Ruby Solid Computer-Aided Design)
+# RScad (Rapid Solid Computer-Aided Design)
 
 ```
 rscad/
