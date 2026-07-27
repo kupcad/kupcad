@@ -63,3 +63,88 @@ zscad/
     ├── test-models/             # Shared CAD models (.zscad / .scad) for E2E tests
     └── schemas/                 # Shared JSON schemas (LSP configs, Settings)
 ```
+
+```
+zscad/
+├── build.zig                   # Multi-target build script (Native CLI, WASM, LSP)
+├── build.zig.zon               # Zig dependencies (manifoldc, opencascade-c, etc.)
+│
+├── src/
+│   ├── main.zig                # Native CLI binary entry point
+│   ├── wasm_api.zig            # WebAssembly C-API for Svelte 5 Web UI
+│   │
+│   ├── core/                   # --- CORE VM & MEMORY ---
+│   │   ├── value.zig           # Dynamic Tagged Union (Numbers, Symbols, Geometry)
+│   │   ├── symbol_pool.zig     # String Interner Pool (u32 Symbol IDs)
+│   │   ├── arena.zig           # AST & Memory Allocation strategy
+│   │   └── errors.zig          # Centralized Error Reporting & Source Spans
+│   │
+│   ├── parsers/                # --- DUAL PARSER FRONTENDS ---
+│   │   ├── common/             # Universal AST & Tokens
+│   │   │   ├── ast.zig         # Standard Geometry AST representation
+│   │   │   └── token.zig       # Source Code Spans (Line, Col, File)
+│   │   │
+│   │   ├── zscad/              # Native .zscad Parser (Ruby-style syntax)
+│   │   │   ├── lexer.zig       # Tokenizer for .zscad
+│   │   │   └── parser.zig      # Pratt Parser (emits Universal AST)
+│   │   │
+│   │   └── openscad/           # Legacy .scad Parser (OpenSCAD compatibility)
+│   │       ├── lexer.zig       # OpenSCAD Tokenizer
+│   │       └── parser.zig      # OpenSCAD Module/Function Parser
+│   │
+│   ├── evaluator/              # --- AST EVALUATOR & SCOPE ---
+│   │   ├── vm.zig              # AST Tree Evaluator / Interpreter
+│   │   ├── scope.zig           # Variable & Module Scope Environment
+│   │   └── importer.zig        # Import Resolver ("std/", "./", packages)
+│   │
+│   ├── kernel/                 # --- KERNEL ABSTRACTION (MULTI-ENGINE) ---
+│   │   ├── kernel.zig          # GeometryKernel Interface (VTable / Trait)
+│   │   ├── geometry_handle.zig # Agnostic geometry node pointer wrapper
+│   │   │
+│   │   ├── engines/            # Concrete Engine Drivers
+│   │   │   ├── manifold/       # Engine 1: Fast Mesh CSG (3D Printing / WASM)
+│   │   │   │   ├── manifold_ffi.zig  # C-bindings to Manifold3D
+│   │   │   │   └── driver.zig        # Manifold VTable implementation
+│   │   │   │
+│   │   │   └── occt/           # Engine 2: B-Rep NURBS (CNC / STEP export)
+│   │   │       ├── occt_ffi.zig      # C-bindings to OpenCASCADE
+│   │   │       └── driver.zig        # OpenCASCADE VTable implementation
+│   │   │
+│   │   └── shape2d/            # Exact 2D Vector Geometry engine (Polylines/Arcs)
+│   │       └── planar_path.zig # Native 2D Planar Engine for Laser/Waterjet
+│   │
+│   ├── exporters/              # --- MULTI-FORMAT EXPORTERS ---
+│   │   ├── exporter.zig        # Universal Exporter Interface
+│   │   │
+│   │   ├── 3d/                 # 3D Solid / Surface Exporters
+│   │   │   ├── stl_binary.zig  # Binary STL Writer (Mesh CSG)
+│   │   │   ├── stl_ascii.zig   # ASCII STL Writer (Mesh CSG)
+│   │   │   ├── 3mf.zig         # 3MF Package Exporter (Mesh CSG)
+│   │   │   ├── obj.zig         # Wavefront OBJ Exporter (Mesh CSG)
+│   │   │   └── step.zig        # STEP / IGES Exporter (B-Rep / OCCT)
+│   │   │
+│   │   └── 2d/                 # 2D CNC & Vector Exporters
+│   │       ├── dxf.zig         # AutoCAD DXF Writer (True Arcs/Lines for CNC)
+│   │       └── svg.zig         # Scalable Vector Graphics Writer
+│   │
+│   ├── lsp/                    # --- LSP SERVER ---
+│   │   ├── main.zig            # zscad-lsp binary entry
+│   │   ├── server.zig          # JSON-RPC Protocol handler
+│   │   └── diagnostics.zig     # Real-time AST error reporter
+│   │
+│   └── std/                    # --- EMBEDDED STANDARD LIBRARY ---
+│       ├── hardware.zscad      # Embedded std/hardware module
+│       ├── mechanics.zscad     # Embedded std/mechanics module
+│       ├── colors.zscad        # Embedded std/colors module
+│       └── math.zscad          # Embedded std/math module
+│
+├── tests/                      # Integration Test Suite
+│   ├── zscad_tests/            # .zscad language unit tests
+│   ├── openscad_tests/         # .scad compatibility unit tests
+│   ├── kernel_tests/           # Manifold vs. OCCT consistency tests
+│   └── exporter_tests/         # STL, STEP, and DXF validity checks
+│
+└── examples/                   # Sample CAD models
+    ├── parametric_box.zscad
+    └── cnc_milled_bracket.zscad
+```
