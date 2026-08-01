@@ -193,3 +193,28 @@ test "OpenSCAD Parser: Assert and Echo Prefixes" {
     const cube_node = assert_node.kind.method_call.block.?;
     try testing.expectEqualStrings("cube", cube_node.kind.method_call.method_name);
 }
+
+test "OpenSCAD Parser: Let and If Expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "x = let(a = 10, b = 2) if (a > b) a else b;";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    // Validate target assignment
+    try testing.expectEqualStrings("x", stmt.kind.assignment.name);
+
+    // Validate Let Expression
+    const let_node = stmt.kind.assignment.value;
+    try testing.expectEqual(ast.Node.Kind.let_expr, @as(std.meta.Tag(ast.Node.Kind), let_node.kind));
+    try testing.expectEqualStrings("a", let_node.kind.let_expr.assignments[0].kind.assignment.name);
+
+    // Validate Yield Expression (If Expression)
+    const yield_node = let_node.kind.let_expr.yield_expr;
+    try testing.expectEqual(ast.Node.Kind.if_stmt, @as(std.meta.Tag(ast.Node.Kind), yield_node.kind));
+    try testing.expectEqualStrings("a", yield_node.kind.if_stmt.then_branch.kind.identifier);
+    try testing.expectEqualStrings("b", yield_node.kind.if_stmt.else_branch.?.kind.identifier);
+}

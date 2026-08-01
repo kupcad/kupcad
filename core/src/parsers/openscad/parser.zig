@@ -529,6 +529,8 @@ pub const Parser = struct {
             .l_paren => try self.parseGroupedExpression(),
             .l_bracket => try self.parseArrayOrRangeOrComprehension(),
             .minus, .bang => try self.parseUnary(),
+            .keyword_let => try self.parseLetExpression(),
+            .keyword_if => try self.parseIfExpression(),
             else => return ParseError.InvalidExpression,
         };
 
@@ -542,6 +544,52 @@ pub const Parser = struct {
             };
         }
         return left;
+    }
+
+    fn parseLetExpression(self: *Parser) ParseError!*Node {
+        const start_tok = try self.expect(.keyword_let);
+        _ = try self.expect(.l_paren);
+
+        var assignments: std.ArrayListUnmanaged(*Node) = .empty;
+        errdefer assignments.deinit(self.allocator);
+
+        while (self.current.tag != .r_paren and self.current.tag != .eof) {
+            const var_tok = try self.expect(.ident);
+            _ = try self.expect(.equal);
+            const val_expr = try self.parseExpression(.none);
+            const assign_node = try self.createNode(.{ .assignment = .{ .name = var_tok.lexeme, .op = null, .value = val_expr } }, var_tok.loc);
+            try assignments.append(self.allocator, assign_node);
+            if (self.current.tag == .comma) self.advance() else break;
+        }
+        _ = try self.expect(.r_paren);
+
+        const yield_expr = try self.parseExpression(.none);
+        return self.createNode(.{ .let_expr = .{
+            .assignments = try assignments.toOwnedSlice(self.allocator),
+            .yield_expr = yield_expr,
+        } }, start_tok.loc);
+    }
+
+    fn parseIfExpression(self: *Parser) ParseError!*Node {
+        const start_tok = try self.expect(.keyword_if);
+        _ = try self.expect(.l_paren);
+        const cond = try self.parseExpression(.none);
+        _ = try self.expect(.r_paren);
+
+        const then_branch = try self.parseExpression(.none);
+        var else_branch: ?*Node = null;
+
+        if (self.current.tag == .keyword_else) {
+            self.advance();
+            else_branch = try self.parseExpression(.none);
+        }
+
+        return self.createNode(.{ .if_stmt = .{
+            .condition = cond,
+            .then_branch = then_branch,
+            .else_branch = else_branch,
+            .is_unless = false,
+        } }, start_tok.loc);
     }
 
     fn parseNumber(self: *Parser) ParseError!*Node {
