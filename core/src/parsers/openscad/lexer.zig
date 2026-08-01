@@ -7,7 +7,6 @@ pub const Tag = enum {
     number,
     string,
     comment,
-
     keyword_module,
     keyword_function,
     keyword_include,
@@ -21,7 +20,8 @@ pub const Tag = enum {
     keyword_false,
     keyword_undef,
     keyword_each,
-
+    keyword_assert,
+    keyword_echo,
     bang_equal,
     less_equal,
     greater_equal,
@@ -31,10 +31,8 @@ pub const Tag = enum {
     or_or,
     bang,
     block_comment,
-
     mod_root,
     mod_debug,
-
     star, // * (acts as multiply AND modifier)
     percent, // % (acts as modulo AND modifier)
     question, // ? (ternary)
@@ -73,6 +71,8 @@ const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "false", .keyword_false },
     .{ "undef", .keyword_undef },
     .{ "each", .keyword_each },
+    .{ "assert", .keyword_assert },
+    .{ "echo", .keyword_echo },
 });
 
 inline fn isIdentStart(c: u8) bool {
@@ -110,7 +110,6 @@ pub const Lexer = struct {
 
     pub fn next(self: *Lexer) Token {
         self.skipWhitespace();
-
         if (self.index >= self.buffer.len) {
             return .{ .tag = .eof, .loc = self.getLoc(), .lexeme = "" };
         }
@@ -171,6 +170,7 @@ pub const Lexer = struct {
         const start = self.index;
         const c1 = self.peek();
         self.advance();
+
         const c2 = if (self.index < self.buffer.len) self.peek() else 0;
 
         const tag: Tag = switch (c1) {
@@ -178,8 +178,8 @@ pub const Lexer = struct {
             '!' => if (c2 == '=') .bang_equal else .bang,
             '<' => if (c2 == '=') .less_equal else .less,
             '>' => if (c2 == '=') .greater_equal else .greater,
-            '&' => if (c2 == '&') .and_and else .bang, // Recovery for single unsupported char
-            '|' => if (c2 == '|') .or_or else .bang, // Recovery for single unsupported char
+            '&' => if (c2 == '&') .and_and else .bang,
+            '|' => if (c2 == '|') .or_or else .bang,
             '*' => .star,
             '%' => .percent,
             '?' => .question,
@@ -198,6 +198,7 @@ pub const Lexer = struct {
     fn consumeSlashOrComment(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
         self.advance();
+
         if (self.index < self.buffer.len) {
             if (self.peek() == '/') {
                 while (self.index < self.buffer.len and self.peek() != '\n') {
@@ -234,14 +235,11 @@ pub const Lexer = struct {
                 break;
             }
         }
-
         const lexeme = self.buffer[start..self.index];
         var tag = Tag.ident;
-
         if (keywords.get(lexeme)) |kw_tag| {
             tag = kw_tag;
         }
-
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }
 

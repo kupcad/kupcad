@@ -84,17 +84,6 @@ test "OpenSCAD Lexer: Ternary, exponentiation, and dual-use operators" {
     });
 }
 
-test "OpenSCAD Lexer: Special variables, ranges, and escaped strings" {
-    try expectTokens("$fn = 50;\nfor(i = [0 : 2 : 10]) {\n  echo(\"Test: \\\"escaped\\\" str\");\n}", &.{
-        t(.ident, "$fn"),       t(.equal, "="),     t(.number, "50"),   t(.semicolon, ";"),
-        t(.keyword_for, "for"), t(.l_paren, "("),   t(.ident, "i"),     t(.equal, "="),
-        t(.l_bracket, "["),     t(.number, "0"),    t(.colon, ":"),     t(.number, "2"),
-        t(.colon, ":"),         t(.number, "10"),   t(.r_bracket, "]"), t(.r_paren, ")"),
-        t(.l_brace, "{"),       t(.ident, "echo"),  t(.l_paren, "("),   t(.string, "Test: \\\"escaped\\\" str"),
-        t(.r_paren, ")"),       t(.semicolon, ";"), t(.r_brace, "}"),   t(.eof, ""),
-    });
-}
-
 test "OpenSCAD Lexer: Let, Comprehensions, Intersection For" {
     try expectTokens("pts = [ for (x = [0:5]) x * 2 ];\nlet(a=5) cube(a);\nintersection_for(i = [1:3]) {}", &.{
         t(.ident, "pts"),       t(.equal, "="),     t(.l_bracket, "["),
@@ -136,4 +125,33 @@ test "OpenSCAD Lexer: Line and column tracking" {
     try testing.expectEqual(.ident, tok.tag);
     try testing.expectEqual(@as(u32, 5), tok.loc.line);
     try testing.expectEqual(@as(u32, 1), tok.loc.col);
+}
+
+test "OpenSCAD Lexer: Special variables, ranges, and escaped strings" {
+    try expectTokens("$fn = 50;\nfor(i = [0 : 2 : 10]) {\n  echo(\"Test: \\\"escaped\\\" str\");\n}", &.{
+        t(.ident, "$fn"),
+        t(.equal, "="),
+        t(.number, "50"),
+        t(.semicolon, ";"),
+        t(.keyword_for, "for"),
+        t(.l_paren, "("),
+        t(.ident, "i"),
+        t(.equal, "="),
+        t(.l_bracket, "["),
+        t(.number, "0"),
+        t(.colon, ":"),
+        t(.number, "2"),
+        t(.colon, ":"),
+        t(.number, "10"),
+        t(.r_bracket, "]"),
+        t(.r_paren, ")"),
+        t(.l_brace, "{"),
+        t(.keyword_echo, "echo"),
+        t(.l_paren, "("),
+        t(.string, "Test: \\\"escaped\\\" str"),
+        t(.r_paren, ")"),
+        t(.semicolon, ";"),
+        t(.r_brace, "}"),
+        t(.eof, ""),
+    });
 }
