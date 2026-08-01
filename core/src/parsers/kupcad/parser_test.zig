@@ -252,12 +252,13 @@ test "KupCAD Parser: Exponentiation vs Unary Precedence" {
 
     const node = try parser.parseExpression(.none);
 
-    try testing.expectEqual(ast.Node.Kind.unary_op, @as(std.meta.Tag(ast.Node.Kind), node.kind));
-    try testing.expectEqual(ast.UnaryOp.negate, node.kind.unary_op.op);
+    // In Ruby/Crystal, `-2 ** 2` is `(-2) ** 2` (Unary binds tighter)
+    try testing.expectEqual(ast.Node.Kind.binary_op, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqual(ast.BinaryOp.exponent, node.kind.binary_op.op);
 
-    const exp_node = node.kind.unary_op.operand;
-    try testing.expectEqual(ast.Node.Kind.binary_op, @as(std.meta.Tag(ast.Node.Kind), exp_node.kind));
-    try testing.expectEqual(ast.BinaryOp.exponent, exp_node.kind.binary_op.op);
+    const left_node = node.kind.binary_op.left;
+    try testing.expectEqual(ast.Node.Kind.unary_op, @as(std.meta.Tag(ast.Node.Kind), left_node.kind));
+    try testing.expectEqual(ast.UnaryOp.negate, left_node.kind.unary_op.op);
 }
 
 test "KupCAD Parser: Parenthesis-less Method Calls (Command Syntax)" {

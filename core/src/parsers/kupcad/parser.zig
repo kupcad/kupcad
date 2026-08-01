@@ -19,8 +19,8 @@ pub const Precedence = enum(u8) {
     range = 7, // ..
     term = 8, // + -
     factor = 9, // * / %
-    unary = 10, // ! - (Unary minus binds weaker than exponentiation)
-    exponent = 11, // **
+    exponent = 10, // **
+    unary = 11, // ! -
     call = 12, // . () []
 };
 
