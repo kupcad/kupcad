@@ -137,3 +137,33 @@ test "KupCAD Lexer: Arrays and Hashes" {
         t(.colon, ":"),   t(.number, "1"), t(.r_brace, "}"),   t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Line and column tracking" {
+    const source = "a = 1\n  b = 2";
+    var lexer = Lexer.init(source, 0);
+
+    var tok = lexer.next(); // 'a'
+    try testing.expectEqual(.ident, tok.tag);
+    try testing.expectEqual(@as(u32, 1), tok.loc.line);
+    try testing.expectEqual(@as(u32, 1), tok.loc.col);
+
+    tok = lexer.next(); // '='
+    try testing.expectEqual(.equal, tok.tag);
+    try testing.expectEqual(@as(u32, 1), tok.loc.line);
+    try testing.expectEqual(@as(u32, 3), tok.loc.col);
+
+    tok = lexer.next(); // '1'
+    try testing.expectEqual(.number, tok.tag);
+    try testing.expectEqual(@as(u32, 1), tok.loc.line);
+    try testing.expectEqual(@as(u32, 5), tok.loc.col);
+
+    tok = lexer.next(); // '\n'
+    try testing.expectEqual(.newline, tok.tag);
+    try testing.expectEqual(@as(u32, 1), tok.loc.line);
+    try testing.expectEqual(@as(u32, 6), tok.loc.col);
+
+    tok = lexer.next(); // 'b'
+    try testing.expectEqual(.ident, tok.tag);
+    try testing.expectEqual(@as(u32, 2), tok.loc.line);
+    try testing.expectEqual(@as(u32, 3), tok.loc.col); // skipped 2 spaces
+}
