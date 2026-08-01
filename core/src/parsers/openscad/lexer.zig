@@ -80,7 +80,7 @@ inline fn isIdentStart(c: u8) bool {
     return utils.LexerUtils.isIdentStart(c, false);
 }
 inline fn isIdentChar(c: u8) bool {
-    return utils.LexerUtils.isIdentChar(c, false);
+    return utils.LexerUtils.isIdentChar(c, true);
 }
 
 pub const Lexer = struct {

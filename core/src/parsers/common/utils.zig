@@ -42,10 +42,10 @@ pub const LexerUtils = struct {
         return false;
     }
 
-    pub inline fn isIdentChar(c: u8, comptime is_kupcad: bool) bool {
+    pub inline fn isIdentChar(c: u8, comptime is_openscad: bool) bool {
         if (std.ascii.isAlphanumeric(c)) return true;
         if (c == '_' or c == '$') return true;
-        if (is_kupcad and (c == '?' or c == '!' or c == '@')) return true;
+        if (!is_openscad and (c == '?' or c == '!' or c == '@')) return true;
         return false;
     }
 };
