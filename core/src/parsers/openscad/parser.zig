@@ -705,7 +705,17 @@ pub const Parser = struct {
             return self.createNode(.{ .array_literal = &.{} }, start_tok.loc);
         }
 
-        const first = try self.parseExpression(.none);
+        var is_each = false;
+        if (self.current.tag == .keyword_each) {
+            is_each = true;
+            self.advance();
+        }
+
+        var first = try self.parseExpression(.none);
+        if (is_each) {
+            first = try self.createNode(.{ .each_expr = first }, start_tok.loc);
+        }
+
         if (self.current.tag == .colon) {
             self.advance();
             const second = try self.parseExpression(.none);
@@ -731,22 +741,25 @@ pub const Parser = struct {
         }
 
         try elements.append(self.allocator, first);
-        if (self.current.tag == .comma) {
-            self.advance();
-        }
+        if (self.current.tag == .comma) self.advance();
 
         while (self.current.tag != .r_bracket and self.current.tag != .eof) {
-            while (self.current.tag == .comment or self.current.tag == .block_comment) {
-                self.advance();
-            }
+            while (self.current.tag == .comment or self.current.tag == .block_comment) self.advance();
             if (self.current.tag == .r_bracket) break;
-            const elem = try self.parseExpression(.none);
-            try elements.append(self.allocator, elem);
-            if (self.current.tag == .comma) {
+
+            is_each = false;
+            if (self.current.tag == .keyword_each) {
+                is_each = true;
                 self.advance();
-            } else {
-                break;
             }
+
+            var elem = try self.parseExpression(.none);
+            if (is_each) {
+                elem = try self.createNode(.{ .each_expr = elem }, start_tok.loc);
+            }
+
+            try elements.append(self.allocator, elem);
+            if (self.current.tag == .comma) self.advance() else break;
         }
         _ = try self.expect(.r_bracket);
 

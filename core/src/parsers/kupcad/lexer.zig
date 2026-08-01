@@ -59,6 +59,8 @@ pub const Tag = enum {
     plus,
     minus,
     ampersand,
+    caret, // ^
+    tilde, // ~
 
     // Assignments & Rockets
     equal,
@@ -72,9 +74,12 @@ pub const Tag = enum {
     or_or_equal,
     arrow,
     minus_greater, // ->
+    less_less, // <<
+    greater_greater, // >>
     dot_dot,
     dot_dot_dot,
     dot,
+    ampersand_dot, // &.
     colon_colon, // ::
     comma,
     l_paren,
@@ -179,7 +184,7 @@ pub const Lexer = struct {
             ':' => self.consumeSymbolOrColon(start_loc),
             '"' => self.consumeString(start_loc),
             '#' => self.consumeCommentOrParam(start_loc),
-            '=', '!', '<', '>', '&', '|', '*', '/', '%', '?', '+', '-' => self.consumeOperator(start_loc),
+            '=', '!', '<', '>', '&', '|', '*', '/', '%', '?', '+', '-', '^', '~' => self.consumeOperator(start_loc),
             else => {
                 if (isIdentStart(c)) return self.consumeIdentOrKeyword(start_loc);
                 if (std.ascii.isDigit(c)) return self.consumeNumber(start_loc);
@@ -256,11 +261,13 @@ pub const Lexer = struct {
             '/' => if (c2 == '=') .slash_equal else .slash,
             '%' => if (c2 == '=') .percent_equal else .percent,
             '|' => if (c2 == '|' and c3 == '=') .or_or_equal else if (c2 == '|') .or_or else .pipe,
-            '&' => if (c2 == '&' and c3 == '=') .and_and_equal else if (c2 == '&') .and_and else .ampersand,
+            '&' => if (c2 == '&' and c3 == '=') .and_and_equal else if (c2 == '&') .and_and else if (c2 == '.') .ampersand_dot else .ampersand,
             '!' => if (c2 == '=') .bang_equal else .bang,
-            '<' => if (c2 == '=') .less_equal else .less,
-            '>' => if (c2 == '=') .greater_equal else .greater,
+            '<' => if (c2 == '=') .less_equal else if (c2 == '<') .less_less else .less,
+            '>' => if (c2 == '=') .greater_equal else if (c2 == '>') .greater_greater else .greater,
             '?' => .question,
+            '^' => .caret,
+            '~' => .tilde,
             else => return self.makeToken(.eof),
         };
 
@@ -270,7 +277,7 @@ pub const Lexer = struct {
         } else if (tag == .equal_equal or tag == .bang_equal or tag == .less_equal or
             tag == .greater_equal or tag == .and_and or tag == .or_or or tag == .star_star or
             tag == .plus_equal or tag == .minus_equal or tag == .star_equal or tag == .slash_equal or
-            tag == .percent_equal or tag == .arrow or tag == .minus_greater)
+            tag == .percent_equal or tag == .arrow or tag == .minus_greater or tag == .less_less or tag == .greater_greater or tag == .ampersand_dot)
         {
             self.advance();
         }

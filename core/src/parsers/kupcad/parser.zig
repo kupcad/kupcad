@@ -16,12 +16,15 @@ pub const Precedence = enum(u8) {
     logical_and = 4, // &&
     equality = 5, // == !=
     comparison = 6, // < <= > >=
-    range = 7, // ..
-    term = 8, // + -
-    factor = 9, // * / %
-    exponent = 10, // **
-    unary = 11, // ! -
-    call = 12, // . () [] ::
+    bitwise_or = 7, // | ^
+    bitwise_and = 8, // & (CSG Intersection)
+    shift = 9, // << >>
+    range = 10, // .. ...
+    term = 11, // + -
+    factor = 12, // * / %
+    exponent = 13, // **
+    unary = 14, // ! -
+    call = 15, // . &. () [] ::
 };
 
 pub const Parser = struct {
@@ -528,7 +531,7 @@ pub const Parser = struct {
             .l_paren => left = try self.parseGroupedExpression(),
             .l_bracket => left = try self.parseArrayLiteral(),
             .l_brace => left = try self.parseHashLiteral(),
-            .plus, .minus, .bang, .keyword_not => left = try self.parseUnary(),
+            .plus, .minus, .bang, .keyword_not, .tilde => left = try self.parseUnary(),
             .keyword_if => left = try self.parseIfStatement(),
             .keyword_unless => left = try self.parseUnlessStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
@@ -538,9 +541,10 @@ pub const Parser = struct {
         while (@intFromEnum(precedence) < @intFromEnum(getInfixPrecedence(self.current.tag))) {
             const op_tok = self.current;
             left = switch (op_tok.tag) {
-                .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or, .dot_dot, .dot_dot_dot, .keyword_and, .keyword_or => try self.parseBinary(left),
+                .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or, .dot_dot, .dot_dot_dot, .less_less, .greater_greater, .keyword_and, .keyword_or, .ampersand, .pipe, .caret => try self.parseBinary(left),
                 .question => try self.parseTernary(left),
-                .dot => try self.parseMethodCall(left),
+                .dot => try self.parseMethodCall(left, false),
+                .ampersand_dot => try self.parseMethodCall(left, true),
                 .colon_colon => try self.parseScopeResolution(left),
                 .l_bracket => try self.parseIndexAccessOrAssignment(left),
                 .l_paren, .keyword_do => try self.parseCallOnExpr(left),
@@ -714,6 +718,7 @@ pub const Parser = struct {
         const op: ast.UnaryOp = switch (tok.tag) {
             .minus => .negate,
             .plus => .positive,
+            .tilde => .bitwise_not,
             else => .not,
         };
         return self.createNode(.{ .unary_op = .{ .op = op, .operand = try self.parseExpression(.unary) } }, tok.loc);
@@ -782,16 +787,14 @@ pub const Parser = struct {
         }
     }
 
-    fn parseMethodCall(self: *Parser, receiver: *Node) ParseError!*Node {
-        if (self.current.tag == .dot) self.advance();
+    fn parseMethodCall(self: *Parser, receiver: *Node, is_safe: bool) ParseError!*Node {
+        if (self.current.tag == .dot or self.current.tag == .ampersand_dot) self.advance();
         const method_tok = try self.expect(.ident);
         const args = try self.parseParenArgs();
-
         var block_node: ?*Node = null;
         if (self.current.tag == .keyword_do) block_node = try self.parseDoBlock();
-
         return self.createNode(.{
-            .method_call = .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = args, .block = block_node },
+            .method_call = .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = args, .block = block_node, .is_safe = is_safe },
         }, method_tok.loc);
     }
 
@@ -859,11 +862,14 @@ pub const Parser = struct {
             .and_and, .keyword_and => .logical_and,
             .equal_equal, .bang_equal => .equality,
             .less, .less_equal, .greater, .greater_equal => .comparison,
+            .pipe, .caret => .bitwise_or,
+            .ampersand => .bitwise_and,
+            .less_less, .greater_greater => .shift,
             .dot_dot, .dot_dot_dot => .range,
             .plus, .minus => .term,
             .star, .slash, .percent => .factor,
             .star_star => .exponent,
-            .dot, .l_paren, .keyword_do, .l_bracket, .colon_colon => .call,
+            .dot, .ampersand_dot, .l_paren, .keyword_do, .l_bracket, .colon_colon => .call,
             else => .none,
         };
     }
@@ -880,10 +886,15 @@ pub const Parser = struct {
             .bang_equal => .not_equal,
             .less => .less,
             .less_equal => .less_equal,
+            .less_less => .shift_left,
             .greater => .greater,
             .greater_equal => .greater_equal,
+            .greater_greater => .shift_right,
             .and_and, .keyword_and => .logical_and,
             .or_or, .keyword_or => .logical_or,
+            .ampersand => .bitwise_and,
+            .pipe => .bitwise_or,
+            .caret => .bitwise_xor,
             else => null,
         };
     }

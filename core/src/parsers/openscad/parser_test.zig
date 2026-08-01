@@ -266,3 +266,27 @@ test "OpenSCAD Parser: Expression-level Assert and Echo" {
     const math_node = echo_node.kind.echo_expr.yield_expr;
     try testing.expectEqual(ast.BinaryOp.multiply, math_node.kind.binary_op.op);
 }
+
+test "OpenSCAD Parser: Array Literal Expansion (each)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "merged = [1, each sub_array, 4];";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const array_node = stmt.kind.assignment.value;
+
+    try testing.expectEqual(ast.Node.Kind.array_literal, @as(std.meta.Tag(ast.Node.Kind), array_node.kind));
+    const elements = array_node.kind.array_literal;
+
+    try testing.expectEqual(@as(usize, 3), elements.len);
+    try testing.expectEqual(@as(f64, 1.0), elements[0].kind.number);
+
+    // Verify the inner `each_expr` unpack node
+    try testing.expectEqual(ast.Node.Kind.each_expr, @as(std.meta.Tag(ast.Node.Kind), elements[1].kind));
+    try testing.expectEqualStrings("sub_array", elements[1].kind.each_expr.kind.identifier);
+
+    try testing.expectEqual(@as(f64, 4.0), elements[2].kind.number);
+}

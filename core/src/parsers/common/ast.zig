@@ -5,6 +5,7 @@ pub const UnaryOp = enum {
     negate, // -
     positive, // +
     not, // !
+    bitwise_not, // ~
 };
 
 pub const BinaryOp = enum {
@@ -22,6 +23,11 @@ pub const BinaryOp = enum {
     greater_equal, // >=
     logical_and, // &&
     logical_or, // ||
+    shift_left, // <<
+    shift_right, // >>
+    bitwise_and, // & (CSG Intersection)
+    bitwise_or, // |
+    bitwise_xor, // ^
 };
 
 pub const ArgModifier = enum {
@@ -161,6 +167,7 @@ pub const Node = struct {
             method_name: []const u8,
             args: []const NamedArg,
             block: ?*Node = null,
+            is_safe: bool = false,
         },
         super_call: struct {
             args: []const NamedArg = &.{},

@@ -479,3 +479,59 @@ test "KupCAD Parser: Splats and Block Forwarding" {
     try testing.expectEqual(ast.ArgModifier.double_splat, args[1].modifier.?);
     try testing.expectEqual(ast.ArgModifier.block, args[2].modifier.?);
 }
+
+test "KupCAD Parser: Shift/Append (<<) and Safe Navigation (&.)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "arr << 5\npart&.cut()";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // Validate Append / Shift Left
+    const shift_node = try parser.parseStatement();
+    try testing.expectEqual(ast.BinaryOp.shift_left, shift_node.kind.binary_op.op);
+    try testing.expectEqualStrings("arr", shift_node.kind.binary_op.left.kind.identifier);
+    try testing.expectEqual(@as(f64, 5.0), shift_node.kind.binary_op.right.kind.number);
+
+    // Validate Safe Navigation Call
+    const safe_call = try parser.parseStatement();
+    try testing.expectEqualStrings("cut", safe_call.kind.method_call.method_name);
+    try testing.expectEqual(true, safe_call.kind.method_call.is_safe);
+}
+
+test "KupCAD Parser: CSG Intersections and Bitwise Operators" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Simulates an inversion and a CSG Intersection
+    const source = "result = ~part1 & part2 | part3 ^ part4";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    // Assigning to `result`
+    try testing.expectEqualStrings("result", stmt.kind.assignment.name);
+
+    // The lowest precedence here is Bitwise OR (`|`) and XOR (`^`) which share a level.
+    // They are left-associative, so the root of the tree is the XOR (`^`)
+    const xor_node = stmt.kind.assignment.value;
+    try testing.expectEqual(ast.BinaryOp.bitwise_xor, xor_node.kind.binary_op.op);
+    try testing.expectEqualStrings("part4", xor_node.kind.binary_op.right.kind.identifier);
+
+    // Left side of XOR is the OR (`|`)
+    const or_node = xor_node.kind.binary_op.left;
+    try testing.expectEqual(ast.BinaryOp.bitwise_or, or_node.kind.binary_op.op);
+    try testing.expectEqualStrings("part3", or_node.kind.binary_op.right.kind.identifier);
+
+    // Left side of OR is the AND (`&`)
+    const and_node = or_node.kind.binary_op.left;
+    try testing.expectEqual(ast.BinaryOp.bitwise_and, and_node.kind.binary_op.op);
+    try testing.expectEqualStrings("part2", and_node.kind.binary_op.right.kind.identifier);
+
+    // Left side of AND is the Unary NOT (`~`)
+    const not_node = and_node.kind.binary_op.left;
+    try testing.expectEqual(ast.UnaryOp.bitwise_not, not_node.kind.unary_op.op);
+    try testing.expectEqualStrings("part1", not_node.kind.unary_op.operand.kind.identifier);
+}
