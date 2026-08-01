@@ -289,3 +289,92 @@ test "KupCAD Parser BUG: Empty String Interpolation" {
 
     try testing.expectEqual(ast.Node.Kind.interpolated_string, @as(std.meta.Tag(ast.Node.Kind), node.kind));
 }
+
+test "KupCAD Parser: Namespace Resolution (Scope Operator ::)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "part = Hardware::Fasteners::M3_Bolt.new(length: 12)";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+
+    try testing.expectEqual(ast.Node.Kind.assignment, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    const call_node = node.kind.assignment.value;
+
+    try testing.expectEqualStrings("new", call_node.kind.method_call.method_name);
+
+    const receiver = call_node.kind.method_call.receiver.?;
+    try testing.expectEqual(ast.Node.Kind.namespace_access, @as(std.meta.Tag(ast.Node.Kind), receiver.kind));
+    try testing.expectEqualStrings("Hardware", receiver.kind.namespace_access.path[0]);
+    try testing.expectEqualStrings("Fasteners", receiver.kind.namespace_access.path[1]);
+    try testing.expectEqualStrings("M3_Bolt", receiver.kind.namespace_access.path[2]);
+}
+
+test "KupCAD Parser: Case / When Control Flow" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\case part_type
+        \\when :screw
+        \\  Hardware::Screw.new(length: 10)
+        \\when :nut
+        \\  Hardware::Nut.new
+        \\else
+        \\  Box.new
+        \\end
+    ;
+
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+
+    try testing.expectEqual(ast.Node.Kind.case_stmt, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqualStrings("part_type", node.kind.case_stmt.condition.?.kind.identifier);
+
+    const branches = node.kind.case_stmt.when_branches;
+    try testing.expectEqual(@as(usize, 2), branches.len);
+    try testing.expectEqualStrings("screw", branches[0].conditions[0].kind.symbol);
+    try testing.expectEqualStrings("nut", branches[1].conditions[0].kind.symbol);
+
+    const else_branch = node.kind.case_stmt.else_branch.?;
+    try testing.expectEqualStrings("new", else_branch.kind.block.stmts[0].kind.method_call.method_name);
+}
+
+test "KupCAD Parser: Multiple Assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "x, y, z = get_coordinates()";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+
+    try testing.expectEqual(ast.Node.Kind.multiple_assignment, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqual(@as(usize, 3), node.kind.multiple_assignment.names.len);
+    try testing.expectEqualStrings("x", node.kind.multiple_assignment.names[0]);
+    try testing.expectEqualStrings("y", node.kind.multiple_assignment.names[1]);
+    try testing.expectEqualStrings("z", node.kind.multiple_assignment.names[2]);
+}
+
+test "KupCAD Parser: Self and Super constructs" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\def build
+        \\  super(x: 10)
+        \\  self
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const def_node = try parser.parseStatement();
+
+    const stmts = def_node.kind.def_stmt.body.kind.block.stmts;
+    try testing.expectEqual(ast.Node.Kind.super_call, @as(std.meta.Tag(ast.Node.Kind), stmts[0].kind));
+    try testing.expectEqualStrings("x", stmts[0].kind.super_call.args[0].name);
+
+    try testing.expectEqual(ast.Node.Kind.self_expr, @as(std.meta.Tag(ast.Node.Kind), stmts[1].kind));
+}

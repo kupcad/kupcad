@@ -14,7 +14,6 @@ pub const Tag = enum {
     symbol,
     param_doc,
     comment,
-
     keyword_do,
     keyword_end,
     keyword_if,
@@ -33,6 +32,10 @@ pub const Tag = enum {
     keyword_unless,
     keyword_while,
     keyword_break,
+    keyword_case,
+    keyword_when,
+    keyword_self,
+    keyword_super,
 
     equal_equal,
     bang_equal,
@@ -53,7 +56,7 @@ pub const Tag = enum {
     minus,
     ampersand,
 
-    // Assigments & Rockets
+    // Assignments & Rockets
     equal,
     plus_equal,
     minus_equal,
@@ -64,9 +67,9 @@ pub const Tag = enum {
     and_and_equal,
     or_or_equal,
     arrow,
-
     dot_dot,
     dot,
+    colon_colon, // ::
     comma,
     l_paren,
     r_paren,
@@ -80,15 +83,28 @@ pub const Tag = enum {
 pub const Token = common_token.Token(Tag);
 
 const keywords = std.StaticStringMap(Tag).initComptime(.{
-    .{ "do", .keyword_do },         .{ "end", .keyword_end },
-    .{ "if", .keyword_if },         .{ "import", .keyword_import },
-    .{ "from", .keyword_from },     .{ "class", .keyword_class },
-    .{ "def", .keyword_def },       .{ "true", .keyword_true },
-    .{ "false", .keyword_false },   .{ "nil", .keyword_nil },
-    .{ "else", .keyword_else },     .{ "elsif", .keyword_elsif },
-    .{ "module", .keyword_module }, .{ "yield", .keyword_yield },
-    .{ "return", .keyword_return }, .{ "unless", .keyword_unless },
-    .{ "while", .keyword_while },   .{ "break", .keyword_break },
+    .{ "do", .keyword_do },
+    .{ "end", .keyword_end },
+    .{ "if", .keyword_if },
+    .{ "import", .keyword_import },
+    .{ "from", .keyword_from },
+    .{ "class", .keyword_class },
+    .{ "def", .keyword_def },
+    .{ "true", .keyword_true },
+    .{ "false", .keyword_false },
+    .{ "nil", .keyword_nil },
+    .{ "else", .keyword_else },
+    .{ "elsif", .keyword_elsif },
+    .{ "module", .keyword_module },
+    .{ "yield", .keyword_yield },
+    .{ "return", .keyword_return },
+    .{ "unless", .keyword_unless },
+    .{ "while", .keyword_while },
+    .{ "break", .keyword_break },
+    .{ "case", .keyword_case },
+    .{ "when", .keyword_when },
+    .{ "self", .keyword_self },
+    .{ "super", .keyword_super },
 });
 
 inline fn isIdentStart(c: u8) bool {
@@ -114,7 +130,6 @@ pub const Lexer = struct {
     col: u32,
     file_id: u32,
 
-    // Internal state for handling nested `${ }` inside strings
     brace_depth: u32 = 0,
     interp_stack: [8]u32 = undefined,
     interp_depth: usize = 0,
@@ -153,11 +168,9 @@ pub const Lexer = struct {
                     self.brace_depth -= 1;
                     return self.consumeChar(.r_brace, start_loc);
                 } else if (self.interp_depth > 0) {
-                    // We just closed a string interpolation block!
-                    // Restore brace depth from before interpolation, and resume string
                     self.interp_depth -= 1;
                     self.brace_depth = self.interp_stack[self.interp_depth];
-                    self.advance(); // consume the '}'
+                    self.advance();
                     return self.consumeStringBody(start_loc, false);
                 } else {
                     return self.consumeChar(.r_brace, start_loc);
@@ -201,8 +214,10 @@ pub const Lexer = struct {
         const start = self.index;
         while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
         const lexeme = self.buffer[start..self.index];
+
         var i: usize = 1;
         while (i < lexeme.len and (lexeme[i] == ' ' or lexeme[i] == '\t')) i += 1;
+
         if (i + 6 <= lexeme.len and std.ascii.eqlIgnoreCase(lexeme[i .. i + 6], "@param")) {
             return .{ .tag = .param_doc, .loc = start_loc, .lexeme = lexeme };
         }
@@ -212,11 +227,14 @@ pub const Lexer = struct {
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
         const is_constant = std.ascii.isUpper(self.peek());
+
         while (self.index < self.buffer.len) {
             if (isIdentChar(self.peek())) self.advance() else break;
         }
+
         const lexeme = self.buffer[start..self.index];
         var tag = if (is_constant) Tag.constant else Tag.ident;
+
         if (keywords.get(lexeme)) |kw_tag| tag = kw_tag;
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }
@@ -225,6 +243,7 @@ pub const Lexer = struct {
         const start = self.index;
         const c1 = self.peek();
         self.advance();
+
         const c2 = if (self.index < self.buffer.len) self.peek() else 0;
         const c3 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
 
@@ -260,6 +279,10 @@ pub const Lexer = struct {
 
     fn consumeSymbolOrColon(self: *Lexer, start_loc: common_token.Location) Token {
         self.advance();
+        if (self.index < self.buffer.len and self.peek() == ':') {
+            self.advance();
+            return .{ .tag = .colon_colon, .loc = start_loc, .lexeme = "::" };
+        }
         if (self.index < self.buffer.len and std.ascii.isAlphabetic(self.peek())) {
             const start = self.index;
             while (self.index < self.buffer.len and (std.ascii.isAlphanumeric(self.peek()) or self.peek() == '_')) {
@@ -277,7 +300,7 @@ pub const Lexer = struct {
             if (std.ascii.isDigit(c)) {
                 self.advance();
             } else if (c == '.') {
-                if (self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '.') break; // `..`
+                if (self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '.') break;
                 self.advance();
             } else {
                 break;
@@ -287,7 +310,7 @@ pub const Lexer = struct {
     }
 
     fn consumeString(self: *Lexer, start_loc: common_token.Location) Token {
-        self.advance(); // consume opening quote
+        self.advance();
         return self.consumeStringBody(start_loc, true);
     }
 
@@ -302,10 +325,9 @@ pub const Lexer = struct {
             }
             if (c == '#' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '{') {
                 const lexeme = self.buffer[start..self.index];
-                self.advance(); // #
-                self.advance(); // {
+                self.advance();
+                self.advance();
 
-                // Track nested depth so inner strings don't break outer interpolation closures
                 if (self.interp_depth < self.interp_stack.len) {
                     self.interp_stack[self.interp_depth] = self.brace_depth;
                     self.interp_depth += 1;
@@ -315,7 +337,7 @@ pub const Lexer = struct {
             }
             if (c == '"') {
                 const lexeme = self.buffer[start..self.index];
-                self.advance(); // consume "
+                self.advance();
                 return .{ .tag = if (is_start) .string else .string_end, .loc = start_loc, .lexeme = lexeme };
             }
             self.advance();
@@ -340,10 +362,12 @@ pub const Lexer = struct {
     inline fn peek(self: *const Lexer) u8 {
         return self.buffer[self.index];
     }
+
     inline fn advance(self: *Lexer) void {
         self.index += 1;
         self.col += 1;
     }
+
     fn makeToken(self: *const Lexer, tag: Tag) Token {
         return .{ .tag = tag, .loc = self.getLoc(), .lexeme = "" };
     }
