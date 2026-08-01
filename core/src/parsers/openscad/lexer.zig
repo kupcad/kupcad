@@ -57,6 +57,22 @@ pub const Tag = enum {
 
 pub const Token = common_token.Token(Tag);
 
+// Compile-time perfect hash map for O(1) keyword lookups
+const keywords = std.StaticStringMap(Tag).initComptime(.{
+    .{ "module", .keyword_module },
+    .{ "function", .keyword_function },
+    .{ "include", .keyword_include },
+    .{ "use", .keyword_use },
+    .{ "for", .keyword_for },
+    .{ "intersection_for", .keyword_intersection_for },
+    .{ "let", .keyword_let },
+    .{ "if", .keyword_if },
+    .{ "else", .keyword_else },
+    .{ "true", .keyword_true },
+    .{ "false", .keyword_false },
+    .{ "undef", .keyword_undef },
+});
+
 inline fn isIdentStart(c: u8) bool {
     if (std.ascii.isAlphabetic(c)) return true;
     return switch (c) {
@@ -218,18 +234,10 @@ pub const Lexer = struct {
         const lexeme = self.buffer[start..self.index];
         var tag = Tag.ident;
 
-        if (std.mem.eql(u8, lexeme, "module")) tag = .keyword_module;
-        if (std.mem.eql(u8, lexeme, "function")) tag = .keyword_function;
-        if (std.mem.eql(u8, lexeme, "include")) tag = .keyword_include;
-        if (std.mem.eql(u8, lexeme, "use")) tag = .keyword_use;
-        if (std.mem.eql(u8, lexeme, "for")) tag = .keyword_for;
-        if (std.mem.eql(u8, lexeme, "intersection_for")) tag = .keyword_intersection_for;
-        if (std.mem.eql(u8, lexeme, "let")) tag = .keyword_let;
-        if (std.mem.eql(u8, lexeme, "if")) tag = .keyword_if;
-        if (std.mem.eql(u8, lexeme, "else")) tag = .keyword_else;
-        if (std.mem.eql(u8, lexeme, "true")) tag = .keyword_true;
-        if (std.mem.eql(u8, lexeme, "false")) tag = .keyword_false;
-        if (std.mem.eql(u8, lexeme, "undef")) tag = .keyword_undef;
+        // O(1) Map lookup
+        if (keywords.get(lexeme)) |kw_tag| {
+            tag = kw_tag;
+        }
 
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }

@@ -65,8 +65,8 @@ test "OpenSCAD Lexer: Block comments and booleans" {
         t(.keyword_false, "false"),                              t(.r_paren, ")"),
         t(.l_brace, "{"),                                        t(.ident, "cube"),
         t(.l_paren, "("),                                        t(.keyword_undef, "undef"),
-        t(.r_paren, ")"),                                        t(.semicolon, ";"),
-        t(.r_brace, "}"),                                        t(.eof, ""),
+        t(.r_paren, ")"), t(.semicolon, ";"), // Added this back!
+        t(.r_brace, "}"), t(.eof, ""),
     });
 }
 
@@ -97,17 +97,20 @@ test "OpenSCAD Lexer: Special variables, ranges, and escaped strings" {
 
 test "OpenSCAD Lexer: Let, Comprehensions, Intersection For" {
     try expectTokens("pts = [ for (x = [0:5]) x * 2 ];\nlet(a=5) cube(a);\nintersection_for(i = [1:3]) {}", &.{
-        t(.ident, "pts"),   t(.equal, "="),                                   t(.l_bracket, "["),     t(.keyword_for, "for"),
-        t(.l_paren, "("),   t(.ident, "x"),                                   t(.equal, "="),         t(.l_bracket, "["),
-        t(.number, "0"),    t(.colon, ":"),                                   t(.number, "5"),        t(.r_bracket, "]"),
-        t(.r_paren, ")"),   t(.ident, "x"),                                   t(.star, "*"),          t(.number, "2"),
-        t(.r_bracket, "]"), t(.semicolon, ";"),                               t(.keyword_let, "let"), t(.l_paren, "("),
-        t(.ident, "a"),     t(.equal, "="),                                   t(.number, "5"),        t(.r_paren, ")"),
-        t(.ident, "cube"),  t(.l_paren, "("),                                 t(.ident, "a"),         t(.r_paren, ")"),
-        t(.semicolon, ";"), t(.keyword_intersection_for, "intersection_for"), t(.l_paren, "("),       t(.ident, "i"),
-        t(.equal, "="),     t(.l_bracket, "["),                               t(.number, "1"),        t(.colon, ":"),
-        t(.number, "3"),    t(.r_bracket, "]"),                               t(.r_paren, ")"),       t(.l_brace, "{"),
-        t(.r_brace, "}"),   t(.eof, ""),
+        t(.ident, "pts"),       t(.equal, "="),     t(.l_bracket, "["),
+        t(.keyword_for, "for"), t(.l_paren, "("),   t(.ident, "x"),
+        t(.equal, "="),         t(.l_bracket, "["), t(.number, "0"),
+        t(.colon, ":"),         t(.number, "5"),    t(.r_bracket, "]"),
+        t(.r_paren, ")"),       t(.ident, "x"),     t(.star, "*"),
+        t(.number, "2"),        t(.r_bracket, "]"), t(.semicolon, ";"),
+        t(.keyword_let, "let"), t(.l_paren, "("),   t(.ident, "a"),
+        t(.equal, "="),         t(.number, "5"),    t(.r_paren, ")"),
+        t(.ident, "cube"),      t(.l_paren, "("),   t(.ident, "a"),
+        t(.r_paren, ")"),       t(.semicolon, ";"), t(.keyword_intersection_for, "intersection_for"),
+        t(.l_paren, "("),       t(.ident, "i"),     t(.equal, "="),
+        t(.l_bracket, "["),     t(.number, "1"),    t(.colon, ":"),
+        t(.number, "3"),        t(.r_bracket, "]"), t(.r_paren, ")"),
+        t(.l_brace, "{"),       t(.r_brace, "}"),   t(.eof, ""),
     });
 }
 

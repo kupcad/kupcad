@@ -63,6 +63,28 @@ pub const Tag = enum {
 
 pub const Token = common_token.Token(Tag);
 
+// Compile-time perfect hash map for O(1) keyword lookups
+const keywords = std.StaticStringMap(Tag).initComptime(.{
+    .{ "do", .keyword_do },
+    .{ "end", .keyword_end },
+    .{ "if", .keyword_if },
+    .{ "import", .keyword_import },
+    .{ "from", .keyword_from },
+    .{ "class", .keyword_class },
+    .{ "def", .keyword_def },
+    .{ "true", .keyword_true },
+    .{ "false", .keyword_false },
+    .{ "nil", .keyword_nil },
+    .{ "else", .keyword_else },
+    .{ "elsif", .keyword_elsif },
+    .{ "module", .keyword_module },
+    .{ "yield", .keyword_yield },
+    .{ "return", .keyword_return },
+    .{ "unless", .keyword_unless },
+    .{ "while", .keyword_while },
+    .{ "break", .keyword_break },
+});
+
 inline fn isIdentStart(c: u8) bool {
     if (std.ascii.isAlphabetic(c)) return true;
     return switch (c) {
@@ -180,24 +202,10 @@ pub const Lexer = struct {
         const lexeme = self.buffer[start..self.index];
         var tag = if (is_constant) Tag.constant else Tag.ident;
 
-        if (std.mem.eql(u8, lexeme, "do")) tag = .keyword_do;
-        if (std.mem.eql(u8, lexeme, "end")) tag = .keyword_end;
-        if (std.mem.eql(u8, lexeme, "if")) tag = .keyword_if;
-        if (std.mem.eql(u8, lexeme, "import")) tag = .keyword_import;
-        if (std.mem.eql(u8, lexeme, "from")) tag = .keyword_from;
-        if (std.mem.eql(u8, lexeme, "class")) tag = .keyword_class;
-        if (std.mem.eql(u8, lexeme, "def")) tag = .keyword_def;
-        if (std.mem.eql(u8, lexeme, "true")) tag = .keyword_true;
-        if (std.mem.eql(u8, lexeme, "false")) tag = .keyword_false;
-        if (std.mem.eql(u8, lexeme, "nil")) tag = .keyword_nil;
-        if (std.mem.eql(u8, lexeme, "else")) tag = .keyword_else;
-        if (std.mem.eql(u8, lexeme, "elsif")) tag = .keyword_elsif;
-        if (std.mem.eql(u8, lexeme, "module")) tag = .keyword_module;
-        if (std.mem.eql(u8, lexeme, "yield")) tag = .keyword_yield;
-        if (std.mem.eql(u8, lexeme, "return")) tag = .keyword_return;
-        if (std.mem.eql(u8, lexeme, "unless")) tag = .keyword_unless;
-        if (std.mem.eql(u8, lexeme, "while")) tag = .keyword_while;
-        if (std.mem.eql(u8, lexeme, "break")) tag = .keyword_break;
+        // O(1) Map lookup
+        if (keywords.get(lexeme)) |kw_tag| {
+            tag = kw_tag;
+        }
 
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }
