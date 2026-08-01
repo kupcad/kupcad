@@ -63,6 +63,22 @@ pub const Tag = enum {
 
 pub const Token = common_token.Token(Tag);
 
+inline fn isIdentStart(c: u8) bool {
+    if (std.ascii.isAlphabetic(c)) return true;
+    return switch (c) {
+        '_', '@', '$' => true,
+        else => false,
+    };
+}
+
+inline fn isIdentChar(c: u8) bool {
+    if (std.ascii.isAlphanumeric(c)) return true;
+    return switch (c) {
+        '_', '?', '!', '@', '$' => true,
+        else => false,
+    };
+}
+
 pub const Lexer = struct {
     buffer: []const u8,
     index: usize,
@@ -107,7 +123,7 @@ pub const Lexer = struct {
             '#' => self.consumeCommentOrParam(start_loc),
             '=', '!', '<', '>', '&', '|', '*', '/', '%', '?' => self.consumeOperator(start_loc),
             else => {
-                if (std.ascii.isAlphabetic(c) or c == '_' or c == '@' or c == '$') {
+                if (isIdentStart(c)) {
                     return self.consumeIdentOrKeyword(start_loc);
                 } else if (std.ascii.isDigit(c)) {
                     return self.consumeNumber(start_loc);
@@ -154,7 +170,7 @@ pub const Lexer = struct {
 
         while (self.index < self.buffer.len) {
             const c = self.peek();
-            if (std.ascii.isAlphanumeric(c) or c == '_' or c == '?' or c == '!' or c == '@' or c == '$') {
+            if (isIdentChar(c)) {
                 self.advance();
             } else {
                 break;
