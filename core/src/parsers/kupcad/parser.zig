@@ -456,6 +456,20 @@ pub const Parser = struct {
         return args.toOwnedSlice(self.allocator);
     }
 
+    fn parseParam(self: *Parser) ParseError!ast.Param {
+        const mod = self.parseArgModifier();
+        if (self.current.tag != .ident) return ParseError.UnexpectedToken;
+        const param_name = self.current.lexeme;
+        self.advance();
+
+        var default_val: ?*Node = null;
+        if (self.current.tag == .equal) {
+            self.advance();
+            default_val = try self.parseExpression(.none);
+        }
+        return .{ .name = param_name, .default_value = default_val, .modifier = mod };
+    }
+
     fn parseParenParams(self: *Parser) ParseError![]const ast.Param {
         var params: std.ArrayListUnmanaged(ast.Param) = .empty;
         errdefer params.deinit(self.allocator);
@@ -463,18 +477,7 @@ pub const Parser = struct {
             self.advance();
             while (self.current.tag != .r_paren and self.current.tag != .eof) {
                 self.skipIgnored();
-                const mod = self.parseArgModifier();
-                if (self.current.tag == .ident) {
-                    const param_name = self.current.lexeme;
-                    self.advance();
-                    var default_val: ?*Node = null;
-                    if (self.current.tag == .equal) {
-                        self.advance();
-                        default_val = try self.parseExpression(.none);
-                    }
-                    try params.append(self.allocator, .{ .name = param_name, .default_value = default_val, .modifier = mod });
-                } else return ParseError.UnexpectedToken;
-
+                try params.append(self.allocator, try self.parseParam());
                 if (self.current.tag == .comma) self.advance() else break;
             }
             _ = try self.expect(.r_paren);

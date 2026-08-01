@@ -141,29 +141,9 @@ pub const Parser = struct {
         const start_tok = try self.expect(.keyword_module);
         const name_tok = try self.expect(.ident);
 
-        var params: std.ArrayListUnmanaged(ast.Param) = .empty;
-        errdefer params.deinit(self.allocator);
-
+        var params: []const ast.Param = &.{};
         if (self.current.tag == .l_paren) {
-            self.advance();
-            while (self.current.tag != .r_paren and self.current.tag != .eof) {
-                if (self.current.tag == .ident) {
-                    const pname = self.current.lexeme;
-                    self.advance();
-                    var default_val: ?*Node = null;
-                    if (self.current.tag == .equal) {
-                        self.advance();
-                        default_val = try self.parseExpression(.none);
-                    }
-                    try params.append(self.allocator, .{ .name = pname, .default_value = default_val });
-                }
-                if (self.current.tag == .comma) {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            _ = try self.expect(.r_paren);
+            params = try self.parseParenParams();
         }
 
         const body = if (self.current.tag == .l_brace) blk: {
@@ -173,11 +153,10 @@ pub const Parser = struct {
             break :blk b;
         } else try self.parseStatement();
 
-        const params_slice = try params.toOwnedSlice(self.allocator);
         return self.createNode(.{
             .module_stmt = .{
                 .name = name_tok.lexeme,
-                .params = params_slice,
+                .params = params,
                 .body = body,
             },
         }, start_tok.loc);
@@ -187,29 +166,9 @@ pub const Parser = struct {
         const start_tok = try self.expect(.keyword_function);
         const name_tok = try self.expect(.ident);
 
-        var params: std.ArrayListUnmanaged(ast.Param) = .empty;
-        errdefer params.deinit(self.allocator);
-
+        var params: []const ast.Param = &.{};
         if (self.current.tag == .l_paren) {
-            self.advance();
-            while (self.current.tag != .r_paren and self.current.tag != .eof) {
-                if (self.current.tag == .ident) {
-                    const pname = self.current.lexeme;
-                    self.advance();
-                    var default_val: ?*Node = null;
-                    if (self.current.tag == .equal) {
-                        self.advance();
-                        default_val = try self.parseExpression(.none);
-                    }
-                    try params.append(self.allocator, .{ .name = pname, .default_value = default_val });
-                }
-                if (self.current.tag == .comma) {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            _ = try self.expect(.r_paren);
+            params = try self.parseParenParams();
         }
 
         _ = try self.expect(.equal);
@@ -218,11 +177,10 @@ pub const Parser = struct {
             self.advance();
         }
 
-        const params_slice = try params.toOwnedSlice(self.allocator);
         return self.createNode(.{
             .def_stmt = .{
                 .name = name_tok.lexeme,
-                .params = params_slice,
+                .params = params,
                 .body = body_expr,
             },
         }, start_tok.loc);
@@ -421,33 +379,13 @@ pub const Parser = struct {
     fn parseAssertOrEcho(self: *Parser) ParseError!*Node {
         const start_tok = self.current;
         self.advance();
-
-        _ = try self.expect(.l_paren);
-        var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
-        errdefer args.deinit(self.allocator);
-
-        while (self.current.tag != .r_paren and self.current.tag != .eof) {
-            var arg_name: []const u8 = "";
-            if (self.current.tag == .ident and self.peekNextTag() == .equal) {
-                arg_name = self.current.lexeme;
-                self.advance();
-                self.advance();
-            }
-            const arg_val = try self.parseExpression(.none);
-            try args.append(self.allocator, .{ .name = arg_name, .value = arg_val });
-            if (self.current.tag == .comma) {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        _ = try self.expect(.r_paren);
+        const args = try self.parseParenArgs();
 
         const call_node = try self.createNode(.{
             .method_call = .{
                 .receiver = null,
                 .method_name = start_tok.lexeme,
-                .args = try args.toOwnedSlice(self.allocator),
+                .args = args,
             },
         }, start_tok.loc);
 
@@ -527,6 +465,60 @@ pub const Parser = struct {
 
         return expr;
     }
+
+    // --- SHARED DRY ARGUMENT & PARAMETER LOGIC ---
+
+    fn parseNamedArg(self: *Parser) ParseError!ast.NamedArg {
+        var arg_name: []const u8 = "";
+        if (self.current.tag == .ident and self.peekNextTag() == .equal) {
+            arg_name = self.current.lexeme;
+            self.advance();
+            self.advance(); // consume equal
+        }
+        const val = try self.parseExpression(.none);
+        return .{ .name = arg_name, .value = val, .modifier = null };
+    }
+
+    fn parseParenArgs(self: *Parser) ParseError![]const ast.NamedArg {
+        _ = try self.expect(.l_paren);
+        var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
+        errdefer args.deinit(self.allocator);
+
+        while (self.current.tag != .r_paren and self.current.tag != .eof) {
+            try args.append(self.allocator, try self.parseNamedArg());
+            if (self.current.tag == .comma) self.advance() else break;
+        }
+        _ = try self.expect(.r_paren);
+        return args.toOwnedSlice(self.allocator);
+    }
+
+    fn parseParam(self: *Parser) ParseError!ast.Param {
+        if (self.current.tag != .ident) return ParseError.UnexpectedToken;
+        const param_name = self.current.lexeme;
+        self.advance();
+
+        var default_val: ?*Node = null;
+        if (self.current.tag == .equal) {
+            self.advance();
+            default_val = try self.parseExpression(.none);
+        }
+        return .{ .name = param_name, .default_value = default_val, .modifier = null };
+    }
+
+    fn parseParenParams(self: *Parser) ParseError![]const ast.Param {
+        _ = try self.expect(.l_paren);
+        var params: std.ArrayListUnmanaged(ast.Param) = .empty;
+        errdefer params.deinit(self.allocator);
+
+        while (self.current.tag != .r_paren and self.current.tag != .eof) {
+            try params.append(self.allocator, try self.parseParam());
+            if (self.current.tag == .comma) self.advance() else break;
+        }
+        _ = try self.expect(.r_paren);
+        return params.toOwnedSlice(self.allocator);
+    }
+
+    // --- EXPRESSION PARSERS ---
 
     pub fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Node {
         const start_tok = self.current;
@@ -625,67 +617,27 @@ pub const Parser = struct {
         const start_tok = self.current;
         const is_assert = (start_tok.tag == .keyword_assert);
         self.advance();
-        _ = try self.expect(.l_paren);
 
-        var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
-        errdefer args.deinit(self.allocator);
-
-        while (self.current.tag != .r_paren and self.current.tag != .eof) {
-            var arg_name: []const u8 = "";
-            if (self.current.tag == .ident and self.peekNextTag() == .equal) {
-                arg_name = self.current.lexeme;
-                self.advance();
-                self.advance();
-            }
-            const arg_val = try self.parseExpression(.none);
-            try args.append(self.allocator, .{ .name = arg_name, .value = arg_val, .modifier = null });
-            if (self.current.tag == .comma) {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        _ = try self.expect(.r_paren);
-
+        const args = try self.parseParenArgs();
         const yield_expr = try self.parseExpression(.none);
 
         if (is_assert) {
-            return self.createNode(.{ .assert_expr = .{ .args = try args.toOwnedSlice(self.allocator), .yield_expr = yield_expr } }, start_tok.loc);
+            return self.createNode(.{ .assert_expr = .{ .args = args, .yield_expr = yield_expr } }, start_tok.loc);
         } else {
-            return self.createNode(.{ .echo_expr = .{ .args = try args.toOwnedSlice(self.allocator), .yield_expr = yield_expr } }, start_tok.loc);
+            return self.createNode(.{ .echo_expr = .{ .args = args, .yield_expr = yield_expr } }, start_tok.loc);
         }
     }
 
     fn parseIdentifierOrCall(self: *Parser) ParseError!*Node {
         const tok = try self.expect(.ident);
         if (self.current.tag == .l_paren) {
-            self.advance();
-            var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
-            errdefer args.deinit(self.allocator);
-
-            while (self.current.tag != .r_paren and self.current.tag != .eof) {
-                var arg_name: []const u8 = "";
-                if (self.current.tag == .ident and self.peekNextTag() == .equal) {
-                    arg_name = self.current.lexeme;
-                    self.advance();
-                    self.advance();
-                }
-                const arg_val = try self.parseExpression(.none);
-                try args.append(self.allocator, .{ .name = arg_name, .value = arg_val });
-                if (self.current.tag == .comma) {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            _ = try self.expect(.r_paren);
-
-            const args_slice = try args.toOwnedSlice(self.allocator);
+            const args = try self.parseParenArgs();
             return self.createNode(.{
                 .method_call = .{
                     .receiver = null,
                     .method_name = tok.lexeme,
-                    .args = args_slice,
+                    .args = args,
+                    .block = null,
                 },
             }, tok.loc);
         }
