@@ -235,3 +235,24 @@ pub const Node = struct {
         },
     };
 };
+
+pub const Builder = struct {
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) Builder {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn create(self: Builder, kind: Node.Kind, loc: Location) !*Node {
+        // Shared node allocation logic
+        const n = try self.allocator.create(Node);
+        n.* = .{ .kind = kind, .loc = loc };
+        return n;
+    }
+
+    pub fn number(self: Builder, lexeme: []const u8, loc: Location) !*Node {
+        // Shared float conversion logic
+        const val = std.fmt.parseFloat(f64, lexeme) catch return error.InvalidExpression;
+        return self.create(.{ .number = val }, loc);
+    }
+};

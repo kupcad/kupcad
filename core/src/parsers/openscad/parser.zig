@@ -29,12 +29,14 @@ pub const Precedence = enum(u8) {
 pub const Parser = struct {
     lexer: *Lexer,
     allocator: std.mem.Allocator,
+    b: ast.Builder,
     current: Token,
 
     pub fn init(lexer: *Lexer, allocator: std.mem.Allocator) Parser {
         var parser = Parser{
             .lexer = lexer,
             .allocator = allocator,
+            .b = ast.Builder.init(allocator),
             .current = undefined,
         };
         parser.advance();
@@ -528,20 +530,38 @@ pub const Parser = struct {
 
     pub fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Node {
         const start_tok = self.current;
-        var left = switch (start_tok.tag) {
-            .number => try self.parseNumber(),
-            .string => try self.parseString(),
-            .keyword_true, .keyword_false => try self.parseBoolean(),
-            .keyword_undef => try self.parseUndef(),
-            .ident => try self.parseIdentifierOrCall(),
-            .l_paren => try self.parseGroupedExpression(),
-            .l_bracket => try self.parseArrayOrRangeOrComprehension(),
-            .plus, .minus, .bang => try self.parseUnary(),
-            .keyword_let => try self.parseLetExpression(),
-            .keyword_if => try self.parseIfExpression(),
-            .keyword_assert, .keyword_echo => try self.parseAssertOrEchoExpr(),
+        var left: *Node = undefined;
+
+        switch (start_tok.tag) {
+            .number => {
+                self.advance();
+                left = try self.b.number(start_tok.lexeme, start_tok.loc);
+            },
+            .string => {
+                self.advance();
+                left = try self.createNode(.{ .string = start_tok.lexeme }, start_tok.loc);
+            },
+            .keyword_true => {
+                self.advance();
+                left = try self.createNode(.{ .boolean = true }, start_tok.loc);
+            },
+            .keyword_false => {
+                self.advance();
+                left = try self.createNode(.{ .boolean = false }, start_tok.loc);
+            },
+            .keyword_undef => {
+                self.advance();
+                left = try self.createNode(.undef, start_tok.loc);
+            },
+            .ident => left = try self.parseIdentifierOrCall(),
+            .l_paren => left = try self.parseGroupedExpression(),
+            .l_bracket => left = try self.parseArrayOrRangeOrComprehension(),
+            .plus, .minus, .bang => left = try self.parseUnary(),
+            .keyword_let => left = try self.parseLetExpression(),
+            .keyword_if => left = try self.parseIfExpression(),
+            .keyword_assert, .keyword_echo => left = try self.parseAssertOrEchoExpr(),
             else => return ParseError.InvalidExpression,
-        };
+        }
 
         while (@intFromEnum(precedence) < @intFromEnum(getInfixPrecedence(self.current.tag))) {
             const op_tok = self.current;
@@ -634,28 +654,6 @@ pub const Parser = struct {
         } else {
             return self.createNode(.{ .echo_expr = .{ .args = try args.toOwnedSlice(self.allocator), .yield_expr = yield_expr } }, start_tok.loc);
         }
-    }
-
-    fn parseNumber(self: *Parser) ParseError!*Node {
-        const tok = try self.expect(.number);
-        const val = std.fmt.parseFloat(f64, tok.lexeme) catch return ParseError.InvalidExpression;
-        return self.createNode(.{ .number = val }, tok.loc);
-    }
-
-    fn parseString(self: *Parser) ParseError!*Node {
-        const tok = try self.expect(.string);
-        return self.createNode(.{ .string = tok.lexeme }, tok.loc);
-    }
-
-    fn parseBoolean(self: *Parser) ParseError!*Node {
-        const tok = self.current;
-        self.advance();
-        return self.createNode(.{ .boolean = tok.tag == .keyword_true }, tok.loc);
-    }
-
-    fn parseUndef(self: *Parser) ParseError!*Node {
-        const tok = try self.expect(.keyword_undef);
-        return self.createNode(.undef, tok.loc);
     }
 
     fn parseIdentifierOrCall(self: *Parser) ParseError!*Node {
@@ -867,9 +865,7 @@ pub const Parser = struct {
     }
 
     fn createNode(self: *Parser, kind: Node.Kind, loc: ast.Location) ParseError!*Node {
-        const node = self.allocator.create(Node) catch return ParseError.OutOfMemory;
-        node.* = .{ .kind = kind, .loc = loc };
-        return node;
+        return self.b.create(kind, loc) catch ParseError.OutOfMemory;
     }
 
     fn getInfixPrecedence(tag: Tag) Precedence {

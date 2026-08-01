@@ -1,5 +1,6 @@
 const std = @import("std");
 const common_token = @import("../common/token.zig");
+const utils = @import("../common/utils.zig");
 
 pub const Tag = enum {
     eof,
@@ -76,19 +77,10 @@ const keywords = std.StaticStringMap(Tag).initComptime(.{
 });
 
 inline fn isIdentStart(c: u8) bool {
-    if (std.ascii.isAlphabetic(c)) return true;
-    return switch (c) {
-        '_', '$' => true,
-        else => false,
-    };
+    return utils.LexerUtils.isIdentStart(c, false);
 }
-
 inline fn isIdentChar(c: u8) bool {
-    if (std.ascii.isAlphanumeric(c)) return true;
-    return switch (c) {
-        '_', '$' => true,
-        else => false,
-    };
+    return utils.LexerUtils.isIdentChar(c, false);
 }
 
 pub const Lexer = struct {
@@ -152,18 +144,7 @@ pub const Lexer = struct {
     }
 
     fn skipWhitespace(self: *Lexer) void {
-        while (self.index < self.buffer.len) {
-            const c = self.peek();
-            if (c == ' ' or c == '\t' or c == '\r') {
-                self.advance();
-            } else if (c == '\n') {
-                self.advance();
-                self.line += 1;
-                self.col = 1;
-            } else {
-                break;
-            }
-        }
+        utils.LexerUtils.skipWhitespace(self.buffer, &self.index, &self.line, &self.col, true);
     }
 
     fn consumeOperator(self: *Lexer, start_loc: common_token.Location) Token {
@@ -244,16 +225,8 @@ pub const Lexer = struct {
     }
 
     fn consumeNumber(self: *Lexer, start_loc: common_token.Location) Token {
-        const start = self.index;
-        while (self.index < self.buffer.len) {
-            const c = self.peek();
-            if (std.ascii.isDigit(c) or c == '.') {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        return .{ .tag = .number, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+        const lexeme = utils.LexerUtils.consumeNumber(self.buffer, &self.index, &self.col);
+        return .{ .tag = .number, .loc = start_loc, .lexeme = lexeme };
     }
 
     fn consumeString(self: *Lexer, start_loc: common_token.Location) Token {
