@@ -432,3 +432,16 @@ test "KupCAD Parser: Statement Modifiers (Trailing if)" {
     const then_branch = node.kind.if_stmt.then_branch;
     try testing.expectEqual(ast.Node.Kind.method_call, @as(std.meta.Tag(ast.Node.Kind), then_branch.kind.block.stmts[0].kind));
 }
+
+test "KupCAD Parser: Unary Plus Support" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "val = +10";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const assign_node = try parser.parseStatement();
+    try testing.expectEqualStrings("val", assign_node.kind.assignment.name);
+    try testing.expectEqual(ast.UnaryOp.positive, assign_node.kind.assignment.value.kind.unary_op.op);
+}

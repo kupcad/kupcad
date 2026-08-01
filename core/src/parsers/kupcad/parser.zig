@@ -401,7 +401,7 @@ pub const Parser = struct {
             .l_paren => try self.parseGroupedExpression(),
             .l_bracket => try self.parseArrayLiteral(),
             .l_brace => try self.parseHashLiteral(),
-            .minus, .bang, .keyword_not => try self.parseUnary(),
+            .plus, .minus, .bang, .keyword_not => try self.parseUnary(),
             .keyword_if => try self.parseIfStatement(),
             .keyword_unless => try self.parseUnlessStatement(),
             .keyword_case => try self.parseCaseStatement(),
@@ -692,7 +692,11 @@ pub const Parser = struct {
     fn parseUnary(self: *Parser) ParseError!*Node {
         const tok = self.current;
         self.advance();
-        const op: ast.UnaryOp = if (tok.tag == .minus) .negate else .not;
+        const op: ast.UnaryOp = switch (tok.tag) {
+            .minus => .negate,
+            .plus => .positive,
+            else => .not,
+        };
         return self.createNode(.{ .unary_op = .{ .op = op, .operand = try self.parseExpression(.unary) } }, tok.loc);
     }
 

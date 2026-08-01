@@ -108,17 +108,25 @@ pub const Parser = struct {
         const start_tok = self.current;
         self.advance();
 
-        _ = try self.expect(.less);
-        var path_buf: std.ArrayListUnmanaged(u8) = .empty;
-        defer path_buf.deinit(self.allocator);
+        var path_str: []const u8 = "";
 
-        while (self.current.tag != .greater and self.current.tag != .eof) {
-            try path_buf.appendSlice(self.allocator, self.current.lexeme);
+        if (self.current.tag == .less) {
             self.advance();
+            var path_buf: std.ArrayListUnmanaged(u8) = .empty;
+            defer path_buf.deinit(self.allocator);
+            while (self.current.tag != .greater and self.current.tag != .eof) {
+                try path_buf.appendSlice(self.allocator, self.current.lexeme);
+                self.advance();
+            }
+            _ = try self.expect(.greater);
+            path_str = try self.allocator.dupe(u8, path_buf.items);
+        } else if (self.current.tag == .string) {
+            path_str = try self.allocator.dupe(u8, self.current.lexeme);
+            self.advance();
+        } else {
+            return ParseError.UnexpectedToken;
         }
-        _ = try self.expect(.greater);
 
-        const path_str = try self.allocator.dupe(u8, path_buf.items);
         return self.createNode(.{
             .include_stmt = .{
                 .path = path_str,
@@ -528,7 +536,7 @@ pub const Parser = struct {
             .ident => try self.parseIdentifierOrCall(),
             .l_paren => try self.parseGroupedExpression(),
             .l_bracket => try self.parseArrayOrRangeOrComprehension(),
-            .minus, .bang => try self.parseUnary(),
+            .plus, .minus, .bang => try self.parseUnary(),
             .keyword_let => try self.parseLetExpression(),
             .keyword_if => try self.parseIfExpression(),
             else => return ParseError.InvalidExpression,
@@ -763,7 +771,11 @@ pub const Parser = struct {
     fn parseUnary(self: *Parser) ParseError!*Node {
         const tok = self.current;
         self.advance();
-        const op: ast.UnaryOp = if (tok.tag == .minus) .negate else .not;
+        const op: ast.UnaryOp = switch (tok.tag) {
+            .minus => .negate,
+            .plus => .positive,
+            else => .not,
+        };
         const operand = try self.parseExpression(.unary);
         return self.createNode(.{
             .unary_op = .{

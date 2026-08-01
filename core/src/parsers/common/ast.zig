@@ -3,6 +3,7 @@ pub const Location = @import("token.zig").Location;
 
 pub const UnaryOp = enum {
     negate, // -
+    positive, // +
     not, // !
 };
 

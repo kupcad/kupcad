@@ -218,3 +218,25 @@ test "OpenSCAD Parser: Let and If Expressions" {
     try testing.expectEqualStrings("a", yield_node.kind.if_stmt.then_branch.kind.identifier);
     try testing.expectEqualStrings("b", yield_node.kind.if_stmt.else_branch.?.kind.identifier);
 }
+
+test "OpenSCAD Parser: Local Quoted Includes and Unary Plus" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\include "local_lib.scad"
+        \\val = +5;
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // Test Quoted Include Path
+    const inc_node = try parser.parseStatement();
+    try testing.expectEqualStrings("local_lib.scad", inc_node.kind.include_stmt.path);
+    try testing.expectEqual(false, inc_node.kind.include_stmt.is_use);
+
+    // Test Unary Plus
+    const assign_node = try parser.parseStatement();
+    try testing.expectEqualStrings("val", assign_node.kind.assignment.name);
+    try testing.expectEqual(ast.UnaryOp.positive, assign_node.kind.assignment.value.kind.unary_op.op);
+}
