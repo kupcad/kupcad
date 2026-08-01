@@ -12,7 +12,7 @@ pub const BinaryOp = enum {
     multiply, // *
     divide, // /
     modulo, // %
-    exponent, // **
+    exponent, // ** or ^
     equal, // ==
     not_equal, // !=
     less, // <
@@ -44,13 +44,15 @@ pub const Node = struct {
         symbol: []const u8,
         boolean: bool,
         nil,
+        undef,
         array_literal: []const *Node,
         hash_literal: []const HashEntry,
 
-        // Range: `start..end`
+        // Range: `start..end` or `[start : step : end]`
         range: struct {
             start: *Node,
             end: *Node,
+            step: ?*Node = null,
         },
 
         // Variable lookup
@@ -82,6 +84,12 @@ pub const Node = struct {
             else_branch: *Node,
         },
 
+        // Index Access: `target[index]`
+        index_access: struct {
+            target: *Node,
+            index: *Node,
+        },
+
         // Method / Function Call: `obj.method(x: 10) do |a| ... end` or `cube(10)`
         method_call: struct {
             receiver: ?*Node,
@@ -90,10 +98,21 @@ pub const Node = struct {
             block: ?*Node = null,
         },
 
+        // Geometry Modifier: `#cube(10);` or `!sphere(5);`
+        modifier_call: struct {
+            modifier: []const u8,
+            child: *Node,
+        },
+
         // Statement Constructs
         import_stmt: struct {
             symbols: []const []const u8,
             path: []const u8,
+        },
+
+        include_stmt: struct {
+            path: []const u8,
+            is_use: bool = false,
         },
 
         if_stmt: struct {
@@ -101,6 +120,18 @@ pub const Node = struct {
             then_branch: *Node,
             else_branch: ?*Node = null,
             is_unless: bool = false,
+        },
+
+        while_stmt: struct {
+            condition: *Node,
+            body: *Node,
+        },
+
+        for_stmt: struct {
+            var_name: []const u8,
+            range: *Node,
+            body: *Node,
+            is_intersection: bool = false,
         },
 
         def_stmt: struct {
@@ -117,6 +148,7 @@ pub const Node = struct {
 
         module_stmt: struct {
             name: []const u8,
+            params: []const Param = &.{},
             body: *Node,
         },
 
@@ -125,6 +157,7 @@ pub const Node = struct {
         break_stmt: ?*Node,
 
         param_doc: []const u8,
+        comment: []const u8,
 
         // Block Scope
         block: struct {

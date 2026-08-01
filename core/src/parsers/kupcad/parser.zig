@@ -25,7 +25,7 @@ pub const Precedence = enum(u8) {
     factor = 9, // * / %
     exponent = 10, // **
     unary = 11, // ! -
-    call = 12, // . ()
+    call = 12, // . () []
 };
 
 pub const Parser = struct {
@@ -61,7 +61,7 @@ pub const Parser = struct {
     }
 
     pub fn parseStatement(self: *Parser) ParseError!*Node {
-        while (self.current.tag == .newline) {
+        while (self.current.tag == .newline or self.current.tag == .comment) {
             self.advance();
         }
 
@@ -69,6 +69,7 @@ pub const Parser = struct {
             .keyword_import => try self.parseImportStatement(),
             .keyword_if => try self.parseIfStatement(),
             .keyword_unless => try self.parseUnlessStatement(),
+            .keyword_while => try self.parseWhileStatement(),
             .keyword_def => try self.parseDefStatement(),
             .keyword_class => try self.parseClassStatement(),
             .keyword_module => try self.parseModuleStatement(),
@@ -79,11 +80,11 @@ pub const Parser = struct {
             else => try self.parseExpression(.none),
         };
 
-        // Statement modifier checks (e.g. `yield unless x == 0` or `break if cond`)
+        // Postfix statement modifiers: `stmt if cond` or `stmt unless cond`
         if (self.current.tag == .keyword_if or self.current.tag == .keyword_unless) {
             const is_unless = (self.current.tag == .keyword_unless);
             const mod_loc = self.current.loc;
-            self.advance(); // consume `if` or `unless`
+            self.advance();
             const cond = try self.parseExpression(.none);
 
             const then_block = try self.createNode(.{
@@ -118,7 +119,7 @@ pub const Parser = struct {
             }
             if (is_end) break;
 
-            if (self.current.tag == .newline) {
+            if (self.current.tag == .newline or self.current.tag == .comment) {
                 self.advance();
                 continue;
             }
@@ -243,6 +244,25 @@ pub const Parser = struct {
                 .then_branch = then_branch,
                 .else_branch = else_branch,
                 .is_unless = true,
+            },
+        }, start_tok.loc);
+    }
+
+    fn parseWhileStatement(self: *Parser) ParseError!*Node {
+        const start_tok = try self.expect(.keyword_while);
+        const condition = try self.parseExpression(.none);
+
+        while (self.current.tag == .newline) {
+            self.advance();
+        }
+
+        const body = try self.parseBlock(&.{.keyword_end});
+        _ = try self.expect(.keyword_end);
+
+        return self.createNode(.{
+            .while_stmt = .{
+                .condition = condition,
+                .body = body,
             },
         }, start_tok.loc);
     }
@@ -416,6 +436,7 @@ pub const Parser = struct {
                 .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or, .dot_dot => try self.parseBinary(left),
                 .question => try self.parseTernary(left),
                 .dot => try self.parseMethodCall(left),
+                .l_bracket => try self.parseIndexAccess(left),
                 .l_paren, .keyword_do => try self.parseCallOnExpr(left),
                 else => break,
             };
@@ -512,8 +533,8 @@ pub const Parser = struct {
             var key: *Node = undefined;
             if (self.current.tag == .ident and self.peekNextTag() == .colon) {
                 const key_tok = self.current;
-                self.advance(); // consume key
-                self.advance(); // consume ':'
+                self.advance();
+                self.advance();
                 key = try self.createNode(.{ .string = key_tok.lexeme }, key_tok.loc);
             } else {
                 key = try self.parseExpression(.none);
@@ -607,12 +628,25 @@ pub const Parser = struct {
         }, q_tok.loc);
     }
 
+    fn parseIndexAccess(self: *Parser, target: *Node) ParseError!*Node {
+        const bracket_tok = try self.expect(.l_bracket);
+        const index = try self.parseExpression(.none);
+        _ = try self.expect(.r_bracket);
+
+        return self.createNode(.{
+            .index_access = .{
+                .target = target,
+                .index = index,
+            },
+        }, bracket_tok.loc);
+    }
+
     fn parseCallOnExpr(self: *Parser, receiver_expr: *Node) ParseError!*Node {
         var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
         errdefer args.deinit(self.allocator);
 
         if (self.current.tag == .l_paren) {
-            self.advance(); // consume '('
+            self.advance();
             while (self.current.tag != .r_paren and self.current.tag != .eof) {
                 var arg_name: []const u8 = "";
                 if (self.current.tag == .ident and self.peekNextTag() == .colon) {
@@ -669,7 +703,7 @@ pub const Parser = struct {
         errdefer args.deinit(self.allocator);
 
         if (self.current.tag == .l_paren) {
-            self.advance(); // consume '('
+            self.advance();
             while (self.current.tag != .r_paren and self.current.tag != .eof) {
                 var arg_name: []const u8 = "";
                 if (self.current.tag == .ident and self.peekNextTag() == .colon) {
@@ -714,7 +748,7 @@ pub const Parser = struct {
         errdefer params.deinit(self.allocator);
 
         if (self.current.tag == .pipe) {
-            self.advance(); // consume '|'
+            self.advance();
             while (self.current.tag != .pipe and self.current.tag != .eof) {
                 if (self.current.tag == .ident) {
                     try params.append(self.allocator, self.current.lexeme);
@@ -768,7 +802,7 @@ pub const Parser = struct {
             .plus, .minus => .term,
             .star, .slash, .percent => .factor,
             .star_star => .exponent,
-            .dot, .l_paren, .keyword_do => .call,
+            .dot, .l_paren, .keyword_do, .l_bracket => .call,
             else => .none,
         };
     }
