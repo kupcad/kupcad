@@ -65,6 +65,7 @@ pub const Node = struct {
             start: *Node,
             end: *Node,
             step: ?*Node = null,
+            is_exclusive: bool = false,
         },
 
         // Variable lookup & Namespace Resolution
@@ -123,6 +124,12 @@ pub const Node = struct {
             yield_expr: *Node,
         },
         each_expr: *Node,
+
+        // OpenSCAD let expression: `let(a=1) a*2`
+        let_expr: struct {
+            assignments: []const *Node,
+            yield_expr: *Node,
+        },
 
         // Method / Function Call: `obj.method(x: 10) do |a| ... end` or `cube(10)`
         method_call: struct {

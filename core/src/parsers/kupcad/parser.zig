@@ -401,7 +401,7 @@ pub const Parser = struct {
             .l_paren => try self.parseGroupedExpression(),
             .l_bracket => try self.parseArrayLiteral(),
             .l_brace => try self.parseHashLiteral(),
-            .minus, .bang => try self.parseUnary(),
+            .minus, .bang, .keyword_not => try self.parseUnary(),
             .keyword_if => try self.parseIfStatement(),
             .keyword_unless => try self.parseUnlessStatement(),
             .keyword_case => try self.parseCaseStatement(),
@@ -411,7 +411,7 @@ pub const Parser = struct {
         while (@intFromEnum(precedence) < @intFromEnum(getInfixPrecedence(self.current.tag))) {
             const op_tok = self.current;
             left = switch (op_tok.tag) {
-                .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or, .dot_dot => try self.parseBinary(left),
+                .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or, .dot_dot, .dot_dot_dot, .keyword_and, .keyword_or => try self.parseBinary(left),
                 .question => try self.parseTernary(left),
                 .dot => try self.parseMethodCall(left),
                 .colon_colon => try self.parseScopeResolution(left),
@@ -700,8 +700,8 @@ pub const Parser = struct {
         const tok = self.current;
         self.advance();
 
-        if (tok.tag == .dot_dot) {
-            return self.createNode(.{ .range = .{ .start = left, .end = try self.parseExpression(.range) } }, tok.loc);
+        if (tok.tag == .dot_dot or tok.tag == .dot_dot_dot) {
+            return self.createNode(.{ .range = .{ .start = left, .end = try self.parseExpression(.range), .is_exclusive = (tok.tag == .dot_dot_dot) } }, tok.loc);
         }
 
         const op = tagToBinaryOp(tok.tag) orelse return ParseError.InvalidExpression;
@@ -870,11 +870,11 @@ pub const Parser = struct {
     fn getInfixPrecedence(tag: Tag) Precedence {
         return switch (tag) {
             .question => .ternary,
-            .or_or => .logical_or,
-            .and_and => .logical_and,
+            .or_or, .keyword_or => .logical_or,
+            .and_and, .keyword_and => .logical_and,
             .equal_equal, .bang_equal => .equality,
             .less, .less_equal, .greater, .greater_equal => .comparison,
-            .dot_dot => .range,
+            .dot_dot, .dot_dot_dot => .range,
             .plus, .minus => .term,
             .star, .slash, .percent => .factor,
             .star_star => .exponent,
@@ -897,8 +897,8 @@ pub const Parser = struct {
             .less_equal => .less_equal,
             .greater => .greater,
             .greater_equal => .greater_equal,
-            .and_and => .logical_and,
-            .or_or => .logical_or,
+            .and_and, .keyword_and => .logical_and,
+            .or_or, .keyword_or => .logical_or,
             else => null,
         };
     }

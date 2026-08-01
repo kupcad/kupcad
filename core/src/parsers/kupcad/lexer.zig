@@ -36,6 +36,9 @@ pub const Tag = enum {
     keyword_when,
     keyword_self,
     keyword_super,
+    keyword_and,
+    keyword_or,
+    keyword_not,
 
     equal_equal,
     bang_equal,
@@ -69,6 +72,7 @@ pub const Tag = enum {
     arrow,
     minus_greater, // ->
     dot_dot,
+    dot_dot_dot,
     dot,
     colon_colon, // ::
     comma,
@@ -106,6 +110,9 @@ const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "when", .keyword_when },
     .{ "self", .keyword_self },
     .{ "super", .keyword_super },
+    .{ "and", .keyword_and },
+    .{ "or", .keyword_or },
+    .{ "not", .keyword_not },
 });
 
 inline fn isIdentStart(c: u8) bool {
@@ -206,6 +213,10 @@ pub const Lexer = struct {
         self.advance();
         if (self.index < self.buffer.len and self.peek() == '.') {
             self.advance();
+            if (self.index < self.buffer.len and self.peek() == '.') {
+                self.advance();
+                return .{ .tag = .dot_dot_dot, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+            }
             return .{ .tag = .dot_dot, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
         }
         return .{ .tag = .dot, .loc = start_loc, .lexeme = self.buffer[start..self.index] };

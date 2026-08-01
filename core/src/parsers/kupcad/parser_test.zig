@@ -403,3 +403,32 @@ test "KupCAD Parser: Stabby Lambda (Anonymous Function)" {
     const body_stmts = lambda.kind.lambda_expr.body.kind.block.stmts;
     try testing.expectEqual(ast.BinaryOp.add, body_stmts[0].kind.binary_op.op);
 }
+
+test "KupCAD Parser: Exclusive Range (...)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "1...5";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseExpression(.none);
+
+    try testing.expectEqual(ast.Node.Kind.range, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqual(true, node.kind.range.is_exclusive);
+    try testing.expectEqual(@as(f64, 5.0), node.kind.range.end.kind.number);
+}
+
+test "KupCAD Parser: Statement Modifiers (Trailing if)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "box.chamfer() if render_chamfer";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+
+    try testing.expectEqual(ast.Node.Kind.if_stmt, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqualStrings("render_chamfer", node.kind.if_stmt.condition.kind.identifier);
+
+    // The then_branch block should wrap the method call statement
+    const then_branch = node.kind.if_stmt.then_branch;
+    try testing.expectEqual(ast.Node.Kind.method_call, @as(std.meta.Tag(ast.Node.Kind), then_branch.kind.block.stmts[0].kind));
+}
