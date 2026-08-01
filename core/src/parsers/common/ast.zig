@@ -57,15 +57,31 @@ pub const Node = struct {
             right: *Node,
         },
 
-        // Method Call: `obj.method(x: 10)`
+        // Method Call: `obj.method(x: 10) do |a| ... end`
         method_call: struct {
             receiver: ?*Node,
             method_name: []const u8,
             args: []const NamedArg,
+            block: ?*Node = null,
+        },
+
+        // Statement Constructs
+        import_stmt: struct {
+            symbols: []const []const u8,
+            path: []const u8,
+        },
+
+        if_stmt: struct {
+            condition: *Node,
+            then_branch: *Node,
+            else_branch: ?*Node = null,
         },
 
         // Block Scope
-        block: []const Node,
+        block: struct {
+            params: []const []const u8 = &.{},
+            stmts: []const *Node,
+        },
     };
 };
 
