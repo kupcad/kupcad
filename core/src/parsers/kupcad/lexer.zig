@@ -67,6 +67,7 @@ pub const Tag = enum {
     and_and_equal,
     or_or_equal,
     arrow,
+    minus_greater, // ->
     dot_dot,
     dot,
     colon_colon, // ::
@@ -250,7 +251,7 @@ pub const Lexer = struct {
         const tag: Tag = switch (c1) {
             '=' => if (c2 == '=') .equal_equal else if (c2 == '>') .arrow else .equal,
             '+' => if (c2 == '=') .plus_equal else .plus,
-            '-' => if (c2 == '=') .minus_equal else .minus,
+            '-' => if (c2 == '=') .minus_equal else if (c2 == '>') .minus_greater else .minus,
             '*' => if (c2 == '*' and c3 == '=') .star_star_equal else if (c2 == '*') .star_star else if (c2 == '=') .star_equal else .star,
             '/' => if (c2 == '=') .slash_equal else .slash,
             '%' => if (c2 == '=') .percent_equal else .percent,
@@ -269,7 +270,7 @@ pub const Lexer = struct {
         } else if (tag == .equal_equal or tag == .bang_equal or tag == .less_equal or
             tag == .greater_equal or tag == .and_and or tag == .or_or or tag == .star_star or
             tag == .plus_equal or tag == .minus_equal or tag == .star_equal or tag == .slash_equal or
-            tag == .percent_equal or tag == .arrow)
+            tag == .percent_equal or tag == .arrow or tag == .minus_greater)
         {
             self.advance();
         }

@@ -378,3 +378,28 @@ test "KupCAD Parser: Self and Super constructs" {
 
     try testing.expectEqual(ast.Node.Kind.self_expr, @as(std.meta.Tag(ast.Node.Kind), stmts[1].kind));
 }
+
+test "KupCAD Parser: Stabby Lambda (Anonymous Function)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "my_lambda = ->(x, y) { x + y }";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+
+    // Verify it evaluates to Assignment.
+    try testing.expectEqual(ast.Node.Kind.assignment, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    const lambda = node.kind.assignment.value;
+
+    // Verify AST Node mapping
+    try testing.expectEqual(ast.Node.Kind.lambda_expr, @as(std.meta.Tag(ast.Node.Kind), lambda.kind));
+
+    // Verify mapped params
+    try testing.expectEqualStrings("x", lambda.kind.lambda_expr.params[0].name);
+    try testing.expectEqualStrings("y", lambda.kind.lambda_expr.params[1].name);
+
+    // Verify mapped AST payload / body block
+    const body_stmts = lambda.kind.lambda_expr.body.kind.block.stmts;
+    try testing.expectEqual(ast.BinaryOp.add, body_stmts[0].kind.binary_op.op);
+}

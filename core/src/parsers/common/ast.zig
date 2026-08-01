@@ -135,6 +135,12 @@ pub const Node = struct {
             args: []const NamedArg = &.{},
         },
 
+        // Anonymous Functions: `->(x, y) { ... }`
+        lambda_expr: struct {
+            params: []const Param,
+            body: *Node,
+        },
+
         // Geometry Modifier: `#cube(10);` or `!sphere(5);`
         modifier_call: struct {
             modifier: []const u8,

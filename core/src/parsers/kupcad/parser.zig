@@ -395,6 +395,7 @@ pub const Parser = struct {
             .keyword_nil => try self.parseNil(),
             .keyword_self => try self.parseSelf(),
             .keyword_super => try self.parseSuper(),
+            .minus_greater => try self.parseLambda(),
             .colon_colon => try self.parseTopLevelScopeResolution(),
             .ident, .constant => try self.parseIdentifierOrAssignmentOrCall(),
             .l_paren => try self.parseGroupedExpression(),
@@ -420,6 +421,52 @@ pub const Parser = struct {
             };
         }
         return left;
+    }
+
+    fn parseLambda(self: *Parser) ParseError!*Node {
+        const start_tok = try self.expect(.minus_greater);
+
+        var params: std.ArrayListUnmanaged(ast.Param) = .empty;
+        errdefer params.deinit(self.allocator);
+
+        if (self.current.tag == .l_paren) {
+            self.advance();
+            while (self.current.tag != .r_paren and self.current.tag != .eof) {
+                self.skipIgnored();
+                if (self.current.tag == .ident) {
+                    const param_name = self.current.lexeme;
+                    self.advance();
+                    var default_val: ?*Node = null;
+                    if (self.current.tag == .equal) {
+                        self.advance();
+                        default_val = try self.parseExpression(.none);
+                    }
+                    try params.append(self.allocator, .{ .name = param_name, .default_value = default_val });
+                }
+                if (self.current.tag == .comma) self.advance() else break;
+            }
+            _ = try self.expect(.r_paren);
+        }
+
+        self.skipIgnored();
+
+        var body: *Node = undefined;
+        if (self.current.tag == .l_brace) {
+            self.advance();
+            body = try self.parseBlock(&.{.r_brace});
+            _ = try self.expect(.r_brace);
+        } else if (self.current.tag == .keyword_do) {
+            self.advance();
+            body = try self.parseBlock(&.{.keyword_end});
+            _ = try self.expect(.keyword_end);
+        } else {
+            return ParseError.UnexpectedToken;
+        }
+
+        return self.createNode(.{ .lambda_expr = .{
+            .params = try params.toOwnedSlice(self.allocator),
+            .body = body,
+        } }, start_tok.loc);
     }
 
     fn parseNumber(self: *Parser) ParseError!*Node {

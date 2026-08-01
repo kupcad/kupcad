@@ -167,3 +167,13 @@ test "KupCAD Lexer: Line and column tracking" {
     try testing.expectEqual(@as(u32, 2), tok.loc.line);
     try testing.expectEqual(@as(u32, 3), tok.loc.col); // skipped 2 spaces
 }
+
+test "KupCAD Lexer: Stabby Lambda" {
+    try expectTokens("my_lambda = ->(x, y) { x + y }", &.{
+        t(.ident, "my_lambda"), t(.equal, "="),   t(.minus_greater, "->"),
+        t(.l_paren, "("),       t(.ident, "x"),   t(.comma, ","),
+        t(.ident, "y"),         t(.r_paren, ")"), t(.l_brace, "{"),
+        t(.ident, "x"),         t(.plus, "+"),    t(.ident, "y"),
+        t(.r_brace, "}"),       t(.eof, ""),
+    });
+}
