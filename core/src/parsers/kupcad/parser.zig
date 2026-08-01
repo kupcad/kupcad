@@ -56,14 +56,18 @@ pub const Parser = struct {
         return ParseError.UnexpectedToken;
     }
 
+    fn skipIgnored(self: *Parser) void {
+        while (self.current.tag == .newline or self.current.tag == .comment) {
+            self.advance();
+        }
+    }
+
     pub fn parseProgram(self: *Parser) ParseError!*Node {
         return self.parseBlock(&.{});
     }
 
     pub fn parseStatement(self: *Parser) ParseError!*Node {
-        while (self.current.tag == .newline or self.current.tag == .comment) {
-            self.advance();
-        }
+        self.skipIgnored();
 
         var stmt = switch (self.current.tag) {
             .keyword_import => try self.parseImportStatement(),
@@ -80,7 +84,6 @@ pub const Parser = struct {
             else => try self.parseExpression(.none),
         };
 
-        // Postfix statement modifiers: `stmt if cond` or `stmt unless cond`
         if (self.current.tag == .keyword_if or self.current.tag == .keyword_unless) {
             const is_unless = (self.current.tag == .keyword_unless);
             const mod_loc = self.current.loc;
@@ -148,6 +151,7 @@ pub const Parser = struct {
         errdefer symbols.deinit(self.allocator);
 
         while (self.current.tag != .r_brace and self.current.tag != .eof) {
+            self.skipIgnored();
             if (self.current.tag == .ident or self.current.tag == .constant) {
                 try symbols.append(self.allocator, self.current.lexeme);
                 self.advance();
@@ -185,10 +189,7 @@ pub const Parser = struct {
         }
 
         const condition = try self.parseExpression(.none);
-
-        while (self.current.tag == .newline) {
-            self.advance();
-        }
+        self.skipIgnored();
 
         const then_branch = try self.parseBlock(&.{ .keyword_elsif, .keyword_else, .keyword_end });
 
@@ -198,9 +199,7 @@ pub const Parser = struct {
             else_branch = try self.parseIfStatement();
         } else if (self.current.tag == .keyword_else) {
             self.advance();
-            while (self.current.tag == .newline) {
-                self.advance();
-            }
+            self.skipIgnored();
             else_branch = try self.parseBlock(&.{.keyword_end});
             _ = try self.expect(.keyword_end);
         } else if (self.current.tag == .keyword_end) {
@@ -220,18 +219,14 @@ pub const Parser = struct {
         const start_tok = try self.expect(.keyword_unless);
         const condition = try self.parseExpression(.none);
 
-        while (self.current.tag == .newline) {
-            self.advance();
-        }
+        self.skipIgnored();
 
         const then_branch = try self.parseBlock(&.{ .keyword_else, .keyword_end });
 
         var else_branch: ?*Node = null;
         if (self.current.tag == .keyword_else) {
             self.advance();
-            while (self.current.tag == .newline) {
-                self.advance();
-            }
+            self.skipIgnored();
             else_branch = try self.parseBlock(&.{.keyword_end});
             _ = try self.expect(.keyword_end);
         } else if (self.current.tag == .keyword_end) {
@@ -252,9 +247,7 @@ pub const Parser = struct {
         const start_tok = try self.expect(.keyword_while);
         const condition = try self.parseExpression(.none);
 
-        while (self.current.tag == .newline) {
-            self.advance();
-        }
+        self.skipIgnored();
 
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
@@ -281,6 +274,7 @@ pub const Parser = struct {
         if (self.current.tag == .l_paren) {
             self.advance();
             while (self.current.tag != .r_paren and self.current.tag != .eof) {
+                self.skipIgnored();
                 if (self.current.tag == .ident) {
                     const param_name = self.current.lexeme;
                     self.advance();
@@ -303,9 +297,7 @@ pub const Parser = struct {
             _ = try self.expect(.r_paren);
         }
 
-        while (self.current.tag == .newline) {
-            self.advance();
-        }
+        self.skipIgnored();
 
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
@@ -338,9 +330,7 @@ pub const Parser = struct {
             }
         }
 
-        while (self.current.tag == .newline) {
-            self.advance();
-        }
+        self.skipIgnored();
 
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
@@ -362,9 +352,7 @@ pub const Parser = struct {
             return ParseError.UnexpectedToken;
         self.advance();
 
-        while (self.current.tag == .newline) {
-            self.advance();
-        }
+        self.skipIgnored();
 
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
@@ -436,7 +424,7 @@ pub const Parser = struct {
                 .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or, .dot_dot => try self.parseBinary(left),
                 .question => try self.parseTernary(left),
                 .dot => try self.parseMethodCall(left),
-                .l_bracket => try self.parseIndexAccess(left),
+                .l_bracket => try self.parseIndexAccessOrAssignment(left),
                 .l_paren, .keyword_do => try self.parseCallOnExpr(left),
                 else => break,
             };
@@ -497,7 +485,7 @@ pub const Parser = struct {
         errdefer elements.deinit(self.allocator);
 
         while (self.current.tag != .r_bracket and self.current.tag != .eof) {
-            if (self.current.tag == .newline) {
+            if (self.current.tag == .newline or self.current.tag == .comment) {
                 self.advance();
                 continue;
             }
@@ -525,7 +513,7 @@ pub const Parser = struct {
         errdefer entries.deinit(self.allocator);
 
         while (self.current.tag != .r_brace and self.current.tag != .eof) {
-            if (self.current.tag == .newline) {
+            if (self.current.tag == .newline or self.current.tag == .comment) {
                 self.advance();
                 continue;
             }
@@ -628,10 +616,22 @@ pub const Parser = struct {
         }, q_tok.loc);
     }
 
-    fn parseIndexAccess(self: *Parser, target: *Node) ParseError!*Node {
+    fn parseIndexAccessOrAssignment(self: *Parser, target: *Node) ParseError!*Node {
         const bracket_tok = try self.expect(.l_bracket);
         const index = try self.parseExpression(.none);
         _ = try self.expect(.r_bracket);
+
+        if (self.current.tag == .equal) {
+            self.advance(); // consume '='
+            const val_expr = try self.parseExpression(.assignment);
+            return self.createNode(.{
+                .index_assignment = .{
+                    .target = target,
+                    .index = index,
+                    .value = val_expr,
+                },
+            }, bracket_tok.loc);
+        }
 
         return self.createNode(.{
             .index_access = .{
@@ -648,6 +648,7 @@ pub const Parser = struct {
         if (self.current.tag == .l_paren) {
             self.advance();
             while (self.current.tag != .r_paren and self.current.tag != .eof) {
+                self.skipIgnored();
                 var arg_name: []const u8 = "";
                 if (self.current.tag == .ident and self.peekNextTag() == .colon) {
                     arg_name = self.current.lexeme;
@@ -705,6 +706,7 @@ pub const Parser = struct {
         if (self.current.tag == .l_paren) {
             self.advance();
             while (self.current.tag != .r_paren and self.current.tag != .eof) {
+                self.skipIgnored();
                 var arg_name: []const u8 = "";
                 if (self.current.tag == .ident and self.peekNextTag() == .colon) {
                     arg_name = self.current.lexeme;

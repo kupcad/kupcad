@@ -72,3 +72,19 @@ test "OpenSCAD Parser: Function Definition & Includes" {
     try testing.expectEqualStrings("double", fn_node.kind.def_stmt.name);
     try testing.expectEqual(ast.BinaryOp.multiply, fn_node.kind.def_stmt.body.kind.binary_op.op);
 }
+
+test "OpenSCAD Parser: Vector Comprehension" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "pts = [ for (x = [0:5]) x * 2 ];";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const assign_node = try parser.parseStatement();
+    const comp_node = assign_node.kind.assignment.value;
+
+    try testing.expectEqual(@as(usize, 1), comp_node.kind.comprehension.clauses.len);
+    try testing.expectEqualStrings("x", comp_node.kind.comprehension.clauses[0].kind.for_stmt.var_name);
+    try testing.expectEqual(ast.BinaryOp.multiply, comp_node.kind.comprehension.yield_expr.kind.binary_op.op);
+}

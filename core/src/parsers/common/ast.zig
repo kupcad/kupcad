@@ -58,9 +58,14 @@ pub const Node = struct {
         // Variable lookup
         identifier: []const u8,
 
-        // Assignment: `target = expr`
+        // Assignment: `target = expr` or `target[idx] = expr`
         assignment: struct {
             name: []const u8,
+            value: *Node,
+        },
+        index_assignment: struct {
+            target: *Node,
+            index: *Node,
             value: *Node,
         },
 
@@ -88,6 +93,12 @@ pub const Node = struct {
         index_access: struct {
             target: *Node,
             index: *Node,
+        },
+
+        // List Comprehension: `[ for (x = [0:5]) x * 2 ]`
+        comprehension: struct {
+            clauses: []const *Node,
+            yield_expr: *Node,
         },
 
         // Method / Function Call: `obj.method(x: 10) do |a| ... end` or `cube(10)`
