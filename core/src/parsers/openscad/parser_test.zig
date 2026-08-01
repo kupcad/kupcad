@@ -240,3 +240,29 @@ test "OpenSCAD Parser: Local Quoted Includes and Unary Plus" {
     try testing.expectEqualStrings("val", assign_node.kind.assignment.name);
     try testing.expectEqual(ast.UnaryOp.positive, assign_node.kind.assignment.value.kind.unary_op.op);
 }
+
+test "OpenSCAD Parser: Expression-level Assert and Echo" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "val = assert(a > 0) echo(a) a * 2;";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    // Assigning to `val`
+    try testing.expectEqualStrings("val", stmt.kind.assignment.name);
+
+    // Top expression should be `assert`
+    const assert_node = stmt.kind.assignment.value;
+    try testing.expectEqual(ast.Node.Kind.assert_expr, @as(std.meta.Tag(ast.Node.Kind), assert_node.kind));
+
+    // Yield expression of assert should be `echo`
+    const echo_node = assert_node.kind.assert_expr.yield_expr;
+    try testing.expectEqual(ast.Node.Kind.echo_expr, @as(std.meta.Tag(ast.Node.Kind), echo_node.kind));
+
+    // Yield expression of echo should be `a * 2`
+    const math_node = echo_node.kind.echo_expr.yield_expr;
+    try testing.expectEqual(ast.BinaryOp.multiply, math_node.kind.binary_op.op);
+}

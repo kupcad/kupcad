@@ -24,9 +24,22 @@ pub const BinaryOp = enum {
     logical_or, // ||
 };
 
+pub const ArgModifier = enum {
+    splat, // *
+    double_splat, // **
+    block, // &
+};
+
 pub const Param = struct {
     name: []const u8,
     default_value: ?*Node = null,
+    modifier: ?ArgModifier = null,
+};
+
+pub const NamedArg = struct {
+    name: []const u8,
+    value: *Node,
+    modifier: ?ArgModifier = null,
 };
 
 pub const HashEntry = struct {
@@ -132,6 +145,16 @@ pub const Node = struct {
             yield_expr: *Node,
         },
 
+        // OpenSCAD Expression-level modifiers
+        assert_expr: struct {
+            args: []const NamedArg,
+            yield_expr: *Node,
+        },
+        echo_expr: struct {
+            args: []const NamedArg,
+            yield_expr: *Node,
+        },
+
         // Method / Function Call: `obj.method(x: 10) do |a| ... end` or `cube(10)`
         method_call: struct {
             receiver: ?*Node,
@@ -211,9 +234,4 @@ pub const Node = struct {
             stmts: []const *Node,
         },
     };
-};
-
-pub const NamedArg = struct {
-    name: []const u8,
-    value: *Node,
 };

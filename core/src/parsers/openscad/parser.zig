@@ -539,6 +539,7 @@ pub const Parser = struct {
             .plus, .minus, .bang => try self.parseUnary(),
             .keyword_let => try self.parseLetExpression(),
             .keyword_if => try self.parseIfExpression(),
+            .keyword_assert, .keyword_echo => try self.parseAssertOrEchoExpr(),
             else => return ParseError.InvalidExpression,
         };
 
@@ -598,6 +599,41 @@ pub const Parser = struct {
             .else_branch = else_branch,
             .is_unless = false,
         } }, start_tok.loc);
+    }
+
+    fn parseAssertOrEchoExpr(self: *Parser) ParseError!*Node {
+        const start_tok = self.current;
+        const is_assert = (start_tok.tag == .keyword_assert);
+        self.advance();
+        _ = try self.expect(.l_paren);
+
+        var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
+        errdefer args.deinit(self.allocator);
+
+        while (self.current.tag != .r_paren and self.current.tag != .eof) {
+            var arg_name: []const u8 = "";
+            if (self.current.tag == .ident and self.peekNextTag() == .equal) {
+                arg_name = self.current.lexeme;
+                self.advance();
+                self.advance();
+            }
+            const arg_val = try self.parseExpression(.none);
+            try args.append(self.allocator, .{ .name = arg_name, .value = arg_val, .modifier = null });
+            if (self.current.tag == .comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        _ = try self.expect(.r_paren);
+
+        const yield_expr = try self.parseExpression(.none);
+
+        if (is_assert) {
+            return self.createNode(.{ .assert_expr = .{ .args = try args.toOwnedSlice(self.allocator), .yield_expr = yield_expr } }, start_tok.loc);
+        } else {
+            return self.createNode(.{ .echo_expr = .{ .args = try args.toOwnedSlice(self.allocator), .yield_expr = yield_expr } }, start_tok.loc);
+        }
     }
 
     fn parseNumber(self: *Parser) ParseError!*Node {

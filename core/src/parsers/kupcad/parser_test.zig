@@ -445,3 +445,37 @@ test "KupCAD Parser: Unary Plus Support" {
     try testing.expectEqualStrings("val", assign_node.kind.assignment.name);
     try testing.expectEqual(ast.UnaryOp.positive, assign_node.kind.assignment.value.kind.unary_op.op);
 }
+
+test "KupCAD Parser: Splats and Block Forwarding" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\def wrapper(*args, **kwargs, &block)
+        \\  target.call(*args, **kwargs, &block)
+        \\end
+    ;
+
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const def_node = try parser.parseStatement();
+
+    // Validate Function Parameters
+    const params = def_node.kind.def_stmt.params;
+    try testing.expectEqual(ast.ArgModifier.splat, params[0].modifier.?);
+    try testing.expectEqualStrings("args", params[0].name);
+
+    try testing.expectEqual(ast.ArgModifier.double_splat, params[1].modifier.?);
+    try testing.expectEqualStrings("kwargs", params[1].name);
+
+    try testing.expectEqual(ast.ArgModifier.block, params[2].modifier.?);
+    try testing.expectEqualStrings("block", params[2].name);
+
+    // Validate Method Call Arguments
+    const call_node = def_node.kind.def_stmt.body.kind.block.stmts[0];
+    const args = call_node.kind.method_call.args;
+
+    try testing.expectEqual(ast.ArgModifier.splat, args[0].modifier.?);
+    try testing.expectEqual(ast.ArgModifier.double_splat, args[1].modifier.?);
+    try testing.expectEqual(ast.ArgModifier.block, args[2].modifier.?);
+}
