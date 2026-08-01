@@ -270,7 +270,18 @@ pub const Lexer = struct {
     fn consumeString(self: *Lexer, start_loc: common_token.Location) Token {
         self.advance();
         const start = self.index;
-        while (self.index < self.buffer.len and self.peek() != '"') {
+        while (self.index < self.buffer.len) {
+            const c = self.peek();
+            if (c == '\\') {
+                self.advance();
+                if (self.index < self.buffer.len) {
+                    self.advance();
+                }
+                continue;
+            }
+            if (c == '"') {
+                break;
+            }
             self.advance();
         }
         const lexeme = self.buffer[start..self.index];

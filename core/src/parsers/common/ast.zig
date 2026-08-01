@@ -1,12 +1,26 @@
 const std = @import("std");
-const Location = @import("token.zig").Location;
+pub const Location = @import("token.zig").Location;
+
+pub const UnaryOp = enum {
+    negate, // -
+    not, // !
+};
 
 pub const BinaryOp = enum {
     add, // +
     subtract, // -
-    intersect, // &
     multiply, // *
     divide, // /
+    modulo, // %
+    exponent, // **
+    equal, // ==
+    not_equal, // !=
+    less, // <
+    less_equal, // <=
+    greater, // >
+    greater_equal, // >=
+    logical_and, // &&
+    logical_or, // ||
 };
 
 pub const Node = struct {
@@ -14,33 +28,45 @@ pub const Node = struct {
     loc: Location,
 
     pub const Kind = union(enum) {
-        // Values
+        // Literals
         number: f64,
         string: []const u8,
+        symbol: []const u8,
+        boolean: bool,
+        nil,
+
+        // Variable lookup
         identifier: []const u8,
 
-        // CSG / Math Operations
+        // Assignment: `target = expr`
+        assignment: struct {
+            name: []const u8,
+            value: *Node,
+        },
+
+        // Unary: `-x`, `!x`
+        unary_op: struct {
+            op: UnaryOp,
+            operand: *Node,
+        },
+
+        // Binary: `a + b`, `x * y`
         binary_op: struct {
             op: BinaryOp,
             left: *Node,
             right: *Node,
         },
 
-        // Geometry Primitives (Universal representation of Box, Cylinder, etc.)
-        geometry_call: struct {
-            primitive_type: PrimitiveType,
+        // Method Call: `obj.method(x: 10)`
+        method_call: struct {
+            receiver: ?*Node,
+            method_name: []const u8,
             args: []const NamedArg,
         },
 
-        // Block / Module scopes
+        // Block Scope
         block: []const Node,
     };
-};
-
-pub const PrimitiveType = enum {
-    cube,
-    cylinder,
-    sphere,
 };
 
 pub const NamedArg = struct {
