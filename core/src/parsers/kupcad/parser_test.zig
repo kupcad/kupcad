@@ -103,7 +103,7 @@ test "KupCAD Parser: If / Elsif / Else Control Flow" {
     try testing.expectEqual(ast.BinaryOp.greater, if_node.kind.if_stmt.condition.kind.binary_op.op);
     try testing.expectEqualStrings("a", if_node.kind.if_stmt.then_branch.kind.block.stmts[0].kind.assignment.name);
 
-    // ELSIF (nested in else_branch)
+    // ELSIF
     const elsif_node = if_node.kind.if_stmt.else_branch.?;
     try testing.expectEqual(ast.BinaryOp.equal, elsif_node.kind.if_stmt.condition.kind.binary_op.op);
     try testing.expectEqualStrings("a", elsif_node.kind.if_stmt.then_branch.kind.block.stmts[0].kind.assignment.name);
@@ -136,4 +136,65 @@ test "KupCAD Parser: Method Call with Do Block and Parameters" {
 
     const stmts = block.kind.block.stmts;
     try testing.expectEqual(ast.BinaryOp.add, stmts[0].kind.binary_op.op);
+}
+
+test "KupCAD Parser: Statement Modifiers (Yield Unless)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "yield unless 10 % 3 == 0";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+
+    try testing.expectEqual(true, node.kind.if_stmt.is_unless);
+    try testing.expectEqual(ast.BinaryOp.equal, node.kind.if_stmt.condition.kind.binary_op.op);
+
+    const inner_yield = node.kind.if_stmt.then_branch.kind.block.stmts[0];
+    try testing.expectEqual(true, inner_yield.kind == .yield_stmt);
+}
+
+test "KupCAD Parser: Functions, Classes, Arrays, and Range" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\class MyPart < Base
+        \\  def is_valid?(x = 10)
+        \\    range = 20..100
+        \\    arr = [1, 2]
+        \\    return x ? true : false
+        \\  end
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const class_node = try parser.parseStatement();
+
+    try testing.expectEqualStrings("MyPart", class_node.kind.class_stmt.name);
+    try testing.expectEqualStrings("Base", class_node.kind.class_stmt.super_class.?);
+
+    const def_node = class_node.kind.class_stmt.body.kind.block.stmts[0];
+    try testing.expectEqualStrings("is_valid?", def_node.kind.def_stmt.name);
+    try testing.expectEqualStrings("x", def_node.kind.def_stmt.params[0].name);
+    try testing.expectEqual(@as(f64, 10.0), def_node.kind.def_stmt.params[0].default_value.?.kind.number);
+
+    const body_stmts = def_node.kind.def_stmt.body.kind.block.stmts;
+
+    // range = 20..100
+    const range_node = body_stmts[0].kind.assignment.value;
+    try testing.expectEqual(@as(f64, 20.0), range_node.kind.range.start.kind.number);
+    try testing.expectEqual(@as(f64, 100.0), range_node.kind.range.end.kind.number);
+
+    // arr = [1, 2]
+    const array_node = body_stmts[1].kind.assignment.value;
+    try testing.expectEqual(@as(usize, 2), array_node.kind.array_literal.len);
+
+    // return x ? true : false
+    const ret_node = body_stmts[2].kind.return_stmt.?;
+    try testing.expectEqualStrings("x", ret_node.kind.ternary_op.condition.kind.identifier);
+    try testing.expectEqual(true, ret_node.kind.ternary_op.then_branch.kind.boolean);
+    try testing.expectEqual(false, ret_node.kind.ternary_op.else_branch.kind.boolean);
 }

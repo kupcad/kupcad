@@ -50,6 +50,7 @@ pub const Tag = enum {
     minus,
     ampersand,
     equal,
+    dot_dot,
     dot,
     comma,
     l_paren,
@@ -132,7 +133,7 @@ pub const Lexer = struct {
             '\n' => self.consumeNewline(start_loc),
             '+' => self.consumeChar(.plus, start_loc),
             '-' => self.consumeChar(.minus, start_loc),
-            '.' => self.consumeChar(.dot, start_loc),
+            '.' => self.consumeDotOrRange(start_loc),
             ',' => self.consumeChar(.comma, start_loc),
             '(' => self.consumeChar(.l_paren, start_loc),
             ')' => self.consumeChar(.r_paren, start_loc),
@@ -169,6 +170,16 @@ pub const Lexer = struct {
                 break;
             }
         }
+    }
+
+    fn consumeDotOrRange(self: *Lexer, start_loc: common_token.Location) Token {
+        const start = self.index;
+        self.advance();
+        if (self.index < self.buffer.len and self.peek() == '.') {
+            self.advance();
+            return .{ .tag = .dot_dot, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+        }
+        return .{ .tag = .dot, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
     fn consumeCommentOrParam(self: *Lexer, start_loc: common_token.Location) Token {
@@ -258,7 +269,12 @@ pub const Lexer = struct {
         const start = self.index;
         while (self.index < self.buffer.len) {
             const c = self.peek();
-            if (std.ascii.isDigit(c) or c == '.') {
+            if (std.ascii.isDigit(c)) {
+                self.advance();
+            } else if (c == '.') {
+                if (self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '.') {
+                    break; // Stop at `..` range operator
+                }
                 self.advance();
             } else {
                 break;

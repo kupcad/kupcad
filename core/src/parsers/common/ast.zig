@@ -23,6 +23,16 @@ pub const BinaryOp = enum {
     logical_or, // ||
 };
 
+pub const Param = struct {
+    name: []const u8,
+    default_value: ?*Node = null,
+};
+
+pub const HashEntry = struct {
+    key: *Node,
+    value: *Node,
+};
+
 pub const Node = struct {
     kind: Kind,
     loc: Location,
@@ -34,6 +44,14 @@ pub const Node = struct {
         symbol: []const u8,
         boolean: bool,
         nil,
+        array_literal: []const *Node,
+        hash_literal: []const HashEntry,
+
+        // Range: `start..end`
+        range: struct {
+            start: *Node,
+            end: *Node,
+        },
 
         // Variable lookup
         identifier: []const u8,
@@ -57,7 +75,14 @@ pub const Node = struct {
             right: *Node,
         },
 
-        // Method Call: `obj.method(x: 10) do |a| ... end`
+        // Ternary: `a ? b : c`
+        ternary_op: struct {
+            condition: *Node,
+            then_branch: *Node,
+            else_branch: *Node,
+        },
+
+        // Method / Function Call: `obj.method(x: 10) do |a| ... end` or `cube(10)`
         method_call: struct {
             receiver: ?*Node,
             method_name: []const u8,
@@ -75,7 +100,31 @@ pub const Node = struct {
             condition: *Node,
             then_branch: *Node,
             else_branch: ?*Node = null,
+            is_unless: bool = false,
         },
+
+        def_stmt: struct {
+            name: []const u8,
+            params: []const Param,
+            body: *Node,
+        },
+
+        class_stmt: struct {
+            name: []const u8,
+            super_class: ?[]const u8 = null,
+            body: *Node,
+        },
+
+        module_stmt: struct {
+            name: []const u8,
+            body: *Node,
+        },
+
+        return_stmt: ?*Node,
+        yield_stmt: ?*Node,
+        break_stmt: ?*Node,
+
+        param_doc: []const u8,
 
         // Block Scope
         block: struct {
