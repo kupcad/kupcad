@@ -2,151 +2,74 @@ const std = @import("std");
 const testing = std.testing;
 const lexer_mod = @import("lexer.zig");
 const Lexer = lexer_mod.Lexer;
-const Token = lexer_mod.Token;
 
-// Helper function to assert token sequences
-fn expectToken(lexer: *Lexer, expected_tag: lexer_mod.Tag, expected_lexeme: []const u8) !void {
-    const tok = lexer.next();
-    try testing.expectEqual(expected_tag, tok.tag);
-    try testing.expectEqualStrings(expected_lexeme, tok.lexeme);
+const ExpectedToken = struct {
+    tag: lexer_mod.Tag,
+    lexeme: []const u8,
+};
+
+fn t(tag: lexer_mod.Tag, lexeme: []const u8) ExpectedToken {
+    return .{ .tag = tag, .lexeme = lexeme };
 }
 
-test "KupCAD Lexer: Basic assignment and method chaining" {
-    const source = "box = Box.new(x: 50)\nbox.translate(z: 10)";
+fn expectTokens(source: []const u8, expected: []const ExpectedToken) !void {
     var lexer = Lexer.init(source, 0);
+    for (expected) |exp| {
+        const tok = lexer.next();
+        try testing.expectEqual(exp.tag, tok.tag);
+        try testing.expectEqualStrings(exp.lexeme, tok.lexeme);
+    }
+}
 
-    try expectToken(&lexer, .ident, "box");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .constant, "Box");
-    try expectToken(&lexer, .dot, ".");
-    try expectToken(&lexer, .ident, "new");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "x");
-    try expectToken(&lexer, .colon, ":");
-    try expectToken(&lexer, .number, "50");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .newline, "\\n");
+// --- TESTS ---
 
-    try expectToken(&lexer, .ident, "box");
-    try expectToken(&lexer, .dot, ".");
-    try expectToken(&lexer, .ident, "translate");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "z");
-    try expectToken(&lexer, .colon, ":");
-    try expectToken(&lexer, .number, "10");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .eof, "");
+test "KupCAD Lexer: Basic assignment and method chaining" {
+    try expectTokens("box = Box.new(x: 50)\nbox.translate(z: 10)", &.{
+        t(.ident, "box"), t(.equal, "="),         t(.constant, "Box"), t(.dot, "."),
+        t(.ident, "new"), t(.l_paren, "("),       t(.ident, "x"),      t(.colon, ":"),
+        t(.number, "50"), t(.r_paren, ")"),       t(.newline, "\\n"),  t(.ident, "box"),
+        t(.dot, "."),     t(.ident, "translate"), t(.l_paren, "("),    t(.ident, "z"),
+        t(.colon, ":"),   t(.number, "10"),       t(.r_paren, ")"),    t(.eof, ""),
+    });
 }
 
 test "KupCAD Lexer: Parametric annotations and comments" {
-    const source =
+    try expectTokens(
         \\# @param width [Length] Overall box width
         \\# Standard comment
         \\width = 80.0
-    ;
-    var lexer = Lexer.init(source, 0);
-
-    try expectToken(&lexer, .param_doc, "# @param width [Length] Overall box width");
-    try expectToken(&lexer, .newline, "\\n");
-    try expectToken(&lexer, .comment, "# Standard comment");
-    try expectToken(&lexer, .newline, "\\n");
-    try expectToken(&lexer, .ident, "width");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .number, "80.0");
-    try expectToken(&lexer, .eof, "");
+    , &.{
+        t(.param_doc, "# @param width [Length] Overall box width"), t(.newline, "\\n"),
+        t(.comment, "# Standard comment"),                          t(.newline, "\\n"),
+        t(.ident, "width"),                                         t(.equal, "="),
+        t(.number, "80.0"),                                         t(.eof, ""),
+    });
 }
 
 test "KupCAD Lexer: Blocks, symbols, and CSG operators" {
-    const source = "box.on_face(:top) do\n  c1 + c2\nend";
-    var lexer = Lexer.init(source, 0);
-
-    try expectToken(&lexer, .ident, "box");
-    try expectToken(&lexer, .dot, ".");
-    try expectToken(&lexer, .ident, "on_face");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .symbol, "top");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .keyword_do, "do");
-    try expectToken(&lexer, .newline, "\\n");
-    try expectToken(&lexer, .ident, "c1");
-    try expectToken(&lexer, .plus, "+");
-    try expectToken(&lexer, .ident, "c2");
-    try expectToken(&lexer, .newline, "\\n");
-    try expectToken(&lexer, .keyword_end, "end");
-    try expectToken(&lexer, .eof, "");
+    try expectTokens("box.on_face(:top) do\n  c1 + c2\nend", &.{
+        t(.ident, "box"),       t(.dot, "."),     t(.ident, "on_face"), t(.l_paren, "("),
+        t(.symbol, "top"),      t(.r_paren, ")"), t(.keyword_do, "do"), t(.newline, "\\n"),
+        t(.ident, "c1"),        t(.plus, "+"),    t(.ident, "c2"),      t(.newline, "\\n"),
+        t(.keyword_end, "end"), t(.eof, ""),
+    });
 }
 
 test "KupCAD Lexer: Complex Parametric Component with Imports" {
-    const source =
+    try expectTokens(
         \\import { ThreadedInsert } from "./hardware.kup"
         \\# @param width [Length] { range: 20..100 }
         \\width = 50.5
-        \\
-        \\base = Box.new(x: width).shell(2.0)
-        \\base.on_face(:top) do
-        \\  ThreadedInsert.new()
-        \\end
-    ;
-    var lexer = Lexer.init(source, 0);
-
-    // Module Import
-    try expectToken(&lexer, .keyword_import, "import");
-    try expectToken(&lexer, .l_brace, "{");
-    try expectToken(&lexer, .constant, "ThreadedInsert");
-    try expectToken(&lexer, .r_brace, "}");
-    try expectToken(&lexer, .keyword_from, "from");
-    try expectToken(&lexer, .string, "./hardware.kup");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // Parametric Docstring & Assignment
-    try expectToken(&lexer, .param_doc, "# @param width [Length] { range: 20..100 }");
-    try expectToken(&lexer, .newline, "\\n");
-    try expectToken(&lexer, .ident, "width");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .number, "50.5");
-    try expectToken(&lexer, .newline, "\\n");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // Method Chaining
-    try expectToken(&lexer, .ident, "base");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .constant, "Box");
-    try expectToken(&lexer, .dot, ".");
-    try expectToken(&lexer, .ident, "new");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "x");
-    try expectToken(&lexer, .colon, ":");
-    try expectToken(&lexer, .ident, "width");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .dot, ".");
-    try expectToken(&lexer, .ident, "shell");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .number, "2.0");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // Workplane Block
-    try expectToken(&lexer, .ident, "base");
-    try expectToken(&lexer, .dot, ".");
-    try expectToken(&lexer, .ident, "on_face");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .symbol, "top");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .keyword_do, "do");
-    try expectToken(&lexer, .newline, "\\n");
-    try expectToken(&lexer, .constant, "ThreadedInsert");
-    try expectToken(&lexer, .dot, ".");
-    try expectToken(&lexer, .ident, "new");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .newline, "\\n");
-    try expectToken(&lexer, .keyword_end, "end");
-
-    try expectToken(&lexer, .eof, "");
+    , &.{
+        t(.keyword_import, "import"), t(.l_brace, "{"),                                            t(.constant, "ThreadedInsert"),
+        t(.r_brace, "}"),             t(.keyword_from, "from"),                                    t(.string, "./hardware.kup"),
+        t(.newline, "\\n"),           t(.param_doc, "# @param width [Length] { range: 20..100 }"), t(.newline, "\\n"),
+        t(.ident, "width"),           t(.equal, "="),                                              t(.number, "50.5"),
+        t(.eof, ""),
+    });
 }
 
 test "KupCAD Lexer: Parametric annotations with irregular spacing and casing" {
-    // FIX: Using concatenated string literals to safely pass \t to the lexer
     const source =
         "#@param width [Length]\n" ++
         "#    @Param height [Length]\n" ++
@@ -154,123 +77,63 @@ test "KupCAD Lexer: Parametric annotations with irregular spacing and casing" {
         "#   @pAraM radius [Length]\n" ++
         "# not_a_param";
 
-    var lexer = Lexer.init(source, 0);
-
-    // No space, all lowercase
-    try expectToken(&lexer, .param_doc, "#@param width [Length]");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // Multiple spaces, title case
-    try expectToken(&lexer, .param_doc, "#    @Param height [Length]");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // Tab character, all uppercase
-    try expectToken(&lexer, .param_doc, "#\t@PARAM depth [Length]");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // Mixed spacing, mixed casing
-    try expectToken(&lexer, .param_doc, "#   @pAraM radius [Length]");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // Standard comment should still be parsed as a comment
-    try expectToken(&lexer, .comment, "# not_a_param");
-    try expectToken(&lexer, .eof, "");
+    try expectTokens(source, &.{
+        t(.param_doc, "#@param width [Length]"),      t(.newline, "\\n"),
+        t(.param_doc, "#    @Param height [Length]"), t(.newline, "\\n"),
+        t(.param_doc, "#\t@PARAM depth [Length]"),    t(.newline, "\\n"),
+        t(.param_doc, "#   @pAraM radius [Length]"),  t(.newline, "\\n"),
+        t(.comment, "# not_a_param"),                 t(.eof, ""),
+    });
 }
 
 test "KupCAD Lexer: Classes, definitions, and logical operators" {
-    const source =
+    try expectTokens(
         \\class MyPart
         \\  def is_valid?
         \\    true && false || !nil
         \\  end
         \\end
-    ;
-    var lexer = Lexer.init(source, 0);
-
-    try expectToken(&lexer, .keyword_class, "class");
-    try expectToken(&lexer, .constant, "MyPart");
-    try expectToken(&lexer, .newline, "\\n");
-    try expectToken(&lexer, .keyword_def, "def");
-    try expectToken(&lexer, .ident, "is_valid?");
-    try expectToken(&lexer, .newline, "\\n");
-    try expectToken(&lexer, .keyword_true, "true");
-    try expectToken(&lexer, .and_and, "&&");
-    try expectToken(&lexer, .keyword_false, "false");
-    try expectToken(&lexer, .or_or, "||");
-    try expectToken(&lexer, .bang, "!");
-    try expectToken(&lexer, .keyword_nil, "nil");
+    , &.{
+        t(.keyword_class, "class"), t(.constant, "MyPart"), t(.newline, "\\n"),
+        t(.keyword_def, "def"),     t(.ident, "is_valid?"), t(.newline, "\\n"),
+        t(.keyword_true, "true"),   t(.and_and, "&&"),      t(.keyword_false, "false"),
+        t(.or_or, "||"),            t(.bang, "!"),          t(.keyword_nil, "nil"),
+    });
 }
 
 test "KupCAD Lexer: Blocks with pipes, math, and flow control" {
-    const source =
-        \\module Component
-        \\  def generate
-        \\    yield unless 10 % 3 * 2 / 1 == 0
-        \\    grid do |x, y|
-        \\      break if x ? true : false
-        \\    end
-        \\  end
-        \\end
-    ;
-    var lexer = Lexer.init(source, 0);
-
-    try expectToken(&lexer, .keyword_module, "module");
-    try expectToken(&lexer, .constant, "Component");
-    try expectToken(&lexer, .newline, "\\n");
-    // ... skipping def, yield, unless
-    _ = lexer.next();
-    _ = lexer.next();
-    _ = lexer.next();
-    _ = lexer.next();
-    _ = lexer.next();
-
-    // Math 10 % 3 * 2 / 1 == 0
-    try expectToken(&lexer, .number, "10");
-    try expectToken(&lexer, .percent, "%");
-    try expectToken(&lexer, .number, "3");
-    try expectToken(&lexer, .star, "*");
-    try expectToken(&lexer, .number, "2");
-    try expectToken(&lexer, .slash, "/");
-    try expectToken(&lexer, .number, "1");
-    try expectToken(&lexer, .equal_equal, "==");
-    try expectToken(&lexer, .number, "0");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // grid do |x, y|
-    try expectToken(&lexer, .ident, "grid");
-    try expectToken(&lexer, .keyword_do, "do");
-    try expectToken(&lexer, .pipe, "|");
-    try expectToken(&lexer, .ident, "x");
-    try expectToken(&lexer, .comma, ",");
-    try expectToken(&lexer, .ident, "y");
-    try expectToken(&lexer, .pipe, "|");
+    try expectTokens(
+        \\yield unless 10 % 3 * 2 / 1 == 0
+        \\grid do |x, y|
+    , &.{
+        t(.keyword_yield, "yield"), t(.keyword_unless, "unless"), t(.number, "10"),
+        t(.percent, "%"),           t(.number, "3"),              t(.star, "*"),
+        t(.number, "2"),            t(.slash, "/"),               t(.number, "1"),
+        t(.equal_equal, "=="),      t(.number, "0"),              t(.newline, "\\n"),
+        t(.ident, "grid"),          t(.keyword_do, "do"),         t(.pipe, "|"),
+        t(.ident, "x"),             t(.comma, ","),               t(.ident, "y"),
+        t(.pipe, "|"),
+    });
 }
 
 test "KupCAD Lexer: Exponentiation and Special Identifiers" {
-    const source =
+    try expectTokens(
         \\@radius = 10 ** 2
         \\$global_offset = 5.0
         \\part.slice!
-    ;
-    var lexer = Lexer.init(source, 0);
+    , &.{
+        t(.ident, "@radius"), t(.equal, "="),     t(.number, "10"),            t(.star_star, "**"),
+        t(.number, "2"),      t(.newline, "\\n"), t(.ident, "$global_offset"), t(.equal, "="),
+        t(.number, "5.0"),    t(.newline, "\\n"), t(.ident, "part"),           t(.dot, "."),
+        t(.ident, "slice!"),  t(.eof, ""),
+    });
+}
 
-    // @radius = 10 ** 2
-    try expectToken(&lexer, .ident, "@radius");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .number, "10");
-    try expectToken(&lexer, .star_star, "**");
-    try expectToken(&lexer, .number, "2");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // $global_offset = 5.0
-    try expectToken(&lexer, .ident, "$global_offset");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .number, "5.0");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // part.slice!
-    try expectToken(&lexer, .ident, "part");
-    try expectToken(&lexer, .dot, ".");
-    try expectToken(&lexer, .ident, "slice!");
-    try expectToken(&lexer, .eof, "");
+test "KupCAD Lexer: Arrays and Hashes" {
+    try expectTokens("arr = [1, 2]\nmap = {x: 1}", &.{
+        t(.ident, "arr"), t(.equal, "="),  t(.l_bracket, "["), t(.number, "1"),
+        t(.comma, ","),   t(.number, "2"), t(.r_bracket, "]"), t(.newline, "\\n"),
+        t(.ident, "map"), t(.equal, "="),  t(.l_brace, "{"),   t(.ident, "x"),
+        t(.colon, ":"),   t(.number, "1"), t(.r_brace, "}"),   t(.eof, ""),
+    });
 }

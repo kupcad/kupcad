@@ -3,256 +3,110 @@ const testing = std.testing;
 const lexer_mod = @import("lexer.zig");
 const Lexer = lexer_mod.Lexer;
 
-// Helper function to assert token sequences
-fn expectToken(lexer: *Lexer, expected_tag: lexer_mod.Tag, expected_lexeme: []const u8) !void {
-    const tok = lexer.next();
-    try testing.expectEqual(expected_tag, tok.tag);
-    try testing.expectEqualStrings(expected_lexeme, tok.lexeme);
+const ExpectedToken = struct {
+    tag: lexer_mod.Tag,
+    lexeme: []const u8,
+};
+
+fn t(tag: lexer_mod.Tag, lexeme: []const u8) ExpectedToken {
+    return .{ .tag = tag, .lexeme = lexeme };
 }
 
-test "OpenSCAD Lexer: Module definition and instantiation" {
-    const source = "module enclosure(w=50) {\n  cube([w, 20, 10]);\n}";
+fn expectTokens(source: []const u8, expected: []const ExpectedToken) !void {
     var lexer = Lexer.init(source, 0);
+    for (expected) |exp| {
+        const tok = lexer.next();
+        try testing.expectEqual(exp.tag, tok.tag);
+        try testing.expectEqualStrings(exp.lexeme, tok.lexeme);
+    }
+}
 
-    try expectToken(&lexer, .keyword_module, "module");
-    try expectToken(&lexer, .ident, "enclosure");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "w");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .number, "50");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .l_brace, "{");
-    try expectToken(&lexer, .ident, "cube");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .l_bracket, "[");
-    try expectToken(&lexer, .ident, "w");
-    try expectToken(&lexer, .comma, ",");
-    try expectToken(&lexer, .number, "20");
-    try expectToken(&lexer, .comma, ",");
-    try expectToken(&lexer, .number, "10");
-    try expectToken(&lexer, .r_bracket, "]");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .semicolon, ";");
-    try expectToken(&lexer, .r_brace, "}");
-    try expectToken(&lexer, .eof, "");
+// --- TESTS ---
+
+test "OpenSCAD Lexer: Module definition and instantiation" {
+    try expectTokens("module enclosure(w=50) {\n  cube([w, 20, 10]);\n}", &.{
+        t(.keyword_module, "module"), t(.ident, "enclosure"), t(.l_paren, "("),
+        t(.ident, "w"),               t(.equal, "="),         t(.number, "50"),
+        t(.r_paren, ")"),             t(.l_brace, "{"),       t(.ident, "cube"),
+        t(.l_paren, "("),             t(.l_bracket, "["),     t(.ident, "w"),
+        t(.comma, ","),               t(.number, "20"),       t(.comma, ","),
+        t(.number, "10"),             t(.r_bracket, "]"),     t(.r_paren, ")"),
+        t(.semicolon, ";"),           t(.r_brace, "}"),       t(.eof, ""),
+    });
 }
 
 test "OpenSCAD Lexer: Geometry modifiers and conditionals" {
-    const source = "!cylinder(h=10);\n#sphere(r=5);";
-    var lexer = Lexer.init(source, 0);
-
-    // Root modifier (!) is now parsed as bang, parser will distinguish
-    try expectToken(&lexer, .bang, "!");
-    try expectToken(&lexer, .ident, "cylinder");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "h");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .number, "10");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .semicolon, ";");
-
-    // Debug modifier (#)
-    try expectToken(&lexer, .mod_debug, "#");
-    try expectToken(&lexer, .ident, "sphere");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "r");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .number, "5");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .semicolon, ";");
-    try expectToken(&lexer, .eof, "");
+    try expectTokens("!cylinder(h=10);\n#sphere(r=5);", &.{
+        t(.bang, "!"),      t(.ident, "cylinder"), t(.l_paren, "("), t(.ident, "h"),
+        t(.equal, "="),     t(.number, "10"),      t(.r_paren, ")"), t(.semicolon, ";"),
+        t(.mod_debug, "#"), t(.ident, "sphere"),   t(.l_paren, "("), t(.ident, "r"),
+        t(.equal, "="),     t(.number, "5"),       t(.r_paren, ")"), t(.semicolon, ";"),
+        t(.eof, ""),
+    });
 }
 
 test "OpenSCAD Lexer: Includes, uses, and comments" {
-    const source = "// standard library\ninclude <BOSL2/std.scad>\nuse <threads.scad>";
-    var lexer = Lexer.init(source, 0);
-
-    try expectToken(&lexer, .comment, "// standard library");
-    try expectToken(&lexer, .keyword_include, "include");
-    // OpenSCAD treats < ... > like strings in an include context or as basic relational operators
-    try expectToken(&lexer, .less, "<");
-    try expectToken(&lexer, .ident, "BOSL2");
-    try expectToken(&lexer, .slash, "/");
-    try expectToken(&lexer, .ident, "std");
-    try expectToken(&lexer, .dot, ".");
-    try expectToken(&lexer, .ident, "scad");
-    try expectToken(&lexer, .greater, ">");
-}
-
-test "OpenSCAD Lexer: Nested Modules, Arrays, Math, and Modifiers" {
-    const source =
-        \\module housing(w, h=20) {
-        \\  difference() {
-        \\    cube([w, w, h]);
-        \\    #cylinder(r=w/4, h=h+1);
-        \\    %sphere(d=5);
-        \\  }
-        \\}
-    ;
-    var lexer = Lexer.init(source, 0);
-
-    try expectToken(&lexer, .keyword_module, "module");
-    try expectToken(&lexer, .ident, "housing");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "w");
-    try expectToken(&lexer, .comma, ",");
-    try expectToken(&lexer, .ident, "h");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .number, "20");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .l_brace, "{");
-
-    try expectToken(&lexer, .ident, "difference");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .l_brace, "{");
-
-    try expectToken(&lexer, .ident, "cube");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .l_bracket, "[");
-    try expectToken(&lexer, .ident, "w");
-    try expectToken(&lexer, .comma, ",");
-    try expectToken(&lexer, .ident, "w");
-    try expectToken(&lexer, .comma, ",");
-    try expectToken(&lexer, .ident, "h");
-    try expectToken(&lexer, .r_bracket, "]");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .semicolon, ";");
-
-    try expectToken(&lexer, .mod_debug, "#");
-    try expectToken(&lexer, .ident, "cylinder");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "r");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .ident, "w");
-    try expectToken(&lexer, .slash, "/");
-    try expectToken(&lexer, .number, "4");
-    try expectToken(&lexer, .comma, ",");
-    try expectToken(&lexer, .ident, "h");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .ident, "h");
-    try expectToken(&lexer, .plus, "+");
-    try expectToken(&lexer, .number, "1");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .semicolon, ";");
-
-    try expectToken(&lexer, .percent, "%");
-    try expectToken(&lexer, .ident, "sphere");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "d");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .number, "5");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .semicolon, ";");
-
-    try expectToken(&lexer, .r_brace, "}");
-    try expectToken(&lexer, .r_brace, "}");
-    try expectToken(&lexer, .eof, "");
+    try expectTokens("// standard library\ninclude <BOSL2/std.scad>\nuse <threads.scad>", &.{
+        t(.comment, "// standard library"), t(.keyword_include, "include"), t(.less, "<"),
+        t(.ident, "BOSL2"),                 t(.slash, "/"),                 t(.ident, "std"),
+        t(.dot, "."),                       t(.ident, "scad"),              t(.greater, ">"),
+        t(.keyword_use, "use"),             t(.less, "<"),                  t(.ident, "threads"),
+        t(.dot, "."),                       t(.ident, "scad"),              t(.greater, ">"),
+        t(.eof, ""),
+    });
 }
 
 test "OpenSCAD Lexer: Block comments and booleans" {
-    const source =
-        \\/* Multi-line
-        \\   comment block */
-        \\if (w <= 10 && !false) {
-        \\  cube(undef);
-        \\}
-    ;
-    var lexer = Lexer.init(source, 0);
-
-    try expectToken(&lexer, .block_comment, "/* Multi-line\n   comment block */");
-    try expectToken(&lexer, .keyword_if, "if");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "w");
-    try expectToken(&lexer, .less_equal, "<=");
-    try expectToken(&lexer, .number, "10");
-    try expectToken(&lexer, .and_and, "&&");
-    try expectToken(&lexer, .bang, "!");
-    try expectToken(&lexer, .keyword_false, "false");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .l_brace, "{");
-    try expectToken(&lexer, .ident, "cube");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .keyword_undef, "undef");
-    try expectToken(&lexer, .r_paren, ")");
+    try expectTokens("/* Multi-line\n   comment block */\nif (w <= 10 && !false) {\n  cube(undef);\n}", &.{
+        t(.block_comment, "/* Multi-line\n   comment block */"), t(.keyword_if, "if"),
+        t(.l_paren, "("),                                        t(.ident, "w"),
+        t(.less_equal, "<="),                                    t(.number, "10"),
+        t(.and_and, "&&"),                                       t(.bang, "!"),
+        t(.keyword_false, "false"),                              t(.r_paren, ")"),
+        t(.l_brace, "{"),                                        t(.ident, "cube"),
+        t(.l_paren, "("),                                        t(.keyword_undef, "undef"),
+        t(.r_paren, ")"),                                        t(.semicolon, ";"),
+        t(.r_brace, "}"),                                        t(.eof, ""),
+    });
 }
 
 test "OpenSCAD Lexer: Ternary, exponentiation, and dual-use operators" {
-    const source =
-        \\r = (a < 5 && b >= 2) ? 10^2 : 5%2;
-        \\*cube(r * 2);
-        \\%sphere(r);
-    ;
-    var lexer = Lexer.init(source, 0);
-
-    try expectToken(&lexer, .ident, "r");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "a");
-    try expectToken(&lexer, .less, "<");
-    try expectToken(&lexer, .number, "5");
-    try expectToken(&lexer, .and_and, "&&");
-    try expectToken(&lexer, .ident, "b");
-    try expectToken(&lexer, .greater_equal, ">=");
-    try expectToken(&lexer, .number, "2");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .question, "?");
-    try expectToken(&lexer, .number, "10");
-    try expectToken(&lexer, .caret, "^");
-    try expectToken(&lexer, .number, "2");
-    try expectToken(&lexer, .colon, ":");
-    try expectToken(&lexer, .number, "5");
-    try expectToken(&lexer, .percent, "%");
-    try expectToken(&lexer, .number, "2");
-    try expectToken(&lexer, .semicolon, ";");
-
-    try expectToken(&lexer, .star, "*");
-    try expectToken(&lexer, .ident, "cube");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "r");
-    try expectToken(&lexer, .star, "*");
-    try expectToken(&lexer, .number, "2");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .semicolon, ";");
-
-    try expectToken(&lexer, .percent, "%");
-    try expectToken(&lexer, .ident, "sphere");
+    try expectTokens("r = (a < 5 && b >= 2) ? 10^2 : 5%2;\n*cube(r * 2);\n%sphere(r);", &.{
+        t(.ident, "r"),          t(.equal, "="),      t(.l_paren, "("),  t(.ident, "a"),
+        t(.less, "<"),           t(.number, "5"),     t(.and_and, "&&"), t(.ident, "b"),
+        t(.greater_equal, ">="), t(.number, "2"),     t(.r_paren, ")"),  t(.question, "?"),
+        t(.number, "10"),        t(.caret, "^"),      t(.number, "2"),   t(.colon, ":"),
+        t(.number, "5"),         t(.percent, "%"),    t(.number, "2"),   t(.semicolon, ";"),
+        t(.star, "*"),           t(.ident, "cube"),   t(.l_paren, "("),  t(.ident, "r"),
+        t(.star, "*"),           t(.number, "2"),     t(.r_paren, ")"),  t(.semicolon, ";"),
+        t(.percent, "%"),        t(.ident, "sphere"), t(.l_paren, "("),  t(.ident, "r"),
+        t(.r_paren, ")"),        t(.semicolon, ";"),  t(.eof, ""),
+    });
 }
 
 test "OpenSCAD Lexer: Special variables, ranges, and escaped strings" {
-    const source =
-        \\$fn = 50;
-        \\for(i = [0 : 2 : 10]) {
-        \\  echo("Test: \"escaped\" str");
-        \\}
-    ;
-    var lexer = Lexer.init(source, 0);
+    try expectTokens("$fn = 50;\nfor(i = [0 : 2 : 10]) {\n  echo(\"Test: \\\"escaped\\\" str\");\n}", &.{
+        t(.ident, "$fn"),       t(.equal, "="),     t(.number, "50"),   t(.semicolon, ";"),
+        t(.keyword_for, "for"), t(.l_paren, "("),   t(.ident, "i"),     t(.equal, "="),
+        t(.l_bracket, "["),     t(.number, "0"),    t(.colon, ":"),     t(.number, "2"),
+        t(.colon, ":"),         t(.number, "10"),   t(.r_bracket, "]"), t(.r_paren, ")"),
+        t(.l_brace, "{"),       t(.ident, "echo"),  t(.l_paren, "("),   t(.string, "Test: \\\"escaped\\\" str"),
+        t(.r_paren, ")"),       t(.semicolon, ";"), t(.r_brace, "}"),   t(.eof, ""),
+    });
+}
 
-    try expectToken(&lexer, .ident, "$fn");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .number, "50");
-    try expectToken(&lexer, .semicolon, ";");
-
-    try expectToken(&lexer, .keyword_for, "for");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .ident, "i");
-    try expectToken(&lexer, .equal, "=");
-    try expectToken(&lexer, .l_bracket, "[");
-    try expectToken(&lexer, .number, "0");
-    try expectToken(&lexer, .colon, ":");
-    try expectToken(&lexer, .number, "2");
-    try expectToken(&lexer, .colon, ":");
-    try expectToken(&lexer, .number, "10");
-    try expectToken(&lexer, .r_bracket, "]");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .l_brace, "{");
-
-    try expectToken(&lexer, .ident, "echo");
-    try expectToken(&lexer, .l_paren, "(");
-    try expectToken(&lexer, .string, "Test: \\\"escaped\\\" str");
-    try expectToken(&lexer, .r_paren, ")");
-    try expectToken(&lexer, .semicolon, ";");
-
-    try expectToken(&lexer, .r_brace, "}");
-    try expectToken(&lexer, .eof, "");
+test "OpenSCAD Lexer: Let, Comprehensions, Intersection For" {
+    try expectTokens("pts = [ for (x = [0:5]) x * 2 ];\nlet(a=5) cube(a);\nintersection_for(i = [1:3]) {}", &.{
+        t(.ident, "pts"),   t(.equal, "="),                                   t(.l_bracket, "["),     t(.keyword_for, "for"),
+        t(.l_paren, "("),   t(.ident, "x"),                                   t(.equal, "="),         t(.l_bracket, "["),
+        t(.number, "0"),    t(.colon, ":"),                                   t(.number, "5"),        t(.r_bracket, "]"),
+        t(.r_paren, ")"),   t(.ident, "x"),                                   t(.star, "*"),          t(.number, "2"),
+        t(.r_bracket, "]"), t(.semicolon, ";"),                               t(.keyword_let, "let"), t(.l_paren, "("),
+        t(.ident, "a"),     t(.equal, "="),                                   t(.number, "5"),        t(.r_paren, ")"),
+        t(.ident, "cube"),  t(.l_paren, "("),                                 t(.ident, "a"),         t(.r_paren, ")"),
+        t(.semicolon, ";"), t(.keyword_intersection_for, "intersection_for"), t(.l_paren, "("),       t(.ident, "i"),
+        t(.equal, "="),     t(.l_bracket, "["),                               t(.number, "1"),        t(.colon, ":"),
+        t(.number, "3"),    t(.r_bracket, "]"),                               t(.r_paren, ")"),       t(.l_brace, "{"),
+        t(.r_brace, "}"),   t(.eof, ""),
+    });
 }

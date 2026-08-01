@@ -207,6 +207,7 @@ pub const Lexer = struct {
         if (std.mem.eql(u8, lexeme, "include")) tag = .keyword_include;
         if (std.mem.eql(u8, lexeme, "use")) tag = .keyword_use;
         if (std.mem.eql(u8, lexeme, "for")) tag = .keyword_for;
+        if (std.mem.eql(u8, lexeme, "intersection_for")) tag = .keyword_intersection_for;
         if (std.mem.eql(u8, lexeme, "let")) tag = .keyword_let;
         if (std.mem.eql(u8, lexeme, "if")) tag = .keyword_if;
         if (std.mem.eql(u8, lexeme, "else")) tag = .keyword_else;
