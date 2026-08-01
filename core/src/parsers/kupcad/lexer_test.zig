@@ -5,7 +5,7 @@ const Lexer = lexer_mod.Lexer;
 const Token = lexer_mod.Token;
 
 // Helper function to assert token sequences
-fn expectToken(lexer: *Lexer, expected_tag: Token.Tag, expected_lexeme: []const u8) !void {
+fn expectToken(lexer: *Lexer, expected_tag: lexer_mod.Tag, expected_lexeme: []const u8) !void {
     const tok = lexer.next();
     try testing.expectEqual(expected_tag, tok.tag);
     try testing.expectEqualStrings(expected_lexeme, tok.lexeme);
@@ -95,7 +95,7 @@ test "KupCAD Lexer: Complex Parametric Component with Imports" {
     try expectToken(&lexer, .constant, "ThreadedInsert");
     try expectToken(&lexer, .r_brace, "}");
     try expectToken(&lexer, .keyword_from, "from");
-    try expectToken(&lexer, .string, "\"./hardware.kup\"");
+    try expectToken(&lexer, .string, "./hardware.kup");
     try expectToken(&lexer, .newline, "\\n");
 
     // Parametric Docstring & Assignment
@@ -146,13 +146,14 @@ test "KupCAD Lexer: Complex Parametric Component with Imports" {
 }
 
 test "KupCAD Lexer: Parametric annotations with irregular spacing and casing" {
+    // FIX: Using concatenated string literals to safely pass \t to the lexer
     const source =
-        \\#@param width [Length]
-        \\#    @Param height [Length]
-        \\#	@PARAM depth [Length]
-        \\#   @pAraM radius [Length]
-        \\# not_a_param
-    ;
+        "#@param width [Length]\n" ++
+        "#    @Param height [Length]\n" ++
+        "#\t@PARAM depth [Length]\n" ++
+        "#   @pAraM radius [Length]\n" ++
+        "# not_a_param";
+
     var lexer = Lexer.init(source, 0);
 
     // No space, all lowercase
@@ -217,7 +218,11 @@ test "KupCAD Lexer: Blocks with pipes, math, and flow control" {
     try expectToken(&lexer, .constant, "Component");
     try expectToken(&lexer, .newline, "\\n");
     // ... skipping def, yield, unless
-    _ = lexer.next(); _ = lexer.next(); _ = lexer.next(); _ = lexer.next(); _ = lexer.next();
+    _ = lexer.next();
+    _ = lexer.next();
+    _ = lexer.next();
+    _ = lexer.next();
+    _ = lexer.next();
 
     // Math 10 % 3 * 2 / 1 == 0
     try expectToken(&lexer, .number, "10");
@@ -239,4 +244,33 @@ test "KupCAD Lexer: Blocks with pipes, math, and flow control" {
     try expectToken(&lexer, .comma, ",");
     try expectToken(&lexer, .ident, "y");
     try expectToken(&lexer, .pipe, "|");
+}
+
+test "KupCAD Lexer: Exponentiation and Special Identifiers" {
+    const source =
+        \\@radius = 10 ** 2
+        \\$global_offset = 5.0
+        \\part.slice!
+    ;
+    var lexer = Lexer.init(source, 0);
+
+    // @radius = 10 ** 2
+    try expectToken(&lexer, .ident, "@radius");
+    try expectToken(&lexer, .equal, "=");
+    try expectToken(&lexer, .number, "10");
+    try expectToken(&lexer, .star_star, "**");
+    try expectToken(&lexer, .number, "2");
+    try expectToken(&lexer, .newline, "\\n");
+
+    // $global_offset = 5.0
+    try expectToken(&lexer, .ident, "$global_offset");
+    try expectToken(&lexer, .equal, "=");
+    try expectToken(&lexer, .number, "5.0");
+    try expectToken(&lexer, .newline, "\\n");
+
+    // part.slice!
+    try expectToken(&lexer, .ident, "part");
+    try expectToken(&lexer, .dot, ".");
+    try expectToken(&lexer, .ident, "slice!");
+    try expectToken(&lexer, .eof, "");
 }

@@ -4,6 +4,6 @@
   "scripts": {
     "build:core:wasm": "cd core && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseFast",
     "build:core:native": "cd core && zig build -Doptimize=ReleaseFast",
-    "test:core": "cd core && zig build test"
+    "test:core": "cd core && zig build test --summary all"
   }
 }

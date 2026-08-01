@@ -40,6 +40,7 @@ pub const Tag = enum {
     and_and,
     or_or,
     bang,
+    star_star,
     star,
     slash,
     percent,
@@ -93,8 +94,6 @@ pub const Lexer = struct {
             '\n' => self.consumeNewline(start_loc),
             '+' => self.consumeChar(.plus, start_loc),
             '-' => self.consumeChar(.minus, start_loc),
-            '&' => self.consumeChar(.ampersand, start_loc),
-            '=' => self.consumeChar(.equal, start_loc),
             '.' => self.consumeChar(.dot, start_loc),
             ',' => self.consumeChar(.comma, start_loc),
             '(' => self.consumeChar(.l_paren, start_loc),
@@ -106,13 +105,9 @@ pub const Lexer = struct {
             ':' => self.consumeSymbolOrColon(start_loc),
             '"' => self.consumeString(start_loc),
             '#' => self.consumeCommentOrParam(start_loc),
-            '*' => self.consumeChar(.star, start_loc),
-            '/' => self.consumeChar(.slash, start_loc),
-            '%' => self.consumeChar(.percent, start_loc),
-            '?' => self.consumeChar(.question, start_loc),
-            '=', '!', '<', '>', '&', '|' => self.consumeOperator(start_loc),
+            '=', '!', '<', '>', '&', '|', '*', '/', '%', '?' => self.consumeOperator(start_loc),
             else => {
-                if (std.ascii.isAlphabetic(c) or c == '_') {
+                if (std.ascii.isAlphabetic(c) or c == '_' or c == '@' or c == '$') {
                     return self.consumeIdentOrKeyword(start_loc);
                 } else if (std.ascii.isDigit(c)) {
                     return self.consumeNumber(start_loc);
@@ -159,7 +154,7 @@ pub const Lexer = struct {
 
         while (self.index < self.buffer.len) {
             const c = self.peek();
-            if (std.ascii.isAlphanumeric(c) or c == '_' or c == '?' or c == '!') {
+            if (std.ascii.isAlphanumeric(c) or c == '_' or c == '?' or c == '!' or c == '@' or c == '$') {
                 self.advance();
             } else {
                 break;
@@ -197,18 +192,22 @@ pub const Lexer = struct {
         self.advance();
         const c2 = if (self.index < self.buffer.len) self.peek() else 0;
 
-        var tag: Tag = switch (c1) {
+        const tag: Tag = switch (c1) {
             '=' => if (c2 == '=') .equal_equal else .equal,
             '!' => if (c2 == '=') .bang_equal else .bang,
             '<' => if (c2 == '=') .less_equal else .less,
             '>' => if (c2 == '=') .greater_equal else .greater,
             '&' => if (c2 == '&') .and_and else .ampersand,
             '|' => if (c2 == '|') .or_or else .pipe,
+            '*' => if (c2 == '*') .star_star else .star,
+            '/' => .slash,
+            '%' => .percent,
+            '?' => .question,
             else => return self.makeToken(.eof, 0),
         };
 
         if (tag == .equal_equal or tag == .bang_equal or tag == .less_equal or
-            tag == .greater_equal or tag == .and_and or tag == .or_or)
+            tag == .greater_equal or tag == .and_and or tag == .or_or or tag == .star_star)
         {
             self.advance(); // consume second character
         }
@@ -223,7 +222,7 @@ pub const Lexer = struct {
             while (self.index < self.buffer.len and (std.ascii.isAlphanumeric(self.peek()) or self.peek() == '_')) {
                 self.advance();
             }
-            return .{ .tag = .symbol, .loc = start_loc, .lexeme = self.buffer[start_loc.col - 1 .. self.index] };
+            return .{ .tag = .symbol, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
         }
         return .{ .tag = .colon, .loc = start_loc, .lexeme = ":" };
     }

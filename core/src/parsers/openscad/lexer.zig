@@ -45,6 +45,7 @@ pub const Tag = enum {
     equal,
     equal_equal,
     comma,
+    dot,
     semicolon,
     l_paren,
     r_paren,
@@ -86,12 +87,10 @@ pub const Lexer = struct {
         return switch (c) {
             '+' => self.consumeChar(.plus, start_loc),
             '-' => self.consumeChar(.minus, start_loc),
-            '*' => self.consumeChar(.mod_disable, start_loc),
-            '!' => self.consumeChar(.mod_root, start_loc),
             '#' => self.consumeChar(.mod_debug, start_loc),
-            '%' => self.consumeChar(.mod_transparent, start_loc),
             '/' => self.consumeSlashOrComment(start_loc),
             ',' => self.consumeChar(.comma, start_loc),
+            '.' => self.consumeChar(.dot, start_loc),
             ';' => self.consumeChar(.semicolon, start_loc),
             '(' => self.consumeChar(.l_paren, start_loc),
             ')' => self.consumeChar(.r_paren, start_loc),
@@ -100,14 +99,11 @@ pub const Lexer = struct {
             '{' => self.consumeChar(.l_brace, start_loc),
             '}' => self.consumeChar(.r_brace, start_loc),
             '"' => self.consumeString(start_loc),
-            '*' => self.consumeChar(.star, start_loc),
-            '%' => self.consumeChar(.percent, start_loc),
             '^' => self.consumeChar(.caret, start_loc),
-            '?' => self.consumeChar(.question, start_loc),
             ':' => self.consumeChar(.colon, start_loc),
-            '=', '!', '<', '>', '&', '|' => self.consumeOperator(start_loc),
+            '=', '!', '<', '>', '&', '|', '*', '%', '?' => self.consumeOperator(start_loc),
             else => {
-                if (std.ascii.isAlphabetic(c) or c == '_') {
+                if (std.ascii.isAlphabetic(c) or c == '_' or c == '$') {
                     return self.consumeIdentOrKeyword(start_loc);
                 } else if (std.ascii.isDigit(c)) {
                     return self.consumeNumber(start_loc);
@@ -139,62 +135,26 @@ pub const Lexer = struct {
         self.advance();
         const c2 = if (self.index < self.buffer.len) self.peek() else 0;
 
-        var tag: Tag = switch (c1) {
+        const tag: Tag = switch (c1) {
             '=' => if (c2 == '=') .equal_equal else .equal,
-            '!' => if (c2 == '=') .bang_equal else .bang,
+            '!' => if (c2 == '=') .bang_equal else .bang, // Parser will map .bang contextually to NOT or Root mod
             '<' => if (c2 == '=') .less_equal else .less,
             '>' => if (c2 == '=') .greater_equal else .greater,
-            '&' => if (c2 == '&') .and_and else return self.makeToken(.eof, 0),
-            '|' => if (c2 == '|') .or_or else return self.makeToken(.eof, 0),
-            else => return self.makeToken(.eof, 0),
+            '&' => if (c2 == '&') .and_and else return .{ .tag = .eof, .loc = start_loc, .lexeme = "" },
+            '|' => if (c2 == '|') .or_or else return .{ .tag = .eof, .loc = start_loc, .lexeme = "" },
+            '*' => .star,
+            '%' => .percent,
+            '?' => .question,
+            else => return .{ .tag = .eof, .loc = start_loc, .lexeme = "" },
         };
 
-        if (tag != .equal and tag != .bang and tag != .less and tag != .greater) {
+        if (tag == .equal_equal or tag == .bang_equal or tag == .less_equal or
+            tag == .greater_equal or tag == .and_and or tag == .or_or)
+        {
             self.advance(); // consume second character
         }
 
         return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
-    }
-
-    fn consumeSlashOrComment(self: *Lexer, start_loc: common_token.Location) Token {
-        const start = self.index;
-        self.advance();
-        if (self.index < self.buffer.len and self.peek() == '/') {
-            while (self.index < self.buffer.len and self.peek() != '\n') {
-                self.advance();
-            }
-            return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
-        }
-        return .{ .tag = .slash, .loc = start_loc, .lexeme = "/" };
-    }
-
-    fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
-        const start = self.index;
-        while (self.index < self.buffer.len) {
-            const c = self.peek();
-            if (std.ascii.isAlphanumeric(c) or c == '_' or c == '$') {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-
-        const lexeme = self.buffer[start..self.index];
-        var tag = Tag.ident;
-
-        if (std.mem.eql(u8, lexeme, "module")) tag = .keyword_module;
-        if (std.mem.eql(u8, lexeme, "function")) tag = .keyword_function;
-        if (std.mem.eql(u8, lexeme, "include")) tag = .keyword_include;
-        if (std.mem.eql(u8, lexeme, "use")) tag = .keyword_use;
-        if (std.mem.eql(u8, lexeme, "for")) tag = .keyword_for;
-        if (std.mem.eql(u8, lexeme, "let")) tag = .keyword_let;
-        if (std.mem.eql(u8, lexeme, "if")) tag = .keyword_if;
-        if (std.mem.eql(u8, lexeme, "else")) tag = .keyword_else;
-        if (std.mem.eql(u8, lexeme, "true")) tag = .keyword_true;
-        if (std.mem.eql(u8, lexeme, "false")) tag = .keyword_false;
-        if (std.mem.eql(u8, lexeme, "undef")) tag = .keyword_undef;
-
-        return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }
 
     fn consumeSlashOrComment(self: *Lexer, start_loc: common_token.Location) Token {
@@ -228,6 +188,35 @@ pub const Lexer = struct {
         return .{ .tag = .slash, .loc = start_loc, .lexeme = "/" };
     }
 
+    fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
+        const start = self.index;
+        while (self.index < self.buffer.len) {
+            const c = self.peek();
+            if (std.ascii.isAlphanumeric(c) or c == '_' or c == '$') {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        const lexeme = self.buffer[start..self.index];
+        var tag = Tag.ident;
+
+        if (std.mem.eql(u8, lexeme, "module")) tag = .keyword_module;
+        if (std.mem.eql(u8, lexeme, "function")) tag = .keyword_function;
+        if (std.mem.eql(u8, lexeme, "include")) tag = .keyword_include;
+        if (std.mem.eql(u8, lexeme, "use")) tag = .keyword_use;
+        if (std.mem.eql(u8, lexeme, "for")) tag = .keyword_for;
+        if (std.mem.eql(u8, lexeme, "let")) tag = .keyword_let;
+        if (std.mem.eql(u8, lexeme, "if")) tag = .keyword_if;
+        if (std.mem.eql(u8, lexeme, "else")) tag = .keyword_else;
+        if (std.mem.eql(u8, lexeme, "true")) tag = .keyword_true;
+        if (std.mem.eql(u8, lexeme, "false")) tag = .keyword_false;
+        if (std.mem.eql(u8, lexeme, "undef")) tag = .keyword_undef;
+
+        return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
+    }
+
     fn consumeNumber(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
         while (self.index < self.buffer.len) {
@@ -244,11 +233,23 @@ pub const Lexer = struct {
     fn consumeString(self: *Lexer, start_loc: common_token.Location) Token {
         self.advance();
         const start = self.index;
-        while (self.index < self.buffer.len and self.peek() != '"') {
+        while (self.index < self.buffer.len) {
+            const c = self.peek();
+            if (c == '\\') {
+                // Skip the escape character and the escaped character
+                self.advance();
+                if (self.index < self.buffer.len) {
+                    self.advance();
+                }
+                continue;
+            }
+            if (c == '"') {
+                break; // End of string
+            }
             self.advance();
         }
         const lexeme = self.buffer[start..self.index];
-        if (self.index < self.buffer.len) self.advance();
+        if (self.index < self.buffer.len) self.advance(); // consume ending quote
         return .{ .tag = .string, .loc = start_loc, .lexeme = lexeme };
     }
 

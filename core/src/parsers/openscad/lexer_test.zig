@@ -2,10 +2,9 @@ const std = @import("std");
 const testing = std.testing;
 const lexer_mod = @import("lexer.zig");
 const Lexer = lexer_mod.Lexer;
-const Token = lexer_mod.Token;
 
 // Helper function to assert token sequences
-fn expectToken(lexer: *Lexer, expected_tag: Token.Tag, expected_lexeme: []const u8) !void {
+fn expectToken(lexer: *Lexer, expected_tag: lexer_mod.Tag, expected_lexeme: []const u8) !void {
     const tok = lexer.next();
     try testing.expectEqual(expected_tag, tok.tag);
     try testing.expectEqualStrings(expected_lexeme, tok.lexeme);
@@ -42,8 +41,8 @@ test "OpenSCAD Lexer: Geometry modifiers and conditionals" {
     const source = "!cylinder(h=10);\n#sphere(r=5);";
     var lexer = Lexer.init(source, 0);
 
-    // Root modifier (!)
-    try expectToken(&lexer, .mod_root, "!");
+    // Root modifier (!) is now parsed as bang, parser will distinguish
+    try expectToken(&lexer, .bang, "!");
     try expectToken(&lexer, .ident, "cylinder");
     try expectToken(&lexer, .l_paren, "(");
     try expectToken(&lexer, .ident, "h");
@@ -70,13 +69,14 @@ test "OpenSCAD Lexer: Includes, uses, and comments" {
 
     try expectToken(&lexer, .comment, "// standard library");
     try expectToken(&lexer, .keyword_include, "include");
-    // OpenSCAD treats < ... > like strings in an include context or as basic relational operators,
-    // For this basic lexer, they parse as operators and idents
+    // OpenSCAD treats < ... > like strings in an include context or as basic relational operators
+    try expectToken(&lexer, .less, "<");
     try expectToken(&lexer, .ident, "BOSL2");
     try expectToken(&lexer, .slash, "/");
     try expectToken(&lexer, .ident, "std");
-    try expectToken(&lexer, .ident, "scad"); // the dot evaluates differently without string bounds, assuming simple identifier chunking
-    // We skip full validation of `<...>` string behaviors here to focus on the structure.
+    try expectToken(&lexer, .dot, ".");
+    try expectToken(&lexer, .ident, "scad");
+    try expectToken(&lexer, .greater, ">");
 }
 
 test "OpenSCAD Lexer: Nested Modules, Arrays, Math, and Modifiers" {
@@ -91,7 +91,6 @@ test "OpenSCAD Lexer: Nested Modules, Arrays, Math, and Modifiers" {
     ;
     var lexer = Lexer.init(source, 0);
 
-    // module housing(w, h=20) {
     try expectToken(&lexer, .keyword_module, "module");
     try expectToken(&lexer, .ident, "housing");
     try expectToken(&lexer, .l_paren, "(");
@@ -102,16 +101,12 @@ test "OpenSCAD Lexer: Nested Modules, Arrays, Math, and Modifiers" {
     try expectToken(&lexer, .number, "20");
     try expectToken(&lexer, .r_paren, ")");
     try expectToken(&lexer, .l_brace, "{");
-    try expectToken(&lexer, .newline, "\\n");
 
-    //   difference() {
     try expectToken(&lexer, .ident, "difference");
     try expectToken(&lexer, .l_paren, "(");
     try expectToken(&lexer, .r_paren, ")");
     try expectToken(&lexer, .l_brace, "{");
-    try expectToken(&lexer, .newline, "\\n");
 
-    //     cube([w, w, h]);
     try expectToken(&lexer, .ident, "cube");
     try expectToken(&lexer, .l_paren, "(");
     try expectToken(&lexer, .l_bracket, "[");
@@ -123,9 +118,7 @@ test "OpenSCAD Lexer: Nested Modules, Arrays, Math, and Modifiers" {
     try expectToken(&lexer, .r_bracket, "]");
     try expectToken(&lexer, .r_paren, ")");
     try expectToken(&lexer, .semicolon, ";");
-    try expectToken(&lexer, .newline, "\\n");
 
-    //     #cylinder(r=w/4, h=h+1);
     try expectToken(&lexer, .mod_debug, "#");
     try expectToken(&lexer, .ident, "cylinder");
     try expectToken(&lexer, .l_paren, "(");
@@ -142,10 +135,8 @@ test "OpenSCAD Lexer: Nested Modules, Arrays, Math, and Modifiers" {
     try expectToken(&lexer, .number, "1");
     try expectToken(&lexer, .r_paren, ")");
     try expectToken(&lexer, .semicolon, ";");
-    try expectToken(&lexer, .newline, "\\n");
 
-    //     %sphere(d=5);
-    try expectToken(&lexer, .mod_transparent, "%");
+    try expectToken(&lexer, .percent, "%");
     try expectToken(&lexer, .ident, "sphere");
     try expectToken(&lexer, .l_paren, "(");
     try expectToken(&lexer, .ident, "d");
@@ -153,13 +144,8 @@ test "OpenSCAD Lexer: Nested Modules, Arrays, Math, and Modifiers" {
     try expectToken(&lexer, .number, "5");
     try expectToken(&lexer, .r_paren, ")");
     try expectToken(&lexer, .semicolon, ";");
-    try expectToken(&lexer, .newline, "\\n");
 
-    //   }
     try expectToken(&lexer, .r_brace, "}");
-    try expectToken(&lexer, .newline, "\\n");
-
-    // }
     try expectToken(&lexer, .r_brace, "}");
     try expectToken(&lexer, .eof, "");
 }
@@ -175,7 +161,6 @@ test "OpenSCAD Lexer: Block comments and booleans" {
     var lexer = Lexer.init(source, 0);
 
     try expectToken(&lexer, .block_comment, "/* Multi-line\n   comment block */");
-    try expectToken(&lexer, .newline, "\\n");
     try expectToken(&lexer, .keyword_if, "if");
     try expectToken(&lexer, .l_paren, "(");
     try expectToken(&lexer, .ident, "w");
@@ -186,7 +171,6 @@ test "OpenSCAD Lexer: Block comments and booleans" {
     try expectToken(&lexer, .keyword_false, "false");
     try expectToken(&lexer, .r_paren, ")");
     try expectToken(&lexer, .l_brace, "{");
-    try expectToken(&lexer, .newline, "\\n");
     try expectToken(&lexer, .ident, "cube");
     try expectToken(&lexer, .l_paren, "(");
     try expectToken(&lexer, .keyword_undef, "undef");
@@ -201,7 +185,6 @@ test "OpenSCAD Lexer: Ternary, exponentiation, and dual-use operators" {
     ;
     var lexer = Lexer.init(source, 0);
 
-    // r = (a < 5 && b >= 2) ? 10^2 : 5%2;
     try expectToken(&lexer, .ident, "r");
     try expectToken(&lexer, .equal, "=");
     try expectToken(&lexer, .l_paren, "(");
@@ -222,9 +205,7 @@ test "OpenSCAD Lexer: Ternary, exponentiation, and dual-use operators" {
     try expectToken(&lexer, .percent, "%");
     try expectToken(&lexer, .number, "2");
     try expectToken(&lexer, .semicolon, ";");
-    try expectToken(&lexer, .newline, "\\n");
 
-    // *cube(r * 2);
     try expectToken(&lexer, .star, "*");
     try expectToken(&lexer, .ident, "cube");
     try expectToken(&lexer, .l_paren, "(");
@@ -233,9 +214,45 @@ test "OpenSCAD Lexer: Ternary, exponentiation, and dual-use operators" {
     try expectToken(&lexer, .number, "2");
     try expectToken(&lexer, .r_paren, ")");
     try expectToken(&lexer, .semicolon, ";");
-    try expectToken(&lexer, .newline, "\\n");
 
-    // %sphere(r);
     try expectToken(&lexer, .percent, "%");
     try expectToken(&lexer, .ident, "sphere");
+}
+
+test "OpenSCAD Lexer: Special variables, ranges, and escaped strings" {
+    const source =
+        \\$fn = 50;
+        \\for(i = [0 : 2 : 10]) {
+        \\  echo("Test: \"escaped\" str");
+        \\}
+    ;
+    var lexer = Lexer.init(source, 0);
+
+    try expectToken(&lexer, .ident, "$fn");
+    try expectToken(&lexer, .equal, "=");
+    try expectToken(&lexer, .number, "50");
+    try expectToken(&lexer, .semicolon, ";");
+
+    try expectToken(&lexer, .keyword_for, "for");
+    try expectToken(&lexer, .l_paren, "(");
+    try expectToken(&lexer, .ident, "i");
+    try expectToken(&lexer, .equal, "=");
+    try expectToken(&lexer, .l_bracket, "[");
+    try expectToken(&lexer, .number, "0");
+    try expectToken(&lexer, .colon, ":");
+    try expectToken(&lexer, .number, "2");
+    try expectToken(&lexer, .colon, ":");
+    try expectToken(&lexer, .number, "10");
+    try expectToken(&lexer, .r_bracket, "]");
+    try expectToken(&lexer, .r_paren, ")");
+    try expectToken(&lexer, .l_brace, "{");
+
+    try expectToken(&lexer, .ident, "echo");
+    try expectToken(&lexer, .l_paren, "(");
+    try expectToken(&lexer, .string, "Test: \\\"escaped\\\" str");
+    try expectToken(&lexer, .r_paren, ")");
+    try expectToken(&lexer, .semicolon, ";");
+
+    try expectToken(&lexer, .r_brace, "}");
+    try expectToken(&lexer, .eof, "");
 }
