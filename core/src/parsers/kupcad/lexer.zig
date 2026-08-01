@@ -63,7 +63,7 @@ pub const Tag = enum {
 
 pub const Token = common_token.Token(Tag);
 
-// Compile-time perfect hash map for O(1) keyword lookups
+// Compile-time O(1) perfect hash map for keyword resolution
 const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "do", .keyword_do },
     .{ "end", .keyword_end },
@@ -122,10 +122,10 @@ pub const Lexer = struct {
         self.skipWhitespace();
 
         if (self.index >= self.buffer.len) {
-            return self.makeToken(.eof, 0);
+            return self.makeToken(.eof);
         }
 
-        const start_loc = common_token.Location{ .line = self.line, .col = self.col, .file_id = self.file_id };
+        const start_loc = self.getLoc();
         const c = self.peek();
 
         return switch (c) {
@@ -151,9 +151,13 @@ pub const Lexer = struct {
                     return self.consumeNumber(start_loc);
                 }
                 self.advance();
-                return self.makeToken(.eof, 0);
+                return self.makeToken(.eof);
             },
         };
+    }
+
+    inline fn getLoc(self: *const Lexer) common_token.Location {
+        return .{ .line = self.line, .col = self.col, .file_id = self.file_id };
     }
 
     fn skipWhitespace(self: *Lexer) void {
@@ -202,7 +206,6 @@ pub const Lexer = struct {
         const lexeme = self.buffer[start..self.index];
         var tag = if (is_constant) Tag.constant else Tag.ident;
 
-        // O(1) Map lookup
         if (keywords.get(lexeme)) |kw_tag| {
             tag = kw_tag;
         }
@@ -227,13 +230,13 @@ pub const Lexer = struct {
             '/' => .slash,
             '%' => .percent,
             '?' => .question,
-            else => return self.makeToken(.eof, 0),
+            else => return self.makeToken(.eof),
         };
 
         if (tag == .equal_equal or tag == .bang_equal or tag == .less_equal or
             tag == .greater_equal or tag == .and_and or tag == .or_or or tag == .star_star)
         {
-            self.advance(); // consume second character
+            self.advance();
         }
 
         return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
@@ -276,10 +279,11 @@ pub const Lexer = struct {
     }
 
     fn consumeNewline(self: *Lexer, start_loc: common_token.Location) Token {
+        const start = self.index;
         self.advance();
         self.line += 1;
         self.col = 1;
-        return .{ .tag = .newline, .loc = start_loc, .lexeme = "\\n" };
+        return .{ .tag = .newline, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
     fn consumeChar(self: *Lexer, tag: Tag, start_loc: common_token.Location) Token {
@@ -288,20 +292,19 @@ pub const Lexer = struct {
         return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
-    fn peek(self: *const Lexer) u8 {
+    inline fn peek(self: *const Lexer) u8 {
         return self.buffer[self.index];
     }
 
-    fn advance(self: *Lexer) void {
+    inline fn advance(self: *Lexer) void {
         self.index += 1;
         self.col += 1;
     }
 
-    fn makeToken(self: *const Lexer, tag: Tag, len: usize) Token {
-        _ = len;
+    fn makeToken(self: *const Lexer, tag: Tag) Token {
         return .{
             .tag = tag,
-            .loc = .{ .line = self.line, .col = self.col, .file_id = self.file_id },
+            .loc = self.getLoc(),
             .lexeme = "",
         };
     }

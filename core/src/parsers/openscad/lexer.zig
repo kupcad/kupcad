@@ -57,7 +57,7 @@ pub const Tag = enum {
 
 pub const Token = common_token.Token(Tag);
 
-// Compile-time perfect hash map for O(1) keyword lookups
+// Compile-time O(1) perfect hash map for keyword resolution
 const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "module", .keyword_module },
     .{ "function", .keyword_function },
@@ -110,10 +110,10 @@ pub const Lexer = struct {
         self.skipWhitespace();
 
         if (self.index >= self.buffer.len) {
-            return .{ .tag = .eof, .loc = .{ .line = self.line, .col = self.col, .file_id = self.file_id }, .lexeme = "" };
+            return .{ .tag = .eof, .loc = self.getLoc(), .lexeme = "" };
         }
 
-        const start_loc = common_token.Location{ .line = self.line, .col = self.col, .file_id = self.file_id };
+        const start_loc = self.getLoc();
         const c = self.peek();
 
         return switch (c) {
@@ -146,6 +146,10 @@ pub const Lexer = struct {
         };
     }
 
+    inline fn getLoc(self: *const Lexer) common_token.Location {
+        return .{ .line = self.line, .col = self.col, .file_id = self.file_id };
+    }
+
     fn skipWhitespace(self: *Lexer) void {
         while (self.index < self.buffer.len) {
             const c = self.peek();
@@ -169,11 +173,11 @@ pub const Lexer = struct {
 
         const tag: Tag = switch (c1) {
             '=' => if (c2 == '=') .equal_equal else .equal,
-            '!' => if (c2 == '=') .bang_equal else .bang, // Parser will map .bang contextually to NOT or Root mod
+            '!' => if (c2 == '=') .bang_equal else .bang,
             '<' => if (c2 == '=') .less_equal else .less,
             '>' => if (c2 == '=') .greater_equal else .greater,
-            '&' => if (c2 == '&') .and_and else return .{ .tag = .eof, .loc = start_loc, .lexeme = "" },
-            '|' => if (c2 == '|') .or_or else return .{ .tag = .eof, .loc = start_loc, .lexeme = "" },
+            '&' => if (c2 == '&') .and_and else .bang, // Recovery for single unsupported char
+            '|' => if (c2 == '|') .or_or else .bang, // Recovery for single unsupported char
             '*' => .star,
             '%' => .percent,
             '?' => .question,
@@ -183,7 +187,7 @@ pub const Lexer = struct {
         if (tag == .equal_equal or tag == .bang_equal or tag == .less_equal or
             tag == .greater_equal or tag == .and_and or tag == .or_or)
         {
-            self.advance(); // consume second character
+            self.advance();
         }
 
         return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
@@ -194,23 +198,21 @@ pub const Lexer = struct {
         self.advance();
         if (self.index < self.buffer.len) {
             if (self.peek() == '/') {
-                // Line comment
                 while (self.index < self.buffer.len and self.peek() != '\n') {
                     self.advance();
                 }
                 return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
             } else if (self.peek() == '*') {
-                // Block comment
                 self.advance();
                 while (self.index < self.buffer.len) {
                     if (self.peek() == '*' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '/') {
-                        self.advance(); // consume *
-                        self.advance(); // consume /
+                        self.advance();
+                        self.advance();
                         break;
                     }
                     if (self.peek() == '\n') {
                         self.line += 1;
-                        self.col = 0; // Will become 1 on advance
+                        self.col = 0;
                     }
                     self.advance();
                 }
@@ -234,7 +236,6 @@ pub const Lexer = struct {
         const lexeme = self.buffer[start..self.index];
         var tag = Tag.ident;
 
-        // O(1) Map lookup
         if (keywords.get(lexeme)) |kw_tag| {
             tag = kw_tag;
         }
@@ -261,7 +262,6 @@ pub const Lexer = struct {
         while (self.index < self.buffer.len) {
             const c = self.peek();
             if (c == '\\') {
-                // Skip the escape character and the escaped character
                 self.advance();
                 if (self.index < self.buffer.len) {
                     self.advance();
@@ -269,12 +269,12 @@ pub const Lexer = struct {
                 continue;
             }
             if (c == '"') {
-                break; // End of string
+                break;
             }
             self.advance();
         }
         const lexeme = self.buffer[start..self.index];
-        if (self.index < self.buffer.len) self.advance(); // consume ending quote
+        if (self.index < self.buffer.len) self.advance();
         return .{ .tag = .string, .loc = start_loc, .lexeme = lexeme };
     }
 
@@ -284,11 +284,11 @@ pub const Lexer = struct {
         return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
-    fn peek(self: *const Lexer) u8 {
+    inline fn peek(self: *const Lexer) u8 {
         return self.buffer[self.index];
     }
 
-    fn advance(self: *Lexer) void {
+    inline fn advance(self: *Lexer) void {
         self.index += 1;
         self.col += 1;
     }
