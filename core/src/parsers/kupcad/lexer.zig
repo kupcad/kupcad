@@ -80,24 +80,15 @@ pub const Tag = enum {
 pub const Token = common_token.Token(Tag);
 
 const keywords = std.StaticStringMap(Tag).initComptime(.{
-    .{ "do", .keyword_do },
-    .{ "end", .keyword_end },
-    .{ "if", .keyword_if },
-    .{ "import", .keyword_import },
-    .{ "from", .keyword_from },
-    .{ "class", .keyword_class },
-    .{ "def", .keyword_def },
-    .{ "true", .keyword_true },
-    .{ "false", .keyword_false },
-    .{ "nil", .keyword_nil },
-    .{ "else", .keyword_else },
-    .{ "elsif", .keyword_elsif },
-    .{ "module", .keyword_module },
-    .{ "yield", .keyword_yield },
-    .{ "return", .keyword_return },
-    .{ "unless", .keyword_unless },
-    .{ "while", .keyword_while },
-    .{ "break", .keyword_break },
+    .{ "do", .keyword_do },         .{ "end", .keyword_end },
+    .{ "if", .keyword_if },         .{ "import", .keyword_import },
+    .{ "from", .keyword_from },     .{ "class", .keyword_class },
+    .{ "def", .keyword_def },       .{ "true", .keyword_true },
+    .{ "false", .keyword_false },   .{ "nil", .keyword_nil },
+    .{ "else", .keyword_else },     .{ "elsif", .keyword_elsif },
+    .{ "module", .keyword_module }, .{ "yield", .keyword_yield },
+    .{ "return", .keyword_return }, .{ "unless", .keyword_unless },
+    .{ "while", .keyword_while },   .{ "break", .keyword_break },
 });
 
 inline fn isIdentStart(c: u8) bool {
@@ -123,7 +114,7 @@ pub const Lexer = struct {
     col: u32,
     file_id: u32,
 
-    // Lexer State Stack for String Interpolation
+    // Internal state for handling nested `${ }` inside strings
     brace_depth: u32 = 0,
     interp_stack: [8]u32 = undefined,
     interp_depth: usize = 0,
@@ -162,10 +153,11 @@ pub const Lexer = struct {
                     self.brace_depth -= 1;
                     return self.consumeChar(.r_brace, start_loc);
                 } else if (self.interp_depth > 0) {
-                    // We just closed an interpolation block `#{ ... }`. Resume string parsing!
+                    // We just closed a string interpolation block!
+                    // Restore brace depth from before interpolation, and resume string
                     self.interp_depth -= 1;
                     self.brace_depth = self.interp_stack[self.interp_depth];
-                    self.advance(); // consume '}'
+                    self.advance(); // consume the '}'
                     return self.consumeStringBody(start_loc, false);
                 } else {
                     return self.consumeChar(.r_brace, start_loc);
@@ -313,7 +305,7 @@ pub const Lexer = struct {
                 self.advance(); // #
                 self.advance(); // {
 
-                // Push current brace depth so we can track nested hashes inside interpolation
+                // Track nested depth so inner strings don't break outer interpolation closures
                 if (self.interp_depth < self.interp_stack.len) {
                     self.interp_stack[self.interp_depth] = self.brace_depth;
                     self.interp_depth += 1;

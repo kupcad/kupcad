@@ -241,3 +241,50 @@ test "KupCAD Parser: String Interpolation" {
     // End part: " mm" (strips closing quote)
     try testing.expectEqualStrings(" mm", interp_node.kind.interpolated_string[2].kind.string);
 }
+
+test "KupCAD Parser: Exponentiation vs Unary Precedence" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "-2 ** 2";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseExpression(.none);
+
+    try testing.expectEqual(ast.Node.Kind.unary_op, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqual(ast.UnaryOp.negate, node.kind.unary_op.op);
+
+    const exp_node = node.kind.unary_op.operand;
+    try testing.expectEqual(ast.Node.Kind.binary_op, @as(std.meta.Tag(ast.Node.Kind), exp_node.kind));
+    try testing.expectEqual(ast.BinaryOp.exponent, exp_node.kind.binary_op.op);
+}
+
+test "KupCAD Parser: Parenthesis-less Method Calls (Command Syntax)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "cube x: 10, y: 20";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+
+    try testing.expectEqual(ast.Node.Kind.method_call, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqualStrings("cube", node.kind.method_call.method_name);
+    try testing.expectEqual(@as(usize, 2), node.kind.method_call.args.len);
+    try testing.expectEqualStrings("x", node.kind.method_call.args[0].name);
+}
+
+test "KupCAD Parser BUG: Empty String Interpolation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "\"Empty: #{}\"";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseExpression(.none);
+
+    try testing.expectEqual(ast.Node.Kind.interpolated_string, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+}
