@@ -15,12 +15,30 @@ pub const Tag = enum {
     keyword_for,
     keyword_intersection_for,
     keyword_let,
+    keyword_if,
+    keyword_else,
+    keyword_true,
+    keyword_false,
+    keyword_undef,
 
-    mod_disable,
+    bang_equal,
+    less_equal,
+    greater_equal,
+    less,
+    greater,
+    and_and,
+    or_or,
+    bang,
+    block_comment,
+
     mod_root,
     mod_debug,
-    mod_transparent,
 
+    star, // * (acts as multiply AND modifier)
+    percent, // % (acts as modulo AND modifier)
+    question, // ? (ternary)
+    colon, // : (ternary)
+    caret, // ^ (exponentiation)
     plus,
     minus,
     slash,
@@ -68,7 +86,6 @@ pub const Lexer = struct {
         return switch (c) {
             '+' => self.consumeChar(.plus, start_loc),
             '-' => self.consumeChar(.minus, start_loc),
-            '=' => self.consumeEqual(start_loc),
             '*' => self.consumeChar(.mod_disable, start_loc),
             '!' => self.consumeChar(.mod_root, start_loc),
             '#' => self.consumeChar(.mod_debug, start_loc),
@@ -83,6 +100,12 @@ pub const Lexer = struct {
             '{' => self.consumeChar(.l_brace, start_loc),
             '}' => self.consumeChar(.r_brace, start_loc),
             '"' => self.consumeString(start_loc),
+            '*' => self.consumeChar(.star, start_loc),
+            '%' => self.consumeChar(.percent, start_loc),
+            '^' => self.consumeChar(.caret, start_loc),
+            '?' => self.consumeChar(.question, start_loc),
+            ':' => self.consumeChar(.colon, start_loc),
+            '=', '!', '<', '>', '&', '|' => self.consumeOperator(start_loc),
             else => {
                 if (std.ascii.isAlphabetic(c) or c == '_') {
                     return self.consumeIdentOrKeyword(start_loc);
@@ -108,6 +131,29 @@ pub const Lexer = struct {
                 break;
             }
         }
+    }
+
+    fn consumeOperator(self: *Lexer, start_loc: common_token.Location) Token {
+        const start = self.index;
+        const c1 = self.peek();
+        self.advance();
+        const c2 = if (self.index < self.buffer.len) self.peek() else 0;
+
+        var tag: Tag = switch (c1) {
+            '=' => if (c2 == '=') .equal_equal else .equal,
+            '!' => if (c2 == '=') .bang_equal else .bang,
+            '<' => if (c2 == '=') .less_equal else .less,
+            '>' => if (c2 == '=') .greater_equal else .greater,
+            '&' => if (c2 == '&') .and_and else return self.makeToken(.eof, 0),
+            '|' => if (c2 == '|') .or_or else return self.makeToken(.eof, 0),
+            else => return self.makeToken(.eof, 0),
+        };
+
+        if (tag != .equal and tag != .bang and tag != .less and tag != .greater) {
+            self.advance(); // consume second character
+        }
+
+        return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
     fn consumeSlashOrComment(self: *Lexer, start_loc: common_token.Location) Token {
@@ -142,8 +188,44 @@ pub const Lexer = struct {
         if (std.mem.eql(u8, lexeme, "use")) tag = .keyword_use;
         if (std.mem.eql(u8, lexeme, "for")) tag = .keyword_for;
         if (std.mem.eql(u8, lexeme, "let")) tag = .keyword_let;
+        if (std.mem.eql(u8, lexeme, "if")) tag = .keyword_if;
+        if (std.mem.eql(u8, lexeme, "else")) tag = .keyword_else;
+        if (std.mem.eql(u8, lexeme, "true")) tag = .keyword_true;
+        if (std.mem.eql(u8, lexeme, "false")) tag = .keyword_false;
+        if (std.mem.eql(u8, lexeme, "undef")) tag = .keyword_undef;
 
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
+    }
+
+    fn consumeSlashOrComment(self: *Lexer, start_loc: common_token.Location) Token {
+        const start = self.index;
+        self.advance();
+        if (self.index < self.buffer.len) {
+            if (self.peek() == '/') {
+                // Line comment
+                while (self.index < self.buffer.len and self.peek() != '\n') {
+                    self.advance();
+                }
+                return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+            } else if (self.peek() == '*') {
+                // Block comment
+                self.advance();
+                while (self.index < self.buffer.len) {
+                    if (self.peek() == '*' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '/') {
+                        self.advance(); // consume *
+                        self.advance(); // consume /
+                        break;
+                    }
+                    if (self.peek() == '\n') {
+                        self.line += 1;
+                        self.col = 0; // Will become 1 on advance
+                    }
+                    self.advance();
+                }
+                return .{ .tag = .block_comment, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+            }
+        }
+        return .{ .tag = .slash, .loc = start_loc, .lexeme = "/" };
     }
 
     fn consumeNumber(self: *Lexer, start_loc: common_token.Location) Token {
@@ -168,16 +250,6 @@ pub const Lexer = struct {
         const lexeme = self.buffer[start..self.index];
         if (self.index < self.buffer.len) self.advance();
         return .{ .tag = .string, .loc = start_loc, .lexeme = lexeme };
-    }
-
-    fn consumeEqual(self: *Lexer, start_loc: common_token.Location) Token {
-        const start = self.index;
-        self.advance();
-        if (self.index < self.buffer.len and self.peek() == '=') {
-            self.advance();
-            return .{ .tag = .equal_equal, .loc = start_loc, .lexeme = "==" };
-        }
-        return .{ .tag = .equal, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
     fn consumeChar(self: *Lexer, tag: Tag, start_loc: common_token.Location) Token {

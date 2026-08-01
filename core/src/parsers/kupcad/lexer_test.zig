@@ -175,3 +175,68 @@ test "KupCAD Lexer: Parametric annotations with irregular spacing and casing" {
     try expectToken(&lexer, .comment, "# not_a_param");
     try expectToken(&lexer, .eof, "");
 }
+
+test "KupCAD Lexer: Classes, definitions, and logical operators" {
+    const source =
+        \\class MyPart
+        \\  def is_valid?
+        \\    true && false || !nil
+        \\  end
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+
+    try expectToken(&lexer, .keyword_class, "class");
+    try expectToken(&lexer, .constant, "MyPart");
+    try expectToken(&lexer, .newline, "\\n");
+    try expectToken(&lexer, .keyword_def, "def");
+    try expectToken(&lexer, .ident, "is_valid?");
+    try expectToken(&lexer, .newline, "\\n");
+    try expectToken(&lexer, .keyword_true, "true");
+    try expectToken(&lexer, .and_and, "&&");
+    try expectToken(&lexer, .keyword_false, "false");
+    try expectToken(&lexer, .or_or, "||");
+    try expectToken(&lexer, .bang, "!");
+    try expectToken(&lexer, .keyword_nil, "nil");
+}
+
+test "KupCAD Lexer: Blocks with pipes, math, and flow control" {
+    const source =
+        \\module Component
+        \\  def generate
+        \\    yield unless 10 % 3 * 2 / 1 == 0
+        \\    grid do |x, y|
+        \\      break if x ? true : false
+        \\    end
+        \\  end
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+
+    try expectToken(&lexer, .keyword_module, "module");
+    try expectToken(&lexer, .constant, "Component");
+    try expectToken(&lexer, .newline, "\\n");
+    // ... skipping def, yield, unless
+    _ = lexer.next(); _ = lexer.next(); _ = lexer.next(); _ = lexer.next(); _ = lexer.next();
+
+    // Math 10 % 3 * 2 / 1 == 0
+    try expectToken(&lexer, .number, "10");
+    try expectToken(&lexer, .percent, "%");
+    try expectToken(&lexer, .number, "3");
+    try expectToken(&lexer, .star, "*");
+    try expectToken(&lexer, .number, "2");
+    try expectToken(&lexer, .slash, "/");
+    try expectToken(&lexer, .number, "1");
+    try expectToken(&lexer, .equal_equal, "==");
+    try expectToken(&lexer, .number, "0");
+    try expectToken(&lexer, .newline, "\\n");
+
+    // grid do |x, y|
+    try expectToken(&lexer, .ident, "grid");
+    try expectToken(&lexer, .keyword_do, "do");
+    try expectToken(&lexer, .pipe, "|");
+    try expectToken(&lexer, .ident, "x");
+    try expectToken(&lexer, .comma, ",");
+    try expectToken(&lexer, .ident, "y");
+    try expectToken(&lexer, .pipe, "|");
+}

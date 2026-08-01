@@ -17,7 +17,34 @@ pub const Tag = enum {
     keyword_if,
     keyword_import,
     keyword_from,
+    keyword_class,
+    keyword_def,
+    keyword_true,
+    keyword_false,
+    keyword_nil,
+    keyword_else,
+    keyword_elsif,
+    keyword_module,
+    keyword_yield,
+    keyword_return,
+    keyword_unless,
+    keyword_while,
+    keyword_break,
 
+    equal_equal,
+    bang_equal,
+    less_equal,
+    greater_equal,
+    less,
+    greater,
+    and_and,
+    or_or,
+    bang,
+    star,
+    slash,
+    percent,
+    pipe,
+    question,
     plus,
     minus,
     ampersand,
@@ -79,6 +106,11 @@ pub const Lexer = struct {
             ':' => self.consumeSymbolOrColon(start_loc),
             '"' => self.consumeString(start_loc),
             '#' => self.consumeCommentOrParam(start_loc),
+            '*' => self.consumeChar(.star, start_loc),
+            '/' => self.consumeChar(.slash, start_loc),
+            '%' => self.consumeChar(.percent, start_loc),
+            '?' => self.consumeChar(.question, start_loc),
+            '=', '!', '<', '>', '&', '|' => self.consumeOperator(start_loc),
             else => {
                 if (std.ascii.isAlphabetic(c) or c == '_') {
                     return self.consumeIdentOrKeyword(start_loc);
@@ -142,8 +174,46 @@ pub const Lexer = struct {
         if (std.mem.eql(u8, lexeme, "if")) tag = .keyword_if;
         if (std.mem.eql(u8, lexeme, "import")) tag = .keyword_import;
         if (std.mem.eql(u8, lexeme, "from")) tag = .keyword_from;
+        if (std.mem.eql(u8, lexeme, "class")) tag = .keyword_class;
+        if (std.mem.eql(u8, lexeme, "def")) tag = .keyword_def;
+        if (std.mem.eql(u8, lexeme, "true")) tag = .keyword_true;
+        if (std.mem.eql(u8, lexeme, "false")) tag = .keyword_false;
+        if (std.mem.eql(u8, lexeme, "nil")) tag = .keyword_nil;
+        if (std.mem.eql(u8, lexeme, "else")) tag = .keyword_else;
+        if (std.mem.eql(u8, lexeme, "elsif")) tag = .keyword_elsif;
+        if (std.mem.eql(u8, lexeme, "module")) tag = .keyword_module;
+        if (std.mem.eql(u8, lexeme, "yield")) tag = .keyword_yield;
+        if (std.mem.eql(u8, lexeme, "return")) tag = .keyword_return;
+        if (std.mem.eql(u8, lexeme, "unless")) tag = .keyword_unless;
+        if (std.mem.eql(u8, lexeme, "while")) tag = .keyword_while;
+        if (std.mem.eql(u8, lexeme, "break")) tag = .keyword_break;
 
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
+    }
+
+    fn consumeOperator(self: *Lexer, start_loc: common_token.Location) Token {
+        const start = self.index;
+        const c1 = self.peek();
+        self.advance();
+        const c2 = if (self.index < self.buffer.len) self.peek() else 0;
+
+        var tag: Tag = switch (c1) {
+            '=' => if (c2 == '=') .equal_equal else .equal,
+            '!' => if (c2 == '=') .bang_equal else .bang,
+            '<' => if (c2 == '=') .less_equal else .less,
+            '>' => if (c2 == '=') .greater_equal else .greater,
+            '&' => if (c2 == '&') .and_and else .ampersand,
+            '|' => if (c2 == '|') .or_or else .pipe,
+            else => return self.makeToken(.eof, 0),
+        };
+
+        if (tag == .equal_equal or tag == .bang_equal or tag == .less_equal or
+            tag == .greater_equal or tag == .and_and or tag == .or_or)
+        {
+            self.advance(); // consume second character
+        }
+
+        return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
     fn consumeSymbolOrColon(self: *Lexer, start_loc: common_token.Location) Token {

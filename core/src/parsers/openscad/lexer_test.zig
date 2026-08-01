@@ -163,3 +163,79 @@ test "OpenSCAD Lexer: Nested Modules, Arrays, Math, and Modifiers" {
     try expectToken(&lexer, .r_brace, "}");
     try expectToken(&lexer, .eof, "");
 }
+
+test "OpenSCAD Lexer: Block comments and booleans" {
+    const source =
+        \\/* Multi-line
+        \\   comment block */
+        \\if (w <= 10 && !false) {
+        \\  cube(undef);
+        \\}
+    ;
+    var lexer = Lexer.init(source, 0);
+
+    try expectToken(&lexer, .block_comment, "/* Multi-line\n   comment block */");
+    try expectToken(&lexer, .newline, "\\n");
+    try expectToken(&lexer, .keyword_if, "if");
+    try expectToken(&lexer, .l_paren, "(");
+    try expectToken(&lexer, .ident, "w");
+    try expectToken(&lexer, .less_equal, "<=");
+    try expectToken(&lexer, .number, "10");
+    try expectToken(&lexer, .and_and, "&&");
+    try expectToken(&lexer, .bang, "!");
+    try expectToken(&lexer, .keyword_false, "false");
+    try expectToken(&lexer, .r_paren, ")");
+    try expectToken(&lexer, .l_brace, "{");
+    try expectToken(&lexer, .newline, "\\n");
+    try expectToken(&lexer, .ident, "cube");
+    try expectToken(&lexer, .l_paren, "(");
+    try expectToken(&lexer, .keyword_undef, "undef");
+    try expectToken(&lexer, .r_paren, ")");
+}
+
+test "OpenSCAD Lexer: Ternary, exponentiation, and dual-use operators" {
+    const source =
+        \\r = (a < 5 && b >= 2) ? 10^2 : 5%2;
+        \\*cube(r * 2);
+        \\%sphere(r);
+    ;
+    var lexer = Lexer.init(source, 0);
+
+    // r = (a < 5 && b >= 2) ? 10^2 : 5%2;
+    try expectToken(&lexer, .ident, "r");
+    try expectToken(&lexer, .equal, "=");
+    try expectToken(&lexer, .l_paren, "(");
+    try expectToken(&lexer, .ident, "a");
+    try expectToken(&lexer, .less, "<");
+    try expectToken(&lexer, .number, "5");
+    try expectToken(&lexer, .and_and, "&&");
+    try expectToken(&lexer, .ident, "b");
+    try expectToken(&lexer, .greater_equal, ">=");
+    try expectToken(&lexer, .number, "2");
+    try expectToken(&lexer, .r_paren, ")");
+    try expectToken(&lexer, .question, "?");
+    try expectToken(&lexer, .number, "10");
+    try expectToken(&lexer, .caret, "^");
+    try expectToken(&lexer, .number, "2");
+    try expectToken(&lexer, .colon, ":");
+    try expectToken(&lexer, .number, "5");
+    try expectToken(&lexer, .percent, "%");
+    try expectToken(&lexer, .number, "2");
+    try expectToken(&lexer, .semicolon, ";");
+    try expectToken(&lexer, .newline, "\\n");
+
+    // *cube(r * 2);
+    try expectToken(&lexer, .star, "*");
+    try expectToken(&lexer, .ident, "cube");
+    try expectToken(&lexer, .l_paren, "(");
+    try expectToken(&lexer, .ident, "r");
+    try expectToken(&lexer, .star, "*");
+    try expectToken(&lexer, .number, "2");
+    try expectToken(&lexer, .r_paren, ")");
+    try expectToken(&lexer, .semicolon, ";");
+    try expectToken(&lexer, .newline, "\\n");
+
+    // %sphere(r);
+    try expectToken(&lexer, .percent, "%");
+    try expectToken(&lexer, .ident, "sphere");
+}
