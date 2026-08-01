@@ -20,6 +20,7 @@ pub const Tag = enum {
     keyword_true,
     keyword_false,
     keyword_undef,
+    keyword_each,
 
     bang_equal,
     less_equal,
@@ -71,6 +72,7 @@ const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "true", .keyword_true },
     .{ "false", .keyword_false },
     .{ "undef", .keyword_undef },
+    .{ "each", .keyword_each },
 });
 
 inline fn isIdentStart(c: u8) bool {

@@ -8,6 +8,9 @@ pub const Tag = enum {
     constant,
     number,
     string,
+    string_start,
+    string_mid,
+    string_end,
     symbol,
     param_doc,
     comment,
@@ -49,7 +52,19 @@ pub const Tag = enum {
     plus,
     minus,
     ampersand,
+
+    // Assigments & Rockets
     equal,
+    plus_equal,
+    minus_equal,
+    star_equal,
+    slash_equal,
+    percent_equal,
+    star_star_equal,
+    and_and_equal,
+    or_or_equal,
+    arrow,
+
     dot_dot,
     dot,
     comma,
@@ -64,7 +79,6 @@ pub const Tag = enum {
 
 pub const Token = common_token.Token(Tag);
 
-// Compile-time O(1) perfect hash map for keyword resolution
 const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "do", .keyword_do },
     .{ "end", .keyword_end },
@@ -109,6 +123,11 @@ pub const Lexer = struct {
     col: u32,
     file_id: u32,
 
+    // Lexer State Stack for String Interpolation
+    brace_depth: u32 = 0,
+    interp_stack: [8]u32 = undefined,
+    interp_depth: usize = 0,
+
     pub fn init(buffer: []const u8, file_id: u32) Lexer {
         return .{
             .buffer = buffer,
@@ -121,36 +140,44 @@ pub const Lexer = struct {
 
     pub fn next(self: *Lexer) Token {
         self.skipWhitespace();
-
-        if (self.index >= self.buffer.len) {
-            return self.makeToken(.eof);
-        }
+        if (self.index >= self.buffer.len) return self.makeToken(.eof);
 
         const start_loc = self.getLoc();
         const c = self.peek();
 
         return switch (c) {
             '\n' => self.consumeNewline(start_loc),
-            '+' => self.consumeChar(.plus, start_loc),
-            '-' => self.consumeChar(.minus, start_loc),
             '.' => self.consumeDotOrRange(start_loc),
             ',' => self.consumeChar(.comma, start_loc),
             '(' => self.consumeChar(.l_paren, start_loc),
             ')' => self.consumeChar(.r_paren, start_loc),
             '[' => self.consumeChar(.l_bracket, start_loc),
             ']' => self.consumeChar(.r_bracket, start_loc),
-            '{' => self.consumeChar(.l_brace, start_loc),
-            '}' => self.consumeChar(.r_brace, start_loc),
+            '{' => {
+                self.brace_depth += 1;
+                return self.consumeChar(.l_brace, start_loc);
+            },
+            '}' => {
+                if (self.brace_depth > 0) {
+                    self.brace_depth -= 1;
+                    return self.consumeChar(.r_brace, start_loc);
+                } else if (self.interp_depth > 0) {
+                    // We just closed an interpolation block `#{ ... }`. Resume string parsing!
+                    self.interp_depth -= 1;
+                    self.brace_depth = self.interp_stack[self.interp_depth];
+                    self.advance(); // consume '}'
+                    return self.consumeStringBody(start_loc, false);
+                } else {
+                    return self.consumeChar(.r_brace, start_loc);
+                }
+            },
             ':' => self.consumeSymbolOrColon(start_loc),
             '"' => self.consumeString(start_loc),
             '#' => self.consumeCommentOrParam(start_loc),
-            '=', '!', '<', '>', '&', '|', '*', '/', '%', '?' => self.consumeOperator(start_loc),
+            '=', '!', '<', '>', '&', '|', '*', '/', '%', '?', '+', '-' => self.consumeOperator(start_loc),
             else => {
-                if (isIdentStart(c)) {
-                    return self.consumeIdentOrKeyword(start_loc);
-                } else if (std.ascii.isDigit(c)) {
-                    return self.consumeNumber(start_loc);
-                }
+                if (isIdentStart(c)) return self.consumeIdentOrKeyword(start_loc);
+                if (std.ascii.isDigit(c)) return self.consumeNumber(start_loc);
                 self.advance();
                 return self.makeToken(.eof);
             },
@@ -164,11 +191,7 @@ pub const Lexer = struct {
     fn skipWhitespace(self: *Lexer) void {
         while (self.index < self.buffer.len) {
             const c = self.peek();
-            if (c == ' ' or c == '\t' or c == '\r') {
-                self.advance();
-            } else {
-                break;
-            }
+            if (c == ' ' or c == '\t' or c == '\r') self.advance() else break;
         }
     }
 
@@ -184,43 +207,25 @@ pub const Lexer = struct {
 
     fn consumeCommentOrParam(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
-        while (self.index < self.buffer.len and self.peek() != '\n') {
-            self.advance();
-        }
+        while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
         const lexeme = self.buffer[start..self.index];
-
         var i: usize = 1;
-        while (i < lexeme.len and (lexeme[i] == ' ' or lexeme[i] == '\t')) {
-            i += 1;
-        }
-
+        while (i < lexeme.len and (lexeme[i] == ' ' or lexeme[i] == '\t')) i += 1;
         if (i + 6 <= lexeme.len and std.ascii.eqlIgnoreCase(lexeme[i .. i + 6], "@param")) {
             return .{ .tag = .param_doc, .loc = start_loc, .lexeme = lexeme };
         }
-
         return .{ .tag = .comment, .loc = start_loc, .lexeme = lexeme };
     }
 
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
         const is_constant = std.ascii.isUpper(self.peek());
-
         while (self.index < self.buffer.len) {
-            const c = self.peek();
-            if (isIdentChar(c)) {
-                self.advance();
-            } else {
-                break;
-            }
+            if (isIdentChar(self.peek())) self.advance() else break;
         }
-
         const lexeme = self.buffer[start..self.index];
         var tag = if (is_constant) Tag.constant else Tag.ident;
-
-        if (keywords.get(lexeme)) |kw_tag| {
-            tag = kw_tag;
-        }
-
+        if (keywords.get(lexeme)) |kw_tag| tag = kw_tag;
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }
 
@@ -229,23 +234,31 @@ pub const Lexer = struct {
         const c1 = self.peek();
         self.advance();
         const c2 = if (self.index < self.buffer.len) self.peek() else 0;
+        const c3 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
 
         const tag: Tag = switch (c1) {
-            '=' => if (c2 == '=') .equal_equal else .equal,
+            '=' => if (c2 == '=') .equal_equal else if (c2 == '>') .arrow else .equal,
+            '+' => if (c2 == '=') .plus_equal else .plus,
+            '-' => if (c2 == '=') .minus_equal else .minus,
+            '*' => if (c2 == '*' and c3 == '=') .star_star_equal else if (c2 == '*') .star_star else if (c2 == '=') .star_equal else .star,
+            '/' => if (c2 == '=') .slash_equal else .slash,
+            '%' => if (c2 == '=') .percent_equal else .percent,
+            '|' => if (c2 == '|' and c3 == '=') .or_or_equal else if (c2 == '|') .or_or else .pipe,
+            '&' => if (c2 == '&' and c3 == '=') .and_and_equal else if (c2 == '&') .and_and else .ampersand,
             '!' => if (c2 == '=') .bang_equal else .bang,
             '<' => if (c2 == '=') .less_equal else .less,
             '>' => if (c2 == '=') .greater_equal else .greater,
-            '&' => if (c2 == '&') .and_and else .ampersand,
-            '|' => if (c2 == '|') .or_or else .pipe,
-            '*' => if (c2 == '*') .star_star else .star,
-            '/' => .slash,
-            '%' => .percent,
             '?' => .question,
             else => return self.makeToken(.eof),
         };
 
-        if (tag == .equal_equal or tag == .bang_equal or tag == .less_equal or
-            tag == .greater_equal or tag == .and_and or tag == .or_or or tag == .star_star)
+        if (tag == .star_star_equal or tag == .or_or_equal or tag == .and_and_equal) {
+            self.advance();
+            self.advance();
+        } else if (tag == .equal_equal or tag == .bang_equal or tag == .less_equal or
+            tag == .greater_equal or tag == .and_and or tag == .or_or or tag == .star_star or
+            tag == .plus_equal or tag == .minus_equal or tag == .star_equal or tag == .slash_equal or
+            tag == .percent_equal or tag == .arrow)
         {
             self.advance();
         }
@@ -272,9 +285,7 @@ pub const Lexer = struct {
             if (std.ascii.isDigit(c)) {
                 self.advance();
             } else if (c == '.') {
-                if (self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '.') {
-                    break; // Stop at `..` range operator
-                }
+                if (self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '.') break; // `..`
                 self.advance();
             } else {
                 break;
@@ -284,25 +295,40 @@ pub const Lexer = struct {
     }
 
     fn consumeString(self: *Lexer, start_loc: common_token.Location) Token {
-        self.advance();
+        self.advance(); // consume opening quote
+        return self.consumeStringBody(start_loc, true);
+    }
+
+    fn consumeStringBody(self: *Lexer, start_loc: common_token.Location, is_start: bool) Token {
         const start = self.index;
         while (self.index < self.buffer.len) {
             const c = self.peek();
             if (c == '\\') {
                 self.advance();
-                if (self.index < self.buffer.len) {
-                    self.advance();
-                }
+                if (self.index < self.buffer.len) self.advance();
                 continue;
             }
+            if (c == '#' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '{') {
+                const lexeme = self.buffer[start..self.index];
+                self.advance(); // #
+                self.advance(); // {
+
+                // Push current brace depth so we can track nested hashes inside interpolation
+                if (self.interp_depth < self.interp_stack.len) {
+                    self.interp_stack[self.interp_depth] = self.brace_depth;
+                    self.interp_depth += 1;
+                    self.brace_depth = 0;
+                }
+                return .{ .tag = if (is_start) .string_start else .string_mid, .loc = start_loc, .lexeme = lexeme };
+            }
             if (c == '"') {
-                break;
+                const lexeme = self.buffer[start..self.index];
+                self.advance(); // consume "
+                return .{ .tag = if (is_start) .string else .string_end, .loc = start_loc, .lexeme = lexeme };
             }
             self.advance();
         }
-        const lexeme = self.buffer[start..self.index];
-        if (self.index < self.buffer.len) self.advance();
-        return .{ .tag = .string, .loc = start_loc, .lexeme = lexeme };
+        return self.makeToken(.eof);
     }
 
     fn consumeNewline(self: *Lexer, start_loc: common_token.Location) Token {
@@ -322,17 +348,11 @@ pub const Lexer = struct {
     inline fn peek(self: *const Lexer) u8 {
         return self.buffer[self.index];
     }
-
     inline fn advance(self: *Lexer) void {
         self.index += 1;
         self.col += 1;
     }
-
     fn makeToken(self: *const Lexer, tag: Tag) Token {
-        return .{
-            .tag = tag,
-            .loc = self.getLoc(),
-            .lexeme = "",
-        };
+        return .{ .tag = tag, .loc = self.getLoc(), .lexeme = "" };
     }
 };

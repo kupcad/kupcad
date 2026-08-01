@@ -255,9 +255,17 @@ pub const Parser = struct {
         self.advance();
 
         _ = try self.expect(.l_paren);
-        const var_tok = try self.expect(.ident);
-        _ = try self.expect(.equal);
-        const range_node = try self.parseExpression(.none);
+
+        var bindings: std.ArrayListUnmanaged(ast.ForBinding) = .empty;
+        errdefer bindings.deinit(self.allocator);
+
+        while (self.current.tag != .r_paren and self.current.tag != .eof) {
+            const var_tok = try self.expect(.ident);
+            _ = try self.expect(.equal);
+            const range_node = try self.parseExpression(.none);
+            try bindings.append(self.allocator, .{ .name = var_tok.lexeme, .range = range_node });
+            if (self.current.tag == .comma) self.advance() else break;
+        }
         _ = try self.expect(.r_paren);
 
         const body = if (self.current.tag == .l_brace) blk: {
@@ -269,8 +277,7 @@ pub const Parser = struct {
 
         return self.createNode(.{
             .for_stmt = .{
-                .var_name = var_tok.lexeme,
-                .range = range_node,
+                .bindings = try bindings.toOwnedSlice(self.allocator),
                 .body = body,
                 .is_intersection = is_intersection,
             },
@@ -283,9 +290,17 @@ pub const Parser = struct {
         self.advance();
 
         _ = try self.expect(.l_paren);
-        const var_tok = try self.expect(.ident);
-        _ = try self.expect(.equal);
-        const range_node = try self.parseExpression(.none);
+
+        var bindings: std.ArrayListUnmanaged(ast.ForBinding) = .empty;
+        errdefer bindings.deinit(self.allocator);
+
+        while (self.current.tag != .r_paren and self.current.tag != .eof) {
+            const var_tok = try self.expect(.ident);
+            _ = try self.expect(.equal);
+            const range_node = try self.parseExpression(.none);
+            try bindings.append(self.allocator, .{ .name = var_tok.lexeme, .range = range_node });
+            if (self.current.tag == .comma) self.advance() else break;
+        }
         _ = try self.expect(.r_paren);
 
         const empty_body = try self.createNode(.{
@@ -294,8 +309,7 @@ pub const Parser = struct {
 
         return self.createNode(.{
             .for_stmt = .{
-                .var_name = var_tok.lexeme,
-                .range = range_node,
+                .bindings = try bindings.toOwnedSlice(self.allocator),
                 .body = empty_body,
                 .is_intersection = is_intersection,
             },
@@ -317,6 +331,7 @@ pub const Parser = struct {
             const assign_node = try self.createNode(.{
                 .assignment = .{
                     .name = var_tok.lexeme,
+                    .op = null,
                     .value = val_expr,
                 },
             }, var_tok.loc);
@@ -370,6 +385,7 @@ pub const Parser = struct {
             const assign_node = try self.createNode(.{
                 .assignment = .{
                     .name = var_tok.lexeme,
+                    .op = null,
                     .value = val_expr,
                 },
             }, var_tok.loc);
@@ -426,6 +442,7 @@ pub const Parser = struct {
             return self.createNode(.{
                 .assignment = .{
                     .name = target_tok.lexeme,
+                    .op = null,
                     .value = val,
                 },
             }, target_tok.loc);
@@ -573,12 +590,19 @@ pub const Parser = struct {
                     const clause = try self.parseIfClause();
                     try clauses.append(self.allocator, clause);
                 }
+
                 while (self.current.tag == .comment or self.current.tag == .block_comment) {
                     self.advance();
                 }
             }
 
-            const yield_expr = try self.parseExpression(.none);
+            const yield_expr = if (self.current.tag == .keyword_each) blk: {
+                const each_tok = self.current;
+                self.advance();
+                const inner = try self.parseExpression(.none);
+                break :blk try self.createNode(.{ .each_expr = inner }, each_tok.loc);
+            } else try self.parseExpression(.none);
+
             while (self.current.tag == .comment or self.current.tag == .block_comment) {
                 self.advance();
             }

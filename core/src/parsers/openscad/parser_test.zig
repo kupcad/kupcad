@@ -47,8 +47,8 @@ test "OpenSCAD Parser: For Loop and Range [start:step:end]" {
 
     const node = try parser.parseStatement();
 
-    try testing.expectEqualStrings("i", node.kind.for_stmt.var_name);
-    const range = node.kind.for_stmt.range;
+    try testing.expectEqualStrings("i", node.kind.for_stmt.bindings[0].name);
+    const range = node.kind.for_stmt.bindings[0].range;
     try testing.expectEqual(@as(f64, 0.0), range.kind.range.start.kind.number);
     try testing.expectEqual(@as(f64, 2.0), range.kind.range.step.?.kind.number);
     try testing.expectEqual(@as(f64, 10.0), range.kind.range.end.kind.number);
@@ -85,6 +85,6 @@ test "OpenSCAD Parser: Vector Comprehension" {
     const comp_node = assign_node.kind.assignment.value;
 
     try testing.expectEqual(@as(usize, 1), comp_node.kind.comprehension.clauses.len);
-    try testing.expectEqualStrings("x", comp_node.kind.comprehension.clauses[0].kind.for_stmt.var_name);
+    try testing.expectEqualStrings("x", comp_node.kind.comprehension.clauses[0].kind.for_stmt.bindings[0].name);
     try testing.expectEqual(ast.BinaryOp.multiply, comp_node.kind.comprehension.yield_expr.kind.binary_op.op);
 }

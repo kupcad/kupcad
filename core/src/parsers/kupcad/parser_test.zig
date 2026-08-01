@@ -198,3 +198,46 @@ test "KupCAD Parser: Functions, Classes, Arrays, and Range" {
     try testing.expectEqual(true, ret_node.kind.ternary_op.then_branch.kind.boolean);
     try testing.expectEqual(false, ret_node.kind.ternary_op.else_branch.kind.boolean);
 }
+
+test "KupCAD Parser: Shorthand Assignment and Hash Rocket" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\w += 10
+        \\map = { "key" => w }
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const add_assign = try parser.parseStatement();
+    try testing.expectEqualStrings("w", add_assign.kind.assignment.name);
+    try testing.expectEqual(ast.BinaryOp.add, add_assign.kind.assignment.op.?);
+
+    const hash_assign = try parser.parseStatement();
+    const hash_node = hash_assign.kind.assignment.value;
+    try testing.expectEqualStrings("key", hash_node.kind.hash_literal[0].key.kind.string);
+}
+
+test "KupCAD Parser: String Interpolation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "echo(\"Value: #{x + 10} mm\")";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const echo_call = try parser.parseStatement();
+    const interp_node = echo_call.kind.method_call.args[0].value;
+
+    try testing.expectEqual(@as(usize, 3), interp_node.kind.interpolated_string.len);
+
+    // First part: "Value: " (strips opening quote)
+    try testing.expectEqualStrings("Value: ", interp_node.kind.interpolated_string[0].kind.string);
+
+    // Middle part: x + 10
+    try testing.expectEqual(ast.BinaryOp.add, interp_node.kind.interpolated_string[1].kind.binary_op.op);
+
+    // End part: " mm" (strips closing quote)
+    try testing.expectEqualStrings(" mm", interp_node.kind.interpolated_string[2].kind.string);
+}

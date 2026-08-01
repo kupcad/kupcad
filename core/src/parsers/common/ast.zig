@@ -33,6 +33,11 @@ pub const HashEntry = struct {
     value: *Node,
 };
 
+pub const ForBinding = struct {
+    name: []const u8,
+    range: *Node,
+};
+
 pub const Node = struct {
     kind: Kind,
     loc: Location,
@@ -41,6 +46,7 @@ pub const Node = struct {
         // Literals
         number: f64,
         string: []const u8,
+        interpolated_string: []const *Node,
         symbol: []const u8,
         boolean: bool,
         nil,
@@ -58,14 +64,16 @@ pub const Node = struct {
         // Variable lookup
         identifier: []const u8,
 
-        // Assignment: `target = expr` or `target[idx] = expr`
+        // Assignment: `target += expr`
         assignment: struct {
             name: []const u8,
+            op: ?BinaryOp, // null means pure '='
             value: *Node,
         },
         index_assignment: struct {
             target: *Node,
             index: *Node,
+            op: ?BinaryOp,
             value: *Node,
         },
 
@@ -95,11 +103,12 @@ pub const Node = struct {
             index: *Node,
         },
 
-        // List Comprehension: `[ for (x = [0:5]) x * 2 ]`
+        // List Comprehension: `[ for (x = [0:5]) each x * 2 ]`
         comprehension: struct {
             clauses: []const *Node,
             yield_expr: *Node,
         },
+        each_expr: *Node,
 
         // Method / Function Call: `obj.method(x: 10) do |a| ... end` or `cube(10)`
         method_call: struct {
@@ -139,8 +148,7 @@ pub const Node = struct {
         },
 
         for_stmt: struct {
-            var_name: []const u8,
-            range: *Node,
+            bindings: []const ForBinding,
             body: *Node,
             is_intersection: bool = false,
         },
