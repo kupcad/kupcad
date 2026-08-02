@@ -2004,3 +2004,97 @@ test "KupCAD Parser: Diagnostics Line and Column Tracking" {
     try testing.expectEqual(@as(u32, 2), diag.loc.line);
     try testing.expectEqual(@as(u32, 12), diag.loc.col);
 }
+
+test "KupCAD Parser: Multiple Prefix Unary Operators" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Simulating something like `valid = !!~-x`
+    const source = "valid = !!~-x";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseStatement();
+
+    const not_1 = stmt.kind.assignment.value;
+    try testing.expectEqual(ast.UnaryOp.not, not_1.kind.unary_op.op);
+
+    const not_2 = not_1.kind.unary_op.operand;
+    try testing.expectEqual(ast.UnaryOp.not, not_2.kind.unary_op.op);
+
+    const bit_not = not_2.kind.unary_op.operand;
+    try testing.expectEqual(ast.UnaryOp.bitwise_not, bit_not.kind.unary_op.op);
+
+    const neg = bit_not.kind.unary_op.operand;
+    try testing.expectEqual(ast.UnaryOp.negate, neg.kind.unary_op.op);
+    try testing.expectEqualStrings("x", neg.kind.unary_op.operand.kind.identifier);
+}
+
+test "KupCAD Parser: Complex Ternary Nesting (Right Associativity)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "status = a ? b ? c : d : e ? f : g";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseStatement();
+
+    const root = stmt.kind.assignment.value;
+    try testing.expectEqual(ast.Node.Kind.ternary_op, @as(std.meta.Tag(ast.Node.Kind), root.kind));
+    try testing.expectEqualStrings("a", root.kind.ternary_op.condition.kind.identifier);
+
+    const then_branch = root.kind.ternary_op.then_branch;
+    try testing.expectEqual(ast.Node.Kind.ternary_op, @as(std.meta.Tag(ast.Node.Kind), then_branch.kind));
+    try testing.expectEqualStrings("b", then_branch.kind.ternary_op.condition.kind.identifier);
+    try testing.expectEqualStrings("c", then_branch.kind.ternary_op.then_branch.kind.identifier);
+    try testing.expectEqualStrings("d", then_branch.kind.ternary_op.else_branch.kind.identifier);
+
+    const else_branch = root.kind.ternary_op.else_branch;
+    try testing.expectEqual(ast.Node.Kind.ternary_op, @as(std.meta.Tag(ast.Node.Kind), else_branch.kind));
+    try testing.expectEqualStrings("e", else_branch.kind.ternary_op.condition.kind.identifier);
+    try testing.expectEqualStrings("f", else_branch.kind.ternary_op.then_branch.kind.identifier);
+    try testing.expectEqualStrings("g", else_branch.kind.ternary_op.else_branch.kind.identifier);
+}
+
+test "KupCAD Parser: Implicit Method Block Argument Parentheses Leniency" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "cube(10) { |x| x.scale(2) }";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseStatement();
+
+    try testing.expectEqualStrings("cube", stmt.kind.method_call.method_name);
+    try testing.expectEqual(@as(f64, 10.0), stmt.kind.method_call.args[0].value.kind.number);
+
+    const block = stmt.kind.method_call.block.?;
+    try testing.expectEqualStrings("x", block.kind.block.params[0].kind.identifier);
+    try testing.expectEqualStrings("scale", block.kind.block.stmts[0].kind.method_call.method_name);
+}
+
+test "KupCAD Parser: Keyword Arguments Mixed with Positional and Splats" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "render(1, 2, *list, size: 10, **opts, &cb)";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseStatement();
+
+    const args = stmt.kind.method_call.args;
+    try testing.expectEqual(@as(usize, 6), args.len);
+
+    try testing.expectEqual(@as(?ast.ArgModifier, null), args[0].modifier);
+    try testing.expectEqual(@as(?ast.ArgModifier, null), args[1].modifier);
+
+    try testing.expectEqual(ast.ArgModifier.splat, args[2].modifier.?);
+    try testing.expectEqualStrings("list", args[2].value.kind.identifier);
+
+    try testing.expectEqualStrings("size", args[3].name);
+
+    try testing.expectEqual(ast.ArgModifier.double_splat, args[4].modifier.?);
+    try testing.expectEqualStrings("opts", args[4].value.kind.identifier);
+
+    try testing.expectEqual(ast.ArgModifier.block, args[5].modifier.?);
+    try testing.expectEqualStrings("cb", args[5].value.kind.identifier);
+}
