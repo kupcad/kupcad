@@ -196,6 +196,7 @@ pub const Node = struct {
         },
         super_call: struct {
             args: []const NamedArg = &.{},
+            block: ?*Node = null,
         },
 
         // Anonymous Functions: `->(x, y) { ... }`

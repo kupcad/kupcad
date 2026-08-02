@@ -237,6 +237,8 @@ pub const Parser = struct {
         if (self.current.tag == .keyword_if or self.current.tag == .keyword_elsif) self.advance() else return ParseError.UnexpectedToken;
 
         const condition = try self.parseExpression(.none);
+        if (self.current.tag == .keyword_then) self.advance();
+
         self.skipIgnored();
 
         const then_branch = try self.parseBlock(&.{ .keyword_elsif, .keyword_else, .keyword_end });
@@ -257,6 +259,8 @@ pub const Parser = struct {
     fn parseUnlessStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_unless);
         const condition = try self.parseExpression(.none);
+        if (self.current.tag == .keyword_then) self.advance();
+
         self.skipIgnored();
 
         const then_branch = try self.parseBlock(&.{ .keyword_else, .keyword_end });
@@ -338,6 +342,8 @@ pub const Parser = struct {
         if (self.current.tag != .newline and self.current.tag != .keyword_when) {
             condition = try self.parseExpression(.none);
         }
+        if (self.current.tag == .keyword_then) self.advance();
+
         self.skipIgnored();
 
         var when_branches: std.ArrayListUnmanaged(ast.WhenBranch) = .empty;
@@ -783,9 +789,25 @@ pub const Parser = struct {
 
     fn parseSuper(self: *Parser) ParseError!*Node {
         const tok = try self.expect(.keyword_super);
-        const args = try self.parseParenArgs();
+
+        if (self.current.tag == .l_paren) {
+            const args = try self.parseParenArgs();
+            var block_node: ?*Node = null;
+            if (self.current.tag == .keyword_do or self.current.tag == .l_brace) block_node = try self.parseBlockClosure();
+            return self.createNode(.{
+                .super_call = .{ .args = args, .block = block_node },
+            }, tok.loc);
+        }
+
+        if (self.isCommandCallStart()) {
+            const cmd = try self.parseCommandArgsAndBlock();
+            return self.createNode(.{
+                .super_call = .{ .args = cmd.args, .block = cmd.block },
+            }, tok.loc);
+        }
+
         return self.createNode(.{
-            .super_call = .{ .args = args },
+            .super_call = .{ .args = &.{}, .block = null },
         }, tok.loc);
     }
 

@@ -762,3 +762,30 @@ test "KupCAD Parser: Quoted Symbols, Single Quotes, Destructuring" {
     try testing.expectEqualStrings("y", params[0].kind.array_literal[1].kind.identifier);
     try testing.expectEqualStrings("val", params[1].kind.identifier);
 }
+
+test "KupCAD Parser: Super with Command Syntax and Blocks" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "super x: 10 do\nend";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.super_call, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqualStrings("x", node.kind.super_call.args[0].name);
+    try testing.expect(node.kind.super_call.block != null);
+}
+
+test "KupCAD Parser: Optional 'then' Keyword" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "if x > 5 then a = 1 end";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.if_stmt, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqualStrings("a", node.kind.if_stmt.then_branch.kind.block.stmts[0].kind.assignment.name);
+}
