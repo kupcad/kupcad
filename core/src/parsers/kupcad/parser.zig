@@ -1039,29 +1039,51 @@ pub const Parser = struct {
         }
     }
 
+    fn parseBlockParam(self: *Parser) ParseError!*Node {
+        if (self.current.tag == .ident) {
+            const tok = self.current;
+            self.advance();
+            return self.createNode(.{ .identifier = tok.lexeme }, tok.loc);
+        } else if (self.current.tag == .l_paren) {
+            const start_loc = self.current.loc;
+            self.advance();
+            var tuple_params: std.ArrayListUnmanaged(*Node) = .empty;
+            errdefer tuple_params.deinit(self.allocator);
+            while (self.current.tag != .r_paren and self.current.tag != .eof) {
+                try tuple_params.append(self.allocator, try self.parseBlockParam());
+                if (self.current.tag == .comma) self.advance() else break;
+            }
+            _ = try self.expect(.r_paren);
+            return self.createNode(.{ .array_literal = try tuple_params.toOwnedSlice(self.allocator) }, start_loc);
+        }
+        return ParseError.UnexpectedToken;
+    }
+
     fn parseBlockClosure(self: *Parser) ParseError!*Node {
         const is_brace = (self.current.tag == .l_brace);
         const start_tok = if (is_brace) try self.expect(.l_brace) else try self.expect(.keyword_do);
-        var params: std.ArrayListUnmanaged([]const u8) = .empty;
+
+        var params: std.ArrayListUnmanaged(*Node) = .empty;
         errdefer params.deinit(self.allocator);
+
         if (self.current.tag == .pipe) {
             self.advance();
             while (self.current.tag != .pipe and self.current.tag != .eof) {
-                if (self.current.tag == .ident) {
-                    try params.append(self.allocator, self.current.lexeme);
-                    self.advance();
-                } else return ParseError.UnexpectedToken;
+                try params.append(self.allocator, try self.parseBlockParam());
                 if (self.current.tag == .comma) self.advance() else break;
             }
             _ = try self.expect(.pipe);
         }
+
         const end_tags: []const Tag = if (is_brace) &.{.r_brace} else &.{.keyword_end};
         const block_node = try self.parseBlock(end_tags);
+
         if (is_brace) {
             _ = try self.expect(.r_brace);
         } else {
             _ = try self.expect(.keyword_end);
         }
+
         return self.createNode(.{
             .block = .{ .params = try params.toOwnedSlice(self.allocator), .stmts = block_node.kind.block.stmts },
         }, start_tok.loc);

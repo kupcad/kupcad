@@ -270,7 +270,7 @@ pub const Node = struct {
 
         // Block Scope
         block: struct {
-            params: []const []const u8 = &.{},
+            params: []const *Node = &.{},
             stmts: []const *Node,
         },
     };

@@ -193,13 +193,14 @@ pub const Lexer = struct {
                     self.interp_depth -= 1;
                     self.brace_depth = self.interp_stack[self.interp_depth];
                     self.advance();
-                    return self.consumeStringBody(start_loc, false);
+                    return self.consumeStringBody(start_loc, false, '"');
                 } else {
                     return self.consumeChar(.r_brace, start_loc);
                 }
             },
             ':' => self.consumeSymbolOrColon(start_loc),
-            '"' => self.consumeString(start_loc),
+            '\'' => self.consumeString(start_loc, '\''),
+            '"' => self.consumeString(start_loc, '"'),
             '#' => self.consumeCommentOrParam(start_loc),
             '=', '!', '<', '>', '&', '|', '*', '/', '?', '+', '-', '^', '~' => self.consumeOperator(start_loc),
             '%' => self.consumePercentOrModulo(start_loc),
@@ -346,6 +347,17 @@ pub const Lexer = struct {
             self.advance();
             return .{ .tag = .colon_colon, .loc = start_loc, .lexeme = "::" };
         }
+        if (self.index < self.buffer.len and (self.peek() == '"' or self.peek() == '\'')) {
+            const quote = self.peek();
+            self.advance();
+            const start = self.index;
+            while (self.index < self.buffer.len and self.peek() != quote) {
+                self.advance();
+            }
+            const lexeme = self.buffer[start..self.index];
+            if (self.index < self.buffer.len) self.advance(); // consume quote
+            return .{ .tag = .symbol, .loc = start_loc, .lexeme = lexeme };
+        }
         if (self.index < self.buffer.len and std.ascii.isAlphabetic(self.peek())) {
             const start = self.index;
             while (self.index < self.buffer.len and (std.ascii.isAlphanumeric(self.peek()) or self.peek() == '_')) {
@@ -361,12 +373,12 @@ pub const Lexer = struct {
         return .{ .tag = .number, .loc = start_loc, .lexeme = lexeme };
     }
 
-    fn consumeString(self: *Lexer, start_loc: common_token.Location) Token {
+    fn consumeString(self: *Lexer, start_loc: common_token.Location, quote: u8) Token {
         self.advance();
-        return self.consumeStringBody(start_loc, true);
+        return self.consumeStringBody(start_loc, true, quote);
     }
 
-    fn consumeStringBody(self: *Lexer, start_loc: common_token.Location, is_start: bool) Token {
+    fn consumeStringBody(self: *Lexer, start_loc: common_token.Location, is_start: bool, quote: u8) Token {
         const start = self.index;
         while (self.index < self.buffer.len) {
             const c = self.peek();
@@ -375,11 +387,11 @@ pub const Lexer = struct {
                 if (self.index < self.buffer.len) self.advance();
                 continue;
             }
-            if (c == '#' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '{') {
+            // Interpolation is ONLY for double-quoted strings
+            if (quote == '"' and c == '#' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '{') {
                 const lexeme = self.buffer[start..self.index];
                 self.advance();
                 self.advance();
-
                 if (self.interp_depth < self.interp_stack.len) {
                     self.interp_stack[self.interp_depth] = self.brace_depth;
                     self.interp_depth += 1;
@@ -387,7 +399,7 @@ pub const Lexer = struct {
                 }
                 return .{ .tag = if (is_start) .string_start else .string_mid, .loc = start_loc, .lexeme = lexeme };
             }
-            if (c == '"') {
+            if (c == quote) {
                 const lexeme = self.buffer[start..self.index];
                 self.advance();
                 return .{ .tag = if (is_start) .string else .string_end, .loc = start_loc, .lexeme = lexeme };

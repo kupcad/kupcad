@@ -131,8 +131,8 @@ test "KupCAD Parser: Method Call with Do Block and Parameters" {
 
     const block = node.kind.method_call.block.?;
     try testing.expectEqual(@as(usize, 2), block.kind.block.params.len);
-    try testing.expectEqualStrings("face", block.kind.block.params[0]);
-    try testing.expectEqualStrings("idx", block.kind.block.params[1]);
+    try testing.expectEqualStrings("face", block.kind.block.params[0].kind.identifier);
+    try testing.expectEqualStrings("idx", block.kind.block.params[1].kind.identifier);
 
     const stmts = block.kind.block.stmts;
     try testing.expectEqual(ast.BinaryOp.add, stmts[0].kind.binary_op.op);
@@ -549,7 +549,8 @@ test "KupCAD Parser: Curly Brace Method Blocks" {
     try testing.expectEqualStrings("each", node.kind.method_call.method_name);
 
     const block = node.kind.method_call.block.?;
-    try testing.expectEqualStrings("f", block.kind.block.params[0]);
+
+    try testing.expectEqualStrings("f", block.kind.block.params[0].kind.identifier);
     try testing.expectEqualStrings("fillet", block.kind.block.stmts[0].kind.method_call.method_name);
 }
 
@@ -741,4 +742,23 @@ test "KupCAD Parser: Implicit RHS Tuples and Array/Hash Splats" {
     const hash_assign = try parser.parseStatement();
     const hash_lit = hash_assign.kind.assignment.value.kind.hash_literal;
     try testing.expectEqual(ast.Node.Kind.double_splat_expr, @as(std.meta.Tag(ast.Node.Kind), hash_lit[1].key.kind));
+}
+
+test "KupCAD Parser: Quoted Symbols, Single Quotes, Destructuring" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "map.each(:'key name') do |(x, y), val|\nend";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    const args = node.kind.method_call.args;
+    try testing.expectEqualStrings("key name", args[0].value.kind.symbol); // Quoted Symbol
+
+    const params = node.kind.method_call.block.?.kind.block.params;
+    try testing.expectEqual(ast.Node.Kind.array_literal, @as(std.meta.Tag(ast.Node.Kind), params[0].kind));
+    try testing.expectEqualStrings("x", params[0].kind.array_literal[0].kind.identifier); // Nested Tuple
+    try testing.expectEqualStrings("y", params[0].kind.array_literal[1].kind.identifier);
+    try testing.expectEqualStrings("val", params[1].kind.identifier);
 }

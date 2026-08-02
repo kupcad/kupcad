@@ -377,3 +377,22 @@ test "OpenSCAD Parser: Trailing Commas Leniency" {
     try testing.expectEqualStrings("y", let_stmts[1].kind.assignment.name);
     try testing.expectEqualStrings("cube", let_stmts[2].kind.method_call.method_name);
 }
+
+test "OpenSCAD Parser: Mid-Expression Comments & Empty Statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "module foo() { ;; x = 10 /* offset */ + 5; ; }";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const mod_node = try parser.parseStatement();
+    const block_stmts = mod_node.kind.module_stmt.body.kind.block.stmts;
+
+    // Only the actual assignment should survive the block
+    try testing.expectEqual(@as(usize, 1), block_stmts.len);
+
+    const assign = block_stmts[0];
+    try testing.expectEqualStrings("x", assign.kind.assignment.name);
+    try testing.expectEqual(ast.BinaryOp.add, assign.kind.assignment.value.kind.binary_op.op);
+}

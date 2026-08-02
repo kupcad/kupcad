@@ -66,24 +66,25 @@ pub const Parser = struct {
         errdefer stmts.deinit(self.allocator);
 
         while (self.current.tag != .eof and self.current.tag != .r_brace) {
-            if (self.current.tag == .comment or self.current.tag == .block_comment) {
+            self.skipIgnored();
+            if (self.current.tag == .semicolon) {
                 self.advance();
                 continue;
             }
+            if (self.current.tag == .r_brace) break;
+
             const stmt = try self.parseStatement();
             try stmts.append(self.allocator, stmt);
         }
 
-        const stmts_slice = try stmts.toOwnedSlice(self.allocator);
         return self.createNode(.{
-            .block = .{ .stmts = stmts_slice },
+            .block = .{ .stmts = try stmts.toOwnedSlice(self.allocator) },
         }, start_loc);
     }
 
     pub fn parseStatement(self: *Parser) ParseError!*Node {
-        while (self.current.tag == .comment or self.current.tag == .block_comment) {
-            self.advance();
-        }
+        self.skipIgnored();
+
         return switch (self.current.tag) {
             .keyword_module => try self.parseModuleDecl(),
             .keyword_function => try self.parseFunctionDecl(),
@@ -506,6 +507,8 @@ pub const Parser = struct {
         const start_tok = self.current;
         var left: *Node = undefined;
 
+        self.skipIgnored();
+
         switch (start_tok.tag) {
             .number => {
                 self.advance();
@@ -548,7 +551,10 @@ pub const Parser = struct {
             else => return ParseError.InvalidExpression,
         }
 
-        while (@intFromEnum(precedence) < @intFromEnum(getInfixPrecedence(self.current.tag))) {
+        while (true) {
+            self.skipIgnored();
+            if (@intFromEnum(precedence) >= @intFromEnum(getInfixPrecedence(self.current.tag))) break;
+
             const op_tok = self.current;
             left = switch (op_tok.tag) {
                 .plus, .minus, .star, .slash, .percent, .caret, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or => try self.parseBinary(left),
@@ -558,6 +564,12 @@ pub const Parser = struct {
             };
         }
         return left;
+    }
+
+    fn skipIgnored(self: *Parser) void {
+        while (self.current.tag == .comment or self.current.tag == .block_comment) {
+            self.advance();
+        }
     }
 
     fn parseLetExpression(self: *Parser) ParseError!*Node {
