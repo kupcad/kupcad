@@ -2210,3 +2210,23 @@ test "KupCAD Parser: Begin Block as Expression" {
     try testing.expectEqual(ast.KupCadKind.begin_stmt, @as(std.meta.Tag(ast.KupCadKind), begin_expr.kind.kupcad));
     try testing.expectEqual(@as(usize, 1), begin_expr.kind.kupcad.begin_stmt.rescues.len);
 }
+
+test "KupCAD Parser: Single-line Case When with 'then'" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\case type
+        \\when 1 then cube()
+        \\when 2 then sphere()
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseStatement();
+
+    const branches = stmt.kind.kupcad.case_stmt.when_branches;
+    try testing.expectEqual(@as(usize, 2), branches.len);
+    try testing.expectEqualStrings("cube", branches[0].body.kind.kupcad.block.stmts[0].kind.kupcad.method_call.method_name);
+    try testing.expectEqualStrings("sphere", branches[1].body.kind.kupcad.block.stmts[0].kind.kupcad.method_call.method_name);
+}

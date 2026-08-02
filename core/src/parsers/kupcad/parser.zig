@@ -205,7 +205,7 @@ pub const Parser = struct {
             var lhs_list: std.ArrayListUnmanaged(ast.LhsExpr) = .empty;
             errdefer lhs_list.deinit(self.allocator);
 
-            while (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof) {
+            while (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_then) {
                 var mod: ?ast.ArgModifier = null;
                 if (self.tokens.current.tag == .star) {
                     mod = .splat;
@@ -482,10 +482,13 @@ pub const Parser = struct {
             var conditions: std.ArrayListUnmanaged(*Node) = .empty;
             errdefer conditions.deinit(self.allocator);
 
-            while (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof) {
+            while (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_then) {
                 try conditions.append(self.allocator, try self.parseExpression(.none));
                 if (self.tokens.current.tag == .comma) self.advance() else break;
             }
+
+            if (self.tokens.current.tag == .keyword_then) self.advance();
+
             self.skipIgnored();
 
             const body = try self.parseBlock(&.{ .keyword_when, .keyword_else, .keyword_end });
@@ -736,7 +739,7 @@ pub const Parser = struct {
     fn parseNextStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_next);
         var val: ?*Node = null;
-        if (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_end and self.tokens.current.tag != .keyword_unless and self.tokens.current.tag != .keyword_if and self.tokens.current.tag != .keyword_while and self.tokens.current.tag != .keyword_until) {
+        if (!self.isExprListEnd()) {
             val = try self.parseExpressionList();
         }
         return self.createNode(.{ .next_stmt = val }, start_tok.loc);
@@ -765,7 +768,7 @@ pub const Parser = struct {
     fn parseReturnStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_return);
         var val: ?*Node = null;
-        if (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_end and self.tokens.current.tag != .keyword_unless and self.tokens.current.tag != .keyword_if and self.tokens.current.tag != .keyword_while and self.tokens.current.tag != .keyword_until) {
+        if (!self.isExprListEnd()) {
             val = try self.parseExpressionList();
         }
         return self.createNode(.{ .return_stmt = val }, start_tok.loc);
@@ -784,7 +787,7 @@ pub const Parser = struct {
             }
             _ = try self.expect(.r_paren);
         } else {
-            while (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_unless and self.tokens.current.tag != .keyword_if and self.tokens.current.tag != .keyword_end) {
+            while (!self.isExprListEnd()) {
                 try args.append(self.allocator, try self.parseExpression(.none));
                 if (self.tokens.current.tag == .comma) self.advance() else break;
             }
@@ -795,7 +798,7 @@ pub const Parser = struct {
     fn parseBreakStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_break);
         var val: ?*Node = null;
-        if (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_end and self.tokens.current.tag != .keyword_unless and self.tokens.current.tag != .keyword_if and self.tokens.current.tag != .keyword_while and self.tokens.current.tag != .keyword_until) {
+        if (!self.isExprListEnd()) {
             val = try self.parseExpressionList();
         }
         return self.createNode(.{ .break_stmt = val }, start_tok.loc);
@@ -943,6 +946,13 @@ pub const Parser = struct {
                 } else return ParseError.UnexpectedToken;
             }
             return .{ .key = key, .value = try self.parseExpression(.none) };
+        }
+    }
+
+    fn isExprListEnd(self: *Parser) bool {
+        switch (self.tokens.current.tag) {
+            .newline, .eof, .keyword_end, .keyword_unless, .keyword_if, .keyword_while, .keyword_until, .r_brace, .r_bracket, .r_paren => return true,
+            else => return false,
         }
     }
 
