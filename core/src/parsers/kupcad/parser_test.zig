@@ -1335,3 +1335,186 @@ test "KupCAD Parser: Class Inheritance with Scope Resolution and Class Methods" 
     try testing.expectEqualStrings("m3", def_node.kind.def_stmt.name);
     try testing.expectEqualStrings("length", def_node.kind.def_stmt.params[0].name);
 }
+
+test "KupCAD Parser: Top-Level Scope Resolution with Chained Calls" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "part = ::Hardware::Fastener::Screw.build(length: 20)";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseStatement();
+
+    try testing.expectEqual(ast.Node.Kind.assignment, @as(std.meta.Tag(ast.Node.Kind), stmt.kind));
+    const call_node = stmt.kind.assignment.value;
+    try testing.expectEqualStrings("build", call_node.kind.method_call.method_name);
+
+    const ns_access = call_node.kind.method_call.receiver.?;
+    try testing.expectEqual(ast.Node.Kind.namespace_access, @as(std.meta.Tag(ast.Node.Kind), ns_access.kind));
+    const path = ns_access.kind.namespace_access.path;
+    try testing.expectEqual(@as(usize, 3), path.len);
+    try testing.expectEqualStrings("Hardware", path[0]);
+    try testing.expectEqualStrings("Fastener", path[1]);
+    try testing.expectEqualStrings("Screw", path[2]);
+}
+
+test "KupCAD Parser: Bitwise and Logical Shorthand Compound Assignments" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\mask &= 0xFF
+        \\flags |= 0b100
+        \\key ^= 0x01
+        \\buf <<= 8
+        \\val ||= default_val
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // 1. mask &= 0xFF
+    const s1 = try parser.parseStatement();
+    try testing.expectEqualStrings("mask", s1.kind.assignment.name);
+    try testing.expectEqual(ast.BinaryOp.bitwise_and, s1.kind.assignment.op.?);
+
+    // 2. flags |= 0b100
+    const s2 = try parser.parseStatement();
+    try testing.expectEqualStrings("flags", s2.kind.assignment.name);
+    try testing.expectEqual(ast.BinaryOp.bitwise_or, s2.kind.assignment.op.?);
+
+    // 3. key ^= 0x01
+    const s3 = try parser.parseStatement();
+    try testing.expectEqualStrings("key", s3.kind.assignment.name);
+    try testing.expectEqual(ast.BinaryOp.bitwise_xor, s3.kind.assignment.op.?);
+
+    // 4. buf <<= 8
+    const s4 = try parser.parseStatement();
+    try testing.expectEqualStrings("buf", s4.kind.assignment.name);
+    try testing.expectEqual(ast.BinaryOp.shift_left, s4.kind.assignment.op.?);
+
+    // 5. val ||= default_val
+    const s5 = try parser.parseStatement();
+    try testing.expectEqualStrings("val", s5.kind.assignment.name);
+    try testing.expectEqual(ast.BinaryOp.logical_or, s5.kind.assignment.op.?);
+}
+
+test "KupCAD Parser: Keyword Logical Operators (and, or, not) Precedence" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "valid and ready or not disabled";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const expr = try parser.parseExpression(.none);
+    // Logical OR has lower precedence than AND, so OR is root
+    try testing.expectEqual(ast.BinaryOp.logical_or, expr.kind.binary_op.op);
+
+    // Right of OR is `not disabled`
+    const not_node = expr.kind.binary_op.right;
+    try testing.expectEqual(ast.UnaryOp.not, not_node.kind.unary_op.op);
+    try testing.expectEqualStrings("disabled", not_node.kind.unary_op.operand.kind.identifier);
+
+    // Left of OR is `valid and ready`
+    const and_node = expr.kind.binary_op.left;
+    try testing.expectEqual(ast.BinaryOp.logical_and, and_node.kind.binary_op.op);
+    try testing.expectEqualStrings("valid", and_node.kind.binary_op.left.kind.identifier);
+    try testing.expectEqualStrings("ready", and_node.kind.binary_op.right.kind.identifier);
+}
+
+test "KupCAD Parser: Control Flow Statements with Payloads and Modifiers" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\break 42 if finished?
+        \\return x, y unless error?
+        \\next val until done?
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // 1. break 42 if finished?
+    const s1 = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.if_stmt, @as(std.meta.Tag(ast.Node.Kind), s1.kind));
+    try testing.expectEqualStrings("finished?", s1.kind.if_stmt.condition.kind.identifier);
+    const break_node = s1.kind.if_stmt.then_branch.kind.block.stmts[0];
+    try testing.expectEqual(@as(f64, 42.0), break_node.kind.break_stmt.?.kind.number);
+
+    // 2. return x, y unless error?
+    const s2 = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.if_stmt, @as(std.meta.Tag(ast.Node.Kind), s2.kind));
+    try testing.expectEqual(true, s2.kind.if_stmt.is_unless);
+    const ret_node = s2.kind.if_stmt.then_branch.kind.block.stmts[0];
+    const ret_arr = ret_node.kind.return_stmt.?.kind.array_literal;
+    try testing.expectEqual(@as(usize, 2), ret_arr.len);
+
+    // 3. next val until done?
+    const s3 = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.while_stmt, @as(std.meta.Tag(ast.Node.Kind), s3.kind));
+    try testing.expectEqual(true, s3.kind.while_stmt.is_until);
+    const next_node = s3.kind.while_stmt.body.kind.block.stmts[0];
+    try testing.expectEqualStrings("val", next_node.kind.next_stmt.?.kind.identifier);
+}
+
+test "KupCAD Parser: Multi-Interpolation String with Expressions and Method Calls" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "\"Part: #{part.name} at X:#{part.x + 10}, Y:#{part.y}\"";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const expr = try parser.parseExpression(.none);
+    try testing.expectEqual(ast.Node.Kind.interpolated_string, @as(std.meta.Tag(ast.Node.Kind), expr.kind));
+
+    const parts = expr.kind.interpolated_string;
+    try testing.expectEqual(@as(usize, 7), parts.len);
+
+    try testing.expectEqualStrings("Part: ", parts[0].kind.string);
+    try testing.expectEqualStrings("name", parts[1].kind.method_call.method_name);
+    try testing.expectEqualStrings(" at X:", parts[2].kind.string);
+    try testing.expectEqual(ast.BinaryOp.add, parts[3].kind.binary_op.op);
+    try testing.expectEqualStrings(", Y:", parts[4].kind.string);
+    try testing.expectEqualStrings("y", parts[5].kind.method_call.method_name);
+    try testing.expectEqualStrings("", parts[6].kind.string);
+}
+
+test "KupCAD Parser: Module Namespaces with Doc Comments and Class Constructors" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\module Enclosures
+        \\  # @param wall_thickness [Length] Thickness of enclosure walls
+        \\  class Box < Base
+        \\    def initialize(w = 100)
+        \\      @w = w
+        \\    end
+        \\  end
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const mod_node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.module_stmt, @as(std.meta.Tag(ast.Node.Kind), mod_node.kind));
+    try testing.expectEqualStrings("Enclosures", mod_node.kind.module_stmt.name);
+
+    const block_stmts = mod_node.kind.module_stmt.body.kind.block.stmts;
+    try testing.expectEqual(@as(usize, 2), block_stmts.len);
+
+    // Statement 0: Doc Comment
+    try testing.expectEqual(ast.Node.Kind.param_doc, @as(std.meta.Tag(ast.Node.Kind), block_stmts[0].kind));
+    try testing.expectEqualStrings("# @param wall_thickness [Length] Thickness of enclosure walls", block_stmts[0].kind.param_doc);
+
+    // Statement 1: Class Statement
+    const class_node = block_stmts[1];
+    try testing.expectEqualStrings("Box", class_node.kind.class_stmt.name.kind.identifier);
+    try testing.expectEqualStrings("Base", class_node.kind.class_stmt.super_class.?.kind.identifier);
+
+    const init_def = class_node.kind.class_stmt.body.kind.block.stmts[0];
+    try testing.expectEqualStrings("initialize", init_def.kind.def_stmt.name);
+    try testing.expectEqualStrings("w", init_def.kind.def_stmt.params[0].name);
+    try testing.expectEqual(@as(f64, 100.0), init_def.kind.def_stmt.params[0].default_value.?.kind.number);
+}
