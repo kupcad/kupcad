@@ -1803,3 +1803,174 @@ test "KupCAD Parser: Return and Next with Multi-value Tuples" {
     try testing.expectEqual(true, ret_vals[0].kind.boolean);
     try testing.expectEqualStrings("done", ret_vals[1].kind.string);
 }
+
+test "KupCAD Parser: Property and Index Assignment Interactions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Validates that method chains can be assigned to dynamically
+    const source = "config.sections[0].name = \"Top\"";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    // Root should be Property Assignment (`.name = "Top"`)
+    try testing.expectEqual(ast.Node.Kind.property_assignment, @as(std.meta.Tag(ast.Node.Kind), stmt.kind));
+    try testing.expectEqualStrings("name", stmt.kind.property_assignment.property);
+    try testing.expectEqualStrings("Top", stmt.kind.property_assignment.value.kind.string);
+
+    // Target of property assignment should be Index Access (`config.sections[0]`)
+    const target = stmt.kind.property_assignment.target;
+    try testing.expectEqual(ast.Node.Kind.index_access, @as(std.meta.Tag(ast.Node.Kind), target.kind));
+    try testing.expectEqual(@as(f64, 0.0), target.kind.index_access.index.kind.number);
+
+    // Target of index access should be Method Call (`config.sections`)
+    const access_target = target.kind.index_access.target;
+    try testing.expectEqual(ast.Node.Kind.method_call, @as(std.meta.Tag(ast.Node.Kind), access_target.kind));
+    try testing.expectEqualStrings("sections", access_target.kind.method_call.method_name);
+    try testing.expectEqualStrings("config", access_target.kind.method_call.receiver.?.kind.identifier);
+}
+
+test "KupCAD Parser: Multiple Sequential Rescue Clauses" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\begin
+        \\  calc()
+        \\rescue MathError, DivByZero => e
+        \\  1
+        \\rescue => fallback
+        \\  2
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.begin_stmt, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+
+    const rescues = node.kind.begin_stmt.rescues;
+    try testing.expectEqual(@as(usize, 2), rescues.len);
+
+    // First rescue
+    try testing.expectEqual(@as(usize, 2), rescues[0].errors.len);
+    try testing.expectEqualStrings("MathError", rescues[0].errors[0]);
+    try testing.expectEqualStrings("DivByZero", rescues[0].errors[1]);
+    try testing.expectEqualStrings("e", rescues[0].variable.?);
+    try testing.expectEqual(@as(f64, 1.0), rescues[0].body.kind.block.stmts[0].kind.number);
+
+    // Second rescue (catch-all)
+    try testing.expectEqual(@as(usize, 0), rescues[1].errors.len);
+    try testing.expectEqualStrings("fallback", rescues[1].variable.?);
+    try testing.expectEqual(@as(f64, 2.0), rescues[1].body.kind.block.stmts[0].kind.number);
+}
+
+test "KupCAD Parser: Trailing Modifiers on Compound Begin/End Blocks" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\begin
+        \\  step()
+        \\end until done?
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    // The statement modifier should wrap the begin block
+    try testing.expectEqual(ast.Node.Kind.while_stmt, @as(std.meta.Tag(ast.Node.Kind), stmt.kind));
+    try testing.expectEqual(true, stmt.kind.while_stmt.is_until);
+    try testing.expectEqualStrings("done?", stmt.kind.while_stmt.condition.kind.identifier);
+
+    // The body of the until statement should be the Begin Block
+    const wrapped_begin = stmt.kind.while_stmt.body.kind.block.stmts[0];
+    try testing.expectEqual(ast.Node.Kind.begin_stmt, @as(std.meta.Tag(ast.Node.Kind), wrapped_begin.kind));
+    try testing.expectEqualStrings("step", wrapped_begin.kind.begin_stmt.body.kind.block.stmts[0].kind.method_call.method_name);
+}
+
+test "KupCAD Parser: Global and Instance Variable Assignments" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\@width = 10
+        \\$offset = @width * 2
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // 1. @width = 10
+    const s1 = try parser.parseStatement();
+    try testing.expectEqualStrings("@width", s1.kind.assignment.name);
+
+    // 2. $offset = @width * 2
+    const s2 = try parser.parseStatement();
+    try testing.expectEqualStrings("$offset", s2.kind.assignment.name);
+    try testing.expectEqualStrings("@width", s2.kind.assignment.value.kind.binary_op.left.kind.identifier);
+}
+
+test "KupCAD Parser: Empty Literals and Blocks" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\arr = []
+        \\obj = {}
+        \\run do
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const s1 = try parser.parseStatement();
+    try testing.expectEqual(@as(usize, 0), s1.kind.assignment.value.kind.array_literal.len);
+
+    const s2 = try parser.parseStatement();
+    try testing.expectEqual(@as(usize, 0), s2.kind.assignment.value.kind.hash_literal.len);
+
+    const s3 = try parser.parseStatement();
+    try testing.expectEqualStrings("run", s3.kind.method_call.method_name);
+    try testing.expectEqual(@as(usize, 0), s3.kind.method_call.block.?.kind.block.stmts.len);
+}
+
+test "KupCAD Parser: Method Calls on Array and Hash Literals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\arr_max = [1, 2, 3].max
+        \\hash_keys = { a: 1 }.keys()
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // 1. arr_max = [1, 2, 3].max
+    const stmt1 = try parser.parseStatement();
+    try testing.expectEqualStrings("arr_max", stmt1.kind.assignment.name);
+
+    const call1 = stmt1.kind.assignment.value;
+    try testing.expectEqual(ast.Node.Kind.method_call, @as(std.meta.Tag(ast.Node.Kind), call1.kind));
+    try testing.expectEqualStrings("max", call1.kind.method_call.method_name);
+
+    const receiver1 = call1.kind.method_call.receiver.?;
+    try testing.expectEqual(ast.Node.Kind.array_literal, @as(std.meta.Tag(ast.Node.Kind), receiver1.kind));
+    try testing.expectEqual(@as(usize, 3), receiver1.kind.array_literal.len);
+    try testing.expectEqual(@as(f64, 1.0), receiver1.kind.array_literal[0].kind.number);
+
+    // 2. hash_keys = { a: 1 }.keys()
+    const stmt2 = try parser.parseStatement();
+    try testing.expectEqualStrings("hash_keys", stmt2.kind.assignment.name);
+
+    const call2 = stmt2.kind.assignment.value;
+    try testing.expectEqual(ast.Node.Kind.method_call, @as(std.meta.Tag(ast.Node.Kind), call2.kind));
+    try testing.expectEqualStrings("keys", call2.kind.method_call.method_name);
+
+    const receiver2 = call2.kind.method_call.receiver.?;
+    try testing.expectEqual(ast.Node.Kind.hash_literal, @as(std.meta.Tag(ast.Node.Kind), receiver2.kind));
+    try testing.expectEqual(@as(usize, 1), receiver2.kind.hash_literal.len);
+    try testing.expectEqualStrings("a", receiver2.kind.hash_literal[0].key.kind.symbol);
+}
