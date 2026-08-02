@@ -2332,3 +2332,72 @@ test "KupCAD Parser: Empty Parentheses evaluate to Nil" {
     // Ensure `()` was gracefully converted to a `.nil` semantic node
     try testing.expectEqual(ast.KupCadKind.nil, @as(std.meta.Tag(ast.KupCadKind), block_stmt.kind.kupcad));
 }
+
+test "KupCAD Parser: Chained and Compound Assignment Right-Associativity" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // 1. Chained assignment: a = b = c = 10
+    const source1 = "a = b = c = 10";
+    var lexer1 = Lexer.init(source1, 0);
+    var parser1 = Parser.init(&lexer1, arena.allocator());
+    const stmt1 = try parser1.parseStatement();
+
+    try testing.expectEqualStrings("a", stmt1.kind.kupcad.assignment.name);
+    const assign_b = stmt1.kind.kupcad.assignment.value;
+    try testing.expectEqual(ast.KupCadKind.assignment, @as(std.meta.Tag(ast.KupCadKind), assign_b.kind.kupcad));
+    try testing.expectEqualStrings("b", assign_b.kind.kupcad.assignment.name);
+
+    const assign_c = assign_b.kind.kupcad.assignment.value;
+    try testing.expectEqual(ast.KupCadKind.assignment, @as(std.meta.Tag(ast.KupCadKind), assign_c.kind.kupcad));
+    try testing.expectEqualStrings("c", assign_c.kind.kupcad.assignment.name);
+    try testing.expectEqual(@as(f64, 10.0), assign_c.kind.kupcad.assignment.value.kind.kupcad.number);
+
+    // 2. Chained compound assignment: x += y += 5
+    const source2 = "x += y += 5";
+    var lexer2 = Lexer.init(source2, 0);
+    var parser2 = Parser.init(&lexer2, arena.allocator());
+    const stmt2 = try parser2.parseStatement();
+
+    try testing.expectEqualStrings("x", stmt2.kind.kupcad.assignment.name);
+    try testing.expectEqual(ast.BinaryOp.add, stmt2.kind.kupcad.assignment.op.?);
+    const assign_y = stmt2.kind.kupcad.assignment.value;
+    try testing.expectEqual(ast.BinaryOp.add, assign_y.kind.kupcad.assignment.op.?);
+    try testing.expectEqualStrings("y", assign_y.kind.kupcad.assignment.name);
+    try testing.expectEqual(@as(f64, 5.0), assign_y.kind.kupcad.assignment.value.kind.kupcad.number);
+}
+
+test "KupCAD Parser: Nested Ternary Right-Associativity" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "a ? b : c ? d : e";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const expr = try parser.parseExpression(.none);
+
+    try testing.expectEqual(ast.KupCadKind.ternary_op, @as(std.meta.Tag(ast.KupCadKind), expr.kind.kupcad));
+    try testing.expectEqualStrings("a", expr.kind.kupcad.ternary_op.condition.kind.kupcad.identifier);
+    try testing.expectEqualStrings("b", expr.kind.kupcad.ternary_op.then_branch.kind.kupcad.identifier);
+
+    const else_ternary = expr.kind.kupcad.ternary_op.else_branch;
+    try testing.expectEqual(ast.KupCadKind.ternary_op, @as(std.meta.Tag(ast.KupCadKind), else_ternary.kind.kupcad));
+    try testing.expectEqualStrings("c", else_ternary.kind.kupcad.ternary_op.condition.kind.kupcad.identifier);
+    try testing.expectEqualStrings("d", else_ternary.kind.kupcad.ternary_op.then_branch.kind.kupcad.identifier);
+    try testing.expectEqualStrings("e", else_ternary.kind.kupcad.ternary_op.else_branch.kind.kupcad.identifier);
+}
+
+test "KupCAD Parser: Multiple Unary Prefix Right-Associativity" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "!!true";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const expr = try parser.parseExpression(.none);
+
+    try testing.expectEqual(ast.UnaryOp.not, expr.kind.kupcad.unary_op.op);
+    const inner_not = expr.kind.kupcad.unary_op.operand;
+    try testing.expectEqual(ast.UnaryOp.not, inner_not.kind.kupcad.unary_op.op);
+    try testing.expectEqual(true, inner_not.kind.kupcad.unary_op.operand.kind.kupcad.boolean);
+}

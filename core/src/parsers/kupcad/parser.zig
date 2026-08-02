@@ -1059,15 +1059,14 @@ pub const Parser = struct {
     }
 
     fn parseExpressionList(self: *Parser) ParseError!*Node {
-        const first = try self.parseExpression(.assignment); // Stop at commas
+        const first = try self.parseExpression(.none);
         if (self.tokens.current.tag == .comma) {
             var elements: std.ArrayListUnmanaged(*Node) = .empty;
             errdefer elements.deinit(self.allocator);
             try elements.append(self.allocator, first);
-
             while (self.tokens.current.tag == .comma) {
                 self.advance();
-                try elements.append(self.allocator, try self.parseExpression(.assignment));
+                try elements.append(self.allocator, try self.parseExpression(.none));
             }
             return self.createNode(.{ .array_literal = try elements.toOwnedSlice(self.allocator) }, first.loc);
         }
