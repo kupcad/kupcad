@@ -824,3 +824,38 @@ test "KupCAD Parser: Implicit Def Rescue / Ensure" {
     // Verify ensure
     try testing.expectEqualStrings("cleanup", begin_node.kind.begin_stmt.ensure_body.?.kind.block.stmts[0].kind.method_call.method_name);
 }
+
+test "KupCAD Parser: Advanced Number Literals (0x, 0b, 0o, Scientific, Underscores)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\hex = 0x1F
+        \\bin = 0b1010
+        \\oct = 0o755
+        \\sci = 1.5e3
+        \\num = 1_000_000
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // 0x1F = 31
+    const n1 = try parser.parseStatement();
+    try testing.expectEqual(@as(f64, 31.0), n1.kind.assignment.value.kind.number);
+
+    // 0b1010 = 10
+    const n2 = try parser.parseStatement();
+    try testing.expectEqual(@as(f64, 10.0), n2.kind.assignment.value.kind.number);
+
+    // 0o755 = 493
+    const n3 = try parser.parseStatement();
+    try testing.expectEqual(@as(f64, 493.0), n3.kind.assignment.value.kind.number);
+
+    // 1.5e3 = 1500
+    const n4 = try parser.parseStatement();
+    try testing.expectEqual(@as(f64, 1500.0), n4.kind.assignment.value.kind.number);
+
+    // 1_000_000 = 1000000
+    const n5 = try parser.parseStatement();
+    try testing.expectEqual(@as(f64, 1000000.0), n5.kind.assignment.value.kind.number);
+}

@@ -19,18 +19,67 @@ pub const LexerUtils = struct {
 
     pub fn consumeNumber(buffer: []const u8, index: *usize, col: *u32) []const u8 {
         const start = index.*;
+        if (start >= buffer.len) return buffer[start..index.*];
+
+        // 1. Check for Hexadecimal (0x), Binary (0b), and Octal (0o)
+        if (buffer[index.*] == '0' and index.* + 1 < buffer.len) {
+            const next_c = buffer[index.* + 1];
+            if (next_c == 'x' or next_c == 'X') {
+                index.* += 2;
+                col.* += 2;
+                while (index.* < buffer.len) {
+                    const c = buffer[index.*];
+                    if (std.ascii.isHex(c) or c == '_') {
+                        index.* += 1;
+                        col.* += 1;
+                    } else break;
+                }
+                return buffer[start..index.*];
+            } else if (next_c == 'b' or next_c == 'B') {
+                index.* += 2;
+                col.* += 2;
+                while (index.* < buffer.len) {
+                    const c = buffer[index.*];
+                    if (c == '0' or c == '1' or c == '_') {
+                        index.* += 1;
+                        col.* += 1;
+                    } else break;
+                }
+                return buffer[start..index.*];
+            } else if (next_c == 'o' or next_c == 'O') {
+                index.* += 2;
+                col.* += 2;
+                while (index.* < buffer.len) {
+                    const c = buffer[index.*];
+                    if ((c >= '0' and c <= '7') or c == '_') {
+                        index.* += 1;
+                        col.* += 1;
+                    } else break;
+                }
+                return buffer[start..index.*];
+            }
+        }
+
+        // 2. Standard Decimal, Fractional, and Scientific Notation (1e10, 1.5e-3)
         while (index.* < buffer.len) {
             const c = buffer[index.*];
-            if (std.ascii.isDigit(c)) {
+            if (std.ascii.isDigit(c) or c == '_') {
                 index.* += 1;
                 col.* += 1;
             } else if (c == '.') {
-                if (index.* + 1 < buffer.len and buffer[index.* + 1] == '.') break;
+                if (index.* + 1 < buffer.len and buffer[index.* + 1] == '.') break; // range check (..)
                 index.* += 1;
                 col.* += 1;
-            } else {
-                break;
-            }
+            } else if (c == 'e' or c == 'E') {
+                var advance_count: usize = 1;
+                if (index.* + 1 < buffer.len and (buffer[index.* + 1] == '+' or buffer[index.* + 1] == '-')) {
+                    advance_count = 2;
+                }
+                if (index.* + advance_count < buffer.len and std.ascii.isDigit(buffer[index.* + advance_count])) {
+                    index.* += advance_count;
+                    col.* += @intCast(advance_count);
+                } else break;
+            } else break;
         }
         return buffer[start..index.*];
     }

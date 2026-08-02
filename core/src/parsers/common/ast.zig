@@ -292,8 +292,38 @@ pub const Builder = struct {
     }
 
     pub fn number(self: Builder, lexeme: []const u8, loc: Location) !*Node {
-        // Shared float conversion logic
-        const val = std.fmt.parseFloat(f64, lexeme) catch return error.InvalidExpression;
+        // Strip visual underscores (e.g. 1_000_000 -> 1000000)
+        var buf: [128]u8 = undefined;
+        var len: usize = 0;
+        for (lexeme) |c| {
+            if (c != '_') {
+                if (len >= buf.len) return error.InvalidExpression;
+                buf[len] = c;
+                len += 1;
+            }
+        }
+        const clean = buf[0..len];
+        if (clean.len == 0) return error.InvalidExpression;
+
+        var val: f64 = 0;
+        if (clean.len > 2 and clean[0] == '0') {
+            const prefix = clean[1];
+            if (prefix == 'x' or prefix == 'X') {
+                const int_val = std.fmt.parseInt(u64, clean[2..], 16) catch return error.InvalidExpression;
+                val = @floatFromInt(int_val);
+            } else if (prefix == 'b' or prefix == 'B') {
+                const int_val = std.fmt.parseInt(u64, clean[2..], 2) catch return error.InvalidExpression;
+                val = @floatFromInt(int_val);
+            } else if (prefix == 'o' or prefix == 'O') {
+                const int_val = std.fmt.parseInt(u64, clean[2..], 8) catch return error.InvalidExpression;
+                val = @floatFromInt(int_val);
+            } else {
+                val = std.fmt.parseFloat(f64, clean) catch return error.InvalidExpression;
+            }
+        } else {
+            val = std.fmt.parseFloat(f64, clean) catch return error.InvalidExpression;
+        }
+
         return self.create(.{ .number = val }, loc);
     }
 

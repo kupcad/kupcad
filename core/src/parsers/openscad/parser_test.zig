@@ -396,3 +396,16 @@ test "OpenSCAD Parser: Mid-Expression Comments & Empty Statements" {
     try testing.expectEqualStrings("x", assign.kind.assignment.name);
     try testing.expectEqual(ast.BinaryOp.add, assign.kind.assignment.value.kind.binary_op.op);
 }
+
+test "OpenSCAD Parser: C-Style Hexadecimal Constants" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "val = 0xFF;";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    try testing.expectEqualStrings("val", stmt.kind.assignment.name);
+    try testing.expectEqual(@as(f64, 255.0), stmt.kind.assignment.value.kind.number);
+}
