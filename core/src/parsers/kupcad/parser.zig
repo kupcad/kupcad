@@ -157,8 +157,8 @@ pub const Parser = struct {
         var stmt = switch (self.tokens.current.tag) {
             .keyword_import => try self.parseImportOrExportStatement(false),
             .keyword_export => try self.parseImportOrExportStatement(true),
-            .keyword_if => try self.parseIfStatement(),
-            .keyword_unless => try self.parseUnlessStatement(),
+            .keyword_if => try self.parseIfOrUnless(false),
+            .keyword_unless => try self.parseIfOrUnless(true),
             .keyword_case => try self.parseCaseStatement(),
             .keyword_while => try self.parseWhileStatement(),
             .keyword_def => try self.parseDefStatement(),
@@ -421,46 +421,37 @@ pub const Parser = struct {
         }
     }
 
-    fn parseIfStatement(self: *Parser) ParseError!*Node {
+    fn parseIfOrUnless(self: *Parser, is_unless: bool) ParseError!*Node {
         const start_tok = self.tokens.current;
-        if (self.tokens.current.tag == .keyword_if or self.tokens.current.tag == .keyword_elsif) self.advance() else return ParseError.UnexpectedToken;
+        self.advance(); // consume if, unless, or elsif
 
         const condition = try self.parseExpression(.none);
         if (self.tokens.current.tag == .keyword_then) self.advance();
-
         self.skipIgnored();
-        const then_branch = try self.parseBlock(&.{ .keyword_elsif, .keyword_else, .keyword_end });
 
+        const then_branch = try self.parseBlock(&.{ .keyword_elsif, .keyword_else, .keyword_end });
         var else_branch: ?*Node = null;
+
         if (self.tokens.current.tag == .keyword_elsif) {
-            else_branch = try self.parseIfStatement();
+            // 'elsif' is logically an 'if' chain mapped into the else_branch
+            else_branch = try self.parseIfOrUnless(false);
         } else if (self.tokens.current.tag == .keyword_else) {
             self.advance();
             self.skipIgnored();
             else_branch = try self.parseBlock(&.{.keyword_end});
             _ = try self.expect(.keyword_end);
-        } else if (self.tokens.current.tag == .keyword_end) self.advance();
-
-        return self.createNode(.{ .if_stmt = try self.b.box(ast.IfStmt, .{ .condition = condition, .then_branch = then_branch, .else_branch = else_branch }) }, start_tok.loc);
-    }
-
-    fn parseUnlessStatement(self: *Parser) ParseError!*Node {
-        const start_tok = try self.expect(.keyword_unless);
-        const condition = try self.parseExpression(.none);
-        if (self.tokens.current.tag == .keyword_then) self.advance();
-
-        self.skipIgnored();
-        const then_branch = try self.parseBlock(&.{ .keyword_else, .keyword_end });
-
-        var else_branch: ?*Node = null;
-        if (self.tokens.current.tag == .keyword_else) {
+        } else if (self.tokens.current.tag == .keyword_end) {
             self.advance();
-            self.skipIgnored();
-            else_branch = try self.parseBlock(&.{.keyword_end});
-            _ = try self.expect(.keyword_end);
-        } else if (self.tokens.current.tag == .keyword_end) self.advance();
+        }
 
-        return self.createNode(.{ .if_stmt = try self.b.box(ast.IfStmt, .{ .condition = condition, .then_branch = then_branch, .else_branch = else_branch, .is_unless = true }) }, start_tok.loc);
+        return self.createNode(.{
+            .if_stmt = try self.b.box(ast.IfStmt, .{
+                .condition = condition,
+                .then_branch = then_branch,
+                .else_branch = else_branch,
+                .is_unless = is_unless,
+            }),
+        }, start_tok.loc);
     }
 
     fn parseCaseStatement(self: *Parser) ParseError!*Node {
@@ -701,13 +692,37 @@ pub const Parser = struct {
         const tok = self.tokens.current;
         self.advance();
 
-        if (self.isCommandCallStart()) {
-            const cmd = try self.parseCommandArgsAndBlock();
+        if (self.tokens.current.tag == .l_paren) {
+            const args = try self.parseParenArgs();
+
+            var block_node: ?*Node = null;
+            if (self.tokens.current.tag == .keyword_do or self.tokens.current.tag == .l_brace) {
+                block_node = try self.parseBlockClosure();
+            }
+
             return self.createNode(.{
-                .method_call = try self.b.box(ast.MethodCall, .{ .receiver = null, .method_name = tok.lexeme, .args = cmd.args, .block = cmd.block, .is_safe = false }),
+                .method_call = try self.b.box(ast.MethodCall, .{
+                    .receiver = null,
+                    .method_name = tok.lexeme,
+                    .args = args,
+                    .block = block_node, // <-- Pass the captured block
+                    .is_safe = false,
+                }),
             }, tok.loc);
         }
 
+        if (self.isCommandCallStart()) {
+            const cmd = try self.parseCommandArgsAndBlock();
+            return self.createNode(.{
+                .method_call = try self.b.box(ast.MethodCall, .{
+                    .receiver = null,
+                    .method_name = tok.lexeme,
+                    .args = cmd.args,
+                    .block = cmd.block,
+                    .is_safe = false,
+                }),
+            }, tok.loc);
+        }
         return self.b.identifierNode(tok.lexeme, tok.loc);
     }
 
@@ -999,8 +1014,8 @@ pub const Parser = struct {
             .l_bracket => left = try self.parseArrayLiteral(),
             .l_brace => left = try self.parseHashLiteral(),
             .plus, .minus, .bang, .keyword_not, .tilde => left = try self.parseUnary(),
-            .keyword_if => left = try self.parseIfStatement(),
-            .keyword_unless => left = try self.parseUnlessStatement(),
+            .keyword_if => left = try self.parseIfOrUnless(false),
+            .keyword_unless => left = try self.parseIfOrUnless(true),
             .keyword_begin => left = try self.parseBeginStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
             .percent_w, .percent_i => left = try self.parsePercentArray(start_tok.tag),

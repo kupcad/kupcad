@@ -2230,3 +2230,46 @@ test "KupCAD Parser: Single-line Case When with 'then'" {
     try testing.expectEqualStrings("cube", branches[0].body.kind.kupcad.block.stmts[0].kind.kupcad.method_call.method_name);
     try testing.expectEqualStrings("sphere", branches[1].body.kind.kupcad.block.stmts[0].kind.kupcad.method_call.method_name);
 }
+
+test "KupCAD Parser: Top-Level Method Call with Parens and Block" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\grid(2, 2) do |x, y|
+        \\  cube()
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    try testing.expectEqual(ast.KupCadKind.method_call, @as(std.meta.Tag(ast.KupCadKind), stmt.kind.kupcad));
+    try testing.expectEqualStrings("grid", stmt.kind.kupcad.method_call.method_name);
+    try testing.expectEqual(@as(usize, 2), stmt.kind.kupcad.method_call.args.len);
+
+    // Ensure the block was NOT discarded!
+    const block = stmt.kind.kupcad.method_call.block.?;
+    try testing.expectEqual(@as(usize, 2), block.kind.kupcad.block.params.len);
+    try testing.expectEqualStrings("x", block.kind.kupcad.block.params[0].kind.kupcad.identifier);
+}
+
+test "KupCAD Parser: Multi-Assignment with Raw Comma Values" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Ensures `x, y = 1, 2` wraps the RHS in an implicit array literal correctly
+    const source = "x, y = 10, 20";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    try testing.expectEqual(ast.KupCadKind.multiple_assignment, @as(std.meta.Tag(ast.KupCadKind), stmt.kind.kupcad));
+
+    const rhs_array = stmt.kind.kupcad.multiple_assignment.value.kind.kupcad.array_literal;
+    try testing.expectEqual(@as(usize, 2), rhs_array.len);
+    try testing.expectEqual(@as(f64, 10.0), rhs_array[0].kind.kupcad.number);
+    try testing.expectEqual(@as(f64, 20.0), rhs_array[1].kind.kupcad.number);
+}
