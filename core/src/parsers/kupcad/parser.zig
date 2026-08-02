@@ -622,6 +622,32 @@ pub const Parser = struct {
 
     // --- SHARED DRY ARGUMENT & PARAMETER LOGIC ---
 
+    // --- SHARED LIST PARSER COMBINATOR ---
+    inline fn parseCommaSeparated(
+        self: *Parser,
+        comptime ItemType: type,
+        comptime parseItemFn: fn (*Parser) ParseError!ItemType,
+        end_tag: Tag,
+    ) ParseError![]const ItemType {
+        var items: std.ArrayListUnmanaged(ItemType) = .empty;
+        errdefer items.deinit(self.allocator);
+
+        while (self.tokens.current.tag != end_tag and self.tokens.current.tag != .eof) {
+            self.skipIgnored();
+            if (self.tokens.current.tag == end_tag) break;
+
+            try items.append(self.allocator, try parseItemFn(self));
+
+            if (self.tokens.current.tag == .comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        return items.toOwnedSlice(self.allocator);
+    }
+
+    // --- SHARED DRY ARGUMENT & PARAMETER LOGIC ---
     fn parseArgModifier(self: *Parser) ?ast.ArgModifier {
         switch (self.tokens.current.tag) {
             .star => {
@@ -657,18 +683,13 @@ pub const Parser = struct {
     }
 
     fn parseParenArgs(self: *Parser) ParseError![]const ast.NamedArg {
-        var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
-        errdefer args.deinit(self.allocator);
         if (self.tokens.current.tag == .l_paren) {
             self.advance();
-            while (self.tokens.current.tag != .r_paren and self.tokens.current.tag != .eof) {
-                self.skipIgnored();
-                try args.append(self.allocator, try self.parseNamedArg());
-                if (self.tokens.current.tag == .comma) self.advance() else break;
-            }
+            const args = try self.parseCommaSeparated(ast.NamedArg, parseNamedArg, .r_paren);
             _ = try self.expect(.r_paren);
+            return args;
         }
-        return args.toOwnedSlice(self.allocator);
+        return &.{};
     }
 
     fn parseParam(self: *Parser) ParseError!ast.Param {
@@ -694,18 +715,49 @@ pub const Parser = struct {
     }
 
     fn parseParenParams(self: *Parser) ParseError![]const ast.Param {
-        var params: std.ArrayListUnmanaged(ast.Param) = .empty;
-        errdefer params.deinit(self.allocator);
         if (self.tokens.current.tag == .l_paren) {
             self.advance();
-            while (self.tokens.current.tag != .r_paren and self.tokens.current.tag != .eof) {
-                self.skipIgnored();
-                try params.append(self.allocator, try self.parseParam());
-                if (self.tokens.current.tag == .comma) self.advance() else break;
-            }
+            const params = try self.parseCommaSeparated(ast.Param, parseParam, .r_paren);
             _ = try self.expect(.r_paren);
+            return params;
         }
-        return params.toOwnedSlice(self.allocator);
+        return &.{};
+    }
+
+    // --- ARRAY AND HASH HELPERS ---
+    fn parseArrayElement(self: *Parser) ParseError!*Node {
+        if (self.tokens.current.tag == .star) {
+            const star_loc = self.tokens.current.loc;
+            self.advance();
+            const inner = try self.parseExpression(.none);
+            return self.createNode(.{ .splat_expr = inner }, star_loc);
+        } else {
+            return self.parseExpression(.none);
+        }
+    }
+
+    fn parseHashEntry(self: *Parser) ParseError!ast.HashEntry {
+        if (self.tokens.current.tag == .star_star) {
+            const star_loc = self.tokens.current.loc;
+            self.advance();
+            const inner = try self.parseExpression(.none);
+            const double_splat = try self.createNode(.{ .double_splat_expr = inner }, star_loc);
+            return .{ .key = double_splat, .value = double_splat };
+        } else {
+            var key: *Node = undefined;
+            if (self.tokens.current.tag == .ident and self.tokens.peekTag() == .colon) {
+                const key_tok = self.tokens.current;
+                self.advance();
+                self.advance();
+                key = try self.createNode(.{ .symbol = key_tok.lexeme }, key_tok.loc);
+            } else {
+                key = try self.parseExpression(.none);
+                if (self.tokens.current.tag == .colon or self.tokens.current.tag == .arrow) {
+                    self.advance();
+                } else return ParseError.UnexpectedToken;
+            }
+            return .{ .key = key, .value = try self.parseExpression(.none) };
+        }
     }
 
     // --- EXPRESSION PARSERS ---
@@ -984,70 +1036,6 @@ pub const Parser = struct {
         return self.b.identifierNode(tok.lexeme, tok.loc);
     }
 
-    fn parseArrayLiteral(self: *Parser) ParseError!*Node {
-        const start_tok = try self.expect(.l_bracket);
-        var elements: std.ArrayListUnmanaged(*Node) = .empty;
-        errdefer elements.deinit(self.allocator);
-
-        while (self.tokens.current.tag != .r_bracket and self.tokens.current.tag != .eof) {
-            self.skipIgnored();
-            if (self.tokens.current.tag == .r_bracket) break;
-
-            if (self.tokens.current.tag == .star) {
-                const star_loc = self.tokens.current.loc;
-                self.advance();
-                const inner = try self.parseExpression(.none);
-                try elements.append(self.allocator, try self.createNode(.{ .splat_expr = inner }, star_loc));
-            } else {
-                try elements.append(self.allocator, try self.parseExpression(.none));
-            }
-
-            if (self.tokens.current.tag == .comma) self.advance() else break;
-        }
-        _ = try self.expect(.r_bracket);
-        return self.createNode(.{ .array_literal = try elements.toOwnedSlice(self.allocator) }, start_tok.loc);
-    }
-
-    fn parseHashLiteral(self: *Parser) ParseError!*Node {
-        const start_tok = try self.expect(.l_brace);
-        var entries: std.ArrayListUnmanaged(ast.HashEntry) = .empty;
-        errdefer entries.deinit(self.allocator);
-
-        while (self.tokens.current.tag != .r_brace and self.tokens.current.tag != .eof) {
-            self.skipIgnored();
-            if (self.tokens.current.tag == .r_brace) break;
-
-            if (self.tokens.current.tag == .star_star) {
-                const star_loc = self.tokens.current.loc;
-                self.advance();
-                const inner = try self.parseExpression(.none);
-                const double_splat = try self.createNode(.{ .double_splat_expr = inner }, star_loc);
-                // Clever AST representation: map **kwargs to both key and value
-                try entries.append(self.allocator, .{ .key = double_splat, .value = double_splat });
-            } else {
-                var key: *Node = undefined;
-                if (self.tokens.current.tag == .ident and self.tokens.peekTag() == .colon) {
-                    const key_tok = self.tokens.current;
-                    self.advance();
-                    self.advance();
-                    // Now properly constructs a .symbol node instead of .string
-                    key = try self.createNode(.{ .symbol = key_tok.lexeme }, key_tok.loc);
-                } else {
-                    key = try self.parseExpression(.none);
-                    if (self.tokens.current.tag == .colon or self.tokens.current.tag == .arrow) {
-                        self.advance();
-                    } else return ParseError.UnexpectedToken;
-                }
-                try entries.append(self.allocator, .{ .key = key, .value = try self.parseExpression(.none) });
-            }
-
-            if (self.tokens.current.tag == .comma) self.advance() else break;
-        }
-        _ = try self.expect(.r_brace);
-
-        return self.createNode(.{ .hash_literal = try entries.toOwnedSlice(self.allocator) }, start_tok.loc);
-    }
-
     fn parseGroupedExpression(self: *Parser) ParseError!*Node {
         _ = try self.expect(.l_paren);
         const expr = try self.parseExpression(.none);
@@ -1183,6 +1171,20 @@ pub const Parser = struct {
         }
     }
 
+    fn parseArrayLiteral(self: *Parser) ParseError!*Node {
+        const start_tok = try self.expect(.l_bracket);
+        const elements = try self.parseCommaSeparated(*Node, parseArrayElement, .r_bracket);
+        _ = try self.expect(.r_bracket);
+        return self.createNode(.{ .array_literal = elements }, start_tok.loc);
+    }
+
+    fn parseHashLiteral(self: *Parser) ParseError!*Node {
+        const start_tok = try self.expect(.l_brace);
+        const entries = try self.parseCommaSeparated(ast.HashEntry, parseHashEntry, .r_brace);
+        _ = try self.expect(.r_brace);
+        return self.createNode(.{ .hash_literal = entries }, start_tok.loc);
+    }
+
     fn parseBlockParam(self: *Parser) ParseError!*Node {
         if (self.tokens.current.tag == .ident) {
             const tok = self.tokens.current;
@@ -1191,14 +1193,9 @@ pub const Parser = struct {
         } else if (self.tokens.current.tag == .l_paren) {
             const start_loc = self.tokens.current.loc;
             self.advance();
-            var tuple_params: std.ArrayListUnmanaged(*Node) = .empty;
-            errdefer tuple_params.deinit(self.allocator);
-            while (self.tokens.current.tag != .r_paren and self.tokens.current.tag != .eof) {
-                try tuple_params.append(self.allocator, try self.parseBlockParam());
-                if (self.tokens.current.tag == .comma) self.advance() else break;
-            }
+            const tuple_params = try self.parseCommaSeparated(*Node, parseBlockParam, .r_paren);
             _ = try self.expect(.r_paren);
-            return self.createNode(.{ .array_literal = try tuple_params.toOwnedSlice(self.allocator) }, start_loc);
+            return self.createNode(.{ .array_literal = tuple_params }, start_loc);
         }
         return ParseError.UnexpectedToken;
     }
@@ -1207,15 +1204,10 @@ pub const Parser = struct {
         const is_brace = (self.tokens.current.tag == .l_brace);
         const start_tok = if (is_brace) try self.expect(.l_brace) else try self.expect(.keyword_do);
 
-        var params: std.ArrayListUnmanaged(*Node) = .empty;
-        errdefer params.deinit(self.allocator);
-
+        var params: []const *Node = &.{};
         if (self.tokens.current.tag == .pipe) {
             self.advance();
-            while (self.tokens.current.tag != .pipe and self.tokens.current.tag != .eof) {
-                try params.append(self.allocator, try self.parseBlockParam());
-                if (self.tokens.current.tag == .comma) self.advance() else break;
-            }
+            params = try self.parseCommaSeparated(*Node, parseBlockParam, .pipe);
             _ = try self.expect(.pipe);
         }
 
@@ -1229,7 +1221,7 @@ pub const Parser = struct {
         }
 
         return self.createNode(.{
-            .block = .{ .params = try params.toOwnedSlice(self.allocator), .stmts = block_node.kind.block.stmts },
+            .block = .{ .params = params, .stmts = block_node.kind.block.stmts },
         }, start_tok.loc);
     }
 

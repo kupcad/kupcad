@@ -979,3 +979,29 @@ test "KupCAD Parser: Diagnostics for Invalid Expression" {
     try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
     try testing.expectEqualStrings("Invalid expression starting with '}'", parser.diagnostics.list.items[0].message);
 }
+
+test "KupCAD Parser: Combinators and Trailing Commas" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\arr = [1, 2, ]
+        \\map = {a: 1, b: 2, }
+        \\obj.each do |x, y, |
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // Arrays
+    const n1 = try parser.parseStatement();
+    try testing.expectEqual(@as(usize, 2), n1.kind.assignment.value.kind.array_literal.len);
+
+    // Hashes
+    const n2 = try parser.parseStatement();
+    try testing.expectEqual(@as(usize, 2), n2.kind.assignment.value.kind.hash_literal.len);
+
+    // Block Params
+    const n3 = try parser.parseStatement();
+    try testing.expectEqual(@as(usize, 2), n3.kind.method_call.block.?.kind.block.params.len);
+}

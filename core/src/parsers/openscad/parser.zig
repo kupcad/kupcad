@@ -503,6 +503,31 @@ pub const Parser = struct {
         return expr;
     }
 
+    // --- SHARED LIST PARSER COMBINATOR ---
+    inline fn parseCommaSeparated(
+        self: *Parser,
+        comptime ItemType: type,
+        comptime parseItemFn: fn (*Parser) ParseError!ItemType,
+        end_tag: Tag,
+    ) ParseError![]const ItemType {
+        var items: std.ArrayListUnmanaged(ItemType) = .empty;
+        errdefer items.deinit(self.allocator);
+
+        while (self.tokens.current.tag != end_tag and self.tokens.current.tag != .eof) {
+            self.skipIgnored();
+            if (self.tokens.current.tag == end_tag) break;
+
+            try items.append(self.allocator, try parseItemFn(self));
+
+            if (self.tokens.current.tag == .comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        return items.toOwnedSlice(self.allocator);
+    }
+
     // --- SHARED DRY ARGUMENT & PARAMETER LOGIC ---
     fn parseNamedArg(self: *Parser) ParseError!ast.NamedArg {
         if (self.tokens.current.tag == .comma or self.tokens.current.tag == .r_paren) {
@@ -523,18 +548,9 @@ pub const Parser = struct {
 
     fn parseParenArgs(self: *Parser) ParseError![]const ast.NamedArg {
         _ = try self.expect(.l_paren);
-        var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
-        errdefer args.deinit(self.allocator);
-
-        while (self.tokens.current.tag != .r_paren and self.tokens.current.tag != .eof) {
-            self.skipIgnored();
-            if (self.tokens.current.tag == .r_paren) break;
-            try args.append(self.allocator, try self.parseNamedArg());
-            if (self.tokens.current.tag == .comma) self.advance() else break;
-        }
+        const args = try self.parseCommaSeparated(ast.NamedArg, parseNamedArg, .r_paren);
         _ = try self.expect(.r_paren);
-
-        return args.toOwnedSlice(self.allocator);
+        return args;
     }
 
     fn parseParam(self: *Parser) ParseError!ast.Param {
@@ -553,18 +569,9 @@ pub const Parser = struct {
 
     fn parseParenParams(self: *Parser) ParseError![]const ast.Param {
         _ = try self.expect(.l_paren);
-        var params: std.ArrayListUnmanaged(ast.Param) = .empty;
-        errdefer params.deinit(self.allocator);
-
-        while (self.tokens.current.tag != .r_paren and self.tokens.current.tag != .eof) {
-            self.skipIgnored();
-            if (self.tokens.current.tag == .r_paren) break;
-            try params.append(self.allocator, try self.parseParam());
-            if (self.tokens.current.tag == .comma) self.advance() else break;
-        }
+        const params = try self.parseCommaSeparated(ast.Param, parseParam, .r_paren);
         _ = try self.expect(.r_paren);
-
-        return params.toOwnedSlice(self.allocator);
+        return params;
     }
 
     // --- EXPRESSION PARSERS ---
