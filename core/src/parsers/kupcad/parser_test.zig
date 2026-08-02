@@ -1903,11 +1903,11 @@ test "KupCAD Parser: Global and Instance Variable Assignments" {
     var lexer = Lexer.init(source, 0);
     var parser = Parser.init(&lexer, arena.allocator());
 
-    // 1. @width = 10
+    // @width = 10
     const s1 = try parser.parseStatement();
     try testing.expectEqualStrings("@width", s1.kind.assignment.name);
 
-    // 2. $offset = @width * 2
+    // $offset = @width * 2
     const s2 = try parser.parseStatement();
     try testing.expectEqualStrings("$offset", s2.kind.assignment.name);
     try testing.expectEqualStrings("@width", s2.kind.assignment.value.kind.binary_op.left.kind.identifier);
@@ -1948,7 +1948,7 @@ test "KupCAD Parser: Method Calls on Array and Hash Literals" {
     var lexer = Lexer.init(source, 0);
     var parser = Parser.init(&lexer, arena.allocator());
 
-    // 1. arr_max = [1, 2, 3].max
+    // arr_max = [1, 2, 3].max
     const stmt1 = try parser.parseStatement();
     try testing.expectEqualStrings("arr_max", stmt1.kind.assignment.name);
 
@@ -1961,7 +1961,7 @@ test "KupCAD Parser: Method Calls on Array and Hash Literals" {
     try testing.expectEqual(@as(usize, 3), receiver1.kind.array_literal.len);
     try testing.expectEqual(@as(f64, 1.0), receiver1.kind.array_literal[0].kind.number);
 
-    // 2. hash_keys = { a: 1 }.keys()
+    // hash_keys = { a: 1 }.keys()
     const stmt2 = try parser.parseStatement();
     try testing.expectEqualStrings("hash_keys", stmt2.kind.assignment.name);
 
@@ -1973,4 +1973,34 @@ test "KupCAD Parser: Method Calls on Array and Hash Literals" {
     try testing.expectEqual(ast.Node.Kind.hash_literal, @as(std.meta.Tag(ast.Node.Kind), receiver2.kind));
     try testing.expectEqual(@as(usize, 1), receiver2.kind.hash_literal.len);
     try testing.expectEqualStrings("a", receiver2.kind.hash_literal[0].key.kind.symbol);
+}
+
+test "KupCAD Parser: Diagnostics Line and Column Tracking" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\def build()
+        \\  x = 10 + }
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const result = parser.parseStatement();
+
+    // We expect a failure because `10 +` is missing a right-hand side and hits `}`
+    try testing.expectError(error.InvalidExpression, result);
+
+    try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
+    const diag = parser.diagnostics.list.items[0];
+
+    // Validate error message
+    try testing.expectEqualStrings("Invalid expression starting with '}'", diag.message);
+
+    // Validate exact coordinates for LSP squigglies
+    // Line 2: `  x = 10 + }`
+    // Col 12 is exactly the closing brace `}`
+    try testing.expectEqual(@as(u32, 2), diag.loc.line);
+    try testing.expectEqual(@as(u32, 12), diag.loc.col);
 }

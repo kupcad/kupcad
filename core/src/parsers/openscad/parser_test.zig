@@ -562,3 +562,34 @@ test "OpenSCAD Parser: Children Module Invocation with Modulo Index" {
     try testing.expectEqualStrings("i", arg_expr.kind.binary_op.left.kind.identifier);
     try testing.expectEqualStrings("$children", arg_expr.kind.binary_op.right.kind.identifier);
 }
+
+test "OpenSCAD Parser: Diagnostics Line and Column Tracking" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\module box() {
+        \\  cube(10);
+        \\  cylinder(r=5, h=);
+        \\}
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const result = parser.parseProgram();
+
+    // We expect a failure because `h=` is missing a value and hits `)`
+    try testing.expectError(error.InvalidExpression, result);
+
+    try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
+    const diag = parser.diagnostics.list.items[0];
+
+    // Validate error message
+    try testing.expectEqualStrings("Invalid expression starting with ')'", diag.message);
+
+    // Validate exact coordinates for LSP squigglies
+    // Line 3: `  cylinder(r=5, h=);`
+    // Col 19 is exactly the closing parenthesis `)`
+    try testing.expectEqual(@as(u32, 3), diag.loc.line);
+    try testing.expectEqual(@as(u32, 19), diag.loc.col);
+}
