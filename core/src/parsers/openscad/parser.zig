@@ -53,6 +53,21 @@ pub const Parser = struct {
         self.diagnostics.add(loc, fmt, args);
     }
 
+    pub fn synchronize(self: *Parser) void {
+        self.advance(); // Skip the token that triggered the error
+
+        while (self.tokens.current.tag != .eof) {
+            // Semicolons are the explicit statement boundaries in OpenSCAD
+            if (self.tokens.previous.tag == .semicolon) return;
+
+            // Look for keywords that start declarations or major blocks
+            switch (self.tokens.current.tag) {
+                .keyword_module, .keyword_function, .keyword_include, .keyword_use, .keyword_if, .keyword_for, .keyword_intersection_for, .keyword_let, .keyword_assert, .keyword_echo => return,
+                else => self.advance(),
+            }
+        }
+    }
+
     fn expect(self: *Parser, tag: Tag) ParseError!Token {
         if (self.tokens.current.tag == tag) {
             const tok = self.tokens.current;
@@ -134,8 +149,12 @@ pub const Parser = struct {
                 continue;
             }
             if (self.tokens.current.tag == .r_brace) break;
-            const stmt = try self.parseStatement();
-            try stmts.append(self.allocator, stmt);
+            if (self.parseStatement()) |parsed_stmt| {
+                try stmts.append(self.allocator, parsed_stmt);
+            } else |err| {
+                if (err == ParseError.OutOfMemory) return err;
+                self.synchronize();
+            }
         }
 
         return self.createNode(.{

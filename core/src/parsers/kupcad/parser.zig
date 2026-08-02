@@ -59,6 +59,21 @@ pub const Parser = struct {
         self.diagnostics.add(loc, fmt, args);
     }
 
+    pub fn synchronize(self: *Parser) void {
+        self.advance(); // Skip the token that triggered the error
+
+        while (self.tokens.current.tag != .eof) {
+            // If we just consumed a newline, we are safely at the start of a new line
+            if (self.tokens.previous.tag == .newline) return;
+
+            // Otherwise, look for keywords that definitively start a new statement
+            switch (self.tokens.current.tag) {
+                .keyword_class, .keyword_def, .keyword_module, .keyword_if, .keyword_unless, .keyword_case, .keyword_while, .keyword_until, .keyword_return, .keyword_begin, .keyword_import, .keyword_export => return,
+                else => self.advance(),
+            }
+        }
+    }
+
     fn expect(self: *Parser, tag: Tag) ParseError!Token {
         if (self.tokens.current.tag == tag) {
             const tok = self.tokens.current;
@@ -119,7 +134,13 @@ pub const Parser = struct {
                 continue;
             }
 
-            try stmts.append(self.allocator, try self.parseStatement());
+            if (self.parseStatement()) |parsed_stmt| {
+                try stmts.append(self.allocator, parsed_stmt);
+            } else |err| {
+                // Never swallow OutOfMemory; only swallow syntax errors
+                if (err == ParseError.OutOfMemory) return err;
+                self.synchronize();
+            }
             if (self.tokens.current.tag == .newline) self.advance();
         }
 

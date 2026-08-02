@@ -562,10 +562,7 @@ test "OpenSCAD Parser: Diagnostics Line and Column Tracking" {
     ;
     var lexer = Lexer.init(source, 0);
     var parser = Parser.init(&lexer, arena.allocator());
-    const result = parser.parseProgram();
-
-    // We expect a failure because `h=` is missing a value and hits `)`
-    try testing.expectError(error.InvalidExpression, result);
+    _ = try parser.parseProgram();
 
     try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
     const diag = parser.diagnostics.list.items[0];
@@ -578,4 +575,25 @@ test "OpenSCAD Parser: Diagnostics Line and Column Tracking" {
     // Col 19 is exactly the closing parenthesis `)`
     try testing.expectEqual(@as(u32, 3), diag.loc.line);
     try testing.expectEqual(@as(u32, 19), diag.loc.col);
+}
+
+test "OpenSCAD Parser: Error Recovery (synchronize)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\x = 10 * ];
+        \\y = 20 + };
+        \\z = 30;
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const result = try parser.parseProgram();
+
+    // The successful statement (z = 30;) was preserved
+    try testing.expectEqual(@as(usize, 1), result.kind.openscad.block.stmts.len);
+
+    // Both errors were captured
+    try testing.expectEqual(@as(usize, 2), parser.diagnostics.list.items.len);
 }

@@ -1964,10 +1964,7 @@ test "KupCAD Parser: Diagnostics Line and Column Tracking" {
     ;
     var lexer = Lexer.init(source, 0);
     var parser = Parser.init(&lexer, arena.allocator());
-    const result = parser.parseStatement();
-
-    // We expect a failure because `10 +` is missing a right-hand side and hits `}`
-    try testing.expectError(error.InvalidExpression, result);
+    _ = try parser.parseStatement();
 
     try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
     const diag = parser.diagnostics.list.items[0];
@@ -2142,4 +2139,28 @@ test "KupCAD Parser: Multiline Command Arguments" {
     try testing.expectEqualStrings("translate", call.method_name);
     try testing.expectEqual(@as(usize, 2), call.args.len);
     try testing.expectEqualStrings("y", call.args[1].name);
+}
+
+test "KupCAD Parser: Error Recovery (synchronize)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Two distinct statements with syntax errors.
+    const source =
+        \\x = 10 + }
+        \\y = 20 * ]
+        \\z = 30
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // The program block will return successfully without throwing an error!
+    const result = try parser.parseProgram();
+
+    // We expect exactly 1 successful statement (z = 30)
+    try testing.expectEqual(@as(usize, 1), result.kind.kupcad.block.stmts.len);
+    try testing.expectEqualStrings("z", result.kind.kupcad.block.stmts[0].kind.kupcad.assignment.name);
+
+    // And diagnostics should contain BOTH errors from the skipped lines!
+    try testing.expectEqual(@as(usize, 2), parser.diagnostics.list.items.len);
 }
