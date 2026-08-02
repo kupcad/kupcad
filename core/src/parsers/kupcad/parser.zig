@@ -549,7 +549,22 @@ pub const Parser = struct {
             self.advance();
         }
 
-        const params = try self.parseParenParams();
+        var params: []const ast.Param = &.{};
+        if (self.tokens.current.tag == .l_paren) {
+            params = try self.parseParenParams();
+        } else {
+            // Parenthesis-less parameters: loop until newline or EOF
+            var param_list: std.ArrayListUnmanaged(ast.Param) = .empty;
+            errdefer param_list.deinit(self.allocator);
+            while (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .comment) {
+                try param_list.append(self.allocator, try self.parseParam());
+                if (self.tokens.current.tag == .comma) {
+                    self.advance();
+                } else break;
+            }
+            params = try param_list.toOwnedSlice(self.allocator);
+        }
+
         self.skipIgnored();
 
         const body_node = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
@@ -1166,7 +1181,10 @@ pub const Parser = struct {
 
         while (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_do and self.tokens.current.tag != .l_brace and self.tokens.current.tag != .r_paren and self.tokens.current.tag != .r_bracket and self.tokens.current.tag != .r_brace and self.tokens.current.tag != .keyword_if and self.tokens.current.tag != .keyword_unless and self.tokens.current.tag != .keyword_while and self.tokens.current.tag != .keyword_until) {
             try args.append(self.allocator, try self.parseNamedArg());
-            if (self.tokens.current.tag == .comma) self.advance() else break;
+            if (self.tokens.current.tag == .comma) {
+                self.advance();
+                self.skipIgnored();
+            } else break;
         }
 
         var block_node: ?*Node = null;

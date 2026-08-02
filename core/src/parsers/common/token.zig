@@ -28,7 +28,7 @@ pub fn BufferedLexer(comptime LexerType: type, comptime TokenType: type, comptim
         pub fn init(lexer: *LexerType) Self {
             var self = Self{
                 .lexer = lexer,
-                .previous = undefined,
+                .previous = .{ .tag = .eof, .loc = .{ .line = 1, .col = 1, .file_id = 0 }, .lexeme = "" },
                 .current = undefined,
                 .next_tok = undefined,
             };

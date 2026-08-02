@@ -2105,3 +2105,41 @@ test "KupCAD Parser: Multiple Comma-Separated Conditions in 'When' Clauses" {
     try testing.expectEqualStrings("square", conditions[1].kind.kupcad.symbol);
     try testing.expectEqualStrings("round", conditions[2].kind.kupcad.symbol);
 }
+
+test "KupCAD Parser: Parenthesis-less Method Definitions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\def build width, height: 10
+        \\  cube()
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const def_node = stmt.kind.kupcad.def_stmt;
+    try testing.expectEqualStrings("build", def_node.name);
+    try testing.expectEqual(@as(usize, 2), def_node.params.len);
+    try testing.expectEqualStrings("width", def_node.params[0].name);
+    try testing.expectEqualStrings("height", def_node.params[1].name);
+    try testing.expectEqual(@as(f64, 10.0), def_node.params[1].default_value.?.kind.kupcad.number);
+}
+
+test "KupCAD Parser: Multiline Command Arguments" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\translate x: 10,
+        \\          y: 20 do
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const call = stmt.kind.kupcad.method_call;
+    try testing.expectEqualStrings("translate", call.method_name);
+    try testing.expectEqual(@as(usize, 2), call.args.len);
+    try testing.expectEqualStrings("y", call.args[1].name);
+}
