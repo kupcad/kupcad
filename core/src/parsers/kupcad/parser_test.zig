@@ -2164,3 +2164,28 @@ test "KupCAD Parser: Error Recovery (synchronize)" {
     // And diagnostics should contain BOTH errors from the skipped lines!
     try testing.expectEqual(@as(usize, 2), parser.diagnostics.list.items.len);
 }
+
+test "KupCAD Parser: Nested String Interpolation AST" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "\"Outer #{ \"Inner #{1 + 2}\" } end\"";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseExpression(.none);
+
+    try testing.expectEqual(ast.KupCadKind.interpolated_string, @as(std.meta.Tag(ast.KupCadKind), stmt.kind.kupcad));
+    const outer_parts = stmt.kind.kupcad.interpolated_string;
+
+    try testing.expectEqualStrings("Outer ", outer_parts[0].kind.kupcad.string);
+
+    const inner_node = outer_parts[1];
+    try testing.expectEqual(ast.KupCadKind.interpolated_string, @as(std.meta.Tag(ast.KupCadKind), inner_node.kind.kupcad));
+    const inner_parts = inner_node.kind.kupcad.interpolated_string;
+
+    try testing.expectEqualStrings("Inner ", inner_parts[0].kind.kupcad.string);
+    try testing.expectEqual(ast.BinaryOp.add, inner_parts[1].kind.kupcad.binary_op.op);
+    try testing.expectEqualStrings("", inner_parts[2].kind.kupcad.string);
+
+    try testing.expectEqualStrings(" end", outer_parts[2].kind.kupcad.string);
+}

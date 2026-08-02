@@ -9,6 +9,11 @@ const Node = ast.Node;
 const common_errors = @import("../common/errors.zig");
 const Diagnostics = common_errors.Diagnostics;
 
+const RescueEnsurePayload = struct {
+    rescues: []const ast.RescueClause,
+    ensure_body: ?*Node,
+};
+
 pub const ParseError = common_errors.ParseError;
 
 pub const Precedence = enum(u8) {
@@ -353,52 +358,19 @@ pub const Parser = struct {
     fn parseBeginStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_begin);
         self.skipIgnored();
-
         const body = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
 
-        var rescues: std.ArrayListUnmanaged(ast.RescueClause) = .empty;
-        errdefer rescues.deinit(self.allocator);
+        const payload = try self.parseRescueAndEnsure();
 
-        while (self.tokens.current.tag == .keyword_rescue) {
-            self.advance();
-            var errors: std.ArrayListUnmanaged([]const u8) = .empty;
-            errdefer errors.deinit(self.allocator);
-            var variable: ?[]const u8 = null;
-
-            if (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) {
-                while (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) {
-                    try errors.append(self.allocator, self.tokens.current.lexeme);
-                    self.advance();
-                    if (self.tokens.current.tag == .comma) self.advance() else break;
-                }
-            }
-
-            if (self.tokens.current.tag == .arrow) { // => e
-                self.advance();
-                if (self.tokens.current.tag == .ident) {
-                    variable = self.tokens.current.lexeme;
-                    self.advance();
-                }
-            }
-
-            self.skipIgnored();
-            const rescue_body = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
-            try rescues.append(self.allocator, .{
-                .errors = try errors.toOwnedSlice(self.allocator),
-                .variable = variable,
-                .body = rescue_body,
-            });
-        }
-
-        var ensure_body: ?*Node = null;
-        if (self.tokens.current.tag == .keyword_ensure) {
-            self.advance();
-            self.skipIgnored();
-            ensure_body = try self.parseBlock(&.{.keyword_end});
-        }
         _ = try self.expect(.keyword_end);
 
-        return self.createNode(.{ .begin_stmt = try self.b.box(ast.BeginStmt, .{ .body = body, .rescues = try rescues.toOwnedSlice(self.allocator), .ensure_body = ensure_body }) }, start_tok.loc);
+        return self.createNode(.{
+            .begin_stmt = try self.b.box(ast.BeginStmt, .{
+                .body = body,
+                .rescues = payload.rescues, // <-- Use payload here
+                .ensure_body = payload.ensure_body, // <-- Use payload here
+            }),
+        }, start_tok.loc);
     }
 
     fn parseImportOrExportStatement(self: *Parser, is_export: bool) ParseError!*Node {
@@ -590,55 +562,19 @@ pub const Parser = struct {
 
         const body_node = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
 
-        var rescues: std.ArrayListUnmanaged(ast.RescueClause) = .empty;
-        errdefer rescues.deinit(self.allocator);
+        const payload = try self.parseRescueAndEnsure();
 
-        while (self.tokens.current.tag == .keyword_rescue) {
-            self.advance();
-            var errors: std.ArrayListUnmanaged([]const u8) = .empty;
-            errdefer errors.deinit(self.allocator);
-            var variable: ?[]const u8 = null;
-
-            if (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) {
-                while (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) {
-                    try errors.append(self.allocator, self.tokens.current.lexeme);
-                    self.advance();
-                    if (self.tokens.current.tag == .comma) self.advance() else break;
-                }
-            }
-
-            if (self.tokens.current.tag == .arrow) { // => e
-                self.advance();
-                if (self.tokens.current.tag == .ident) {
-                    variable = self.tokens.current.lexeme;
-                    self.advance();
-                }
-            }
-
-            self.skipIgnored();
-            const rescue_body = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
-            try rescues.append(self.allocator, .{
-                .errors = try errors.toOwnedSlice(self.allocator),
-                .variable = variable,
-                .body = rescue_body,
-            });
-        }
-
-        var ensure_body: ?*Node = null;
-        if (self.tokens.current.tag == .keyword_ensure) {
-            self.advance();
-            self.skipIgnored();
-            ensure_body = try self.parseBlock(&.{.keyword_end});
-        }
         _ = try self.expect(.keyword_end);
 
         var final_body = body_node;
-        if (rescues.items.len > 0 or ensure_body != null) {
+
+        // Wrap in an implicit begin_stmt if rescue or ensure were present
+        if (payload.rescues.len > 0 or payload.ensure_body != null) {
             final_body = try self.createNode(.{
                 .begin_stmt = try self.b.box(ast.BeginStmt, .{
                     .body = body_node,
-                    .rescues = try rescues.toOwnedSlice(self.allocator),
-                    .ensure_body = ensure_body,
+                    .rescues = payload.rescues, // <-- Use payload here
+                    .ensure_body = payload.ensure_body, // <-- Use payload here
                 }),
             }, start_tok.loc);
         }
@@ -1160,6 +1096,55 @@ pub const Parser = struct {
         return self.createNode(.{ .array_literal = try elements.toOwnedSlice(self.allocator) }, tok.loc);
     }
 
+    fn parseRescueAndEnsure(self: *Parser) ParseError!RescueEnsurePayload {
+        var rescues: std.ArrayListUnmanaged(ast.RescueClause) = .empty;
+        errdefer rescues.deinit(self.allocator);
+
+        while (self.tokens.current.tag == .keyword_rescue) {
+            self.advance();
+            var errors: std.ArrayListUnmanaged([]const u8) = .empty;
+            errdefer errors.deinit(self.allocator);
+            var variable: ?[]const u8 = null;
+
+            if (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) {
+                while (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) {
+                    try errors.append(self.allocator, self.tokens.current.lexeme);
+                    self.advance();
+                    if (self.tokens.current.tag == .comma) self.advance() else break;
+                }
+            }
+
+            if (self.tokens.current.tag == .arrow) { // => e
+                self.advance();
+                if (self.tokens.current.tag == .ident) {
+                    variable = self.tokens.current.lexeme;
+                    self.advance();
+                }
+            }
+
+            self.skipIgnored();
+            const rescue_body = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
+
+            try rescues.append(self.allocator, .{
+                .errors = try errors.toOwnedSlice(self.allocator),
+                .variable = variable,
+                .body = rescue_body,
+            });
+        }
+
+        var ensure_body: ?*Node = null;
+        if (self.tokens.current.tag == .keyword_ensure) {
+            self.advance();
+            self.skipIgnored();
+            ensure_body = try self.parseBlock(&.{.keyword_end});
+        }
+
+        return .{
+            .rescues = try rescues.toOwnedSlice(self.allocator),
+            .ensure_body = ensure_body,
+        };
+    }
+
     fn parseRescueModifierExpr(self: *Parser, left: *Node) ParseError!*Node {
         const tok = self.tokens.current;
         self.advance();
@@ -1183,17 +1168,24 @@ pub const Parser = struct {
 
     fn isCommandCallStart(self: *Parser) bool {
         const tag = self.tokens.current.tag;
-        if (tag == .newline or tag == .eof or tag == .r_paren or tag == .r_brace or tag == .r_bracket or tag == .comma or tag == .colon or tag == .string_mid or tag == .string_end or tag == .keyword_rescue or tag == .keyword_else or tag == .keyword_elsif or tag == .keyword_when or tag == .keyword_ensure or tag == .keyword_end) return false;
-        if (tag == .keyword_do or tag == .l_brace) return true;
-        if (isAssignmentOp(tag)) return false;
-        if (tag == .keyword_if or tag == .keyword_unless or tag == .keyword_while or tag == .keyword_until) return false;
 
-        const prev_tok = self.tokens.previous;
-        const has_space = (prev_tok.loc.line != self.tokens.current.loc.line) or (prev_tok.loc.col + prev_tok.lexeme.len < self.tokens.current.loc.col);
-        if (has_space and tag == .l_bracket) return true;
+        switch (tag) {
+            .newline, .eof, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
 
-        if (@intFromEnum(getInfixPrecedence(tag)) == 0) return true;
-        return false;
+            .keyword_do, .l_brace => return true,
+            else => {
+                if (isAssignmentOp(tag)) return false;
+
+                const prev_tok = self.tokens.previous;
+                const has_space = (prev_tok.loc.line != self.tokens.current.loc.line) or
+                    (prev_tok.loc.col + prev_tok.lexeme.len < self.tokens.current.loc.col);
+
+                if (has_space and tag == .l_bracket) return true;
+                if (@intFromEnum(getInfixPrecedence(tag)) == 0) return true;
+
+                return false;
+            },
+        }
     }
 
     fn parseCommandArgsAndBlock(self: *Parser) ParseError!struct { args: []const ast.NamedArg, block: ?*Node } {

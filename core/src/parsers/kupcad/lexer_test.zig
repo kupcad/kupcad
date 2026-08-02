@@ -174,3 +174,16 @@ test "KupCAD Lexer: Bitwise Assignment Operators" {
         t(.ident, "h"), t(.greater_greater_equal, ">>="), t(.number, "2"), t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Nested String Interpolation" {
+    try expectTokens("\"Outer #{ \"Inner #{1 + 2}\" } end\"", &.{
+        t(.string_start, "Outer "),
+        t(.string_start, "Inner "),
+        t(.number, "1"),
+        t(.plus, "+"),
+        t(.number, "2"),
+        t(.string_end, ""),
+        t(.string_end, " end"),
+        t(.eof, ""),
+    });
+}
