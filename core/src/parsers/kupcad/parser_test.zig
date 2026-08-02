@@ -889,7 +889,35 @@ test "KupCAD Parser: Multi-line Method Chaining (Fluent API)" {
     try testing.expectEqualStrings("new", new_node.kind.method_call.method_name);
 }
 
-test "KupCAD Parser: Import options and Trailing Call Commas" {
+test "KupCAD Parser: Import / Export with Attributes (with {})" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\import { names } from "module-name" with { key: "data", key2: "data2" }
+        \\export { names } from "module-name" with {}
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // Import Statement
+    const imp_node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.import_stmt, @as(std.meta.Tag(ast.Node.Kind), imp_node.kind));
+    try testing.expectEqualStrings("module-name", imp_node.kind.import_stmt.path);
+    try testing.expectEqualStrings("names", imp_node.kind.import_stmt.symbols[0]);
+    const attrs = imp_node.kind.import_stmt.attributes.?;
+    try testing.expectEqual(@as(usize, 2), attrs.kind.hash_literal.len);
+    try testing.expectEqualStrings("key", attrs.kind.hash_literal[0].key.kind.symbol);
+
+    // Export Statement
+    const exp_node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.export_stmt, @as(std.meta.Tag(ast.Node.Kind), exp_node.kind));
+    try testing.expectEqualStrings("module-name", exp_node.kind.export_stmt.path);
+    const exp_attrs = exp_node.kind.export_stmt.attributes.?;
+    try testing.expectEqual(@as(usize, 0), exp_attrs.kind.hash_literal.len);
+}
+
+test "KupCAD Parser: Optional Imports and Trailing Call Commas" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
@@ -901,17 +929,17 @@ test "KupCAD Parser: Import options and Trailing Call Commas" {
     var lexer = Lexer.init(source, 0);
     var parser = Parser.init(&lexer, arena.allocator());
 
-    // First statement is a plain import
+    // 1. Plain import
     const imp_node_1 = try parser.parseStatement();
     try testing.expectEqualStrings("global_config.kup", imp_node_1.kind.import_stmt.path);
     try testing.expectEqual(@as(usize, 0), imp_node_1.kind.import_stmt.symbols.len);
 
-    // Second statement is a single-symbol import
+    // 2. Single-symbol import
     const imp_node_2 = try parser.parseStatement();
     try testing.expectEqualStrings("hardware.kup", imp_node_2.kind.import_stmt.path);
     try testing.expectEqualStrings("Hardware", imp_node_2.kind.import_stmt.symbols[0]);
 
-    // Third statement is the method call
+    // 3. Method call trailing comma bypass
     const call_node = try parser.parseStatement();
     try testing.expectEqualStrings("cube", call_node.kind.method_call.method_name);
     try testing.expectEqual(@as(usize, 2), call_node.kind.method_call.args.len);

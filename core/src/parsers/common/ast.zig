@@ -215,6 +215,12 @@ pub const Node = struct {
         import_stmt: struct {
             symbols: []const []const u8,
             path: []const u8,
+            attributes: ?*Node = null,
+        },
+        export_stmt: struct {
+            symbols: []const []const u8,
+            path: []const u8,
+            attributes: ?*Node = null,
         },
         include_stmt: struct {
             path: []const u8,

@@ -92,7 +92,8 @@ pub const Parser = struct {
     pub fn parseStatement(self: *Parser) ParseError!*Node {
         self.skipIgnored();
         var stmt = switch (self.current.tag) {
-            .keyword_import => try self.parseImportStatement(),
+            .keyword_import => try self.parseImportOrExportStatement(false),
+            .keyword_export => try self.parseImportOrExportStatement(true),
             .keyword_if => try self.parseIfStatement(),
             .keyword_unless => try self.parseUnlessStatement(),
             .keyword_case => try self.parseCaseStatement(),
@@ -207,8 +208,8 @@ pub const Parser = struct {
         return self.createNode(.{ .begin_stmt = .{ .body = body, .rescues = try rescues.toOwnedSlice(self.allocator), .ensure_body = ensure_body } }, start_tok.loc);
     }
 
-    fn parseImportStatement(self: *Parser) ParseError!*Node {
-        const start_tok = try self.expect(.keyword_import);
+    fn parseImportOrExportStatement(self: *Parser, is_export: bool) ParseError!*Node {
+        const start_tok = try self.expect(if (is_export) .keyword_export else .keyword_import);
 
         var symbols: std.ArrayListUnmanaged([]const u8) = .empty;
         errdefer symbols.deinit(self.allocator);
@@ -236,9 +237,23 @@ pub const Parser = struct {
         }
 
         const path_tok = try self.expect(.string);
-        return self.createNode(.{
-            .import_stmt = .{ .symbols = try symbols.toOwnedSlice(self.allocator), .path = path_tok.lexeme },
-        }, start_tok.loc);
+
+        var attributes: ?*Node = null;
+        self.skipIgnored();
+        if (self.current.tag == .keyword_with) {
+            self.advance();
+            attributes = try self.parseHashLiteral();
+        }
+
+        if (is_export) {
+            return self.createNode(.{
+                .export_stmt = .{ .symbols = try symbols.toOwnedSlice(self.allocator), .path = path_tok.lexeme, .attributes = attributes },
+            }, start_tok.loc);
+        } else {
+            return self.createNode(.{
+                .import_stmt = .{ .symbols = try symbols.toOwnedSlice(self.allocator), .path = path_tok.lexeme, .attributes = attributes },
+            }, start_tok.loc);
+        }
     }
 
     fn parseIfStatement(self: *Parser) ParseError!*Node {
