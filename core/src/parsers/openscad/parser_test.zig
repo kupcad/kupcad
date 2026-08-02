@@ -499,3 +499,66 @@ test "OpenSCAD Parser: Diagnostics for Invalid Expression" {
     try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
     try testing.expectEqualStrings("Invalid expression starting with '*'", parser.diagnostics.list.items[0].message);
 }
+
+test "OpenSCAD Parser: Deeply Nested Let Expressions & Chained Expression Modifiers" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Tests multi-level `let` nesting combined with `assert` and `echo`
+    const source = "val = let(a = 5) let(b = a * 2) assert(b > 0) echo(b) b + 1;";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseStatement();
+
+    try testing.expectEqualStrings("val", stmt.kind.assignment.name);
+
+    // Outer let: a = 5
+    const let1 = stmt.kind.assignment.value;
+    try testing.expectEqual(ast.Node.Kind.let_expr, @as(std.meta.Tag(ast.Node.Kind), let1.kind));
+    try testing.expectEqualStrings("a", let1.kind.let_expr.assignments[0].kind.assignment.name);
+
+    // Inner let: b = a * 2
+    const let2 = let1.kind.let_expr.yield_expr;
+    try testing.expectEqual(ast.Node.Kind.let_expr, @as(std.meta.Tag(ast.Node.Kind), let2.kind));
+    try testing.expectEqualStrings("b", let2.kind.let_expr.assignments[0].kind.assignment.name);
+
+    // Assert -> Echo -> Addition
+    const assert_node = let2.kind.let_expr.yield_expr;
+    try testing.expectEqual(ast.Node.Kind.assert_expr, @as(std.meta.Tag(ast.Node.Kind), assert_node.kind));
+
+    const echo_node = assert_node.kind.assert_expr.yield_expr;
+    try testing.expectEqual(ast.Node.Kind.echo_expr, @as(std.meta.Tag(ast.Node.Kind), echo_node.kind));
+
+    const math_node = echo_node.kind.echo_expr.yield_expr;
+    try testing.expectEqual(ast.BinaryOp.add, math_node.kind.binary_op.op);
+}
+
+test "OpenSCAD Parser: Children Module Invocation with Modulo Index" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\module grid() {
+        \\  for (i = [0:3]) {
+        \\    translate([i * 10, 0, 0]) children(i % $children);
+        \\  }
+        \\}
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const mod_node = try parser.parseStatement();
+    try testing.expectEqualStrings("grid", mod_node.kind.module_stmt.name);
+
+    const for_node = mod_node.kind.module_stmt.body.kind.block.stmts[0];
+    const trans_call = for_node.kind.for_stmt.body.kind.block.stmts[0];
+    try testing.expectEqualStrings("translate", trans_call.kind.method_call.method_name);
+
+    const child_call = trans_call.kind.method_call.block.?;
+    try testing.expectEqualStrings("children", child_call.kind.method_call.method_name);
+
+    const arg_expr = child_call.kind.method_call.args[0].value;
+    try testing.expectEqual(ast.BinaryOp.modulo, arg_expr.kind.binary_op.op);
+    try testing.expectEqualStrings("i", arg_expr.kind.binary_op.left.kind.identifier);
+    try testing.expectEqualStrings("$children", arg_expr.kind.binary_op.right.kind.identifier);
+}

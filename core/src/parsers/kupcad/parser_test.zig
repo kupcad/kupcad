@@ -1518,3 +1518,101 @@ test "KupCAD Parser: Module Namespaces with Doc Comments and Class Constructors"
     try testing.expectEqualStrings("w", init_def.kind.def_stmt.params[0].name);
     try testing.expectEqual(@as(f64, 100.0), init_def.kind.def_stmt.params[0].default_value.?.kind.number);
 }
+
+test "KupCAD Parser: Command-Syntax Calls with Trailing Statement Modifiers" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "cube x: 10, y: 20 unless draft_mode?";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.if_stmt, @as(std.meta.Tag(ast.Node.Kind), stmt.kind));
+    try testing.expectEqual(true, stmt.kind.if_stmt.is_unless);
+    try testing.expectEqualStrings("draft_mode?", stmt.kind.if_stmt.condition.kind.identifier);
+
+    const inner_stmt = stmt.kind.if_stmt.then_branch.kind.block.stmts[0];
+    try testing.expectEqual(ast.Node.Kind.method_call, @as(std.meta.Tag(ast.Node.Kind), inner_stmt.kind));
+    try testing.expectEqualStrings("cube", inner_stmt.kind.method_call.method_name);
+    try testing.expectEqual(@as(usize, 2), inner_stmt.kind.method_call.args.len);
+}
+
+test "KupCAD Parser: Safe Navigation inside Ternary Conditions and Global Scope Resolution" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "target = part&.is_valid? ? part.build() : ::CAD::Default.build()";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    try testing.expectEqualStrings("target", stmt.kind.assignment.name);
+
+    const ternary = stmt.kind.assignment.value;
+    try testing.expectEqual(ast.Node.Kind.ternary_op, @as(std.meta.Tag(ast.Node.Kind), ternary.kind));
+
+    // Condition: part&.is_valid?
+    const cond = ternary.kind.ternary_op.condition;
+    try testing.expectEqualStrings("is_valid?", cond.kind.method_call.method_name);
+    try testing.expectEqual(true, cond.kind.method_call.is_safe);
+
+    // Else branch: ::CAD::Default.build()
+    const else_branch = ternary.kind.ternary_op.else_branch;
+    try testing.expectEqualStrings("build", else_branch.kind.method_call.method_name);
+    const receiver_ns = else_branch.kind.method_call.receiver.?;
+    try testing.expectEqual(ast.Node.Kind.namespace_access, @as(std.meta.Tag(ast.Node.Kind), receiver_ns.kind));
+    try testing.expectEqualStrings("CAD", receiver_ns.kind.namespace_access.path[0]);
+    try testing.expectEqualStrings("Default", receiver_ns.kind.namespace_access.path[1]);
+}
+
+test "KupCAD Parser: Class Method Definitions with Rescue Blocks" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\def self.create(opts = {})
+        \\  build(opts)
+        \\rescue StandardError => err
+        \\  handle_error(err)
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const def_node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.def_stmt, @as(std.meta.Tag(ast.Node.Kind), def_node.kind));
+    try testing.expectEqual(true, def_node.kind.def_stmt.is_class_method);
+    try testing.expectEqualStrings("create", def_node.kind.def_stmt.name);
+
+    // Def body wrapped in begin_stmt due to rescue clause
+    const begin_node = def_node.kind.def_stmt.body;
+    try testing.expectEqual(ast.Node.Kind.begin_stmt, @as(std.meta.Tag(ast.Node.Kind), begin_node.kind));
+
+    const rescue = begin_node.kind.begin_stmt.rescues[0];
+    try testing.expectEqualStrings("StandardError", rescue.errors[0]);
+    try testing.expectEqualStrings("err", rescue.variable.?);
+}
+
+test "KupCAD Parser: Multi-line Array Destructuring in Method Arguments" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "mesh.transform([x, y, z], [10, 20, 30])";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    try testing.expectEqualStrings("transform", stmt.kind.method_call.method_name);
+
+    const args = stmt.kind.method_call.args;
+    try testing.expectEqual(@as(usize, 2), args.len);
+
+    const arr1 = args[0].value.kind.array_literal;
+    try testing.expectEqual(@as(usize, 3), arr1.len);
+    try testing.expectEqualStrings("x", arr1[0].kind.identifier);
+
+    const arr2 = args[1].value.kind.array_literal;
+    try testing.expectEqual(@as(usize, 3), arr2.len);
+    try testing.expectEqual(@as(f64, 10.0), arr2[0].kind.number);
+}
