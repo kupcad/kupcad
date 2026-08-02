@@ -19,6 +19,7 @@ pub fn Token(comptime TagType: type) type {
 pub fn BufferedLexer(comptime LexerType: type, comptime TokenType: type, comptime TagType: type) type {
     return struct {
         lexer: *LexerType,
+        previous: TokenType,
         current: TokenType,
         next_tok: TokenType,
 
@@ -27,6 +28,7 @@ pub fn BufferedLexer(comptime LexerType: type, comptime TokenType: type, comptim
         pub fn init(lexer: *LexerType) Self {
             var self = Self{
                 .lexer = lexer,
+                .previous = undefined,
                 .current = undefined,
                 .next_tok = undefined,
             };
@@ -36,6 +38,7 @@ pub fn BufferedLexer(comptime LexerType: type, comptime TokenType: type, comptim
         }
 
         pub fn advance(self: *Self) void {
+            self.previous = self.current;
             self.current = self.next_tok;
             self.next_tok = self.lexer.next();
         }

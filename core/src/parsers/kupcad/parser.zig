@@ -667,7 +667,7 @@ pub const Parser = struct {
             }, tok.loc);
         }
 
-        if (self.isCommandCallStart(tok)) {
+        if (self.isCommandCallStart()) {
             const cmd = try self.parseCommandArgsAndBlock();
             return self.createNode(.{
                 .super_call = try self.b.box(ast.SuperCall, .{ .args = cmd.args, .block = cmd.block }),
@@ -710,7 +710,7 @@ pub const Parser = struct {
             }, method_tok.loc);
         }
 
-        if (self.isCommandCallStart(method_tok)) {
+        if (self.isCommandCallStart()) {
             const cmd = try self.parseCommandArgsAndBlock();
             return self.createNode(.{
                 .method_call = try self.b.box(ast.MethodCall, .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = cmd.args, .block = cmd.block, .is_safe = is_safe }),
@@ -726,7 +726,7 @@ pub const Parser = struct {
         const tok = self.tokens.current;
         self.advance();
 
-        if (self.isCommandCallStart(tok)) {
+        if (self.isCommandCallStart()) {
             const cmd = try self.parseCommandArgsAndBlock();
             return self.createNode(.{
                 .method_call = try self.b.box(ast.MethodCall, .{ .receiver = null, .method_name = tok.lexeme, .args = cmd.args, .block = cmd.block, .is_safe = false }),
@@ -1145,13 +1145,14 @@ pub const Parser = struct {
         }, tok.loc);
     }
 
-    fn isCommandCallStart(self: *Parser, prev_tok: Token) bool {
+    fn isCommandCallStart(self: *Parser) bool {
         const tag = self.tokens.current.tag;
         if (tag == .newline or tag == .eof or tag == .r_paren or tag == .r_brace or tag == .r_bracket or tag == .comma or tag == .colon or tag == .string_mid or tag == .string_end or tag == .keyword_rescue or tag == .keyword_else or tag == .keyword_elsif or tag == .keyword_when or tag == .keyword_ensure or tag == .keyword_end) return false;
         if (tag == .keyword_do or tag == .l_brace) return true;
         if (isAssignmentOp(tag)) return false;
         if (tag == .keyword_if or tag == .keyword_unless or tag == .keyword_while or tag == .keyword_until) return false;
 
+        const prev_tok = self.tokens.previous;
         const has_space = (prev_tok.loc.line != self.tokens.current.loc.line) or (prev_tok.loc.col + prev_tok.lexeme.len < self.tokens.current.loc.col);
         if (has_space and tag == .l_bracket) return true;
 
