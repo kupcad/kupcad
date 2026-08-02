@@ -255,19 +255,18 @@ test "KupCAD Parser: String Interpolation" {
 test "KupCAD Parser: Exponentiation vs Unary Precedence" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-
     const source = "-2 ** 2";
     var lexer = Lexer.init(source, 0);
     var parser = Parser.init(&lexer, arena.allocator());
     const stmt = try parser.parseExpression(.none);
 
-    // In Ruby/Crystal, `-2 ** 2` is `(-2) ** 2` (Unary binds tighter)
-    try testing.expectEqual(ast.KupCadKind.binary_op, @as(std.meta.Tag(ast.KupCadKind), stmt.kind.kupcad));
-    try testing.expectEqual(ast.BinaryOp.exponent, stmt.kind.kupcad.binary_op.op);
+    // In Ruby/Crystal, `-2 ** 2` is `-(2 ** 2)` (Exponentiation binds tighter)
+    try testing.expectEqual(ast.KupCadKind.unary_op, @as(std.meta.Tag(ast.KupCadKind), stmt.kind.kupcad));
+    try testing.expectEqual(ast.UnaryOp.negate, stmt.kind.kupcad.unary_op.op);
 
-    const left_node = stmt.kind.kupcad.binary_op.left;
-    try testing.expectEqual(ast.KupCadKind.unary_op, @as(std.meta.Tag(ast.KupCadKind), left_node.kind.kupcad));
-    try testing.expectEqual(ast.UnaryOp.negate, left_node.kind.kupcad.unary_op.op);
+    const right_node = stmt.kind.kupcad.unary_op.operand;
+    try testing.expectEqual(ast.KupCadKind.binary_op, @as(std.meta.Tag(ast.KupCadKind), right_node.kind.kupcad));
+    try testing.expectEqual(ast.BinaryOp.exponent, right_node.kind.kupcad.binary_op.op);
 }
 
 test "KupCAD Parser: Parenthesis-less Method Calls (Command Syntax)" {
@@ -2188,4 +2187,26 @@ test "KupCAD Parser: Nested String Interpolation AST" {
     try testing.expectEqualStrings("", inner_parts[2].kind.kupcad.string);
 
     try testing.expectEqualStrings(" end", outer_parts[2].kind.kupcad.string);
+}
+
+test "KupCAD Parser: Begin Block as Expression" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\val = begin
+        \\  calc()
+        \\rescue
+        \\  0
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseStatement();
+
+    try testing.expectEqualStrings("val", stmt.kind.kupcad.assignment.name);
+
+    const begin_expr = stmt.kind.kupcad.assignment.value;
+    try testing.expectEqual(ast.KupCadKind.begin_stmt, @as(std.meta.Tag(ast.KupCadKind), begin_expr.kind.kupcad));
+    try testing.expectEqual(@as(usize, 1), begin_expr.kind.kupcad.begin_stmt.rescues.len);
 }

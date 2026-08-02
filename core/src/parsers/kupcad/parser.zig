@@ -31,8 +31,8 @@ pub const Precedence = enum(u8) {
     range = 11, // .. ...
     term = 12, // + -
     factor = 13, // * / %
-    exponent = 14, // **
-    unary = 15, // ! -
+    unary = 14, // ! -
+    exponent = 15, // **
     call = 16, // . &. () [] ::
 };
 
@@ -991,6 +991,7 @@ pub const Parser = struct {
             .plus, .minus, .bang, .keyword_not, .tilde => left = try self.parseUnary(),
             .keyword_if => left = try self.parseIfStatement(),
             .keyword_unless => left = try self.parseUnlessStatement(),
+            .keyword_begin => left = try self.parseBeginStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
             .percent_w, .percent_i => left = try self.parsePercentArray(start_tok.tag),
             else => {
