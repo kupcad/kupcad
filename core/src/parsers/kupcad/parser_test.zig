@@ -173,8 +173,9 @@ test "KupCAD Parser: Functions, Classes, Arrays, and Range" {
 
     const class_node = try parser.parseStatement();
 
-    try testing.expectEqualStrings("MyPart", class_node.kind.class_stmt.name);
-    try testing.expectEqualStrings("Base", class_node.kind.class_stmt.super_class.?);
+    // `name` and `super_class` are now AST Nodes, not raw strings
+    try testing.expectEqualStrings("MyPart", class_node.kind.class_stmt.name.kind.identifier);
+    try testing.expectEqualStrings("Base", class_node.kind.class_stmt.super_class.?.kind.identifier);
 
     const def_node = class_node.kind.class_stmt.body.kind.block.stmts[0];
     try testing.expectEqualStrings("is_valid?", def_node.kind.def_stmt.name);
@@ -700,4 +701,44 @@ test "KupCAD Lexer and Parser: Percent Literals (%w, %i)" {
     try testing.expectEqualStrings("gear", arr[0].kind.string);
     try testing.expectEqualStrings("shaft", arr[1].kind.string);
     try testing.expectEqualStrings("motor", arr[2].kind.string);
+}
+
+test "KupCAD Parser: Class Methods and Namespaced Inheritance" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "class Hardware::Screw < Base::Part\n  def self.build()\n  end\nend";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const class_node = try parser.parseStatement();
+
+    // Check Namespaces
+    try testing.expectEqualStrings("Hardware", class_node.kind.class_stmt.name.kind.namespace_access.path[0]);
+    try testing.expectEqualStrings("Base", class_node.kind.class_stmt.super_class.?.kind.namespace_access.path[0]);
+
+    // Check Class Method
+    const def_node = class_node.kind.class_stmt.body.kind.block.stmts[0];
+    try testing.expectEqual(true, def_node.kind.def_stmt.is_class_method);
+    try testing.expectEqualStrings("build", def_node.kind.def_stmt.name);
+}
+
+test "KupCAD Parser: Implicit RHS Tuples and Array/Hash Splats" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "x, y = 10, 20\narr = [1, *other]\nopts = {a: 1, **kwargs}";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const multi_assign = try parser.parseStatement();
+    try testing.expectEqual(@as(usize, 2), multi_assign.kind.multiple_assignment.value.kind.array_literal.len); // Implicit tuple array
+
+    const arr_assign = try parser.parseStatement();
+    const arr_lit = arr_assign.kind.assignment.value.kind.array_literal;
+    try testing.expectEqual(ast.Node.Kind.splat_expr, @as(std.meta.Tag(ast.Node.Kind), arr_lit[1].kind));
+
+    const hash_assign = try parser.parseStatement();
+    const hash_lit = hash_assign.kind.assignment.value.kind.hash_literal;
+    try testing.expectEqual(ast.Node.Kind.double_splat_expr, @as(std.meta.Tag(ast.Node.Kind), hash_lit[1].key.kind));
 }

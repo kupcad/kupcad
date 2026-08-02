@@ -352,3 +352,28 @@ test "OpenSCAD Parser: Adjacency String Concatenation" {
 
     try testing.expectEqualStrings("Path: to/file.stl", args[0].value.kind.string);
 }
+
+test "OpenSCAD Parser: Trailing Commas Leniency" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "module test(a, b, ) { let(x=1, y=2, ) cube(); }";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    try testing.expectEqualStrings("test", stmt.kind.module_stmt.name);
+    try testing.expectEqual(@as(usize, 2), stmt.kind.module_stmt.params.len); // Ignored trailing comma
+
+    // Statement-level let() compiles into a scoped block!
+    const let_block = stmt.kind.module_stmt.body.kind.block.stmts[0];
+    try testing.expectEqual(ast.Node.Kind.block, @as(std.meta.Tag(ast.Node.Kind), let_block.kind));
+
+    // Verify it ignored the comma and collected 2 assignments + 1 body statement
+    const let_stmts = let_block.kind.block.stmts;
+    try testing.expectEqual(@as(usize, 3), let_stmts.len);
+
+    try testing.expectEqualStrings("x", let_stmts[0].kind.assignment.name);
+    try testing.expectEqualStrings("y", let_stmts[1].kind.assignment.name);
+    try testing.expectEqualStrings("cube", let_stmts[2].kind.method_call.method_name);
+}

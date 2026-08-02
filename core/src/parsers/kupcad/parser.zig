@@ -318,7 +318,7 @@ pub const Parser = struct {
             if (isAssignmentOp(self.current.tag)) {
                 const op_tag = self.current.tag;
                 self.advance();
-                const val_node = try self.parseExpression(.assignment);
+                const val_node = try self.parseExpressionList();
                 return self.createNode(.{
                     .multiple_assignment = .{
                         .lhs = try lhs_list.toOwnedSlice(self.allocator),
@@ -401,35 +401,62 @@ pub const Parser = struct {
 
     fn parseDefStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_def);
-        const name_tok = if (self.current.tag == .ident or self.current.tag == .constant) self.current else return ParseError.UnexpectedToken;
-        self.advance();
+        var is_class_method = false;
+        var name_tok: Token = undefined;
+
+        if (self.current.tag == .keyword_self and self.next_tok.tag == .dot) {
+            is_class_method = true;
+            self.advance(); // consume self
+            self.advance(); // consume .
+            name_tok = if (self.current.tag == .ident or self.current.tag == .constant) self.current else return ParseError.UnexpectedToken;
+            self.advance();
+        } else {
+            name_tok = if (self.current.tag == .ident or self.current.tag == .constant) self.current else return ParseError.UnexpectedToken;
+            self.advance();
+        }
+
         const params = try self.parseParenParams();
         self.skipIgnored();
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
+        return self.createNode(.{ .def_stmt = .{ .name = name_tok.lexeme, .params = params, .body = body, .is_class_method = is_class_method } }, start_tok.loc);
+    }
 
-        return self.createNode(.{ .def_stmt = .{ .name = name_tok.lexeme, .params = params, .body = body } }, start_tok.loc);
+    fn parseClassPath(self: *Parser) ParseError!*Node {
+        const start_loc = self.current.loc;
+        var path_list: std.ArrayListUnmanaged([]const u8) = .empty;
+        errdefer path_list.deinit(self.allocator);
+
+        while (self.current.tag == .constant or self.current.tag == .ident) {
+            try path_list.append(self.allocator, self.current.lexeme);
+            self.advance();
+            if (self.current.tag == .colon_colon) {
+                self.advance();
+            } else break;
+        }
+
+        if (path_list.items.len == 1) {
+            return self.createNode(.{ .identifier = path_list.items[0] }, start_loc);
+        } else {
+            return self.createNode(.{ .namespace_access = .{ .path = try path_list.toOwnedSlice(self.allocator) } }, start_loc);
+        }
     }
 
     fn parseClassStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_class);
-        const name_tok = if (self.current.tag == .constant or self.current.tag == .ident) self.current else return ParseError.UnexpectedToken;
-        self.advance();
+        if (self.current.tag != .constant and self.current.tag != .ident) return ParseError.UnexpectedToken;
+        const name_node = try self.parseClassPath();
 
-        var super_class: ?[]const u8 = null;
+        var super_class: ?*Node = null;
         if (self.current.tag == .less) {
             self.advance();
-            if (self.current.tag == .constant or self.current.tag == .ident) {
-                super_class = self.current.lexeme;
-                self.advance();
-            }
+            if (self.current.tag != .constant and self.current.tag != .ident) return ParseError.UnexpectedToken;
+            super_class = try self.parseClassPath();
         }
-
         self.skipIgnored();
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
-
-        return self.createNode(.{ .class_stmt = .{ .name = name_tok.lexeme, .super_class = super_class, .body = body } }, start_tok.loc);
+        return self.createNode(.{ .class_stmt = .{ .name = name_node, .super_class = super_class, .body = body } }, start_tok.loc);
     }
 
     fn parseModuleStatement(self: *Parser) ParseError!*Node {
@@ -448,7 +475,7 @@ pub const Parser = struct {
         const start_tok = try self.expect(.keyword_return);
         var val: ?*Node = null;
         if (self.current.tag != .newline and self.current.tag != .eof and self.current.tag != .keyword_end and self.current.tag != .keyword_unless and self.current.tag != .keyword_if) {
-            val = try self.parseExpression(.none);
+            val = try self.parseExpressionList();
         }
         return self.createNode(.{ .return_stmt = val }, start_tok.loc);
     }
@@ -641,6 +668,21 @@ pub const Parser = struct {
         return left;
     }
 
+    fn parseExpressionList(self: *Parser) ParseError!*Node {
+        const first = try self.parseExpression(.assignment); // Stop at commas
+        if (self.current.tag == .comma) {
+            var elements: std.ArrayListUnmanaged(*Node) = .empty;
+            errdefer elements.deinit(self.allocator);
+            try elements.append(self.allocator, first);
+            while (self.current.tag == .comma) {
+                self.advance();
+                try elements.append(self.allocator, try self.parseExpression(.assignment));
+            }
+            return self.createNode(.{ .array_literal = try elements.toOwnedSlice(self.allocator) }, first.loc);
+        }
+        return first;
+    }
+
     fn parseLambda(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.minus_greater);
         const params = try self.parseParenParams();
@@ -808,7 +850,16 @@ pub const Parser = struct {
         while (self.current.tag != .r_bracket and self.current.tag != .eof) {
             self.skipIgnored();
             if (self.current.tag == .r_bracket) break;
-            try elements.append(self.allocator, try self.parseExpression(.none));
+
+            if (self.current.tag == .star) {
+                const star_loc = self.current.loc;
+                self.advance();
+                const inner = try self.parseExpression(.none);
+                try elements.append(self.allocator, try self.createNode(.{ .splat_expr = inner }, star_loc));
+            } else {
+                try elements.append(self.allocator, try self.parseExpression(.none));
+            }
+
             if (self.current.tag == .comma) self.advance() else break;
         }
         _ = try self.expect(.r_bracket);
@@ -823,19 +874,30 @@ pub const Parser = struct {
         while (self.current.tag != .r_brace and self.current.tag != .eof) {
             self.skipIgnored();
             if (self.current.tag == .r_brace) break;
-            var key: *Node = undefined;
-            if (self.current.tag == .ident and self.next_tok.tag == .colon) {
-                const key_tok = self.current;
+
+            if (self.current.tag == .star_star) {
+                const star_loc = self.current.loc;
                 self.advance();
-                self.advance();
-                key = try self.createNode(.{ .string = key_tok.lexeme }, key_tok.loc);
+                const inner = try self.parseExpression(.none);
+                const double_splat = try self.createNode(.{ .double_splat_expr = inner }, star_loc);
+                // Clever AST representation: map **kwargs to both key and value
+                try entries.append(self.allocator, .{ .key = double_splat, .value = double_splat });
             } else {
-                key = try self.parseExpression(.none);
-                if (self.current.tag == .colon or self.current.tag == .arrow) {
+                var key: *Node = undefined;
+                if (self.current.tag == .ident and self.next_tok.tag == .colon) {
+                    const key_tok = self.current;
                     self.advance();
-                } else return ParseError.UnexpectedToken;
+                    self.advance();
+                    key = try self.createNode(.{ .string = key_tok.lexeme }, key_tok.loc);
+                } else {
+                    key = try self.parseExpression(.none);
+                    if (self.current.tag == .colon or self.current.tag == .arrow) {
+                        self.advance();
+                    } else return ParseError.UnexpectedToken;
+                }
+                try entries.append(self.allocator, .{ .key = key, .value = try self.parseExpression(.none) });
             }
-            try entries.append(self.allocator, .{ .key = key, .value = try self.parseExpression(.none) });
+
             if (self.current.tag == .comma) self.advance() else break;
         }
         _ = try self.expect(.r_brace);

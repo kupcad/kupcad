@@ -160,6 +160,8 @@ pub const Node = struct {
             target: *Node,
             index: *Node,
         },
+        splat_expr: *Node,
+        double_splat_expr: *Node,
 
         // List Comprehension: `[ for (x = [0:5]) each x * 2 ]`
         comprehension: struct {
@@ -242,10 +244,11 @@ pub const Node = struct {
             name: []const u8,
             params: []const Param,
             body: *Node,
+            is_class_method: bool = false,
         },
         class_stmt: struct {
-            name: []const u8,
-            super_class: ?[]const u8 = null,
+            name: *Node,
+            super_class: ?*Node = null,
             body: *Node,
         },
         module_stmt: struct {
