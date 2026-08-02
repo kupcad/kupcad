@@ -2,23 +2,11 @@ const std = @import("std");
 const testing = std.testing;
 const lexer_mod = @import("lexer.zig");
 const Lexer = lexer_mod.Lexer;
+const test_utils = @import("../common/test_utils.zig");
+const t = test_utils.t;
 
-const ExpectedToken = struct {
-    tag: lexer_mod.Tag,
-    lexeme: []const u8,
-};
-
-fn t(tag: lexer_mod.Tag, lexeme: []const u8) ExpectedToken {
-    return .{ .tag = tag, .lexeme = lexeme };
-}
-
-fn expectTokens(source: []const u8, expected: []const ExpectedToken) !void {
-    var lexer = Lexer.init(source, 0);
-    for (expected) |exp| {
-        const tok = lexer.next();
-        try testing.expectEqual(exp.tag, tok.tag);
-        try testing.expectEqualStrings(exp.lexeme, tok.lexeme);
-    }
+fn expectTokens(source: []const u8, expected: anytype) !void {
+    return test_utils.expectTokens(Lexer, source, expected);
 }
 
 // --- TESTS ---
