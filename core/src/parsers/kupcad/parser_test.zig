@@ -864,3 +864,55 @@ test "KupCAD Parser: Advanced Number Literals (0x, 0b, 0o, Scientific, Underscor
     const n6 = try parser.parseStatement();
     try testing.expectEqual(@as(f64, 0.56), n6.kind.assignment.value.kind.number);
 }
+
+test "KupCAD Parser: Multi-line Method Chaining (Fluent API)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\Box.new(10)
+        \\  .chamfer(2)
+        \\  .translate(x: 5)
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    // Top node is translate
+    try testing.expectEqualStrings("translate", stmt.kind.method_call.method_name);
+    // Receiver of translate is chamfer
+    const chamfer_node = stmt.kind.method_call.receiver.?;
+    try testing.expectEqualStrings("chamfer", chamfer_node.kind.method_call.method_name);
+    // Receiver of chamfer is new
+    const new_node = chamfer_node.kind.method_call.receiver.?;
+    try testing.expectEqualStrings("new", new_node.kind.method_call.method_name);
+}
+
+test "KupCAD Parser: Import options and Trailing Call Commas" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\import "global_config.kup"
+        \\import Hardware from "hardware.kup"
+        \\cube(10, 20, )
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // First statement is a plain import
+    const imp_node_1 = try parser.parseStatement();
+    try testing.expectEqualStrings("global_config.kup", imp_node_1.kind.import_stmt.path);
+    try testing.expectEqual(@as(usize, 0), imp_node_1.kind.import_stmt.symbols.len);
+
+    // Second statement is a single-symbol import
+    const imp_node_2 = try parser.parseStatement();
+    try testing.expectEqualStrings("hardware.kup", imp_node_2.kind.import_stmt.path);
+    try testing.expectEqualStrings("Hardware", imp_node_2.kind.import_stmt.symbols[0]);
+
+    // Third statement is the method call
+    const call_node = try parser.parseStatement();
+    try testing.expectEqualStrings("cube", call_node.kind.method_call.method_name);
+    try testing.expectEqual(@as(usize, 2), call_node.kind.method_call.args.len);
+}

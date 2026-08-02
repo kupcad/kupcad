@@ -424,3 +424,43 @@ test "OpenSCAD Parser: Leading-Dot Float Literals" {
     try testing.expectEqual(@as(f64, 0.5), math_node.kind.binary_op.left.kind.number);
     try testing.expectEqual(@as(f64, 0.125), math_node.kind.binary_op.right.kind.number);
 }
+
+test "OpenSCAD Parser: C-Style For Loops" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "for (a = 0, b = 1; a < 10; a = a + 1, b = b * 2) cube(a);";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.c_for_stmt, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+
+    // Check Multi-Init
+    try testing.expectEqual(@as(usize, 2), node.kind.c_for_stmt.init.len);
+    try testing.expectEqualStrings("b", node.kind.c_for_stmt.init[1].kind.assignment.name);
+
+    // Check Condition
+    try testing.expectEqual(ast.BinaryOp.less, node.kind.c_for_stmt.condition.?.kind.binary_op.op);
+
+    // Check Multi-Update
+    try testing.expectEqual(@as(usize, 2), node.kind.c_for_stmt.update.len);
+    try testing.expectEqual(ast.BinaryOp.add, node.kind.c_for_stmt.update[0].kind.assignment.value.kind.binary_op.op);
+}
+
+test "OpenSCAD Parser: Function Literals (Anonymous)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "f = function(x, y) x * y;";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const func_lit = stmt.kind.assignment.value;
+
+    // Function literals compile down to Lambda Expressions!
+    try testing.expectEqual(ast.Node.Kind.lambda_expr, @as(std.meta.Tag(ast.Node.Kind), func_lit.kind));
+    try testing.expectEqualStrings("x", func_lit.kind.lambda_expr.params[0].name);
+    try testing.expectEqual(ast.BinaryOp.multiply, func_lit.kind.lambda_expr.body.kind.binary_op.op);
+}

@@ -389,6 +389,10 @@ pub const Lexer = struct {
         const start = self.index;
         while (self.index < self.buffer.len) {
             const c = self.peek();
+            if (c == '\n') {
+                self.line += 1;
+                self.col = 0; // Will become 1 on advance() below
+            }
             if (c == '\\') {
                 self.advance();
                 if (self.index < self.buffer.len) self.advance();

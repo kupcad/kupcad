@@ -209,23 +209,33 @@ pub const Parser = struct {
 
     fn parseImportStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_import);
-        _ = try self.expect(.l_brace);
+
         var symbols: std.ArrayListUnmanaged([]const u8) = .empty;
         errdefer symbols.deinit(self.allocator);
 
-        while (self.current.tag != .r_brace and self.current.tag != .eof) {
-            self.skipIgnored();
-            if (self.current.tag == .ident or self.current.tag == .constant) {
-                try symbols.append(self.allocator, self.current.lexeme);
-                self.advance();
-            } else return ParseError.UnexpectedToken;
-            if (self.current.tag == .comma) self.advance() else break;
+        if (self.current.tag == .l_brace) {
+            // e.g. import { a, b } from "path"
+            self.advance();
+            while (self.current.tag != .r_brace and self.current.tag != .eof) {
+                self.skipIgnored();
+                if (self.current.tag == .ident or self.current.tag == .constant) {
+                    try symbols.append(self.allocator, self.current.lexeme);
+                    self.advance();
+                } else return ParseError.UnexpectedToken;
+                if (self.current.tag == .comma) self.advance() else break;
+            }
+            _ = try self.expect(.r_brace);
+            _ = try self.expect(.keyword_from);
+        } else if (self.current.tag == .constant or self.current.tag == .ident) {
+            // e.g. import Hardware from "path"
+            try symbols.append(self.allocator, self.current.lexeme);
+            self.advance();
+            _ = try self.expect(.keyword_from);
+        } else if (self.current.tag != .string) {
+            return ParseError.UnexpectedToken;
         }
 
-        _ = try self.expect(.r_brace);
-        _ = try self.expect(.keyword_from);
         const path_tok = try self.expect(.string);
-
         return self.createNode(.{
             .import_stmt = .{ .symbols = try symbols.toOwnedSlice(self.allocator), .path = path_tok.lexeme },
         }, start_tok.loc);
@@ -669,7 +679,6 @@ pub const Parser = struct {
     pub fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Node {
         const start_tok = self.current;
         var left: *Node = undefined;
-
         switch (start_tok.tag) {
             .number => {
                 self.advance();
@@ -715,7 +724,22 @@ pub const Parser = struct {
             else => return ParseError.InvalidExpression,
         }
 
-        while (@intFromEnum(precedence) < @intFromEnum(getInfixPrecedence(self.current.tag))) {
+        while (true) {
+            // Handle multi-line method chaining (Fluent API)
+            if (self.current.tag == .newline) {
+                const next_tag = self.next_tok.tag;
+                if (next_tag == .dot or next_tag == .ampersand_dot) {
+                    self.advance(); // consume newline to continue the chain
+                } else {
+                    break; // normal end of statement
+                }
+            }
+
+            // Allow mid-expression comments
+            while (self.current.tag == .comment) self.advance();
+
+            if (@intFromEnum(precedence) >= @intFromEnum(getInfixPrecedence(self.current.tag))) break;
+
             const op_tok = self.current;
             left = switch (op_tok.tag) {
                 .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => try self.parseAssignmentExpr(left),
@@ -969,7 +993,8 @@ pub const Parser = struct {
                     const key_tok = self.current;
                     self.advance();
                     self.advance();
-                    key = try self.createNode(.{ .string = key_tok.lexeme }, key_tok.loc);
+                    // Now properly constructs a .symbol node instead of .string
+                    key = try self.createNode(.{ .symbol = key_tok.lexeme }, key_tok.loc);
                 } else {
                     key = try self.parseExpression(.none);
                     if (self.current.tag == .colon or self.current.tag == .arrow) {
@@ -982,6 +1007,7 @@ pub const Parser = struct {
             if (self.current.tag == .comma) self.advance() else break;
         }
         _ = try self.expect(.r_brace);
+
         return self.createNode(.{ .hash_literal = try entries.toOwnedSlice(self.allocator) }, start_tok.loc);
     }
 

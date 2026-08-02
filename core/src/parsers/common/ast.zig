@@ -241,6 +241,13 @@ pub const Node = struct {
             body: *Node,
             is_intersection: bool = false,
         },
+        c_for_stmt: struct {
+            init: []const *Node,
+            condition: ?*Node,
+            update: []const *Node,
+            body: *Node,
+            is_intersection: bool = false,
+        },
         def_stmt: struct {
             name: []const u8,
             params: []const Param,
