@@ -2285,14 +2285,15 @@ test "KupCAD Parser: Implicit RHS Array on Single Assignment" {
     var lexer = Lexer.init(source, 0);
     var parser = Parser.init(&lexer, arena.allocator());
 
-    // 1. Verify `coords = 10, 20, 30`
+    // Verify `coords = 10, 20, 30`
     const stmt1 = try parser.parseStatement();
     const rhs_arr1 = stmt1.kind.kupcad.assignment.value.kind.kupcad.array_literal;
     try testing.expectEqual(@as(usize, 3), rhs_arr1.len);
     try testing.expectEqual(@as(f64, 30.0), rhs_arr1[2].kind.kupcad.number);
 
-    // 2. Verify `points[0] = 5, 5`
+    // Verify `points[0] = 5, 5`
     const stmt2 = try parser.parseStatement();
     const rhs_arr2 = stmt2.kind.kupcad.index_assignment.value.kind.kupcad.array_literal;
     try testing.expectEqual(@as(usize, 2), rhs_arr2.len);
+    try testing.expectEqual(@as(f64, 5.0), rhs_arr2[1].kind.kupcad.number);
 }
