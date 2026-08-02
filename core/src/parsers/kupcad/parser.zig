@@ -109,23 +109,6 @@ pub const Parser = struct {
             else => try self.parseExprOrMultiAssign(),
         };
 
-        // Command Syntax check at the statement level
-        if (stmt.kind == .identifier and self.current.tag != .newline and self.current.tag != .eof and self.current.tag != .keyword_if and self.current.tag != .keyword_unless) {
-            if (@intFromEnum(getInfixPrecedence(self.current.tag)) == 0 and self.current.tag != .keyword_do and self.current.tag != .colon) {
-                var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
-                errdefer args.deinit(self.allocator);
-                while (self.current.tag != .newline and self.current.tag != .eof and self.current.tag != .keyword_do) {
-                    try args.append(self.allocator, try self.parseNamedArg());
-                    if (self.current.tag == .comma) self.advance() else break;
-                }
-                var block_node: ?*Node = null;
-                if (self.current.tag == .keyword_do or self.current.tag == .l_brace) block_node = try self.parseBlockClosure();
-                stmt = try self.createNode(.{
-                    .method_call = .{ .receiver = null, .method_name = stmt.kind.identifier, .args = try args.toOwnedSlice(self.allocator), .block = block_node },
-                }, stmt.loc);
-            }
-        }
-
         if (self.current.tag == .keyword_if or self.current.tag == .keyword_unless or self.current.tag == .keyword_while or self.current.tag == .keyword_until) {
             const mod_tag = self.current.tag;
             const mod_loc = self.current.loc;
@@ -270,9 +253,13 @@ pub const Parser = struct {
         var temp_lexer = self.lexer.*;
         var temp_next = self.next_tok;
         var curr = self.current;
+        var has_comma = false;
+
         while (curr.tag != .newline and curr.tag != .eof) {
-            if (isAssignmentOp(curr.tag)) return true;
-            if (curr.tag != .ident and curr.tag != .constant and curr.tag != .comma and curr.tag != .star) {
+            if (isAssignmentOp(curr.tag)) return has_comma;
+            if (curr.tag == .comma) {
+                has_comma = true;
+            } else if (curr.tag != .ident and curr.tag != .constant and curr.tag != .star) {
                 return false;
             }
             curr = temp_next;
@@ -601,7 +588,7 @@ pub const Parser = struct {
             .keyword_super => left = try self.parseSuper(),
             .minus_greater => left = try self.parseLambda(),
             .colon_colon => left = try self.parseTopLevelScopeResolution(),
-            .ident, .constant => left = try self.parseIdentifierOrAssignmentOrCall(),
+            .ident, .constant => left = try self.parseIdentifierOrCall(),
             .l_paren => left = try self.parseGroupedExpression(),
             .l_bracket => left = try self.parseArrayLiteral(),
             .l_brace => left = try self.parseHashLiteral(),
@@ -615,13 +602,15 @@ pub const Parser = struct {
         while (@intFromEnum(precedence) < @intFromEnum(getInfixPrecedence(self.current.tag))) {
             const op_tok = self.current;
             left = switch (op_tok.tag) {
+                .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => try self.parseAssignmentExpr(left),
                 .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or, .dot_dot, .dot_dot_dot, .less_less, .greater_greater, .keyword_and, .keyword_or, .ampersand, .pipe, .caret => try self.parseBinary(left),
                 .question => try self.parseTernary(left),
                 .dot => try self.parseMethodCall(left, false),
                 .ampersand_dot => try self.parseMethodCall(left, true),
                 .colon_colon => try self.parseScopeResolution(left),
                 .l_bracket => try self.parseIndexAccessOrAssignment(left),
-                .l_paren, .keyword_do => try self.parseCallOnExpr(left),
+                .l_paren => try self.parseCallOnExpr(left),
+
                 else => break,
             };
         }
@@ -678,6 +667,28 @@ pub const Parser = struct {
         return self.createNode(.{ .interpolated_string = try parts.toOwnedSlice(self.allocator) }, start_tok.loc);
     }
 
+    fn parseAssignmentExpr(self: *Parser, left: *Node) ParseError!*Node {
+        const op_tag = self.current.tag;
+        self.advance();
+        const value = try self.parseExpression(.none); // Right associative
+
+        if (left.kind == .identifier) {
+            return self.createNode(.{ .assignment = .{
+                .name = left.kind.identifier,
+                .op = tagToAssignmentOp(op_tag),
+                .value = value,
+            } }, left.loc);
+        } else if (left.kind == .method_call and left.kind.method_call.args.len == 0 and left.kind.method_call.block == null) {
+            return self.createNode(.{ .property_assignment = .{
+                .target = left.kind.method_call.receiver orelse return ParseError.InvalidExpression,
+                .property = left.kind.method_call.method_name,
+                .op = tagToAssignmentOp(op_tag),
+                .value = value,
+            } }, left.loc);
+        }
+        return ParseError.InvalidExpression;
+    }
+
     fn parseSuper(self: *Parser) ParseError!*Node {
         const tok = try self.expect(.keyword_super);
         const args = try self.parseParenArgs();
@@ -700,39 +711,41 @@ pub const Parser = struct {
         }, tok.loc);
     }
 
-    fn parseIdentifierOrAssignmentOrCall(self: *Parser) ParseError!*Node {
-        const tok = self.current;
-        self.advance();
+    fn isCommandCallStart(self: *Parser) bool {
+        const tag = self.current.tag;
+        if (tag == .newline or tag == .eof or tag == .r_paren or tag == .r_brace or tag == .r_bracket or tag == .comma) return false;
+        if (tag == .keyword_do or tag == .l_brace) return true;
+        if (isAssignmentOp(tag)) return false;
+        if (tag == .keyword_if or tag == .keyword_unless or tag == .keyword_while or tag == .keyword_until) return false;
 
-        // Single assignment: `x = 10`
-        if (isAssignmentOp(self.current.tag)) {
-            const op_tag = self.current.tag;
-            self.advance();
-            const val_node = try self.parseExpression(.assignment);
-            return self.createNode(.{
-                .assignment = .{
-                    .name = tok.lexeme,
-                    .op = tagToAssignmentOp(op_tag),
-                    .value = val_node,
-                },
-            }, tok.loc);
+        if (@intFromEnum(getInfixPrecedence(tag)) == 0) return true;
+        return false;
+    }
+
+    fn parseCommandArgsAndBlock(self: *Parser) ParseError!struct { args: []const ast.NamedArg, block: ?*Node } {
+        var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
+        errdefer args.deinit(self.allocator);
+
+        while (self.current.tag != .newline and self.current.tag != .eof and self.current.tag != .keyword_do and self.current.tag != .l_brace and self.current.tag != .r_paren and self.current.tag != .r_bracket and self.current.tag != .r_brace and self.current.tag != .keyword_if and self.current.tag != .keyword_unless and self.current.tag != .keyword_while and self.current.tag != .keyword_until) {
+            try args.append(self.allocator, try self.parseNamedArg());
+            if (self.current.tag == .comma) self.advance() else break;
         }
 
-        // Lookahead for command calls inside expressions
-        if (self.current.tag != .newline and self.current.tag != .eof and self.current.tag != .r_paren and self.current.tag != .r_brace and self.current.tag != .r_bracket and self.current.tag != .comma) {
-            if (@intFromEnum(getInfixPrecedence(self.current.tag)) == 0 and self.current.tag != .keyword_do and self.current.tag != .colon) {
-                var args: std.ArrayListUnmanaged(ast.NamedArg) = .empty;
-                errdefer args.deinit(self.allocator);
-                while (self.current.tag != .newline and self.current.tag != .eof and self.current.tag != .keyword_do and self.current.tag != .r_paren and self.current.tag != .r_brace and self.current.tag != .r_bracket) {
-                    try args.append(self.allocator, try self.parseNamedArg());
-                    if (self.current.tag == .comma) self.advance() else break;
-                }
-                var block_node: ?*Node = null;
-                if (self.current.tag == .keyword_do or self.current.tag == .l_brace) block_node = try self.parseBlockClosure();
-                return self.createNode(.{
-                    .method_call = .{ .receiver = null, .method_name = tok.lexeme, .args = try args.toOwnedSlice(self.allocator), .block = block_node },
-                }, tok.loc);
-            }
+        var block_node: ?*Node = null;
+        if (self.current.tag == .keyword_do or self.current.tag == .l_brace) {
+            block_node = try self.parseBlockClosure();
+        }
+        return .{ .args = try args.toOwnedSlice(self.allocator), .block = block_node };
+    }
+
+    fn parseIdentifierOrCall(self: *Parser) ParseError!*Node {
+        const tok = self.current;
+        self.advance();
+        if (self.isCommandCallStart()) {
+            const cmd = try self.parseCommandArgsAndBlock();
+            return self.createNode(.{
+                .method_call = .{ .receiver = null, .method_name = tok.lexeme, .args = cmd.args, .block = cmd.block, .is_safe = false },
+            }, tok.loc);
         }
         return self.createNode(.{ .identifier = tok.lexeme }, tok.loc);
     }
@@ -864,11 +877,25 @@ pub const Parser = struct {
     fn parseMethodCall(self: *Parser, receiver: *Node, is_safe: bool) ParseError!*Node {
         if (self.current.tag == .dot or self.current.tag == .ampersand_dot) self.advance();
         const method_tok = try self.expect(.ident);
-        const args = try self.parseParenArgs();
-        var block_node: ?*Node = null;
-        if (self.current.tag == .keyword_do or self.current.tag == .l_brace) block_node = try self.parseBlockClosure();
+
+        if (self.current.tag == .l_paren) {
+            const args = try self.parseParenArgs();
+            var block_node: ?*Node = null;
+            if (self.current.tag == .keyword_do or self.current.tag == .l_brace) block_node = try self.parseBlockClosure();
+            return self.createNode(.{
+                .method_call = .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = args, .block = block_node, .is_safe = is_safe },
+            }, method_tok.loc);
+        }
+
+        if (self.isCommandCallStart()) {
+            const cmd = try self.parseCommandArgsAndBlock();
+            return self.createNode(.{
+                .method_call = .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = cmd.args, .block = cmd.block, .is_safe = is_safe },
+            }, method_tok.loc);
+        }
+
         return self.createNode(.{
-            .method_call = .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = args, .block = block_node, .is_safe = is_safe },
+            .method_call = .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = &.{}, .block = null, .is_safe = is_safe },
         }, method_tok.loc);
     }
 
@@ -934,6 +961,7 @@ pub const Parser = struct {
 
     fn getInfixPrecedence(tag: Tag) Precedence {
         return switch (tag) {
+            .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => .assignment,
             .question => .ternary,
             .or_or, .keyword_or => .logical_or,
             .and_and, .keyword_and => .logical_and,

@@ -611,3 +611,39 @@ test "KupCAD Parser: Begin / Rescue / Ensure" {
     try testing.expectEqualStrings("log", node.kind.begin_stmt.rescue_body.?.kind.block.stmts[0].kind.method_call.method_name);
     try testing.expectEqualStrings("clean", node.kind.begin_stmt.ensure_body.?.kind.block.stmts[0].kind.method_call.method_name);
 }
+
+test "KupCAD Parser: Object Property Assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "box.width = 100";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.property_assignment, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqualStrings("box", node.kind.property_assignment.target.kind.identifier);
+    try testing.expectEqualStrings("width", node.kind.property_assignment.property);
+    try testing.expectEqual(@as(f64, 100.0), node.kind.property_assignment.value.kind.number);
+}
+
+test "KupCAD Parser: Receiver Command Syntax" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "box.translate x: 10, y: 20 do\nend";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.method_call, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqualStrings("translate", node.kind.method_call.method_name);
+    try testing.expectEqualStrings("box", node.kind.method_call.receiver.?.kind.identifier);
+
+    const args = node.kind.method_call.args;
+    try testing.expectEqual(@as(usize, 2), args.len);
+    try testing.expectEqualStrings("x", args[0].name);
+    try testing.expectEqualStrings("y", args[1].name);
+
+    try testing.expect(node.kind.method_call.block != null);
+}

@@ -111,6 +111,12 @@ pub const Node = struct {
             op: ?BinaryOp = null,
             value: *Node,
         },
+        property_assignment: struct {
+            target: *Node,
+            property: []const u8,
+            op: ?BinaryOp,
+            value: *Node,
+        },
         index_assignment: struct {
             target: *Node,
             index: *Node,
