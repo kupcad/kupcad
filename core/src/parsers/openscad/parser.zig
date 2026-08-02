@@ -253,85 +253,63 @@ pub const Parser = struct {
         }, start_tok.loc);
     }
 
-    fn parseForClause(self: *Parser) ParseError!*Node {
-        const is_intersection = (self.current.tag == .keyword_intersection_for);
-        const start_tok = self.current;
-        self.advance();
-
-        _ = try self.expect(.l_paren);
-        var bindings: std.ArrayListUnmanaged(ast.ForBinding) = .empty;
-        errdefer bindings.deinit(self.allocator);
-
-        while (self.current.tag != .r_paren and self.current.tag != .eof) {
-            const var_tok = try self.expect(.ident);
-            _ = try self.expect(.equal);
-            const range_node = try self.parseExpression(.none);
-            try bindings.append(self.allocator, .{ .name = var_tok.lexeme, .range = range_node });
-            if (self.current.tag == .comma) self.advance() else break;
-        }
-        _ = try self.expect(.r_paren);
-
-        const empty_body = try self.createNode(.{
-            .block = .{ .stmts = &.{} },
-        }, start_tok.loc);
-
-        return self.createNode(.{
-            .for_stmt = .{
-                .bindings = try bindings.toOwnedSlice(self.allocator),
-                .body = empty_body,
-                .is_intersection = is_intersection,
-            },
-        }, start_tok.loc);
-    }
-
-    fn parseLetClause(self: *Parser) ParseError!*Node {
-        const start_tok = try self.expect(.keyword_let);
-        _ = try self.expect(.l_paren);
-        var assignments: std.ArrayListUnmanaged(*Node) = .empty;
-        errdefer assignments.deinit(self.allocator);
-
-        while (self.current.tag != .r_paren and self.current.tag != .eof) {
-            const var_tok = try self.expect(.ident);
-            _ = try self.expect(.equal);
-            const val_expr = try self.parseExpression(.none);
-            const assign_node = try self.createNode(.{
-                .assignment = .{
-                    .name = var_tok.lexeme,
-                    .op = null,
-                    .value = val_expr,
-                },
-            }, var_tok.loc);
-            try assignments.append(self.allocator, assign_node);
-            if (self.current.tag == .comma) {
-                self.advance();
-            } else {
-                break;
+    fn parseComprehensionElement(self: *Parser) ParseError!*Node {
+        if (self.current.tag == .keyword_for or self.current.tag == .keyword_intersection_for) {
+            const start_tok = self.current;
+            self.advance();
+            _ = try self.expect(.l_paren);
+            var bindings: std.ArrayListUnmanaged(ast.ForBinding) = .empty;
+            errdefer bindings.deinit(self.allocator);
+            while (self.current.tag != .r_paren and self.current.tag != .eof) {
+                const var_tok = try self.expect(.ident);
+                _ = try self.expect(.equal);
+                const range_node = try self.parseExpression(.none);
+                try bindings.append(self.allocator, .{ .name = var_tok.lexeme, .range = range_node });
+                if (self.current.tag == .comma) self.advance() else break;
             }
+            _ = try self.expect(.r_paren);
+            const body = try self.parseComprehensionElement();
+            return self.createNode(.{ .for_stmt = .{ .bindings = try bindings.toOwnedSlice(self.allocator), .body = body, .is_intersection = (start_tok.tag == .keyword_intersection_for) } }, start_tok.loc);
+        } else if (self.current.tag == .keyword_let) {
+            const start_tok = try self.expect(.keyword_let);
+            _ = try self.expect(.l_paren);
+            var assignments: std.ArrayListUnmanaged(*Node) = .empty;
+            errdefer assignments.deinit(self.allocator);
+            while (self.current.tag != .r_paren and self.current.tag != .eof) {
+                const var_tok = try self.expect(.ident);
+                _ = try self.expect(.equal);
+                const val_expr = try self.parseExpression(.none);
+                const assign_node = try self.createNode(.{ .assignment = .{ .name = var_tok.lexeme, .op = null, .value = val_expr } }, var_tok.loc);
+                try assignments.append(self.allocator, assign_node);
+                if (self.current.tag == .comma) self.advance() else break;
+            }
+            _ = try self.expect(.r_paren);
+            const yield_expr = try self.parseComprehensionElement();
+            return self.createNode(.{ .let_expr = .{ .assignments = try assignments.toOwnedSlice(self.allocator), .yield_expr = yield_expr } }, start_tok.loc);
+        } else if (self.current.tag == .keyword_if) {
+            const start_tok = try self.expect(.keyword_if);
+            _ = try self.expect(.l_paren);
+            const cond = try self.parseExpression(.none);
+            _ = try self.expect(.r_paren);
+            const then_branch = try self.parseComprehensionElement();
+            var else_branch: ?*Node = null;
+            if (self.current.tag == .keyword_else) {
+                self.advance();
+                else_branch = try self.parseComprehensionElement();
+            }
+            return self.createNode(.{ .if_stmt = .{ .condition = cond, .then_branch = then_branch, .else_branch = else_branch, .is_unless = false } }, start_tok.loc);
+        } else {
+            var is_each = false;
+            if (self.current.tag == .keyword_each) {
+                is_each = true;
+                self.advance();
+            }
+            var expr = try self.parseExpression(.none);
+            if (is_each) {
+                expr = try self.createNode(.{ .each_expr = expr }, expr.loc);
+            }
+            return expr;
         }
-        _ = try self.expect(.r_paren);
-
-        return self.createNode(.{
-            .block = .{ .stmts = try assignments.toOwnedSlice(self.allocator) },
-        }, start_tok.loc);
-    }
-
-    fn parseIfClause(self: *Parser) ParseError!*Node {
-        const start_tok = try self.expect(.keyword_if);
-        _ = try self.expect(.l_paren);
-        const cond = try self.parseExpression(.none);
-        _ = try self.expect(.r_paren);
-
-        const empty_then = try self.createNode(.{
-            .block = .{ .stmts = &.{} },
-        }, start_tok.loc);
-
-        return self.createNode(.{
-            .if_stmt = .{
-                .condition = cond,
-                .then_branch = empty_then,
-                .else_branch = null,
-            },
-        }, start_tok.loc);
     }
 
     fn parseLetStatement(self: *Parser) ParseError!*Node {
@@ -653,50 +631,23 @@ pub const Parser = struct {
 
     fn parseArrayOrRangeOrComprehension(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.l_bracket);
-        while (self.current.tag == .comment or self.current.tag == .block_comment) {
-            self.advance();
-        }
+        while (self.current.tag == .comment or self.current.tag == .block_comment) self.advance();
 
-        if (self.current.tag == .keyword_for or self.current.tag == .keyword_let or self.current.tag == .keyword_intersection_for) {
-            var clauses: std.ArrayListUnmanaged(*Node) = .empty;
-            errdefer clauses.deinit(self.allocator);
-
-            while (self.current.tag == .keyword_for or self.current.tag == .keyword_let or self.current.tag == .keyword_if or self.current.tag == .keyword_intersection_for) {
-                if (self.current.tag == .keyword_for or self.current.tag == .keyword_intersection_for) {
-                    const clause = try self.parseForClause();
-                    try clauses.append(self.allocator, clause);
-                } else if (self.current.tag == .keyword_let) {
-                    const clause = try self.parseLetClause();
-                    try clauses.append(self.allocator, clause);
-                } else if (self.current.tag == .keyword_if) {
-                    const clause = try self.parseIfClause();
-                    try clauses.append(self.allocator, clause);
-                }
-                while (self.current.tag == .comment or self.current.tag == .block_comment) {
-                    self.advance();
-                }
-            }
-
-            const yield_expr = if (self.current.tag == .keyword_each) blk: {
-                const each_tok = self.current;
-                self.advance();
-                const inner = try self.parseExpression(.none);
-                break :blk try self.createNode(.{ .each_expr = inner }, each_tok.loc);
-            } else try self.parseExpression(.none);
-
-            while (self.current.tag == .comment or self.current.tag == .block_comment) {
-                self.advance();
-            }
+        // Comprehension execution (Recursive)
+        if (self.current.tag == .keyword_for or self.current.tag == .keyword_let or self.current.tag == .keyword_if or self.current.tag == .keyword_intersection_for) {
+            const root = try self.parseComprehensionElement();
+            while (self.current.tag == .comment or self.current.tag == .block_comment) self.advance();
             _ = try self.expect(.r_bracket);
 
             return self.createNode(.{
                 .comprehension = .{
-                    .clauses = try clauses.toOwnedSlice(self.allocator),
-                    .yield_expr = yield_expr,
+                    .clauses = &.{}, // Flat clauses are no longer needed; it is beautifully represented recursively!
+                    .yield_expr = root,
                 },
             }, start_tok.loc);
         }
 
+        // Standard Array or Range parsing
         var elements: std.ArrayListUnmanaged(*Node) = .empty;
         errdefer elements.deinit(self.allocator);
 
@@ -717,6 +668,7 @@ pub const Parser = struct {
         }
 
         if (self.current.tag == .colon) {
+            if (is_each) return ParseError.InvalidExpression; // Range cannot start with `each`
             self.advance();
             const second = try self.parseExpression(.none);
             if (self.current.tag == .colon) {

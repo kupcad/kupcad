@@ -208,6 +208,7 @@ pub const Node = struct {
         while_stmt: struct {
             condition: *Node,
             body: *Node,
+            is_until: bool = false,
         },
         for_stmt: struct {
             bindings: []const ForBinding,
@@ -232,6 +233,7 @@ pub const Node = struct {
         return_stmt: ?*Node,
         yield_stmt: ?*Node,
         break_stmt: ?*Node,
+        next_stmt: ?*Node,
         param_doc: []const u8,
         comment: []const u8,
 

@@ -177,3 +177,13 @@ test "KupCAD Lexer: Stabby Lambda" {
         t(.r_brace, "}"),       t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Bitwise Assignment Operators" {
+    try expectTokens("a &= b\nc |= d\ne ^= f\ng <<= 1\nh >>= 2", &.{
+        t(.ident, "a"), t(.ampersand_equal, "&="),        t(.ident, "b"),  t(.newline, "\n"),
+        t(.ident, "c"), t(.pipe_equal, "|="),             t(.ident, "d"),  t(.newline, "\n"),
+        t(.ident, "e"), t(.caret_equal, "^="),            t(.ident, "f"),  t(.newline, "\n"),
+        t(.ident, "g"), t(.less_less_equal, "<<="),       t(.number, "1"), t(.newline, "\n"),
+        t(.ident, "h"), t(.greater_greater_equal, ">>="), t(.number, "2"), t(.eof, ""),
+    });
+}

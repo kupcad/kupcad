@@ -535,3 +535,37 @@ test "KupCAD Parser: CSG Intersections and Bitwise Operators" {
     try testing.expectEqual(ast.UnaryOp.bitwise_not, not_node.kind.unary_op.op);
     try testing.expectEqualStrings("part1", not_node.kind.unary_op.operand.kind.identifier);
 }
+
+test "KupCAD Parser: Curly Brace Method Blocks" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "faces.each { |f| f.fillet(2) }";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    try testing.expectEqualStrings("each", node.kind.method_call.method_name);
+
+    const block = node.kind.method_call.block.?;
+    try testing.expectEqualStrings("f", block.kind.block.params[0]);
+    try testing.expectEqualStrings("fillet", block.kind.block.stmts[0].kind.method_call.method_name);
+}
+
+test "KupCAD Parser: Next Statement and Until/While Modifiers" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "next 10 until x == 5";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+
+    try testing.expectEqual(ast.Node.Kind.while_stmt, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqual(true, node.kind.while_stmt.is_until);
+
+    const inner_next = node.kind.while_stmt.body.kind.block.stmts[0];
+    try testing.expectEqual(ast.Node.Kind.next_stmt, @as(std.meta.Tag(ast.Node.Kind), inner_next.kind));
+    try testing.expectEqual(@as(f64, 10.0), inner_next.kind.next_stmt.?.kind.number);
+}

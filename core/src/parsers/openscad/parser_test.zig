@@ -84,9 +84,17 @@ test "OpenSCAD Parser: Vector Comprehension" {
     const assign_node = try parser.parseStatement();
     const comp_node = assign_node.kind.assignment.value;
 
-    try testing.expectEqual(@as(usize, 1), comp_node.kind.comprehension.clauses.len);
-    try testing.expectEqualStrings("x", comp_node.kind.comprehension.clauses[0].kind.for_stmt.bindings[0].name);
-    try testing.expectEqual(ast.BinaryOp.multiply, comp_node.kind.comprehension.yield_expr.kind.binary_op.op);
+    // Flat clauses are no longer used; verify it is empty
+    try testing.expectEqual(@as(usize, 0), comp_node.kind.comprehension.clauses.len);
+
+    // The top node of the comprehension yield logic is the FOR statement
+    const for_node = comp_node.kind.comprehension.yield_expr;
+    try testing.expectEqual(ast.Node.Kind.for_stmt, @as(std.meta.Tag(ast.Node.Kind), for_node.kind));
+    try testing.expectEqualStrings("x", for_node.kind.for_stmt.bindings[0].name);
+
+    // The body of the FOR is the mathematical expression
+    const math_node = for_node.kind.for_stmt.body;
+    try testing.expectEqual(ast.BinaryOp.multiply, math_node.kind.binary_op.op);
 }
 
 test "OpenSCAD Parser: Unbraced Operator Module Chaining" {
@@ -289,4 +297,25 @@ test "OpenSCAD Parser: Array Literal Expansion (each)" {
     try testing.expectEqualStrings("sub_array", elements[1].kind.each_expr.kind.identifier);
 
     try testing.expectEqual(@as(f64, 4.0), elements[2].kind.number);
+}
+
+test "OpenSCAD Parser: Comprehension with Else" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "pts = [ for (i = [0:5]) if (i % 2 == 0) i else -i ];";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const comp_node = stmt.kind.assignment.value;
+
+    // The top node of the comprehension yield logic is the FOR statement
+    const for_node = comp_node.kind.comprehension.yield_expr;
+    try testing.expectEqualStrings("i", for_node.kind.for_stmt.bindings[0].name);
+
+    // The body of the FOR is the nested IF statement
+    const if_node = for_node.kind.for_stmt.body;
+    try testing.expectEqualStrings("i", if_node.kind.if_stmt.then_branch.kind.identifier);
+    try testing.expectEqual(ast.UnaryOp.negate, if_node.kind.if_stmt.else_branch.?.kind.unary_op.op);
 }
