@@ -6,6 +6,11 @@ const parser_mod = @import("parser.zig");
 const Parser = parser_mod.Parser;
 const ast = @import("../common/ast.zig");
 
+test "AST Node Memory Size Optimization" {
+    // Verifies that large payload boxing keeps Node struct size <= 40 bytes
+    try testing.expect(@sizeOf(ast.Node) <= 40);
+}
+
 test "KupCAD Parser: Operator Precedence (* vs +)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

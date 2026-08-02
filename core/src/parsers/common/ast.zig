@@ -75,6 +75,176 @@ pub const RescueClause = struct {
     body: *Node,
 };
 
+// --- STANDALONE BOXED AST PAYLOADS ---
+
+pub const Range = struct {
+    start: *Node,
+    end: *Node,
+    step: ?*Node = null,
+    is_exclusive: bool = false,
+};
+
+pub const Assignment = struct {
+    name: []const u8,
+    op: ?BinaryOp = null,
+    value: *Node,
+};
+
+pub const MultipleAssignment = struct {
+    lhs: []const LhsExpr,
+    op: ?BinaryOp = null,
+    value: *Node,
+};
+
+pub const PropertyAssignment = struct {
+    target: *Node,
+    property: []const u8,
+    op: ?BinaryOp = null,
+    value: *Node,
+};
+
+pub const IndexAssignment = struct {
+    target: *Node,
+    index: *Node,
+    op: ?BinaryOp = null,
+    value: *Node,
+};
+
+pub const BinaryExpr = struct {
+    op: BinaryOp,
+    left: *Node,
+    right: *Node,
+};
+
+pub const TernaryExpr = struct {
+    condition: *Node,
+    then_branch: *Node,
+    else_branch: *Node,
+};
+
+pub const Comprehension = struct {
+    clauses: []const *Node = &.{},
+    yield_expr: *Node,
+};
+
+pub const LetExpr = struct {
+    assignments: []const *Node,
+    yield_expr: *Node,
+};
+
+pub const AssertExpr = struct {
+    args: []const NamedArg,
+    yield_expr: *Node,
+};
+
+pub const EchoExpr = struct {
+    args: []const NamedArg,
+    yield_expr: *Node,
+};
+
+pub const MethodCall = struct {
+    receiver: ?*Node = null,
+    method_name: []const u8,
+    args: []const NamedArg = &.{},
+    block: ?*Node = null,
+    is_safe: bool = false,
+};
+
+pub const SuperCall = struct {
+    args: []const NamedArg = &.{},
+    block: ?*Node = null,
+};
+
+pub const LambdaExpr = struct {
+    params: []const Param,
+    body: *Node,
+};
+
+pub const ModifierCall = struct {
+    modifier: []const u8,
+    child: *Node,
+};
+
+pub const ImportStmt = struct {
+    symbols: []const []const u8 = &.{},
+    path: []const u8,
+    attributes: ?*Node = null,
+};
+
+pub const ExportStmt = struct {
+    symbols: []const []const u8 = &.{},
+    path: []const u8,
+    attributes: ?*Node = null,
+};
+
+pub const IncludeStmt = struct {
+    path: []const u8,
+    is_use: bool = false,
+};
+
+pub const IfStmt = struct {
+    condition: *Node,
+    then_branch: *Node,
+    else_branch: ?*Node = null,
+    is_unless: bool = false,
+};
+
+pub const CaseStmt = struct {
+    condition: ?*Node = null,
+    when_branches: []const WhenBranch = &.{},
+    else_branch: ?*Node = null,
+};
+
+pub const WhileStmt = struct {
+    condition: *Node,
+    body: *Node,
+    is_until: bool = false,
+};
+
+pub const ForStmt = struct {
+    bindings: []const ForBinding,
+    body: *Node,
+    is_intersection: bool = false,
+};
+
+pub const CForStmt = struct {
+    init: []const *Node,
+    condition: ?*Node = null,
+    update: []const *Node,
+    body: *Node,
+    is_intersection: bool = false,
+};
+
+pub const DefStmt = struct {
+    name: []const u8,
+    params: []const Param = &.{},
+    body: *Node,
+    is_class_method: bool = false,
+};
+
+pub const ClassStmt = struct {
+    name: *Node,
+    super_class: ?*Node = null,
+    body: *Node,
+};
+
+pub const ModuleStmt = struct {
+    name: []const u8,
+    params: []const Param = &.{},
+    body: *Node,
+};
+
+pub const BeginStmt = struct {
+    body: *Node,
+    rescues: []const RescueClause = &.{},
+    ensure_body: ?*Node = null,
+};
+
+pub const Block = struct {
+    params: []const *Node = &.{},
+    stmts: []const *Node,
+};
+
 pub const Node = struct {
     kind: Kind,
     loc: Location,
@@ -92,13 +262,8 @@ pub const Node = struct {
         array_literal: []const *Node,
         hash_literal: []const HashEntry,
 
-        // Range: `start..end` or `[start : step : end]`
-        range: struct {
-            start: *Node,
-            end: *Node,
-            step: ?*Node = null,
-            is_exclusive: bool = false,
-        },
+        // Range
+        range: *Range,
 
         // Variable lookup & Namespace Resolution
         identifier: []const u8,
@@ -106,31 +271,13 @@ pub const Node = struct {
             path: []const []const u8,
         },
 
-        // Assignment: `target += expr`
-        assignment: struct {
-            name: []const u8,
-            op: ?BinaryOp, // null means pure '='
-            value: *Node,
-        },
-        multiple_assignment: struct {
-            lhs: []const LhsExpr,
-            op: ?BinaryOp = null,
-            value: *Node,
-        },
-        property_assignment: struct {
-            target: *Node,
-            property: []const u8,
-            op: ?BinaryOp,
-            value: *Node,
-        },
-        index_assignment: struct {
-            target: *Node,
-            index: *Node,
-            op: ?BinaryOp,
-            value: *Node,
-        },
+        // Assignments
+        assignment: *Assignment,
+        multiple_assignment: *MultipleAssignment,
+        property_assignment: *PropertyAssignment,
+        index_assignment: *IndexAssignment,
 
-        // Unary: `-x`, `!x`
+        // Unary
         unary_op: struct {
             op: UnaryOp,
             operand: *Node,
@@ -141,21 +288,11 @@ pub const Node = struct {
             rescue_expr: *Node,
         },
 
-        // Binary: `a + b`, `x * y`
-        binary_op: struct {
-            op: BinaryOp,
-            left: *Node,
-            right: *Node,
-        },
+        // Binary & Ternary
+        binary_op: *BinaryExpr,
+        ternary_op: *TernaryExpr,
 
-        // Ternary: `a ? b : c`
-        ternary_op: struct {
-            condition: *Node,
-            then_branch: *Node,
-            else_branch: *Node,
-        },
-
-        // Index Access: `target[index]`
+        // Index Access
         index_access: struct {
             target: *Node,
             index: *Node,
@@ -163,130 +300,44 @@ pub const Node = struct {
         splat_expr: *Node,
         double_splat_expr: *Node,
 
-        // List Comprehension: `[ for (x = [0:5]) each x * 2 ]`
-        comprehension: struct {
-            clauses: []const *Node,
-            yield_expr: *Node,
-        },
+        // List Comprehension & Let
+        comprehension: *Comprehension,
         each_expr: *Node,
+        let_expr: *LetExpr,
 
-        // OpenSCAD let expression: `let(a=1) a*2`
-        let_expr: struct {
-            assignments: []const *Node,
-            yield_expr: *Node,
-        },
+        // Modifiers
+        assert_expr: *AssertExpr,
+        echo_expr: *EchoExpr,
 
-        // OpenSCAD Expression-level modifiers
-        assert_expr: struct {
-            args: []const NamedArg,
-            yield_expr: *Node,
-        },
-        echo_expr: struct {
-            args: []const NamedArg,
-            yield_expr: *Node,
-        },
-
-        // Method / Function Call: `obj.method(x: 10) do |a| ... end` or `cube(10)`
-        method_call: struct {
-            receiver: ?*Node,
-            method_name: []const u8,
-            args: []const NamedArg,
-            block: ?*Node = null,
-            is_safe: bool = false,
-        },
-        super_call: struct {
-            args: []const NamedArg = &.{},
-            block: ?*Node = null,
-        },
-
-        // Anonymous Functions: `->(x, y) { ... }`
-        lambda_expr: struct {
-            params: []const Param,
-            body: *Node,
-        },
-
-        // Geometry Modifier: `#cube(10);` or `!sphere(5);`
-        modifier_call: struct {
-            modifier: []const u8,
-            child: *Node,
-        },
+        // Calls
+        method_call: *MethodCall,
+        super_call: *SuperCall,
+        lambda_expr: *LambdaExpr,
+        modifier_call: *ModifierCall,
 
         // Statement Constructs
-        import_stmt: struct {
-            symbols: []const []const u8,
-            path: []const u8,
-            attributes: ?*Node = null,
-        },
-        export_stmt: struct {
-            symbols: []const []const u8,
-            path: []const u8,
-            attributes: ?*Node = null,
-        },
-        include_stmt: struct {
-            path: []const u8,
-            is_use: bool = false,
-        },
-        if_stmt: struct {
-            condition: *Node,
-            then_branch: *Node,
-            else_branch: ?*Node = null,
-            is_unless: bool = false,
-        },
-        case_stmt: struct {
-            condition: ?*Node,
-            when_branches: []const WhenBranch,
-            else_branch: ?*Node = null,
-        },
-        while_stmt: struct {
-            condition: *Node,
-            body: *Node,
-            is_until: bool = false,
-        },
-        for_stmt: struct {
-            bindings: []const ForBinding,
-            body: *Node,
-            is_intersection: bool = false,
-        },
-        c_for_stmt: struct {
-            init: []const *Node,
-            condition: ?*Node,
-            update: []const *Node,
-            body: *Node,
-            is_intersection: bool = false,
-        },
-        def_stmt: struct {
-            name: []const u8,
-            params: []const Param,
-            body: *Node,
-            is_class_method: bool = false,
-        },
-        class_stmt: struct {
-            name: *Node,
-            super_class: ?*Node = null,
-            body: *Node,
-        },
-        module_stmt: struct {
-            name: []const u8,
-            params: []const Param = &.{},
-            body: *Node,
-        },
+        import_stmt: *ImportStmt,
+        export_stmt: *ExportStmt,
+        include_stmt: *IncludeStmt,
+        if_stmt: *IfStmt,
+        case_stmt: *CaseStmt,
+        while_stmt: *WhileStmt,
+        for_stmt: *ForStmt,
+        c_for_stmt: *CForStmt,
+        def_stmt: *DefStmt,
+        class_stmt: *ClassStmt,
+        module_stmt: *ModuleStmt,
+        begin_stmt: *BeginStmt,
+
         return_stmt: ?*Node,
         yield_stmt: []const *Node,
         break_stmt: ?*Node,
         next_stmt: ?*Node,
-        begin_stmt: struct {
-            body: *Node,
-            rescues: []const RescueClause,
-            ensure_body: ?*Node,
-        },
         param_doc: []const u8,
         comment: []const u8,
 
         // Block Scope
-        block: struct {
-            params: []const *Node = &.{},
-            stmts: []const *Node,
-        },
+        block: *Block,
     };
 };
 
@@ -298,14 +349,18 @@ pub const Builder = struct {
     }
 
     pub fn create(self: Builder, kind: Node.Kind, loc: Location) !*Node {
-        // Shared node allocation logic
         const n = try self.allocator.create(Node);
         n.* = .{ .kind = kind, .loc = loc };
         return n;
     }
 
+    pub fn box(self: Builder, comptime T: type, val: T) !*T {
+        const ptr = try self.allocator.create(T);
+        ptr.* = val;
+        return ptr;
+    }
+
     pub fn number(self: Builder, lexeme: []const u8, loc: Location) !*Node {
-        // Strip visual underscores (e.g. 1_000_000 -> 1000000)
         var buf: [128]u8 = undefined;
         var len: usize = 0;
         for (lexeme) |c| {
