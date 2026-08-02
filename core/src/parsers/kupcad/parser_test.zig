@@ -152,7 +152,7 @@ test "KupCAD Parser: Statement Modifiers (Yield Unless)" {
     try testing.expectEqual(ast.BinaryOp.equal, node.kind.if_stmt.condition.kind.binary_op.op);
 
     const inner_yield = node.kind.if_stmt.then_branch.kind.block.stmts[0];
-    try testing.expectEqual(true, inner_yield.kind == .yield_stmt);
+    try testing.expectEqual(@as(usize, 0), inner_yield.kind.yield_stmt.len);
 }
 
 test "KupCAD Parser: Functions, Classes, Arrays, and Range" {
@@ -352,10 +352,10 @@ test "KupCAD Parser: Multiple Assignment" {
     const node = try parser.parseStatement();
 
     try testing.expectEqual(ast.Node.Kind.multiple_assignment, @as(std.meta.Tag(ast.Node.Kind), node.kind));
-    try testing.expectEqual(@as(usize, 3), node.kind.multiple_assignment.names.len);
-    try testing.expectEqualStrings("x", node.kind.multiple_assignment.names[0]);
-    try testing.expectEqualStrings("y", node.kind.multiple_assignment.names[1]);
-    try testing.expectEqualStrings("z", node.kind.multiple_assignment.names[2]);
+    try testing.expectEqual(@as(usize, 3), node.kind.multiple_assignment.lhs.len);
+    try testing.expectEqualStrings("x", node.kind.multiple_assignment.lhs[0].name);
+    try testing.expectEqualStrings("y", node.kind.multiple_assignment.lhs[1].name);
+    try testing.expectEqualStrings("z", node.kind.multiple_assignment.lhs[2].name);
 }
 
 test "KupCAD Parser: Self and Super constructs" {
@@ -568,4 +568,46 @@ test "KupCAD Parser: Next Statement and Until/While Modifiers" {
     const inner_next = node.kind.while_stmt.body.kind.block.stmts[0];
     try testing.expectEqual(ast.Node.Kind.next_stmt, @as(std.meta.Tag(ast.Node.Kind), inner_next.kind));
     try testing.expectEqual(@as(f64, 10.0), inner_next.kind.next_stmt.?.kind.number);
+}
+
+test "KupCAD Parser: LHS Splats and Multiple Assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "first, *rest = get_faces()";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+    const lhs = node.kind.multiple_assignment.lhs;
+    try testing.expectEqual(@as(usize, 2), lhs.len);
+    try testing.expectEqualStrings("first", lhs[0].name);
+    try testing.expectEqual(ast.ArgModifier.splat, lhs[1].modifier.?);
+    try testing.expectEqualStrings("rest", lhs[1].name);
+}
+
+test "KupCAD Parser: Keyword Arguments in Definitions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "def build(width:, height: 10)\nend";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+    const params = node.kind.def_stmt.params;
+    try testing.expectEqual(true, params[0].is_keyword);
+    try testing.expectEqualStrings("width", params[0].name);
+    try testing.expectEqual(true, params[1].is_keyword);
+    try testing.expectEqualStrings("height", params[1].name);
+    try testing.expectEqual(@as(f64, 10.0), params[1].default_value.?.kind.number);
+}
+
+test "KupCAD Parser: Begin / Rescue / Ensure" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "begin\n  build()\nrescue => e\n  log()\nensure\n  clean()\nend";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.begin_stmt, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqualStrings("build", node.kind.begin_stmt.body.kind.block.stmts[0].kind.method_call.method_name);
+    try testing.expectEqualStrings("log", node.kind.begin_stmt.rescue_body.?.kind.block.stmts[0].kind.method_call.method_name);
+    try testing.expectEqualStrings("clean", node.kind.begin_stmt.ensure_body.?.kind.block.stmts[0].kind.method_call.method_name);
 }

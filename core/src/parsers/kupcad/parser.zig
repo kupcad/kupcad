@@ -104,6 +104,7 @@ pub const Parser = struct {
             .keyword_yield => try self.parseYieldStatement(),
             .keyword_break => try self.parseBreakStatement(),
             .keyword_next => try self.parseNextStatement(),
+            .keyword_begin => try self.parseBeginStatement(),
             .param_doc => try self.parseParamDoc(),
             else => try self.parseExprOrMultiAssign(),
         };
@@ -171,6 +172,34 @@ pub const Parser = struct {
         }
 
         return self.createNode(.{ .block = .{ .stmts = try stmts.toOwnedSlice(self.allocator) } }, start_loc);
+    }
+
+    // 2. Add the `parseBeginStatement` helper method:
+    fn parseBeginStatement(self: *Parser) ParseError!*Node {
+        const start_tok = try self.expect(.keyword_begin);
+        self.skipIgnored();
+        const body = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
+
+        var rescue_body: ?*Node = null;
+        if (self.current.tag == .keyword_rescue) {
+            self.advance();
+            if (self.current.tag == .arrow) { // Handle `rescue => e`
+                self.advance();
+                if (self.current.tag == .ident) self.advance();
+            }
+            self.skipIgnored();
+            rescue_body = try self.parseBlock(&.{ .keyword_ensure, .keyword_end });
+        }
+
+        var ensure_body: ?*Node = null;
+        if (self.current.tag == .keyword_ensure) {
+            self.advance();
+            self.skipIgnored();
+            ensure_body = try self.parseBlock(&.{.keyword_end});
+        }
+        _ = try self.expect(.keyword_end);
+
+        return self.createNode(.{ .begin_stmt = .{ .body = body, .rescue_body = rescue_body, .ensure_body = ensure_body } }, start_tok.loc);
     }
 
     fn parseImportStatement(self: *Parser) ParseError!*Node {
@@ -241,11 +270,9 @@ pub const Parser = struct {
         var temp_lexer = self.lexer.*;
         var temp_next = self.next_tok;
         var curr = self.current;
-
         while (curr.tag != .newline and curr.tag != .eof) {
             if (isAssignmentOp(curr.tag)) return true;
-            // Stop scanning if we hit something that clearly ends a valid left-hand side list
-            if (curr.tag != .ident and curr.tag != .constant and curr.tag != .comma) {
+            if (curr.tag != .ident and curr.tag != .constant and curr.tag != .comma and curr.tag != .star) {
                 return false;
             }
             curr = temp_next;
@@ -255,36 +282,41 @@ pub const Parser = struct {
     }
 
     fn parseExprOrMultiAssign(self: *Parser) ParseError!*Node {
-        if ((self.current.tag == .ident or self.current.tag == .constant) and self.next_tok.tag == .comma) {
-            if (self.isMultipleAssignmentStatement()) {
-                const start_loc = self.current.loc;
-                var names: std.ArrayListUnmanaged([]const u8) = .empty;
-                errdefer names.deinit(self.allocator);
+        const is_multi = if ((self.current.tag == .ident or self.current.tag == .constant or self.current.tag == .star) and (self.next_tok.tag == .comma or self.next_tok.tag == .ident)) self.isMultipleAssignmentStatement() else false;
 
-                try names.append(self.allocator, self.current.lexeme);
-                self.advance();
+        if (is_multi) {
+            const start_loc = self.current.loc;
+            var lhs_list: std.ArrayListUnmanaged(ast.LhsExpr) = .empty;
+            errdefer lhs_list.deinit(self.allocator);
 
-                while (self.current.tag == .comma) {
-                    self.advance(); // consume comma
-                    if (self.current.tag == .ident or self.current.tag == .constant) {
-                        try names.append(self.allocator, self.current.lexeme);
-                        self.advance();
-                    } else return ParseError.UnexpectedToken;
-                }
-
-                if (isAssignmentOp(self.current.tag)) {
-                    const op_tag = self.current.tag;
+            while (self.current.tag != .newline and self.current.tag != .eof) {
+                var mod: ?ast.ArgModifier = null;
+                if (self.current.tag == .star) {
+                    mod = .splat;
                     self.advance();
-                    const val_node = try self.parseExpression(.assignment);
-                    return self.createNode(.{
-                        .multiple_assignment = .{
-                            .names = try names.toOwnedSlice(self.allocator),
-                            .op = tagToAssignmentOp(op_tag),
-                            .value = val_node,
-                        },
-                    }, start_loc);
+                }
+                if (self.current.tag == .ident or self.current.tag == .constant) {
+                    try lhs_list.append(self.allocator, .{ .name = self.current.lexeme, .modifier = mod });
+                    self.advance();
                 } else return ParseError.UnexpectedToken;
+
+                if (self.current.tag == .comma) {
+                    self.advance(); // consume comma
+                } else break;
             }
+
+            if (isAssignmentOp(self.current.tag)) {
+                const op_tag = self.current.tag;
+                self.advance();
+                const val_node = try self.parseExpression(.assignment);
+                return self.createNode(.{
+                    .multiple_assignment = .{
+                        .lhs = try lhs_list.toOwnedSlice(self.allocator),
+                        .op = tagToAssignmentOp(op_tag),
+                        .value = val_node,
+                    },
+                }, start_loc);
+            } else return ParseError.UnexpectedToken;
         }
         return try self.parseExpression(.none);
     }
@@ -413,11 +445,23 @@ pub const Parser = struct {
 
     fn parseYieldStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_yield);
-        var val: ?*Node = null;
-        if (self.current.tag != .newline and self.current.tag != .eof and self.current.tag != .keyword_unless and self.current.tag != .keyword_if and self.current.tag != .keyword_end) {
-            val = try self.parseExpression(.none);
+        var args: std.ArrayListUnmanaged(*Node) = .empty;
+        errdefer args.deinit(self.allocator);
+
+        if (self.current.tag == .l_paren) {
+            self.advance();
+            while (self.current.tag != .r_paren and self.current.tag != .eof) {
+                try args.append(self.allocator, try self.parseExpression(.none));
+                if (self.current.tag == .comma) self.advance() else break;
+            }
+            _ = try self.expect(.r_paren);
+        } else {
+            while (self.current.tag != .newline and self.current.tag != .eof and self.current.tag != .keyword_unless and self.current.tag != .keyword_if and self.current.tag != .keyword_end) {
+                try args.append(self.allocator, try self.parseExpression(.none));
+                if (self.current.tag == .comma) self.advance() else break;
+            }
         }
-        return self.createNode(.{ .yield_stmt = val }, start_tok.loc);
+        return self.createNode(.{ .yield_stmt = try args.toOwnedSlice(self.allocator) }, start_tok.loc);
     }
 
     fn parseBreakStatement(self: *Parser) ParseError!*Node {
@@ -487,12 +531,20 @@ pub const Parser = struct {
         const param_name = self.current.lexeme;
         self.advance();
 
+        var is_keyword = false;
         var default_val: ?*Node = null;
-        if (self.current.tag == .equal) {
+
+        if (self.current.tag == .colon) {
+            is_keyword = true;
+            self.advance();
+            if (self.current.tag != .comma and self.current.tag != .r_paren) {
+                default_val = try self.parseExpression(.none);
+            }
+        } else if (self.current.tag == .equal) {
             self.advance();
             default_val = try self.parseExpression(.none);
         }
-        return .{ .name = param_name, .default_value = default_val, .modifier = mod };
+        return .{ .name = param_name, .default_value = default_val, .modifier = mod, .is_keyword = is_keyword };
     }
 
     fn parseParenParams(self: *Parser) ParseError![]const ast.Param {

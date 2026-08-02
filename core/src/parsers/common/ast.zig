@@ -40,6 +40,7 @@ pub const Param = struct {
     name: []const u8,
     default_value: ?*Node = null,
     modifier: ?ArgModifier = null,
+    is_keyword: bool = false,
 };
 
 pub const NamedArg = struct {
@@ -61,6 +62,11 @@ pub const ForBinding = struct {
 pub const WhenBranch = struct {
     conditions: []const *Node,
     body: *Node,
+};
+
+pub const LhsExpr = struct {
+    name: []const u8,
+    modifier: ?ArgModifier = null,
 };
 
 pub const Node = struct {
@@ -101,7 +107,7 @@ pub const Node = struct {
             value: *Node,
         },
         multiple_assignment: struct {
-            names: []const []const u8,
+            lhs: []const LhsExpr,
             op: ?BinaryOp = null,
             value: *Node,
         },
@@ -231,9 +237,14 @@ pub const Node = struct {
             body: *Node,
         },
         return_stmt: ?*Node,
-        yield_stmt: ?*Node,
+        yield_stmt: []const *Node,
         break_stmt: ?*Node,
         next_stmt: ?*Node,
+        begin_stmt: struct {
+            body: *Node,
+            rescue_body: ?*Node,
+            ensure_body: ?*Node,
+        },
         param_doc: []const u8,
         comment: []const u8,
 

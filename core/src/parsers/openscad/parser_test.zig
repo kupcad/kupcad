@@ -319,3 +319,22 @@ test "OpenSCAD Parser: Comprehension with Else" {
     try testing.expectEqualStrings("i", if_node.kind.if_stmt.then_branch.kind.identifier);
     try testing.expectEqual(ast.UnaryOp.negate, if_node.kind.if_stmt.else_branch.?.kind.unary_op.op);
 }
+
+test "OpenSCAD Parser: Empty Arguments and Array Elements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "translate([10, , 20]) cube(10, , 20);";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+
+    // Check empty array element inside arguments
+    const arr = node.kind.method_call.args[0].value.kind.array_literal;
+    try testing.expectEqual(ast.Node.Kind.number, @as(std.meta.Tag(ast.Node.Kind), arr[0].kind));
+    try testing.expectEqual(ast.Node.Kind.undef, @as(std.meta.Tag(ast.Node.Kind), arr[1].kind));
+
+    // Check empty argument on block
+    const cube_call = node.kind.method_call.block.?;
+    const cube_args = cube_call.kind.method_call.args;
+    try testing.expectEqual(ast.Node.Kind.undef, @as(std.meta.Tag(ast.Node.Kind), cube_args[1].value.kind));
+}

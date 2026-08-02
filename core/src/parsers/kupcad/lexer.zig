@@ -42,6 +42,9 @@ pub const Tag = enum {
     keyword_and,
     keyword_or,
     keyword_not,
+    keyword_begin,
+    keyword_rescue,
+    keyword_ensure,
 
     equal_equal,
     bang_equal,
@@ -128,6 +131,9 @@ const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "and", .keyword_and },
     .{ "or", .keyword_or },
     .{ "not", .keyword_not },
+    .{ "begin", .keyword_begin },
+    .{ "rescue", .keyword_rescue },
+    .{ "ensure", .keyword_ensure },
 });
 
 inline fn isIdentStart(c: u8) bool {

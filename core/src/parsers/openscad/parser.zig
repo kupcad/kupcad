@@ -447,6 +447,10 @@ pub const Parser = struct {
     // --- SHARED DRY ARGUMENT & PARAMETER LOGIC ---
 
     fn parseNamedArg(self: *Parser) ParseError!ast.NamedArg {
+        if (self.current.tag == .comma or self.current.tag == .r_paren) {
+            const val = try self.createNode(.undef, self.current.loc);
+            return .{ .name = "", .value = val, .modifier = null };
+        }
         var arg_name: []const u8 = "";
         if (self.current.tag == .ident and self.peekNextTag() == .equal) {
             arg_name = self.current.lexeme;
@@ -662,7 +666,14 @@ pub const Parser = struct {
             self.advance();
         }
 
-        var first = try self.parseExpression(.none);
+        // Handle first element (might be empty/undef)
+        var first: *Node = undefined;
+        if (self.current.tag == .comma or self.current.tag == .r_bracket) {
+            first = try self.createNode(.undef, self.current.loc);
+        } else {
+            first = try self.parseExpression(.none);
+        }
+
         if (is_each) {
             first = try self.createNode(.{ .each_expr = first }, start_tok.loc);
         }
@@ -695,6 +706,7 @@ pub const Parser = struct {
         try elements.append(self.allocator, first);
         if (self.current.tag == .comma) self.advance();
 
+        // Handle subsequent elements
         while (self.current.tag != .r_bracket and self.current.tag != .eof) {
             while (self.current.tag == .comment or self.current.tag == .block_comment) self.advance();
             if (self.current.tag == .r_bracket) break;
@@ -705,7 +717,14 @@ pub const Parser = struct {
                 self.advance();
             }
 
-            var elem = try self.parseExpression(.none);
+            // Handle missing values (e.g. `[1, , 2]` drops an .undef in the middle)
+            var elem: *Node = undefined;
+            if (self.current.tag == .comma or self.current.tag == .r_bracket) {
+                elem = try self.createNode(.undef, self.current.loc);
+            } else {
+                elem = try self.parseExpression(.none);
+            }
+
             if (is_each) {
                 elem = try self.createNode(.{ .each_expr = elem }, start_tok.loc);
             }
