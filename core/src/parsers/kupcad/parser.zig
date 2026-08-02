@@ -602,13 +602,19 @@ pub const Parser = struct {
 
     fn parseClassStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_class);
-        if (self.tokens.current.tag != .constant and self.tokens.current.tag != .ident) return ParseError.UnexpectedToken;
+        if (self.tokens.current.tag != .constant and self.tokens.current.tag != .ident) {
+            self.reportError(self.tokens.current.loc, "Expected 'constant', but found '{s}'", .{self.tokens.current.lexeme});
+            return ParseError.UnexpectedToken;
+        }
         const name_node = try self.parseClassPath();
 
         var super_class: ?*Node = null;
         if (self.tokens.current.tag == .less) {
             self.advance();
-            if (self.tokens.current.tag != .constant and self.tokens.current.tag != .ident) return ParseError.UnexpectedToken;
+            if (self.tokens.current.tag != .constant and self.tokens.current.tag != .ident) {
+                self.reportError(self.tokens.current.loc, "Expected 'constant', but found '{s}'", .{self.tokens.current.lexeme});
+                return ParseError.UnexpectedToken;
+            }
             super_class = try self.parseClassPath();
         }
         self.skipIgnored();
@@ -825,12 +831,15 @@ pub const Parser = struct {
 
             try items.append(self.allocator, try parseItemFn(self));
 
+            self.skipIgnored();
             if (self.tokens.current.tag == .comma) {
                 self.advance();
+                self.skipIgnored();
             } else {
                 break;
             }
         }
+        self.skipIgnored();
         return items.toOwnedSlice(self.allocator);
     }
 

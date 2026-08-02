@@ -182,46 +182,17 @@ pub const Lexer = struct {
     }
 
     fn consumeSlashOrComment(self: *Lexer, start_loc: common_token.Location) Token {
-        const start = self.index;
-        self.advance();
-
-        if (self.index < self.buffer.len) {
-            if (self.peek() == '/') {
-                while (self.index < self.buffer.len and self.peek() != '\n') {
-                    self.advance();
-                }
-                return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
-            } else if (self.peek() == '*') {
-                self.advance();
-                while (self.index < self.buffer.len) {
-                    if (self.peek() == '*' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '/') {
-                        self.advance();
-                        self.advance();
-                        break;
-                    }
-                    if (self.peek() == '\n') {
-                        self.line += 1;
-                        self.col = 0;
-                    }
-                    self.advance();
-                }
-                return .{ .tag = .block_comment, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
-            }
-        }
-        return .{ .tag = .slash, .loc = start_loc, .lexeme = "/" };
+        const res = utils.LexerUtils.consumeSlashOrComment(self.buffer, &self.index, &self.line, &self.col);
+        const tag: Tag = switch (res.kind) {
+            .slash => .slash,
+            .comment => .comment,
+            .block_comment => .block_comment,
+        };
+        return .{ .tag = tag, .loc = start_loc, .lexeme = res.lexeme };
     }
 
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
-        const start = self.index;
-        while (self.index < self.buffer.len) {
-            const c = self.peek();
-            if (isIdentChar(c)) {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        const lexeme = self.buffer[start..self.index];
+        const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index, &self.col, true);
         var tag = Tag.ident;
         if (keywords.get(lexeme)) |kw_tag| {
             tag = kw_tag;
@@ -229,35 +200,14 @@ pub const Lexer = struct {
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }
 
+    fn consumeString(self: *Lexer, start_loc: common_token.Location) Token {
+        const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, &self.line, &self.col, '"');
+        return .{ .tag = .string, .loc = start_loc, .lexeme = lexeme };
+    }
+
     fn consumeNumber(self: *Lexer, start_loc: common_token.Location) Token {
         const lexeme = utils.LexerUtils.consumeNumber(self.buffer, &self.index, &self.col);
         return .{ .tag = .number, .loc = start_loc, .lexeme = lexeme };
-    }
-
-    fn consumeString(self: *Lexer, start_loc: common_token.Location) Token {
-        self.advance();
-        const start = self.index;
-        while (self.index < self.buffer.len) {
-            const c = self.peek();
-            if (c == '\n') {
-                self.line += 1;
-                self.col = 0; // Will become 1 on advance() below
-            }
-            if (c == '\\') {
-                self.advance();
-                if (self.index < self.buffer.len) {
-                    self.advance();
-                }
-                continue;
-            }
-            if (c == '"') {
-                break;
-            }
-            self.advance();
-        }
-        const lexeme = self.buffer[start..self.index];
-        if (self.index < self.buffer.len) self.advance();
-        return .{ .tag = .string, .loc = start_loc, .lexeme = lexeme };
     }
 
     fn consumeChar(self: *Lexer, tag: Tag, start_loc: common_token.Location) Token {

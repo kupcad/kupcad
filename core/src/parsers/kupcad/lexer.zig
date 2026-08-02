@@ -297,21 +297,6 @@ pub const Lexer = struct {
         return .{ .tag = .comment, .loc = start_loc, .lexeme = lexeme };
     }
 
-    fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
-        const start = self.index;
-        const is_constant = std.ascii.isUpper(self.peek());
-
-        while (self.index < self.buffer.len) {
-            if (isIdentChar(self.peek())) self.advance() else break;
-        }
-
-        const lexeme = self.buffer[start..self.index];
-        var tag = if (is_constant) Tag.constant else Tag.ident;
-
-        if (keywords.get(lexeme)) |kw_tag| tag = kw_tag;
-        return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
-    }
-
     fn consumeOperator(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
         const c1 = self.peek();
@@ -352,6 +337,23 @@ pub const Lexer = struct {
         return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
+    fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
+        const is_constant = std.ascii.isUpper(self.peek());
+        const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index, &self.col, false);
+        var tag = if (is_constant) Tag.constant else Tag.ident;
+        if (keywords.get(lexeme)) |kw_tag| tag = kw_tag;
+        return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
+    }
+
+    fn consumeString(self: *Lexer, start_loc: common_token.Location, quote: u8) Token {
+        if (quote == '\'') {
+            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, &self.line, &self.col, '\'');
+            return .{ .tag = .string, .loc = start_loc, .lexeme = lexeme };
+        }
+        self.advance();
+        return self.consumeStringBody(start_loc, true, quote);
+    }
+
     fn consumeSymbolOrColon(self: *Lexer, start_loc: common_token.Location) Token {
         self.advance();
         if (self.index < self.buffer.len and self.peek() == ':') {
@@ -382,11 +384,6 @@ pub const Lexer = struct {
     fn consumeNumber(self: *Lexer, start_loc: common_token.Location) Token {
         const lexeme = utils.LexerUtils.consumeNumber(self.buffer, &self.index, &self.col);
         return .{ .tag = .number, .loc = start_loc, .lexeme = lexeme };
-    }
-
-    fn consumeString(self: *Lexer, start_loc: common_token.Location, quote: u8) Token {
-        self.advance();
-        return self.consumeStringBody(start_loc, true, quote);
     }
 
     fn consumeStringBody(self: *Lexer, start_loc: common_token.Location, is_start: bool, quote: u8) Token {

@@ -106,12 +106,15 @@ pub const Parser = struct {
 
             try items.append(self.allocator, try parseItemFn(self));
 
+            self.skipIgnored();
             if (self.tokens.current.tag == .comma) {
                 self.advance();
+                self.skipIgnored();
             } else {
                 break;
             }
         }
+        self.skipIgnored();
         return items.toOwnedSlice(self.allocator);
     }
 

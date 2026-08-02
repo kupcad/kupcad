@@ -1,5 +1,16 @@
 const std = @import("std");
 
+pub const SlashKind = enum {
+    slash,
+    comment,
+    block_comment,
+};
+
+pub const SlashResult = struct {
+    lexeme: []const u8,
+    kind: SlashKind,
+};
+
 pub const LexerUtils = struct {
     pub fn skipWhitespace(buffer: []const u8, index: *usize, line: *u32, col: *u32, comptime skip_newlines: bool) void {
         while (index.* < buffer.len) {
@@ -21,7 +32,7 @@ pub const LexerUtils = struct {
         const start = index.*;
         if (start >= buffer.len) return buffer[start..index.*];
 
-        // 1. Check for Hexadecimal (0x), Binary (0b), and Octal (0o)
+        // Check for Hexadecimal (0x), Binary (0b), and Octal (0o)
         if (buffer[index.*] == '0' and index.* + 1 < buffer.len) {
             const next_c = buffer[index.* + 1];
             if (next_c == 'x' or next_c == 'X') {
@@ -60,7 +71,7 @@ pub const LexerUtils = struct {
             }
         }
 
-        // 2. Standard Decimal, Leading Dot (.5), and Scientific Notation (1.5e-3)
+        // Standard Decimal, Leading Dot (.5), and Scientific Notation (1.5e-3)
         while (index.* < buffer.len) {
             const c = buffer[index.*];
             if (std.ascii.isDigit(c) or c == '_') {
@@ -96,5 +107,99 @@ pub const LexerUtils = struct {
         if (c == '_' or c == '$') return true;
         if (!is_openscad and (c == '?' or c == '!' or c == '@')) return true;
         return false;
+    }
+
+    pub fn consumeIdentLexeme(
+        buffer: []const u8,
+        index: *usize,
+        col: *u32,
+        comptime is_openscad: bool,
+    ) []const u8 {
+        const start = index.*;
+        while (index.* < buffer.len) {
+            if (isIdentChar(buffer[index.*], is_openscad)) {
+                index.* += 1;
+                col.* += 1;
+            } else break;
+        }
+        return buffer[start..index.*];
+    }
+
+    pub fn consumeSlashOrComment(
+        buffer: []const u8,
+        index: *usize,
+        line: *u32,
+        col: *u32,
+    ) SlashResult {
+        const start = index.*;
+        index.* += 1;
+        col.* += 1;
+
+        if (index.* < buffer.len) {
+            if (buffer[index.*] == '/') {
+                while (index.* < buffer.len and buffer[index.*] != '\n') {
+                    index.* += 1;
+                    col.* += 1;
+                }
+                return .{ .lexeme = buffer[start..index.*], .kind = .comment };
+            } else if (buffer[index.*] == '*') {
+                index.* += 1;
+                col.* += 1;
+                while (index.* < buffer.len) {
+                    if (buffer[index.*] == '*' and index.* + 1 < buffer.len and buffer[index.* + 1] == '/') {
+                        index.* += 2;
+                        col.* += 2;
+                        break;
+                    }
+                    if (buffer[index.*] == '\n') {
+                        line.* += 1;
+                        col.* = 0;
+                    }
+                    index.* += 1;
+                    col.* += 1;
+                }
+                return .{ .lexeme = buffer[start..index.*], .kind = .block_comment };
+            }
+        }
+        return .{ .lexeme = "/", .kind = .slash };
+    }
+
+    pub fn consumeQuotedString(
+        buffer: []const u8,
+        index: *usize,
+        line: *u32,
+        col: *u32,
+        quote: u8,
+    ) []const u8 {
+        index.* += 1;
+        col.* += 1;
+        const start = index.*;
+        while (index.* < buffer.len) {
+            const c = buffer[index.*];
+            if (c == '\n') {
+                line.* += 1;
+                col.* = 0;
+            }
+            if (c == '\\') {
+                index.* += 1;
+                col.* += 1;
+                if (index.* < buffer.len) {
+                    index.* += 1;
+                    col.* += 1;
+                }
+                continue;
+            }
+            if (c == quote) {
+                break;
+            }
+            index.* += 1;
+            col.* += 1;
+        }
+        const lexeme = buffer[start..index.*];
+        if (index.* < buffer.len) {
+            index.* += 1;
+            col.* += 1;
+        }
+        return lexeme;
     }
 };

@@ -1010,3 +1010,119 @@ test "KupCAD Parser: Combinators and Trailing Commas" {
     const n3 = try parser.parseStatement();
     try testing.expectEqual(@as(usize, 2), n3.kind.method_call.block.?.kind.block.params.len);
 }
+
+test "KupCAD Parser: Index Access and Index Compound Assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "points[0] += offset * 2";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+
+    try testing.expectEqual(ast.Node.Kind.index_assignment, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqualStrings("points", node.kind.index_assignment.target.kind.identifier);
+    try testing.expectEqual(@as(f64, 0.0), node.kind.index_assignment.index.kind.number);
+    try testing.expectEqual(ast.BinaryOp.add, node.kind.index_assignment.op.?);
+    try testing.expectEqual(ast.BinaryOp.multiply, node.kind.index_assignment.value.kind.binary_op.op);
+}
+
+test "KupCAD Parser: Nested Module Definitions and Export Statements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\export { Enclosure, Mount } from "./housing.kup" with { version: 2 }
+        \\module Hardware
+        \\  class Screw < Base
+        \\  end
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const export_node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.export_stmt, @as(std.meta.Tag(ast.Node.Kind), export_node.kind));
+    try testing.expectEqualStrings("./housing.kup", export_node.kind.export_stmt.path);
+    try testing.expectEqualStrings("Enclosure", export_node.kind.export_stmt.symbols[0]);
+    try testing.expectEqualStrings("Mount", export_node.kind.export_stmt.symbols[1]);
+
+    const mod_node = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.module_stmt, @as(std.meta.Tag(ast.Node.Kind), mod_node.kind));
+    try testing.expectEqualStrings("Hardware", mod_node.kind.module_stmt.name);
+    const inner_class = mod_node.kind.module_stmt.body.kind.block.stmts[0];
+    try testing.expectEqualStrings("Screw", inner_class.kind.class_stmt.name.kind.identifier);
+}
+
+test "KupCAD Parser: Multi-line Arrays with Interspersed Comments" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\pts = [
+        \\  # start point
+        \\  10,
+        \\  # mid point
+        \\  20,
+        \\  30
+        \\]
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const arr = stmt.kind.assignment.value.kind.array_literal;
+    try testing.expectEqual(@as(usize, 3), arr.len);
+    try testing.expectEqual(@as(f64, 10.0), arr[0].kind.number);
+    try testing.expectEqual(@as(f64, 20.0), arr[1].kind.number);
+    try testing.expectEqual(@as(f64, 30.0), arr[2].kind.number);
+}
+
+test "KupCAD Parser: Safe Navigation Multi-line Fluent API" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\part
+        \\  &.cut(hole)
+        \\  &.chamfer(radius: 1.5)
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.method_call, @as(std.meta.Tag(ast.Node.Kind), stmt.kind));
+    try testing.expectEqualStrings("chamfer", stmt.kind.method_call.method_name);
+    try testing.expectEqual(true, stmt.kind.method_call.is_safe);
+
+    const prev_call = stmt.kind.method_call.receiver.?;
+    try testing.expectEqualStrings("cut", prev_call.kind.method_call.method_name);
+    try testing.expectEqual(true, prev_call.kind.method_call.is_safe);
+}
+
+test "KupCAD Parser: Parametric Doc Comments Parsing" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "# @param length [Length] Screw length";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.param_doc, @as(std.meta.Tag(ast.Node.Kind), stmt.kind));
+    try testing.expectEqualStrings("# @param length [Length] Screw length", stmt.kind.param_doc);
+}
+
+test "KupCAD Parser: Diagnostics for Malformed Class Declaration" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "class Box < 123\nend";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const result = parser.parseStatement();
+    try testing.expectError(error.UnexpectedToken, result);
+    try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
+    try testing.expectEqualStrings("Expected 'constant', but found '123'", parser.diagnostics.list.items[0].message);
+}
