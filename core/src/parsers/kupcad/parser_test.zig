@@ -1126,3 +1126,197 @@ test "KupCAD Parser: Diagnostics for Malformed Class Declaration" {
     try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
     try testing.expectEqualStrings("Expected 'constant', but found '123'", parser.diagnostics.list.items[0].message);
 }
+
+test "KupCAD Parser: CSG Math Chains with Mixed Arithmetic and Set Operators" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Union (+), Difference (-), Intersection (&) CSG expression pipeline
+    const source = "base_mesh + (cover - cylinder(r: 2)) & boundary";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseStatement();
+
+    // Intersection (&) has lower precedence than union (+)/difference (-) in KupCAD, so it's root
+    try testing.expectEqual(ast.BinaryOp.bitwise_and, stmt.kind.binary_op.op);
+    try testing.expectEqualStrings("boundary", stmt.kind.binary_op.right.kind.identifier);
+
+    const left_expr = stmt.kind.binary_op.left; // base_mesh + (cover - cylinder)
+    try testing.expectEqual(ast.BinaryOp.add, left_expr.kind.binary_op.op);
+    try testing.expectEqualStrings("base_mesh", left_expr.kind.binary_op.left.kind.identifier);
+
+    const paren_expr = left_expr.kind.binary_op.right; // (cover - cylinder)
+    try testing.expectEqual(ast.BinaryOp.subtract, paren_expr.kind.binary_op.op);
+    try testing.expectEqualStrings("cover", paren_expr.kind.binary_op.left.kind.identifier);
+    try testing.expectEqualStrings("cylinder", paren_expr.kind.binary_op.right.kind.method_call.method_name);
+}
+
+test "KupCAD Parser: Nested Command Syntax Transforms with Blocks" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\translate x: 10, y: 20 do
+        \\  rotate z: 45 do
+        \\    cube size: 10
+        \\  end
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const top_call = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.method_call, @as(std.meta.Tag(ast.Node.Kind), top_call.kind));
+    try testing.expectEqualStrings("translate", top_call.kind.method_call.method_name);
+    try testing.expectEqual(@as(usize, 2), top_call.kind.method_call.args.len);
+
+    const rotate_call = top_call.kind.method_call.block.?.kind.block.stmts[0];
+    try testing.expectEqualStrings("rotate", rotate_call.kind.method_call.method_name);
+
+    const cube_call = rotate_call.kind.method_call.block.?.kind.block.stmts[0];
+    try testing.expectEqualStrings("cube", cube_call.kind.method_call.method_name);
+    try testing.expectEqualStrings("size", cube_call.kind.method_call.args[0].name);
+}
+
+test "KupCAD Parser: Range Slicing inside Indexing Operations" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "subset = vertices[1..4]";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    try testing.expectEqualStrings("subset", stmt.kind.assignment.name);
+
+    const index_access = stmt.kind.assignment.value;
+    try testing.expectEqual(ast.Node.Kind.index_access, @as(std.meta.Tag(ast.Node.Kind), index_access.kind));
+    try testing.expectEqualStrings("vertices", index_access.kind.index_access.target.kind.identifier);
+
+    const range_node = index_access.kind.index_access.index;
+    try testing.expectEqual(ast.Node.Kind.range, @as(std.meta.Tag(ast.Node.Kind), range_node.kind));
+    try testing.expectEqual(@as(f64, 1.0), range_node.kind.range.start.kind.number);
+    try testing.expectEqual(@as(f64, 4.0), range_node.kind.range.end.kind.number);
+    try testing.expectEqual(false, range_node.kind.range.is_exclusive);
+}
+
+test "KupCAD Parser: Complex Nested Hashes with Symbol Arrays (%i)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "options = { style: :fillet, keys: %i[r h d], inner: { depth: 5 } }";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const hash = stmt.kind.assignment.value.kind.hash_literal;
+    try testing.expectEqual(@as(usize, 3), hash.len);
+
+    // Entry 1: style: :fillet
+    try testing.expectEqualStrings("style", hash[0].key.kind.symbol);
+    try testing.expectEqualStrings("fillet", hash[0].value.kind.symbol);
+
+    // Entry 2: keys: %i[r h d]
+    try testing.expectEqualStrings("keys", hash[1].key.kind.symbol);
+    const sym_array = hash[1].value.kind.array_literal;
+    try testing.expectEqual(@as(usize, 3), sym_array.len);
+    try testing.expectEqualStrings("r", sym_array[0].kind.symbol);
+
+    // Entry 3: inner: { depth: 5 }
+    try testing.expectEqualStrings("inner", hash[2].key.kind.symbol);
+    const nested_hash = hash[2].value.kind.hash_literal;
+    try testing.expectEqualStrings("depth", nested_hash[0].key.kind.symbol);
+    try testing.expectEqual(@as(f64, 5.0), nested_hash[0].value.kind.number);
+}
+
+test "KupCAD Parser: Multiple Destructuring Assignment with Splats" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "a, *middle, z = [1, 2, 3, 4, 5]";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.multiple_assignment, @as(std.meta.Tag(ast.Node.Kind), stmt.kind));
+
+    const lhs = stmt.kind.multiple_assignment.lhs;
+    try testing.expectEqual(@as(usize, 3), lhs.len);
+
+    try testing.expectEqualStrings("a", lhs[0].name);
+    try testing.expectEqual(@as(?ast.ArgModifier, null), lhs[0].modifier);
+
+    try testing.expectEqualStrings("middle", lhs[1].name);
+    try testing.expectEqual(ast.ArgModifier.splat, lhs[1].modifier.?);
+
+    try testing.expectEqualStrings("z", lhs[2].name);
+    try testing.expectEqual(@as(?ast.ArgModifier, null), lhs[2].modifier);
+}
+
+test "KupCAD Parser: Hexadecimal, Scientific, and Negative Math Operations" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "val = -0x1F + .5 * 1.5e2 - 0b10";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const math_node = stmt.kind.assignment.value;
+
+    // Root is subtraction `- 0b10`
+    try testing.expectEqual(ast.BinaryOp.subtract, math_node.kind.binary_op.op);
+    try testing.expectEqual(@as(f64, 2.0), math_node.kind.binary_op.right.kind.number); // 0b10 = 2
+
+    // Left is `-0x1F + (.5 * 1.5e2)`
+    const add_node = math_node.kind.binary_op.left;
+    try testing.expectEqual(ast.BinaryOp.add, add_node.kind.binary_op.op);
+
+    // Negated Hex: -0x1F (-31)
+    const neg_hex = add_node.kind.binary_op.left;
+    try testing.expectEqual(ast.UnaryOp.negate, neg_hex.kind.unary_op.op);
+    try testing.expectEqual(@as(f64, 31.0), neg_hex.kind.unary_op.operand.kind.number);
+
+    // Multiplication: .5 * 150.0 = 75.0
+    const mult_node = add_node.kind.binary_op.right;
+    try testing.expectEqual(ast.BinaryOp.multiply, mult_node.kind.binary_op.op);
+    try testing.expectEqual(@as(f64, 0.5), mult_node.kind.binary_op.left.kind.number);
+    try testing.expectEqual(@as(f64, 150.0), mult_node.kind.binary_op.right.kind.number); // Fixed: 1.5e2 = 150.0
+}
+
+test "KupCAD Parser: Class Inheritance with Scope Resolution and Class Methods" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\class CAD::Fastener::Bolt < Hardware::Base
+        \\  def self.m3(length: 10)
+        \\    new(diameter: 3, length: length)
+        \\  end
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const class_stmt = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.class_stmt, @as(std.meta.Tag(ast.Node.Kind), class_stmt.kind));
+
+    // Name: CAD::Fastener::Bolt
+    const name_ns = class_stmt.kind.class_stmt.name.kind.namespace_access.path;
+    try testing.expectEqual(@as(usize, 3), name_ns.len);
+    try testing.expectEqualStrings("CAD", name_ns[0]);
+    try testing.expectEqualStrings("Fastener", name_ns[1]);
+    try testing.expectEqualStrings("Bolt", name_ns[2]);
+
+    // Super: Hardware::Base
+    const super_ns = class_stmt.kind.class_stmt.super_class.?.kind.namespace_access.path;
+    try testing.expectEqual(@as(usize, 2), super_ns.len);
+    try testing.expectEqualStrings("Hardware", super_ns[0]);
+    try testing.expectEqualStrings("Base", super_ns[1]);
+
+    // Class Method: def self.m3
+    const def_node = class_stmt.kind.class_stmt.body.kind.block.stmts[0];
+    try testing.expectEqual(true, def_node.kind.def_stmt.is_class_method);
+    try testing.expectEqualStrings("m3", def_node.kind.def_stmt.name);
+    try testing.expectEqualStrings("length", def_node.kind.def_stmt.params[0].name);
+}
