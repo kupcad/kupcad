@@ -60,14 +60,14 @@ pub const LexerUtils = struct {
             }
         }
 
-        // 2. Standard Decimal, Fractional, and Scientific Notation (1e10, 1.5e-3)
+        // 2. Standard Decimal, Leading Dot (.5), and Scientific Notation (1.5e-3)
         while (index.* < buffer.len) {
             const c = buffer[index.*];
             if (std.ascii.isDigit(c) or c == '_') {
                 index.* += 1;
                 col.* += 1;
             } else if (c == '.') {
-                if (index.* + 1 < buffer.len and buffer[index.* + 1] == '.') break; // range check (..)
+                if (index.* + 1 < buffer.len and buffer[index.* + 1] == '.') break; // Avoid range operator `..`
                 index.* += 1;
                 col.* += 1;
             } else if (c == 'e' or c == 'E') {

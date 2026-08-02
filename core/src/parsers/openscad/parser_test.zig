@@ -409,3 +409,18 @@ test "OpenSCAD Parser: C-Style Hexadecimal Constants" {
     try testing.expectEqualStrings("val", stmt.kind.assignment.name);
     try testing.expectEqual(@as(f64, 255.0), stmt.kind.assignment.value.kind.number);
 }
+
+test "OpenSCAD Parser: Leading-Dot Float Literals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "val = .5 + .125;";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const math_node = stmt.kind.assignment.value;
+
+    try testing.expectEqual(@as(f64, 0.5), math_node.kind.binary_op.left.kind.number);
+    try testing.expectEqual(@as(f64, 0.125), math_node.kind.binary_op.right.kind.number);
+}

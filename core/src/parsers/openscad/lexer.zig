@@ -115,7 +115,12 @@ pub const Lexer = struct {
             '#' => self.consumeChar(.mod_debug, start_loc),
             '/' => self.consumeSlashOrComment(start_loc),
             ',' => self.consumeChar(.comma, start_loc),
-            '.' => self.consumeChar(.dot, start_loc),
+            '.' => {
+                if (self.index + 1 < self.buffer.len and std.ascii.isDigit(self.buffer[self.index + 1])) {
+                    return self.consumeNumber(start_loc);
+                }
+                return self.consumeChar(.dot, start_loc);
+            },
             ';' => self.consumeChar(.semicolon, start_loc),
             '(' => self.consumeChar(.l_paren, start_loc),
             ')' => self.consumeChar(.r_paren, start_loc),

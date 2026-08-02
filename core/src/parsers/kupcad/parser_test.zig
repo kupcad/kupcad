@@ -835,6 +835,7 @@ test "KupCAD Parser: Advanced Number Literals (0x, 0b, 0o, Scientific, Underscor
         \\oct = 0o755
         \\sci = 1.5e3
         \\num = 1_000_000
+        \\leading_dot = .56
     ;
     var lexer = Lexer.init(source, 0);
     var parser = Parser.init(&lexer, arena.allocator());
@@ -858,4 +859,8 @@ test "KupCAD Parser: Advanced Number Literals (0x, 0b, 0o, Scientific, Underscor
     // 1_000_000 = 1000000
     const n5 = try parser.parseStatement();
     try testing.expectEqual(@as(f64, 1000000.0), n5.kind.assignment.value.kind.number);
+
+    // .56 = 0.56
+    const n6 = try parser.parseStatement();
+    try testing.expectEqual(@as(f64, 0.56), n6.kind.assignment.value.kind.number);
 }
