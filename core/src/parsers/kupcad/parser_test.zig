@@ -2297,3 +2297,38 @@ test "KupCAD Parser: Implicit RHS Array on Single Assignment" {
     try testing.expectEqual(@as(usize, 2), rhs_arr2.len);
     try testing.expectEqual(@as(f64, 5.0), rhs_arr2[1].kind.kupcad.number);
 }
+
+test "KupCAD Parser: Multi-Dimensional Array Indexing" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "val = matrix[x, y]";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const index_node = stmt.kind.kupcad.assignment.value;
+
+    try testing.expectEqual(ast.KupCadKind.index_access, @as(std.meta.Tag(ast.KupCadKind), index_node.kind.kupcad));
+
+    // The inner index should automatically be grouped into an array literal
+    const index_args = index_node.kind.kupcad.index_access.index.kind.kupcad.array_literal;
+    try testing.expectEqual(@as(usize, 2), index_args.len);
+    try testing.expectEqualStrings("x", index_args[0].kind.kupcad.identifier);
+    try testing.expectEqualStrings("y", index_args[1].kind.kupcad.identifier);
+}
+
+test "KupCAD Parser: Empty Parentheses evaluate to Nil" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "call() do\n ()\nend";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const block_stmt = stmt.kind.kupcad.method_call.block.?.kind.kupcad.block.stmts[0];
+
+    // Ensure `()` was gracefully converted to a `.nil` semantic node
+    try testing.expectEqual(ast.KupCadKind.nil, @as(std.meta.Tag(ast.KupCadKind), block_stmt.kind.kupcad));
+}

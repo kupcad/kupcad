@@ -311,9 +311,12 @@ pub const Parser = struct {
         return self.createNode(.{ .ternary_op = try self.b.box(ast.TernaryExpr, .{ .condition = condition, .then_branch = then_branch, .else_branch = else_branch }) }, q_tok.loc);
     }
 
+    // In parsers/kupcad/parser.zig -> parseIndexAccessOrAssignment
     fn parseIndexAccessOrAssignment(self: *Parser, target: *Node) ParseError!*Node {
         const bracket_tok = try self.expect(.l_bracket);
-        const index = try self.parseExpression(.none);
+
+        const index = try self.parseExpressionList();
+
         _ = try self.expect(.r_bracket);
 
         if (isAssignmentOp(self.tokens.current.tag)) {
@@ -324,8 +327,6 @@ pub const Parser = struct {
                     .target = target,
                     .index = index,
                     .op = tagToAssignmentOp(op_tag),
-
-                    // Use ExpressionList to capture `arr[0] = 1, 2`
                     .value = try self.parseExpressionList(),
                 }),
             }, bracket_tok.loc);
@@ -587,33 +588,6 @@ pub const Parser = struct {
         }, start_tok.loc);
     }
 
-    fn parseClassStatement(self: *Parser) ParseError!*Node {
-        const start_tok = try self.expect(.keyword_class);
-
-        if (self.tokens.current.tag != .constant and self.tokens.current.tag != .ident) {
-            self.reportError(self.tokens.current.loc, "Expected 'constant', but found '{s}'", .{self.tokens.current.lexeme});
-            return ParseError.UnexpectedToken;
-        }
-
-        const name_node = try self.parseClassPath();
-        var super_class: ?*Node = null;
-
-        if (self.tokens.current.tag == .less) {
-            self.advance();
-            if (self.tokens.current.tag != .constant and self.tokens.current.tag != .ident) {
-                self.reportError(self.tokens.current.loc, "Expected 'constant', but found '{s}'", .{self.tokens.current.lexeme});
-                return ParseError.UnexpectedToken;
-            }
-            super_class = try self.parseClassPath();
-        }
-
-        self.skipIgnored();
-        const body = try self.parseBlock(&.{.keyword_end});
-        _ = try self.expect(.keyword_end);
-
-        return self.createNode(.{ .class_stmt = try self.b.box(ast.ClassStmt, .{ .name = name_node, .super_class = super_class, .body = body }) }, start_tok.loc);
-    }
-
     fn parseModuleStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_module);
         const name_tok = if (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) self.tokens.current else return ParseError.UnexpectedToken;
@@ -766,6 +740,12 @@ pub const Parser = struct {
 
     fn parseClassPath(self: *Parser) ParseError!*Node {
         const start_loc = self.tokens.current.loc;
+
+        if (self.tokens.current.tag != .constant and self.tokens.current.tag != .ident) {
+            self.reportError(start_loc, "Expected 'constant', but found '{s}'", .{self.tokens.current.lexeme});
+            return ParseError.UnexpectedToken;
+        }
+
         var path_list: std.ArrayListUnmanaged([]const u8) = .empty;
         errdefer path_list.deinit(self.allocator);
 
@@ -782,6 +762,24 @@ pub const Parser = struct {
         } else {
             return self.createNode(.{ .namespace_access = .{ .path = try path_list.toOwnedSlice(self.allocator) } }, start_loc);
         }
+    }
+
+    fn parseClassStatement(self: *Parser) ParseError!*Node {
+        const start_tok = try self.expect(.keyword_class);
+
+        const name_node = try self.parseClassPath();
+
+        var super_class: ?*Node = null;
+        if (self.tokens.current.tag == .less) {
+            self.advance();
+            super_class = try self.parseClassPath();
+        }
+
+        self.skipIgnored();
+        const body = try self.parseBlock(&.{.keyword_end});
+        _ = try self.expect(.keyword_end);
+
+        return self.createNode(.{ .class_stmt = try self.b.box(ast.ClassStmt, .{ .name = name_node, .super_class = super_class, .body = body }) }, start_tok.loc);
     }
 
     fn parseReturnStatement(self: *Parser) ParseError!*Node {
@@ -1238,7 +1236,13 @@ pub const Parser = struct {
     }
 
     fn parseGroupedExpression(self: *Parser) ParseError!*Node {
-        _ = try self.expect(.l_paren);
+        const start_tok = try self.expect(.l_paren);
+
+        if (self.tokens.current.tag == .r_paren) {
+            self.advance();
+            return self.createNode(.nil, start_tok.loc);
+        }
+
         const expr = try self.parseExpression(.none);
         _ = try self.expect(.r_paren);
         return expr;
