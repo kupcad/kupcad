@@ -262,7 +262,9 @@ pub const Parser = struct {
     fn parseAssignmentExpr(self: *Parser, left: *Node) ParseError!*Node {
         const op_tag = self.tokens.current.tag;
         self.advance();
-        const value = try self.parseExpression(.none);
+
+        // Use ExpressionList to capture `x = 1, 2` as an ArrayLiteral
+        const value = try self.parseExpressionList();
 
         if (left.kind.kupcad == .identifier) {
             return self.createNode(.{ .assignment = try self.b.box(ast.Assignment, .{
@@ -322,7 +324,9 @@ pub const Parser = struct {
                     .target = target,
                     .index = index,
                     .op = tagToAssignmentOp(op_tag),
-                    .value = try self.parseExpression(.assignment),
+
+                    // Use ExpressionList to capture `arr[0] = 1, 2`
+                    .value = try self.parseExpressionList(),
                 }),
             }, bracket_tok.loc);
         }
