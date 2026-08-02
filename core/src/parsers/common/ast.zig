@@ -341,26 +341,57 @@ pub const Node = struct {
     };
 };
 
+pub const StringPool = struct {
+    map: std.StringHashMapUnmanaged([]const u8) = .empty,
+
+    pub fn deinit(self: *StringPool, allocator: std.mem.Allocator) void {
+        var iter = self.map.iterator();
+        while (iter.next()) |entry| {
+            allocator.free(entry.value_ptr.*);
+        }
+        self.map.deinit(allocator);
+    }
+
+    pub fn intern(self: *StringPool, allocator: std.mem.Allocator, str: []const u8) ![]const u8 {
+        if (self.map.get(str)) |existing| {
+            return existing;
+        }
+        const duped = try allocator.dupe(u8, str);
+        errdefer allocator.free(duped);
+        try self.map.put(allocator, duped, duped);
+        return duped;
+    }
+};
+
 pub const Builder = struct {
     allocator: std.mem.Allocator,
+    pool: StringPool = .{},
 
     pub fn init(allocator: std.mem.Allocator) Builder {
         return .{ .allocator = allocator };
     }
 
-    pub fn create(self: Builder, kind: Node.Kind, loc: Location) !*Node {
+    pub fn deinit(self: *Builder) void {
+        self.pool.deinit(self.allocator);
+    }
+
+    pub fn intern(self: *Builder, str: []const u8) ![]const u8 {
+        return self.pool.intern(self.allocator, str);
+    }
+
+    pub fn create(self: *const Builder, kind: Node.Kind, loc: Location) !*Node {
         const n = try self.allocator.create(Node);
         n.* = .{ .kind = kind, .loc = loc };
         return n;
     }
 
-    pub fn box(self: Builder, comptime T: type, val: T) !*T {
+    pub fn box(self: *const Builder, comptime T: type, val: T) !*T {
         const ptr = try self.allocator.create(T);
         ptr.* = val;
         return ptr;
     }
 
-    pub fn number(self: Builder, lexeme: []const u8, loc: Location) !*Node {
+    pub fn number(self: *const Builder, lexeme: []const u8, loc: Location) !*Node {
         var buf: [128]u8 = undefined;
         var len: usize = 0;
         for (lexeme) |c| {
@@ -395,19 +426,26 @@ pub const Builder = struct {
         return self.create(.{ .number = val }, loc);
     }
 
-    pub fn undefNode(self: Builder, loc: Location) !*Node {
+    pub fn undefNode(self: *const Builder, loc: Location) !*Node {
         return self.create(.undef, loc);
     }
 
-    pub fn booleanNode(self: Builder, val: bool, loc: Location) !*Node {
+    pub fn booleanNode(self: *const Builder, val: bool, loc: Location) !*Node {
         return self.create(.{ .boolean = val }, loc);
     }
 
-    pub fn identifierNode(self: Builder, name: []const u8, loc: Location) !*Node {
-        return self.create(.{ .identifier = name }, loc);
+    pub fn identifierNode(self: *Builder, name: []const u8, loc: Location) !*Node {
+        const interned = try self.intern(name);
+        return self.create(.{ .identifier = interned }, loc);
     }
 
-    pub fn stringNode(self: Builder, str: []const u8, loc: Location) !*Node {
-        return self.create(.{ .string = str }, loc);
+    pub fn stringNode(self: *Builder, str: []const u8, loc: Location) !*Node {
+        const interned = try self.intern(str);
+        return self.create(.{ .string = interned }, loc);
+    }
+
+    pub fn symbolNode(self: *Builder, sym: []const u8, loc: Location) !*Node {
+        const interned = try self.intern(sym);
+        return self.create(.{ .symbol = interned }, loc);
     }
 };

@@ -11,6 +11,21 @@ test "AST Node Memory Size Optimization" {
     try testing.expect(@sizeOf(ast.Node) <= 40);
 }
 
+test "AST Builder: String Interning Memory Optimization" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var builder = ast.Builder.init(arena.allocator());
+    defer builder.deinit();
+
+    const str1 = try builder.intern("duplicate_key");
+    const str2 = try builder.intern("duplicate_key");
+
+    // Must return the exact same slice pointer (identical memory address)
+    try testing.expectEqual(str1.ptr, str2.ptr);
+    try testing.expectEqualStrings("duplicate_key", str1);
+}
+
 test "KupCAD Parser: Operator Precedence (* vs +)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

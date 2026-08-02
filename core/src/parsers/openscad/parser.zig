@@ -156,9 +156,9 @@ pub const Parser = struct {
                 self.advance();
             }
             _ = try self.expect(.greater);
-            path_str = try self.allocator.dupe(u8, path_buf.items);
+            path_str = try self.b.intern(path_buf.items);
         } else if (self.tokens.current.tag == .string) {
-            path_str = try self.allocator.dupe(u8, self.tokens.current.lexeme);
+            path_str = try self.b.intern(self.tokens.current.lexeme);
             self.advance();
         } else {
             return ParseError.UnexpectedToken;
@@ -421,16 +421,17 @@ pub const Parser = struct {
                 self.advance();
                 if (self.tokens.current.tag == .string) {
                     var concat_str: std.ArrayListUnmanaged(u8) = .empty;
-                    errdefer concat_str.deinit(self.allocator);
+                    defer concat_str.deinit(self.allocator);
                     try concat_str.appendSlice(self.allocator, start_tok.lexeme);
 
                     while (self.tokens.current.tag == .string) {
                         try concat_str.appendSlice(self.allocator, self.tokens.current.lexeme);
                         self.advance();
                     }
-                    left = try self.createNode(.{ .string = try concat_str.toOwnedSlice(self.allocator) }, start_tok.loc);
+                    const interned = try self.b.intern(concat_str.items);
+                    left = try self.createNode(.{ .string = interned }, start_tok.loc);
                 } else {
-                    left = try self.createNode(.{ .string = start_tok.lexeme }, start_tok.loc);
+                    left = try self.b.stringNode(start_tok.lexeme, start_tok.loc);
                 }
             },
             .keyword_true => {

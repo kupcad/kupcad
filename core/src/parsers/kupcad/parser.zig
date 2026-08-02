@@ -370,7 +370,6 @@ pub const Parser = struct {
 
     fn parseImportOrExportStatement(self: *Parser, is_export: bool) ParseError!*Node {
         const start_tok = try self.expect(if (is_export) .keyword_export else .keyword_import);
-
         var symbols: std.ArrayListUnmanaged([]const u8) = .empty;
         errdefer symbols.deinit(self.allocator);
 
@@ -379,7 +378,7 @@ pub const Parser = struct {
             while (self.tokens.current.tag != .r_brace and self.tokens.current.tag != .eof) {
                 self.skipIgnored();
                 if (self.tokens.current.tag == .ident or self.tokens.current.tag == .constant) {
-                    try symbols.append(self.allocator, self.tokens.current.lexeme);
+                    try symbols.append(self.allocator, try self.b.intern(self.tokens.current.lexeme));
                     self.advance();
                 } else return ParseError.UnexpectedToken;
                 if (self.tokens.current.tag == .comma) self.advance() else break;
@@ -387,7 +386,7 @@ pub const Parser = struct {
             _ = try self.expect(.r_brace);
             _ = try self.expect(.keyword_from);
         } else if (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) {
-            try symbols.append(self.allocator, self.tokens.current.lexeme);
+            try symbols.append(self.allocator, try self.b.intern(self.tokens.current.lexeme));
             self.advance();
             _ = try self.expect(.keyword_from);
         } else if (self.tokens.current.tag != .string) {
@@ -395,6 +394,7 @@ pub const Parser = struct {
         }
 
         const path_tok = try self.expect(.string);
+        const interned_path = try self.b.intern(path_tok.lexeme);
 
         var attributes: ?*Node = null;
         self.skipIgnored();
@@ -405,11 +405,11 @@ pub const Parser = struct {
 
         if (is_export) {
             return self.createNode(.{
-                .export_stmt = try self.b.box(ast.ExportStmt, .{ .symbols = try symbols.toOwnedSlice(self.allocator), .path = path_tok.lexeme, .attributes = attributes }),
+                .export_stmt = try self.b.box(ast.ExportStmt, .{ .symbols = try symbols.toOwnedSlice(self.allocator), .path = interned_path, .attributes = attributes }),
             }, start_tok.loc);
         } else {
             return self.createNode(.{
-                .import_stmt = try self.b.box(ast.ImportStmt, .{ .symbols = try symbols.toOwnedSlice(self.allocator), .path = path_tok.lexeme, .attributes = attributes }),
+                .import_stmt = try self.b.box(ast.ImportStmt, .{ .symbols = try symbols.toOwnedSlice(self.allocator), .path = interned_path, .attributes = attributes }),
             }, start_tok.loc);
         }
     }
@@ -945,7 +945,7 @@ pub const Parser = struct {
                 const key_tok = self.tokens.current;
                 self.advance();
                 self.advance();
-                key = try self.createNode(.{ .symbol = key_tok.lexeme }, key_tok.loc);
+                key = try self.b.symbolNode(key_tok.lexeme, key_tok.loc);
             } else {
                 key = try self.parseExpression(.none);
                 if (self.tokens.current.tag == .colon or self.tokens.current.tag == .arrow) {
@@ -968,13 +968,13 @@ pub const Parser = struct {
             },
             .string => {
                 self.advance();
-                left = try self.createNode(.{ .string = start_tok.lexeme }, start_tok.loc);
+                left = try self.b.stringNode(start_tok.lexeme, start_tok.loc);
             },
-            .string_start => left = try self.parseInterpolatedString(),
             .symbol => {
                 self.advance();
-                left = try self.createNode(.{ .symbol = start_tok.lexeme }, start_tok.loc);
+                left = try self.b.symbolNode(start_tok.lexeme, start_tok.loc);
             },
+            .string_start => left = try self.parseInterpolatedString(),
             .keyword_true => {
                 self.advance();
                 left = try self.b.booleanNode(true, start_tok.loc);
@@ -1089,17 +1089,17 @@ pub const Parser = struct {
     fn parsePercentArray(self: *Parser, tag: Tag) ParseError!*Node {
         const tok = self.tokens.current;
         self.advance();
-        // Extract inner content e.g. from `%w[a b]`
         const inner = tok.lexeme[3 .. tok.lexeme.len - 1];
         var iter = std.mem.tokenizeAny(u8, inner, " \t\r\n");
         var elements: std.ArrayListUnmanaged(*Node) = .empty;
         errdefer elements.deinit(self.allocator);
 
         while (iter.next()) |word| {
+            const interned = try self.b.intern(word);
             if (tag == .percent_w) {
-                elements.append(self.allocator, try self.createNode(.{ .string = word }, tok.loc)) catch return ParseError.OutOfMemory;
+                elements.append(self.allocator, try self.createNode(.{ .string = interned }, tok.loc)) catch return ParseError.OutOfMemory;
             } else {
-                elements.append(self.allocator, try self.createNode(.{ .symbol = word }, tok.loc)) catch return ParseError.OutOfMemory;
+                elements.append(self.allocator, try self.createNode(.{ .symbol = interned }, tok.loc)) catch return ParseError.OutOfMemory;
             }
         }
         return self.createNode(.{ .array_literal = try elements.toOwnedSlice(self.allocator) }, tok.loc);
