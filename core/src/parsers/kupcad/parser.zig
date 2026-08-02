@@ -11,20 +11,21 @@ pub const ParseError = error{ UnexpectedToken, InvalidExpression, OutOfMemory };
 pub const Precedence = enum(u8) {
     none = 0,
     assignment = 1, // = += -= etc
-    ternary = 2, // ? :
-    logical_or = 3, // ||
-    logical_and = 4, // &&
-    equality = 5, // == !=
-    comparison = 6, // < <= > >=
-    bitwise_or = 7, // | ^
-    bitwise_and = 8, // & (CSG Intersection)
-    shift = 9, // << >>
-    range = 10, // .. ...
-    term = 11, // + -
-    factor = 12, // * / %
-    exponent = 13, // **
-    unary = 14, // ! -
-    call = 15, // . &. () [] ::
+    rescue_mod = 2, // rescue
+    ternary = 3, // ? :
+    logical_or = 4, // ||
+    logical_and = 5, // &&
+    equality = 6, // == !=
+    comparison = 7, // < <= > >=
+    bitwise_or = 8, // | ^
+    bitwise_and = 9, // & (CSG Intersection)
+    shift = 10, // << >>
+    range = 11, // .. ...
+    term = 12, // + -
+    factor = 13, // * / %
+    exponent = 14, // **
+    unary = 15, // ! -
+    call = 16, // . &. () [] ::
 };
 
 pub const Parser = struct {
@@ -157,21 +158,43 @@ pub const Parser = struct {
         return self.createNode(.{ .block = .{ .stmts = try stmts.toOwnedSlice(self.allocator) } }, start_loc);
     }
 
-    // 2. Add the `parseBeginStatement` helper method:
     fn parseBeginStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_begin);
         self.skipIgnored();
         const body = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
 
-        var rescue_body: ?*Node = null;
-        if (self.current.tag == .keyword_rescue) {
+        var rescues: std.ArrayListUnmanaged(ast.RescueClause) = .empty;
+        errdefer rescues.deinit(self.allocator);
+
+        while (self.current.tag == .keyword_rescue) {
             self.advance();
-            if (self.current.tag == .arrow) { // Handle `rescue => e`
-                self.advance();
-                if (self.current.tag == .ident) self.advance();
+            var errors: std.ArrayListUnmanaged([]const u8) = .empty;
+            errdefer errors.deinit(self.allocator);
+            var variable: ?[]const u8 = null;
+
+            if (self.current.tag == .constant or self.current.tag == .ident) {
+                while (self.current.tag == .constant or self.current.tag == .ident) {
+                    try errors.append(self.allocator, self.current.lexeme);
+                    self.advance();
+                    if (self.current.tag == .comma) self.advance() else break;
+                }
             }
+
+            if (self.current.tag == .arrow) { // => e
+                self.advance();
+                if (self.current.tag == .ident) {
+                    variable = self.current.lexeme;
+                    self.advance();
+                }
+            }
+
             self.skipIgnored();
-            rescue_body = try self.parseBlock(&.{ .keyword_ensure, .keyword_end });
+            const rescue_body = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
+            try rescues.append(self.allocator, .{
+                .errors = try errors.toOwnedSlice(self.allocator),
+                .variable = variable,
+                .body = rescue_body,
+            });
         }
 
         var ensure_body: ?*Node = null;
@@ -182,7 +205,7 @@ pub const Parser = struct {
         }
         _ = try self.expect(.keyword_end);
 
-        return self.createNode(.{ .begin_stmt = .{ .body = body, .rescue_body = rescue_body, .ensure_body = ensure_body } }, start_tok.loc);
+        return self.createNode(.{ .begin_stmt = .{ .body = body, .rescues = try rescues.toOwnedSlice(self.allocator), .ensure_body = ensure_body } }, start_tok.loc);
     }
 
     fn parseImportStatement(self: *Parser) ParseError!*Node {
@@ -596,6 +619,7 @@ pub const Parser = struct {
             .keyword_if => left = try self.parseIfStatement(),
             .keyword_unless => left = try self.parseUnlessStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
+            .percent_w, .percent_i => left = try self.parsePercentArray(start_tok.tag),
             else => return ParseError.InvalidExpression,
         }
 
@@ -610,7 +634,7 @@ pub const Parser = struct {
                 .colon_colon => try self.parseScopeResolution(left),
                 .l_bracket => try self.parseIndexAccessOrAssignment(left),
                 .l_paren => try self.parseCallOnExpr(left),
-
+                .keyword_rescue => try self.parseRescueModifierExpr(left),
                 else => break,
             };
         }
@@ -687,6 +711,32 @@ pub const Parser = struct {
             } }, left.loc);
         }
         return ParseError.InvalidExpression;
+    }
+
+    fn parsePercentArray(self: *Parser, tag: Tag) ParseError!*Node {
+        const tok = self.current;
+        self.advance();
+        // Extract inner content e.g. from `%w[a b]`
+        const inner = tok.lexeme[3 .. tok.lexeme.len - 1];
+        var iter = std.mem.tokenizeAny(u8, inner, " \t\r\n");
+        var elements: std.ArrayListUnmanaged(*Node) = .empty;
+        errdefer elements.deinit(self.allocator);
+
+        while (iter.next()) |word| {
+            if (tag == .percent_w) {
+                elements.append(self.allocator, try self.createNode(.{ .string = word }, tok.loc)) catch return ParseError.OutOfMemory;
+            } else {
+                elements.append(self.allocator, try self.createNode(.{ .symbol = word }, tok.loc)) catch return ParseError.OutOfMemory;
+            }
+        }
+        return self.createNode(.{ .array_literal = try elements.toOwnedSlice(self.allocator) }, tok.loc);
+    }
+
+    fn parseRescueModifierExpr(self: *Parser, left: *Node) ParseError!*Node {
+        const tok = self.current;
+        self.advance();
+        const rescue_expr = try self.parseExpression(getInfixPrecedence(.keyword_rescue));
+        return self.createNode(.{ .rescue_modifier = .{ .expr = left, .rescue_expr = rescue_expr } }, tok.loc);
     }
 
     fn parseSuper(self: *Parser) ParseError!*Node {
@@ -962,6 +1012,7 @@ pub const Parser = struct {
     fn getInfixPrecedence(tag: Tag) Precedence {
         return switch (tag) {
             .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => .assignment,
+            .keyword_rescue => .rescue_mod,
             .question => .ternary,
             .or_or, .keyword_or => .logical_or,
             .and_and, .keyword_and => .logical_and,

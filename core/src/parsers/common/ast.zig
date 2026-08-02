@@ -69,6 +69,12 @@ pub const LhsExpr = struct {
     modifier: ?ArgModifier = null,
 };
 
+pub const RescueClause = struct {
+    errors: []const []const u8,
+    variable: ?[]const u8,
+    body: *Node,
+};
+
 pub const Node = struct {
     kind: Kind,
     loc: Location,
@@ -128,6 +134,11 @@ pub const Node = struct {
         unary_op: struct {
             op: UnaryOp,
             operand: *Node,
+        },
+
+        rescue_modifier: struct {
+            expr: *Node,
+            rescue_expr: *Node,
         },
 
         // Binary: `a + b`, `x * y`
@@ -248,7 +259,7 @@ pub const Node = struct {
         next_stmt: ?*Node,
         begin_stmt: struct {
             body: *Node,
-            rescue_body: ?*Node,
+            rescues: []const RescueClause,
             ensure_body: ?*Node,
         },
         param_doc: []const u8,

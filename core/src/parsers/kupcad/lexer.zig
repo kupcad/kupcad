@@ -66,6 +66,8 @@ pub const Tag = enum {
     ampersand,
     caret, // ^
     tilde, // ~
+    percent_w,
+    percent_i,
 
     // Assignments & Rockets
     equal,
@@ -199,7 +201,8 @@ pub const Lexer = struct {
             ':' => self.consumeSymbolOrColon(start_loc),
             '"' => self.consumeString(start_loc),
             '#' => self.consumeCommentOrParam(start_loc),
-            '=', '!', '<', '>', '&', '|', '*', '/', '%', '?', '+', '-', '^', '~' => self.consumeOperator(start_loc),
+            '=', '!', '<', '>', '&', '|', '*', '/', '?', '+', '-', '^', '~' => self.consumeOperator(start_loc),
+            '%' => self.consumePercentOrModulo(start_loc),
             else => {
                 if (isIdentStart(c)) return self.consumeIdentOrKeyword(start_loc);
                 if (std.ascii.isDigit(c)) return self.consumeNumber(start_loc);
@@ -215,6 +218,43 @@ pub const Lexer = struct {
 
     fn skipWhitespace(self: *Lexer) void {
         utils.LexerUtils.skipWhitespace(self.buffer, &self.index, &self.line, &self.col, false);
+    }
+
+    fn consumePercentOrModulo(self: *Lexer, start_loc: common_token.Location) Token {
+        const c2 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
+        const c3 = if (self.index + 2 < self.buffer.len) self.buffer[self.index + 2] else 0;
+        if ((c2 == 'w' or c2 == 'i') and (c3 == '[' or c3 == '{' or c3 == '(' or c3 == '<')) {
+            return self.consumePercentLiteral(start_loc);
+        }
+        return self.consumeOperator(start_loc);
+    }
+
+    fn consumePercentLiteral(self: *Lexer, start_loc: common_token.Location) Token {
+        const start = self.index;
+        self.advance(); // %
+        const kind = self.peek(); // w or i
+        self.advance();
+        const open_delim = self.peek();
+        self.advance();
+        const close_delim: u8 = switch (open_delim) {
+            '[' => ']',
+            '{' => '}',
+            '(' => ')',
+            '<' => '>',
+            else => open_delim,
+        };
+
+        while (self.index < self.buffer.len and self.peek() != close_delim) {
+            if (self.peek() == '\n') {
+                self.line += 1;
+                self.col = 1;
+            }
+            self.advance();
+        }
+        if (self.index < self.buffer.len) self.advance(); // consume close delim
+
+        const tag: Tag = if (kind == 'w') .percent_w else .percent_i;
+        return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
     fn consumeDotOrRange(self: *Lexer, start_loc: common_token.Location) Token {

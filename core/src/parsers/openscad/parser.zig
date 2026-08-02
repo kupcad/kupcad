@@ -513,7 +513,18 @@ pub const Parser = struct {
             },
             .string => {
                 self.advance();
-                left = try self.createNode(.{ .string = start_tok.lexeme }, start_tok.loc);
+                if (self.current.tag == .string) {
+                    var concat_str: std.ArrayListUnmanaged(u8) = .empty;
+                    errdefer concat_str.deinit(self.allocator);
+                    try concat_str.appendSlice(self.allocator, start_tok.lexeme);
+                    while (self.current.tag == .string) {
+                        try concat_str.appendSlice(self.allocator, self.current.lexeme);
+                        self.advance();
+                    }
+                    left = try self.createNode(.{ .string = try concat_str.toOwnedSlice(self.allocator) }, start_tok.loc);
+                } else {
+                    left = try self.createNode(.{ .string = start_tok.lexeme }, start_tok.loc);
+                }
             },
             .keyword_true => {
                 self.advance();

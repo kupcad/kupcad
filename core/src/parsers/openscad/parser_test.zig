@@ -338,3 +338,17 @@ test "OpenSCAD Parser: Empty Arguments and Array Elements" {
     const cube_args = cube_call.kind.method_call.args;
     try testing.expectEqual(ast.Node.Kind.undef, @as(std.meta.Tag(ast.Node.Kind), cube_args[1].value.kind));
 }
+
+test "OpenSCAD Parser: Adjacency String Concatenation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "echo(\"Path: \" \"to/file.stl\");";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    const args = node.kind.method_call.args;
+
+    try testing.expectEqualStrings("Path: to/file.stl", args[0].value.kind.string);
+}

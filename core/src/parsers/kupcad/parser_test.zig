@@ -606,9 +606,11 @@ test "KupCAD Parser: Begin / Rescue / Ensure" {
     var lexer = Lexer.init(source, 0);
     var parser = Parser.init(&lexer, arena.allocator());
     const node = try parser.parseStatement();
+
     try testing.expectEqual(ast.Node.Kind.begin_stmt, @as(std.meta.Tag(ast.Node.Kind), node.kind));
     try testing.expectEqualStrings("build", node.kind.begin_stmt.body.kind.block.stmts[0].kind.method_call.method_name);
-    try testing.expectEqualStrings("log", node.kind.begin_stmt.rescue_body.?.kind.block.stmts[0].kind.method_call.method_name);
+    try testing.expectEqualStrings("log", node.kind.begin_stmt.rescues[0].body.kind.block.stmts[0].kind.method_call.method_name);
+
     try testing.expectEqualStrings("clean", node.kind.begin_stmt.ensure_body.?.kind.block.stmts[0].kind.method_call.method_name);
 }
 
@@ -646,4 +648,56 @@ test "KupCAD Parser: Receiver Command Syntax" {
     try testing.expectEqualStrings("y", args[1].name);
 
     try testing.expect(node.kind.method_call.block != null);
+}
+
+test "KupCAD Parser: Begin / Rescue / Ensure with Classes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "begin\n  build()\nrescue IOError, KeyError => e\n  log()\nensure\n  clean()\nend";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const node = try parser.parseStatement();
+
+    try testing.expectEqual(ast.Node.Kind.begin_stmt, @as(std.meta.Tag(ast.Node.Kind), node.kind));
+    try testing.expectEqualStrings("build", node.kind.begin_stmt.body.kind.block.stmts[0].kind.method_call.method_name);
+
+    const rescue_clause = node.kind.begin_stmt.rescues[0];
+    try testing.expectEqual(@as(usize, 2), rescue_clause.errors.len);
+    try testing.expectEqualStrings("IOError", rescue_clause.errors[0]);
+    try testing.expectEqualStrings("KeyError", rescue_clause.errors[1]);
+    try testing.expectEqualStrings("e", rescue_clause.variable.?);
+    try testing.expectEqualStrings("log", rescue_clause.body.kind.block.stmts[0].kind.method_call.method_name);
+
+    try testing.expectEqualStrings("clean", node.kind.begin_stmt.ensure_body.?.kind.block.stmts[0].kind.method_call.method_name);
+}
+
+test "KupCAD Parser: Inline Rescue Modifier" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "val = dangerous() rescue 0";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    const res_mod = node.kind.assignment.value;
+
+    try testing.expectEqual(ast.Node.Kind.rescue_modifier, @as(std.meta.Tag(ast.Node.Kind), res_mod.kind));
+    try testing.expectEqualStrings("dangerous", res_mod.kind.rescue_modifier.expr.kind.method_call.method_name);
+    try testing.expectEqual(@as(f64, 0.0), res_mod.kind.rescue_modifier.rescue_expr.kind.number);
+}
+
+test "KupCAD Lexer and Parser: Percent Literals (%w, %i)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "list = %w[gear shaft motor]";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const node = try parser.parseStatement();
+    const arr = node.kind.assignment.value.kind.array_literal;
+
+    try testing.expectEqual(@as(usize, 3), arr.len);
+    try testing.expectEqualStrings("gear", arr[0].kind.string);
+    try testing.expectEqualStrings("shaft", arr[1].kind.string);
+    try testing.expectEqualStrings("motor", arr[2].kind.string);
 }
