@@ -296,4 +296,20 @@ pub const Builder = struct {
         const val = std.fmt.parseFloat(f64, lexeme) catch return error.InvalidExpression;
         return self.create(.{ .number = val }, loc);
     }
+
+    pub fn undefNode(self: Builder, loc: Location) !*Node {
+        return self.create(.undef, loc);
+    }
+
+    pub fn booleanNode(self: Builder, val: bool, loc: Location) !*Node {
+        return self.create(.{ .boolean = val }, loc);
+    }
+
+    pub fn identifierNode(self: Builder, name: []const u8, loc: Location) !*Node {
+        return self.create(.{ .identifier = name }, loc);
+    }
+
+    pub fn stringNode(self: Builder, str: []const u8, loc: Location) !*Node {
+        return self.create(.{ .string = str }, loc);
+    }
 };

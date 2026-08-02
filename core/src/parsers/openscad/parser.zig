@@ -444,7 +444,7 @@ pub const Parser = struct {
 
     fn parseNamedArg(self: *Parser) ParseError!ast.NamedArg {
         if (self.current.tag == .comma or self.current.tag == .r_paren) {
-            const val = try self.createNode(.undef, self.current.loc);
+            const val = try self.b.undefNode(self.current.loc);
             return .{ .name = "", .value = val, .modifier = null };
         }
         var arg_name: []const u8 = "";
@@ -526,15 +526,15 @@ pub const Parser = struct {
             },
             .keyword_true => {
                 self.advance();
-                left = try self.createNode(.{ .boolean = true }, start_tok.loc);
+                left = try self.b.booleanNode(true, start_tok.loc);
             },
             .keyword_false => {
                 self.advance();
-                left = try self.createNode(.{ .boolean = false }, start_tok.loc);
+                left = try self.b.booleanNode(false, start_tok.loc);
             },
             .keyword_undef => {
                 self.advance();
-                left = try self.createNode(.undef, start_tok.loc);
+                left = try self.b.undefNode(start_tok.loc);
             },
             .ident => left = try self.parseIdentifierOrCall(),
             .l_paren => left = try self.parseGroupedExpression(),
@@ -641,7 +641,7 @@ pub const Parser = struct {
                 },
             }, tok.loc);
         }
-        return self.createNode(.{ .identifier = tok.lexeme }, tok.loc);
+        return self.b.identifierNode(tok.lexeme, tok.loc);
     }
 
     fn parseGroupedExpression(self: *Parser) ParseError!*Node {
@@ -687,7 +687,7 @@ pub const Parser = struct {
         // Handle first element (might be empty/undef)
         var first: *Node = undefined;
         if (self.current.tag == .comma or self.current.tag == .r_bracket) {
-            first = try self.createNode(.undef, self.current.loc);
+            first = try self.b.undefNode(self.current.loc);
         } else {
             first = try self.parseExpression(.none);
         }
@@ -738,7 +738,7 @@ pub const Parser = struct {
             // Handle missing values (e.g. `[1, , 2]` drops an .undef in the middle)
             var elem: *Node = undefined;
             if (self.current.tag == .comma or self.current.tag == .r_bracket) {
-                elem = try self.createNode(.undef, self.current.loc);
+                elem = try self.b.undefNode(self.current.loc);
             } else {
                 elem = try self.parseExpression(.none);
             }

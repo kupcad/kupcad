@@ -501,7 +501,7 @@ pub const Parser = struct {
         }
 
         if (path_list.items.len == 1) {
-            return self.createNode(.{ .identifier = path_list.items[0] }, start_loc);
+            return self.b.identifierNode(path_list.items[0], start_loc);
         } else {
             return self.createNode(.{ .namespace_access = .{ .path = try path_list.toOwnedSlice(self.allocator) } }, start_loc);
         }
@@ -686,11 +686,11 @@ pub const Parser = struct {
             },
             .keyword_true => {
                 self.advance();
-                left = try self.createNode(.{ .boolean = true }, start_tok.loc);
+                left = try self.b.booleanNode(true, start_tok.loc);
             },
             .keyword_false => {
                 self.advance();
-                left = try self.createNode(.{ .boolean = false }, start_tok.loc);
+                left = try self.b.booleanNode(false, start_tok.loc);
             },
             .keyword_nil => {
                 self.advance();
@@ -920,7 +920,7 @@ pub const Parser = struct {
                 .method_call = .{ .receiver = null, .method_name = tok.lexeme, .args = cmd.args, .block = cmd.block, .is_safe = false },
             }, tok.loc);
         }
-        return self.createNode(.{ .identifier = tok.lexeme }, tok.loc);
+        return self.b.identifierNode(tok.lexeme, tok.loc);
     }
 
     fn parseArrayLiteral(self: *Parser) ParseError!*Node {
@@ -1124,7 +1124,7 @@ pub const Parser = struct {
         if (self.current.tag == .ident) {
             const tok = self.current;
             self.advance();
-            return self.createNode(.{ .identifier = tok.lexeme }, tok.loc);
+            return self.b.identifierNode(tok.lexeme, tok.loc);
         } else if (self.current.tag == .l_paren) {
             const start_loc = self.current.loc;
             self.advance();
