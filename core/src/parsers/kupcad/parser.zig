@@ -746,7 +746,7 @@ pub const Parser = struct {
         const start_tok = try self.expect(.keyword_next);
         var val: ?*Node = null;
         if (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_end and self.tokens.current.tag != .keyword_unless and self.tokens.current.tag != .keyword_if and self.tokens.current.tag != .keyword_while and self.tokens.current.tag != .keyword_until) {
-            val = try self.parseExpression(.none);
+            val = try self.parseExpressionList();
         }
         return self.createNode(.{ .next_stmt = val }, start_tok.loc);
     }
@@ -774,7 +774,7 @@ pub const Parser = struct {
     fn parseReturnStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_return);
         var val: ?*Node = null;
-        if (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_end and self.tokens.current.tag != .keyword_unless and self.tokens.current.tag != .keyword_if) {
+        if (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_end and self.tokens.current.tag != .keyword_unless and self.tokens.current.tag != .keyword_if and self.tokens.current.tag != .keyword_while and self.tokens.current.tag != .keyword_until) {
             val = try self.parseExpressionList();
         }
         return self.createNode(.{ .return_stmt = val }, start_tok.loc);
@@ -804,8 +804,8 @@ pub const Parser = struct {
     fn parseBreakStatement(self: *Parser) ParseError!*Node {
         const start_tok = try self.expect(.keyword_break);
         var val: ?*Node = null;
-        if (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_unless and self.tokens.current.tag != .keyword_if and self.tokens.current.tag != .keyword_end) {
-            val = try self.parseExpression(.none);
+        if (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_end and self.tokens.current.tag != .keyword_unless and self.tokens.current.tag != .keyword_if and self.tokens.current.tag != .keyword_while and self.tokens.current.tag != .keyword_until) {
+            val = try self.parseExpressionList();
         }
         return self.createNode(.{ .break_stmt = val }, start_tok.loc);
     }

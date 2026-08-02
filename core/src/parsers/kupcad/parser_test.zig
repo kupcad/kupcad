@@ -1616,3 +1616,190 @@ test "KupCAD Parser: Multi-line Array Destructuring in Method Arguments" {
     try testing.expectEqual(@as(usize, 3), arr2.len);
     try testing.expectEqual(@as(f64, 10.0), arr2[0].kind.number);
 }
+
+test "KupCAD Parser: Destructuring with Nested Tuple Patterns" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Multi-assignment with parenthesis tuple grouping: `a, (b, c) = data`
+    // (Note: we simulate this with standard array mapping in AST)
+    const source = "points.each do |(x, y), index|\nend";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const params = stmt.kind.method_call.block.?.kind.block.params;
+    try testing.expectEqual(@as(usize, 2), params.len);
+
+    const tuple_param = params[0].kind.array_literal;
+    try testing.expectEqual(@as(usize, 2), tuple_param.len);
+    try testing.expectEqualStrings("x", tuple_param[0].kind.identifier);
+    try testing.expectEqualStrings("y", tuple_param[1].kind.identifier);
+    try testing.expectEqualStrings("index", params[1].kind.identifier);
+}
+
+test "KupCAD Parser: Complex Nested Modifier Precedence" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // The trailing `unless` should bind to the assignment, not just `false`
+    const source = "x = y ? true : false unless z == 1";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const root = try parser.parseStatement();
+
+    // Root should be `if_stmt` (unless) wrapping the assignment
+    try testing.expectEqual(ast.Node.Kind.if_stmt, @as(std.meta.Tag(ast.Node.Kind), root.kind));
+    try testing.expectEqual(true, root.kind.if_stmt.is_unless);
+
+    const cond = root.kind.if_stmt.condition;
+    try testing.expectEqual(ast.BinaryOp.equal, cond.kind.binary_op.op);
+    try testing.expectEqualStrings("z", cond.kind.binary_op.left.kind.identifier);
+
+    const assign = root.kind.if_stmt.then_branch.kind.block.stmts[0];
+    try testing.expectEqualStrings("x", assign.kind.assignment.name);
+    try testing.expectEqual(ast.Node.Kind.ternary_op, @as(std.meta.Tag(ast.Node.Kind), assign.kind.assignment.value.kind));
+}
+
+test "KupCAD Parser: Global Namespace Property Assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "::App::Config.debug_mode = true";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    try testing.expectEqual(ast.Node.Kind.property_assignment, @as(std.meta.Tag(ast.Node.Kind), stmt.kind));
+
+    try testing.expectEqualStrings("debug_mode", stmt.kind.property_assignment.property);
+    try testing.expectEqual(true, stmt.kind.property_assignment.value.kind.boolean);
+
+    const target_ns = stmt.kind.property_assignment.target;
+    try testing.expectEqual(ast.Node.Kind.namespace_access, @as(std.meta.Tag(ast.Node.Kind), target_ns.kind));
+    try testing.expectEqual(@as(usize, 2), target_ns.kind.namespace_access.path.len);
+    try testing.expectEqualStrings("App", target_ns.kind.namespace_access.path[0]);
+    try testing.expectEqualStrings("Config", target_ns.kind.namespace_access.path[1]);
+}
+
+test "KupCAD Parser: Multiple Trailing Safe Navigation Calls" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "part&.cut(hole)&.translate(x: 10)&.chamfer()";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    // Top-most call is `chamfer`
+    try testing.expectEqualStrings("chamfer", stmt.kind.method_call.method_name);
+    try testing.expectEqual(true, stmt.kind.method_call.is_safe);
+
+    // Receiver of chamfer is `translate`
+    const translate_call = stmt.kind.method_call.receiver.?;
+    try testing.expectEqualStrings("translate", translate_call.kind.method_call.method_name);
+    try testing.expectEqual(true, translate_call.kind.method_call.is_safe);
+
+    // Receiver of translate is `cut`
+    const cut_call = translate_call.kind.method_call.receiver.?;
+    try testing.expectEqualStrings("cut", cut_call.kind.method_call.method_name);
+    try testing.expectEqual(true, cut_call.kind.method_call.is_safe);
+
+    // Receiver of cut is `part`
+    const part_ident = cut_call.kind.method_call.receiver.?;
+    try testing.expectEqualStrings("part", part_ident.kind.identifier);
+}
+
+test "KupCAD Parser: Multi-Line Nested Array and Range Expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\points = [
+        \\  [10, 20],
+        \\  0...5,
+        \\  [x, y, z]
+        \\]
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+    const arr = stmt.kind.assignment.value.kind.array_literal;
+    try testing.expectEqual(@as(usize, 3), arr.len);
+
+    // First item is nested array
+    try testing.expectEqual(ast.Node.Kind.array_literal, @as(std.meta.Tag(ast.Node.Kind), arr[0].kind));
+    try testing.expectEqual(@as(f64, 10.0), arr[0].kind.array_literal[0].kind.number);
+
+    // Second item is exclusive range
+    try testing.expectEqual(ast.Node.Kind.range, @as(std.meta.Tag(ast.Node.Kind), arr[1].kind));
+    try testing.expectEqual(true, arr[1].kind.range.is_exclusive);
+
+    // Third item is identifier array
+    try testing.expectEqual(ast.Node.Kind.array_literal, @as(std.meta.Tag(ast.Node.Kind), arr[2].kind));
+    try testing.expectEqualStrings("x", arr[2].kind.array_literal[0].kind.identifier);
+}
+
+test "KupCAD Parser: Chained Comparisons (Ruby-style Equality)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "a == b and c != d or e >= f";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    // Root is OR
+    try testing.expectEqual(ast.BinaryOp.logical_or, stmt.kind.binary_op.op);
+
+    // Right of OR is e >= f
+    const r_expr = stmt.kind.binary_op.right;
+    try testing.expectEqual(ast.BinaryOp.greater_equal, r_expr.kind.binary_op.op);
+    try testing.expectEqualStrings("e", r_expr.kind.binary_op.left.kind.identifier);
+    try testing.expectEqualStrings("f", r_expr.kind.binary_op.right.kind.identifier);
+
+    // Left of OR is a == b and c != d
+    const l_expr = stmt.kind.binary_op.left;
+    try testing.expectEqual(ast.BinaryOp.logical_and, l_expr.kind.binary_op.op);
+
+    try testing.expectEqual(ast.BinaryOp.equal, l_expr.kind.binary_op.left.kind.binary_op.op);
+    try testing.expectEqual(ast.BinaryOp.not_equal, l_expr.kind.binary_op.right.kind.binary_op.op);
+}
+
+test "KupCAD Parser: Return and Next with Multi-value Tuples" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\def process
+        \\  next 1, 2, 3 if skip?
+        \\  return true, "done"
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const def_node = try parser.parseStatement();
+    const stmts = def_node.kind.def_stmt.body.kind.block.stmts;
+
+    // 1. next 1, 2, 3 if skip? (If modifier wrapper)
+    const if_node = stmts[0];
+    try testing.expectEqualStrings("skip?", if_node.kind.if_stmt.condition.kind.identifier);
+    const next_node = if_node.kind.if_stmt.then_branch.kind.block.stmts[0];
+
+    // Multi-return/next gets parsed as an array_literal of values
+    const next_vals = next_node.kind.next_stmt.?.kind.array_literal;
+    try testing.expectEqual(@as(usize, 3), next_vals.len);
+    try testing.expectEqual(@as(f64, 2.0), next_vals[1].kind.number);
+
+    // 2. return true, "done"
+    const ret_node = stmts[1];
+    const ret_vals = ret_node.kind.return_stmt.?.kind.array_literal;
+    try testing.expectEqual(@as(usize, 2), ret_vals.len);
+    try testing.expectEqual(true, ret_vals[0].kind.boolean);
+    try testing.expectEqualStrings("done", ret_vals[1].kind.string);
+}
