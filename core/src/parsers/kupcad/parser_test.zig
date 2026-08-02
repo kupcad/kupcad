@@ -789,3 +789,38 @@ test "KupCAD Parser: Optional 'then' Keyword" {
     try testing.expectEqual(ast.Node.Kind.if_stmt, @as(std.meta.Tag(ast.Node.Kind), node.kind));
     try testing.expectEqualStrings("a", node.kind.if_stmt.then_branch.kind.block.stmts[0].kind.assignment.name);
 }
+
+test "KupCAD Parser: Implicit Def Rescue / Ensure" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\def process
+        \\  run_step()
+        \\rescue => err
+        \\  handle_error()
+        \\ensure
+        \\  cleanup()
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const def_node = try parser.parseStatement();
+    try testing.expectEqualStrings("process", def_node.kind.def_stmt.name);
+
+    // Body should be wrapped in an implicit begin_stmt
+    const begin_node = def_node.kind.def_stmt.body;
+    try testing.expectEqual(ast.Node.Kind.begin_stmt, @as(std.meta.Tag(ast.Node.Kind), begin_node.kind));
+
+    // Verify main body
+    try testing.expectEqualStrings("run_step", begin_node.kind.begin_stmt.body.kind.block.stmts[0].kind.method_call.method_name);
+
+    // Verify rescue
+    const rescue_clause = begin_node.kind.begin_stmt.rescues[0];
+    try testing.expectEqualStrings("err", rescue_clause.variable.?);
+    try testing.expectEqualStrings("handle_error", rescue_clause.body.kind.block.stmts[0].kind.method_call.method_name);
+
+    // Verify ensure
+    try testing.expectEqualStrings("cleanup", begin_node.kind.begin_stmt.ensure_body.?.kind.block.stmts[0].kind.method_call.method_name);
+}

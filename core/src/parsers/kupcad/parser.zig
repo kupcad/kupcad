@@ -409,7 +409,6 @@ pub const Parser = struct {
         const start_tok = try self.expect(.keyword_def);
         var is_class_method = false;
         var name_tok: Token = undefined;
-
         if (self.current.tag == .keyword_self and self.next_tok.tag == .dot) {
             is_class_method = true;
             self.advance(); // consume self
@@ -420,12 +419,73 @@ pub const Parser = struct {
             name_tok = if (self.current.tag == .ident or self.current.tag == .constant) self.current else return ParseError.UnexpectedToken;
             self.advance();
         }
-
         const params = try self.parseParenParams();
         self.skipIgnored();
-        const body = try self.parseBlock(&.{.keyword_end});
+
+        // Parse main body up to rescue, ensure, or end
+        const body_node = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
+
+        var rescues: std.ArrayListUnmanaged(ast.RescueClause) = .empty;
+        errdefer rescues.deinit(self.allocator);
+
+        while (self.current.tag == .keyword_rescue) {
+            self.advance();
+            var errors: std.ArrayListUnmanaged([]const u8) = .empty;
+            errdefer errors.deinit(self.allocator);
+            var variable: ?[]const u8 = null;
+
+            if (self.current.tag == .constant or self.current.tag == .ident) {
+                while (self.current.tag == .constant or self.current.tag == .ident) {
+                    try errors.append(self.allocator, self.current.lexeme);
+                    self.advance();
+                    if (self.current.tag == .comma) self.advance() else break;
+                }
+            }
+            if (self.current.tag == .arrow) { // => e
+                self.advance();
+                if (self.current.tag == .ident) {
+                    variable = self.current.lexeme;
+                    self.advance();
+                }
+            }
+            self.skipIgnored();
+            const rescue_body = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
+            try rescues.append(self.allocator, .{
+                .errors = try errors.toOwnedSlice(self.allocator),
+                .variable = variable,
+                .body = rescue_body,
+            });
+        }
+
+        var ensure_body: ?*Node = null;
+        if (self.current.tag == .keyword_ensure) {
+            self.advance();
+            self.skipIgnored();
+            ensure_body = try self.parseBlock(&.{.keyword_end});
+        }
+
         _ = try self.expect(.keyword_end);
-        return self.createNode(.{ .def_stmt = .{ .name = name_tok.lexeme, .params = params, .body = body, .is_class_method = is_class_method } }, start_tok.loc);
+
+        // If implicit rescue/ensure was used, wrap the body in a begin_stmt
+        var final_body = body_node;
+        if (rescues.items.len > 0 or ensure_body != null) {
+            final_body = try self.createNode(.{
+                .begin_stmt = .{
+                    .body = body_node,
+                    .rescues = try rescues.toOwnedSlice(self.allocator),
+                    .ensure_body = ensure_body,
+                },
+            }, start_tok.loc);
+        }
+
+        return self.createNode(.{
+            .def_stmt = .{
+                .name = name_tok.lexeme,
+                .params = params,
+                .body = final_body,
+                .is_class_method = is_class_method,
+            },
+        }, start_tok.loc);
     }
 
     fn parseClassPath(self: *Parser) ParseError!*Node {
