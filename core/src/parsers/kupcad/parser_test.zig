@@ -944,3 +944,38 @@ test "KupCAD Parser: Optional Imports and Trailing Call Commas" {
     try testing.expectEqualStrings("cube", call_node.kind.method_call.method_name);
     try testing.expectEqual(@as(usize, 2), call_node.kind.method_call.args.len);
 }
+
+test "KupCAD Parser: Diagnostics for Unexpected Token" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Missing closing parenthesis
+    const source = "(x + 1 ]";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const result = parser.parseExpression(.none);
+
+    // 1. Assert it fails with the correct error
+    try testing.expectError(error.UnexpectedToken, result);
+
+    // 2. Assert the diagnostic was captured
+    try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
+    try testing.expectEqualStrings("Expected 'r_paren', but found ']'", parser.diagnostics.list.items[0].message);
+}
+
+test "KupCAD Parser: Diagnostics for Invalid Expression" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // We intentionally leave the RHS of an assignment as a curly brace
+    const source = "val = }";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const result = parser.parseStatement();
+
+    try testing.expectError(error.InvalidExpression, result);
+    try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
+    try testing.expectEqualStrings("Invalid expression starting with '}'", parser.diagnostics.list.items[0].message);
+}

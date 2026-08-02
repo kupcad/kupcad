@@ -464,3 +464,38 @@ test "OpenSCAD Parser: Function Literals (Anonymous)" {
     try testing.expectEqualStrings("x", func_lit.kind.lambda_expr.params[0].name);
     try testing.expectEqual(ast.BinaryOp.multiply, func_lit.kind.lambda_expr.body.kind.binary_op.op);
 }
+
+test "OpenSCAD Parser: Diagnostics for Unexpected Token" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // We intentionally use a bracket instead of a parenthesis
+    const source = "cube(10 ];";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const result = parser.parseStatement();
+
+    // 1. Assert it fails with the correct error
+    try testing.expectError(error.UnexpectedToken, result);
+
+    // 2. Assert the diagnostic was captured
+    try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
+    try testing.expectEqualStrings("Expected 'r_paren', but found ']'", parser.diagnostics.list.items[0].message);
+}
+
+test "OpenSCAD Parser: Diagnostics for Invalid Expression" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // We intentionally start an expression with a stray multiplication symbol
+    const source = "x = * 5;";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const result = parser.parseStatement();
+
+    try testing.expectError(error.InvalidExpression, result);
+    try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
+    try testing.expectEqualStrings("Invalid expression starting with '*'", parser.diagnostics.list.items[0].message);
+}

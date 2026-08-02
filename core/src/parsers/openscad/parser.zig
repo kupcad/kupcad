@@ -6,8 +6,9 @@ const Token = lexer_mod.Token;
 const ast = @import("../common/ast.zig");
 const common_token = @import("../common/token.zig");
 const Node = ast.Node;
-
-pub const ParseError = @import("../common/errors.zig").ParseError;
+const common_errors = @import("../common/errors.zig");
+const Diagnostics = common_errors.Diagnostics;
+pub const ParseError = common_errors.ParseError;
 
 pub const Precedence = enum(u8) {
     none = 0,
@@ -27,17 +28,23 @@ pub const Parser = struct {
     tokens: common_token.BufferedLexer(Lexer, Token, Tag),
     allocator: std.mem.Allocator,
     b: ast.Builder,
+    diagnostics: Diagnostics,
 
     pub fn init(lexer: *Lexer, allocator: std.mem.Allocator) Parser {
         return Parser{
             .tokens = common_token.BufferedLexer(Lexer, Token, Tag).init(lexer),
             .allocator = allocator,
             .b = ast.Builder.init(allocator),
+            .diagnostics = Diagnostics.init(allocator),
         };
     }
 
     inline fn advance(self: *Parser) void {
         self.tokens.advance();
+    }
+
+    pub fn reportError(self: *Parser, loc: ast.Location, comptime fmt: []const u8, args: anytype) void {
+        self.diagnostics.add(loc, fmt, args);
     }
 
     fn expect(self: *Parser, tag: Tag) ParseError!Token {
@@ -46,6 +53,7 @@ pub const Parser = struct {
             self.advance();
             return tok;
         }
+        self.reportError(self.tokens.current.loc, "Expected '{s}', but found '{s}'", .{ @tagName(tag), self.tokens.current.lexeme });
         return ParseError.UnexpectedToken;
     }
 
@@ -612,7 +620,10 @@ pub const Parser = struct {
                 const body = try self.parseExpression(.none);
                 left = try self.createNode(.{ .lambda_expr = .{ .params = params, .body = body } }, func_tok.loc);
             },
-            else => return ParseError.InvalidExpression,
+            else => {
+                self.reportError(start_tok.loc, "Invalid expression starting with '{s}'", .{start_tok.lexeme});
+                return ParseError.InvalidExpression;
+            },
         }
 
         while (true) {
