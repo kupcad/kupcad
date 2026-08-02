@@ -5,12 +5,7 @@ const Tag = lexer_mod.Tag;
 const Token = lexer_mod.Token;
 const ast = @import("../common/ast.zig");
 const Node = ast.Node;
-
-pub const ParseError = error{
-    UnexpectedToken,
-    InvalidExpression,
-    OutOfMemory,
-};
+pub const ParseError = @import("../common/errors.zig").ParseError;
 
 pub const Precedence = enum(u8) {
     none = 0,
