@@ -311,7 +311,6 @@ pub const Parser = struct {
         return self.createNode(.{ .ternary_op = try self.b.box(ast.TernaryExpr, .{ .condition = condition, .then_branch = then_branch, .else_branch = else_branch }) }, q_tok.loc);
     }
 
-    // In parsers/kupcad/parser.zig -> parseIndexAccessOrAssignment
     fn parseIndexAccessOrAssignment(self: *Parser, target: *Node) ParseError!*Node {
         const bracket_tok = try self.expect(.l_bracket);
 
