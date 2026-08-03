@@ -2500,3 +2500,39 @@ test "KupCAD Parser: AST Node offset and length calculation for LSP" {
     try testing.expectEqual(@as(u32, 11), right_num.loc.offset); // Starts at '2'
     try testing.expectEqual(@as(u32, 3), right_num.loc.length); // Spans "200" (length 3)
 }
+
+test "KupCAD Parser: Multi-line Compound Node Span Tracking" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Let's mathematically map out the exact byte offsets:
+    // "def calculate(a)\n"  --> Length 17 (Offsets 0 to 16)
+    // "  # a comment\n"     --> Length 14 (Offsets 17 to 30)
+    // "  a * 2\n"           --> Length 8  (Offsets 31 to 38) (The 'a' starts at 33)
+    // "end"                 --> Length 3  (Offsets 39 to 41)
+    // Total File Length: 42 bytes.
+    const source =
+        "def calculate(a)\n" ++
+        "  # a comment\n" ++
+        "  a * 2\n" ++
+        "end";
+
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    // 1. Verify the Root Node (def_stmt) covers the entire block perfectly.
+    try testing.expectEqual(std.meta.Tag(ast.NodeKind).def_stmt, std.meta.activeTag(stmt.kind));
+    try testing.expectEqual(@as(u32, 0), stmt.loc.offset);
+    try testing.expectEqual(@as(u32, 42), stmt.loc.length);
+
+    // 2. Verify the Inner Math Node (binary_op) didn't accidentally consume the \n
+    const body_block = stmt.kind.def_stmt.body.kind.block.stmts;
+    try testing.expectEqual(@as(usize, 1), body_block.len); // Comment should be ignored in AST
+
+    const math_expr = body_block[0];
+    try testing.expectEqual(std.meta.Tag(ast.NodeKind).binary_op, std.meta.activeTag(math_expr.kind));
+    try testing.expectEqual(@as(u32, 33), math_expr.loc.offset); // Exactly at the 'a'
+    try testing.expectEqual(@as(u32, 5), math_expr.loc.length); // Spans "a * 2" (length 5)
+}
