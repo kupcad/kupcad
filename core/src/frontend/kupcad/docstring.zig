@@ -35,7 +35,7 @@ pub const DocstringParser = struct {
                 const options_str = text[brace_idx..];
                 desc_end = brace_idx;
 
-                // MAGIC: Spin up the KupCAD parser to natively parse the options hash!
+                // Spin up the KupCAD parser to natively parse the options hash
                 var lexer = lexer_mod.Lexer.init(options_str, loc.file_id);
                 var parser = parser_mod.Parser.init(&lexer, self.allocator);
                 parser.b = self.b.*; // Clone builder so they share the StringPool and Allocator
