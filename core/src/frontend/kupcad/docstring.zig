@@ -8,20 +8,24 @@ pub const DocstringParser = struct {
     b: *ast.Builder,
 
     pub fn parse(self: *DocstringParser, raw: []const u8, loc: ast.Location) !*ast.ParamDoc {
-        // Normalize the text (remove '#' and newlines, compress spaces)
+        // Normalize the text (remove '#' and compress spaces, but PRESERVE newlines)
         var clean_text: std.ArrayListUnmanaged(u8) = .empty;
         defer clean_text.deinit(self.allocator);
-
         var lines = std.mem.splitScalar(u8, raw, '\n');
+
+        var is_first_line = true;
         while (lines.next()) |line| {
             const trimmed = std.mem.trim(u8, line, " \t\r#");
             if (trimmed.len > 0) {
+                if (!is_first_line) {
+                    try clean_text.append(self.allocator, '\n');
+                }
                 try clean_text.appendSlice(self.allocator, trimmed);
-                try clean_text.append(self.allocator, ' ');
+                is_first_line = false;
             }
         }
 
-        const text = std.mem.trim(u8, clean_text.items, " ");
+        const text = std.mem.trim(u8, clean_text.items, " \n");
         if (text.len == 0 or text[0] != '@') {
             return self.b.box(ast.ParamDoc, .{ .tag_name = try self.b.intern("") });
         }
@@ -47,9 +51,9 @@ pub const DocstringParser = struct {
             }
         }
 
-        // Tokenize the remaining string
-        const header_str = std.mem.trim(u8, text[0..desc_end], " ");
-        var iter = std.mem.tokenizeAny(u8, header_str, " ");
+        // Tokenize the remaining string, splitting by spaces OR newlines to extract tags safely
+        const header_str = std.mem.trim(u8, text[0..desc_end], " \n\r\t");
+        var iter = std.mem.tokenizeAny(u8, header_str, " \n\r\t");
 
         if (iter.next()) |tag| {
             doc.tag_name = try self.b.intern(tag[1..]); // skip '@'
@@ -64,12 +68,12 @@ pub const DocstringParser = struct {
 
         // Check for Type `[Type]` and Description
         const rest = iter.rest();
-        const trimmed_rest = std.mem.trim(u8, rest, " ");
+        const trimmed_rest = std.mem.trim(u8, rest, " \n\r\t");
 
         if (trimmed_rest.len > 0 and trimmed_rest[0] == '[') {
             if (std.mem.indexOfScalar(u8, trimmed_rest, ']')) |close_idx| {
                 doc.type_name = try self.b.intern(trimmed_rest[1..close_idx]);
-                doc.description = try self.b.intern(std.mem.trim(u8, trimmed_rest[close_idx + 1 ..], " "));
+                doc.description = try self.b.intern(std.mem.trim(u8, trimmed_rest[close_idx + 1 ..], " \n\r\t"));
             } else {
                 doc.description = try self.b.intern(trimmed_rest);
             }

@@ -1,0 +1,12 @@
+# @param missing_var [Length] This variable doesn't exist
+
+unused_var = 100
+
+Box.new(x: -15) # Should trigger CAD physical warning
+
+part - part # Should trigger CSG self-subtraction warning
+
+def check_flow()
+  return
+  cube() # Should trigger unreachable code warning
+end

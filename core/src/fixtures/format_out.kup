@@ -1,0 +1,9 @@
+# @param width [Length] Overall box width
+#   multiline comment
+width = 50
+Box.new(x: width)
+  .chamfer(2)
+  .translate(z: 10)
+def create_part(h: 20)
+  cube(h)
+end

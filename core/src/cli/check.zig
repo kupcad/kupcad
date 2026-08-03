@@ -9,11 +9,9 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         return;
     };
 
-    // Read the file
     const source = try std.Io.Dir.cwd().readFileAlloc(init.io, file_path, allocator, .limited(FILE_SIZE_LIMIT));
     defer allocator.free(source);
 
-    // Process via our pure API
     const diags = try api.checkCode(allocator, source);
     defer {
         for (diags) |d| allocator.free(d.message);
@@ -21,11 +19,16 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     }
 
     if (diags.len == 0) {
-        std.debug.print("Success: No syntax or semantic issues found.\n", .{});
+        std.debug.print("Success: No CAD geometry, syntax, or semantic issues found.\n", .{});
     } else {
-        std.debug.print("Found {d} issue(s):\n", .{diags.len});
+        std.debug.print("Found {d} diagnostic issue(s):\n\n", .{diags.len});
         for (diags) |d| {
-            std.debug.print("[{s}] Line {d}, Col {d}: {s}\n", .{ @tagName(d.severity), d.loc.line, d.loc.col, d.message });
+            const sev_str = switch (d.severity) {
+                .@"error" => "ERROR",
+                .warning => "WARNING",
+                .info => "INFO",
+            };
+            std.debug.print("[{s}] Line {d}, Col {d}: {s}\n", .{ sev_str, d.loc.line, d.loc.col, d.message });
         }
     }
 }

@@ -536,10 +536,12 @@ pub const Parser = struct {
             is_class_method = true;
             self.advance();
             self.advance();
-            name_tok = if (self.tokens.current.tag == .ident or self.tokens.current.tag == .constant) self.tokens.current else return ParseError.UnexpectedToken;
+            if (self.tokens.current.tag != .ident and self.tokens.current.tag != .constant) return ParseError.UnexpectedToken;
+            name_tok = self.tokens.current;
             self.advance();
         } else {
-            name_tok = if (self.tokens.current.tag == .ident or self.tokens.current.tag == .constant) self.tokens.current else return ParseError.UnexpectedToken;
+            if (self.tokens.current.tag != .ident and self.tokens.current.tag != .constant) return ParseError.UnexpectedToken;
+            name_tok = self.tokens.current;
             self.advance();
         }
 
@@ -547,7 +549,6 @@ pub const Parser = struct {
         if (self.tokens.current.tag == .l_paren) {
             params = try self.parseParenParams();
         } else {
-            // Parenthesis-less parameters: loop until newline or EOF
             var param_list: std.ArrayListUnmanaged(ast.Param) = .empty;
             errdefer param_list.deinit(self.allocator);
             while (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .comment) {
@@ -558,24 +559,19 @@ pub const Parser = struct {
             }
             params = try param_list.toOwnedSlice(self.allocator);
         }
-
         self.skipIgnored();
 
         const body_node = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
-
         const payload = try self.parseRescueAndEnsure();
-
         _ = try self.expect(.keyword_end);
 
         var final_body = body_node;
-
-        // Wrap in an implicit begin_stmt if rescue or ensure were present
         if (payload.rescues.len > 0 or payload.ensure_body != null) {
             final_body = try self.createNode(.{
                 .begin_stmt = try self.b.box(ast.BeginStmt, .{
                     .body = body_node,
-                    .rescues = payload.rescues, // <-- Use payload here
-                    .ensure_body = payload.ensure_body, // <-- Use payload here
+                    .rescues = payload.rescues,
+                    .ensure_body = payload.ensure_body,
                 }),
             }, start_tok.loc);
         }
@@ -669,27 +665,28 @@ pub const Parser = struct {
 
     fn parseIdentifierOrCall(self: *Parser) ParseError!*Node {
         const tok = self.tokens.current;
+        if (tok.tag != .ident and tok.tag != .constant) {
+            self.reportError(tok.loc, "Expected identifier or constant", .{});
+            return ParseError.UnexpectedToken;
+        }
         self.advance();
 
         if (self.tokens.current.tag == .l_paren) {
             const args = try self.parseParenArgs();
-
             var block_node: ?*Node = null;
             if (self.tokens.current.tag == .keyword_do or self.tokens.current.tag == .l_brace) {
                 block_node = try self.parseBlockClosure();
             }
-
             return self.createNode(.{
                 .method_call = try self.b.box(ast.MethodCall, .{
                     .receiver = null,
                     .method_name = tok.lexeme,
                     .args = args,
-                    .block = block_node, // <-- Pass the captured block
+                    .block = block_node,
                     .is_safe = false,
                 }),
             }, tok.loc);
         }
-
         if (self.isCommandCallStart()) {
             const cmd = try self.parseCommandArgsAndBlock();
             return self.createNode(.{

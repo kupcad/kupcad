@@ -2456,7 +2456,7 @@ test "KupCAD Parser: Multi-line Indented Docstring Tag Node" {
     try testing.expectEqualStrings("deprecated", doc.tag_name);
     try testing.expectEqual(@as(?[]const u8, null), doc.target_name);
     try testing.expectEqual(@as(?[]const u8, null), doc.type_name);
-    try testing.expectEqualStrings("Use {#my_new_method} instead of this method because it uses a library that is no longer supported.", doc.description);
+    try testing.expectEqualStrings("Use {#my_new_method} instead of this method because\nit uses a library that is no longer supported.", doc.description);
 
     // Statement 1: The target function definition `def mymethod`
     const def_stmt = try parser.parseStatement();
