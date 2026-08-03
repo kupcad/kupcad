@@ -1,6 +1,8 @@
 const std = @import("std");
 const api = @import("../api.zig");
 
+const FILE_SIZE_LIMIT = 1024 * 1024 * 10;
+
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     const file_path = args_iter.next() orelse {
         std.debug.print("Error: Missing file path. Usage: kupcad check <file>\n", .{});
@@ -8,7 +10,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     };
 
     // Read the file
-    const source = try std.Io.Dir.cwd().readFileAlloc(init.io, file_path, allocator, .limited(1024 * 1024 * 10));
+    const source = try std.Io.Dir.cwd().readFileAlloc(init.io, file_path, allocator, .limited(FILE_SIZE_LIMIT));
     defer allocator.free(source);
 
     // Process via our pure API
