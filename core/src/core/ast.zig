@@ -208,6 +208,14 @@ pub const Block = struct {
     stmts: []const *Node,
 };
 
+pub const ParamDoc = struct {
+    tag_name: []const u8,
+    target_name: ?[]const u8 = null,
+    type_name: ?[]const u8 = null,
+    description: []const u8 = "",
+    options_expr: ?*Node = null,
+};
+
 pub const NodeKind = union(enum) {
     // Literals
     number: f64,
@@ -281,7 +289,7 @@ pub const NodeKind = union(enum) {
     break_stmt: ?*Node,
     next_stmt: ?*Node,
 
-    param_doc: []const u8,
+    param_doc: *ParamDoc,
     comment: []const u8,
 
     // Block Scope

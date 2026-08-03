@@ -474,10 +474,10 @@ test "OpenSCAD Parser: Diagnostics for Unexpected Token" {
     var parser = Parser.init(&lexer, arena.allocator());
     const result = parser.parseStatement();
 
-    // 1. Assert it fails with the correct error
+    // Assert it fails with the correct error
     try testing.expectError(error.UnexpectedToken, result);
 
-    // 2. Assert the diagnostic was captured
+    // Assert the diagnostic was captured
     try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
     try testing.expectEqualStrings("Expected 'r_paren', but found ']'", parser.diagnostics.list.items[0].message);
 }

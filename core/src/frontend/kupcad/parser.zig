@@ -7,6 +7,7 @@ const ast = @import("../../core/ast.zig");
 const common_token = @import("../../core/token.zig");
 const Node = ast.Node;
 const common_errors = @import("../../core/errors.zig");
+const docstring = @import("docstring.zig");
 const Diagnostics = common_errors.Diagnostics;
 
 const RescueEnsurePayload = struct {
@@ -831,7 +832,9 @@ pub const Parser = struct {
 
     fn parseParamDoc(self: *Parser) ParseError!*Node {
         const tok = try self.expect(.param_doc);
-        return self.createNode(.{ .param_doc = tok.lexeme }, tok.loc);
+        var doc_parser = docstring.DocstringParser{ .allocator = self.allocator, .b = &self.b };
+        const doc_node = doc_parser.parse(tok.lexeme, tok.loc) catch return ParseError.OutOfMemory;
+        return self.createNode(.{ .param_doc = doc_node }, tok.loc);
     }
 
     inline fn parseCommaSeparated(

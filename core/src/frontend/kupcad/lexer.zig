@@ -286,18 +286,18 @@ pub const Lexer = struct {
     fn consumeCommentOrParam(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
 
-        // 1. Consume the initial comment line
+        // Consume the initial comment line
         while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
         const first_line = self.buffer[start..self.index];
 
         var i: usize = 1; // Start after '#'
         while (i < first_line.len and (first_line[i] == ' ' or first_line[i] == '\t')) i += 1;
 
-        // 2. Check if this is a YARD/Lookbook docstring annotation (@tag)
+        // Check if this is a YARD/Lookbook docstring annotation (@tag)
         if (i < first_line.len and first_line[i] == '@') {
             const base_indent = i - 1; // Number of spaces between '#' and '@'
 
-            // 3. Scan for multi-line continuation lines
+            // Scan for multi-line continuation lines
             while (self.index < self.buffer.len and self.peek() == '\n') {
                 var lookahead = self.index + 1;
 
