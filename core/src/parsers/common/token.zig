@@ -6,6 +6,11 @@ pub const Location = struct {
     file_id: u32, // Maps to a file path in your centralized Symbol/String Pool
 };
 
+pub const Comment = struct {
+    lexeme: []const u8,
+    loc: Location,
+};
+
 /// A generic Token wrapper that takes a language-specific Tag enum.
 pub fn Token(comptime TagType: type) type {
     return struct {

@@ -41,6 +41,7 @@ pub const Parser = struct {
     allocator: std.mem.Allocator,
     b: ast.Builder,
     diagnostics: Diagnostics,
+    comments: std.ArrayListUnmanaged(common_token.Comment) = .empty,
 
     pub fn init(lexer: *Lexer, allocator: std.mem.Allocator) Parser {
         return Parser{
@@ -90,7 +91,15 @@ pub const Parser = struct {
     }
 
     fn skipIgnored(self: *Parser) void {
-        while (self.tokens.current.tag == .newline or self.tokens.current.tag == .comment) self.advance();
+        while (self.tokens.current.tag == .newline or self.tokens.current.tag == .comment) {
+            if (self.tokens.current.tag == .comment) {
+                self.comments.append(self.allocator, .{
+                    .lexeme = self.tokens.current.lexeme,
+                    .loc = self.tokens.current.loc,
+                }) catch {};
+            }
+            self.advance();
+        }
     }
 
     fn isAssignmentOp(tag: Tag) bool {
