@@ -285,19 +285,50 @@ pub const Lexer = struct {
 
     fn consumeCommentOrParam(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
+
+        // 1. Consume the initial comment line
         while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
-        const lexeme = self.buffer[start..self.index];
+        const first_line = self.buffer[start..self.index];
+
         var i: usize = 1; // Start after '#'
+        while (i < first_line.len and (first_line[i] == ' ' or first_line[i] == '\t')) i += 1;
 
-        // Skip leading whitespace after '#'
-        while (i < lexeme.len and (lexeme[i] == ' ' or lexeme[i] == '\t')) i += 1;
+        // 2. Check if this is a YARD/Lookbook docstring annotation (@tag)
+        if (i < first_line.len and first_line[i] == '@') {
+            const base_indent = i - 1; // Number of spaces between '#' and '@'
 
-        // Check if comment starts with '@' followed by an alphabetic tag character
-        if (i < lexeme.len and lexeme[i] == '@' and i + 1 < lexeme.len and std.ascii.isAlphabetic(lexeme[i + 1])) {
-            return .{ .tag = .param_doc, .loc = start_loc, .lexeme = lexeme };
+            // 3. Scan for multi-line continuation lines
+            while (self.index < self.buffer.len and self.peek() == '\n') {
+                var lookahead = self.index + 1;
+
+                // Skip horizontal whitespace leading up to '#'
+                while (lookahead < self.buffer.len and (self.buffer[lookahead] == ' ' or self.buffer[lookahead] == '\t')) : (lookahead += 1) {}
+
+                if (lookahead < self.buffer.len and self.buffer[lookahead] == '#') {
+                    lookahead += 1; // Skip '#'
+
+                    var spaces_after_hash: usize = 0;
+                    while (lookahead < self.buffer.len and (self.buffer[lookahead] == ' ' or self.buffer[lookahead] == '\t')) : (lookahead += 1) {
+                        spaces_after_hash += 1;
+                    }
+
+                    // Continuation rule:
+                    // Must have strictly MORE spaces after '#' than the tag line AND must NOT start a new '@' tag
+                    if (spaces_after_hash > base_indent and lookahead < self.buffer.len and self.buffer[lookahead] != '@') {
+                        // Swallow the newline and the continuation comment line
+                        self.advance(); // consume '\n'
+                        self.line += 1;
+                        self.col = 1;
+                        while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
+                        continue;
+                    }
+                }
+                break;
+            }
+            return .{ .tag = .param_doc, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
         }
 
-        return .{ .tag = .comment, .loc = start_loc, .lexeme = lexeme };
+        return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
     fn consumeOperator(self: *Lexer, start_loc: common_token.Location) Token {

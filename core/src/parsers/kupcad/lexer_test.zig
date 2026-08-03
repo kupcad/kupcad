@@ -199,3 +199,27 @@ test "KupCAD Lexer: Generalized Docstring Annotations (@return, @type, @deprecat
         t(.param_doc, "# @type [Length] Depth offset"),          t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Multi-line Indented Docstring Tag" {
+    const source =
+        \\# @deprecated Use {#my_new_method} instead of this method because
+        \\#   it uses a library that is no longer supported.
+        \\#   The new method accepts the same parameters.
+        \\def mymethod
+        \\end
+    ;
+
+    try expectTokens(source, &.{
+        t(.param_doc,
+            \\# @deprecated Use {#my_new_method} instead of this method because
+            \\#   it uses a library that is no longer supported.
+            \\#   The new method accepts the same parameters.
+        ),
+        t(.newline, "\n"),
+        t(.keyword_def, "def"),
+        t(.ident, "mymethod"),
+        t(.newline, "\n"),
+        t(.keyword_end, "end"),
+        t(.eof, ""),
+    });
+}

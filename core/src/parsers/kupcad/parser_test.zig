@@ -2401,3 +2401,40 @@ test "KupCAD Parser: Multiple Unary Prefix Right-Associativity" {
     try testing.expectEqual(ast.UnaryOp.not, inner_not.kind.kupcad.unary_op.op);
     try testing.expectEqual(true, inner_not.kind.kupcad.unary_op.operand.kind.kupcad.boolean);
 }
+
+test "KupCAD Parser: Multi-line Indented Docstring Tag Node" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\# @deprecated Use {#my_new_method} instead of this method because
+        \\#   it uses a library that is no longer supported.
+        \\#   The new method accepts the same parameters.
+        \\# @params number
+        \\def mymethod
+        \\end
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // Statement 0: The multi-line docstring annotation AST node
+    const doc_stmt1 = try parser.parseStatement();
+    try testing.expectEqual(ast.KupCadKind.param_doc, @as(std.meta.Tag(ast.KupCadKind), doc_stmt1.kind.kupcad));
+    try testing.expectEqualStrings(
+        \\# @deprecated Use {#my_new_method} instead of this method because
+        \\#   it uses a library that is no longer supported.
+        \\#   The new method accepts the same parameters.
+    , doc_stmt1.kind.kupcad.param_doc);
+
+    // Statement 1: The multi-line docstring annotation AST node
+    const doc_stmt2 = try parser.parseStatement();
+    try testing.expectEqual(ast.KupCadKind.param_doc, @as(std.meta.Tag(ast.KupCadKind), doc_stmt2.kind.kupcad));
+    try testing.expectEqualStrings(
+        \\# @params number
+    , doc_stmt2.kind.kupcad.param_doc);
+
+    // Statement 2: The target function definition `def mymethod`
+    const def_stmt = try parser.parseStatement();
+    try testing.expectEqual(ast.KupCadKind.def_stmt, @as(std.meta.Tag(ast.KupCadKind), def_stmt.kind.kupcad));
+    try testing.expectEqualStrings("mymethod", def_stmt.kind.kupcad.def_stmt.name);
+}
