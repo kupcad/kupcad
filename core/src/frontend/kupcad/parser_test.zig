@@ -2522,12 +2522,12 @@ test "KupCAD Parser: Multi-line Compound Node Span Tracking" {
 
     const stmt = try parser.parseStatement();
 
-    // 1. Verify the Root Node (def_stmt) covers the entire block perfectly.
+    // Verify the Root Node (def_stmt) covers the entire block perfectly.
     try testing.expectEqual(std.meta.Tag(ast.NodeKind).def_stmt, std.meta.activeTag(stmt.kind));
     try testing.expectEqual(@as(u32, 0), stmt.loc.offset);
     try testing.expectEqual(@as(u32, 42), stmt.loc.length);
 
-    // 2. Verify the Inner Math Node (binary_op) didn't accidentally consume the \n
+    // Verify the Inner Math Node (binary_op) didn't accidentally consume the \n
     const body_block = stmt.kind.def_stmt.body.kind.block.stmts;
     try testing.expectEqual(@as(usize, 1), body_block.len); // Comment should be ignored in AST
 
