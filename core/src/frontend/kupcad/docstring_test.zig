@@ -4,7 +4,7 @@ const ast = @import("../../core/ast.zig");
 const token = @import("../../core/token.zig");
 const DocstringParser = @import("docstring.zig").DocstringParser;
 
-const dummy_loc = token.Location{ .line = 1, .col = 1, .file_id = 0 };
+const dummy_loc = token.Location{ .line = 1, .col = 1, .offset = 0, .length = 0, .file_id = 0 };
 
 test "Docstring Parser: Standard @param with type and description" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

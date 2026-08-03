@@ -225,7 +225,7 @@ pub const Lexer = struct {
     }
 
     inline fn getLoc(self: *const Lexer) common_token.Location {
-        return .{ .line = self.line, .col = self.col, .file_id = self.file_id };
+        return .{ .line = self.line, .col = self.col, .offset = @intCast(self.index), .length = 0, .file_id = self.file_id };
     }
 
     fn skipWhitespace(self: *Lexer) void {

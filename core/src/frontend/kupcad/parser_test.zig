@@ -1488,8 +1488,8 @@ test "KupCAD Parser: Module Namespaces with Doc Comments and Class Constructors"
     ;
     var lexer = Lexer.init(source, 0);
     var parser = Parser.init(&lexer, arena.allocator());
-    const mod_node = try parser.parseStatement();
 
+    const mod_node = try parser.parseStatement();
     try testing.expectEqual(std.meta.Tag(ast.NodeKind).module_stmt, std.meta.activeTag(mod_node.kind));
     try testing.expectEqualStrings("Enclosures", mod_node.kind.module_stmt.name);
 
@@ -2414,6 +2414,25 @@ test "KupCAD Parser: Multiple Unary Prefix Right-Associativity" {
     const inner_not = expr.kind.unary_op.operand;
     try testing.expectEqual(ast.UnaryOp.not, inner_not.kind.unary_op.op);
     try testing.expectEqual(true, inner_not.kind.unary_op.operand.kind.boolean);
+}
+
+test "KupCAD Parser: Ruby 3.1 Shorthand Hash Syntax" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "opts = { width:, height: }";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+    const stmt = try parser.parseStatement();
+
+    const hash = stmt.kind.assignment.value.kind.hash_literal;
+    try testing.expectEqual(@as(usize, 2), hash.len);
+
+    try testing.expectEqualStrings("width", hash[0].key.kind.symbol);
+    try testing.expectEqualStrings("width", hash[0].value.kind.identifier);
+
+    try testing.expectEqualStrings("height", hash[1].key.kind.symbol);
+    try testing.expectEqualStrings("height", hash[1].value.kind.identifier);
 }
 
 test "KupCAD Parser: Multi-line Indented Docstring Tag Node" {

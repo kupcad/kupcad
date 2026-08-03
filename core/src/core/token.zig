@@ -3,6 +3,8 @@ const std = @import("std");
 pub const Location = struct {
     line: u32,
     col: u32,
+    offset: u32,
+    length: u32 = 0,
     file_id: u32, // Maps to a file path in your centralized Symbol/String Pool
 };
 
@@ -33,7 +35,7 @@ pub fn BufferedLexer(comptime LexerType: type, comptime TokenType: type, comptim
         pub fn init(lexer: *LexerType) Self {
             var self = Self{
                 .lexer = lexer,
-                .previous = .{ .tag = .eof, .loc = .{ .line = 1, .col = 1, .file_id = 0 }, .lexeme = "" },
+                .previous = .{ .tag = .eof, .loc = .{ .line = 1, .col = 1, .offset = 0, .length = 0, .file_id = 0 }, .lexeme = "" },
                 .current = undefined,
                 .next_tok = undefined,
             };

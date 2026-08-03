@@ -135,6 +135,8 @@ pub const Parser = struct {
         errdefer stmts.deinit(self.allocator);
 
         while (self.tokens.current.tag != .eof) {
+            self.skipIgnored(); // <-- Captures inline and trailing comments!
+
             var is_end = false;
             for (end_tags) |end_tag| {
                 if (self.tokens.current.tag == end_tag) {
@@ -143,20 +145,14 @@ pub const Parser = struct {
                 }
             }
             if (is_end) break;
-
-            if (self.tokens.current.tag == .newline or self.tokens.current.tag == .comment) {
-                self.advance();
-                continue;
-            }
+            if (self.tokens.current.tag == .eof) break;
 
             if (self.parseStatement()) |parsed_stmt| {
                 try stmts.append(self.allocator, parsed_stmt);
             } else |err| {
-                // Never swallow OutOfMemory; only swallow syntax errors
                 if (err == ParseError.OutOfMemory) return err;
                 self.synchronize();
             }
-            if (self.tokens.current.tag == .newline) self.advance();
         }
 
         return self.createNode(.{ .block = try self.b.box(ast.Block, .{ .stmts = try stmts.toOwnedSlice(self.allocator) }) }, start_loc);
@@ -967,6 +963,11 @@ pub const Parser = struct {
                 self.advance();
                 self.advance();
                 key = try self.b.symbolNode(key_tok.lexeme, key_tok.loc);
+
+                if (self.tokens.current.tag == .comma or self.tokens.current.tag == .r_brace) {
+                    const val = try self.b.identifierNode(key_tok.lexeme, key_tok.loc);
+                    return .{ .key = key, .value = val };
+                }
             } else {
                 key = try self.parseExpression(.none);
                 if (self.tokens.current.tag == .colon or self.tokens.current.tag == .arrow) {
