@@ -1,6 +1,6 @@
 const std = @import("std");
-const common_token = @import("../common/token.zig");
-const utils = @import("../common/utils.zig");
+const common_token = @import("../../core/token.zig");
+const utils = @import("../utils.zig");
 
 pub const Tag = enum {
     eof,

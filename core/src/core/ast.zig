@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const Location = @import("../parsers/common/token.zig").Location;
+pub const Location = @import("token.zig").Location;
 
 pub const UnaryOp = enum {
     negate, // -
