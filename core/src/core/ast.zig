@@ -1,5 +1,6 @@
 const std = @import("std");
-pub const Location = @import("token.zig").Location;
+
+pub const Location = @import("../parsers/common/token.zig").Location;
 
 pub const UnaryOp = enum {
     negate, // -
@@ -122,26 +123,6 @@ pub const TernaryExpr = struct {
     else_branch: *Node,
 };
 
-pub const Comprehension = struct {
-    clauses: []const *Node = &.{},
-    yield_expr: *Node,
-};
-
-pub const LetExpr = struct {
-    assignments: []const *Node,
-    yield_expr: *Node,
-};
-
-pub const AssertExpr = struct {
-    args: []const NamedArg,
-    yield_expr: *Node,
-};
-
-pub const EchoExpr = struct {
-    args: []const NamedArg,
-    yield_expr: *Node,
-};
-
 pub const MethodCall = struct {
     receiver: ?*Node = null,
     method_name: []const u8,
@@ -160,11 +141,6 @@ pub const LambdaExpr = struct {
     body: *Node,
 };
 
-pub const ModifierCall = struct {
-    modifier: []const u8,
-    child: *Node,
-};
-
 pub const ImportStmt = struct {
     symbols: []const []const u8 = &.{},
     path: []const u8,
@@ -175,11 +151,6 @@ pub const ExportStmt = struct {
     symbols: []const []const u8 = &.{},
     path: []const u8,
     attributes: ?*Node = null,
-};
-
-pub const IncludeStmt = struct {
-    path: []const u8,
-    is_use: bool = false,
 };
 
 pub const IfStmt = struct {
@@ -203,14 +174,6 @@ pub const WhileStmt = struct {
 
 pub const ForStmt = struct {
     bindings: []const ForBinding,
-    body: *Node,
-    is_intersection: bool = false,
-};
-
-pub const CForStmt = struct {
-    init: []const *Node,
-    condition: ?*Node = null,
-    update: []const *Node,
     body: *Node,
     is_intersection: bool = false,
 };
@@ -245,73 +208,13 @@ pub const Block = struct {
     stmts: []const *Node,
 };
 
-pub const OpenScadKind = union(enum) {
-    // Literals
-    number: f64,
-    string: []const u8,
-    boolean: bool,
-    undef,
-    array_literal: []const *Node,
-
-    // Range
-    range: *Range,
-
-    // Variable lookup
-    identifier: []const u8,
-
-    // Assignments
-    assignment: *Assignment,
-
-    // Unary
-    unary_op: struct {
-        op: UnaryOp,
-        operand: *Node,
-    },
-
-    // Binary & Ternary
-    binary_op: *BinaryExpr,
-    ternary_op: *TernaryExpr,
-
-    // Index Access
-    index_access: struct {
-        target: *Node,
-        index: *Node,
-    },
-
-    // List Comprehension & Let
-    comprehension: *Comprehension,
-    let_expr: *LetExpr,
-    each_expr: *Node,
-
-    // Modifiers
-    assert_expr: *AssertExpr,
-    echo_expr: *EchoExpr,
-
-    // Calls
-    method_call: *MethodCall,
-    lambda_expr: *LambdaExpr,
-    modifier_call: *ModifierCall,
-
-    // Statement Constructs
-    include_stmt: *IncludeStmt,
-    if_stmt: *IfStmt,
-    for_stmt: *ForStmt,
-    c_for_stmt: *CForStmt,
-    def_stmt: *DefStmt,
-    module_stmt: *ModuleStmt,
-
-    // Block Scope
-    block: *Block,
-};
-
-pub const KupCadKind = union(enum) {
+pub const NodeKind = union(enum) {
     // Literals
     number: f64,
     string: []const u8,
     interpolated_string: []const *Node,
     symbol: []const u8,
     boolean: bool,
-
     nil,
     undef,
     self_expr,
@@ -338,7 +241,6 @@ pub const KupCadKind = union(enum) {
         op: UnaryOp,
         operand: *Node,
     },
-
     rescue_modifier: struct {
         expr: *Node,
         rescue_expr: *Node,
@@ -378,6 +280,7 @@ pub const KupCadKind = union(enum) {
     yield_stmt: []const *Node,
     break_stmt: ?*Node,
     next_stmt: ?*Node,
+
     param_doc: []const u8,
     comment: []const u8,
 
@@ -386,13 +289,8 @@ pub const KupCadKind = union(enum) {
 };
 
 pub const Node = struct {
-    kind: Kind,
+    kind: NodeKind,
     loc: Location,
-
-    pub const Kind = union(enum) {
-        openscad: OpenScadKind,
-        kupcad: KupCadKind,
-    };
 };
 
 pub const StringPool = struct {
@@ -417,15 +315,12 @@ pub const StringPool = struct {
     }
 };
 
-pub const Dialect = enum { openscad, kupcad };
-
 pub const Builder = struct {
     allocator: std.mem.Allocator,
     pool: StringPool = .{},
-    dialect: Dialect,
 
-    pub fn init(allocator: std.mem.Allocator, dialect: Dialect) Builder {
-        return .{ .allocator = allocator, .dialect = dialect };
+    pub fn init(allocator: std.mem.Allocator) Builder {
+        return .{ .allocator = allocator };
     }
 
     pub fn deinit(self: *Builder) void {
@@ -436,15 +331,9 @@ pub const Builder = struct {
         return self.pool.intern(self.allocator, str);
     }
 
-    pub fn createOpenScad(self: *const Builder, kind: OpenScadKind, loc: Location) !*Node {
+    pub fn createNode(self: *const Builder, kind: NodeKind, loc: Location) !*Node {
         const n = try self.allocator.create(Node);
-        n.* = .{ .kind = .{ .openscad = kind }, .loc = loc };
-        return n;
-    }
-
-    pub fn createKupCad(self: *const Builder, kind: KupCadKind, loc: Location) !*Node {
-        const n = try self.allocator.create(Node);
-        n.* = .{ .kind = .{ .kupcad = kind }, .loc = loc };
+        n.* = .{ .kind = kind, .loc = loc };
         return n;
     }
 
@@ -486,49 +375,29 @@ pub const Builder = struct {
             val = std.fmt.parseFloat(f64, clean) catch return error.InvalidExpression;
         }
 
-        if (self.dialect == .openscad) {
-            return self.createOpenScad(.{ .number = val }, loc);
-        } else {
-            return self.createKupCad(.{ .number = val }, loc);
-        }
+        return self.createNode(.{ .number = val }, loc);
     }
 
     pub fn undefNode(self: *const Builder, loc: Location) !*Node {
-        if (self.dialect == .openscad) {
-            return self.createOpenScad(.undef, loc);
-        } else {
-            return self.createKupCad(.undef, loc);
-        }
+        return self.createNode(.undef, loc);
     }
 
     pub fn booleanNode(self: *const Builder, val: bool, loc: Location) !*Node {
-        if (self.dialect == .openscad) {
-            return self.createOpenScad(.{ .boolean = val }, loc);
-        } else {
-            return self.createKupCad(.{ .boolean = val }, loc);
-        }
+        return self.createNode(.{ .boolean = val }, loc);
     }
 
     pub fn identifierNode(self: *Builder, name: []const u8, loc: Location) !*Node {
         const interned = try self.intern(name);
-        if (self.dialect == .openscad) {
-            return self.createOpenScad(.{ .identifier = interned }, loc);
-        } else {
-            return self.createKupCad(.{ .identifier = interned }, loc);
-        }
+        return self.createNode(.{ .identifier = interned }, loc);
     }
 
     pub fn stringNode(self: *Builder, str: []const u8, loc: Location) !*Node {
         const interned = try self.intern(str);
-        if (self.dialect == .openscad) {
-            return self.createOpenScad(.{ .string = interned }, loc);
-        } else {
-            return self.createKupCad(.{ .string = interned }, loc);
-        }
+        return self.createNode(.{ .string = interned }, loc);
     }
 
     pub fn symbolNode(self: *Builder, sym: []const u8, loc: Location) !*Node {
         const interned = try self.intern(sym);
-        return self.createKupCad(.{ .symbol = interned }, loc);
+        return self.createNode(.{ .symbol = interned }, loc);
     }
 };

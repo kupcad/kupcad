@@ -3,7 +3,7 @@ const lexer_mod = @import("lexer.zig");
 const Lexer = lexer_mod.Lexer;
 const Tag = lexer_mod.Tag;
 const Token = lexer_mod.Token;
-const ast = @import("../common/ast.zig");
+const ast = @import("../../core/ast.zig");
 const common_token = @import("../common/token.zig");
 const Node = ast.Node;
 const common_errors = @import("../common/errors.zig");
@@ -35,7 +35,7 @@ pub const Parser = struct {
         return Parser{
             .tokens = common_token.BufferedLexer(Lexer, Token, Tag).init(lexer),
             .allocator = allocator,
-            .b = ast.Builder.init(allocator, ast.Dialect.openscad),
+            .b = ast.Builder.init(allocator), // No longer needs a dialect flag!
             .diagnostics = Diagnostics.init(allocator),
         };
     }
@@ -54,13 +54,9 @@ pub const Parser = struct {
     }
 
     pub fn synchronize(self: *Parser) void {
-        self.advance(); // Skip the token that triggered the error
-
+        self.advance();
         while (self.tokens.current.tag != .eof) {
-            // Semicolons are the explicit statement boundaries in OpenSCAD
             if (self.tokens.previous.tag == .semicolon) return;
-
-            // Look for keywords that start declarations or major blocks
             switch (self.tokens.current.tag) {
                 .keyword_module, .keyword_function, .keyword_include, .keyword_use, .keyword_if, .keyword_for, .keyword_intersection_for, .keyword_let, .keyword_assert, .keyword_echo => return,
                 else => self.advance(),
@@ -111,7 +107,6 @@ pub const Parser = struct {
         return block_node;
     }
 
-    // --- SHARED LIST PARSER COMBINATOR ---
     inline fn parseCommaSeparated(
         self: *Parser,
         comptime ItemType: type,
@@ -163,7 +158,7 @@ pub const Parser = struct {
     }
 
     fn parseIncludeOrUse(self: *Parser) ParseError!*Node {
-        const is_use = (self.tokens.current.tag == .keyword_use);
+        // We desugar OpenSCAD includes directly into KupCAD imports
         const start_tok = self.tokens.current;
         self.advance();
 
@@ -188,11 +183,12 @@ pub const Parser = struct {
         }
 
         return self.createNode(.{
-            .include_stmt = try self.b.box(ast.IncludeStmt, .{ .path = path_str, .is_use = is_use }),
+            .import_stmt = try self.b.box(ast.ImportStmt, .{ .path = path_str, .symbols = &.{} }),
         }, start_tok.loc);
     }
 
     fn parseLetStatement(self: *Parser) ParseError!*Node {
+        // let() statements desugar into a standard KupCAD block scope
         const start_tok = try self.expect(.keyword_let);
         _ = try self.expect(.l_paren);
 
@@ -236,14 +232,29 @@ pub const Parser = struct {
     }
 
     fn parseModifierCall(self: *Parser) ParseError!*Node {
+        // Desugar legacy modifiers into KupCAD method calls with blocks
         const mod_tok = self.tokens.current;
         self.advance();
         const child = try self.parseStatement();
 
+        const mod_name = switch (mod_tok.lexeme[0]) {
+            '!' => "root",
+            '#' => "debug",
+            '%' => "background",
+            '*' => "disable",
+            else => "modifier",
+        };
+        const interned_name = try self.b.intern(mod_name);
+
+        const child_block = try self.createNode(.{ .block = try self.b.box(ast.Block, .{ .stmts = try self.allocator.dupe(*Node, &.{child}) }) }, child.loc);
+
         return self.createNode(.{
-            .modifier_call = try self.b.box(ast.ModifierCall, .{
-                .modifier = mod_tok.lexeme,
-                .child = child,
+            .method_call = try self.b.box(ast.MethodCall, .{
+                .receiver = null,
+                .method_name = interned_name,
+                .args = &.{},
+                .block = child_block,
+                .is_safe = false,
             }),
         }, mod_tok.loc);
     }
@@ -272,6 +283,7 @@ pub const Parser = struct {
         }
 
         if (self.tokens.current.tag == .semicolon) {
+            // Desugar C-style for-loop into a KupCAD While loop wrapped in a Block
             self.advance();
             var condition: ?*Node = null;
             if (self.tokens.current.tag != .semicolon) condition = try self.parseExpression(.none);
@@ -296,15 +308,23 @@ pub const Parser = struct {
                 break :blk b;
             } else try self.parseStatement();
 
-            return self.createNode(.{
-                .c_for_stmt = try self.b.box(ast.CForStmt, .{
-                    .init = try init_assignments.toOwnedSlice(self.allocator),
-                    .condition = condition,
-                    .update = try updates.toOwnedSlice(self.allocator),
-                    .body = body,
-                    .is_intersection = is_intersection,
-                }),
-            }, start_tok.loc);
+            var while_stmts = std.ArrayListUnmanaged(*Node).empty;
+            try while_stmts.append(self.allocator, body);
+            try while_stmts.appendSlice(self.allocator, updates.items);
+            const while_body = try self.createNode(.{ .block = try self.b.box(ast.Block, .{ .stmts = try while_stmts.toOwnedSlice(self.allocator) }) }, body.loc);
+
+            const true_cond = try self.b.booleanNode(true, start_tok.loc);
+            const while_node = try self.createNode(.{ .while_stmt = try self.b.box(ast.WhileStmt, .{
+                .condition = condition orelse true_cond,
+                .body = while_body,
+                .is_until = false,
+            }) }, start_tok.loc);
+
+            var outer_stmts = std.ArrayListUnmanaged(*Node).empty;
+            try outer_stmts.appendSlice(self.allocator, init_assignments.items);
+            try outer_stmts.append(self.allocator, while_node);
+
+            return self.createNode(.{ .block = try self.b.box(ast.Block, .{ .stmts = try outer_stmts.toOwnedSlice(self.allocator) }) }, start_tok.loc);
         } else {
             _ = try self.expect(.r_paren);
 
@@ -364,7 +384,14 @@ pub const Parser = struct {
             _ = try self.expect(.r_paren);
 
             const yield_expr = try self.parseComprehensionElement();
-            return self.createNode(.{ .let_expr = try self.b.box(ast.LetExpr, .{ .assignments = try assignments.toOwnedSlice(self.allocator), .yield_expr = yield_expr }) }, start_tok.loc);
+
+            var stmts_list = std.ArrayListUnmanaged(*Node).empty;
+            try stmts_list.appendSlice(self.allocator, assignments.items);
+            try stmts_list.append(self.allocator, yield_expr);
+
+            return self.createNode(.{
+                .block = try self.b.box(ast.Block, .{ .stmts = try stmts_list.toOwnedSlice(self.allocator) }),
+            }, start_tok.loc);
         } else if (self.tokens.current.tag == .keyword_if) {
             const start_tok = try self.expect(.keyword_if);
             _ = try self.expect(.l_paren);
@@ -412,15 +439,16 @@ pub const Parser = struct {
         }
 
         const expr = try self.parseExpression(.none);
-        if (expr.kind.openscad == .method_call) {
+        if (expr.kind == .method_call) {
             if (self.tokens.current.tag == .l_brace) {
                 self.advance();
                 const children_block = try self.parseBlock();
                 _ = try self.expect(.r_brace);
-                expr.kind.openscad.method_call.block = children_block;
+                expr.kind.method_call.block = children_block;
             } else if (self.tokens.current.tag != .semicolon and self.tokens.current.tag != .r_brace and self.tokens.current.tag != .eof) {
                 const child_stmt = try self.parseStatement();
-                expr.kind.openscad.method_call.block = child_stmt;
+                const child_block = try self.createNode(.{ .block = try self.b.box(ast.Block, .{ .stmts = try self.allocator.dupe(*Node, &.{child_stmt}) }) }, child_stmt.loc);
+                expr.kind.method_call.block = child_block;
             }
         }
         if (self.tokens.current.tag == .semicolon) {
@@ -443,7 +471,6 @@ pub const Parser = struct {
                 self.advance();
                 self.skipIgnored();
 
-                // Check for adjacency concatenations
                 if (self.tokens.current.tag == .string) {
                     var buf: std.ArrayListUnmanaged(u8) = .empty;
                     defer buf.deinit(self.allocator);
@@ -524,21 +551,35 @@ pub const Parser = struct {
         _ = try self.expect(.r_paren);
 
         const yield_expr = try self.parseExpression(.none);
-        return self.createNode(.{ .let_expr = try self.b.box(ast.LetExpr, .{ .assignments = try assignments.toOwnedSlice(self.allocator), .yield_expr = yield_expr }) }, start_tok.loc);
+
+        var stmts = std.ArrayListUnmanaged(*Node).empty;
+        try stmts.appendSlice(self.allocator, assignments.items);
+        try stmts.append(self.allocator, yield_expr);
+
+        return self.createNode(.{ .block = try self.b.box(ast.Block, .{ .stmts = try stmts.toOwnedSlice(self.allocator) }) }, start_tok.loc);
     }
 
     fn parseAssertOrEchoExpr(self: *Parser) ParseError!*Node {
         const start_tok = self.tokens.current;
-        const is_assert = (start_tok.tag == .keyword_assert);
         self.advance();
         const args = try self.parseParenArgs();
         const yield_expr = try self.parseExpression(.none);
 
-        if (is_assert) {
-            return self.createNode(.{ .assert_expr = try self.b.box(ast.AssertExpr, .{ .args = args, .yield_expr = yield_expr }) }, start_tok.loc);
-        } else {
-            return self.createNode(.{ .echo_expr = try self.b.box(ast.EchoExpr, .{ .args = args, .yield_expr = yield_expr }) }, start_tok.loc);
-        }
+        const call_node = try self.createNode(.{
+            .method_call = try self.b.box(ast.MethodCall, .{
+                .receiver = null,
+                .method_name = start_tok.lexeme,
+                .args = args,
+                .block = null,
+                .is_safe = false,
+            }),
+        }, start_tok.loc);
+
+        var stmts = try self.allocator.alloc(*Node, 2);
+        stmts[0] = call_node;
+        stmts[1] = yield_expr;
+
+        return self.createNode(.{ .block = try self.b.box(ast.Block, .{ .stmts = stmts }) }, start_tok.loc);
     }
 
     fn parseArrayOrRangeOrComprehension(self: *Parser) ParseError!*Node {
@@ -551,12 +592,9 @@ pub const Parser = struct {
             while (self.tokens.current.tag == .comment or self.tokens.current.tag == .block_comment) self.advance();
             _ = try self.expect(.r_bracket);
 
-            return self.createNode(.{
-                .comprehension = try self.b.box(ast.Comprehension, .{
-                    .clauses = &.{},
-                    .yield_expr = root,
-                }),
-            }, start_tok.loc);
+            var arr = try self.allocator.alloc(*Node, 1);
+            arr[0] = root;
+            return self.createNode(.{ .array_literal = arr }, start_tok.loc);
         }
 
         var elements: std.ArrayListUnmanaged(*Node) = .empty;
@@ -678,7 +716,7 @@ pub const Parser = struct {
             default_val = try self.parseExpression(.none);
         }
 
-        return .{ .name = param_name, .default_value = default_val, .modifier = null };
+        return .{ .name = param_name, .default_value = default_val, .modifier = null, .is_keyword = false };
     }
 
     fn parseParenParams(self: *Parser) ParseError![]const ast.Param {
@@ -728,10 +766,11 @@ pub const Parser = struct {
         } else try self.parseStatement();
 
         return self.createNode(.{
-            .module_stmt = try self.b.box(ast.ModuleStmt, .{
+            .def_stmt = try self.b.box(ast.DefStmt, .{
                 .name = name_tok.lexeme,
                 .params = params,
                 .body = body,
+                .is_class_method = false,
             }),
         }, start_tok.loc);
     }
@@ -756,6 +795,7 @@ pub const Parser = struct {
                 .name = name_tok.lexeme,
                 .params = params,
                 .body = body_expr,
+                .is_class_method = false,
             }),
         }, start_tok.loc);
     }
@@ -804,6 +844,8 @@ pub const Parser = struct {
                 .receiver = null,
                 .method_name = start_tok.lexeme,
                 .args = args,
+                .block = null,
+                .is_safe = false,
             }),
         }, start_tok.loc);
 
@@ -814,11 +856,12 @@ pub const Parser = struct {
             self.advance();
             const child_block = try self.parseBlock();
             _ = try self.expect(.r_brace);
-            call_node.kind.openscad.method_call.block = child_block;
+            call_node.kind.method_call.block = child_block;
             return call_node;
         } else if (self.tokens.current.tag != .r_brace and self.tokens.current.tag != .eof) {
             const child_stmt = try self.parseStatement();
-            call_node.kind.openscad.method_call.block = child_stmt;
+            const block = try self.createNode(.{ .block = try self.b.box(ast.Block, .{ .stmts = try self.allocator.dupe(*Node, &.{child_stmt}) }) }, child_stmt.loc);
+            call_node.kind.method_call.block = block;
             return call_node;
         }
         return call_node;
@@ -905,8 +948,8 @@ pub const Parser = struct {
         }, bracket_tok.loc);
     }
 
-    fn createNode(self: *Parser, kind: ast.OpenScadKind, loc: ast.Location) ParseError!*Node {
-        return self.b.createOpenScad(kind, loc) catch ParseError.OutOfMemory;
+    fn createNode(self: *Parser, kind: ast.NodeKind, loc: ast.Location) ParseError!*Node {
+        return self.b.createNode(kind, loc) catch ParseError.OutOfMemory;
     }
 
     fn getInfixPrecedence(tag: Tag) Precedence {

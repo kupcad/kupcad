@@ -3,7 +3,7 @@ const lexer_mod = @import("lexer.zig");
 const Lexer = lexer_mod.Lexer;
 const Tag = lexer_mod.Tag;
 const Token = lexer_mod.Token;
-const ast = @import("../common/ast.zig");
+const ast = @import("../../core/ast.zig");
 const common_token = @import("../common/token.zig");
 const Node = ast.Node;
 const common_errors = @import("../common/errors.zig");
@@ -47,7 +47,7 @@ pub const Parser = struct {
         return Parser{
             .tokens = common_token.BufferedLexer(Lexer, Token, Tag).init(lexer),
             .allocator = allocator,
-            .b = ast.Builder.init(allocator, ast.Dialect.kupcad),
+            .b = ast.Builder.init(allocator), // Dialect parameter removed
             .diagnostics = Diagnostics.init(allocator),
         };
     }
@@ -275,16 +275,16 @@ pub const Parser = struct {
         // Use ExpressionList to capture `x = 1, 2` as an ArrayLiteral
         const value = try self.parseExpressionList();
 
-        if (left.kind.kupcad == .identifier) {
+        if (left.kind == .identifier) {
             return self.createNode(.{ .assignment = try self.b.box(ast.Assignment, .{
-                .name = left.kind.kupcad.identifier,
+                .name = left.kind.identifier,
                 .op = tagToAssignmentOp(op_tag),
                 .value = value,
             }) }, left.loc);
-        } else if (left.kind.kupcad == .method_call and left.kind.kupcad.method_call.args.len == 0 and left.kind.kupcad.method_call.block == null) {
+        } else if (left.kind == .method_call and left.kind.method_call.args.len == 0 and left.kind.method_call.block == null) {
             return self.createNode(.{ .property_assignment = try self.b.box(ast.PropertyAssignment, .{
-                .target = left.kind.kupcad.method_call.receiver orelse return ParseError.InvalidExpression,
-                .property = left.kind.kupcad.method_call.method_name,
+                .target = left.kind.method_call.receiver orelse return ParseError.InvalidExpression,
+                .property = left.kind.method_call.method_name,
                 .op = tagToAssignmentOp(op_tag),
                 .value = value,
             }) }, left.loc);
@@ -364,7 +364,7 @@ pub const Parser = struct {
         }
 
         return self.createNode(.{
-            .block = try self.b.box(ast.Block, .{ .params = params, .stmts = block_node.kind.kupcad.block.stmts }),
+            .block = try self.b.box(ast.Block, .{ .params = params, .stmts = block_node.kind.block.stmts }),
         }, start_tok.loc);
     }
 
@@ -637,9 +637,9 @@ pub const Parser = struct {
 
         if (self.tokens.current.tag == .keyword_do or self.tokens.current.tag == .l_brace) block_node = try self.parseBlockClosure();
 
-        if (receiver_expr.kind.kupcad == .identifier) {
+        if (receiver_expr.kind == .identifier) {
             return self.createNode(.{
-                .method_call = try self.b.box(ast.MethodCall, .{ .receiver = null, .method_name = receiver_expr.kind.kupcad.identifier, .args = args, .block = block_node }),
+                .method_call = try self.b.box(ast.MethodCall, .{ .receiver = null, .method_name = receiver_expr.kind.identifier, .args = args, .block = block_node }),
             }, receiver_expr.loc);
         } else {
             return self.createNode(.{
@@ -1272,19 +1272,19 @@ pub const Parser = struct {
         const right_tok = if (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) self.tokens.current else return ParseError.UnexpectedToken;
         self.advance();
 
-        if (left.kind.kupcad == .namespace_access) {
+        if (left.kind == .namespace_access) {
             var path_list: std.ArrayListUnmanaged([]const u8) = .empty;
             errdefer path_list.deinit(self.allocator);
-            try path_list.appendSlice(self.allocator, left.kind.kupcad.namespace_access.path);
+            try path_list.appendSlice(self.allocator, left.kind.namespace_access.path);
             try path_list.append(self.allocator, right_tok.lexeme);
 
             return self.createNode(.{
                 .namespace_access = .{ .path = try path_list.toOwnedSlice(self.allocator) },
             }, tok.loc);
-        } else if (left.kind.kupcad == .identifier) {
+        } else if (left.kind == .identifier) {
             var path_list: std.ArrayListUnmanaged([]const u8) = .empty;
             errdefer path_list.deinit(self.allocator);
-            try path_list.append(self.allocator, left.kind.kupcad.identifier);
+            try path_list.append(self.allocator, left.kind.identifier);
             try path_list.append(self.allocator, right_tok.lexeme);
 
             return self.createNode(.{
@@ -1324,8 +1324,8 @@ pub const Parser = struct {
         return ParseError.UnexpectedToken;
     }
 
-    fn createNode(self: *Parser, kind: ast.KupCadKind, loc: ast.Location) ParseError!*Node {
-        return self.b.createKupCad(kind, loc) catch ParseError.OutOfMemory;
+    fn createNode(self: *Parser, kind: ast.NodeKind, loc: ast.Location) ParseError!*Node {
+        return self.b.createNode(kind, loc) catch ParseError.OutOfMemory;
     }
 
     fn getInfixPrecedence(tag: Tag) Precedence {
