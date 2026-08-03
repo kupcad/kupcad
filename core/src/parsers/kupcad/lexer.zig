@@ -287,13 +287,16 @@ pub const Lexer = struct {
         const start = self.index;
         while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
         const lexeme = self.buffer[start..self.index];
+        var i: usize = 1; // Start after '#'
 
-        var i: usize = 1;
+        // Skip leading whitespace after '#'
         while (i < lexeme.len and (lexeme[i] == ' ' or lexeme[i] == '\t')) i += 1;
 
-        if (i + 6 <= lexeme.len and std.ascii.eqlIgnoreCase(lexeme[i .. i + 6], "@param")) {
+        // Check if comment starts with '@' followed by an alphabetic tag character
+        if (i < lexeme.len and lexeme[i] == '@' and i + 1 < lexeme.len and std.ascii.isAlphabetic(lexeme[i + 1])) {
             return .{ .tag = .param_doc, .loc = start_loc, .lexeme = lexeme };
         }
+
         return .{ .tag = .comment, .loc = start_loc, .lexeme = lexeme };
     }
 

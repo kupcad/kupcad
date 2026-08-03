@@ -187,3 +187,15 @@ test "KupCAD Lexer: Nested String Interpolation" {
         t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Generalized Docstring Annotations (@return, @type, @deprecated)" {
+    try expectTokens(
+        \\# @return [Mesh] Outer enclosure shell
+        \\# @deprecated Use Box.new instead
+        \\# @type [Length] Depth offset
+    , &.{
+        t(.param_doc, "# @return [Mesh] Outer enclosure shell"), t(.newline, "\n"),
+        t(.param_doc, "# @deprecated Use Box.new instead"),      t(.newline, "\n"),
+        t(.param_doc, "# @type [Length] Depth offset"),          t(.eof, ""),
+    });
+}
