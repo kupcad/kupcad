@@ -2463,3 +2463,40 @@ test "KupCAD Parser: Multi-line Indented Docstring Tag Node" {
     try testing.expectEqual(std.meta.Tag(ast.NodeKind).def_stmt, std.meta.activeTag(def_stmt.kind));
     try testing.expectEqualStrings("mymethod", def_stmt.kind.def_stmt.name);
 }
+
+test "KupCAD Parser: AST Node offset and length calculation for LSP" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // String byte-indices mapped out for clarity:
+    // 01234567890123456789012
+    // val = 10 + 200
+    const source = "val = 10 + 200";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    // 1. Check the Root Assignment Node (`val = 10 + 200`)
+    try testing.expectEqual(std.meta.Tag(ast.NodeKind).assignment, std.meta.activeTag(stmt.kind));
+    try testing.expectEqual(@as(u32, 0), stmt.loc.offset);
+    try testing.expectEqual(@as(u32, 14), stmt.loc.length); // Spans exactly characters 0 through 14
+
+    // 2. Check the Binary Expression RHS (`10 + 200`)
+    const bin_expr = stmt.kind.assignment.value;
+    try testing.expectEqual(std.meta.Tag(ast.NodeKind).binary_op, std.meta.activeTag(bin_expr.kind));
+    try testing.expectEqual(@as(u32, 6), bin_expr.loc.offset); // Starts at '1'
+    try testing.expectEqual(@as(u32, 8), bin_expr.loc.length); // Spans "10 + 200" (length 8)
+
+    // 3. Check the Left Number Leaf (`10`)
+    const left_num = bin_expr.kind.binary_op.left;
+    try testing.expectEqual(std.meta.Tag(ast.NodeKind).number, std.meta.activeTag(left_num.kind));
+    try testing.expectEqual(@as(u32, 6), left_num.loc.offset);
+    try testing.expectEqual(@as(u32, 2), left_num.loc.length);
+
+    // 4. Check the Right Number Leaf (`200`)
+    const right_num = bin_expr.kind.binary_op.right;
+    try testing.expectEqual(std.meta.Tag(ast.NodeKind).number, std.meta.activeTag(right_num.kind));
+    try testing.expectEqual(@as(u32, 11), right_num.loc.offset); // Starts at '2'
+    try testing.expectEqual(@as(u32, 3), right_num.loc.length); // Spans "200" (length 3)
+}

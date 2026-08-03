@@ -19,6 +19,10 @@ pub fn Token(comptime TagType: type) type {
         tag: TagType,
         loc: Location,
         lexeme: []const u8,
+
+        pub fn endOffset(self: @This()) u32 {
+            return self.loc.offset + @as(u32, @intCast(self.lexeme.len));
+        }
     };
 }
 

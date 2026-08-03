@@ -383,7 +383,9 @@ pub const Builder = struct {
             val = std.fmt.parseFloat(f64, clean) catch return error.InvalidExpression;
         }
 
-        return self.createNode(.{ .number = val }, loc);
+        var final_loc = loc;
+        if (final_loc.length == 0) final_loc.length = @as(u32, @intCast(lexeme.len));
+        return self.createNode(.{ .number = val }, final_loc);
     }
 
     pub fn undefNode(self: *const Builder, loc: Location) !*Node {
@@ -391,21 +393,29 @@ pub const Builder = struct {
     }
 
     pub fn booleanNode(self: *const Builder, val: bool, loc: Location) !*Node {
-        return self.createNode(.{ .boolean = val }, loc);
+        var final_loc = loc;
+        if (final_loc.length == 0) final_loc.length = if (val) 4 else 5;
+        return self.createNode(.{ .boolean = val }, final_loc);
     }
 
     pub fn identifierNode(self: *Builder, name: []const u8, loc: Location) !*Node {
+        var final_loc = loc;
+        if (final_loc.length == 0) final_loc.length = @as(u32, @intCast(name.len));
         const interned = try self.intern(name);
-        return self.createNode(.{ .identifier = interned }, loc);
+        return self.createNode(.{ .identifier = interned }, final_loc);
     }
 
     pub fn stringNode(self: *Builder, str: []const u8, loc: Location) !*Node {
+        var final_loc = loc;
+        if (final_loc.length == 0) final_loc.length = @as(u32, @intCast(str.len));
         const interned = try self.intern(str);
-        return self.createNode(.{ .string = interned }, loc);
+        return self.createNode(.{ .string = interned }, final_loc);
     }
 
     pub fn symbolNode(self: *Builder, sym: []const u8, loc: Location) !*Node {
+        var final_loc = loc;
+        if (final_loc.length == 0) final_loc.length = @as(u32, @intCast(sym.len));
         const interned = try self.intern(sym);
-        return self.createNode(.{ .symbol = interned }, loc);
+        return self.createNode(.{ .symbol = interned }, final_loc);
     }
 };

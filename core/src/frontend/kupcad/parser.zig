@@ -305,23 +305,20 @@ pub const Parser = struct {
 
         return self.createNode(.{
             .binary_op = try self.b.box(ast.BinaryExpr, .{ .op = op, .left = left, .right = try self.parseExpression(next_prec) }),
-        }, tok.loc);
+        }, left.loc);
     }
 
     fn parseTernary(self: *Parser, condition: *Node) ParseError!*Node {
-        const q_tok = try self.expect(.question);
+        _ = try self.expect(.question);
         const then_branch = try self.parseExpression(.none);
         _ = try self.expect(.colon);
         const else_branch = try self.parseExpression(.none);
-
-        return self.createNode(.{ .ternary_op = try self.b.box(ast.TernaryExpr, .{ .condition = condition, .then_branch = then_branch, .else_branch = else_branch }) }, q_tok.loc);
+        return self.createNode(.{ .ternary_op = try self.b.box(ast.TernaryExpr, .{ .condition = condition, .then_branch = then_branch, .else_branch = else_branch }) }, condition.loc);
     }
 
     fn parseIndexAccessOrAssignment(self: *Parser, target: *Node) ParseError!*Node {
-        const bracket_tok = try self.expect(.l_bracket);
-
+        _ = try self.expect(.l_bracket);
         const index = try self.parseExpressionList();
-
         _ = try self.expect(.r_bracket);
 
         if (isAssignmentOp(self.tokens.current.tag)) {
@@ -334,10 +331,10 @@ pub const Parser = struct {
                     .op = tagToAssignmentOp(op_tag),
                     .value = try self.parseExpressionList(),
                 }),
-            }, bracket_tok.loc);
+            }, target.loc);
         }
 
-        return self.createNode(.{ .index_access = .{ .target = target, .index = index } }, bracket_tok.loc);
+        return self.createNode(.{ .index_access = .{ .target = target, .index = index } }, target.loc);
     }
 
     fn parseBlockClosure(self: *Parser) ParseError!*Node {
@@ -653,22 +650,21 @@ pub const Parser = struct {
             const args = try self.parseParenArgs();
             var block_node: ?*Node = null;
             if (self.tokens.current.tag == .keyword_do or self.tokens.current.tag == .l_brace) block_node = try self.parseBlockClosure();
-
             return self.createNode(.{
                 .method_call = try self.b.box(ast.MethodCall, .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = args, .block = block_node, .is_safe = is_safe }),
-            }, method_tok.loc);
+            }, receiver.loc);
         }
 
         if (self.isCommandCallStart()) {
             const cmd = try self.parseCommandArgsAndBlock();
             return self.createNode(.{
                 .method_call = try self.b.box(ast.MethodCall, .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = cmd.args, .block = cmd.block, .is_safe = is_safe }),
-            }, method_tok.loc);
+            }, receiver.loc);
         }
 
         return self.createNode(.{
             .method_call = try self.b.box(ast.MethodCall, .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = &.{}, .block = null, .is_safe = is_safe }),
-        }, method_tok.loc);
+        }, receiver.loc);
     }
 
     fn parseIdentifierOrCall(self: *Parser) ParseError!*Node {
@@ -1185,10 +1181,9 @@ pub const Parser = struct {
     }
 
     fn parseRescueModifierExpr(self: *Parser, left: *Node) ParseError!*Node {
-        const tok = self.tokens.current;
         self.advance();
         const rescue_expr = try self.parseExpression(getInfixPrecedence(.keyword_rescue));
-        return self.createNode(.{ .rescue_modifier = .{ .expr = left, .rescue_expr = rescue_expr } }, tok.loc);
+        return self.createNode(.{ .rescue_modifier = .{ .expr = left, .rescue_expr = rescue_expr } }, left.loc);
     }
 
     fn parseTopLevelScopeResolution(self: *Parser) ParseError!*Node {
@@ -1272,7 +1267,7 @@ pub const Parser = struct {
     }
 
     fn parseScopeResolution(self: *Parser, left: *Node) ParseError!*Node {
-        const tok = try self.expect(.colon_colon);
+        _ = try self.expect(.colon_colon);
         const right_tok = if (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) self.tokens.current else return ParseError.UnexpectedToken;
         self.advance();
 
@@ -1281,19 +1276,17 @@ pub const Parser = struct {
             errdefer path_list.deinit(self.allocator);
             try path_list.appendSlice(self.allocator, left.kind.namespace_access.path);
             try path_list.append(self.allocator, right_tok.lexeme);
-
             return self.createNode(.{
                 .namespace_access = .{ .path = try path_list.toOwnedSlice(self.allocator) },
-            }, tok.loc);
+            }, left.loc);
         } else if (left.kind == .identifier) {
             var path_list: std.ArrayListUnmanaged([]const u8) = .empty;
             errdefer path_list.deinit(self.allocator);
             try path_list.append(self.allocator, left.kind.identifier);
             try path_list.append(self.allocator, right_tok.lexeme);
-
             return self.createNode(.{
                 .namespace_access = .{ .path = try path_list.toOwnedSlice(self.allocator) },
-            }, tok.loc);
+            }, left.loc);
         } else {
             return ParseError.InvalidExpression;
         }
@@ -1329,7 +1322,28 @@ pub const Parser = struct {
     }
 
     fn createNode(self: *Parser, kind: ast.NodeKind, loc: ast.Location) ParseError!*Node {
-        return self.b.createNode(kind, loc) catch ParseError.OutOfMemory;
+        var final_loc = loc;
+
+        // Calculate the span by taking the start of the *next* token (current)
+        // minus the start of the first token (loc.offset).
+        // This prevents capturing trailing whitespace
+        if (self.tokens.current.loc.offset > loc.offset) {
+            // Trim any trailing whitespace from the length
+            var raw_len = self.tokens.current.loc.offset - loc.offset;
+
+            // Safety check: Don't count spaces/newlines that immediately precede the current token
+            while (raw_len > 0) {
+                const c = self.tokens.lexer.buffer[loc.offset + raw_len - 1];
+                if (c == ' ' or c == '\t' or c == '\r' or c == '\n') {
+                    raw_len -= 1;
+                } else {
+                    break;
+                }
+            }
+            final_loc.length = raw_len;
+        }
+
+        return self.b.createNode(kind, final_loc) catch ParseError.OutOfMemory;
     }
 
     fn getInfixPrecedence(tag: Tag) Precedence {

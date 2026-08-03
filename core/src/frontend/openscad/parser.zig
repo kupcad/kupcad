@@ -919,11 +919,11 @@ pub const Parser = struct {
                 .left = left,
                 .right = right,
             }),
-        }, tok.loc);
+        }, left.loc);
     }
 
     fn parseTernary(self: *Parser, condition: *Node) ParseError!*Node {
-        const q_tok = try self.expect(.question);
+        _ = try self.expect(.question);
         const then_branch = try self.parseExpression(.none);
         _ = try self.expect(.colon);
         const else_branch = try self.parseExpression(.none);
@@ -933,11 +933,11 @@ pub const Parser = struct {
                 .then_branch = then_branch,
                 .else_branch = else_branch,
             }),
-        }, q_tok.loc);
+        }, condition.loc);
     }
 
     fn parseIndexAccess(self: *Parser, target: *Node) ParseError!*Node {
-        const bracket_tok = try self.expect(.l_bracket);
+        _ = try self.expect(.l_bracket);
         const index = try self.parseExpression(.none);
         _ = try self.expect(.r_bracket);
         return self.createNode(.{
@@ -945,7 +945,7 @@ pub const Parser = struct {
                 .target = target,
                 .index = index,
             },
-        }, bracket_tok.loc);
+        }, target.loc);
     }
 
     fn createNode(self: *Parser, kind: ast.NodeKind, loc: ast.Location) ParseError!*Node {

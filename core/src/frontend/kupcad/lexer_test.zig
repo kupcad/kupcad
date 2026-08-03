@@ -223,3 +223,135 @@ test "KupCAD Lexer: Multi-line Indented Docstring Tag" {
         t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Token offset and endOffset tracking for LSP" {
+    // String indices:
+    // 01234567890123456789012
+    // let x = 100 + 50
+    const source = "let x = 100 + 50";
+    var lexer = Lexer.init(source, 0);
+
+    // 'let' (length: 3)
+    var tok = lexer.next();
+    try testing.expectEqualStrings("let", tok.lexeme);
+    try testing.expectEqual(@as(u32, 0), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 3), tok.endOffset());
+
+    // 'x' (length: 1, skips 1 space)
+    tok = lexer.next();
+    try testing.expectEqualStrings("x", tok.lexeme);
+    try testing.expectEqual(@as(u32, 4), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 5), tok.endOffset());
+
+    // '=' (length: 1, skips 1 space)
+    tok = lexer.next();
+    try testing.expectEqualStrings("=", tok.lexeme);
+    try testing.expectEqual(@as(u32, 6), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 7), tok.endOffset());
+
+    // '100' (length: 3, skips 1 space)
+    tok = lexer.next();
+    try testing.expectEqualStrings("100", tok.lexeme);
+    try testing.expectEqual(@as(u32, 8), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 11), tok.endOffset());
+
+    // '+' (length: 1, skips 1 space)
+    tok = lexer.next();
+    try testing.expectEqualStrings("+", tok.lexeme);
+    try testing.expectEqual(@as(u32, 12), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 13), tok.endOffset());
+
+    // '50' (length: 2, skips 1 space)
+    tok = lexer.next();
+    try testing.expectEqualStrings("50", tok.lexeme);
+    try testing.expectEqual(@as(u32, 14), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 16), tok.endOffset());
+
+    // EOF
+    tok = lexer.next();
+    try testing.expectEqual(.eof, tok.tag);
+    try testing.expectEqual(@as(u32, 16), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 16), tok.endOffset());
+}
+
+test "KupCAD Lexer: Exhaustive Location tracking (line, col, offset, length, file_id)" {
+    // String indices mapped out for clarity:
+    // 01234 5 6789012
+    // a = 1 \n   b = 2
+    const source = "a = 1\n  b = 2";
+
+    // We pass a unique file_id (e.g., 42) to verify it propagates to every token
+    var lexer = Lexer.init(source, 42);
+
+    // 1. 'a'
+    var tok = lexer.next();
+    try testing.expectEqual(.ident, tok.tag);
+    try testing.expectEqualStrings("a", tok.lexeme);
+    try testing.expectEqual(@as(u32, 1), tok.loc.line);
+    try testing.expectEqual(@as(u32, 1), tok.loc.col);
+    try testing.expectEqual(@as(u32, 0), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 0), tok.loc.length); // Unpopulated by Lexer (expected)
+    try testing.expectEqual(@as(u32, 42), tok.loc.file_id); // File ID propagates perfectly
+    try testing.expectEqual(@as(u32, 1), tok.endOffset()); // offset(0) + len(1)
+
+    // 2. '='
+    tok = lexer.next();
+    try testing.expectEqual(.equal, tok.tag);
+    try testing.expectEqualStrings("=", tok.lexeme);
+    try testing.expectEqual(@as(u32, 1), tok.loc.line);
+    try testing.expectEqual(@as(u32, 3), tok.loc.col);
+    try testing.expectEqual(@as(u32, 2), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 3), tok.endOffset());
+
+    // 3. '1'
+    tok = lexer.next();
+    try testing.expectEqual(.number, tok.tag);
+    try testing.expectEqualStrings("1", tok.lexeme);
+    try testing.expectEqual(@as(u32, 1), tok.loc.line);
+    try testing.expectEqual(@as(u32, 5), tok.loc.col);
+    try testing.expectEqual(@as(u32, 4), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 5), tok.endOffset());
+
+    // 4. '\n' (Newline triggers line/col resets for the NEXT token)
+    tok = lexer.next();
+    try testing.expectEqual(.newline, tok.tag);
+    try testing.expectEqualStrings("\n", tok.lexeme);
+    try testing.expectEqual(@as(u32, 1), tok.loc.line); // Belongs to the end of line 1
+    try testing.expectEqual(@as(u32, 6), tok.loc.col);
+    try testing.expectEqual(@as(u32, 5), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 6), tok.endOffset());
+
+    // 5. 'b' (Skips 2 spaces of indentation on line 2)
+    tok = lexer.next();
+    try testing.expectEqual(.ident, tok.tag);
+    try testing.expectEqualStrings("b", tok.lexeme);
+    try testing.expectEqual(@as(u32, 2), tok.loc.line); // Successfully jumped to Line 2
+    try testing.expectEqual(@as(u32, 3), tok.loc.col); // Col 3 (after 2 spaces)
+    try testing.expectEqual(@as(u32, 8), tok.loc.offset); // Byte 8 overall
+    try testing.expectEqual(@as(u32, 9), tok.endOffset());
+
+    // 6. '='
+    tok = lexer.next();
+    try testing.expectEqual(.equal, tok.tag);
+    try testing.expectEqualStrings("=", tok.lexeme);
+    try testing.expectEqual(@as(u32, 2), tok.loc.line);
+    try testing.expectEqual(@as(u32, 5), tok.loc.col);
+    try testing.expectEqual(@as(u32, 10), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 11), tok.endOffset());
+
+    // 7. '2'
+    tok = lexer.next();
+    try testing.expectEqual(.number, tok.tag);
+    try testing.expectEqualStrings("2", tok.lexeme);
+    try testing.expectEqual(@as(u32, 2), tok.loc.line);
+    try testing.expectEqual(@as(u32, 7), tok.loc.col);
+    try testing.expectEqual(@as(u32, 12), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 13), tok.endOffset());
+
+    // 8. EOF
+    tok = lexer.next();
+    try testing.expectEqual(.eof, tok.tag);
+    try testing.expectEqual(@as(u32, 2), tok.loc.line);
+    try testing.expectEqual(@as(u32, 8), tok.loc.col);
+    try testing.expectEqual(@as(u32, 13), tok.loc.offset);
+}
