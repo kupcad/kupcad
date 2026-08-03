@@ -2501,14 +2501,14 @@ test "KupCAD Parser: AST Node offset and length calculation for LSP" {
     try testing.expectEqual(@as(u32, 3), right_num.loc.length); // Spans "200" (length 3)
 }
 
-test "KupCAD Parser: Multi-line Compound Node Span Tracking" {
+test "KupCAD Parser: Compound Node Spans and Comment Side-Table Extraction" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     // Let's mathematically map out the exact byte offsets:
     // "def calculate(a)\n"  --> Length 17 (Offsets 0 to 16)
-    // "  # a comment\n"     --> Length 14 (Offsets 17 to 30)
-    // "  a * 2\n"           --> Length 8  (Offsets 31 to 38) (The 'a' starts at 33)
+    // "  # a comment\n"     --> Length 14 (Offsets 17 to 30) The '#' is at offset 19.
+    // "  a * 2\n"           --> Length 8  (Offsets 31 to 38) The 'a' is at offset 33.
     // "end"                 --> Length 3  (Offsets 39 to 41)
     // Total File Length: 42 bytes.
     const source =
@@ -2535,4 +2535,11 @@ test "KupCAD Parser: Multi-line Compound Node Span Tracking" {
     try testing.expectEqual(std.meta.Tag(ast.NodeKind).binary_op, std.meta.activeTag(math_expr.kind));
     try testing.expectEqual(@as(u32, 33), math_expr.loc.offset); // Exactly at the 'a'
     try testing.expectEqual(@as(u32, 5), math_expr.loc.length); // Spans "a * 2" (length 5)
+
+    // Verify the Comment was captured in the side-table perfectly
+    try testing.expectEqual(@as(usize, 1), parser.comments.items.len);
+    const captured_comment = parser.comments.items[0];
+    try testing.expectEqualStrings("# a comment", captured_comment.lexeme);
+    try testing.expectEqual(@as(u32, 2), captured_comment.loc.line);
+    try testing.expectEqual(@as(u32, 19), captured_comment.loc.offset);
 }
