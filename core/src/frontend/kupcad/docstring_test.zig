@@ -141,3 +141,55 @@ test "Docstring Parser: Non-annotation comment evaluates to empty tag" {
 
     try testing.expectEqualStrings("", doc.tag_name);
 }
+
+test "Docstring Parser: Graceful handling of invalid options hash" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
+    // This hash contains a syntax error (`bad_syntax` with no value)
+    const raw = "# @param width [Length] Width { min: 10, bad_syntax }";
+
+    const doc = try parser.parse(raw, dummy_loc);
+
+    try testing.expectEqualStrings("param", doc.tag_name);
+    try testing.expectEqualStrings("width", doc.target_name.?);
+    try testing.expectEqualStrings("Length", doc.type_name.?);
+    try testing.expectEqualStrings("Width", doc.description);
+
+    // The embedded parser should swallow the syntax error safely and leave options_expr as null
+    try testing.expect(doc.options_expr == null);
+}
+
+test "Docstring Parser: Graceful handling of missing closing brackets and incomplete tags" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
+
+    // Missing closing bracket for type
+    const doc1 = try parser.parse("# @param width [Length", dummy_loc);
+    try testing.expectEqualStrings("param", doc1.tag_name);
+    try testing.expectEqualStrings("width", doc1.target_name.?);
+    try testing.expect(doc1.type_name == null);
+    // When bracket is unclosed, it falls back to treating it as the description
+    try testing.expectEqualStrings("[Length", doc1.description);
+
+    // Incomplete param tag (missing name and description)
+    const doc2 = try parser.parse("# @param", dummy_loc);
+    try testing.expectEqualStrings("param", doc2.tag_name);
+    try testing.expect(doc2.target_name == null);
+    try testing.expect(doc2.type_name == null);
+    try testing.expectEqualStrings("", doc2.description);
+
+    // Bare @ symbol
+    const doc3 = try parser.parse("# @", dummy_loc);
+    try testing.expectEqualStrings("", doc3.tag_name);
+    try testing.expect(doc3.target_name == null);
+    try testing.expect(doc3.type_name == null);
+    try testing.expectEqualStrings("", doc3.description);
+}
