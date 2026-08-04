@@ -289,10 +289,10 @@ test "Formatter: Safely skips lines with invalid syntax (Error Recovery)" {
         \\another_valid = 20
     ;
 
-    // The parser throws an error on line 2, synchronizes, and recovers.
-    // Therefore, the formatter only ever receives lines 1 and 3 in the AST.
+    // The statement on line 2 fails to parse, but its comment is preserved in the side-table.
     const expected =
         \\valid_line = 10
+        \\# This is invalid strict syntax
         \\another_valid = 20
         \\
     ;

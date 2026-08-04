@@ -2626,3 +2626,26 @@ test "KupCAD Parser: Strict Index Assignment Rejects Spaces" {
     try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
     try testing.expectEqualStrings("Invalid expression starting with '*='", parser.diagnostics.list.items[0].message);
 }
+
+test "KupCAD Parser: Ignore trailing comments on binary operations and calls" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\part - part # Should trigger CSG self-subtraction warning
+        \\cube() # Trailing comment on method call
+    ;
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const p1 = try parser.parseStatement();
+    try testing.expectEqual(ast.BinaryOp.subtract, p1.kind.binary_op.op);
+    try testing.expectEqualStrings("part", p1.kind.binary_op.left.kind.identifier);
+    try testing.expectEqualStrings("part", p1.kind.binary_op.right.kind.identifier);
+
+    const p2 = try parser.parseStatement();
+    try testing.expectEqualStrings("cube", p2.kind.method_call.method_name);
+
+    // Verify 0 syntax diagnostics were generated
+    try testing.expectEqual(@as(usize, 0), parser.diagnostics.list.items.len);
+}

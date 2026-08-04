@@ -103,6 +103,18 @@ pub const Parser = struct {
         }
     }
 
+    fn skipComments(self: *Parser) void {
+        while (self.tokens.current.tag == .comment or self.tokens.current.tag == .param_doc) {
+            if (self.tokens.current.tag == .comment) {
+                self.comments.append(self.allocator, .{
+                    .lexeme = self.tokens.current.lexeme,
+                    .loc = self.tokens.current.loc,
+                }) catch {};
+            }
+            self.advance();
+        }
+    }
+
     fn isAssignmentOp(tag: Tag) bool {
         return switch (tag) {
             .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => true,
@@ -991,9 +1003,10 @@ pub const Parser = struct {
     }
 
     pub fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Node {
+        self.skipIgnored();
+
         const start_tok = self.tokens.current;
         var left: *Node = undefined;
-        self.skipIgnored();
 
         switch (start_tok.tag) {
             .number => {
@@ -1057,7 +1070,7 @@ pub const Parser = struct {
             }
 
             // Allow mid-expression comments
-            while (self.tokens.current.tag == .comment) self.advance();
+            self.skipComments();
 
             if (@intFromEnum(precedence) >= @intFromEnum(getInfixPrecedence(self.tokens.current.tag))) break;
             const op_tok = self.tokens.current;
@@ -1215,7 +1228,7 @@ pub const Parser = struct {
         const tag = self.tokens.current.tag;
 
         switch (tag) {
-            .newline, .eof, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
+            .newline, .eof, .comment, .param_doc, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
 
             .keyword_do, .l_brace => return true,
             else => {
