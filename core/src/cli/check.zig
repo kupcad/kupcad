@@ -50,7 +50,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     if (!has_args) {
         std.debug.print("Error: Missing file path. Usage: kupcad check <file|dir>...\n", .{});
-        return;
+        std.process.exit(1);
     }
 
     // Final Summary Footer
@@ -70,6 +70,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             Color.reset,
         });
     }
+
+    // Ensure CI/CD pipelines fail if there are any linting errors
+    if (totals.errors > 0) {
+        std.process.exit(1);
+    }
 }
 
 fn processPath(init: std.process.Init, allocator: std.mem.Allocator, path: []const u8, totals: *Totals) !void {
@@ -80,11 +85,9 @@ fn processPath(init: std.process.Init, allocator: std.mem.Allocator, path: []con
         var dir = dir_obj;
         defer dir.close(init.io);
 
-        // dir.walk only takes the allocator
         var walker = try dir.walk(allocator);
         defer walker.deinit();
 
-        //  walker.next takes the IO context to perform syscalls
         while (try walker.next(init.io)) |entry| {
             // Filter strictly for `.kup` files
             if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".kup")) {
@@ -99,6 +102,8 @@ fn processPath(init: std.process.Init, allocator: std.mem.Allocator, path: []con
             try processFile(init, allocator, path, totals);
         } else {
             std.debug.print("{s}Error accessing '{s}': {}{s}\n", .{ Color.red, path, err, Color.reset });
+            // Consider an access error a failure condition
+            totals.errors += 1;
         }
     }
 }
@@ -107,6 +112,7 @@ fn processFile(init: std.process.Init, allocator: std.mem.Allocator, file_path: 
     const cwd = std.Io.Dir.cwd();
     const source = cwd.readFileAlloc(init.io, file_path, allocator, .limited(FILE_SIZE_LIMIT)) catch |err| {
         std.debug.print("{s}Error reading '{s}': {}{s}\n", .{ Color.red, file_path, err, Color.reset });
+        totals.errors += 1;
         return;
     };
     defer allocator.free(source);
