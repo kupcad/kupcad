@@ -4,15 +4,16 @@ const token = @import("../../core/token.zig");
 const lexer_mod = @import("../../frontend/kupcad/lexer.zig");
 const parser_mod = @import("../../frontend/kupcad/parser.zig");
 const LintRule = @import("rules/rule.zig").LintRule;
-const NegativeDimRule = @import("rules/negative_dim.zig").NegativeDimRule;
-const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;
 const Config = @import("config.zig").Config;
 
-pub const DiagnosticSeverity = enum {
-    @"error",
-    warning,
-    info,
-};
+// Import our decoupled plugins
+const NegativeDimRule = @import("rules/negative_dim.zig").NegativeDimRule;
+const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;
+const UnreachableCodeRule = @import("rules/unreachable_code.zig").UnreachableCodeRule;
+const SelfSubtractionRule = @import("rules/self_subtraction.zig").SelfSubtractionRule;
+const ParamDocsRule = @import("rules/param_docs.zig").ParamDocsRule;
+
+pub const DiagnosticSeverity = enum { @"error", warning, info };
 
 pub const LinterDiagnostic = struct {
     loc: token.Location,
@@ -35,38 +36,32 @@ pub const Linter = struct {
     config: Config,
     diagnostics: std.ArrayListUnmanaged(LinterDiagnostic) = .empty,
     scopes: std.ArrayListUnmanaged(Scope) = .empty,
-    param_docs: std.StringHashMapUnmanaged(token.Location) = .empty,
     rules: std.ArrayListUnmanaged(LintRule) = .empty,
 
-    // Keep stateful rule instances alive for the lifetime of the Linter
+    // Rule persistent states
     negative_dim_rule: NegativeDimRule = .{},
     unused_vars_rule: UnusedVarsRule = .{},
+    unreachable_code_rule: UnreachableCodeRule = .{},
+    self_subtraction_rule: SelfSubtractionRule = .{},
+    param_docs_rule: ParamDocsRule = .{},
 
-    pub fn init(allocator: std.mem.Allocator, config: Config) !Linter {
-        var linter = Linter{
-            .allocator = allocator,
-            .config = config,
-        };
+    pub fn init(allocator: std.mem.Allocator, config: Config) Linter {
+        return Linter{ .allocator = allocator, .config = config };
+    }
 
-        // Conditionally register plugins based on config
-        if (config.check_negative_dims) {
-            try linter.rules.append(allocator, linter.negative_dim_rule.rule());
-        }
-        if (config.check_unused_vars) {
-            try linter.rules.append(allocator, linter.unused_vars_rule.rule());
-        }
-
-        return linter;
+    pub fn registerDefaultRules(self: *Linter) !void {
+        if (self.config.check_negative_dims) try self.rules.append(self.allocator, self.negative_dim_rule.rule());
+        if (self.config.check_unused_vars) try self.rules.append(self.allocator, self.unused_vars_rule.rule());
+        if (self.config.check_unreachable_code) try self.rules.append(self.allocator, self.unreachable_code_rule.rule());
+        if (self.config.check_self_subtraction) try self.rules.append(self.allocator, self.self_subtraction_rule.rule());
+        if (self.config.check_param_docs) try self.rules.append(self.allocator, self.param_docs_rule.rule());
     }
 
     pub fn deinit(self: *Linter) void {
-        for (self.diagnostics.items) |d| {
-            self.allocator.free(d.message);
-        }
+        for (self.diagnostics.items) |d| self.allocator.free(d.message);
         self.diagnostics.deinit(self.allocator);
         for (self.scopes.items) |*s| s.deinit(self.allocator);
         self.scopes.deinit(self.allocator);
-        self.param_docs.deinit(self.allocator);
         self.rules.deinit(self.allocator);
     }
 
@@ -82,22 +77,27 @@ pub const Linter = struct {
             else => null,
         };
 
+        // Format and copy Parser syntax errors into the Linter Diagnostics Array
         for (parser.diagnostics.list.items) |diag| {
-            try self.addDiagnostic(diag.loc, diag.message, .@"error");
+            try self.addDiagnostic(diag.loc, .@"error", "{s}", .{diag.message});
         }
 
         if (tree) |root| {
             try self.pushScope();
             try self.analyzeNode(root);
-            try self.checkParamDocMatches();
             try self.popScope();
+
+            // Fire EOF Hook on all plugins
+            for (self.rules.items) |rule| try rule.checkEOF(self);
         }
     }
 
-    fn addDiagnostic(self: *Linter, loc: token.Location, message: []const u8, severity: DiagnosticSeverity) !void {
+    // DRY: Unified formatting diagnostic helper for all plugins!
+    pub fn addDiagnostic(self: *Linter, loc: token.Location, severity: DiagnosticSeverity, comptime fmt: []const u8, args: anytype) !void {
+        const msg = try std.fmt.allocPrint(self.allocator, fmt, args);
         try self.diagnostics.append(self.allocator, .{
             .loc = loc,
-            .message = try self.allocator.dupe(u8, message),
+            .message = msg,
             .severity = severity,
         });
     }
@@ -112,13 +112,11 @@ pub const Linter = struct {
             self.scopes.shrinkRetainingCapacity(self.scopes.items.len - 1);
 
             // Fire exitScope hook on all plugins
-            for (self.rules.items) |rule| {
-                try rule.exitScope(&scope, &self.diagnostics, self.allocator);
-            }
-
+            for (self.rules.items) |rule| try rule.exitScope(&scope, self);
             scope.deinit(self.allocator);
         }
     }
+
     fn declareVariable(self: *Linter, name: []const u8, loc: token.Location) !void {
         if (self.scopes.items.len > 0) {
             const current = &self.scopes.items[self.scopes.items.len - 1];
@@ -139,24 +137,13 @@ pub const Linter = struct {
     }
 
     fn analyzeNode(self: *Linter, node: *ast.Node) !void {
-        // 1. Fire all registered Linter plugins against this node
-        for (self.rules.items) |rule| {
-            try rule.checkNode(node, &self.diagnostics, self.allocator);
-        }
+        // Fire all registered Linter plugins against this node
+        for (self.rules.items) |rule| try rule.checkNode(node, self);
 
-        // 2. Stateful Analysis & AST Traversal Recursive Pass
+        // Pure Stateful Traversal (Scope management only)
         switch (node.kind) {
             .block => |b| {
-                var unreachable_found = false;
-                for (b.stmts) |stmt| {
-                    if (unreachable_found) {
-                        try self.addDiagnostic(stmt.loc, "Unreachable code detected after explicit control flow return/break.", .warning);
-                    }
-                    try self.analyzeNode(stmt);
-                    if (stmt.kind == .return_stmt or stmt.kind == .break_stmt or stmt.kind == .next_stmt) {
-                        unreachable_found = true;
-                    }
-                }
+                for (b.stmts) |stmt| try self.analyzeNode(stmt);
             },
             .assignment => |a| {
                 try self.declareVariable(a.name, node.loc);
@@ -166,9 +153,7 @@ pub const Linter = struct {
                 try self.analyzeNode(pa.target);
                 try self.analyzeNode(pa.value);
             },
-            .identifier => |i| {
-                self.markVariableUsed(i);
-            },
+            .identifier => |i| self.markVariableUsed(i),
             .method_call => |mc| {
                 if (mc.receiver) |r| try self.analyzeNode(r);
                 for (mc.args) |arg| try self.analyzeNode(arg.value);
@@ -177,18 +162,6 @@ pub const Linter = struct {
             .binary_op => |b| {
                 try self.analyzeNode(b.left);
                 try self.analyzeNode(b.right);
-                if (b.op == .subtract) {
-                    if (b.left.kind == .identifier and b.right.kind == .identifier) {
-                        if (std.mem.eql(u8, b.left.kind.identifier, b.right.kind.identifier)) {
-                            try self.addDiagnostic(node.loc, "CSG Warning: Self-difference operation ('a - a') will result in empty geometry.", .warning);
-                        }
-                    }
-                }
-            },
-            .param_doc => |doc| {
-                if (doc.target_name) |target| {
-                    try self.param_docs.put(self.allocator, target, node.loc);
-                }
             },
             .if_stmt => |ifs| {
                 try self.analyzeNode(ifs.condition);
@@ -202,21 +175,6 @@ pub const Linter = struct {
                 try self.popScope();
             },
             else => {},
-        }
-    }
-
-    fn checkParamDocMatches(self: *Linter) !void {
-        var doc_iter = self.param_docs.iterator();
-        while (doc_iter.next()) |entry| {
-            const param_name = entry.key_ptr.*;
-            if (self.scopes.items.len > 0) {
-                const root_scope = &self.scopes.items[0];
-                if (!root_scope.declared_vars.contains(param_name)) {
-                    const msg = try std.fmt.allocPrint(self.allocator, "@param annotation references variable '{s}', which is never declared in standard scope.", .{param_name});
-                    defer self.allocator.free(msg);
-                    try self.addDiagnostic(entry.value_ptr.*, msg, .info);
-                }
-            }
         }
     }
 };

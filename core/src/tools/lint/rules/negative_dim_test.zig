@@ -6,17 +6,17 @@ const parser_mod = @import("../../../frontend/kupcad/parser.zig");
 const linter_mod = @import("../linter.zig");
 const NegativeDimRule = @import("negative_dim.zig").NegativeDimRule;
 
-fn walkAndCheck(node: *ast.Node, rule: @import("rule.zig").LintRule, diags: *std.ArrayListUnmanaged(linter_mod.LinterDiagnostic), allocator: std.mem.Allocator) !void {
-    try rule.checkNode(node, diags, allocator);
+fn walkAndCheck(node: *ast.Node, rule: @import("rule.zig").LintRule, engine: *linter_mod.Linter) !void {
+    try rule.checkNode(node, engine);
 
     // Minimal walker for testing purposes to reach expressions
     switch (node.kind) {
-        .block => |b| for (b.stmts) |stmt| try walkAndCheck(stmt, rule, diags, allocator),
-        .assignment => |a| try walkAndCheck(a.value, rule, diags, allocator),
-        .property_assignment => |pa| try walkAndCheck(pa.value, rule, diags, allocator),
+        .block => |b| for (b.stmts) |stmt| try walkAndCheck(stmt, rule, engine),
+        .assignment => |a| try walkAndCheck(a.value, rule, engine),
+        .property_assignment => |pa| try walkAndCheck(pa.value, rule, engine),
         .method_call => |mc| {
-            if (mc.receiver) |r| try walkAndCheck(r, rule, diags, allocator);
-            for (mc.args) |arg| try walkAndCheck(arg.value, rule, diags, allocator);
+            if (mc.receiver) |r| try walkAndCheck(r, rule, engine);
+            for (mc.args) |arg| try walkAndCheck(arg.value, rule, engine);
         },
         else => {},
     }
@@ -32,13 +32,15 @@ test "Linter Rule: NegativeDimRule catches negative dimensions in method calls" 
 
     const tree = try parser.parseProgram();
 
-    var diags: std.ArrayListUnmanaged(linter_mod.LinterDiagnostic) = .empty;
+    // Create an empty engine for the context API (removed `try`)
+    var engine = linter_mod.Linter.init(arena.allocator(), .{});
+    defer engine.deinit();
+
     var rule_impl = NegativeDimRule{};
+    try walkAndCheck(tree, rule_impl.rule(), &engine);
 
-    try walkAndCheck(tree, rule_impl.rule(), &diags, arena.allocator());
-
-    try testing.expectEqual(@as(usize, 1), diags.items.len);
-    try testing.expectEqualStrings("CAD Warning: Property 'x' in primitive construction has non-positive dimension.", diags.items[0].message);
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("CAD Warning: Property 'x' in primitive construction has non-positive dimension.", engine.diagnostics.items[0].message);
 }
 
 test "Linter Rule: NegativeDimRule catches negative dimensions in property assignment" {
@@ -51,11 +53,12 @@ test "Linter Rule: NegativeDimRule catches negative dimensions in property assig
 
     const tree = try parser.parseProgram();
 
-    var diags: std.ArrayListUnmanaged(linter_mod.LinterDiagnostic) = .empty;
+    var engine = linter_mod.Linter.init(arena.allocator(), .{});
+    defer engine.deinit();
+
     var rule_impl = NegativeDimRule{};
+    try walkAndCheck(tree, rule_impl.rule(), &engine);
 
-    try walkAndCheck(tree, rule_impl.rule(), &diags, arena.allocator());
-
-    try testing.expectEqual(@as(usize, 1), diags.items.len);
-    try testing.expectEqualStrings("CAD Warning: Property 'width' in primitive construction has non-positive dimension.", diags.items[0].message);
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("CAD Warning: Property 'width' in primitive construction has non-positive dimension.", engine.diagnostics.items[0].message);
 }

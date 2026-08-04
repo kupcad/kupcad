@@ -17,22 +17,20 @@ pub const Formatter = struct {
     comment_idx: usize = 0,
     indent_level: usize = 0,
 
-    // Keep stateful rule instances alive for the lifetime of the Formatter
     sort_imports_rule: SortImportsRule = .{},
 
-    pub fn init(allocator: std.mem.Allocator, comments: []const token.Comment, config: Config) !Formatter {
-        var fmt = Formatter{
+    pub fn init(allocator: std.mem.Allocator, comments: []const token.Comment, config: Config) Formatter {
+        return Formatter{
             .allocator = allocator,
             .comments = comments,
             .config = config,
         };
+    }
 
-        // Register default rules based on config
-        if (config.sort_imports) {
-            try fmt.rules.append(allocator, fmt.sort_imports_rule.rule());
+    pub fn registerDefaultRules(self: *Formatter) !void {
+        if (self.config.sort_imports) {
+            try self.rules.append(self.allocator, self.sort_imports_rule.rule());
         }
-
-        return fmt;
     }
 
     pub fn deinit(self: *Formatter) void {

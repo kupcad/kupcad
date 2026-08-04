@@ -5,35 +5,19 @@ const LintRule = @import("rule.zig").LintRule;
 
 pub const UnusedVarsRule = struct {
     pub fn rule(self: *UnusedVarsRule) LintRule {
-        return .{
-            .ptr = self,
-            .vtable = &.{
-                .name = getName,
-                .exitScope = exitScope,
-            },
-        };
+        return .{ .ptr = self, .vtable = &.{ .name = getName, .exitScope = exitScope } };
     }
 
     fn getName(_: *anyopaque) []const u8 {
         return "Unused Variables Check";
     }
 
-    fn exitScope(
-        _: *anyopaque,
-        scope: *const linter.Scope,
-        diagnostics: *std.ArrayListUnmanaged(linter.LinterDiagnostic),
-        allocator: std.mem.Allocator,
-    ) !void {
+    fn exitScope(_: *anyopaque, scope: *const linter.Scope, engine: *linter.Linter) !void {
         var var_iter = scope.declared_vars.iterator();
         while (var_iter.next()) |entry| {
             const var_name = entry.key_ptr.*;
             if (!scope.used_vars.contains(var_name) and var_name[0] != '_') {
-                const msg = try std.fmt.allocPrint(allocator, "Unused variable '{s}'. Prefix with '_' if intentional.", .{var_name});
-                try diagnostics.append(allocator, .{
-                    .loc = entry.value_ptr.*,
-                    .message = msg,
-                    .severity = .warning,
-                });
+                try engine.addDiagnostic(entry.value_ptr.*, .warning, "Unused variable '{s}'. Prefix with '_' if intentional.", .{var_name});
             }
         }
     }

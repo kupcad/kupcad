@@ -1,0 +1,36 @@
+const std = @import("std");
+const testing = std.testing;
+const linter_mod = @import("../linter.zig");
+const UnreachableCodeRule = @import("unreachable_code.zig").UnreachableCodeRule;
+
+test "Linter Rule: UnreachableCodeRule catches code after return" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\def check_flow()
+        \\  return
+        \\  cube()
+        \\end
+    ;
+
+    // Init linter with ALL rules turned off via config to isolate this test
+    var linter = linter_mod.Linter.init(arena.allocator(), .{
+        .check_negative_dims = false,
+        .check_unused_vars = false,
+        .check_unreachable_code = false,
+        .check_self_subtraction = false,
+        .check_param_docs = false,
+    });
+    defer linter.deinit();
+
+    // Manually register only the UnreachableCodeRule
+    var rule_impl = UnreachableCodeRule{};
+    try linter.rules.append(arena.allocator(), rule_impl.rule());
+
+    // Run the full engine pipeline
+    try linter.check(source);
+
+    try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);
+    try testing.expectEqualStrings("Unreachable code detected after explicit control flow return/break.", linter.diagnostics.items[0].message);
+}

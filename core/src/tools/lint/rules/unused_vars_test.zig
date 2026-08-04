@@ -17,7 +17,7 @@ test "Linter Rule: UnusedVarsRule catches unused variables" {
     ;
 
     // Init linter with ALL rules turned off via config
-    var linter = try linter_mod.Linter.init(arena.allocator(), .{ .check_negative_dims = false, .check_unused_vars = false });
+    var linter = linter_mod.Linter.init(arena.allocator(), .{ .check_negative_dims = false, .check_unused_vars = false });
     defer linter.deinit();
 
     // Manually register only the UnusedVarsRule
