@@ -8,12 +8,18 @@ pub const LintRule = struct {
 
     pub const VTable = struct {
         name: *const fn (ptr: *anyopaque) []const u8,
-        checkNode: *const fn (
+        checkNode: ?*const fn (
             ptr: *anyopaque,
             node: *ast.Node,
             diagnostics: *std.ArrayListUnmanaged(linter.LinterDiagnostic),
             allocator: std.mem.Allocator,
-        ) anyerror!void,
+        ) anyerror!void = null,
+        exitScope: ?*const fn (
+            ptr: *anyopaque,
+            scope: *const linter.Scope,
+            diagnostics: *std.ArrayListUnmanaged(linter.LinterDiagnostic),
+            allocator: std.mem.Allocator,
+        ) anyerror!void = null,
     };
 
     pub fn checkNode(
@@ -22,6 +28,19 @@ pub const LintRule = struct {
         diagnostics: *std.ArrayListUnmanaged(linter.LinterDiagnostic),
         allocator: std.mem.Allocator,
     ) !void {
-        return self.vtable.checkNode(self.ptr, node, diagnostics, allocator);
+        if (self.vtable.checkNode) |func| {
+            try func(self.ptr, node, diagnostics, allocator);
+        }
+    }
+
+    pub fn exitScope(
+        self: LintRule,
+        scope: *const linter.Scope,
+        diagnostics: *std.ArrayListUnmanaged(linter.LinterDiagnostic),
+        allocator: std.mem.Allocator,
+    ) !void {
+        if (self.vtable.exitScope) |func| {
+            try func(self.ptr, scope, diagnostics, allocator);
+        }
     }
 };

@@ -5,6 +5,8 @@ const lexer_mod = @import("../../frontend/kupcad/lexer.zig");
 const parser_mod = @import("../../frontend/kupcad/parser.zig");
 const LintRule = @import("rules/rule.zig").LintRule;
 const NegativeDimRule = @import("rules/negative_dim.zig").NegativeDimRule;
+const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;
+const Config = @import("config.zig").Config;
 
 pub const DiagnosticSeverity = enum {
     @"error",
@@ -30,6 +32,7 @@ pub const Scope = struct {
 
 pub const Linter = struct {
     allocator: std.mem.Allocator,
+    config: Config,
     diagnostics: std.ArrayListUnmanaged(LinterDiagnostic) = .empty,
     scopes: std.ArrayListUnmanaged(Scope) = .empty,
     param_docs: std.StringHashMapUnmanaged(token.Location) = .empty,
@@ -37,12 +40,21 @@ pub const Linter = struct {
 
     // Keep stateful rule instances alive for the lifetime of the Linter
     negative_dim_rule: NegativeDimRule = .{},
+    unused_vars_rule: UnusedVarsRule = .{},
 
-    pub fn init(allocator: std.mem.Allocator) !Linter {
-        var linter = Linter{ .allocator = allocator };
+    pub fn init(allocator: std.mem.Allocator, config: Config) !Linter {
+        var linter = Linter{
+            .allocator = allocator,
+            .config = config,
+        };
 
-        // Register default plugins
-        try linter.rules.append(allocator, linter.negative_dim_rule.rule());
+        // Conditionally register plugins based on config
+        if (config.check_negative_dims) {
+            try linter.rules.append(allocator, linter.negative_dim_rule.rule());
+        }
+        if (config.check_unused_vars) {
+            try linter.rules.append(allocator, linter.unused_vars_rule.rule());
+        }
 
         return linter;
     }
@@ -99,19 +111,14 @@ pub const Linter = struct {
             var scope = self.scopes.items[self.scopes.items.len - 1];
             self.scopes.shrinkRetainingCapacity(self.scopes.items.len - 1);
 
-            var var_iter = scope.declared_vars.iterator();
-            while (var_iter.next()) |entry| {
-                const var_name = entry.key_ptr.*;
-                if (!scope.used_vars.contains(var_name) and var_name[0] != '_') {
-                    const msg = try std.fmt.allocPrint(self.allocator, "Unused variable '{s}'. Prefix with '_' if intentional.", .{var_name});
-                    defer self.allocator.free(msg);
-                    try self.addDiagnostic(entry.value_ptr.*, msg, .warning);
-                }
+            // Fire exitScope hook on all plugins
+            for (self.rules.items) |rule| {
+                try rule.exitScope(&scope, &self.diagnostics, self.allocator);
             }
+
             scope.deinit(self.allocator);
         }
     }
-
     fn declareVariable(self: *Linter, name: []const u8, loc: token.Location) !void {
         if (self.scopes.items.len > 0) {
             const current = &self.scopes.items[self.scopes.items.len - 1];
