@@ -146,12 +146,25 @@ pub const Linter = struct {
                 for (b.stmts) |stmt| try self.analyzeNode(stmt);
             },
             .assignment => |a| {
-                try self.declareVariable(a.name, node.loc);
                 try self.analyzeNode(a.value);
+                try self.declareVariable(a.name, node.loc);
+            },
+            .multiple_assignment => |ma| {
+                try self.analyzeNode(ma.value);
+                for (ma.lhs) |l| try self.declareVariable(l.name, node.loc);
             },
             .property_assignment => |pa| {
                 try self.analyzeNode(pa.target);
                 try self.analyzeNode(pa.value);
+            },
+            .index_assignment => |ia| {
+                try self.analyzeNode(ia.target);
+                try self.analyzeNode(ia.index);
+                try self.analyzeNode(ia.value);
+            },
+            .index_access => |ia| {
+                try self.analyzeNode(ia.target);
+                try self.analyzeNode(ia.index);
             },
             .identifier => |i| self.markVariableUsed(i),
             .method_call => |mc| {
@@ -159,14 +172,55 @@ pub const Linter = struct {
                 for (mc.args) |arg| try self.analyzeNode(arg.value);
                 if (mc.block) |b| try self.analyzeNode(b);
             },
+            .super_call => |sc| {
+                for (sc.args) |arg| try self.analyzeNode(arg.value);
+                if (sc.block) |b| try self.analyzeNode(b);
+            },
             .binary_op => |b| {
                 try self.analyzeNode(b.left);
                 try self.analyzeNode(b.right);
+            },
+            .unary_op => |u| try self.analyzeNode(u.operand),
+            .ternary_op => |t| {
+                try self.analyzeNode(t.condition);
+                try self.analyzeNode(t.then_branch);
+                try self.analyzeNode(t.else_branch);
             },
             .if_stmt => |ifs| {
                 try self.analyzeNode(ifs.condition);
                 try self.analyzeNode(ifs.then_branch);
                 if (ifs.else_branch) |eb| try self.analyzeNode(eb);
+            },
+            .while_stmt => |ws| {
+                try self.analyzeNode(ws.condition);
+                try self.analyzeNode(ws.body);
+            },
+            .for_stmt => |fs| {
+                try self.pushScope();
+                for (fs.bindings) |b| {
+                    try self.analyzeNode(b.range);
+                    try self.declareVariable(b.name, node.loc);
+                }
+                try self.analyzeNode(fs.body);
+                try self.popScope();
+            },
+            .case_stmt => |cs| {
+                if (cs.condition) |c| try self.analyzeNode(c);
+                for (cs.when_branches) |wb| {
+                    for (wb.conditions) |c| try self.analyzeNode(c);
+                    try self.analyzeNode(wb.body);
+                }
+                if (cs.else_branch) |eb| try self.analyzeNode(eb);
+            },
+            .begin_stmt => |bs| {
+                try self.analyzeNode(bs.body);
+                for (bs.rescues) |r| {
+                    try self.pushScope();
+                    if (r.variable) |v| try self.declareVariable(v, node.loc);
+                    try self.analyzeNode(r.body);
+                    try self.popScope();
+                }
+                if (bs.ensure_body) |eb| try self.analyzeNode(eb);
             },
             .def_stmt => |def| {
                 try self.pushScope();
@@ -174,6 +228,41 @@ pub const Linter = struct {
                 try self.analyzeNode(def.body);
                 try self.popScope();
             },
+            .class_stmt => |cls| {
+                try self.analyzeNode(cls.name);
+                if (cls.super_class) |sc| try self.analyzeNode(sc);
+                try self.analyzeNode(cls.body);
+            },
+            .module_stmt => |ms| try self.analyzeNode(ms.body),
+            .lambda_expr => |le| {
+                try self.pushScope();
+                for (le.params) |p| try self.declareVariable(p.name, node.loc);
+                try self.analyzeNode(le.body);
+                try self.popScope();
+            },
+            .array_literal => |arr| for (arr) |elem| try self.analyzeNode(elem),
+            .hash_literal => |entries| {
+                for (entries) |entry| {
+                    try self.analyzeNode(entry.key);
+                    try self.analyzeNode(entry.value);
+                }
+            },
+            .range => |r| {
+                try self.analyzeNode(r.start);
+                try self.analyzeNode(r.end);
+                if (r.step) |s| try self.analyzeNode(s);
+            },
+            .splat_expr => |s| try self.analyzeNode(s),
+            .double_splat_expr => |s| try self.analyzeNode(s),
+            .each_expr => |e| try self.analyzeNode(e),
+            .rescue_modifier => |rm| {
+                try self.analyzeNode(rm.expr);
+                try self.analyzeNode(rm.rescue_expr);
+            },
+            .return_stmt => |r| if (r) |expr| try self.analyzeNode(expr),
+            .break_stmt => |b| if (b) |expr| try self.analyzeNode(expr),
+            .next_stmt => |n| if (n) |expr| try self.analyzeNode(expr),
+            .yield_stmt => |y| for (y) |expr| try self.analyzeNode(expr),
             else => {},
         }
     }

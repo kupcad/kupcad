@@ -160,13 +160,14 @@ pub const Parser = struct {
 
     pub fn parseStatement(self: *Parser) ParseError!*Node {
         self.skipIgnored();
+
         var stmt = switch (self.tokens.current.tag) {
             .keyword_import => try self.parseImportOrExportStatement(false),
             .keyword_export => try self.parseImportOrExportStatement(true),
             .keyword_if => try self.parseIfOrUnless(false),
             .keyword_unless => try self.parseIfOrUnless(true),
             .keyword_case => try self.parseCaseStatement(),
-            .keyword_while => try self.parseWhileStatement(),
+            .keyword_while, .keyword_until => try self.parseWhileStatement(),
             .keyword_def => try self.parseDefStatement(),
             .keyword_class => try self.parseClassStatement(),
             .keyword_module => try self.parseModuleStatement(),
@@ -183,7 +184,6 @@ pub const Parser = struct {
             const mod_tag = self.tokens.current.tag;
             const mod_loc = self.tokens.current.loc;
             self.advance();
-
             const cond = try self.parseExpression(.none);
             const then_block = try self.createNode(.{
                 .block = try self.b.box(ast.Block, .{ .stmts = try self.allocator.dupe(*Node, &.{stmt}) }),
@@ -1023,6 +1023,7 @@ pub const Parser = struct {
             .plus, .minus, .bang, .keyword_not, .tilde => left = try self.parseUnary(),
             .keyword_if => left = try self.parseIfOrUnless(false),
             .keyword_unless => left = try self.parseIfOrUnless(true),
+            .keyword_while, .keyword_until => left = try self.parseWhileStatement(),
             .keyword_begin => left = try self.parseBeginStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
             .percent_w, .percent_i => left = try self.parsePercentArray(start_tok.tag),
@@ -1045,9 +1046,10 @@ pub const Parser = struct {
 
             // Allow mid-expression comments
             while (self.tokens.current.tag == .comment) self.advance();
-            if (@intFromEnum(precedence) >= @intFromEnum(getInfixPrecedence(self.tokens.current.tag))) break;
 
+            if (@intFromEnum(precedence) >= @intFromEnum(getInfixPrecedence(self.tokens.current.tag))) break;
             const op_tok = self.tokens.current;
+
             left = switch (op_tok.tag) {
                 .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => try self.parseAssignmentExpr(left),
                 .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or, .dot_dot, .dot_dot_dot, .less_less, .greater_greater, .keyword_and, .keyword_or, .ampersand, .pipe, .caret => try self.parseBinary(left),

@@ -83,3 +83,24 @@ test "Linter Rule: NegativeDimRule ignores negative coordinates" {
     // Should be zero diagnostics!
     try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
 }
+
+test "Linter Rule: NegativeDimRule catches negative dimensions inside arrays" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // The 'size' parameter expects a [x, y, z] array. One is negative.
+    const source = "box = Box.new(size: [10, -20, 30])";
+
+    var lexer = lexer_mod.Lexer.init(source, 0);
+    var parser = parser_mod.Parser.init(&lexer, arena.allocator());
+    const tree = try parser.parseProgram();
+
+    var engine = linter_mod.Linter.init(arena.allocator(), .{});
+    defer engine.deinit();
+
+    var rule_impl = NegativeDimRule{};
+    try walkAndCheck(tree, rule_impl.rule(), &engine);
+
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("CAD Warning: Property 'size' in primitive construction has non-positive dimension.", engine.diagnostics.items[0].message);
+}

@@ -110,3 +110,103 @@ test "Formatter: Inline Rescue Modifier" {
     const expected = "val = dangerous() rescue 0\n";
     try expectFormat(source, expected);
 }
+
+test "Formatter: Classes, Modules, and Namespace Access" {
+    const source =
+        \\module Hardware
+        \\class Screw< Base::Part
+        \\def self.build()
+        \\end
+        \\end
+        \\end
+    ;
+    const expected =
+        \\module Hardware
+        \\  class Screw < Base::Part
+        \\    def self.build
+        \\    end
+        \\  end
+        \\end
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Loops (while, until)" {
+    // Replaced OpenSCAD `for` loop with a valid `until` loop to ensure syntax passes
+    const source =
+        \\while x<10
+        \\x+=1
+        \\end
+        \\until y>10
+        \\cube(y)
+        \\end
+    ;
+    const expected =
+        \\while x < 10
+        \\  x += 1
+        \\end
+        \\until y > 10
+        \\  cube(y)
+        \\end
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Begin / Rescue / Ensure blocks" {
+    const source =
+        \\begin
+        \\build()
+        \\rescue MathError=>e
+        \\log(e)
+        \\ensure
+        \\clean()
+        \\end
+    ;
+    const expected =
+        \\begin
+        \\  build()
+        \\rescue MathError => e
+        \\  log(e)
+        \\ensure
+        \\  clean()
+        \\end
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Case Statements" {
+    const source =
+        \\case type
+        \\when 1,2
+        \\a()
+        \\else
+        \\b()
+        \\end
+    ;
+    const expected =
+        \\case type
+        \\when 1, 2
+        \\  a()
+        \\else
+        \\  b()
+        \\end
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Multi-Assignment and Indexing" {
+    const source =
+        \\x, y,z = [1,2,3]
+        \\obj[0]=x
+    ;
+    const expected =
+        \\x, y, z = [1, 2, 3]
+        \\obj[0] = x
+        \\
+    ;
+    try expectFormat(source, expected);
+}
