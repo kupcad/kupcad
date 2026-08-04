@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const lexer_mod = @import("lexer.zig");
 const Lexer = lexer_mod.Lexer;
+
 const test_utils = @import("../test_utils.zig");
 const t = test_utils.t;
 
@@ -13,11 +14,16 @@ fn expectTokens(source: []const u8, expected: anytype) !void {
 
 test "KupCAD Lexer: Basic assignment and method chaining" {
     try expectTokens("box = Box.new(x: 50)\nbox.translate(z: 10)", &.{
-        t(.ident, "box"), t(.equal, "="),         t(.constant, "Box"), t(.dot, "."),
-        t(.ident, "new"), t(.l_paren, "("),       t(.ident, "x"),      t(.colon, ":"),
-        t(.number, "50"), t(.r_paren, ")"),       t(.newline, "\n"),   t(.ident, "box"),
-        t(.dot, "."),     t(.ident, "translate"), t(.l_paren, "("),    t(.ident, "z"),
-        t(.colon, ":"),   t(.number, "10"),       t(.r_paren, ")"),    t(.eof, ""),
+        t(.ident, "box"),    t(.equal, "="),
+        t(.constant, "Box"), t(.dot, "."),
+        t(.ident, "new"),    t(.l_paren, "("),
+        t(.ident, "x"),      t(.colon, ":"),
+        t(.number, "50"),    t(.r_paren, ")"),
+        t(.newline, "\n"),   t(.ident, "box"),
+        t(.dot, "."),        t(.ident, "translate"),
+        t(.l_paren, "("),    t(.ident, "z"),
+        t(.colon, ":"),      t(.number, "10"),
+        t(.r_paren, ")"),    t(.eof, ""),
     });
 }
 
@@ -129,6 +135,7 @@ test "KupCAD Lexer: Arrays and Hashes" {
 test "KupCAD Lexer: Line and column tracking" {
     const source = "a = 1\n  b = 2";
     var lexer = Lexer.init(source, 0);
+
     var tok = lexer.next(); // 'a'
     try testing.expectEqual(.ident, tok.tag);
     try testing.expectEqual(@as(u32, 1), tok.loc.line);
@@ -354,4 +361,16 @@ test "KupCAD Lexer: Exhaustive Location tracking (line, col, offset, length, fil
     try testing.expectEqual(@as(u32, 2), tok.loc.line);
     try testing.expectEqual(@as(u32, 8), tok.loc.col);
     try testing.expectEqual(@as(u32, 13), tok.loc.offset);
+}
+
+test "KupCAD Lexer: Hash label vs Symbol ambiguity without spaces" {
+    try expectTokens("opts = {a: 1, b: b, c:c, d: :sym}", &.{
+        t(.ident, "opts"), t(.equal, "="), t(.l_brace, "{"),
+        t(.ident, "a"),    t(.colon, ":"), t(.number, "1"),
+        t(.comma, ","),    t(.ident, "b"), t(.colon, ":"),
+        t(.ident, "b"),    t(.comma, ","), t(.ident, "c"),
+        t(.colon, ":"),    t(.ident, "c"), t(.comma, ","),
+        t(.ident, "d"),    t(.colon, ":"), t(.symbol, "sym"),
+        t(.r_brace, "}"),  t(.eof, ""),
+    });
 }

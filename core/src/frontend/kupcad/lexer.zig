@@ -48,7 +48,6 @@ pub const Tag = enum {
     keyword_ensure,
     keyword_export,
     keyword_with,
-
     equal_equal,
     bang_equal,
     less_equal,
@@ -147,6 +146,7 @@ const keywords = std.StaticStringMap(Tag).initComptime(.{
 inline fn isIdentStart(c: u8) bool {
     return utils.LexerUtils.isIdentStart(c, true);
 }
+
 inline fn isIdentChar(c: u8) bool {
     return utils.LexerUtils.isIdentChar(c, false);
 }
@@ -248,6 +248,7 @@ pub const Lexer = struct {
         self.advance();
         const open_delim = self.peek();
         self.advance();
+
         const close_delim: u8 = switch (open_delim) {
             '[' => ']',
             '{' => '}',
@@ -285,11 +286,10 @@ pub const Lexer = struct {
 
     fn consumeCommentOrParam(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
-
         // Consume the initial comment line
         while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
-        const first_line = self.buffer[start..self.index];
 
+        const first_line = self.buffer[start..self.index];
         var i: usize = 1; // Start after '#'
         while (i < first_line.len and (first_line[i] == ' ' or first_line[i] == '\t')) i += 1;
 
@@ -300,13 +300,11 @@ pub const Lexer = struct {
             // Scan for multi-line continuation lines
             while (self.index < self.buffer.len and self.peek() == '\n') {
                 var lookahead = self.index + 1;
-
                 // Skip horizontal whitespace leading up to '#'
                 while (lookahead < self.buffer.len and (self.buffer[lookahead] == ' ' or self.buffer[lookahead] == '\t')) : (lookahead += 1) {}
 
                 if (lookahead < self.buffer.len and self.buffer[lookahead] == '#') {
                     lookahead += 1; // Skip '#'
-
                     var spaces_after_hash: usize = 0;
                     while (lookahead < self.buffer.len and (self.buffer[lookahead] == ' ' or self.buffer[lookahead] == '\t')) : (lookahead += 1) {
                         spaces_after_hash += 1;
@@ -374,8 +372,10 @@ pub const Lexer = struct {
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
         const is_constant = std.ascii.isUpper(self.peek());
         const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index, &self.col, false);
+
         var tag = if (is_constant) Tag.constant else Tag.ident;
         if (keywords.get(lexeme)) |kw_tag| tag = kw_tag;
+
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }
 
@@ -390,11 +390,24 @@ pub const Lexer = struct {
 
     fn consumeSymbolOrColon(self: *Lexer, start_loc: common_token.Location) Token {
         self.advance();
+
+        // Handle `::`
         if (self.index < self.buffer.len and self.peek() == ':') {
             self.advance();
             return .{ .tag = .colon_colon, .loc = start_loc, .lexeme = "::" };
         }
-        if (self.index < self.buffer.len and (self.peek() == '"' or self.peek() == '\'')) {
+
+        // Check if the character *before* the ':' indicates this is a hash/param label, not a symbol prefix.
+        var is_symbol = true;
+        if (self.index >= 2) {
+            const prev = self.buffer[self.index - 2];
+            if (isIdentChar(prev) or prev == '"' or prev == '\'' or prev == ']' or prev == ')' or prev == '}') {
+                is_symbol = false;
+            }
+        }
+
+        // Quoted symbols (e.g. :'complex name')
+        if (is_symbol and self.index < self.buffer.len and (self.peek() == '"' or self.peek() == '\'')) {
             const quote = self.peek();
             self.advance();
             const start = self.index;
@@ -405,13 +418,16 @@ pub const Lexer = struct {
             if (self.index < self.buffer.len) self.advance(); // consume quote
             return .{ .tag = .symbol, .loc = start_loc, .lexeme = lexeme };
         }
-        if (self.index < self.buffer.len and std.ascii.isAlphabetic(self.peek())) {
+
+        // Standard alphanumeric symbols (e.g. :name)
+        if (is_symbol and self.index < self.buffer.len and std.ascii.isAlphabetic(self.peek())) {
             const start = self.index;
             while (self.index < self.buffer.len and (std.ascii.isAlphanumeric(self.peek()) or self.peek() == '_')) {
                 self.advance();
             }
             return .{ .tag = .symbol, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
         }
+
         return .{ .tag = .colon, .loc = start_loc, .lexeme = ":" };
     }
 
@@ -424,15 +440,18 @@ pub const Lexer = struct {
         const start = self.index;
         while (self.index < self.buffer.len) {
             const c = self.peek();
+
             if (c == '\n') {
                 self.line += 1;
                 self.col = 0; // Will become 1 on advance() below
             }
+
             if (c == '\\') {
                 self.advance();
                 if (self.index < self.buffer.len) self.advance();
                 continue;
             }
+
             // Interpolation is ONLY for double-quoted strings
             if (quote == '"' and c == '#' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '{') {
                 const lexeme = self.buffer[start..self.index];
@@ -445,11 +464,13 @@ pub const Lexer = struct {
                 }
                 return .{ .tag = if (is_start) .string_start else .string_mid, .loc = start_loc, .lexeme = lexeme };
             }
+
             if (c == quote) {
                 const lexeme = self.buffer[start..self.index];
                 self.advance();
                 return .{ .tag = if (is_start) .string else .string_end, .loc = start_loc, .lexeme = lexeme };
             }
+
             self.advance();
         }
         return self.makeToken(.eof);
