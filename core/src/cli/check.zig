@@ -12,6 +12,14 @@ const Color = struct {
     const reset = "\x1b[0m";
 };
 
+// Track aggregate stats across all files
+const Totals = struct {
+    files: usize = 0,
+    errors: usize = 0,
+    warnings: usize = 0,
+    infos: usize = 0,
+};
+
 /// Helper to extract a specific 1-indexed line from the raw source string.
 fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
     var line_num: u32 = 1;
@@ -31,13 +39,79 @@ fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
-    const file_path = args_iter.next() orelse {
-        std.debug.print("Error: Missing file path. Usage: kupcad check <file>\n", .{});
+    var totals = Totals{};
+    var has_args = false;
+
+    // Process every argument passed by the user (or expanded by the shell like `*`)
+    while (args_iter.next()) |path| {
+        has_args = true;
+        try processPath(init, allocator, path, &totals);
+    }
+
+    if (!has_args) {
+        std.debug.print("Error: Missing file path. Usage: kupcad check <file|dir>...\n", .{});
+        return;
+    }
+
+    // Final Summary Footer
+    if (totals.errors == 0 and totals.warnings == 0 and totals.infos == 0) {
+        std.debug.print("\n{s}Success: No CAD geometry, syntax, or semantic issues found across {d} file(s).{s}\n", .{ Color.green, totals.files, Color.reset });
+    } else {
+        std.debug.print("\n{d} file(s) inspected, {s}{d} errors{s}, {s}{d} warnings{s}, {s}{d} info{s} detected.\n", .{
+            totals.files,
+            Color.red,
+            totals.errors,
+            Color.reset,
+            Color.yellow,
+            totals.warnings,
+            Color.reset,
+            Color.cyan,
+            totals.infos,
+            Color.reset,
+        });
+    }
+}
+
+fn processPath(init: std.process.Init, allocator: std.mem.Allocator, path: []const u8, totals: *Totals) !void {
+    const cwd = std.Io.Dir.cwd();
+
+    // Attempt to open the path as a directory first (sidesteps needing to stat the path)
+    if (cwd.openDir(init.io, path, .{ .iterate = true })) |dir_obj| {
+        var dir = dir_obj;
+        defer dir.close(init.io);
+
+        // dir.walk only takes the allocator
+        var walker = try dir.walk(allocator);
+        defer walker.deinit();
+
+        //  walker.next takes the IO context to perform syscalls
+        while (try walker.next(init.io)) |entry| {
+            // Filter strictly for `.kup` files
+            if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".kup")) {
+                const full_path = try std.fs.path.join(allocator, &.{ path, entry.path });
+                defer allocator.free(full_path);
+                try processFile(init, allocator, full_path, totals);
+            }
+        }
+    } else |err| {
+        if (err == error.NotDir) {
+            // It's a file, not a directory! Safely process it.
+            try processFile(init, allocator, path, totals);
+        } else {
+            std.debug.print("{s}Error accessing '{s}': {}{s}\n", .{ Color.red, path, err, Color.reset });
+        }
+    }
+}
+
+fn processFile(init: std.process.Init, allocator: std.mem.Allocator, file_path: []const u8, totals: *Totals) !void {
+    const cwd = std.Io.Dir.cwd();
+    const source = cwd.readFileAlloc(init.io, file_path, allocator, .limited(FILE_SIZE_LIMIT)) catch |err| {
+        std.debug.print("{s}Error reading '{s}': {}{s}\n", .{ Color.red, file_path, err, Color.reset });
         return;
     };
-
-    const source = try std.Io.Dir.cwd().readFileAlloc(init.io, file_path, allocator, .limited(FILE_SIZE_LIMIT));
     defer allocator.free(source);
+
+    totals.files += 1;
 
     const diags = try api.checkCode(allocator, source);
     defer {
@@ -45,15 +119,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         allocator.free(diags);
     }
 
-    if (diags.len == 0) {
-        std.debug.print("{s}Success: No CAD geometry, syntax, or semantic issues found.{s}\n", .{ Color.green, Color.reset });
-    } else {
-        std.debug.print("\n", .{});
-
-        var errors: usize = 0;
-        var warnings: usize = 0;
-        var infos: usize = 0;
-
+    if (diags.len > 0) {
         for (diags) |d| {
             const sev_color = switch (d.severity) {
                 .@"error" => Color.red,
@@ -67,9 +133,9 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             };
 
             switch (d.severity) {
-                .@"error" => errors += 1,
-                .warning => warnings += 1,
-                .info => infos += 1,
+                .@"error" => totals.errors += 1,
+                .warning => totals.warnings += 1,
+                .info => totals.infos += 1,
             }
 
             // Print the header (e.g., path/to/file.kup:10:5: W: Message goes here)
@@ -85,13 +151,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             // Print the squigglies mapping to the exact column and token length
             const col_idx = if (d.loc.col > 0) d.loc.col - 1 else 0;
 
-            // Pad spaces up to the column
             var i: usize = 0;
             while (i < col_idx) : (i += 1) {
                 std.debug.print(" ", .{});
             }
 
-            // Print the correct number of carets (fallback to 1 if length is 0 for EOF/synthetic nodes)
             std.debug.print("{s}", .{sev_color});
             const squiggles = if (d.loc.length > 0) d.loc.length else 1;
             var j: u32 = 0;
@@ -100,19 +164,5 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             }
             std.debug.print("{s}\n\n", .{Color.reset});
         }
-
-        // Summary footer
-        std.debug.print("{d} files inspected, {s}{d} errors{s}, {s}{d} warnings{s}, {s}{d} info{s} detected.\n", .{
-            1, // Hardcoded to 1 for now since the CLI takes a single file path
-            Color.red,
-            errors,
-            Color.reset,
-            Color.yellow,
-            warnings,
-            Color.reset,
-            Color.cyan,
-            infos,
-            Color.reset,
-        });
     }
 }
