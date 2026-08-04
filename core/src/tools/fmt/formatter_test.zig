@@ -282,19 +282,16 @@ test "Formatter: Compound Property and Index Assignments" {
     try expectFormat(source, expected);
 }
 
-test "Formatter: Safely skips lines with invalid syntax (Error Recovery)" {
-    const source =
+test "Formatter: Aborts formatting when source contains syntax errors" {
+    const invalid_source =
         \\valid_line = 10
-        \\arr [ 0 ] *= 5 # This is invalid strict syntax
+        \\arr [ 0 ] *= 5 # Syntax error
         \\another_valid = 20
     ;
 
-    // The statement on line 2 fails to parse, but its comment is preserved in the side-table.
-    const expected =
-        \\valid_line = 10
-        \\# This is invalid strict syntax
-        \\another_valid = 20
-        \\
-    ;
-    try expectFormat(source, expected);
+    const allocator = testing.allocator;
+    const result = api.formatCode(allocator, invalid_source, .{});
+
+    // Must return error.SyntaxError rather than returning partial code
+    try testing.expectError(error.SyntaxError, result);
 }

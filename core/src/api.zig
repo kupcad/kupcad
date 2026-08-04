@@ -7,6 +7,11 @@ const Linter = @import("tools/lint/linter.zig").Linter;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 pub const LinterDiagnostic = @import("tools/lint/linter.zig").LinterDiagnostic;
 
+pub const FormatError = error{
+    SyntaxError,
+    OutOfMemory,
+};
+
 /// Formats KupCAD source code. Caller owns the returned slice.
 pub fn formatCode(allocator: std.mem.Allocator, source: []const u8, config: FormatterConfig) ![]const u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -18,9 +23,15 @@ pub fn formatCode(allocator: std.mem.Allocator, source: []const u8, config: Form
 
     const tree = try parser.parseProgram();
 
+    // Abort formatting if any syntax errors occurred during parsing!
+    if (parser.diagnostics.list.items.len > 0) {
+        return error.SyntaxError;
+    }
+
     // Feed the original allocator to the Formatter and apply the passed Config
     var formatter = Formatter.init(allocator, parser.comments.items, config);
     defer formatter.deinit();
+
     try formatter.registerDefaultRules();
 
     return formatter.format(tree);
@@ -30,8 +41,8 @@ pub fn formatCode(allocator: std.mem.Allocator, source: []const u8, config: Form
 pub fn checkCode(allocator: std.mem.Allocator, source: []const u8, config: LinterConfig) ![]LinterDiagnostic {
     var linter = Linter.init(allocator, config);
     defer linter.deinit();
-    try linter.registerDefaultRules();
 
+    try linter.registerDefaultRules();
     try linter.check(source);
 
     return linter.diagnostics.toOwnedSlice(allocator);
