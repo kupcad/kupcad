@@ -12,6 +12,14 @@ pub const NegativeDimRule = struct {
         return "Negative Dimension Check";
     }
 
+    fn isDimensionName(name: []const u8) bool {
+        const dims = [_][]const u8{ "r", "h", "d", "w", "l", "radius", "height", "diameter", "width", "length", "depth", "thickness", "size" };
+        for (dims) |dim| {
+            if (std.mem.eql(u8, name, dim)) return true;
+        }
+        return false;
+    }
+
     fn isNodeNegative(node: *ast.Node) bool {
         switch (node.kind) {
             .number => |n| return n <= 0.0,
@@ -28,15 +36,16 @@ pub const NegativeDimRule = struct {
     fn checkNode(_: *anyopaque, node: *ast.Node, engine: *linter.Linter) !void {
         switch (node.kind) {
             .property_assignment => |pa| {
-                if (isNodeNegative(pa.value)) {
+                if (isDimensionName(pa.property) and isNodeNegative(pa.value)) {
                     try engine.addDiagnostic(pa.value.loc, .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{pa.property});
                 }
             },
             .method_call => |mc| {
                 for (mc.args) |arg| {
-                    if (isNodeNegative(arg.value)) {
-                        const param_name = if (arg.name.len > 0) arg.name else "unnamed";
-                        try engine.addDiagnostic(arg.value.loc, .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{param_name});
+                    if (arg.name.len > 0 and isDimensionName(arg.name)) {
+                        if (isNodeNegative(arg.value)) {
+                            try engine.addDiagnostic(arg.value.loc, .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{arg.name});
+                        }
                     }
                 }
             },

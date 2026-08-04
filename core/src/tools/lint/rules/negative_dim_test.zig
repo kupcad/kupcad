@@ -26,13 +26,13 @@ test "Linter Rule: NegativeDimRule catches negative dimensions in method calls" 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    const source = "box = Box.new(x: -50, y: 20)";
+    // Changed from `x: -50` to `r: -50` to trigger physical dimension check
+    const source = "cyl = Cylinder.new(r: -50, h: 20)";
     var lexer = lexer_mod.Lexer.init(source, 0);
     var parser = parser_mod.Parser.init(&lexer, arena.allocator());
 
     const tree = try parser.parseProgram();
 
-    // Create an empty engine for the context API (removed `try`)
     var engine = linter_mod.Linter.init(arena.allocator(), .{});
     defer engine.deinit();
 
@@ -40,7 +40,7 @@ test "Linter Rule: NegativeDimRule catches negative dimensions in method calls" 
     try walkAndCheck(tree, rule_impl.rule(), &engine);
 
     try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
-    try testing.expectEqualStrings("CAD Warning: Property 'x' in primitive construction has non-positive dimension.", engine.diagnostics.items[0].message);
+    try testing.expectEqualStrings("CAD Warning: Property 'r' in primitive construction has non-positive dimension.", engine.diagnostics.items[0].message);
 }
 
 test "Linter Rule: NegativeDimRule catches negative dimensions in property assignment" {
@@ -61,4 +61,25 @@ test "Linter Rule: NegativeDimRule catches negative dimensions in property assig
 
     try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
     try testing.expectEqualStrings("CAD Warning: Property 'width' in primitive construction has non-positive dimension.", engine.diagnostics.items[0].message);
+}
+
+test "Linter Rule: NegativeDimRule ignores negative coordinates" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Verify coordinates and translations are permitted
+    const source = "box = Box.new(x: -50, y: -20, z: -10)";
+    var lexer = lexer_mod.Lexer.init(source, 0);
+    var parser = parser_mod.Parser.init(&lexer, arena.allocator());
+
+    const tree = try parser.parseProgram();
+
+    var engine = linter_mod.Linter.init(arena.allocator(), .{});
+    defer engine.deinit();
+
+    var rule_impl = NegativeDimRule{};
+    try walkAndCheck(tree, rule_impl.rule(), &engine);
+
+    // Should be zero diagnostics!
+    try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
 }
