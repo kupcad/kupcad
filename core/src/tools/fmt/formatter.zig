@@ -407,7 +407,9 @@ pub const Formatter = struct {
         try self.formatNode(pa.target);
         try self.out.append(self.allocator, '.');
         try self.out.appendSlice(self.allocator, pa.property);
-        try self.out.appendSlice(self.allocator, " = ");
+        try self.out.append(self.allocator, ' ');
+        if (pa.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op));
+        try self.out.appendSlice(self.allocator, "= ");
         try self.formatNode(pa.value);
     }
 
@@ -415,7 +417,9 @@ pub const Formatter = struct {
         try self.formatNode(ia.target);
         try self.out.append(self.allocator, '[');
         try self.formatNode(ia.index);
-        try self.out.appendSlice(self.allocator, "] = ");
+        try self.out.appendSlice(self.allocator, "] ");
+        if (ia.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op));
+        try self.out.appendSlice(self.allocator, "= ");
         try self.formatNode(ia.value);
     }
 

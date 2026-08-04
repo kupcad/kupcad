@@ -210,3 +210,91 @@ test "Formatter: Multi-Assignment and Indexing" {
     ;
     try expectFormat(source, expected);
 }
+
+test "Formatter: Flow control keywords (return, break, next, yield)" {
+    const source = "return  x,y\nbreak   42\nnext\nyield  1,  2";
+    const expected =
+        \\return [x, y]
+        \\break 42
+        \\next
+        \\yield 1, 2
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Unary Operators and Splats (no extra spaces)" {
+    const source = "x =  - 10\ny =  ! true\nz =  ~ part\ndef foo( * args,  ** kwargs)\nend";
+    const expected =
+        \\x = -10
+        \\y = !true
+        \\z = ~part
+        \\def foo(*args, **kwargs)
+        \\end
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Property and Index Assignment" {
+    const source = "obj . x  =  10\narr[0]= 5";
+    const expected =
+        \\obj.x = 10
+        \\arr[0] = 5
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Imports and Exports" {
+    const source =
+        \\import   "lib.kup"
+        \\import  {  A,B  }  from  "lib.kup"   with {  version:2  }
+        \\export {C} from "other.kup"
+    ;
+    const expected =
+        \\import "lib.kup"
+        \\import { A, B } from "lib.kup" with { version: 2 }
+        \\export { C } from "other.kup"
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Percent Arrays normalize to standard canonical arrays" {
+    const source = "arr = %w[ gear shaft ]\nsyms = %i( a b )";
+    // The formatter canonicalizes obscure syntax back to the universal standard
+    const expected =
+        \\arr = ["gear", "shaft"]
+        \\syms = [:a, :b]
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Compound Property and Index Assignments" {
+    const source = "obj . x  +=  10\narr[0]*= 5";
+    const expected =
+        \\obj.x += 10
+        \\arr[0] *= 5
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Safely skips lines with invalid syntax (Error Recovery)" {
+    const source =
+        \\valid_line = 10
+        \\arr [ 0 ] *= 5 # This is invalid strict syntax
+        \\another_valid = 20
+    ;
+
+    // The parser throws an error on line 2, synchronizes, and recovers.
+    // Therefore, the formatter only ever receives lines 1 and 3 in the AST.
+    const expected =
+        \\valid_line = 10
+        \\another_valid = 20
+        \\
+    ;
+    try expectFormat(source, expected);
+}

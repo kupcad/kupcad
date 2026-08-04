@@ -2543,3 +2543,86 @@ test "KupCAD Parser: Compound Node Spans and Comment Side-Table Extraction" {
     try testing.expectEqual(@as(u32, 2), captured_comment.loc.line);
     try testing.expectEqual(@as(u32, 19), captured_comment.loc.offset);
 }
+
+test "KupCAD Parser: Standard Block While and Until Loops" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\while x < 10
+        \\  x += 1
+        \\end
+        \\until y > 10
+        \\  y -= 1
+        \\end
+    ;
+
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    // Check `while`
+    const while_stmt = try parser.parseStatement();
+    try testing.expectEqual(ast.NodeKind.while_stmt, @as(std.meta.Tag(ast.NodeKind), while_stmt.kind));
+    try testing.expectEqual(false, while_stmt.kind.while_stmt.is_until);
+    try testing.expectEqual(ast.BinaryOp.add, while_stmt.kind.while_stmt.body.kind.block.stmts[0].kind.assignment.op.?);
+
+    // Check `until`
+    const until_stmt = try parser.parseStatement();
+    try testing.expectEqual(ast.NodeKind.while_stmt, @as(std.meta.Tag(ast.NodeKind), until_stmt.kind));
+    try testing.expectEqual(true, until_stmt.kind.while_stmt.is_until);
+    try testing.expectEqual(ast.BinaryOp.subtract, until_stmt.kind.while_stmt.body.kind.block.stmts[0].kind.assignment.op.?);
+}
+
+test "KupCAD Parser: Index Compound Assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "arr[0] *= 5";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    try testing.expectEqual(ast.NodeKind.index_assignment, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
+    try testing.expectEqualStrings("arr", stmt.kind.index_assignment.target.kind.identifier);
+    try testing.expectEqual(@as(f64, 0.0), stmt.kind.index_assignment.index.kind.number);
+    try testing.expectEqual(ast.BinaryOp.multiply, stmt.kind.index_assignment.op.?);
+    try testing.expectEqual(@as(f64, 5.0), stmt.kind.index_assignment.value.kind.number);
+}
+
+test "KupCAD Parser: Property Compound Assignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source = "obj.x += 10";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const stmt = try parser.parseStatement();
+
+    try testing.expectEqual(ast.NodeKind.property_assignment, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
+    try testing.expectEqualStrings("obj", stmt.kind.property_assignment.target.kind.identifier);
+    try testing.expectEqualStrings("x", stmt.kind.property_assignment.property);
+    try testing.expectEqual(ast.BinaryOp.add, stmt.kind.property_assignment.op.?);
+    try testing.expectEqual(@as(f64, 10.0), stmt.kind.property_assignment.value.kind.number);
+}
+
+test "KupCAD Parser: Strict Index Assignment Rejects Spaces" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Because of the space, `arr [ 0 ]` parses as a method call `arr([0])`.
+    // When it hits `*=`, `parseAssignmentExpr` strictly rejects assigning to a method call with args.
+    const source = "arr [ 0 ] *= 5";
+    var lexer = Lexer.init(source, 0);
+    var parser = Parser.init(&lexer, arena.allocator());
+
+    const result = parser.parseStatement();
+
+    // Assert that the parser threw an error instead of returning an AST node
+    try testing.expectError(error.InvalidExpression, result);
+
+    // Assert that a diagnostic was generated for the language server
+    try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
+    try testing.expectEqualStrings("Invalid expression starting with '*='", parser.diagnostics.list.items[0].message);
+}

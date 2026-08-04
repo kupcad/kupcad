@@ -266,7 +266,9 @@ pub const Parser = struct {
     }
 
     fn parseAssignmentExpr(self: *Parser, left: *Node) ParseError!*Node {
-        const op_tag = self.tokens.current.tag;
+        // Capture the full token so we have the location and lexeme for the error message
+        const op_tok = self.tokens.current;
+        const op_tag = op_tok.tag;
         self.advance();
 
         // Use ExpressionList to capture `x = 1, 2` as an ArrayLiteral
@@ -285,7 +287,17 @@ pub const Parser = struct {
                 .op = tagToAssignmentOp(op_tag),
                 .value = value,
             }) }, left.loc);
+        } else if (left.kind == .index_access) {
+            return self.createNode(.{ .index_assignment = try self.b.box(ast.IndexAssignment, .{
+                .target = left.kind.index_access.target,
+                .index = left.kind.index_access.index,
+                .op = tagToAssignmentOp(op_tag),
+                .value = value,
+            }) }, left.loc);
         }
+
+        // Throw the diagnostic to the language server before bailing out!
+        self.reportError(op_tok.loc, "Invalid expression starting with '{s}'", .{op_tok.lexeme});
         return ParseError.InvalidExpression;
     }
 
