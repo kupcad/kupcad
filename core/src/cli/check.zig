@@ -1,5 +1,7 @@
 const std = @import("std");
 const api = @import("../api.zig");
+const ProjectConfig = @import("config.zig").ProjectConfig;
+const LintConfig = @import("../tools/lint/config.zig").Config;
 
 const FILE_SIZE_LIMIT = 1024 * 1024 * 10;
 
@@ -26,7 +28,6 @@ fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
     var iter = std.mem.splitScalar(u8, source, '\n');
     while (iter.next()) |line| {
         if (line_num == target_line) {
-            // Manually trim the trailing carriage return if on Windows CRLF
             var trimmed = line;
             if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '\r') {
                 trimmed = trimmed[0 .. trimmed.len - 1];
@@ -42,10 +43,14 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     var totals = Totals{};
     var has_args = false;
 
-    // Process every argument passed by the user (or expanded by the shell like `*`)
+    const config = ProjectConfig.load(init, allocator) catch |err| {
+        std.debug.print("Error parsing .kupcad.json: {}\n", .{err});
+        std.process.exit(1);
+    };
+
     while (args_iter.next()) |path| {
         has_args = true;
-        try processPath(init, allocator, path, &totals);
+        try processPath(init, allocator, path, &totals, config.lint);
     }
 
     if (!has_args) {
@@ -53,7 +58,6 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         std.process.exit(1);
     }
 
-    // Final Summary Footer
     if (totals.errors == 0 and totals.warnings == 0 and totals.infos == 0) {
         std.debug.print("\n{s}Success: No CAD geometry, syntax, or semantic issues found across {d} file(s).{s}\n", .{ Color.green, totals.files, Color.reset });
     } else {
@@ -71,16 +75,14 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         });
     }
 
-    // Ensure CI/CD pipelines fail if there are any linting errors
     if (totals.errors > 0) {
         std.process.exit(1);
     }
 }
 
-fn processPath(init: std.process.Init, allocator: std.mem.Allocator, path: []const u8, totals: *Totals) !void {
+fn processPath(init: std.process.Init, allocator: std.mem.Allocator, path: []const u8, totals: *Totals, lint_config: LintConfig) !void {
     const cwd = std.Io.Dir.cwd();
 
-    // Attempt to open the path as a directory first (sidesteps needing to stat the path)
     if (cwd.openDir(init.io, path, .{ .iterate = true })) |dir_obj| {
         var dir = dir_obj;
         defer dir.close(init.io);
@@ -89,26 +91,23 @@ fn processPath(init: std.process.Init, allocator: std.mem.Allocator, path: []con
         defer walker.deinit();
 
         while (try walker.next(init.io)) |entry| {
-            // Filter strictly for `.kup` files
             if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".kup")) {
                 const full_path = try std.fs.path.join(allocator, &.{ path, entry.path });
                 defer allocator.free(full_path);
-                try processFile(init, allocator, full_path, totals);
+                try processFile(init, allocator, full_path, totals, lint_config);
             }
         }
     } else |err| {
         if (err == error.NotDir) {
-            // It's a file, not a directory! Safely process it.
-            try processFile(init, allocator, path, totals);
+            try processFile(init, allocator, path, totals, lint_config);
         } else {
             std.debug.print("{s}Error accessing '{s}': {}{s}\n", .{ Color.red, path, err, Color.reset });
-            // Consider an access error a failure condition
             totals.errors += 1;
         }
     }
 }
 
-fn processFile(init: std.process.Init, allocator: std.mem.Allocator, file_path: []const u8, totals: *Totals) !void {
+fn processFile(init: std.process.Init, allocator: std.mem.Allocator, file_path: []const u8, totals: *Totals, lint_config: LintConfig) !void {
     const cwd = std.Io.Dir.cwd();
     const source = cwd.readFileAlloc(init.io, file_path, allocator, .limited(FILE_SIZE_LIMIT)) catch |err| {
         std.debug.print("{s}Error reading '{s}': {}{s}\n", .{ Color.red, file_path, err, Color.reset });
@@ -119,7 +118,7 @@ fn processFile(init: std.process.Init, allocator: std.mem.Allocator, file_path: 
 
     totals.files += 1;
 
-    const diags = try api.checkCode(allocator, source);
+    const diags = try api.checkCode(allocator, source, lint_config);
     defer {
         for (diags) |d| allocator.free(d.message);
         allocator.free(diags);
@@ -144,17 +143,14 @@ fn processFile(init: std.process.Init, allocator: std.mem.Allocator, file_path: 
                 .info => totals.infos += 1,
             }
 
-            // Print the header (e.g., path/to/file.kup:10:5: W: Message goes here)
             std.debug.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}\n", .{
                 Color.cyan, file_path, d.loc.line,  d.loc.col, Color.reset,
                 sev_color,  sev_char,  Color.reset, d.message,
             });
 
-            // Extract and print the exact line of code
             const source_line = getSourceLine(source, d.loc.line);
             std.debug.print("{s}\n", .{source_line});
 
-            // Print the squigglies mapping to the exact column and token length
             const col_idx = if (d.loc.col > 0) d.loc.col - 1 else 0;
 
             var i: usize = 0;
