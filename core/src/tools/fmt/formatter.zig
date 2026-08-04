@@ -20,7 +20,7 @@ pub const Formatter = struct {
     sort_imports_rule: SortImportsRule = .{},
 
     pub fn init(allocator: std.mem.Allocator, comments: []const token.Comment, config: Config) Formatter {
-        return Formatter{
+        return .{
             .allocator = allocator,
             .comments = comments,
             .config = config,
@@ -39,301 +39,465 @@ pub const Formatter = struct {
     }
 
     pub fn format(self: *Formatter, root: *ast.Node) ![]const u8 {
-        // Phase 1: AST Normalizer (Config Application)
-        for (self.rules.items) |rule| {
-            rule.normalize(root);
-        }
+        for (self.rules.items) |rule| rule.normalize(root);
 
-        // Phase 2: Canonical Layout Printer
         try self.formatNode(root);
         try self.flushComments(std.math.maxInt(u32));
 
-        if (self.out.items.len > 0 and self.out.items[self.out.items.len - 1] != '\n') {
-            try self.out.append(self.allocator, '\n');
-        }
+        try self.ensureNewline();
         return try self.out.toOwnedSlice(self.allocator);
     }
 
-    fn writeIndent(self: *Formatter) !void {
-        // Apply Config-driven indentation
-        try self.out.appendNTimes(self.allocator, ' ', self.indent_level * self.config.indent_width);
+    // --- State & Spacing Helpers ---
+
+    fn isAtLineStartOrEmpty(self: *Formatter) bool {
+        return self.out.items.len == 0 or self.out.items[self.out.items.len - 1] == '\n';
     }
 
-    fn flushComments(self: *Formatter, up_to_line: u32) !void {
-        while (self.comment_idx < self.comments.len) {
-            const c = self.comments[self.comment_idx];
-            if (c.loc.line <= up_to_line) {
-                try self.writeIndent();
-                try self.out.appendSlice(self.allocator, c.lexeme);
-                try self.out.append(self.allocator, '\n');
-                self.comment_idx += 1;
-            } else {
-                break;
-            }
+    fn ensureNewline(self: *Formatter) Error!void {
+        if (!self.isAtLineStartOrEmpty()) {
+            try self.out.append(self.allocator, '\n');
         }
     }
 
+    fn writeIndent(self: *Formatter) Error!void {
+        try self.out.appendNTimes(self.allocator, ' ', self.indent_level * self.config.indent_width);
+    }
+
+    fn formatBodyWithEnd(self: *Formatter, body: *ast.Node) Error!void {
+        try self.ensureNewline();
+        self.indent_level += 1;
+        try self.formatNode(body);
+        self.indent_level -= 1;
+        try self.writeIndent();
+        try self.out.appendSlice(self.allocator, "end");
+    }
+
+    fn flushComments(self: *Formatter, up_to_line: u32) Error!void {
+        while (self.comment_idx < self.comments.len) {
+            const c = self.comments[self.comment_idx];
+            if (c.loc.line <= up_to_line) {
+                if (self.isAtLineStartOrEmpty()) try self.writeIndent();
+                try self.out.appendSlice(self.allocator, c.lexeme);
+                try self.out.append(self.allocator, '\n');
+                self.comment_idx += 1;
+            } else break;
+        }
+    }
+
+    // --- Core Master Traversal ---
+
     fn formatNode(self: *Formatter, node: *ast.Node) Error!void {
         try self.flushComments(node.loc.line);
+
         switch (node.kind) {
-            .block => |b| {
-                for (b.stmts, 0..) |stmt, idx| {
-                    try self.writeIndent();
-                    try self.formatNode(stmt);
-                    if (idx < b.stmts.len - 1 or b.stmts.len == 1) {
-                        try self.out.append(self.allocator, '\n');
-                    }
-                }
-            },
-            .assignment => |a| {
-                try self.out.appendSlice(self.allocator, a.name);
-                try self.out.append(self.allocator, ' ');
-                if (a.op) |op| {
-                    try self.formatBinaryOpStr(op);
-                }
-                try self.out.appendSlice(self.allocator, "= ");
-                try self.formatNode(a.value);
-            },
-            .multiple_assignment => |ma| {
-                for (ma.lhs, 0..) |item, idx| {
-                    if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                    if (item.modifier) |mod| {
-                        if (mod == .splat) try self.out.append(self.allocator, '*');
-                    }
-                    try self.out.appendSlice(self.allocator, item.name);
-                }
-                try self.out.appendSlice(self.allocator, " = ");
-                try self.formatNode(ma.value);
-            },
-            .property_assignment => |pa| {
-                try self.formatNode(pa.target);
-                try self.out.append(self.allocator, '.');
-                try self.out.appendSlice(self.allocator, pa.property);
-                try self.out.appendSlice(self.allocator, " = ");
-                try self.formatNode(pa.value);
-            },
-            .index_assignment => |ia| {
-                try self.formatNode(ia.target);
-                try self.out.append(self.allocator, '[');
-                try self.formatNode(ia.index);
-                try self.out.appendSlice(self.allocator, "] = ");
-                try self.formatNode(ia.value);
-            },
-            .binary_op => |b| {
-                try self.formatNode(b.left);
-                try self.out.append(self.allocator, ' ');
-                try self.formatBinaryOpStr(b.op);
-                try self.out.append(self.allocator, ' ');
-                try self.formatNode(b.right);
-            },
-            .unary_op => |u| {
-                const op_str = switch (u.op) {
-                    .negate => "-",
-                    .positive => "+",
-                    .not => "!",
-                    .bitwise_not => "~",
-                };
-                try self.out.appendSlice(self.allocator, op_str);
-                try self.formatNode(u.operand);
-            },
-            .method_call => |mc| {
-                if (mc.receiver) |r| {
-                    try self.formatNode(r);
-                    if (r.kind == .method_call) {
-                        try self.out.append(self.allocator, '\n');
-                        self.indent_level += 1;
-                        try self.writeIndent();
-                        self.indent_level -= 1;
-                    }
-                    if (mc.is_safe) {
-                        try self.out.appendSlice(self.allocator, "&.");
-                    } else {
-                        try self.out.append(self.allocator, '.');
-                    }
-                }
-                try self.out.appendSlice(self.allocator, mc.method_name);
-                if (mc.args.len > 0) {
-                    try self.out.append(self.allocator, '(');
-                    for (mc.args, 0..) |arg, idx| {
-                        if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                        if (arg.name.len > 0) {
-                            try self.out.appendSlice(self.allocator, arg.name);
-                            try self.out.appendSlice(self.allocator, ": ");
-                        }
-                        try self.formatNode(arg.value);
-                    }
-                    try self.out.append(self.allocator, ')');
-                }
-                if (mc.block) |block_node| {
-                    try self.out.append(self.allocator, ' ');
-                    try self.formatBlockClosure(block_node);
-                }
-            },
-            .if_stmt => |ifs| {
-                const kw = if (ifs.is_unless) "unless " else "if ";
-                try self.out.appendSlice(self.allocator, kw);
-                try self.formatNode(ifs.condition);
-                try self.out.append(self.allocator, '\n');
-                self.indent_level += 1;
-                try self.formatNode(ifs.then_branch);
-                self.indent_level -= 1;
-                if (ifs.else_branch) |eb| {
-                    try self.writeIndent();
-                    try self.out.appendSlice(self.allocator, "else\n");
-                    self.indent_level += 1;
-                    try self.formatNode(eb);
-                    self.indent_level -= 1;
-                }
-                try self.writeIndent();
-                try self.out.appendSlice(self.allocator, "end");
-            },
-            .def_stmt => |def| {
-                try self.out.appendSlice(self.allocator, "def ");
-                if (def.is_class_method) try self.out.appendSlice(self.allocator, "self.");
-                try self.out.appendSlice(self.allocator, def.name);
-                if (def.params.len > 0) {
-                    try self.out.append(self.allocator, '(');
-                    for (def.params, 0..) |p, idx| {
-                        if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                        try self.out.appendSlice(self.allocator, p.name);
-                        if (p.is_keyword) try self.out.append(self.allocator, ':');
-                        if (p.default_value) |dv| {
-                            if (p.is_keyword) {
-                                try self.out.append(self.allocator, ' ');
-                            } else {
-                                try self.out.appendSlice(self.allocator, " = ");
-                            }
-                            try self.formatNode(dv);
-                        }
-                    }
-                    try self.out.append(self.allocator, ')');
-                }
-                try self.out.append(self.allocator, '\n');
-                self.indent_level += 1;
-                try self.formatNode(def.body);
-                self.indent_level -= 1;
-                try self.writeIndent();
-                try self.out.appendSlice(self.allocator, "end");
-            },
-            .class_stmt => |cls| {
-                try self.out.appendSlice(self.allocator, "class ");
-                try self.formatNode(cls.name);
-                if (cls.super_class) |sc| {
-                    try self.out.appendSlice(self.allocator, " < ");
-                    try self.formatNode(sc);
-                }
-                try self.out.append(self.allocator, '\n');
-                self.indent_level += 1;
-                try self.formatNode(cls.body);
-                self.indent_level -= 1;
-                try self.writeIndent();
-                try self.out.appendSlice(self.allocator, "end");
-            },
-            .module_stmt => |m| {
-                try self.out.appendSlice(self.allocator, "module ");
-                try self.out.appendSlice(self.allocator, m.name);
-                try self.out.append(self.allocator, '\n');
-                self.indent_level += 1;
-                try self.formatNode(m.body);
-                self.indent_level -= 1;
-                try self.writeIndent();
-                try self.out.appendSlice(self.allocator, "end");
-            },
-            .array_literal => |arr| {
-                try self.out.append(self.allocator, '[');
-                for (arr, 0..) |elem, idx| {
-                    if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                    try self.formatNode(elem);
-                }
-                try self.out.append(self.allocator, ']');
-            },
-            .hash_literal => |entries| {
-                try self.out.appendSlice(self.allocator, "{ ");
-                for (entries, 0..) |entry, idx| {
-                    if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                    try self.formatNode(entry.key);
-                    try self.out.appendSlice(self.allocator, ": ");
-                    try self.formatNode(entry.value);
-                }
-                try self.out.appendSlice(self.allocator, " }");
-            },
-            .param_doc => |doc| {
-                try self.out.appendSlice(self.allocator, "# @");
-                try self.out.appendSlice(self.allocator, doc.tag_name);
-                var current_line_len: usize = self.indent_level * 2 + 3 + doc.tag_name.len;
-                if (doc.target_name) |tn| {
-                    try self.out.append(self.allocator, ' ');
-                    try self.out.appendSlice(self.allocator, tn);
-                    current_line_len += 1 + tn.len;
-                }
-                if (doc.type_name) |tn| {
-                    try self.out.appendSlice(self.allocator, " [");
-                    try self.out.appendSlice(self.allocator, tn);
-                    try self.out.append(self.allocator, ']');
-                    current_line_len += 3 + tn.len;
-                }
-                if (doc.description.len > 0) {
-                    const max_len: usize = 80;
-                    var line_iter = std.mem.splitScalar(u8, doc.description, '\n');
-                    var first_line = true;
-                    while (line_iter.next()) |line| {
-                        if (!first_line) {
-                            try self.out.append(self.allocator, '\n');
-                            try self.writeIndent();
-                            try self.out.appendSlice(self.allocator, "#   ");
-                            current_line_len = self.indent_level * 2 + 4;
-                        } else {
-                            try self.out.append(self.allocator, ' ');
-                            current_line_len += 1;
-                        }
-                        first_line = false;
-                        var word_iter = std.mem.tokenizeAny(u8, line, " \t\r");
-                        var first_word = true;
-                        while (word_iter.next()) |word| {
-                            if (!first_word) {
-                                if (current_line_len + 1 + word.len > max_len) {
-                                    try self.out.append(self.allocator, '\n');
-                                    try self.writeIndent();
-                                    try self.out.appendSlice(self.allocator, "#   ");
-                                    current_line_len = self.indent_level * 2 + 4;
-                                } else {
-                                    try self.out.append(self.allocator, ' ');
-                                    current_line_len += 1;
-                                }
-                            }
-                            try self.out.appendSlice(self.allocator, word);
-                            current_line_len += word.len;
-                            first_word = false;
-                        }
-                    }
-                }
-                if (doc.options_expr) |opts| {
-                    try self.out.appendSlice(self.allocator, " ");
-                    try self.formatNode(opts);
-                }
-            },
+            .block => |b| try self.formatBlockStmts(b.stmts),
             .number => |n| {
                 var buf: [64]u8 = undefined;
-                const str = try std.fmt.bufPrint(&buf, "{d}", .{n});
-                try self.out.appendSlice(self.allocator, str);
+                try self.out.appendSlice(self.allocator, try std.fmt.bufPrint(&buf, "{d}", .{n}));
             },
-            .string => |s| {
-                try self.out.append(self.allocator, '"');
-                try self.out.appendSlice(self.allocator, s);
-                try self.out.append(self.allocator, '"');
-            },
-            .symbol => |s| {
-                try self.out.append(self.allocator, ':');
-                try self.out.appendSlice(self.allocator, s);
-            },
-            .boolean => |b| {
-                try self.out.appendSlice(self.allocator, if (b) "true" else "false");
-            },
+            .string => |s| try self.formatWrappedString(s, '"'),
+            .interpolated_string => |parts| try self.formatInterpolatedString(parts),
+            .symbol => |s| try self.formatWrappedString(s, ':'),
+            .boolean => |b| try self.out.appendSlice(self.allocator, if (b) "true" else "false"),
             .nil => try self.out.appendSlice(self.allocator, "nil"),
+            .undef => try self.out.appendSlice(self.allocator, "undef"),
+            .self_expr => try self.out.appendSlice(self.allocator, "self"),
             .identifier => |i| try self.out.appendSlice(self.allocator, i),
-            else => {
-                try self.out.appendSlice(self.allocator, "/* unformatted node */");
-            },
+            .array_literal => |arr| try self.formatArray(arr),
+            .hash_literal => |entries| try self.formatHash(entries),
+            .if_stmt => |ifs| try self.formatIfStmt(ifs),
+            .while_stmt => |ws| try self.formatWhileStmt(ws),
+            .for_stmt => |fs| try self.formatForStmt(fs),
+            .case_stmt => |cs| try self.formatCaseStmt(cs),
+            .begin_stmt => |bs| try self.formatBeginStmt(bs),
+            .def_stmt => |def| try self.formatDefStmt(def),
+            .class_stmt => |cls| try self.formatClassStmt(cls),
+            .module_stmt => |m| try self.formatModuleStmt(m),
+            .lambda_expr => |l| try self.formatLambda(l),
+            .namespace_access => |ns| try self.formatNamespace(ns),
+            .range => |r| try self.formatRange(r),
+            .assignment => |a| try self.formatAssignment(a),
+            .multiple_assignment => |ma| try self.formatMultipleAssignment(ma),
+            .property_assignment => |pa| try self.formatPropertyAssignment(pa),
+            .index_assignment => |ia| try self.formatIndexAssignment(ia),
+            .index_access => |ia| try self.formatIndexAccess(ia),
+            .binary_op => |b| try self.formatBinaryOp(b),
+            .unary_op => |u| try self.formatUnaryOp(u),
+            .ternary_op => |t| try self.formatTernaryOp(t),
+            .splat_expr => |s| try self.formatSplat(s, "*"),
+            .double_splat_expr => |s| try self.formatSplat(s, "**"),
+            .each_expr => |e| try self.formatSplat(e, "each "),
+            .rescue_modifier => |rm| try self.formatRescueModifier(rm),
+            .method_call => |mc| try self.formatMethodCall(mc),
+            .super_call => |sc| try self.formatSuperCall(sc),
+            .return_stmt => |r| try self.formatFlowControl("return", r),
+            .break_stmt => |b| try self.formatFlowControl("break", b),
+            .next_stmt => |n| try self.formatFlowControl("next", n),
+            .yield_stmt => |y| try self.formatYield(y),
+            .import_stmt => |is| try self.formatImportExport("import", is.symbols, is.path, is.attributes),
+            .export_stmt => |es| try self.formatImportExport("export", es.symbols, es.path, es.attributes),
+            .param_doc => |doc| try self.formatParamDoc(doc),
+            .comment => |c| try self.out.appendSlice(self.allocator, c),
+        }
+    }
+
+    // --- Isolated Node Formatters ---
+
+    fn formatBlockStmts(self: *Formatter, stmts: []const *ast.Node) Error!void {
+        for (stmts, 0..) |stmt, idx| {
+            if (self.isAtLineStartOrEmpty()) try self.writeIndent();
+            try self.formatNode(stmt);
+            if (idx < stmts.len - 1 or stmts.len == 1) try self.ensureNewline();
+        }
+    }
+
+    fn formatWrappedString(self: *Formatter, s: []const u8, wrapper: u8) Error!void {
+        if (wrapper == '"') try self.out.append(self.allocator, '"');
+        if (wrapper == ':') try self.out.append(self.allocator, ':');
+        try self.out.appendSlice(self.allocator, s);
+        if (wrapper == '"') try self.out.append(self.allocator, '"');
+    }
+
+    fn formatInterpolatedString(self: *Formatter, parts: []const *ast.Node) Error!void {
+        try self.out.append(self.allocator, '"');
+        for (parts) |part| {
+            if (part.kind == .string) {
+                try self.out.appendSlice(self.allocator, part.kind.string);
+            } else {
+                try self.out.appendSlice(self.allocator, "#{");
+                try self.formatNode(part);
+                try self.out.append(self.allocator, '}');
+            }
+        }
+        try self.out.append(self.allocator, '"');
+    }
+
+    fn formatArray(self: *Formatter, arr: []const *ast.Node) Error!void {
+        if (arr.len == 0) return self.out.appendSlice(self.allocator, "[]");
+        try self.out.append(self.allocator, '[');
+        for (arr, 0..) |elem, idx| {
+            if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+            try self.formatNode(elem);
+        }
+        try self.out.append(self.allocator, ']');
+    }
+
+    fn formatHash(self: *Formatter, entries: []const ast.HashEntry) Error!void {
+        if (entries.len == 0) return self.out.appendSlice(self.allocator, "{}");
+        try self.out.appendSlice(self.allocator, "{ ");
+        for (entries, 0..) |entry, idx| {
+            if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+            if (entry.key.kind == .double_splat_expr) {
+                try self.formatNode(entry.key);
+            } else if (entry.key.kind == .symbol and entry.value.kind == .identifier and std.mem.eql(u8, entry.key.kind.symbol, entry.value.kind.identifier)) {
+                try self.out.appendSlice(self.allocator, entry.key.kind.symbol);
+                try self.out.append(self.allocator, ':');
+            } else {
+                if (entry.key.kind == .symbol) {
+                    try self.out.appendSlice(self.allocator, entry.key.kind.symbol);
+                    try self.out.appendSlice(self.allocator, ": ");
+                } else {
+                    try self.formatNode(entry.key);
+                    try self.out.appendSlice(self.allocator, " => ");
+                }
+                try self.formatNode(entry.value);
+            }
+        }
+        try self.out.appendSlice(self.allocator, " }");
+    }
+
+    fn formatIfStmt(self: *Formatter, ifs: *ast.IfStmt) Error!void {
+        try self.out.appendSlice(self.allocator, if (ifs.is_unless) "unless " else "if ");
+        try self.formatNode(ifs.condition);
+        try self.ensureNewline();
+
+        self.indent_level += 1;
+        try self.formatNode(ifs.then_branch);
+        self.indent_level -= 1;
+
+        if (ifs.else_branch) |eb| {
+            try self.writeIndent();
+            try self.out.appendSlice(self.allocator, "else\n");
+            self.indent_level += 1;
+            try self.formatNode(eb);
+            self.indent_level -= 1;
+        }
+        try self.writeIndent();
+        try self.out.appendSlice(self.allocator, "end");
+    }
+
+    fn formatWhileStmt(self: *Formatter, ws: *ast.WhileStmt) Error!void {
+        try self.out.appendSlice(self.allocator, if (ws.is_until) "until " else "while ");
+        try self.formatNode(ws.condition);
+        try self.formatBodyWithEnd(ws.body);
+    }
+
+    fn formatForStmt(self: *Formatter, fs: *ast.ForStmt) Error!void {
+        const kw = if (fs.is_intersection) "intersection_for(" else "for(";
+        try self.out.appendSlice(self.allocator, kw);
+        for (fs.bindings, 0..) |b, idx| {
+            if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+            try self.out.appendSlice(self.allocator, b.name);
+            try self.out.appendSlice(self.allocator, " = ");
+            try self.formatNode(b.range);
+        }
+        try self.out.appendSlice(self.allocator, ")");
+        try self.formatBodyWithEnd(fs.body);
+    }
+
+    fn formatCaseStmt(self: *Formatter, cs: *ast.CaseStmt) Error!void {
+        try self.out.appendSlice(self.allocator, "case");
+        if (cs.condition) |cond| {
+            try self.out.append(self.allocator, ' ');
+            try self.formatNode(cond);
+        }
+        try self.out.append(self.allocator, '\n');
+        for (cs.when_branches) |wb| {
+            try self.writeIndent();
+            try self.out.appendSlice(self.allocator, "when ");
+            for (wb.conditions, 0..) |cond, idx| {
+                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+                try self.formatNode(cond);
+            }
+            try self.ensureNewline();
+            self.indent_level += 1;
+            try self.formatNode(wb.body);
+            self.indent_level -= 1;
+        }
+        if (cs.else_branch) |eb| {
+            try self.writeIndent();
+            try self.out.appendSlice(self.allocator, "else\n");
+            self.indent_level += 1;
+            try self.formatNode(eb);
+            self.indent_level -= 1;
+        }
+        try self.writeIndent();
+        try self.out.appendSlice(self.allocator, "end");
+    }
+
+    fn formatBeginStmt(self: *Formatter, bs: *ast.BeginStmt) Error!void {
+        try self.out.appendSlice(self.allocator, "begin\n");
+        self.indent_level += 1;
+        try self.formatNode(bs.body);
+        self.indent_level -= 1;
+
+        for (bs.rescues) |r| {
+            try self.writeIndent();
+            try self.out.appendSlice(self.allocator, "rescue");
+            if (r.errors.len > 0) {
+                try self.out.append(self.allocator, ' ');
+                for (r.errors, 0..) |e, i| {
+                    if (i > 0) try self.out.appendSlice(self.allocator, ", ");
+                    try self.out.appendSlice(self.allocator, e);
+                }
+            }
+            if (r.variable) |v| {
+                try self.out.appendSlice(self.allocator, " => ");
+                try self.out.appendSlice(self.allocator, v);
+            }
+            try self.ensureNewline();
+            self.indent_level += 1;
+            try self.formatNode(r.body);
+            self.indent_level -= 1;
+        }
+        if (bs.ensure_body) |eb| {
+            try self.writeIndent();
+            try self.out.appendSlice(self.allocator, "ensure\n");
+            self.indent_level += 1;
+            try self.formatNode(eb);
+            self.indent_level -= 1;
+        }
+        try self.writeIndent();
+        try self.out.appendSlice(self.allocator, "end");
+    }
+
+    fn formatDefStmt(self: *Formatter, def: *ast.DefStmt) Error!void {
+        try self.out.appendSlice(self.allocator, "def ");
+        if (def.is_class_method) try self.out.appendSlice(self.allocator, "self.");
+        try self.out.appendSlice(self.allocator, def.name);
+
+        if (def.params.len > 0) {
+            try self.out.append(self.allocator, '(');
+            for (def.params, 0..) |p, idx| {
+                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+                if (p.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
+
+                try self.out.appendSlice(self.allocator, p.name);
+
+                if (p.is_keyword) try self.out.append(self.allocator, ':');
+                if (p.default_value) |dv| {
+                    try self.out.appendSlice(self.allocator, if (p.is_keyword) " " else " = ");
+                    try self.formatNode(dv);
+                }
+            }
+            try self.out.append(self.allocator, ')');
+        }
+        try self.formatBodyWithEnd(def.body);
+    }
+
+    fn formatClassStmt(self: *Formatter, cls: *ast.ClassStmt) Error!void {
+        try self.out.appendSlice(self.allocator, "class ");
+        try self.formatNode(cls.name);
+        if (cls.super_class) |sc| {
+            try self.out.appendSlice(self.allocator, " < ");
+            try self.formatNode(sc);
+        }
+        try self.formatBodyWithEnd(cls.body);
+    }
+
+    fn formatModuleStmt(self: *Formatter, m: *ast.ModuleStmt) Error!void {
+        try self.out.appendSlice(self.allocator, "module ");
+        try self.out.appendSlice(self.allocator, m.name);
+        try self.formatBodyWithEnd(m.body);
+    }
+
+    fn formatLambda(self: *Formatter, l: *ast.LambdaExpr) Error!void {
+        try self.out.appendSlice(self.allocator, "->");
+        if (l.params.len > 0) {
+            try self.out.append(self.allocator, '(');
+            for (l.params, 0..) |p, i| {
+                if (i > 0) try self.out.appendSlice(self.allocator, ", ");
+                try self.out.appendSlice(self.allocator, p.name);
+            }
+            try self.out.append(self.allocator, ')');
+        }
+        if (l.body.kind == .block) {
+            try self.out.appendSlice(self.allocator, " ");
+            try self.formatBlockClosure(l.body);
+        } else {
+            try self.out.appendSlice(self.allocator, " { ");
+            try self.formatNode(l.body);
+            try self.out.appendSlice(self.allocator, " }");
+        }
+    }
+
+    fn formatNamespace(self: *Formatter, ns: anytype) Error!void {
+        for (ns.path, 0..) |p, idx| {
+            if (idx > 0) try self.out.appendSlice(self.allocator, "::");
+            try self.out.appendSlice(self.allocator, p);
+        }
+    }
+
+    fn formatRange(self: *Formatter, r: *ast.Range) Error!void {
+        try self.formatNode(r.start);
+        try self.out.appendSlice(self.allocator, if (r.is_exclusive) "..." else "..");
+        try self.formatNode(r.end);
+    }
+
+    fn formatAssignment(self: *Formatter, a: *ast.Assignment) Error!void {
+        try self.out.appendSlice(self.allocator, a.name);
+        try self.out.append(self.allocator, ' ');
+        if (a.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op));
+        try self.out.appendSlice(self.allocator, "= ");
+        try self.formatNode(a.value);
+    }
+
+    fn formatMultipleAssignment(self: *Formatter, ma: *ast.MultipleAssignment) Error!void {
+        for (ma.lhs, 0..) |item, idx| {
+            if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+            if (item.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
+            try self.out.appendSlice(self.allocator, item.name);
+        }
+        try self.out.appendSlice(self.allocator, " = ");
+        try self.formatNode(ma.value);
+    }
+
+    fn formatPropertyAssignment(self: *Formatter, pa: *ast.PropertyAssignment) Error!void {
+        try self.formatNode(pa.target);
+        try self.out.append(self.allocator, '.');
+        try self.out.appendSlice(self.allocator, pa.property);
+        try self.out.appendSlice(self.allocator, " = ");
+        try self.formatNode(pa.value);
+    }
+
+    fn formatIndexAssignment(self: *Formatter, ia: *ast.IndexAssignment) Error!void {
+        try self.formatNode(ia.target);
+        try self.out.append(self.allocator, '[');
+        try self.formatNode(ia.index);
+        try self.out.appendSlice(self.allocator, "] = ");
+        try self.formatNode(ia.value);
+    }
+
+    fn formatIndexAccess(self: *Formatter, ia: anytype) Error!void {
+        try self.formatNode(ia.target);
+        try self.out.append(self.allocator, '[');
+        try self.formatNode(ia.index);
+        try self.out.append(self.allocator, ']');
+    }
+
+    fn formatBinaryOp(self: *Formatter, b: *ast.BinaryExpr) Error!void {
+        try self.formatNode(b.left);
+        try self.out.append(self.allocator, ' ');
+        try self.out.appendSlice(self.allocator, getBinaryOpStr(b.op));
+        try self.out.append(self.allocator, ' ');
+        try self.formatNode(b.right);
+    }
+
+    fn formatUnaryOp(self: *Formatter, u: anytype) Error!void {
+        const op_str = switch (u.op) {
+            .negate => "-",
+            .positive => "+",
+            .not => "!",
+            .bitwise_not => "~",
+        };
+        try self.out.appendSlice(self.allocator, op_str);
+        try self.formatNode(u.operand);
+    }
+
+    fn formatTernaryOp(self: *Formatter, t: *ast.TernaryExpr) Error!void {
+        try self.formatNode(t.condition);
+        try self.out.appendSlice(self.allocator, " ? ");
+        try self.formatNode(t.then_branch);
+        try self.out.appendSlice(self.allocator, " : ");
+        try self.formatNode(t.else_branch);
+    }
+
+    fn formatSplat(self: *Formatter, node: *ast.Node, prefix: []const u8) Error!void {
+        try self.out.appendSlice(self.allocator, prefix);
+        try self.formatNode(node);
+    }
+
+    fn formatRescueModifier(self: *Formatter, rm: anytype) Error!void {
+        try self.formatNode(rm.expr);
+        try self.out.appendSlice(self.allocator, " rescue ");
+        try self.formatNode(rm.rescue_expr);
+    }
+
+    fn formatMethodCall(self: *Formatter, mc: *ast.MethodCall) Error!void {
+        if (mc.receiver) |r| {
+            try self.formatNode(r);
+            // Multi-line indentation alignment for fluent method chains
+            if (r.kind == .method_call) {
+                try self.ensureNewline();
+                self.indent_level += 1;
+                try self.writeIndent();
+                self.indent_level -= 1;
+            }
+            try self.out.appendSlice(self.allocator, if (mc.is_safe) "&." else ".");
+        }
+
+        try self.out.appendSlice(self.allocator, mc.method_name);
+
+        if (mc.args.len > 0) {
+            try self.out.append(self.allocator, '(');
+            for (mc.args, 0..) |arg, idx| {
+                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+                if (arg.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
+                if (arg.name.len > 0) {
+                    try self.out.appendSlice(self.allocator, arg.name);
+                    try self.out.appendSlice(self.allocator, ": ");
+                }
+                try self.formatNode(arg.value);
+            }
+            try self.out.append(self.allocator, ')');
+        } else if (mc.receiver == null and mc.block == null) {
+            try self.out.appendSlice(self.allocator, "()");
+        }
+
+        if (mc.block) |block_node| {
+            try self.out.append(self.allocator, ' ');
+            try self.formatBlockClosure(block_node);
         }
     }
 
@@ -349,36 +513,162 @@ pub const Formatter = struct {
             }
             try self.out.append(self.allocator, '|');
         }
-        try self.out.append(self.allocator, '\n');
-        self.indent_level += 1;
-        try self.formatNode(block_node);
-        self.indent_level -= 1;
-        try self.writeIndent();
-        try self.out.appendSlice(self.allocator, "end");
+        try self.formatBodyWithEnd(block_node);
     }
 
-    fn formatBinaryOpStr(self: *Formatter, op: ast.BinaryOp) !void {
-        const op_str = switch (op) {
-            .add => "+",
-            .subtract => "-",
-            .multiply => "*",
-            .divide => "/",
-            .modulo => "%",
-            .exponent => "**",
-            .equal => "==",
-            .not_equal => "!=",
-            .less => "<",
-            .less_equal => "<=",
-            .greater => ">",
-            .greater_equal => ">=",
-            .logical_and => "&&",
-            .logical_or => "||",
-            .shift_left => "<<",
-            .shift_right => ">>",
-            .bitwise_and => "&",
-            .bitwise_or => "|",
-            .bitwise_xor => "^",
-        };
-        try self.out.appendSlice(self.allocator, op_str);
+    fn formatSuperCall(self: *Formatter, sc: *ast.SuperCall) Error!void {
+        try self.out.appendSlice(self.allocator, "super");
+        if (sc.args.len > 0) {
+            try self.out.append(self.allocator, '(');
+            for (sc.args, 0..) |arg, idx| {
+                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+                if (arg.name.len > 0) {
+                    try self.out.appendSlice(self.allocator, arg.name);
+                    try self.out.appendSlice(self.allocator, ": ");
+                }
+                try self.formatNode(arg.value);
+            }
+            try self.out.append(self.allocator, ')');
+        }
+        if (sc.block) |b| {
+            try self.out.append(self.allocator, ' ');
+            try self.formatBlockClosure(b);
+        }
+    }
+
+    fn formatFlowControl(self: *Formatter, kw: []const u8, val: ?*ast.Node) Error!void {
+        try self.out.appendSlice(self.allocator, kw);
+        if (val) |expr| {
+            try self.out.append(self.allocator, ' ');
+            try self.formatNode(expr);
+        }
+    }
+
+    fn formatYield(self: *Formatter, args: []const *ast.Node) Error!void {
+        try self.out.appendSlice(self.allocator, "yield");
+        if (args.len > 0) {
+            try self.out.append(self.allocator, ' ');
+            for (args, 0..) |expr, idx| {
+                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+                try self.formatNode(expr);
+            }
+        }
+    }
+
+    fn formatImportExport(self: *Formatter, kw: []const u8, symbols: []const []const u8, path: []const u8, attrs: ?*ast.Node) Error!void {
+        try self.out.appendSlice(self.allocator, kw);
+        try self.out.append(self.allocator, ' ');
+        if (symbols.len > 0) {
+            try self.out.appendSlice(self.allocator, "{ ");
+            for (symbols, 0..) |sym, idx| {
+                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+                try self.out.appendSlice(self.allocator, sym);
+            }
+            try self.out.appendSlice(self.allocator, " } from ");
+        }
+        try self.out.append(self.allocator, '"');
+        try self.out.appendSlice(self.allocator, path);
+        try self.out.append(self.allocator, '"');
+
+        if (attrs) |attr| {
+            try self.out.appendSlice(self.allocator, " with ");
+            try self.formatNode(attr);
+        }
+    }
+
+    fn formatParamDoc(self: *Formatter, doc: *ast.ParamDoc) Error!void {
+        try self.out.appendSlice(self.allocator, "# @");
+        try self.out.appendSlice(self.allocator, doc.tag_name);
+
+        var current_line_len: usize = self.indent_level * self.config.indent_width + 3 + doc.tag_name.len;
+
+        if (doc.target_name) |tn| {
+            try self.out.append(self.allocator, ' ');
+            try self.out.appendSlice(self.allocator, tn);
+            current_line_len += 1 + tn.len;
+        }
+        if (doc.type_name) |tn| {
+            try self.out.appendSlice(self.allocator, " [");
+            try self.out.appendSlice(self.allocator, tn);
+            try self.out.append(self.allocator, ']');
+            current_line_len += 3 + tn.len;
+        }
+
+        if (doc.description.len > 0) try self.formatWrappedText(doc.description, &current_line_len);
+
+        if (doc.options_expr) |opts| {
+            try self.out.append(self.allocator, ' ');
+            try self.formatNode(opts);
+        }
+    }
+
+    fn formatWrappedText(self: *Formatter, text: []const u8, current_line_len: *usize) Error!void {
+        var line_iter = std.mem.splitScalar(u8, text, '\n');
+        var first_line = true;
+        while (line_iter.next()) |line| {
+            if (!first_line) {
+                try self.ensureNewline();
+                try self.writeIndent();
+                try self.out.appendSlice(self.allocator, "#   ");
+                current_line_len.* = self.indent_level * self.config.indent_width + 4;
+            } else {
+                try self.out.append(self.allocator, ' ');
+                current_line_len.* += 1;
+            }
+            first_line = false;
+
+            var word_iter = std.mem.tokenizeAny(u8, line, " \t\r");
+            var first_word = true;
+            while (word_iter.next()) |word| {
+                if (!first_word) {
+                    if (current_line_len.* + 1 + word.len > self.config.max_line_length) {
+                        try self.ensureNewline();
+                        try self.writeIndent();
+                        try self.out.appendSlice(self.allocator, "#   ");
+                        current_line_len.* = self.indent_level * self.config.indent_width + 4;
+                    } else {
+                        try self.out.append(self.allocator, ' ');
+                        current_line_len.* += 1;
+                    }
+                }
+                try self.out.appendSlice(self.allocator, word);
+                current_line_len.* += word.len;
+                first_word = false;
+            }
+        }
     }
 };
+
+// --- Pure Data Lookups ---
+
+fn getBinaryOpStr(op: ast.BinaryOp) []const u8 {
+    return switch (op) {
+        .add => "+",
+        .subtract => "-",
+        .multiply => "*",
+        .divide => "/",
+        .modulo => "%",
+        .exponent => "**",
+        .equal => "==",
+        .not_equal => "!=",
+        .less => "<",
+        .less_equal => "<=",
+        .greater => ">",
+        .greater_equal => ">=",
+        .logical_and => "&&",
+        .logical_or => "||",
+        .shift_left => "<<",
+        .shift_right => ">>",
+        .bitwise_and => "&",
+        .bitwise_or => "|",
+        .bitwise_xor => "^",
+    };
+}
+
+fn getArgModifierStr(mod: ast.ArgModifier) []const u8 {
+    return switch (mod) {
+        .splat => "*",
+        .double_splat => "**",
+        .block => "&",
+    };
+}
