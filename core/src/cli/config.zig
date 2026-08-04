@@ -8,27 +8,22 @@ pub const ProjectConfig = struct {
     fmt: FmtConfig = .{},
     lint: LintConfig = .{},
 
-    /// Attempts to load and parse `.kupcad.json` (or a custom path) from the current directory.
-    /// Returns default configurations if the default file does not exist.
-    pub fn load(init: std.process.Init, allocator: std.mem.Allocator, custom_path: ?[]const u8) !ProjectConfig {
+    pub fn load(io: std.Io, allocator: std.mem.Allocator, custom_path: ?[]const u8) !ProjectConfig {
         const cwd = std.Io.Dir.cwd();
-
         const target_path = custom_path orelse DEFAULT_CONFIG_NAME;
 
-        // Try to read the config file
-        const source = cwd.readFileAlloc(init.io, target_path, allocator, .limited(1024 * 1024)) catch |err| {
+        const source = cwd.readFileAlloc(io, target_path, allocator, .limited(1024 * 1024)) catch |err| {
             if (err == error.FileNotFound) {
                 if (custom_path == null) {
-                    return ProjectConfig{}; // Just return defaults if no default config file is found
+                    return ProjectConfig{};
                 }
             }
-            return err; // Fail loudly if the explicit custom path is missing or there's an IO error
+            return err;
         };
         defer allocator.free(source);
 
-        // Parse the JSON directly into our Zig structs
         const parsed = try std.json.parseFromSlice(ProjectConfig, allocator, source, .{
-            .ignore_unknown_fields = true, // Be lenient with extra keys
+            .ignore_unknown_fields = true,
         });
         defer parsed.deinit();
 

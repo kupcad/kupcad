@@ -41,14 +41,14 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     var options = try CommandOptions.parseOrExit(allocator, args_iter, "check");
     defer options.deinit(allocator);
 
-    const config = ProjectConfig.load(init, allocator, options.config_path) catch |err| {
+    const config = ProjectConfig.load(init.io, allocator, options.config_path) catch |err| {
         std.debug.print("Error parsing configuration file: {}\n", .{err});
         std.process.exit(1);
     };
 
     var totals = Totals{ .config = config.lint };
 
-    try walker.walkPaths(init, allocator, options.paths.items, &totals, processFile);
+    try walker.walkPaths(init.io, allocator, options.paths.items, &totals, processFile);
 
     if (totals.errors == 0 and totals.warnings == 0 and totals.infos == 0) {
         std.debug.print("\n{s}Success: No CAD geometry, syntax, or semantic issues found across {d} file(s).{s}\n", .{ Color.green, totals.files, Color.reset });
@@ -63,7 +63,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     if (totals.errors > 0) std.process.exit(1);
 }
 
-fn processFile(_: std.process.Init, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
+fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
+    _ = io;
     var totals = @as(*Totals, @ptrCast(@alignCast(context.?)));
     totals.files += 1;
 

@@ -10,6 +10,7 @@ test {
     // CLI & Config Tests
     _ = @import("cli/config_test.zig");
     _ = @import("cli/options_test.zig");
+    _ = @import("cli/walker_test.zig");
 
     // Formatter Tests
     _ = @import("tools/fmt/formatter_test.zig");

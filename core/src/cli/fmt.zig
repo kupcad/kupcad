@@ -9,15 +9,16 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     var options = try CommandOptions.parseOrExit(allocator, args_iter, "fmt");
     defer options.deinit(allocator);
 
-    const config = ProjectConfig.load(init, allocator, options.config_path) catch |err| {
+    const config = ProjectConfig.load(init.io, allocator, options.config_path) catch |err| {
         std.debug.print("Error parsing configuration file: {}\n", .{err});
         std.process.exit(1);
     };
 
-    try walker.walkPaths(init, allocator, options.paths.items, @constCast(&config.fmt), processFile);
+    try walker.walkPaths(init.io, allocator, options.paths.items, @constCast(&config.fmt), processFile);
 }
 
-fn processFile(_: std.process.Init, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
+fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
+    _ = io;
     const fmt_config = @as(*FmtConfig, @ptrCast(@alignCast(context.?))).*;
 
     const formatted = api.formatCode(allocator, source, fmt_config) catch |err| {
