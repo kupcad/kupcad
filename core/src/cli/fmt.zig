@@ -4,20 +4,35 @@ const ProjectConfig = @import("config.zig").ProjectConfig;
 const FmtConfig = @import("../tools/fmt/config.zig").Config;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
-    var has_args = false;
+    var paths: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer paths.deinit(allocator);
 
-    const config = ProjectConfig.load(init, allocator) catch |err| {
-        std.debug.print("Error parsing .kupcad.json: {}\n", .{err});
+    var config_path: ?[]const u8 = null;
+
+    // Separate flags from target file/dir paths
+    while (args_iter.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--config")) {
+            config_path = args_iter.next() orelse {
+                std.debug.print("Error: Missing value for --config. Usage: kupcad fmt [--config <file>] <file|dir>...\n", .{});
+                std.process.exit(1);
+            };
+        } else {
+            try paths.append(allocator, arg);
+        }
+    }
+
+    const config = ProjectConfig.load(init, allocator, config_path) catch |err| {
+        std.debug.print("Error parsing configuration file: {}\n", .{err});
         std.process.exit(1);
     };
 
-    while (args_iter.next()) |path| {
-        has_args = true;
-        try processPath(init, allocator, path, config.fmt);
+    if (paths.items.len == 0) {
+        std.debug.print("Error: Missing file path. Usage: kupcad fmt [--config <file>] <file|dir>...\n", .{});
+        std.process.exit(1);
     }
 
-    if (!has_args) {
-        std.debug.print("Error: Missing file path. Usage: kupcad fmt <file|dir>...\n", .{});
+    for (paths.items) |path| {
+        try processPath(init, allocator, path, config.fmt);
     }
 }
 

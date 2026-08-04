@@ -8,17 +8,21 @@ pub const ProjectConfig = struct {
     fmt: FmtConfig = .{},
     lint: LintConfig = .{},
 
-    /// Attempts to load and parse `.kupcad.json` from the current directory.
-    /// Returns default configurations if the file does not exist.
-    pub fn load(init: std.process.Init, allocator: std.mem.Allocator) !ProjectConfig {
+    /// Attempts to load and parse `.kupcad.json` (or a custom path) from the current directory.
+    /// Returns default configurations if the default file does not exist.
+    pub fn load(init: std.process.Init, allocator: std.mem.Allocator, custom_path: ?[]const u8) !ProjectConfig {
         const cwd = std.Io.Dir.cwd();
 
+        const target_path = custom_path orelse DEFAULT_CONFIG_NAME;
+
         // Try to read the config file
-        const source = cwd.readFileAlloc(init.io, DEFAULT_CONFIG_NAME, allocator, .limited(1024 * 1024)) catch |err| {
+        const source = cwd.readFileAlloc(init.io, target_path, allocator, .limited(1024 * 1024)) catch |err| {
             if (err == error.FileNotFound) {
-                return ProjectConfig{}; // Just return defaults if no config file is found
+                if (custom_path == null) {
+                    return ProjectConfig{}; // Just return defaults if no default config file is found
+                }
             }
-            return err;
+            return err; // Fail loudly if the explicit custom path is missing or there's an IO error
         };
         defer allocator.free(source);
 

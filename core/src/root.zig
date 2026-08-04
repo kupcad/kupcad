@@ -5,7 +5,14 @@ test {
     _ = @import("frontend/kupcad/parser_test.zig");
     _ = @import("frontend/openscad/lexer_test.zig");
     _ = @import("frontend/openscad/parser_test.zig");
+
+    // Config Tests
+    _ = @import("cli/config_test.zig");
+
+    // Formatter Tests
     _ = @import("tools/fmt/rules/sort_imports_test.zig");
+
+    // Linter Tests
     _ = @import("tools/lint/rules/negative_dim_test.zig");
     _ = @import("tools/lint/rules/unused_vars_test.zig");
     _ = @import("tools/lint/rules/unreachable_code_test.zig");
