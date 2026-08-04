@@ -3,10 +3,8 @@ const api = @import("../api.zig");
 const ProjectConfig = @import("config.zig").ProjectConfig;
 const LintConfig = @import("../tools/lint/config.zig").Config;
 const CommandOptions = @import("options.zig").CommandOptions;
+const walker = @import("walker.zig");
 
-const FILE_SIZE_LIMIT = 1024 * 1024 * 10;
-
-// ANSI Color Codes for terminal output
 const Color = struct {
     const cyan = "\x1b[36m";
     const yellow = "\x1b[33m";
@@ -15,15 +13,14 @@ const Color = struct {
     const reset = "\x1b[0m";
 };
 
-// Track aggregate stats across all files
 const Totals = struct {
     files: usize = 0,
     errors: usize = 0,
     warnings: usize = 0,
     infos: usize = 0,
+    config: LintConfig,
 };
 
-/// Helper to extract a specific 1-indexed line from the raw source string.
 fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
     var line_num: u32 = 1;
     var iter = std.mem.splitScalar(u8, source, '\n');
@@ -41,85 +38,45 @@ fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
-    var totals = Totals{};
-
-    // Unified Argument Parsing with graceful exit on invalid CLI usage
     var options = try CommandOptions.parseOrExit(allocator, args_iter, "check");
     defer options.deinit(allocator);
 
-    // Load Configuration
     const config = ProjectConfig.load(init, allocator, options.config_path) catch |err| {
         std.debug.print("Error parsing configuration file: {}\n", .{err});
         std.process.exit(1);
     };
 
-    // Process targets
-    for (options.paths.items) |path| {
-        try processPath(init, allocator, path, &totals, config.lint);
-    }
+    var totals = Totals{ .config = config.lint };
 
-    // Final Summary Footer
+    try walker.walkPaths(init, allocator, options.paths.items, &totals, processFile);
+
     if (totals.errors == 0 and totals.warnings == 0 and totals.infos == 0) {
         std.debug.print("\n{s}Success: No CAD geometry, syntax, or semantic issues found across {d} file(s).{s}\n", .{ Color.green, totals.files, Color.reset });
     } else {
         std.debug.print("\n{d} file(s) inspected, {s}{d} errors{s}, {s}{d} warnings{s}, {s}{d} info{s} detected.\n", .{
-            totals.files,
-            Color.red,
-            totals.errors,
-            Color.reset,
-            Color.yellow,
-            totals.warnings,
-            Color.reset,
-            Color.cyan,
-            totals.infos,
-            Color.reset,
+            totals.files, Color.red,       totals.errors, Color.reset,
+            Color.yellow, totals.warnings, Color.reset,   Color.cyan,
+            totals.infos, Color.reset,
         });
     }
 
-    // Ensure CI/CD pipelines fail if there are any linting errors
-    if (totals.errors > 0) {
-        std.process.exit(1);
-    }
+    if (totals.errors > 0) std.process.exit(1);
 }
 
-fn processPath(init: std.process.Init, allocator: std.mem.Allocator, path: []const u8, totals: *Totals, lint_config: LintConfig) !void {
-    const cwd = std.Io.Dir.cwd();
-    if (cwd.openDir(init.io, path, .{ .iterate = true })) |dir_obj| {
-        var dir = dir_obj;
-        defer dir.close(init.io);
-        var walker = try dir.walk(allocator);
-        defer walker.deinit();
-        while (try walker.next(init.io)) |entry| {
-            if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".kup")) {
-                const full_path = try std.fs.path.join(allocator, &.{ path, entry.path });
-                defer allocator.free(full_path);
-                try processFile(init, allocator, full_path, totals, lint_config);
-            }
-        }
-    } else |err| {
-        if (err == error.NotDir) {
-            try processFile(init, allocator, path, totals, lint_config);
-        } else {
-            std.debug.print("{s}Error accessing '{s}': {}{s}\n", .{ Color.red, path, err, Color.reset });
-            totals.errors += 1;
-        }
-    }
-}
+fn processFile(_: std.process.Init, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
+    var totals = @as(*Totals, @ptrCast(@alignCast(context.?)));
+    totals.files += 1;
 
-fn processFile(init: std.process.Init, allocator: std.mem.Allocator, file_path: []const u8, totals: *Totals, lint_config: LintConfig) !void {
-    const cwd = std.Io.Dir.cwd();
-    const source = cwd.readFileAlloc(init.io, file_path, allocator, .limited(FILE_SIZE_LIMIT)) catch |err| {
-        std.debug.print("{s}Error reading '{s}': {}{s}\n", .{ Color.red, file_path, err, Color.reset });
+    const diags = api.checkCode(allocator, source, totals.config) catch |err| {
+        std.debug.print("{s}Error checking '{s}': {}{s}\n", .{ Color.red, file_path, err, Color.reset });
         totals.errors += 1;
         return;
     };
-    defer allocator.free(source);
-    totals.files += 1;
-    const diags = try api.checkCode(allocator, source, lint_config);
     defer {
         for (diags) |d| allocator.free(d.message);
         allocator.free(diags);
     }
+
     if (diags.len > 0) {
         for (diags) |d| {
             const sev_color = switch (d.severity) {
@@ -137,23 +94,18 @@ fn processFile(init: std.process.Init, allocator: std.mem.Allocator, file_path: 
                 .warning => totals.warnings += 1,
                 .info => totals.infos += 1,
             }
-            std.debug.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}\n", .{
-                Color.cyan, file_path, d.loc.line,  d.loc.col, Color.reset,
-                sev_color,  sev_char,  Color.reset, d.message,
-            });
+
+            std.debug.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}\n", .{ Color.cyan, file_path, d.loc.line, d.loc.col, Color.reset, sev_color, sev_char, Color.reset, d.message });
+
             const source_line = getSourceLine(source, d.loc.line);
             std.debug.print("{s}\n", .{source_line});
+
             const col_idx = if (d.loc.col > 0) d.loc.col - 1 else 0;
-            var i: usize = 0;
-            while (i < col_idx) : (i += 1) {
-                std.debug.print(" ", .{});
-            }
+            for (0..col_idx) |_| std.debug.print(" ", .{});
+
             std.debug.print("{s}", .{sev_color});
             const squiggles = if (d.loc.length > 0) d.loc.length else 1;
-            var j: u32 = 0;
-            while (j < squiggles) : (j += 1) {
-                std.debug.print("^", .{});
-            }
+            for (0..squiggles) |_| std.debug.print("^", .{});
             std.debug.print("{s}\n\n", .{Color.reset});
         }
     }

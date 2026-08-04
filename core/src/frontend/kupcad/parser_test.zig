@@ -1,10 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const lexer_mod = @import("lexer.zig");
-const Lexer = lexer_mod.Lexer;
-const parser_mod = @import("parser.zig");
-const Parser = parser_mod.Parser;
 const ast = @import("../../core/ast.zig");
+const Lexer = @import("lexer.zig").Lexer;
+const Parser = @import("parser.zig").Parser;
 
 test "AST Node Memory Size Optimization" {
     // Verifies that large payload boxing keeps Node struct size <= 40 bytes

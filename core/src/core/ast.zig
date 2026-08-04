@@ -419,3 +419,113 @@ pub const Builder = struct {
         return self.createNode(.{ .symbol = interned }, final_loc);
     }
 };
+
+pub const Visitor = struct {
+    ptr: *anyopaque,
+    /// Return true to automatically traverse children, false to skip standard traversal
+    visitFn: *const fn (ptr: *anyopaque, node: *Node) anyerror!bool,
+
+    pub fn walk(self: Visitor, node: *Node) anyerror!void {
+        const traverse_children = try self.visitFn(self.ptr, node);
+        if (!traverse_children) return;
+
+        switch (node.kind) {
+            .number, .string, .symbol, .boolean, .nil, .undef, .self_expr, .identifier, .comment, .param_doc, .namespace_access => {},
+            .interpolated_string => |parts| for (parts) |p| try self.walk(p),
+            .array_literal => |arr| for (arr) |elem| try self.walk(elem),
+            .hash_literal => |entries| {
+                for (entries) |e| {
+                    try self.walk(e.key);
+                    try self.walk(e.value);
+                }
+            },
+            .range => |r| {
+                try self.walk(r.start);
+                try self.walk(r.end);
+                if (r.step) |s| try self.walk(s);
+            },
+            .assignment => |a| try self.walk(a.value),
+            .multiple_assignment => |ma| try self.walk(ma.value),
+            .property_assignment => |pa| {
+                try self.walk(pa.target);
+                try self.walk(pa.value);
+            },
+            .index_assignment => |ia| {
+                try self.walk(ia.target);
+                try self.walk(ia.index);
+                try self.walk(ia.value);
+            },
+            .unary_op => |u| try self.walk(u.operand),
+            .rescue_modifier => |rm| {
+                try self.walk(rm.expr);
+                try self.walk(rm.rescue_expr);
+            },
+            .binary_op => |b| {
+                try self.walk(b.left);
+                try self.walk(b.right);
+            },
+            .ternary_op => |t| {
+                try self.walk(t.condition);
+                try self.walk(t.then_branch);
+                try self.walk(t.else_branch);
+            },
+            .index_access => |ia| {
+                try self.walk(ia.target);
+                try self.walk(ia.index);
+            },
+            .splat_expr => |s| try self.walk(s),
+            .double_splat_expr => |s| try self.walk(s),
+            .each_expr => |e| try self.walk(e),
+            .method_call => |mc| {
+                if (mc.receiver) |r| try self.walk(r);
+                for (mc.args) |a| try self.walk(a.value);
+                if (mc.block) |b| try self.walk(b);
+            },
+            .super_call => |sc| {
+                for (sc.args) |a| try self.walk(a.value);
+                if (sc.block) |b| try self.walk(b);
+            },
+            .lambda_expr => |le| try self.walk(le.body),
+            .import_stmt => |is| if (is.attributes) |attr| try self.walk(attr),
+            .export_stmt => |es| if (es.attributes) |attr| try self.walk(attr),
+            .if_stmt => |ifs| {
+                try self.walk(ifs.condition);
+                try self.walk(ifs.then_branch);
+                if (ifs.else_branch) |eb| try self.walk(eb);
+            },
+            .case_stmt => |cs| {
+                if (cs.condition) |c| try self.walk(c);
+                for (cs.when_branches) |wb| {
+                    for (wb.conditions) |cond| try self.walk(cond);
+                    try self.walk(wb.body);
+                }
+                if (cs.else_branch) |eb| try self.walk(eb);
+            },
+            .while_stmt => |ws| {
+                try self.walk(ws.condition);
+                try self.walk(ws.body);
+            },
+            .for_stmt => |fs| {
+                for (fs.bindings) |b| try self.walk(b.range);
+                try self.walk(fs.body);
+            },
+            .def_stmt => |ds| try self.walk(ds.body),
+            .class_stmt => |cs| {
+                try self.walk(cs.name);
+                if (cs.super_class) |sc| try self.walk(sc);
+                try self.walk(cs.body);
+            },
+            .module_stmt => |ms| try self.walk(ms.body),
+            .begin_stmt => |bs| {
+                try self.walk(bs.body);
+                for (bs.rescues) |r| try self.walk(r.body);
+                if (bs.ensure_body) |eb| try self.walk(eb);
+            },
+            .return_stmt => |r| if (r) |expr| try self.walk(expr),
+            .yield_stmt => |y| for (y) |expr| try self.walk(expr),
+            .break_stmt => |b| if (b) |expr| try self.walk(expr),
+            .next_stmt => |n| if (n) |expr| try self.walk(expr),
+            .block => |b| for (b.stmts) |s| try self.walk(s),
+        }
+    }
+};

@@ -18,50 +18,37 @@ pub const SortImportsRule = struct {
     }
 
     fn normalize(_: *anyopaque, node: *ast.Node) void {
-        walk(node);
+        var visitor = ast.Visitor{
+            .ptr = undefined,
+            .visitFn = visitNode,
+        };
+        visitor.walk(node) catch {};
     }
 
-    fn walk(node: *ast.Node) void {
-        switch (node.kind) {
-            .block => |b| {
-                var start_idx: ?usize = null;
-                for (b.stmts, 0..) |stmt, i| {
-                    if (stmt.kind == .import_stmt) {
-                        if (start_idx == null) start_idx = i;
-                    } else {
-                        if (start_idx) |start| {
-                            if (i - start > 1) {
-                                // Safely cast away constness because we own this dynamically allocated AST
-                                std.mem.sort(*ast.Node, @constCast(b.stmts[start..i]), {}, importLessThan);
-                            }
+    fn visitNode(_: *anyopaque, node: *ast.Node) anyerror!bool {
+        if (node.kind == .block) {
+            const b = node.kind.block;
+            var start_idx: ?usize = null;
+
+            for (b.stmts, 0..) |stmt, i| {
+                if (stmt.kind == .import_stmt) {
+                    if (start_idx == null) start_idx = i;
+                } else {
+                    if (start_idx) |start| {
+                        if (i - start > 1) {
+                            std.mem.sort(*ast.Node, @constCast(b.stmts[start..i]), {}, importLessThan);
                         }
-                        start_idx = null;
                     }
+                    start_idx = null;
                 }
-                // Handle trailing imports at the end of a block
-                if (start_idx) |start| {
-                    if (b.stmts.len - start > 1) {
-                        std.mem.sort(*ast.Node, @constCast(b.stmts[start..b.stmts.len]), {}, importLessThan);
-                    }
+            }
+            if (start_idx) |start| {
+                if (b.stmts.len - start > 1) {
+                    std.mem.sort(*ast.Node, @constCast(b.stmts[start..b.stmts.len]), {}, importLessThan);
                 }
-                // Recurse into statements
-                for (b.stmts) |stmt| walk(stmt);
-            },
-            .def_stmt => |d| walk(d.body),
-            .class_stmt => |c| walk(c.body),
-            .module_stmt => |m| walk(m.body),
-            .if_stmt => |ifs| {
-                walk(ifs.then_branch);
-                if (ifs.else_branch) |eb| walk(eb);
-            },
-            .while_stmt => |w| walk(w.body),
-            .begin_stmt => |b| {
-                walk(b.body);
-                for (b.rescues) |r| walk(r.body);
-                if (b.ensure_body) |eb| walk(eb);
-            },
-            else => {},
+            }
         }
+        return true; // Always allow the generic visitor to continue recursing
     }
 
     fn importLessThan(_: void, a: *ast.Node, b: *ast.Node) bool {
