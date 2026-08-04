@@ -20,7 +20,6 @@ test "Walker: Recursively finds .kup files in directory" {
     const paths = &[_][]const u8{"src/fixtures"};
     var ctx = WalkerContext{};
 
-    // We pass the global testing IO handle provided by Zig 0.16!
     try walker.walkPaths(testing.io, testing.allocator, paths, &ctx, testProcessFn);
 
     try testing.expect(ctx.kup_files_found >= 3);
