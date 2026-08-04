@@ -43,8 +43,8 @@ fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     var totals = Totals{};
 
-    // Unified Argument Parsing
-    var options = try CommandOptions.parse(allocator, args_iter, "check");
+    // Unified Argument Parsing with graceful exit on invalid CLI usage
+    var options = try CommandOptions.parseOrExit(allocator, args_iter, "check");
     defer options.deinit(allocator);
 
     // Load Configuration

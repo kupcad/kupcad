@@ -5,8 +5,8 @@ const FmtConfig = @import("../tools/fmt/config.zig").Config;
 const CommandOptions = @import("options.zig").CommandOptions;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
-    // Unified Argument Parsing
-    var options = try CommandOptions.parse(allocator, args_iter, "fmt");
+    // Unified Argument Parsing with graceful exit on invalid CLI usage
+    var options = try CommandOptions.parseOrExit(allocator, args_iter, "fmt");
     defer options.deinit(allocator);
 
     // Load Configuration

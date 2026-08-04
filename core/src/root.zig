@@ -6,8 +6,9 @@ test {
     _ = @import("frontend/openscad/lexer_test.zig");
     _ = @import("frontend/openscad/parser_test.zig");
 
-    // Config Tests
+    // CLI & Config Tests
     _ = @import("cli/config_test.zig");
+    _ = @import("cli/options_test.zig");
 
     // Formatter Tests
     _ = @import("tools/fmt/rules/sort_imports_test.zig");
