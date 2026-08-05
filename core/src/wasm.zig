@@ -41,18 +41,11 @@ pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]con
         allocator.free(diags);
     }
 
-    // Zig 0.16.0: Capital 'I' in std.Io
     var out: std.Io.Writer.Allocating = .init(allocator);
 
     out.writer.writeAll("[") catch return "[]\x00".ptr;
     for (diags, 0..) |d, i| {
         if (i > 0) out.writer.writeAll(",") catch return "[]\x00".ptr;
-
-        const sev_str = switch (d.severity) {
-            .@"error" => "error",
-            .warning => "warning",
-            .info => "info",
-        };
 
         // Map the diagnostic to an anonymous struct to flatten the hierarchy
         const flat_diag = .{
@@ -60,7 +53,7 @@ pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]con
             .col = d.loc.col,
             .offset = d.loc.offset,
             .length = d.loc.length,
-            .severity = sev_str,
+            .severity = d.severity.toString(), // Centralized string conversion
             .message = d.message,
         };
 
@@ -70,6 +63,5 @@ pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]con
     out.writer.writeAll("]") catch return "[]\x00".ptr;
     out.writer.writeAll("\x00") catch return "[]\x00".ptr; // Null-terminate for JS
 
-    // .written() returns the exact allocated []u8 slice
     return out.written().ptr;
 }

@@ -13,7 +13,38 @@ const UnreachableCodeRule = @import("rules/unreachable_code.zig").UnreachableCod
 const SelfSubtractionRule = @import("rules/self_subtraction.zig").SelfSubtractionRule;
 const ParamDocsRule = @import("rules/param_docs.zig").ParamDocsRule;
 
-pub const DiagnosticSeverity = enum { @"error", warning, info };
+pub const DiagnosticSeverity = enum {
+    @"error",
+    warning,
+    info,
+
+    /// Returns the standard string representation (useful for JSON/WASM)
+    pub fn toString(self: DiagnosticSeverity) []const u8 {
+        return switch (self) {
+            .@"error" => "error",
+            .warning => "warning",
+            .info => "info",
+        };
+    }
+
+    /// Returns the ANSI color code for CLI output
+    pub fn toColor(self: DiagnosticSeverity) []const u8 {
+        return switch (self) {
+            .@"error" => "\x1b[31m", // Red
+            .warning => "\x1b[33m", // Yellow
+            .info => "\x1b[36m", // Cyan
+        };
+    }
+
+    /// Returns the single-character severity indicator for CLI output
+    pub fn toChar(self: DiagnosticSeverity) []const u8 {
+        return switch (self) {
+            .@"error" => "E",
+            .warning => "W",
+            .info => "I",
+        };
+    }
+};
 
 pub const LinterDiagnostic = struct {
     loc: token.Location,

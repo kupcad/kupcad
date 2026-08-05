@@ -80,16 +80,10 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
 
     if (diags.len > 0) {
         for (diags) |d| {
-            const sev_color = switch (d.severity) {
-                .@"error" => Color.red,
-                .warning => Color.yellow,
-                .info => Color.cyan,
-            };
-            const sev_char = switch (d.severity) {
-                .@"error" => "E",
-                .warning => "W",
-                .info => "I",
-            };
+            // Utilize centralized rendering methods
+            const sev_color = d.severity.toColor();
+            const sev_char = d.severity.toChar();
+
             switch (d.severity) {
                 .@"error" => totals.errors += 1,
                 .warning => totals.warnings += 1,
