@@ -46,3 +46,42 @@ test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
     try testing.expectEqual(@as(u32, 1), diags[3].loc.line);
     try testing.expectEqualStrings("@param annotation references variable 'missing_var', which is never declared in standard scope.", diags[3].message);
 }
+
+test "Document: successfully parses valid code and owns the AST" {
+    const source =
+        \\# A comment
+        \\width = 10
+    ;
+
+    var doc = try api.Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    // Verify successful tree generation
+    try testing.expect(doc.tree != null);
+
+    // Verify block statement holds our assignment
+    const block = doc.tree.?.kind.block;
+    try testing.expectEqual(@as(usize, 1), block.stmts.len);
+    try testing.expectEqualStrings("width", block.stmts[0].kind.assignment.name);
+
+    // Verify comment was captured
+    try testing.expectEqual(@as(usize, 1), doc.comments.len);
+    try testing.expectEqualStrings("# A comment", doc.comments[0].lexeme);
+
+    // Verify LineIndex was built
+    try testing.expect(doc.line_index.line_starts.len > 0);
+
+    // No diagnostics should be emitted for valid code
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+}
+
+test "Document: safely handles parsing syntax errors without leaking" {
+    const source = "val = 10 + }"; // Intentional syntax error
+
+    var doc = try api.Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    // Verify that the parser diagnostic was captured natively in the document
+    try testing.expectEqual(@as(usize, 1), doc.diagnostics.len);
+    try testing.expectEqualStrings("Invalid expression starting with '}'", doc.diagnostics[0].message);
+}

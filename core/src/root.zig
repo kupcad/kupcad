@@ -5,10 +5,12 @@ pub const checkCode = api.checkCode;
 pub const FormatterConfig = api.FormatterConfig;
 pub const LinterConfig = api.LinterConfig;
 pub const LinterDiagnostic = api.LinterDiagnostic;
+pub const LineIndex = api.LineIndex;
 
 test {
     _ = @import("api_test.zig");
     _ = @import("core/ast_test.zig");
+    _ = @import("core/line_index_test.zig");
     _ = @import("frontend/kupcad/docstring_test.zig");
     _ = @import("frontend/kupcad/lexer_test.zig");
     _ = @import("frontend/kupcad/parser_test.zig");

@@ -6,8 +6,10 @@ const common_errors = @import("core/errors.zig");
 const ast = @import("core/ast.zig");
 
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
-pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
 const Linter = @import("tools/lint/linter.zig").Linter;
+
+pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
+pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 pub const LinterDiagnostic = @import("tools/lint/linter.zig").LinterDiagnostic;
 
@@ -23,27 +25,30 @@ pub const Document = struct {
     tree: ?*ast.Node,
     comments: []const common_token.Comment,
     diagnostics: []const common_errors.Diagnostic,
+    line_index: LineIndex,
 
     pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Document {
         var arena = std.heap.ArenaAllocator.init(allocator);
         errdefer arena.deinit();
+        const arena_alloc = arena.allocator();
 
         var lexer = lexer_mod.Lexer.init(source, 0);
-        var parser = parser_mod.Parser.init(&lexer, arena.allocator());
+        var parser = parser_mod.Parser.init(&lexer, arena_alloc);
 
-        // DO NOT call parser.deinit()!
-        // The parser allocates diagnostics and comments inside the Arena.
-        // We want the Document to retain ownership of that memory.
         const tree = parser.parseProgram() catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => null,
         };
 
-        return Document{
+        // Initialize the LineIndex using the Arena Allocator
+        const line_index = try LineIndex.init(arena_alloc, source);
+
+        return .{
             .arena = arena,
             .tree = tree,
             .comments = parser.comments.items,
             .diagnostics = parser.diagnostics.list.items,
+            .line_index = line_index,
         };
     }
 
