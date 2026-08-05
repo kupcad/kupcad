@@ -154,12 +154,95 @@ pub const Linter = struct {
         switch (node.kind) {
             .assignment => |a| {
                 try self.analyzeNode(a.value);
-                try self.declareVariable(a.name, node.loc);
+                // Check if variable already exists in any scope (reassignment)
+                var exists = false;
+                var i = self.scopes.items.len;
+                while (i > 0) {
+                    i -= 1;
+                    if (self.scopes.items[i].declared_vars.contains(a.name)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    try self.declareVariable(a.name, node.loc);
+                }
                 return false; // Skip default child traversal
             },
             .multiple_assignment => |ma| {
                 try self.analyzeNode(ma.value);
-                for (ma.lhs) |l| try self.declareVariable(l.name, node.loc);
+                for (ma.lhs) |l| {
+                    var exists = false;
+                    var i = self.scopes.items.len;
+                    while (i > 0) {
+                        i -= 1;
+                        if (self.scopes.items[i].declared_vars.contains(l.name)) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (!exists) {
+                        try self.declareVariable(l.name, node.loc);
+                    }
+                }
+                return false;
+            },
+            .method_call => |mc| {
+                if (mc.receiver) |r| try self.analyzeNode(r);
+                for (mc.args) |a| try self.analyzeNode(a.value);
+
+                if (mc.block) |b| {
+                    try self.pushScope();
+                    for (b.kind.block.params) |p| {
+                        if (p.kind == .identifier) {
+                            try self.declareVariable(p.kind.identifier, p.loc);
+                        } else if (p.kind == .array_literal) {
+                            for (p.kind.array_literal) |elem| {
+                                if (elem.kind == .identifier) {
+                                    try self.declareVariable(elem.kind.identifier, elem.loc);
+                                }
+                            }
+                        }
+                    }
+                    for (b.kind.block.stmts) |s| try self.analyzeNode(s);
+                    try self.popScope();
+                }
+                return false; // We manually walked the children
+            },
+            .super_call => |sc| {
+                for (sc.args) |a| try self.analyzeNode(a.value);
+
+                if (sc.block) |b| {
+                    try self.pushScope();
+                    for (b.kind.block.params) |p| {
+                        if (p.kind == .identifier) {
+                            try self.declareVariable(p.kind.identifier, p.loc);
+                        } else if (p.kind == .array_literal) {
+                            for (p.kind.array_literal) |elem| {
+                                if (elem.kind == .identifier) {
+                                    try self.declareVariable(elem.kind.identifier, elem.loc);
+                                }
+                            }
+                        }
+                    }
+                    for (b.kind.block.stmts) |s| try self.analyzeNode(s);
+                    try self.popScope();
+                }
+                return false;
+            },
+            .class_stmt => |cs| {
+                try self.analyzeNode(cs.name);
+                if (cs.super_class) |sc| try self.analyzeNode(sc);
+
+                try self.pushScope();
+                try self.analyzeNode(cs.body);
+                try self.popScope();
+                return false;
+            },
+            .module_stmt => |ms| {
+                try self.pushScope();
+                try self.analyzeNode(ms.body);
+                try self.popScope();
                 return false;
             },
             .identifier => |i| {

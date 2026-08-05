@@ -60,3 +60,41 @@ test "Linter: Surfaces syntax errors from the Parser as Linter Diagnostics" {
     try testing.expectEqual(linter_mod.DiagnosticSeverity.@"error", linter.diagnostics.items[0].severity);
     try testing.expectEqualStrings("Invalid expression starting with '}'", linter.diagnostics.items[0].message);
 }
+
+test "Linter: Scope shadowing inside blocks (do ... end) and lambdas" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\val = 10 # Unused outer variable
+        \\Box.new.each do |val|
+        \\  puts(val) # Uses block parameter, NOT outer 'val'
+        \\end
+        \\
+        \\used_outer = 20
+        \\Box.new.each do |x|
+        \\  puts(x)
+        \\  puts(used_outer) # Uses outer variable properly
+        \\end
+    ;
+
+    var linter = linter_mod.Linter.init(arena.allocator(), .{
+        .check_negative_dims = false,
+        .check_unused_vars = true,
+        .check_unreachable_code = false,
+        .check_self_subtraction = false,
+        .check_param_docs = false,
+    });
+    defer linter.deinit();
+
+    // Wire up the UnusedVarsRule to trigger scope analysis
+    var rule_impl = @import("rules/unused_vars.zig").UnusedVarsRule{};
+    try linter.rules.append(arena.allocator(), rule_impl.rule());
+
+    try linter.check(source);
+
+    // We expect exactly ONE warning: the outer `val` is shadowed and unused.
+    try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);
+    try testing.expectEqualStrings("Unused variable 'val'. Prefix with '_' if intentional.", linter.diagnostics.items[0].message);
+    try testing.expectEqual(@as(u32, 1), linter.diagnostics.items[0].loc.line);
+}
