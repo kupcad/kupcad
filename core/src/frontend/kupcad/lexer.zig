@@ -4,6 +4,7 @@ const utils = @import("../utils.zig");
 
 pub const Tag = enum {
     eof,
+    invalid,
     newline,
     ident,
     constant,
@@ -218,8 +219,11 @@ pub const Lexer = struct {
             else => {
                 if (isIdentStart(c)) return self.consumeIdentOrKeyword(start_loc);
                 if (std.ascii.isDigit(c)) return self.consumeNumber(start_loc);
+
+                // Return an invalid token for unknown characters to trigger parser diagnostics
+                const invalid_lexeme = self.buffer[self.index .. self.index + 1];
                 self.advance();
-                return self.makeToken(.eof);
+                return .{ .tag = .invalid, .loc = start_loc, .lexeme = invalid_lexeme };
             },
         };
     }
@@ -440,37 +444,36 @@ pub const Lexer = struct {
         const start = self.index;
         while (self.index < self.buffer.len) {
             const c = self.peek();
-
             if (c == '\n') {
                 self.line += 1;
                 self.col = 0; // Will become 1 on advance() below
             }
-
             if (c == '\\') {
                 self.advance();
                 if (self.index < self.buffer.len) self.advance();
                 continue;
             }
-
             // Interpolation is ONLY for double-quoted strings
             if (quote == '"' and c == '#' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '{') {
                 const lexeme = self.buffer[start..self.index];
                 self.advance();
                 self.advance();
-                if (self.interp_depth < self.interp_stack.len) {
-                    self.interp_stack[self.interp_depth] = self.brace_depth;
-                    self.interp_depth += 1;
-                    self.brace_depth = 0;
+
+                // Gracefully throw a lexical error token instead of overflowing
+                if (self.interp_depth >= self.interp_stack.len) {
+                    return .{ .tag = .invalid, .loc = start_loc, .lexeme = "Interpolation depth exceeded" };
                 }
+
+                self.interp_stack[self.interp_depth] = self.brace_depth;
+                self.interp_depth += 1;
+                self.brace_depth = 0;
                 return .{ .tag = if (is_start) .string_start else .string_mid, .loc = start_loc, .lexeme = lexeme };
             }
-
             if (c == quote) {
                 const lexeme = self.buffer[start..self.index];
                 self.advance();
                 return .{ .tag = if (is_start) .string else .string_end, .loc = start_loc, .lexeme = lexeme };
             }
-
             self.advance();
         }
         return self.makeToken(.eof);

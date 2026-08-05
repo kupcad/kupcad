@@ -2357,3 +2357,20 @@ test "KupCAD Parser: Ignore trailing comments on binary operations and calls" {
     // Verify 0 syntax diagnostics were generated
     try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
 }
+
+test "KupCAD Parser: Deeply Nested String Interpolation gracefully fails" {
+    // 9 levels deep (exceeds the [8]u32 stack size)
+    const source = "\"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"deep\" }\" }\" }\" }\" }\" }\" }\" }\" }\"";
+
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const result = pt.parser.parseExpression(.none);
+
+    // Assert it fails safely
+    try testing.expectError(error.InvalidExpression, result);
+
+    // Assert the exact diagnostic generated for the Language Server
+    try testing.expect(pt.parser.diagnostics.list.items.len > 0);
+    try testing.expectEqualStrings("Invalid expression starting with 'Interpolation depth exceeded'", pt.parser.diagnostics.list.items[0].message);
+}

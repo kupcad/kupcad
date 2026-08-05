@@ -374,3 +374,22 @@ test "KupCAD Lexer: Hash label vs Symbol ambiguity without spaces" {
         t(.r_brace, "}"),  t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Deeply Nested String Interpolation gracefully fails" {
+    // 9 levels deep (exceeds the [8]u32 stack size)
+    const source = "\"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"deep\" }\" }\" }\" }\" }\" }\" }\" }\" }\"";
+    var lexer = Lexer.init(source, 0);
+
+    var has_invalid = false;
+    while (true) {
+        const tok = lexer.next();
+        if (tok.tag == .eof) break;
+        if (tok.tag == .invalid) {
+            has_invalid = true;
+            try testing.expectEqualStrings("Interpolation depth exceeded", tok.lexeme);
+            break;
+        }
+    }
+
+    try testing.expect(has_invalid);
+}
