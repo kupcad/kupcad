@@ -1,3 +1,11 @@
+pub const api = @import("api.zig");
+
+pub const formatCode = api.formatCode;
+pub const checkCode = api.checkCode;
+pub const FormatterConfig = api.FormatterConfig;
+pub const LinterConfig = api.LinterConfig;
+pub const LinterDiagnostic = api.LinterDiagnostic;
+
 test {
     _ = @import("api_test.zig");
     _ = @import("core/ast_test.zig");
