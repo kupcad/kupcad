@@ -39,11 +39,8 @@ pub const Formatter = struct {
     }
 
     pub fn format(self: *Formatter, root: *ast.Node) ![]const u8 {
-        for (self.rules.items) |rule| rule.normalize(root);
-
         try self.formatNode(root);
         try self.flushLeadingComments(std.math.maxInt(u32)); // Flush EOF comments
-
         try self.ensureNewline();
         return try self.out.toOwnedSlice(self.allocator);
     }
@@ -160,14 +157,22 @@ pub const Formatter = struct {
     // --- Isolated Node Formatters ---
 
     fn formatBlockStmts(self: *Formatter, stmts: []const *ast.Node) Error!void {
-        for (stmts, 0..) |stmt, idx| {
+        // Create an ephemeral memory arena just for this formatting pass
+        var temp_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer temp_arena.deinit();
+
+        var print_stmts = stmts;
+
+        // Pipe the statements through all active plugins
+        for (self.rules.items) |rule| {
+            print_stmts = rule.processBlockStmts(temp_arena.allocator(), print_stmts);
+        }
+
+        for (print_stmts, 0..) |stmt, idx| {
             if (self.isAtLineStartOrEmpty()) try self.writeIndent();
             try self.formatNode(stmt);
-
-            // Safe inline comment flush: If the stmt was a single line, flush its comment cleanly
             try self.flushInlineComments(stmt.loc.line);
-
-            if (idx < stmts.len - 1 or stmts.len == 1) try self.ensureNewline();
+            if (idx < print_stmts.len - 1 or print_stmts.len == 1) try self.ensureNewline();
         }
     }
 

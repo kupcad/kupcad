@@ -5,22 +5,16 @@ const lexer_mod = @import("../../../frontend/kupcad/lexer.zig");
 const parser_mod = @import("../../../frontend/kupcad/parser.zig");
 const SortImportsRule = @import("sort_imports.zig").SortImportsRule;
 
-fn runRule(allocator: std.mem.Allocator, source: []const u8) !*ast.Node {
+fn runRule(allocator: std.mem.Allocator, source: []const u8) ![]const *ast.Node {
     var lexer = lexer_mod.Lexer.init(source, 0);
     var parser = parser_mod.Parser.init(&lexer, allocator);
-
-    // DO NOT call `defer parser.deinit()` here
-    // The parser owns the StringPool. If we deinit it, all strings
-    // inside the AST nodes become dangling pointers.
-    // We let the caller's ArenaAllocator clean it all up safely at the end.
-
     const tree = try parser.parseProgram();
 
     var rule_impl = SortImportsRule{};
     const rule = rule_impl.rule();
-    rule.normalize(tree);
 
-    return tree;
+    // Test the specific non-destructive hook directly
+    return rule.processBlockStmts(allocator, tree.kind.block.stmts);
 }
 
 test "Formatter Rule: SortImportsRule sorts standard contiguous imports" {
@@ -33,8 +27,7 @@ test "Formatter Rule: SortImportsRule sorts standard contiguous imports" {
         \\import "m_lib.kup"
     ;
 
-    const tree = try runRule(arena.allocator(), source);
-    const sorted_stmts = tree.kind.block.stmts;
+    const sorted_stmts = try runRule(arena.allocator(), source);
 
     try testing.expectEqualStrings("a_lib.kup", sorted_stmts[0].kind.import_stmt.path);
     try testing.expectEqualStrings("m_lib.kup", sorted_stmts[1].kind.import_stmt.path);
@@ -51,8 +44,7 @@ test "Formatter Rule: SortImportsRule handles named and destructured imports" {
         \\import "a_global.kup"
     ;
 
-    const tree = try runRule(arena.allocator(), source);
-    const sorted_stmts = tree.kind.block.stmts;
+    const sorted_stmts = try runRule(arena.allocator(), source);
 
     // Should sort entirely by the path string, ignoring the symbol bindings
     try testing.expectEqualStrings("a_global.kup", sorted_stmts[0].kind.import_stmt.path);
@@ -79,8 +71,7 @@ test "Formatter Rule: SortImportsRule respects non-contiguous blocks" {
         \\import "b.kup"
     ;
 
-    const tree = try runRule(arena.allocator(), source);
-    const stmts = tree.kind.block.stmts;
+    const stmts = try runRule(arena.allocator(), source);
 
     // Block 1 (Indexes 0, 1)
     try testing.expectEqualStrings("a.kup", stmts[0].kind.import_stmt.path);
@@ -104,8 +95,7 @@ test "Formatter Rule: SortImportsRule handles imports with trailing attributes" 
         \\import "a.kup" with { version: 1 }
     ;
 
-    const tree = try runRule(arena.allocator(), source);
-    const sorted_stmts = tree.kind.block.stmts;
+    const sorted_stmts = try runRule(arena.allocator(), source);
 
     try testing.expectEqualStrings("a.kup", sorted_stmts[0].kind.import_stmt.path);
     try testing.expectEqualStrings("z.kup", sorted_stmts[1].kind.import_stmt.path);
