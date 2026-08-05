@@ -15,12 +15,12 @@ export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const 
     const source = source_ptr[0..source_len];
     const allocator = std.heap.wasm_allocator;
 
-    const formatted = api.formatCode(allocator, source, .{}) catch return source_ptr;
+    // Return a guaranteed null-terminated string on error
+    const formatted = api.formatCode(allocator, source, .{}) catch return "Error: Syntax Error\x00".ptr;
 
-    // Using the stable ArrayListUnmanaged.empty
     var out = std.ArrayListUnmanaged(u8).empty;
-    out.appendSlice(allocator, formatted) catch return source_ptr;
-    out.append(allocator, 0) catch return source_ptr; // Null-terminate for JS
+    out.appendSlice(allocator, formatted) catch return "Error: Out of Memory\x00".ptr;
+    out.append(allocator, 0) catch return "Error: Out of Memory\x00".ptr; // Null-terminate for JS
 
     return out.items.ptr;
 }

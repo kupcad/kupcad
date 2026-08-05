@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KupCAD WASM Test</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      background: #1e1e1e;
+      color: #d4d4d4;
+    }
+
+    textarea {
+      width: 100%;
+      height: 150px;
+      background: #2d2d2d;
+      color: #fff;
+      border: 1px solid #444;
+      padding: 10px;
+      font-family: monospace;
+    }
+
+    button {
+      padding: 10px 20px;
+      background: #007acc;
+      color: white;
+      border: none;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    button:hover {
+      background: #005f9e;
+    }
+
+    pre {
+      background: #000;
+      padding: 15px;
+      border-radius: 5px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>KupCAD WebAssembly Linter Test</h2>
+
+  <textarea id="sourceCode">
+# @param missing_var [Length] This variable doesn't exist
+unused_var = 100
+Box.new(x: -15)
+
+def check_flow()
+  return
+  cube()
+end
+    </textarea>
+
+  <button onclick="runLinter()">Run Linter (check_code_wasm)</button>
+  <button onclick="runFormatter()">Run Formatter (format_code_wasm)</button>
+
+  <h3>Output:</h3>
+  <pre id="output">Loading WASM...</pre>
+
+  <script>
+    let wasmInstance = null;
+
+    // 1. Load and Instantiate the WebAssembly Module
+    WebAssembly.instantiateStreaming(fetch("kupcad.wasm"), {})
+      .then(result => {
+        wasmInstance = result.instance;
+        document.getElementById("output").innerText = "WASM Loaded Successfully! Ready to test.";
+        console.log("WASM Exports:", wasmInstance.exports);
+      })
+      .catch(console.error);
+
+    function runLinter() {
+      if (!wasmInstance) return alert("WASM not loaded yet!");
+      const code = document.getElementById("sourceCode").value;
+
+      const encoder = new TextEncoder();
+      const encodedArgs = encoder.encode(code);
+
+      const ptr = wasmInstance.exports.alloc(encodedArgs.length);
+      const memoryBefore = new Uint8Array(wasmInstance.exports.memory.buffer);
+      memoryBefore.set(encodedArgs, ptr);
+
+      // Run WASM (this may trigger memory.grow, which detaches memoryBefore)
+      const resultPtr = wasmInstance.exports.check_code_wasm(ptr, encodedArgs.length);
+
+      // MUST REFRESH MEMORY VIEW AFTER WASM EXECUTION
+      const memoryAfter = new Uint8Array(wasmInstance.exports.memory.buffer);
+
+      // MUST INCLUDE BOUNDS CHECK
+      let endPtr = resultPtr;
+      while (endPtr < memoryAfter.length && memoryAfter[endPtr] !== 0) {
+        endPtr++;
+      }
+
+      const decoder = new TextDecoder();
+      const jsonString = decoder.decode(memoryAfter.subarray(resultPtr, endPtr));
+
+      wasmInstance.exports.free(ptr, encodedArgs.length);
+
+      try {
+        const diagnostics = JSON.parse(jsonString);
+        document.getElementById("output").innerText = JSON.stringify(diagnostics, null, 2);
+      } catch (e) {
+        document.getElementById("output").innerText = "Error parsing JSON:\n" + jsonString;
+      }
+    }
+
+    function runFormatter() {
+      if (!wasmInstance) return alert("WASM not loaded yet!");
+      const code = document.getElementById("sourceCode").value;
+
+      const encoder = new TextEncoder();
+      const encodedArgs = encoder.encode(code);
+
+      const ptr = wasmInstance.exports.alloc(encodedArgs.length);
+      const memoryBefore = new Uint8Array(wasmInstance.exports.memory.buffer);
+      memoryBefore.set(encodedArgs, ptr);
+
+      // Run WASM
+      const resultPtr = wasmInstance.exports.format_code_wasm(ptr, encodedArgs.length);
+
+      // MUST REFRESH MEMORY VIEW
+      const memoryAfter = new Uint8Array(wasmInstance.exports.memory.buffer);
+
+      // MUST INCLUDE BOUNDS CHECK
+      let endPtr = resultPtr;
+      while (endPtr < memoryAfter.length && memoryAfter[endPtr] !== 0) {
+        endPtr++;
+      }
+
+      const decoder = new TextDecoder();
+      const formattedCode = decoder.decode(memoryAfter.subarray(resultPtr, endPtr));
+
+      wasmInstance.exports.free(ptr, encodedArgs.length);
+
+      document.getElementById("output").innerText = formattedCode;
+    }
+  </script>
+</body>
+
+</html>
