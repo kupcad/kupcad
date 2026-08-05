@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const api = @import("../../../api.zig");
 const linter_mod = @import("../linter.zig");
 const ParamDocsRule = @import("param_docs.zig").ParamDocsRule;
 
@@ -24,7 +25,10 @@ test "Linter Rule: ParamDocsRule catches missing variables" {
     var rule_impl = ParamDocsRule{};
     try linter.rules.append(arena.allocator(), rule_impl.rule());
 
-    try linter.check(source);
+    var doc = try api.Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    try linter.check(doc.tree, doc.diagnostics);
 
     try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);
     try testing.expectEqualStrings("@param annotation references variable 'missing_var', which is never declared in standard scope.", linter.diagnostics.items[0].message);
@@ -51,7 +55,10 @@ test "Linter Rule: ParamDocsRule stays quiet on valid matching variables" {
     var rule_impl = ParamDocsRule{};
     try linter.rules.append(arena.allocator(), rule_impl.rule());
 
-    try linter.check(source);
+    var doc = try api.Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    try linter.check(doc.tree, doc.diagnostics);
 
     // Should be perfectly quiet
     try testing.expectEqual(@as(usize, 0), linter.diagnostics.items.len);

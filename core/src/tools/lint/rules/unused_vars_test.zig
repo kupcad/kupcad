@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const ast = @import("../../../core/ast.zig");
+const api = @import("../../../api.zig");
 const linter_mod = @import("../linter.zig");
 const config_mod = @import("../config.zig");
 const UnusedVarsRule = @import("unused_vars.zig").UnusedVarsRule;
@@ -25,7 +26,10 @@ test "Linter Rule: UnusedVarsRule catches unused variables" {
     try linter.rules.append(arena.allocator(), rule_impl.rule());
 
     // Run the AST walk
-    try linter.check(source);
+    var doc = try api.Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    try linter.check(doc.tree, doc.diagnostics);
 
     try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);
     try testing.expectEqualStrings("Unused variable 'x'. Prefix with '_' if intentional.", linter.diagnostics.items[0].message);
@@ -48,7 +52,10 @@ test "Linter Rule: UnusedVarsRule detects usage across nested scopes" {
     var rule_impl = UnusedVarsRule{};
     try linter.rules.append(arena.allocator(), rule_impl.rule());
 
-    try linter.check(source);
+    var doc = try api.Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    try linter.check(doc.tree, doc.diagnostics);
 
     // Should be 0 diagnostics because `wall_thickness` is used in the inner block
     try testing.expectEqual(@as(usize, 0), linter.diagnostics.items.len);
@@ -70,7 +77,10 @@ test "Linter Rule: UnusedVarsRule flags unused function parameters" {
     var rule_impl = UnusedVarsRule{};
     try linter.rules.append(arena.allocator(), rule_impl.rule());
 
-    try linter.check(source);
+    var doc = try api.Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    try linter.check(doc.tree, doc.diagnostics);
 
     // Only `height` should trigger a warning; `width` is used
     try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);

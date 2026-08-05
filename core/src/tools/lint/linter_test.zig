@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const api = @import("../../api.zig");
 const linter_mod = @import("linter.zig");
 const token = @import("../../core/token.zig");
 
@@ -54,7 +55,10 @@ test "Linter: Surfaces syntax errors from the Parser as Linter Diagnostics" {
     const source = "val = 10 + }";
 
     // The linter should catch the parser error and map it to a diagnostic
-    try linter.check(source);
+    var doc = try api.Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    try linter.check(doc.tree, doc.diagnostics);
 
     try testing.expect(linter.diagnostics.items.len > 0);
     try testing.expectEqual(linter_mod.DiagnosticSeverity.@"error", linter.diagnostics.items[0].severity);
@@ -91,7 +95,10 @@ test "Linter: Scope shadowing inside blocks (do ... end) and lambdas" {
     var rule_impl = @import("rules/unused_vars.zig").UnusedVarsRule{};
     try linter.rules.append(arena.allocator(), rule_impl.rule());
 
-    try linter.check(source);
+    var doc = try api.Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    try linter.check(doc.tree, doc.diagnostics);
 
     // We expect exactly ONE warning: the outer `val` is shadowed and unused.
     try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);

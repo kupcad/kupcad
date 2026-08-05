@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
+const common_errors = @import("../../core/errors.zig");
 const token = @import("../../core/token.zig");
 const lexer_mod = @import("../../frontend/kupcad/lexer.zig");
 const parser_mod = @import("../../frontend/kupcad/parser.zig");
@@ -95,20 +96,9 @@ pub const Linter = struct {
         self.scope_arena.deinit();
     }
 
-    pub fn check(self: *Linter, source: []const u8) !void {
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-
-        var lexer = lexer_mod.Lexer.init(source, 0);
-        var parser = parser_mod.Parser.init(&lexer, arena.allocator());
-
-        const tree: ?*ast.Node = parser.parseProgram() catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => null,
-        };
-
+    pub fn check(self: *Linter, tree: ?*ast.Node, parser_diags: []const common_errors.Diagnostic) !void {
         // Format and copy Parser syntax errors into the Linter Diagnostics Array
-        for (parser.diagnostics.list.items) |diag| {
+        for (parser_diags) |diag| {
             try self.addDiagnostic(diag.loc, .@"error", "{s}", .{diag.message});
         }
 
