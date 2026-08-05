@@ -36,19 +36,16 @@ export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const u
     const diags = api.checkCode(allocator, source, .{}) catch {
         return "[]\x00".ptr;
     };
-
     defer {
         for (diags) |d| allocator.free(d.message);
         allocator.free(diags);
     }
 
-    var out = std.ArrayListUnmanaged(u8).empty;
+    var out: std.Io.Writer.Allocating = .init(allocator);
 
-    // Manually serialize the LinterDiagnostics array to JSON
-    out.append(allocator, '[') catch return "[]\x00".ptr;
-
+    out.writer.writeAll("[") catch return "[]\x00".ptr;
     for (diags, 0..) |d, i| {
-        if (i > 0) out.append(allocator, ',') catch return "[]\x00".ptr;
+        if (i > 0) out.writer.writeAll(",") catch return "[]\x00".ptr;
 
         const sev_str = switch (d.severity) {
             .@"error" => "error",
@@ -56,31 +53,22 @@ export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const u
             .info => "info",
         };
 
-        // Pre-format the numbers into an isolated string
-        const prefix = std.fmt.allocPrint(allocator,
-            \\{{"line":{d},"col":{d},"offset":{d},"length":{d},"severity":"{s}","message":""
-        , .{ d.loc.line, d.loc.col, d.loc.offset, d.loc.length, sev_str }) catch return "[]\x00".ptr;
-        defer allocator.free(prefix);
+        // Map the diagnostic to an anonymous struct to flatten the hierarchy
+        const flat_diag = .{
+            .line = d.loc.line,
+            .col = d.loc.col,
+            .offset = d.loc.offset,
+            .length = d.loc.length,
+            .severity = sev_str,
+            .message = d.message,
+        };
 
-        // Append the formatted string piece
-        out.appendSlice(allocator, prefix) catch return "[]\x00".ptr;
-
-        // Safely escape the message string
-        for (d.message) |c| {
-            switch (c) {
-                '"' => out.appendSlice(allocator, "\\\"") catch return "[]\x00".ptr,
-                '\\' => out.appendSlice(allocator, "\\\\") catch return "[]\x00".ptr,
-                '\n' => out.appendSlice(allocator, "\\n") catch return "[]\x00".ptr,
-                '\r' => out.appendSlice(allocator, "\\r") catch return "[]\x00".ptr,
-                '\t' => out.appendSlice(allocator, "\\t") catch return "[]\x00".ptr,
-                else => out.append(allocator, c) catch return "[]\x00".ptr,
-            }
-        }
-        out.appendSlice(allocator, "\"}") catch return "[]\x00".ptr;
+        // Leverage standard writer with std.json.fmt
+        out.writer.print("{}", .{std.json.fmt(flat_diag, .{})}) catch return "[]\x00".ptr;
     }
+    out.writer.writeAll("]") catch return "[]\x00".ptr;
+    out.writer.writeAll("\x00") catch return "[]\x00".ptr; // Null-terminate for JS
 
-    out.append(allocator, ']') catch return "[]\x00".ptr;
-    out.append(allocator, 0) catch return "[]\x00".ptr; // Null-terminate for JS
-
-    return out.items.ptr;
+    // .written() returns the exact allocated []u8 slice
+    return out.written().ptr;
 }
