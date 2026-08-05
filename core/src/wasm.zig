@@ -1,24 +1,24 @@
 const std = @import("std");
 const api = @import("api.zig");
 
-export fn alloc(len: usize) ?[*]u8 {
+pub export fn alloc(len: usize) ?[*]u8 {
     // If allocation fails, returning `null` safely translates to `0` in WebAssembly
     const slice = std.heap.wasm_allocator.alloc(u8, len) catch return null;
     return slice.ptr;
 }
 
-export fn free(ptr: [*]u8, len: usize) void {
+pub export fn free(ptr: [*]u8, len: usize) void {
     std.heap.wasm_allocator.free(ptr[0..len]);
 }
 
-export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const u8 {
+pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const u8 {
     const source = source_ptr[0..source_len];
     const allocator = std.heap.wasm_allocator;
 
     // Return a guaranteed null-terminated string on error
     const formatted = api.formatCode(allocator, source, .{}) catch return "Error: Syntax Error\x00".ptr;
 
-    // Clean up the original slice once we are done copying it
+    // Clean up the original slice once we are done copying it!
     defer allocator.free(formatted);
 
     var out = std.ArrayListUnmanaged(u8).empty;
@@ -28,7 +28,7 @@ export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const 
     return out.items.ptr;
 }
 
-export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const u8 {
+pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const u8 {
     const source = source_ptr[0..source_len];
     const allocator = std.heap.wasm_allocator;
 
@@ -41,6 +41,7 @@ export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const u
         allocator.free(diags);
     }
 
+    // Zig 0.16.0: Capital 'I' in std.Io
     var out: std.Io.Writer.Allocating = .init(allocator);
 
     out.writer.writeAll("[") catch return "[]\x00".ptr;

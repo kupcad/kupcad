@@ -148,3 +148,9 @@ kupcad/
     ├── parametric_box.kupcad
     └── cnc_milled_bracket.kupcad
 ```
+
+## Wasm tests
+
+```
+brew install wasmtime
+```
