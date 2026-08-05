@@ -393,3 +393,23 @@ test "KupCAD Lexer: Deeply Nested String Interpolation gracefully fails" {
 
     try testing.expect(has_invalid);
 }
+
+test "KupCAD Lexer: EOF handling for unclosed strings and interpolations" {
+    // Unclosed standard string
+    var lexer1 = Lexer.init("\"unclosed string...", 0);
+    // Because it never finds the closing quote, consumeStringBody safely hits
+    // the end of the buffer and returns .eof
+    try testing.expectEqual(.eof, lexer1.next().tag);
+
+    // Unclosed string interpolation
+    var lexer2 = Lexer.init("\"start #{ 1 + ", 0);
+    const tok1 = lexer2.next();
+    try testing.expectEqual(.string_start, tok1.tag);
+    try testing.expectEqualStrings("start ", tok1.lexeme);
+
+    try testing.expectEqual(.number, lexer2.next().tag);
+    try testing.expectEqual(.plus, lexer2.next().tag);
+
+    // The interpolation was never closed with `}` and hits EOF safely
+    try testing.expectEqual(.eof, lexer2.next().tag);
+}

@@ -2396,3 +2396,27 @@ test "KupCAD Parser: Trailing commas in multiple assignment" {
     try testing.expectEqual(@as(f64, 10.0), rhs_array[0].kind.number);
     try testing.expectEqual(@as(f64, 20.0), rhs_array[1].kind.number);
 }
+
+test "KupCAD Parser: Deep recursion safety (Stack Overflow Prevention)" {
+    // Create a 200-level deep nested parenthesis expression
+    const depth: usize = 200;
+    var source_buf = std.ArrayListUnmanaged(u8).empty;
+    defer source_buf.deinit(testing.allocator);
+
+    // Build: ((((((...1...))))))
+    for (0..depth) |_| try source_buf.append(testing.allocator, '(');
+    try source_buf.appendSlice(testing.allocator, "1");
+    for (0..depth) |_| try source_buf.append(testing.allocator, ')');
+
+    var pt = try KTest.init(source_buf.items);
+    defer pt.deinit();
+
+    // Parse the heavily nested expression
+    const expr = try pt.parser.parseExpression(.none);
+
+    // Since parseGroupedExpression passes the inner node directly up,
+    // a 200-deep parenthesis wrap collapses down to the single leaf node.
+    // If we reached this point, the stack successfully handled the recursion!
+    try testing.expectEqual(std.meta.Tag(ast.NodeKind).number, std.meta.activeTag(expr.kind));
+    try testing.expectEqual(@as(f64, 1.0), expr.kind.number);
+}
