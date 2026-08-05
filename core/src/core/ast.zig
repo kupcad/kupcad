@@ -388,6 +388,30 @@ pub const Builder = struct {
         return self.createNode(.{ .number = val }, final_loc);
     }
 
+    pub fn binary(self: *const Builder, op: BinaryOp, left: *Node, right: *Node, loc: Location) !*Node {
+        return self.createNode(.{ .binary_op = try self.box(BinaryExpr, .{ .op = op, .left = left, .right = right }) }, loc);
+    }
+
+    pub fn block(self: *const Builder, params: []const *Node, stmts: []const *Node, loc: Location) !*Node {
+        return self.createNode(.{ .block = try self.box(Block, .{ .params = params, .stmts = stmts }) }, loc);
+    }
+
+    pub fn assignment(self: *const Builder, name: []const u8, op: ?BinaryOp, value: *Node, loc: Location) !*Node {
+        return self.createNode(.{ .assignment = try self.box(Assignment, .{ .name = name, .op = op, .value = value }) }, loc);
+    }
+
+    pub fn methodCall(self: *const Builder, receiver: ?*Node, method_name: []const u8, args: []const NamedArg, block_node: ?*Node, is_safe: bool, loc: Location) !*Node {
+        return self.createNode(.{ .method_call = try self.box(MethodCall, .{ .receiver = receiver, .method_name = method_name, .args = args, .block = block_node, .is_safe = is_safe }) }, loc);
+    }
+
+    pub fn ifStmt(self: *const Builder, condition: *Node, then_branch: *Node, else_branch: ?*Node, is_unless: bool, loc: Location) !*Node {
+        return self.createNode(.{ .if_stmt = try self.box(IfStmt, .{ .condition = condition, .then_branch = then_branch, .else_branch = else_branch, .is_unless = is_unless }) }, loc);
+    }
+
+    pub fn whileStmt(self: *const Builder, condition: *Node, body: *Node, is_until: bool, loc: Location) !*Node {
+        return self.createNode(.{ .while_stmt = try self.box(WhileStmt, .{ .condition = condition, .body = body, .is_until = is_until }) }, loc);
+    }
+
     pub fn undefNode(self: *const Builder, loc: Location) !*Node {
         return self.createNode(.undef, loc);
     }

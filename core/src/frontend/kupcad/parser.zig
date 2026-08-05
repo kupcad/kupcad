@@ -167,7 +167,7 @@ pub const Parser = struct {
             }
         }
 
-        return self.createNode(.{ .block = try self.b.box(ast.Block, .{ .stmts = try stmts.toOwnedSlice(self.allocator) }) }, start_loc);
+        return self.b.block(&.{}, try stmts.toOwnedSlice(self.allocator), self.getSpan(start_loc)) catch ParseError.OutOfMemory;
     }
 
     pub fn parseStatement(self: *Parser) ParseError!*Node {
@@ -202,13 +202,9 @@ pub const Parser = struct {
             }, stmt.loc);
 
             if (mod_tag == .keyword_if or mod_tag == .keyword_unless) {
-                stmt = try self.createNode(.{
-                    .if_stmt = try self.b.box(ast.IfStmt, .{ .condition = cond, .then_branch = then_block, .else_branch = null, .is_unless = (mod_tag == .keyword_unless) }),
-                }, mod_loc);
+                stmt = try self.b.ifStmt(cond, then_block, null, mod_tag == .keyword_unless, self.getSpan(mod_loc));
             } else {
-                stmt = try self.createNode(.{
-                    .while_stmt = try self.b.box(ast.WhileStmt, .{ .condition = cond, .body = then_block, .is_until = (mod_tag == .keyword_until) }),
-                }, mod_loc);
+                stmt = try self.b.whileStmt(cond, then_block, mod_tag == .keyword_until, self.getSpan(mod_loc));
             }
         }
 
@@ -291,11 +287,7 @@ pub const Parser = struct {
         const value = try self.parseExpressionList();
 
         if (left.kind == .identifier) {
-            return self.createNode(.{ .assignment = try self.b.box(ast.Assignment, .{
-                .name = left.kind.identifier,
-                .op = tagToAssignmentOp(op_tag),
-                .value = value,
-            }) }, left.loc);
+            return self.b.assignment(left.kind.identifier, tagToAssignmentOp(op_tag), value, self.getSpan(left.loc)) catch ParseError.OutOfMemory;
         } else if (left.kind == .method_call and left.kind.method_call.args.len == 0 and left.kind.method_call.block == null) {
             return self.createNode(.{ .property_assignment = try self.b.box(ast.PropertyAssignment, .{
                 .target = left.kind.method_call.receiver orelse return ParseError.InvalidExpression,
@@ -331,9 +323,7 @@ pub const Parser = struct {
         else
             getInfixPrecedence(tok.tag);
 
-        return self.createNode(.{
-            .binary_op = try self.b.box(ast.BinaryExpr, .{ .op = op, .left = left, .right = try self.parseExpression(next_prec) }),
-        }, left.loc);
+        return self.b.binary(op, left, try self.parseExpression(next_prec), self.getSpan(left.loc)) catch ParseError.OutOfMemory;
     }
 
     fn parseTernary(self: *Parser, condition: *Node) ParseError!*Node {
@@ -385,9 +375,7 @@ pub const Parser = struct {
             _ = try self.expect(.keyword_end);
         }
 
-        return self.createNode(.{
-            .block = try self.b.box(ast.Block, .{ .params = params, .stmts = block_node.kind.block.stmts }),
-        }, start_tok.loc);
+        return self.b.block(params, block_node.kind.block.stmts, self.getSpan(start_tok.loc)) catch ParseError.OutOfMemory;
     }
 
     fn parseBeginStatement(self: *Parser) ParseError!*Node {
@@ -479,14 +467,7 @@ pub const Parser = struct {
             self.advance();
         }
 
-        return self.createNode(.{
-            .if_stmt = try self.b.box(ast.IfStmt, .{
-                .condition = condition,
-                .then_branch = then_branch,
-                .else_branch = else_branch,
-                .is_unless = is_unless,
-            }),
-        }, start_tok.loc);
+        return self.b.ifStmt(condition, then_branch, else_branch, is_unless, self.getSpan(start_tok.loc)) catch ParseError.OutOfMemory;
     }
 
     fn parseCaseStatement(self: *Parser) ParseError!*Node {
@@ -552,7 +533,7 @@ pub const Parser = struct {
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
 
-        return self.createNode(.{ .while_stmt = try self.b.box(ast.WhileStmt, .{ .condition = condition, .body = body, .is_until = is_until }) }, start_tok.loc);
+        return self.b.whileStmt(condition, body, is_until, self.getSpan(start_tok.loc)) catch ParseError.OutOfMemory;
     }
 
     fn parseDefStatement(self: *Parser) ParseError!*Node {
@@ -1349,19 +1330,12 @@ pub const Parser = struct {
         return ParseError.UnexpectedToken;
     }
 
-    fn createNode(self: *Parser, kind: ast.NodeKind, loc: ast.Location) ParseError!*Node {
-        var final_loc = loc;
-
-        // Calculate the span by taking the start of the *next* token (current)
-        // minus the start of the first token (loc.offset).
-        // This prevents capturing trailing whitespace
-        if (self.tokens.current.loc.offset > loc.offset) {
-            // Trim any trailing whitespace from the length
-            var raw_len = self.tokens.current.loc.offset - loc.offset;
-
-            // Safety check: Don't count spaces/newlines that immediately precede the current token
+    fn getSpan(self: *Parser, start_loc: ast.Location) ast.Location {
+        var final_loc = start_loc;
+        if (self.tokens.current.loc.offset > start_loc.offset) {
+            var raw_len = self.tokens.current.loc.offset - start_loc.offset;
             while (raw_len > 0) {
-                const c = self.tokens.lexer.buffer[loc.offset + raw_len - 1];
+                const c = self.tokens.lexer.buffer[start_loc.offset + raw_len - 1];
                 if (c == ' ' or c == '\t' or c == '\r' or c == '\n') {
                     raw_len -= 1;
                 } else {
@@ -1370,8 +1344,11 @@ pub const Parser = struct {
             }
             final_loc.length = raw_len;
         }
+        return final_loc;
+    }
 
-        return self.b.createNode(kind, final_loc) catch ParseError.OutOfMemory;
+    fn createNode(self: *Parser, kind: ast.NodeKind, loc: ast.Location) ParseError!*Node {
+        return self.b.createNode(kind, self.getSpan(loc)) catch ParseError.OutOfMemory;
     }
 
     fn getInfixPrecedence(tag: Tag) Precedence {
