@@ -27,12 +27,7 @@ test "ProjectConfig: parses partial JSON and retains defaults" {
         \\}
     ;
 
-    const parsed = try std.json.parseFromSlice(ProjectConfig, testing.allocator, json_source, .{
-        .ignore_unknown_fields = true,
-    });
-    defer parsed.deinit();
-
-    const config = parsed.value;
+    const config = try ProjectConfig.parse(testing.allocator, json_source);
 
     // 1. Verify overridden fields
     try testing.expectEqual(@as(u8, 4), config.fmt.indent_width);
@@ -56,12 +51,28 @@ test "ProjectConfig: gracefully ignores unknown fields" {
         \\}
     ;
 
-    // If `.ignore_unknown_fields = true` wasn't set, this would throw an error
-    const parsed = try std.json.parseFromSlice(ProjectConfig, testing.allocator, json_source, .{
-        .ignore_unknown_fields = true,
-    });
-    defer parsed.deinit();
+    const config = try ProjectConfig.parse(testing.allocator, json_source);
 
-    const config = parsed.value;
     try testing.expectEqual(true, config.lint.check_unused_vars); // Should remain default
+}
+
+test "ProjectConfig: gracefully fails on malformed JSON" {
+    // Missing comma after indent_width and missing closing braces
+    const json_source =
+        \\{
+        \\  "fmt": {
+        \\    "indent_width": 4
+        \\  "lint": {
+        \\}
+    ;
+
+    const result = ProjectConfig.parse(testing.allocator, json_source);
+
+    // Assert that the parsing returns an error instead of crashing/panicking
+    if (result) |_| {
+        try testing.expect(false); // Force test failure if it accidentally succeeds
+    } else |_| {
+        // Validate that an error was safely caught and returned
+        try testing.expect(true);
+    }
 }
