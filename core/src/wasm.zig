@@ -18,6 +18,9 @@ export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const 
     // Return a guaranteed null-terminated string on error
     const formatted = api.formatCode(allocator, source, .{}) catch return "Error: Syntax Error\x00".ptr;
 
+    // Clean up the original slice once we are done copying it
+    defer allocator.free(formatted);
+
     var out = std.ArrayListUnmanaged(u8).empty;
     out.appendSlice(allocator, formatted) catch return "Error: Out of Memory\x00".ptr;
     out.append(allocator, 0) catch return "Error: Out of Memory\x00".ptr; // Null-terminate for JS
