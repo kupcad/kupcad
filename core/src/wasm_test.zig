@@ -9,36 +9,53 @@ test "WASM Interop: format_code_wasm handles invalid and empty inputs gracefully
     const bad_src = "class 123 { invalid }";
     const res_bad = wasm.format_code_wasm(bad_src.ptr, bad_src.len);
 
-    // std.mem.sliceTo safely reads a generic [*]const u8 until it hits the 0 byte
-    const bad_slice = std.mem.sliceTo(res_bad, 0);
-    try testing.expectEqualStrings("Error: Syntax Error", bad_slice);
+    // Formatter should fail and return null
+    try testing.expect(res_bad == null);
+
+    // Retrieve and verify the last error message
+    const err_ptr = wasm.get_last_error();
+    const err_slice = std.mem.sliceTo(err_ptr, 0);
+    try testing.expectEqualStrings("Syntax Error", err_slice);
 
     // Test Zero-Length / Empty Input
     const empty_src = "";
     const res_empty = wasm.format_code_wasm(empty_src.ptr, empty_src.len);
 
-    const empty_slice = std.mem.sliceTo(res_empty, 0);
-    // Depending on Formatter behavior, an empty file usually formats to an empty string
-    // but the critical assertion is that it did not panic!
-    try testing.expect(empty_slice.len == 0 or std.mem.eql(u8, empty_slice, "Error: Syntax Error"));
+    // Depending on the exact Formatter implementation, an empty file might
+    // succeed with an empty string, or throw a Syntax Error. We handle both gracefully.
+    if (res_empty) |ptr| {
+        const empty_slice = std.mem.sliceTo(ptr, 0);
+        try testing.expectEqualStrings("", empty_slice);
+    } else {
+        const err_ptr2 = wasm.get_last_error();
+        const err_slice2 = std.mem.sliceTo(err_ptr2, 0);
+        try testing.expectEqualStrings("Syntax Error", err_slice2);
+    }
 }
 
-test "WASM Interop: check_code_wasm returns valid empty JSON on syntax errors" {
+test "WASM Interop: check_code_wasm returns valid JSON on syntax errors" {
     // Test Syntax Error Handling
     const bad_src = "def !invalid";
     const res_bad = wasm.check_code_wasm(bad_src.ptr, bad_src.len);
 
-    const bad_slice = std.mem.sliceTo(res_bad, 0);
+    // The linter captures syntax errors natively and returns them as diagnostics!
+    // Therefore, it should NOT return null, but a valid JSON array.
+    try testing.expect(res_bad != null);
 
-    // Even if the parser fails catastrophically, we must return a valid JSON array
-    // to prevent the JS Web Worker from crashing when calling JSON.parse()
-    try testing.expectEqualStrings("[]", bad_slice);
+    const bad_slice = std.mem.sliceTo(res_bad.?, 0);
+
+    // Verify it is a valid JSON array structure
+    try testing.expect(bad_slice.len >= 2);
+    try testing.expect(bad_slice[0] == '[');
+    try testing.expect(bad_slice[bad_slice.len - 1] == ']');
 
     // Test Zero-Length / Empty Input
     const empty_src = "";
     const res_empty = wasm.check_code_wasm(empty_src.ptr, empty_src.len);
 
-    const empty_slice = std.mem.sliceTo(res_empty, 0);
+    try testing.expect(res_empty != null);
+    const empty_slice = std.mem.sliceTo(res_empty.?, 0);
+
     // An empty file has no diagnostics, so it should return an empty JSON array
     try testing.expectEqualStrings("[]", empty_slice);
 }

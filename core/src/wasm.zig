@@ -1,8 +1,14 @@
 const std = @import("std");
 const api = @import("api.zig");
 
+// --- Global Error State ---
+var last_error_msg: [*]const u8 = "None\x00".ptr;
+
+pub export fn get_last_error() [*]const u8 {
+    return last_error_msg;
+}
+
 pub export fn alloc(len: usize) ?[*]u8 {
-    // If allocation fails, returning `null` safely translates to `0` in WebAssembly
     const slice = std.heap.wasm_allocator.alloc(u8, len) catch return null;
     return slice.ptr;
 }
@@ -11,57 +17,77 @@ pub export fn free(ptr: [*]u8, len: usize) void {
     std.heap.wasm_allocator.free(ptr[0..len]);
 }
 
-pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const u8 {
-    const source = source_ptr[0..source_len];
-    const allocator = std.heap.wasm_allocator;
+// --- Inner Zig Native Functions ---
 
-    // Return a guaranteed null-terminated string on error
-    const formatted = api.formatCode(allocator, source, .{}) catch return "Error: Syntax Error\x00".ptr;
-
-    // Clean up the original slice once we are done copying it!
+fn inner_format(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
+    const formatted = try api.formatCode(allocator, source, .{});
     defer allocator.free(formatted);
 
     var out = std.ArrayListUnmanaged(u8).empty;
-    out.appendSlice(allocator, formatted) catch return "Error: Out of Memory\x00".ptr;
-    out.append(allocator, 0) catch return "Error: Out of Memory\x00".ptr; // Null-terminate for JS
+    errdefer out.deinit(allocator);
 
-    return out.items.ptr;
+    try out.appendSlice(allocator, formatted);
+    try out.append(allocator, 0);
+
+    return try out.toOwnedSlice(allocator);
 }
 
-pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) [*]const u8 {
-    const source = source_ptr[0..source_len];
-    const allocator = std.heap.wasm_allocator;
-
-    // Run the linter
-    const diags = api.checkCode(allocator, source, .{}) catch {
-        return "[]\x00".ptr;
-    };
+fn inner_check(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
+    // Note: checkCode safely returns syntax errors as part of the diagnostics array.
+    // It only throws an error on catastrophic failures (e.g., OutOfMemory).
+    const diags = try api.checkCode(allocator, source, .{});
     defer {
         for (diags) |d| allocator.free(d.message);
         allocator.free(diags);
     }
 
     var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
 
-    out.writer.writeAll("[") catch return "[]\x00".ptr;
+    try out.writer.writeAll("[");
     for (diags, 0..) |d, i| {
-        if (i > 0) out.writer.writeAll(",") catch return "[]\x00".ptr;
+        if (i > 0) try out.writer.writeAll(",");
 
-        // Map the diagnostic to an anonymous struct to flatten the hierarchy
         const flat_diag = .{
             .line = d.loc.line,
             .col = d.loc.col,
             .offset = d.loc.offset,
             .length = d.loc.length,
-            .severity = d.severity.toString(), // Centralized string conversion
+            .severity = d.severity.toString(),
             .message = d.message,
         };
 
-        // Leverage standard writer with std.json.fmt
-        out.writer.print("{}", .{std.json.fmt(flat_diag, .{})}) catch return "[]\x00".ptr;
+        try out.writer.print("{}", .{std.json.fmt(flat_diag, .{})});
     }
-    out.writer.writeAll("]") catch return "[]\x00".ptr;
-    out.writer.writeAll("\x00") catch return "[]\x00".ptr; // Null-terminate for JS
+    try out.writer.writeAll("]");
+    try out.writer.writeAll("\x00");
 
-    return out.written().ptr;
+    return out.written();
+}
+
+// --- WASM Export Boundaries ---
+
+pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize) ?[*]const u8 {
+    const source = source_ptr[0..source_len];
+    if (inner_format(std.heap.wasm_allocator, source)) |res| {
+        return res.ptr;
+    } else |err| {
+        // Set the global error state and return 0 (null)
+        if (err == error.SyntaxError) {
+            last_error_msg = "Syntax Error\x00".ptr;
+        } else {
+            last_error_msg = "Internal Formatting Error\x00".ptr;
+        }
+        return null;
+    }
+}
+
+pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) ?[*]const u8 {
+    const source = source_ptr[0..source_len];
+    if (inner_check(std.heap.wasm_allocator, source)) |res| {
+        return res.ptr;
+    } else |_| {
+        last_error_msg = "Internal Linter Error\x00".ptr;
+        return null;
+    }
 }
