@@ -42,7 +42,7 @@ pub const Formatter = struct {
         for (self.rules.items) |rule| rule.normalize(root);
 
         try self.formatNode(root);
-        try self.flushComments(std.math.maxInt(u32));
+        try self.flushLeadingComments(std.math.maxInt(u32)); // Flush EOF comments
 
         try self.ensureNewline();
         return try self.out.toOwnedSlice(self.allocator);
@@ -73,11 +73,27 @@ pub const Formatter = struct {
         try self.out.appendSlice(self.allocator, "end");
     }
 
-    fn flushComments(self: *Formatter, up_to_line: u32) Error!void {
+    fn flushLeadingComments(self: *Formatter, up_to_line: u32) Error!void {
         while (self.comment_idx < self.comments.len) {
             const c = self.comments[self.comment_idx];
-            if (c.loc.line <= up_to_line) {
+            if (c.loc.line < up_to_line) {
                 if (self.isAtLineStartOrEmpty()) try self.writeIndent();
+                try self.out.appendSlice(self.allocator, c.lexeme);
+                try self.out.append(self.allocator, '\n');
+                self.comment_idx += 1;
+            } else break;
+        }
+    }
+
+    fn flushInlineComments(self: *Formatter, exact_line: u32) Error!void {
+        while (self.comment_idx < self.comments.len) {
+            const c = self.comments[self.comment_idx];
+            if (c.loc.line == exact_line) {
+                if (!self.isAtLineStartOrEmpty()) {
+                    try self.out.append(self.allocator, ' ');
+                } else {
+                    try self.writeIndent();
+                }
                 try self.out.appendSlice(self.allocator, c.lexeme);
                 try self.out.append(self.allocator, '\n');
                 self.comment_idx += 1;
@@ -88,8 +104,7 @@ pub const Formatter = struct {
     // --- Core Master Traversal ---
 
     fn formatNode(self: *Formatter, node: *ast.Node) Error!void {
-        try self.flushComments(node.loc.line);
-
+        try self.flushLeadingComments(node.loc.line);
         switch (node.kind) {
             .block => |b| try self.formatBlockStmts(b.stmts),
             .number => |n| {
@@ -106,15 +121,15 @@ pub const Formatter = struct {
             .identifier => |i| try self.out.appendSlice(self.allocator, i),
             .array_literal => |arr| try self.formatArray(arr),
             .hash_literal => |entries| try self.formatHash(entries),
-            .if_stmt => |ifs| try self.formatIfStmt(ifs),
-            .while_stmt => |ws| try self.formatWhileStmt(ws),
-            .for_stmt => |fs| try self.formatForStmt(fs),
-            .case_stmt => |cs| try self.formatCaseStmt(cs),
-            .begin_stmt => |bs| try self.formatBeginStmt(bs),
-            .def_stmt => |def| try self.formatDefStmt(def),
-            .class_stmt => |cls| try self.formatClassStmt(cls),
-            .module_stmt => |m| try self.formatModuleStmt(m),
-            .lambda_expr => |l| try self.formatLambda(l),
+            .if_stmt => |ifs| try self.formatIfStmt(ifs, node.loc.line),
+            .while_stmt => |ws| try self.formatWhileStmt(ws, node.loc.line),
+            .for_stmt => |fs| try self.formatForStmt(fs, node.loc.line),
+            .case_stmt => |cs| try self.formatCaseStmt(cs, node.loc.line),
+            .begin_stmt => |bs| try self.formatBeginStmt(bs, node.loc.line),
+            .def_stmt => |def| try self.formatDefStmt(def, node.loc.line),
+            .class_stmt => |cls| try self.formatClassStmt(cls, node.loc.line),
+            .module_stmt => |m| try self.formatModuleStmt(m, node.loc.line),
+            .lambda_expr => |l| try self.formatLambda(l, node.loc.line),
             .namespace_access => |ns| try self.formatNamespace(ns),
             .range => |r| try self.formatRange(r),
             .assignment => |a| try self.formatAssignment(a),
@@ -129,8 +144,8 @@ pub const Formatter = struct {
             .double_splat_expr => |s| try self.formatSplat(s, "**"),
             .each_expr => |e| try self.formatSplat(e, "each "),
             .rescue_modifier => |rm| try self.formatRescueModifier(rm),
-            .method_call => |mc| try self.formatMethodCall(mc),
-            .super_call => |sc| try self.formatSuperCall(sc),
+            .method_call => |mc| try self.formatMethodCall(mc, node.loc.line),
+            .super_call => |sc| try self.formatSuperCall(sc, node.loc.line),
             .return_stmt => |r| try self.formatFlowControl("return", r),
             .break_stmt => |b| try self.formatFlowControl("break", b),
             .next_stmt => |n| try self.formatFlowControl("next", n),
@@ -148,6 +163,10 @@ pub const Formatter = struct {
         for (stmts, 0..) |stmt, idx| {
             if (self.isAtLineStartOrEmpty()) try self.writeIndent();
             try self.formatNode(stmt);
+
+            // Safe inline comment flush: If the stmt was a single line, flush its comment cleanly
+            try self.flushInlineComments(stmt.loc.line);
+
             if (idx < stmts.len - 1 or stmts.len == 1) try self.ensureNewline();
         }
     }
@@ -207,15 +226,14 @@ pub const Formatter = struct {
         try self.out.appendSlice(self.allocator, " }");
     }
 
-    fn formatIfStmt(self: *Formatter, ifs: *ast.IfStmt) Error!void {
+    fn formatIfStmt(self: *Formatter, ifs: *ast.IfStmt, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, if (ifs.is_unless) "unless " else "if ");
         try self.formatNode(ifs.condition);
+        try self.flushInlineComments(start_line);
         try self.ensureNewline();
-
         self.indent_level += 1;
         try self.formatNode(ifs.then_branch);
         self.indent_level -= 1;
-
         if (ifs.else_branch) |eb| {
             try self.writeIndent();
             try self.out.appendSlice(self.allocator, "else\n");
@@ -227,13 +245,14 @@ pub const Formatter = struct {
         try self.out.appendSlice(self.allocator, "end");
     }
 
-    fn formatWhileStmt(self: *Formatter, ws: *ast.WhileStmt) Error!void {
+    fn formatWhileStmt(self: *Formatter, ws: *ast.WhileStmt, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, if (ws.is_until) "until " else "while ");
         try self.formatNode(ws.condition);
+        try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(ws.body);
     }
 
-    fn formatForStmt(self: *Formatter, fs: *ast.ForStmt) Error!void {
+    fn formatForStmt(self: *Formatter, fs: *ast.ForStmt, start_line: u32) Error!void {
         const kw = if (fs.is_intersection) "intersection_for(" else "for(";
         try self.out.appendSlice(self.allocator, kw);
         for (fs.bindings, 0..) |b, idx| {
@@ -243,15 +262,17 @@ pub const Formatter = struct {
             try self.formatNode(b.range);
         }
         try self.out.appendSlice(self.allocator, ")");
+        try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(fs.body);
     }
 
-    fn formatCaseStmt(self: *Formatter, cs: *ast.CaseStmt) Error!void {
+    fn formatCaseStmt(self: *Formatter, cs: *ast.CaseStmt, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "case");
         if (cs.condition) |cond| {
             try self.out.append(self.allocator, ' ');
             try self.formatNode(cond);
         }
+        try self.flushInlineComments(start_line);
         try self.out.append(self.allocator, '\n');
         for (cs.when_branches) |wb| {
             try self.writeIndent();
@@ -276,12 +297,13 @@ pub const Formatter = struct {
         try self.out.appendSlice(self.allocator, "end");
     }
 
-    fn formatBeginStmt(self: *Formatter, bs: *ast.BeginStmt) Error!void {
-        try self.out.appendSlice(self.allocator, "begin\n");
+    fn formatBeginStmt(self: *Formatter, bs: *ast.BeginStmt, start_line: u32) Error!void {
+        try self.out.appendSlice(self.allocator, "begin");
+        try self.flushInlineComments(start_line);
+        try self.out.append(self.allocator, '\n');
         self.indent_level += 1;
         try self.formatNode(bs.body);
         self.indent_level -= 1;
-
         for (bs.rescues) |r| {
             try self.writeIndent();
             try self.out.appendSlice(self.allocator, "rescue");
@@ -312,19 +334,16 @@ pub const Formatter = struct {
         try self.out.appendSlice(self.allocator, "end");
     }
 
-    fn formatDefStmt(self: *Formatter, def: *ast.DefStmt) Error!void {
+    fn formatDefStmt(self: *Formatter, def: *ast.DefStmt, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "def ");
         if (def.is_class_method) try self.out.appendSlice(self.allocator, "self.");
         try self.out.appendSlice(self.allocator, def.name);
-
         if (def.params.len > 0) {
             try self.out.append(self.allocator, '(');
             for (def.params, 0..) |p, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
                 if (p.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
-
                 try self.out.appendSlice(self.allocator, p.name);
-
                 if (p.is_keyword) try self.out.append(self.allocator, ':');
                 if (p.default_value) |dv| {
                     try self.out.appendSlice(self.allocator, if (p.is_keyword) " " else " = ");
@@ -333,26 +352,29 @@ pub const Formatter = struct {
             }
             try self.out.append(self.allocator, ')');
         }
+        try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(def.body);
     }
 
-    fn formatClassStmt(self: *Formatter, cls: *ast.ClassStmt) Error!void {
+    fn formatClassStmt(self: *Formatter, cls: *ast.ClassStmt, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "class ");
         try self.formatNode(cls.name);
         if (cls.super_class) |sc| {
             try self.out.appendSlice(self.allocator, " < ");
             try self.formatNode(sc);
         }
+        try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(cls.body);
     }
 
-    fn formatModuleStmt(self: *Formatter, m: *ast.ModuleStmt) Error!void {
+    fn formatModuleStmt(self: *Formatter, m: *ast.ModuleStmt, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "module ");
         try self.out.appendSlice(self.allocator, m.name);
+        try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(m.body);
     }
 
-    fn formatLambda(self: *Formatter, l: *ast.LambdaExpr) Error!void {
+    fn formatLambda(self: *Formatter, l: *ast.LambdaExpr, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "->");
         if (l.params.len > 0) {
             try self.out.append(self.allocator, '(');
@@ -362,9 +384,10 @@ pub const Formatter = struct {
             }
             try self.out.append(self.allocator, ')');
         }
+
         if (l.body.kind == .block) {
             try self.out.appendSlice(self.allocator, " ");
-            try self.formatBlockClosure(l.body);
+            try self.formatBlockClosure(l.body, start_line);
         } else {
             try self.out.appendSlice(self.allocator, " { ");
             try self.formatNode(l.body);
@@ -468,7 +491,7 @@ pub const Formatter = struct {
         try self.formatNode(rm.rescue_expr);
     }
 
-    fn formatMethodCall(self: *Formatter, mc: *ast.MethodCall) Error!void {
+    fn formatMethodCall(self: *Formatter, mc: *ast.MethodCall, start_line: u32) Error!void {
         if (mc.receiver) |r| {
             try self.formatNode(r);
             // Multi-line indentation alignment for fluent method chains
@@ -480,9 +503,7 @@ pub const Formatter = struct {
             }
             try self.out.appendSlice(self.allocator, if (mc.is_safe) "&." else ".");
         }
-
         try self.out.appendSlice(self.allocator, mc.method_name);
-
         if (mc.args.len > 0) {
             try self.out.append(self.allocator, '(');
             for (mc.args, 0..) |arg, idx| {
@@ -498,14 +519,13 @@ pub const Formatter = struct {
         } else if (mc.receiver == null and mc.block == null) {
             try self.out.appendSlice(self.allocator, "()");
         }
-
         if (mc.block) |block_node| {
             try self.out.append(self.allocator, ' ');
-            try self.formatBlockClosure(block_node);
+            try self.formatBlockClosure(block_node, start_line);
         }
     }
 
-    fn formatBlockClosure(self: *Formatter, block_node: *ast.Node) Error!void {
+    fn formatBlockClosure(self: *Formatter, block_node: *ast.Node, start_line: u32) Error!void {
         if (block_node.kind != .block) return;
         const b = block_node.kind.block;
         try self.out.appendSlice(self.allocator, "do");
@@ -517,10 +537,11 @@ pub const Formatter = struct {
             }
             try self.out.append(self.allocator, '|');
         }
+        try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(block_node);
     }
 
-    fn formatSuperCall(self: *Formatter, sc: *ast.SuperCall) Error!void {
+    fn formatSuperCall(self: *Formatter, sc: *ast.SuperCall, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "super");
         if (sc.args.len > 0) {
             try self.out.append(self.allocator, '(');
@@ -536,7 +557,7 @@ pub const Formatter = struct {
         }
         if (sc.block) |b| {
             try self.out.append(self.allocator, ' ');
-            try self.formatBlockClosure(b);
+            try self.formatBlockClosure(b, start_line);
         }
     }
 

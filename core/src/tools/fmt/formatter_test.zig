@@ -295,3 +295,20 @@ test "Formatter: Aborts formatting when source contains syntax errors" {
     // Must return error.SyntaxError rather than returning partial code
     try testing.expectError(error.SyntaxError, result);
 }
+
+test "Formatter: Inline and leading comments are placed correctly" {
+    const source =
+        \\# Leading comment
+        \\width = 50 # Inline comment
+        \\# Another leading comment
+        \\Box.new(width)
+    ;
+    const expected =
+        \\# Leading comment
+        \\width = 50 # Inline comment
+        \\# Another leading comment
+        \\Box.new(width)
+        \\
+    ;
+    try expectFormat(source, expected);
+}
