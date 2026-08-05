@@ -1,8 +1,11 @@
 const std = @import("std");
 const testing = std.testing;
 const ast = @import("../../core/ast.zig");
+const ParserTest = @import("../test_utils.zig").ParserTest;
 const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("parser.zig").Parser;
+
+const KTest = ParserTest(Lexer, Parser);
 
 test "AST Node Memory Size Optimization" {
     // Verifies that large payload boxing keeps Node struct size <= 40 bytes
@@ -25,13 +28,10 @@ test "AST Builder: String Interning Memory Optimization" {
 }
 
 test "KupCAD Parser: Operator Precedence (* vs +)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
+    var pt = try KTest.init("1 + 2 * 3");
+    defer pt.deinit();
 
-    const source = "1 + 2 * 3";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseExpression(.none);
+    const stmt = try pt.parser.parseExpression(.none);
 
     try testing.expectEqual(ast.BinaryOp.add, stmt.kind.binary_op.op);
     try testing.expectEqual(@as(f64, 1.0), stmt.kind.binary_op.left.kind.number);
@@ -43,13 +43,10 @@ test "KupCAD Parser: Operator Precedence (* vs +)" {
 }
 
 test "KupCAD Parser: Right Associativity for Exponentiation (**)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
+    var pt = try KTest.init("2 ** 3 ** 4");
+    defer pt.deinit();
 
-    const source = "2 ** 3 ** 4";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseExpression(.none);
+    const stmt = try pt.parser.parseExpression(.none);
 
     try testing.expectEqual(ast.BinaryOp.exponent, stmt.kind.binary_op.op);
     try testing.expectEqual(@as(f64, 2.0), stmt.kind.binary_op.left.kind.number);
@@ -61,13 +58,10 @@ test "KupCAD Parser: Right Associativity for Exponentiation (**)" {
 }
 
 test "KupCAD Parser: Method Chaining with Named Args" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
+    var pt = try KTest.init("Box.new(x: 50).translate(z: 10)");
+    defer pt.deinit();
 
-    const source = "Box.new(x: 50).translate(z: 10)";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseExpression(.none);
+    const stmt = try pt.parser.parseExpression(.none);
 
     try testing.expectEqualStrings("translate", stmt.kind.method_call.method_name);
     try testing.expectEqualStrings("z", stmt.kind.method_call.args[0].name);
@@ -81,13 +75,11 @@ test "KupCAD Parser: Method Chaining with Named Args" {
 }
 
 test "KupCAD Parser: Import Statement" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "import { ThreadedInsert, Screw } from \"./hardware.kup\"";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqualStrings("./hardware.kup", stmt.kind.import_stmt.path);
     try testing.expectEqual(@as(usize, 2), stmt.kind.import_stmt.symbols.len);
@@ -96,9 +88,6 @@ test "KupCAD Parser: Import Statement" {
 }
 
 test "KupCAD Parser: If / Elsif / Else Control Flow" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\if x > 10
         \\  a = 1
@@ -108,9 +97,10 @@ test "KupCAD Parser: If / Elsif / Else Control Flow" {
         \\  a = 3
         \\end
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const if_node = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const if_node = try pt.parser.parseStatement();
 
     // Top IF
     try testing.expectEqual(ast.BinaryOp.greater, if_node.kind.if_stmt.condition.kind.binary_op.op);
@@ -127,17 +117,15 @@ test "KupCAD Parser: If / Elsif / Else Control Flow" {
 }
 
 test "KupCAD Parser: Method Call with Do Block and Parameters" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\base.on_face(:top) do |face, idx|
         \\  c1 + c2
         \\end
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqualStrings("on_face", stmt.kind.method_call.method_name);
     const block = stmt.kind.method_call.block.?;
@@ -151,13 +139,11 @@ test "KupCAD Parser: Method Call with Do Block and Parameters" {
 }
 
 test "KupCAD Parser: Statement Modifiers (Yield Unless)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "yield unless 10 % 3 == 0";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(true, stmt.kind.if_stmt.is_unless);
     try testing.expectEqual(ast.BinaryOp.equal, stmt.kind.if_stmt.condition.kind.binary_op.op);
@@ -167,9 +153,6 @@ test "KupCAD Parser: Statement Modifiers (Yield Unless)" {
 }
 
 test "KupCAD Parser: Functions, Classes, Arrays, and Range" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\class MyPart < Base
         \\  def is_valid?(x = 10)
@@ -179,9 +162,10 @@ test "KupCAD Parser: Functions, Classes, Arrays, and Range" {
         \\  end
         \\end
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const class_stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const class_stmt = try pt.parser.parseStatement();
 
     try testing.expectEqualStrings("MyPart", class_stmt.kind.class_stmt.name.kind.identifier);
     try testing.expectEqualStrings("Base", class_stmt.kind.class_stmt.super_class.?.kind.identifier);
@@ -210,33 +194,29 @@ test "KupCAD Parser: Functions, Classes, Arrays, and Range" {
 }
 
 test "KupCAD Parser: Shorthand Assignment and Hash Rocket" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\w += 10
         \\map = { "key" => w }
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
+    var pt = try KTest.init(source);
+    defer pt.deinit();
 
-    const add_assign = try parser.parseStatement();
+    const add_assign = try pt.parser.parseStatement();
+
     try testing.expectEqualStrings("w", add_assign.kind.assignment.name);
     try testing.expectEqual(ast.BinaryOp.add, add_assign.kind.assignment.op.?);
 
-    const hash_assign = try parser.parseStatement();
+    const hash_assign = try pt.parser.parseStatement();
     const hash_node = hash_assign.kind.assignment.value;
     try testing.expectEqualStrings("key", hash_node.kind.hash_literal[0].key.kind.string);
 }
 
 test "KupCAD Parser: String Interpolation" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "echo(\"Value: #{x + 10} mm\")";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const echo_call = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const echo_call = try pt.parser.parseStatement();
 
     const interp_node = echo_call.kind.method_call.args[0].value;
     try testing.expectEqual(@as(usize, 3), interp_node.kind.interpolated_string.len);
@@ -250,12 +230,11 @@ test "KupCAD Parser: String Interpolation" {
 }
 
 test "KupCAD Parser: Exponentiation vs Unary Precedence" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
     const source = "-2 ** 2";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseExpression(.none);
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseExpression(.none);
 
     // In Ruby/Crystal, `-2 ** 2` is `-(2 ** 2)` (Exponentiation binds tighter)
     try testing.expectEqual(std.meta.Tag(ast.NodeKind).unary_op, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
@@ -267,13 +246,11 @@ test "KupCAD Parser: Exponentiation vs Unary Precedence" {
 }
 
 test "KupCAD Parser: Parenthesis-less Method Calls (Command Syntax)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "cube x: 10, y: 20";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.method_call, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqualStrings("cube", stmt.kind.method_call.method_name);
@@ -282,25 +259,21 @@ test "KupCAD Parser: Parenthesis-less Method Calls (Command Syntax)" {
 }
 
 test "KupCAD Parser BUG: Empty String Interpolation" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "\"Empty: #{}\"";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseExpression(.none);
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseExpression(.none);
 
     try testing.expectEqual(ast.NodeKind.interpolated_string, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
 }
 
 test "KupCAD Parser: Namespace Resolution (Scope Operator ::)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "part = Hardware::Fasteners::M3_Bolt.new(length: 12)";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.assignment, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     const call_node = stmt.kind.assignment.value;
@@ -314,9 +287,6 @@ test "KupCAD Parser: Namespace Resolution (Scope Operator ::)" {
 }
 
 test "KupCAD Parser: Case / When Control Flow" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\case part_type
         \\when :screw
@@ -327,9 +297,10 @@ test "KupCAD Parser: Case / When Control Flow" {
         \\  Box.new
         \\end
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.case_stmt, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqualStrings("part_type", stmt.kind.case_stmt.condition.?.kind.identifier);
@@ -344,13 +315,11 @@ test "KupCAD Parser: Case / When Control Flow" {
 }
 
 test "KupCAD Parser: Multiple Assignment" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "x, y, z = get_coordinates()";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.multiple_assignment, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqual(@as(usize, 3), stmt.kind.multiple_assignment.lhs.len);
@@ -360,18 +329,16 @@ test "KupCAD Parser: Multiple Assignment" {
 }
 
 test "KupCAD Parser: Self and Super constructs" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\def build
         \\  super(x: 10)
         \\  self
         \\end
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const def_node = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const def_node = try pt.parser.parseStatement();
 
     const stmts = def_node.kind.def_stmt.body.kind.block.stmts;
     try testing.expectEqual(ast.NodeKind.super_call, @as(std.meta.Tag(ast.NodeKind), stmts[0].kind));
@@ -380,13 +347,11 @@ test "KupCAD Parser: Self and Super constructs" {
 }
 
 test "KupCAD Parser: Stabby Lambda (Anonymous Function)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "my_lambda = ->(x, y) { x + y }";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     // Verify it evaluates to Assignment.
     try testing.expectEqual(ast.NodeKind.assignment, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
@@ -405,13 +370,11 @@ test "KupCAD Parser: Stabby Lambda (Anonymous Function)" {
 }
 
 test "KupCAD Parser: Exclusive Range (...)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "1...5";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseExpression(.none);
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseExpression(.none);
 
     try testing.expectEqual(ast.NodeKind.range, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqual(true, stmt.kind.range.is_exclusive);
@@ -419,13 +382,11 @@ test "KupCAD Parser: Exclusive Range (...)" {
 }
 
 test "KupCAD Parser: Statement Modifiers (Trailing if)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "box.chamfer() if render_chamfer";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.if_stmt, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqualStrings("render_chamfer", stmt.kind.if_stmt.condition.kind.identifier);
@@ -436,30 +397,26 @@ test "KupCAD Parser: Statement Modifiers (Trailing if)" {
 }
 
 test "KupCAD Parser: Unary Plus Support" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "val = +10";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const assign_node = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const assign_node = try pt.parser.parseStatement();
 
     try testing.expectEqualStrings("val", assign_node.kind.assignment.name);
     try testing.expectEqual(ast.UnaryOp.positive, assign_node.kind.assignment.value.kind.unary_op.op);
 }
 
 test "KupCAD Parser: Splats and Block Forwarding" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\def wrapper(*args, **kwargs, &block)
         \\  target.call(*args, **kwargs, &block)
         \\end
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const def_node = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const def_node = try pt.parser.parseStatement();
 
     // Validate Function Parameters
     const params = def_node.kind.def_stmt.params;
@@ -479,34 +436,29 @@ test "KupCAD Parser: Splats and Block Forwarding" {
 }
 
 test "KupCAD Parser: Shift/Append (<<) and Safe Navigation (&.)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "arr << 5\npart&.cut()";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
+    var pt = try KTest.init(source);
+    defer pt.deinit();
 
     // Validate Append / Shift Left
-    const shift_node = try parser.parseStatement();
+    const shift_node = try pt.parser.parseStatement();
     try testing.expectEqual(ast.BinaryOp.shift_left, shift_node.kind.binary_op.op);
     try testing.expectEqualStrings("arr", shift_node.kind.binary_op.left.kind.identifier);
     try testing.expectEqual(@as(f64, 5.0), shift_node.kind.binary_op.right.kind.number);
 
     // Validate Safe Navigation Call
-    const safe_call = try parser.parseStatement();
+    const safe_call = try pt.parser.parseStatement();
     try testing.expectEqualStrings("cut", safe_call.kind.method_call.method_name);
     try testing.expectEqual(true, safe_call.kind.method_call.is_safe);
 }
 
 test "KupCAD Parser: CSG Intersections and Bitwise Operators" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     // Simulates an inversion and a CSG Intersection
     const source = "result = ~part1 & part2 | part3 ^ part4";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     // Assigning to `result`
     try testing.expectEqualStrings("result", stmt.kind.assignment.name);
@@ -534,13 +486,11 @@ test "KupCAD Parser: CSG Intersections and Bitwise Operators" {
 }
 
 test "KupCAD Parser: Curly Brace Method Blocks" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "faces.each { |f| f.fillet(2) }";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqualStrings("each", stmt.kind.method_call.method_name);
     const block = stmt.kind.method_call.block.?;
@@ -549,13 +499,11 @@ test "KupCAD Parser: Curly Brace Method Blocks" {
 }
 
 test "KupCAD Parser: Next Statement and Until/While Modifiers" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "next 10 until x == 5";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.while_stmt, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqual(true, stmt.kind.while_stmt.is_until);
@@ -566,13 +514,11 @@ test "KupCAD Parser: Next Statement and Until/While Modifiers" {
 }
 
 test "KupCAD Parser: LHS Splats and Multiple Assignment" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "first, *rest = get_faces()";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     const lhs = stmt.kind.multiple_assignment.lhs;
     try testing.expectEqual(@as(usize, 2), lhs.len);
@@ -582,13 +528,11 @@ test "KupCAD Parser: LHS Splats and Multiple Assignment" {
 }
 
 test "KupCAD Parser: Keyword Arguments in Definitions" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "def build(width:, height: 10)\nend";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     const params = stmt.kind.def_stmt.params;
     try testing.expectEqual(true, params[0].is_keyword);
@@ -599,13 +543,11 @@ test "KupCAD Parser: Keyword Arguments in Definitions" {
 }
 
 test "KupCAD Parser: Begin / Rescue / Ensure" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "begin\n  build()\nrescue => e\n  log()\nensure\n  clean()\nend";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.begin_stmt, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqualStrings("build", stmt.kind.begin_stmt.body.kind.block.stmts[0].kind.method_call.method_name);
@@ -614,13 +556,11 @@ test "KupCAD Parser: Begin / Rescue / Ensure" {
 }
 
 test "KupCAD Parser: Object Property Assignment" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "box.width = 100";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.property_assignment, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqualStrings("box", stmt.kind.property_assignment.target.kind.identifier);
@@ -629,13 +569,11 @@ test "KupCAD Parser: Object Property Assignment" {
 }
 
 test "KupCAD Parser: Receiver Command Syntax" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "box.translate x: 10, y: 20 do\nend";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.method_call, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqualStrings("translate", stmt.kind.method_call.method_name);
@@ -649,13 +587,11 @@ test "KupCAD Parser: Receiver Command Syntax" {
 }
 
 test "KupCAD Parser: Begin / Rescue / Ensure with Classes" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "begin\n  build()\nrescue IOError, KeyError => e\n  log()\nensure\n  clean()\nend";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.begin_stmt, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqualStrings("build", stmt.kind.begin_stmt.body.kind.block.stmts[0].kind.method_call.method_name);
@@ -670,13 +606,11 @@ test "KupCAD Parser: Begin / Rescue / Ensure with Classes" {
 }
 
 test "KupCAD Parser: Inline Rescue Modifier" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "val = dangerous() rescue 0";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     const res_mod = stmt.kind.assignment.value;
     try testing.expectEqual(ast.NodeKind.rescue_modifier, @as(std.meta.Tag(ast.NodeKind), res_mod.kind));
@@ -685,13 +619,11 @@ test "KupCAD Parser: Inline Rescue Modifier" {
 }
 
 test "KupCAD Lexer and Parser: Percent Literals (%w, %i)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "list = %w[gear shaft motor]";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     const arr = stmt.kind.assignment.value.kind.array_literal;
     try testing.expectEqual(@as(usize, 3), arr.len);
@@ -701,13 +633,11 @@ test "KupCAD Lexer and Parser: Percent Literals (%w, %i)" {
 }
 
 test "KupCAD Parser: Class Methods and Namespaced Inheritance" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "class Hardware::Screw < Base::Part\n  def self.build()\n  end\nend";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const class_stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const class_stmt = try pt.parser.parseStatement();
 
     // Check Namespaces
     try testing.expectEqualStrings("Hardware", class_stmt.kind.class_stmt.name.kind.namespace_access.path[0]);
@@ -720,33 +650,28 @@ test "KupCAD Parser: Class Methods and Namespaced Inheritance" {
 }
 
 test "KupCAD Parser: Implicit RHS Tuples and Array/Hash Splats" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "x, y = 10, 20\narr = [1, *other]\nopts = {a: 1, **kwargs}";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
+    var pt = try KTest.init(source);
+    defer pt.deinit();
 
-    const multi_assign = try parser.parseStatement();
+    const multi_assign = try pt.parser.parseStatement();
     try testing.expectEqual(@as(usize, 2), multi_assign.kind.multiple_assignment.value.kind.array_literal.len); // Implicit tuple array
 
-    const arr_assign = try parser.parseStatement();
+    const arr_assign = try pt.parser.parseStatement();
     const arr_lit = arr_assign.kind.assignment.value.kind.array_literal;
     try testing.expectEqual(ast.NodeKind.splat_expr, @as(std.meta.Tag(ast.NodeKind), arr_lit[1].kind));
 
-    const hash_assign = try parser.parseStatement();
+    const hash_assign = try pt.parser.parseStatement();
     const hash_lit = hash_assign.kind.assignment.value.kind.hash_literal;
     try testing.expectEqual(ast.NodeKind.double_splat_expr, @as(std.meta.Tag(ast.NodeKind), hash_lit[1].key.kind));
 }
 
 test "KupCAD Parser: Quoted Symbols, Single Quotes, Destructuring" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "map.each(:'key name') do |(x, y), val|\nend";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     const args = stmt.kind.method_call.args;
     try testing.expectEqualStrings("key name", args[0].value.kind.symbol); // Quoted Symbol
@@ -759,13 +684,11 @@ test "KupCAD Parser: Quoted Symbols, Single Quotes, Destructuring" {
 }
 
 test "KupCAD Parser: Super with Command Syntax and Blocks" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "super x: 10 do\nend";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.super_call, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqualStrings("x", stmt.kind.super_call.args[0].name);
@@ -773,22 +696,17 @@ test "KupCAD Parser: Super with Command Syntax and Blocks" {
 }
 
 test "KupCAD Parser: Optional 'then' Keyword" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source = "if x > 5 then a = 1 end";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     try testing.expectEqual(ast.NodeKind.if_stmt, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
     try testing.expectEqualStrings("a", stmt.kind.if_stmt.then_branch.kind.block.stmts[0].kind.assignment.name);
 }
 
 test "KupCAD Parser: Implicit Def Rescue / Ensure" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\def process
         \\  run_step()
@@ -798,9 +716,10 @@ test "KupCAD Parser: Implicit Def Rescue / Ensure" {
         \\  cleanup()
         \\end
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const def_node = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const def_node = try pt.parser.parseStatement();
 
     try testing.expectEqualStrings("process", def_node.kind.def_stmt.name);
 
@@ -821,9 +740,6 @@ test "KupCAD Parser: Implicit Def Rescue / Ensure" {
 }
 
 test "KupCAD Parser: Advanced Number Literals (0x, 0b, 0o, Scientific, Underscores)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\hex = 0x1F
         \\bin = 0b1010
@@ -832,46 +748,44 @@ test "KupCAD Parser: Advanced Number Literals (0x, 0b, 0o, Scientific, Underscor
         \\num = 1_000_000
         \\leading_dot = .56
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
+    var pt = try KTest.init(source);
+    defer pt.deinit();
 
     // 0x1F = 31
-    const n1 = try parser.parseStatement();
+    const n1 = try pt.parser.parseStatement();
     try testing.expectEqual(@as(f64, 31.0), n1.kind.assignment.value.kind.number);
 
     // 0b1010 = 10
-    const n2 = try parser.parseStatement();
+    const n2 = try pt.parser.parseStatement();
     try testing.expectEqual(@as(f64, 10.0), n2.kind.assignment.value.kind.number);
 
     // 0o755 = 493
-    const n3 = try parser.parseStatement();
+    const n3 = try pt.parser.parseStatement();
     try testing.expectEqual(@as(f64, 493.0), n3.kind.assignment.value.kind.number);
 
     // 1.5e3 = 1500
-    const n4 = try parser.parseStatement();
+    const n4 = try pt.parser.parseStatement();
     try testing.expectEqual(@as(f64, 1500.0), n4.kind.assignment.value.kind.number);
 
     // 1_000_000 = 1000000
-    const n5 = try parser.parseStatement();
+    const n5 = try pt.parser.parseStatement();
     try testing.expectEqual(@as(f64, 1000000.0), n5.kind.assignment.value.kind.number);
 
     // .56 = 0.56
-    const n6 = try parser.parseStatement();
+    const n6 = try pt.parser.parseStatement();
     try testing.expectEqual(@as(f64, 0.56), n6.kind.assignment.value.kind.number);
 }
 
 test "KupCAD Parser: Multi-line Method Chaining (Fluent API)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\Box.new(10)
         \\  .chamfer(2)
         \\  .translate(x: 5)
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const stmt = try parser.parseStatement();
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
 
     // Top node is translate
     try testing.expectEqualStrings("translate", stmt.kind.method_call.method_name);
@@ -886,18 +800,15 @@ test "KupCAD Parser: Multi-line Method Chaining (Fluent API)" {
 }
 
 test "KupCAD Parser: Import / Export with Attributes (with {})" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\import { names } from "module-name" with { key: "data", key2: "data2" }
         \\export { names } from "module-name" with {}
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
+    var pt = try KTest.init(source);
+    defer pt.deinit();
 
     // Import Statement
-    const imp_node = try parser.parseStatement();
+    const imp_node = try pt.parser.parseStatement();
     try testing.expectEqual(ast.NodeKind.import_stmt, @as(std.meta.Tag(ast.NodeKind), imp_node.kind));
     try testing.expectEqualStrings("module-name", imp_node.kind.import_stmt.path);
     try testing.expectEqualStrings("names", imp_node.kind.import_stmt.symbols[0]);
@@ -907,7 +818,7 @@ test "KupCAD Parser: Import / Export with Attributes (with {})" {
     try testing.expectEqualStrings("key", attrs.kind.hash_literal[0].key.kind.symbol);
 
     // Export Statement
-    const exp_node = try parser.parseStatement();
+    const exp_node = try pt.parser.parseStatement();
     try testing.expectEqual(ast.NodeKind.export_stmt, @as(std.meta.Tag(ast.NodeKind), exp_node.kind));
     try testing.expectEqualStrings("module-name", exp_node.kind.export_stmt.path);
 
@@ -916,49 +827,44 @@ test "KupCAD Parser: Import / Export with Attributes (with {})" {
 }
 
 test "KupCAD Parser: Optional Imports and Trailing Call Commas" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\import "global_config.kup"
         \\import Hardware from "hardware.kup"
         \\cube(10, 20, )
     ;
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
+    var pt = try KTest.init(source);
+    defer pt.deinit();
 
     // Plain import
-    const imp_node_1 = try parser.parseStatement();
+    const imp_node_1 = try pt.parser.parseStatement();
     try testing.expectEqualStrings("global_config.kup", imp_node_1.kind.import_stmt.path);
     try testing.expectEqual(@as(usize, 0), imp_node_1.kind.import_stmt.symbols.len);
 
     // Single-symbol import
-    const imp_node_2 = try parser.parseStatement();
+    const imp_node_2 = try pt.parser.parseStatement();
     try testing.expectEqualStrings("hardware.kup", imp_node_2.kind.import_stmt.path);
     try testing.expectEqualStrings("Hardware", imp_node_2.kind.import_stmt.symbols[0]);
 
     // Method call trailing comma bypass
-    const call_node = try parser.parseStatement();
+    const call_node = try pt.parser.parseStatement();
     try testing.expectEqualStrings("cube", call_node.kind.method_call.method_name);
     try testing.expectEqual(@as(usize, 2), call_node.kind.method_call.args.len);
 }
 
 test "KupCAD Parser: Diagnostics for Unexpected Token" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     // Missing closing parenthesis
     const source = "(x + 1 ]";
-    var lexer = Lexer.init(source, 0);
-    var parser = Parser.init(&lexer, arena.allocator());
-    const result = parser.parseExpression(.none);
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const result = pt.parser.parseExpression(.none);
 
     // Assert it fails with the correct error
     try testing.expectError(error.UnexpectedToken, result);
 
     // Assert the diagnostic was captured
-    try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
-    try testing.expectEqualStrings("Expected 'r_paren', but found ']'", parser.diagnostics.list.items[0].message);
+    try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
+    try testing.expectEqualStrings("Expected 'r_paren', but found ']'", pt.parser.diagnostics.list.items[0].message);
 }
 
 test "KupCAD Parser: Diagnostics for Invalid Expression" {
