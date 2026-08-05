@@ -224,11 +224,15 @@ pub const Parser = struct {
             errdefer lhs_list.deinit(self.allocator);
 
             while (self.tokens.current.tag != .newline and self.tokens.current.tag != .eof and self.tokens.current.tag != .keyword_then) {
+                // Safely break if we hit the assignment operator after a trailing comma
+                if (isAssignmentOp(self.tokens.current.tag)) break;
+
                 var mod: ?ast.ArgModifier = null;
                 if (self.tokens.current.tag == .star) {
                     mod = .splat;
                     self.advance();
                 }
+
                 if (self.tokens.current.tag == .ident or self.tokens.current.tag == .constant) {
                     try lhs_list.append(self.allocator, .{ .name = self.tokens.current.lexeme, .modifier = mod });
                     self.advance();
@@ -243,7 +247,6 @@ pub const Parser = struct {
                 const op_tag = self.tokens.current.tag;
                 self.advance();
                 const val_node = try self.parseExpressionList();
-
                 return self.createNode(.{
                     .multiple_assignment = try self.b.box(ast.MultipleAssignment, .{
                         .lhs = try lhs_list.toOwnedSlice(self.allocator),
@@ -253,6 +256,7 @@ pub const Parser = struct {
                 }, start_loc);
             } else return ParseError.UnexpectedToken;
         }
+
         return try self.parseExpression(.none);
     }
 

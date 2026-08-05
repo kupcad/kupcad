@@ -2374,3 +2374,25 @@ test "KupCAD Parser: Deeply Nested String Interpolation gracefully fails" {
     try testing.expect(pt.parser.diagnostics.list.items.len > 0);
     try testing.expectEqualStrings("Invalid expression starting with 'Interpolation depth exceeded'", pt.parser.diagnostics.list.items[0].message);
 }
+
+test "KupCAD Parser: Trailing commas in multiple assignment" {
+    const source = "x, y, = 10, 20";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt = try pt.parser.parseStatement();
+
+    try testing.expectEqual(ast.NodeKind.multiple_assignment, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
+    const lhs = stmt.kind.multiple_assignment.lhs;
+
+    // Verify LHS captures 'x' and 'y' correctly, ignoring the trailing comma
+    try testing.expectEqual(@as(usize, 2), lhs.len);
+    try testing.expectEqualStrings("x", lhs[0].name);
+    try testing.expectEqualStrings("y", lhs[1].name);
+
+    // Verify RHS array captures 10 and 20 correctly
+    const rhs_array = stmt.kind.multiple_assignment.value.kind.array_literal;
+    try testing.expectEqual(@as(usize, 2), rhs_array.len);
+    try testing.expectEqual(@as(f64, 10.0), rhs_array[0].kind.number);
+    try testing.expectEqual(@as(f64, 20.0), rhs_array[1].kind.number);
+}
