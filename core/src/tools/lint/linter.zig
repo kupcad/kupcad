@@ -24,11 +24,6 @@ pub const LinterDiagnostic = struct {
 pub const Scope = struct {
     declared_vars: std.StringHashMapUnmanaged(token.Location) = .empty,
     used_vars: std.StringHashMapUnmanaged(void) = .empty,
-
-    pub fn deinit(self: *Scope, allocator: std.mem.Allocator) void {
-        self.declared_vars.deinit(allocator);
-        self.used_vars.deinit(allocator);
-    }
 };
 
 pub const Linter = struct {
@@ -37,6 +32,7 @@ pub const Linter = struct {
     diagnostics: std.ArrayListUnmanaged(LinterDiagnostic) = .empty,
     scopes: std.ArrayListUnmanaged(Scope) = .empty,
     rules: std.ArrayListUnmanaged(LintRule) = .empty,
+    scope_arena: std.heap.ArenaAllocator,
 
     // Rule persistent states
     negative_dim_rule: NegativeDimRule = .{},
@@ -46,7 +42,11 @@ pub const Linter = struct {
     param_docs_rule: ParamDocsRule = .{},
 
     pub fn init(allocator: std.mem.Allocator, config: Config) Linter {
-        return Linter{ .allocator = allocator, .config = config };
+        return .{
+            .allocator = allocator,
+            .config = config,
+            .scope_arena = std.heap.ArenaAllocator.init(allocator),
+        };
     }
 
     pub fn registerDefaultRules(self: *Linter) !void {
@@ -60,9 +60,8 @@ pub const Linter = struct {
     pub fn deinit(self: *Linter) void {
         for (self.diagnostics.items) |d| self.allocator.free(d.message);
         self.diagnostics.deinit(self.allocator);
-        for (self.scopes.items) |*s| s.deinit(self.allocator);
-        self.scopes.deinit(self.allocator);
         self.rules.deinit(self.allocator);
+        self.scope_arena.deinit();
     }
 
     pub fn check(self: *Linter, source: []const u8) !void {
@@ -90,6 +89,9 @@ pub const Linter = struct {
             // Fire EOF Hook on all plugins
             for (self.rules.items) |rule| try rule.checkEOF(self);
         }
+
+        _ = self.scope_arena.reset(.retain_capacity);
+        self.scopes = .empty;
     }
 
     // DRY: Unified formatting diagnostic helper for all plugins!
@@ -103,7 +105,7 @@ pub const Linter = struct {
     }
 
     fn pushScope(self: *Linter) !void {
-        try self.scopes.append(self.allocator, Scope{});
+        try self.scopes.append(self.scope_arena.allocator(), Scope{});
     }
 
     fn popScope(self: *Linter) !void {
@@ -113,14 +115,13 @@ pub const Linter = struct {
 
             // Fire exitScope hook on all plugins
             for (self.rules.items) |rule| try rule.exitScope(&scope, self);
-            scope.deinit(self.allocator);
         }
     }
 
     fn declareVariable(self: *Linter, name: []const u8, loc: token.Location) !void {
         if (self.scopes.items.len > 0) {
             const current = &self.scopes.items[self.scopes.items.len - 1];
-            try current.declared_vars.put(self.allocator, name, loc);
+            try current.declared_vars.put(self.scope_arena.allocator(), name, loc);
         }
     }
 
@@ -130,7 +131,7 @@ pub const Linter = struct {
             i -= 1;
             var scope = &self.scopes.items[i];
             if (scope.declared_vars.contains(name)) {
-                scope.used_vars.put(self.allocator, name, {}) catch {};
+                scope.used_vars.put(self.scope_arena.allocator(), name, {}) catch {};
                 break;
             }
         }
