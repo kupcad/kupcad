@@ -6,7 +6,7 @@ export default defineConfig({
     lib: {
       entry: resolve(__dirname, 'src/extension.js'),
       formats: ['cjs'],
-      fileName: () => 'extension.js',
+      fileName: () => 'extension.cjs',
     },
     outDir: 'dist',
     rollupOptions: {

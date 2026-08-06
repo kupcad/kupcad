@@ -2,17 +2,27 @@
   "name": "@kupcad/vscode",
   "displayName": "kupcad-vscode",
   "description": "KupCAD - code to CAD language",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
+  "main": "./dist/extension.cjs",
+  "publisher": "kupcad",
   "engines": {
     "vscode": "^1.125.0"
   },
   "categories": [
-    "Other"
+    "Programming Languages",
+    "Formatters",
+    "Linters",
+    "Visualization"
   ],
   "activationEvents": [],
-  "main": "./dist/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "kupcad.showUI",
+        "title": "KupCAD: Open Viewer"
+      }
+    ],
     "languages": [
       {
         "id": "kupcad",
