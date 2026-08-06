@@ -4,6 +4,7 @@
   "scripts": {
     "build:core:wasm": "cd core && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseFast",
     "build:core:native": "cd core && zig build -Doptimize=ReleaseFast",
+    "build:core:grammar": "cd core && zig build grammar -Doptimize=ReleaseFast",
     "test:core": "cd core && zig build test --summary all",
     "test:wasm": "cd core/src && zig test wasm_test.zig -target wasm32-wasi --test-cmd wasmtime --test-cmd-bin"
   }

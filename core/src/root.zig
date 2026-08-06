@@ -1,4 +1,5 @@
 pub const api = @import("api.zig");
+pub const registry = @import("core/registry.zig");
 
 pub const formatCode = api.formatCode;
 pub const checkCode = api.checkCode;
@@ -9,6 +10,7 @@ pub const LineIndex = api.LineIndex;
 
 test {
     _ = @import("api_test.zig");
+    _ = @import("gen_grammar_test.zig");
     _ = @import("core/ast_test.zig");
     _ = @import("core/line_index_test.zig");
     _ = @import("frontend/kupcad/docstring_test.zig");

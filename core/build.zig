@@ -177,6 +177,26 @@ pub fn build(b: *std.Build) void {
         const test_step = b.step("test", "Run tests");
         test_step.dependOn(&run_mod_tests.step);
         test_step.dependOn(&run_exe_tests.step);
+
+        // generate grammar file
+        const gen_grammar_exe = b.addExecutable(.{ .name = "gen_grammar", .root_module = b.createModule(.{
+            .root_source_file = b.path("src/gen_grammar.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "kupcad", .module = mod },
+            },
+        }) });
+
+        // Create a run step for the executable
+        const run_gen_grammar = b.addRunArtifact(gen_grammar_exe);
+
+        // Pass the destination path as an argument to the generator tool
+        run_gen_grammar.addArg("../packages/vscode/syntaxes/kupcad.tmLanguage.json");
+
+        // Expose it as a specific build step
+        const gen_step = b.step("grammar", "Generate VS Code TextMate grammar JSON");
+        gen_step.dependOn(&run_gen_grammar.step);
     }
 
     // Just like flags, top level steps are also listed in the `--help` menu.

@@ -1,0 +1,116 @@
+{
+  "name": "KupCAD",
+  "scopeName": "source.kupcad",
+  "patterns": [
+    {
+      "include": "#param_docs"
+    },
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#symbols"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#primitives_3d"
+    },
+    {
+      "include": "#primitives_2d"
+    },
+    {
+      "include": "#transforms"
+    },
+    {
+      "include": "#csg_operators"
+    },
+    {
+      "include": "#workplanes"
+    },
+    {
+      "include": "#inspections"
+    },
+    {
+      "include": "#numbers"
+    }
+  ],
+  "repository": {
+    "param_docs": {
+      "match": "^\\s*(#\\s*@[a-zA-Z_]+)(.*)$",
+      "captures": {
+        "1": {
+          "name": "keyword.control.directive.kupcad"
+        },
+        "2": {
+          "name": "comment.block.documentation.kupcad"
+        }
+      }
+    },
+    "comments": {
+      "match": "#.*$",
+      "name": "comment.line.number-sign.kupcad"
+    },
+    "strings": {
+      "begin": "\"",
+      "end": "\"",
+      "name": "string.quoted.double.kupcad",
+      "patterns": [
+        {
+          "match": "\\\\.",
+          "name": "constant.character.escape.kupcad"
+        },
+        {
+          "begin": "#\\{",
+          "end": "\\}",
+          "name": "meta.embedded.line.kupcad",
+          "patterns": [
+            {
+              "include": "$self"
+            }
+          ]
+        }
+      ]
+    },
+    "symbols": {
+      "match": "(?<!:):[a-zA-Z_]\\w*",
+      "name": "constant.language.symbol.kupcad"
+    },
+    "numbers": {
+      "match": "\\b[0-9]+(\\.[0-9]+)?\\b",
+      "name": "constant.numeric.kupcad"
+    },
+    "keywords": {
+      "match": "\\b(def|class|import)\\b",
+      "name": "keyword.control.kupcad"
+    },
+    "primitives_3d": {
+      "match": "\\b(box|cylinder|sphere|cone|torus|polyhedron|wedge)\\b",
+      "name": "support.class.primitive.3d.kupcad"
+    },
+    "primitives_2d": {
+      "match": "\\b(rect|circle|polygon|regular_polygon|annulus)\\b",
+      "name": "support.class.primitive.2d.kupcad"
+    },
+    "transforms": {
+      "match": "\\b(extrude|revolve|hull|translate|rotate|scale|mirror|center|offset|smooth|refine)\\b",
+      "name": "support.function.transform.kupcad"
+    },
+    "csg_operators": {
+      "match": "\\b(union|difference|intersect)\\b",
+      "name": "support.function.csg.kupcad"
+    },
+    "workplanes": {
+      "match": "\\b(on_face)\\b",
+      "name": "support.function.workplane.kupcad"
+    },
+    "inspections": {
+      "match": "\\b(bbox|volume|to_mesh)\\b",
+      "name": "support.function.inspection.kupcad"
+    }
+  }
+}
