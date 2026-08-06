@@ -6,16 +6,25 @@ pub const Handler = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     transport: *lsp.Transport,
+    use_utf8: bool = false,
+
+    // We need to store the open files in memory so the formatter can access their text
+    files: std.StringHashMapUnmanaged([]const u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, transport: *lsp.Transport) Handler {
         return .{ .allocator = allocator, .io = io, .transport = transport };
     }
 
     pub fn deinit(self: *Handler) void {
-        _ = self;
+        // Clean up our file memory when the server shuts down
+        var it = self.files.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.files.deinit(self.allocator);
     }
 
-    /// Uses std.log to safely bypass ReleaseFast optimizations and the 0.16 IO changes
     fn log(self: *Handler, comptime fmt: []const u8, args: anytype) void {
         _ = self;
         std.log.err("LSP: " ++ fmt, args);
@@ -27,8 +36,18 @@ pub const Handler = struct {
         request: lsp.types.InitializeParams,
     ) lsp.types.InitializeResult {
         _ = arena;
-        _ = request;
         self.log("Initializing Server...", .{});
+
+        if (request.capabilities.general) |general| {
+            if (general.positionEncodings) |encodings| {
+                for (encodings) |enc| {
+                    if (enc == .@"utf-8") {
+                        self.use_utf8 = true;
+                        break;
+                    }
+                }
+            }
+        }
 
         return .{
             .serverInfo = .{
@@ -36,12 +55,15 @@ pub const Handler = struct {
                 .version = "0.1.0",
             },
             .capabilities = .{
+                .positionEncoding = if (self.use_utf8) .@"utf-8" else .@"utf-16",
                 .textDocumentSync = .{
                     .text_document_sync_options = .{
                         .openClose = true,
-                        .change = .Full, // We want the full text string on every keystroke
+                        .change = .Full,
                     },
                 },
+                // NEW: Tell VS Code we are ready to format documents!
+                .documentFormattingProvider = .{ .bool = true },
             },
         };
     }
@@ -52,6 +74,12 @@ pub const Handler = struct {
         params: lsp.types.TextDocument.DidOpenParams,
     ) !void {
         self.log("Opened {s}", .{params.textDocument.uri});
+
+        // Store the file text in our hash map
+        const uri_dup = try self.allocator.dupe(u8, params.textDocument.uri);
+        const text_dup = try self.allocator.dupe(u8, params.textDocument.text);
+        try self.files.put(self.allocator, uri_dup, text_dup);
+
         try self.runDiagnostics(arena, params.textDocument.uri, params.textDocument.text);
     }
 
@@ -62,9 +90,13 @@ pub const Handler = struct {
     ) !void {
         self.log("Changed {s}", .{params.textDocument.uri});
         if (params.contentChanges.len > 0) {
-            // Because we requested .Full sync, the change event contains the entire file text
             switch (params.contentChanges[0]) {
                 .text_document_content_change_whole_document => |doc| {
+                    // Update our stored file text
+                    if (self.files.getPtr(params.textDocument.uri)) |ptr| {
+                        self.allocator.free(ptr.*);
+                        ptr.* = try self.allocator.dupe(u8, doc.text);
+                    }
                     try self.runDiagnostics(arena, params.textDocument.uri, doc.text);
                 },
                 else => {},
@@ -72,9 +104,60 @@ pub const Handler = struct {
         }
     }
 
-    /// Evaluates the code using KupCAD's core and sends squiggly lines to VS Code
+    // Clean up memory when the user closes the tab in VS Code
+    pub fn @"textDocument/didClose"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.TextDocument.DidCloseParams,
+    ) !void {
+        _ = arena;
+        self.log("Closed {s}", .{params.textDocument.uri});
+        if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
+            self.allocator.free(kv.key);
+            self.allocator.free(kv.value);
+        }
+    }
+
+    // Handle the format request
+    pub fn @"textDocument/formatting"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.document_formatting.Params,
+    ) !?[]const lsp.types.TextEdit {
+        self.log("Formatting requested for {s}", .{params.textDocument.uri});
+
+        // Fetch the code from our internal state
+        const source = self.files.get(params.textDocument.uri) orelse return null;
+
+        // Run the KupCAD formatter
+        const formatted = api.formatCode(arena, source, .{}) catch |err| {
+            self.log("Formatter failed: {}", .{err});
+            return null; // Return null to indicate no changes on error
+        };
+
+        // Calculate the end position to replace the entire document
+        var line_index = try api.LineIndex.init(arena, source);
+        const end_offset: u32 = @intCast(source.len);
+        const end_line = line_index.getLine(end_offset);
+        const end_char = if (self.use_utf8)
+            line_index.getUtf8Column(end_offset)
+        else
+            line_index.getUtf16Column(end_offset);
+
+        // Create the TextEdit payload
+        var edits = std.ArrayListUnmanaged(lsp.types.TextEdit).empty;
+        try edits.append(arena, .{
+            .range = .{
+                .start = .{ .line = 0, .character = 0 },
+                .end = .{ .line = end_line, .character = end_char },
+            },
+            .newText = formatted,
+        });
+
+        return edits.items;
+    }
+
     fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, source: []const u8) !void {
-        // Run the KupCAD linter
         const diags = api.checkCode(self.allocator, source, .{}) catch |err| {
             self.log("Linter crashed: {}", .{err});
             return;
@@ -84,7 +167,6 @@ pub const Handler = struct {
             self.allocator.free(diags);
         }
 
-        // 2. Define our own lightweight, spec-compliant LSP structs
         const Position = struct { line: u32, character: u32 };
         const Range = struct { start: Position, end: Position };
         const Diagnostic = struct {
@@ -98,22 +180,16 @@ pub const Handler = struct {
             diagnostics: []const Diagnostic,
         };
 
-        // Initialize the LineIndex to accurately map flat byte offsets to UTF-16 LSP coordinates
         var line_index = try api.LineIndex.init(arena, source);
-
-        // Map KupCAD Diagnostics to LSP Diagnostics
         var lsp_diags: std.ArrayListUnmanaged(Diagnostic) = .empty;
 
         for (diags) |d| {
-            // Use the LineIndex to get exact 0-indexed line numbers and UTF-16 character columns
             const start_line = line_index.getLine(d.loc.offset);
-            const start_char = line_index.getUtf16Column(d.loc.offset);
-
-            // Calculate the end offset, defaulting to 1 character wide if length is 0
             const end_offset = d.loc.offset + if (d.loc.length > 0) d.loc.length else 1;
-
             const end_line = line_index.getLine(end_offset);
-            const end_char = line_index.getUtf16Column(end_offset);
+
+            const start_char = if (self.use_utf8) line_index.getUtf8Column(d.loc.offset) else line_index.getUtf16Column(d.loc.offset);
+            const end_char = if (self.use_utf8) line_index.getUtf8Column(end_offset) else line_index.getUtf16Column(end_offset);
 
             try lsp_diags.append(arena, .{
                 .range = .{
@@ -130,9 +206,6 @@ pub const Handler = struct {
             });
         }
 
-        self.log("Publishing {d} diagnostics", .{lsp_diags.items.len});
-
-        // Send the notification to VS Code
         try self.transport.writeNotification(
             self.io,
             arena,
@@ -161,7 +234,6 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !void {
     var stdio_transport: lsp.Transport.Stdio = .init(&read_buffer, .stdin(), .stdout());
     const transport: *lsp.Transport = &stdio_transport.transport;
 
-    // Pass the transport and io objects into the handler
     var handler = Handler.init(allocator, init.io, transport);
     defer handler.deinit();
 

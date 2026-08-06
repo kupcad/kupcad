@@ -57,6 +57,26 @@ pub const Formatter = struct {
         }
     }
 
+    // Determines if a node is a definition that requires visual separation
+    fn requiresBlankLineSeparation(node: *const ast.Node) bool {
+        return switch (node.kind) {
+            .def_stmt, .class_stmt, .module_stmt => true,
+            else => false,
+        };
+    }
+
+    // Safely ensures exactly one empty line exists
+    fn ensureBlankLine(self: *Formatter) Error!void {
+        try self.ensureNewline();
+        if (self.out.items.len >= 2) {
+            if (self.out.items[self.out.items.len - 2] != '\n') {
+                try self.out.append(self.allocator, '\n');
+            }
+        } else if (self.out.items.len == 1) {
+            try self.out.append(self.allocator, '\n');
+        }
+    }
+
     fn writeIndent(self: *Formatter) Error!void {
         try self.out.appendNTimes(self.allocator, ' ', self.indent_level * self.config.indent_width);
     }
@@ -66,6 +86,7 @@ pub const Formatter = struct {
         self.indent_level += 1;
         try self.formatNode(body);
         self.indent_level -= 1;
+        try self.ensureNewline(); // Force a newline before 'end'
         try self.writeIndent();
         try self.out.appendSlice(self.allocator, "end");
     }
@@ -157,22 +178,29 @@ pub const Formatter = struct {
     // --- Isolated Node Formatters ---
 
     fn formatBlockStmts(self: *Formatter, stmts: []const *ast.Node) Error!void {
-        // Create an ephemeral memory arena just for this formatting pass
         var temp_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer temp_arena.deinit();
 
         var print_stmts = stmts;
-
-        // Pipe the statements through all active plugins
         for (self.rules.items) |rule| {
             print_stmts = rule.processBlockStmts(temp_arena.allocator(), print_stmts);
         }
 
         for (print_stmts, 0..) |stmt, idx| {
+            if (idx > 0) {
+                const prev_stmt = print_stmts[idx - 1];
+                if (requiresBlankLineSeparation(prev_stmt) or requiresBlankLineSeparation(stmt)) {
+                    try self.ensureBlankLine();
+                }
+            }
+
+            // Flush comments BEFORE indenting the statement to keep indentation intact
+            try self.flushLeadingComments(stmt.loc.line);
+
             if (self.isAtLineStartOrEmpty()) try self.writeIndent();
             try self.formatNode(stmt);
             try self.flushInlineComments(stmt.loc.line);
-            if (idx < print_stmts.len - 1 or print_stmts.len == 1) try self.ensureNewline();
+            try self.ensureNewline(); // Unconditionally ensure a newline
         }
     }
 
@@ -236,16 +264,21 @@ pub const Formatter = struct {
         try self.formatNode(ifs.condition);
         try self.flushInlineComments(start_line);
         try self.ensureNewline();
+
         self.indent_level += 1;
         try self.formatNode(ifs.then_branch);
         self.indent_level -= 1;
+        try self.ensureNewline(); // Force a newline before 'else' or 'end'
+
         if (ifs.else_branch) |eb| {
             try self.writeIndent();
             try self.out.appendSlice(self.allocator, "else\n");
             self.indent_level += 1;
             try self.formatNode(eb);
             self.indent_level -= 1;
+            try self.ensureNewline(); // Force a newline before 'end'
         }
+
         try self.writeIndent();
         try self.out.appendSlice(self.allocator, "end");
     }
@@ -279,6 +312,7 @@ pub const Formatter = struct {
         }
         try self.flushInlineComments(start_line);
         try self.out.append(self.allocator, '\n');
+
         for (cs.when_branches) |wb| {
             try self.writeIndent();
             try self.out.appendSlice(self.allocator, "when ");
@@ -290,14 +324,18 @@ pub const Formatter = struct {
             self.indent_level += 1;
             try self.formatNode(wb.body);
             self.indent_level -= 1;
+            try self.ensureNewline(); // Force a newline before the next 'when', 'else', or 'end'
         }
+
         if (cs.else_branch) |eb| {
             try self.writeIndent();
             try self.out.appendSlice(self.allocator, "else\n");
             self.indent_level += 1;
             try self.formatNode(eb);
             self.indent_level -= 1;
+            try self.ensureNewline(); // Force a newline before 'end'
         }
+
         try self.writeIndent();
         try self.out.appendSlice(self.allocator, "end");
     }
@@ -306,9 +344,12 @@ pub const Formatter = struct {
         try self.out.appendSlice(self.allocator, "begin");
         try self.flushInlineComments(start_line);
         try self.out.append(self.allocator, '\n');
+
         self.indent_level += 1;
         try self.formatNode(bs.body);
         self.indent_level -= 1;
+        try self.ensureNewline(); // Force a newline before 'rescue', 'ensure', or 'end'
+
         for (bs.rescues) |r| {
             try self.writeIndent();
             try self.out.appendSlice(self.allocator, "rescue");
@@ -327,14 +368,18 @@ pub const Formatter = struct {
             self.indent_level += 1;
             try self.formatNode(r.body);
             self.indent_level -= 1;
+            try self.ensureNewline(); // Force a newline before the next 'rescue', 'ensure', or 'end'
         }
+
         if (bs.ensure_body) |eb| {
             try self.writeIndent();
             try self.out.appendSlice(self.allocator, "ensure\n");
             self.indent_level += 1;
             try self.formatNode(eb);
             self.indent_level -= 1;
+            try self.ensureNewline(); // Force a newline before 'end'
         }
+
         try self.writeIndent();
         try self.out.appendSlice(self.allocator, "end");
     }

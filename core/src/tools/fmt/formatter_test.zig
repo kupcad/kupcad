@@ -229,6 +229,7 @@ test "Formatter: Unary Operators and Splats (no extra spaces)" {
         \\x = -10
         \\y = !true
         \\z = ~part
+        \\
         \\def foo(*args, **kwargs)
         \\end
         \\
@@ -311,4 +312,62 @@ test "Formatter: Inline and leading comments are placed correctly" {
         \\
     ;
     try expectFormat(source, expected);
+}
+
+test "Formatter: properly adds newline before 'end' in multi-statement blocks" {
+    const source =
+        \\def test
+        \\  return
+        \\  a += 1
+        \\end
+    ;
+    const allocator = testing.allocator;
+
+    const formatted = try api.formatCode(allocator, source, .{});
+    defer allocator.free(formatted);
+
+    try testing.expectEqualStrings(
+        \\def test
+        \\  return
+        \\  a += 1
+        \\end
+        \\
+    , formatted);
+}
+
+test "Formatter: inserts blank lines between methods and classes" {
+    const source =
+        \\def foo
+        \\  a = 1
+        \\end
+        \\# Comment for bar
+        \\def bar
+        \\  b = 2
+        \\end
+        \\class MyClass
+        \\end
+        \\x = 10
+    ;
+
+    const expected =
+        \\def foo
+        \\  a = 1
+        \\end
+        \\
+        \\# Comment for bar
+        \\def bar
+        \\  b = 2
+        \\end
+        \\
+        \\class MyClass
+        \\end
+        \\
+        \\x = 10
+        \\
+    ;
+    const allocator = testing.allocator;
+    const formatted = try api.formatCode(allocator, source, .{});
+    defer allocator.free(formatted);
+
+    try testing.expectEqualStrings(expected, formatted);
 }
