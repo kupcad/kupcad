@@ -92,6 +92,10 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
             .{ .include = "#comments" },
             .{ .include = "#strings" },
             .{ .include = "#symbols" },
+            .{ .include = "#instance_vars" },
+            .{ .include = "#global_vars" },
+            .{ .include = "#constants" },
+            .{ .include = "#method_calls" },
             .{ .include = "#keywords" },
             .{ .include = "#primitives_3d" },
             .{ .include = "#primitives_2d" },
@@ -100,6 +104,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
             .{ .include = "#workplanes" },
             .{ .include = "#inspections" },
             .{ .include = "#numbers" },
+            .{ .include = "#operators" },
         },
         .repository = .{
             .param_docs = .{
@@ -130,12 +135,46 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
                 },
             },
             .symbols = .{
-                .match = "(?<!:):[a-zA-Z_]\\w*",
+                .match = "(?<!:):[a-zA-Z_]\\w*[!?]?",
                 .name = "constant.language.symbol.kupcad",
             },
+            // Handles hex (0x), binary (0b), octal (0o), floats (1.5e3), and underscores (100_000)
             .numbers = .{
-                .match = "\\b[0-9]+(\\.[0-9]+)?\\b",
+                .match = "\\b(0[xX][a-fA-F0-9_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*(\\.[0-9_]+)?([eE][-+]?[0-9_]+)?)\\b",
                 .name = "constant.numeric.kupcad",
+            },
+            // Instance Variables (@var)
+            .instance_vars = .{
+                .match = "(@)[a-zA-Z_]\\w*",
+                .name = "variable.other.readwrite.instance.kupcad",
+            },
+            // Global Variables ($var)
+            .global_vars = .{
+                .match = "(\\$)[a-zA-Z_]\\w*",
+                .name = "variable.other.readwrite.global.kupcad",
+            },
+            // Constants and Classes (Starts with Capital Letter)
+            .constants = .{
+                .match = "\\b[A-Z]\\w*\\b",
+                .name = "entity.name.type.class.kupcad",
+            },
+            // Operators and Safe Navigation
+            .operators = .{
+                .patterns = .{
+                    .{ .match = "(&\\.)", .name = "keyword.operator.safe-navigation.kupcad" },
+                    .{ .match = "(<<=|>>=|\\*\\*=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|&&=\\|\\|=)", .name = "keyword.operator.assignment.augmented.kupcad" },
+                    .{ .match = "(==|!=|<=|>=|<|>|<=>|===)", .name = "keyword.operator.comparison.kupcad" },
+                    .{ .match = "(&&|\\|\\||!)", .name = "keyword.operator.logical.kupcad" },
+                    .{ .match = "(\\+|-|\\*|/|%|\\*\\*|&|\\||\\^|<<|>>)", .name = "keyword.operator.arithmetic.kupcad" },
+                    .{ .match = "=", .name = "keyword.operator.assignment.kupcad" },
+                },
+            },
+            // Generic Method Calls (e.g. `my_method(x)`)
+            .method_calls = .{
+                .match = "([a-zA-Z_]\\w*[!?]?)(\\()",
+                .captures = .{
+                    .@"1" = .{ .name = "entity.name.function.kupcad" },
+                },
             },
             .keywords = .{
                 .match = kw_match,
