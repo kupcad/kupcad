@@ -3,7 +3,7 @@ import * as path from 'path';
 
 export function activate(context) {
 	context.subscriptions.push(
-		vscode.commands.registerCommand('myExtension.showUI', () => {
+		vscode.commands.registerCommand('kupcad.showUI', () => {
 			const panel = vscode.window.createWebviewPanel(
 				'webviewPanel', 'My Webview', vscode.ViewColumn.One,
 				{ enableScripts: true }
@@ -18,7 +18,6 @@ export function activate(context) {
           <html>
             <body>
               <div id="root"></div>
-              <script type="module" src="http://localhost:5173/@react-refresh"></script>
               <script type="module" src="http://localhost:5173/src/main.tsx"></script>
             </body>
           </html>`;
