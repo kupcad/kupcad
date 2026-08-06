@@ -157,7 +157,7 @@
       }
     },
     "keywords": {
-      "match": "(?<![\\\\w.])(def|class|import)(?![\\\\w?!])",
+      "match": "(?<![\\\\w.])(def|class|import|export|from|with|module|end|do|if|else|elsif|unless|while|until|case|when|return|yield|break|next|begin|rescue|ensure|self|super|and|or|not|true|false|nil)(?![\\\\w?!])",
       "name": "keyword.control.kupcad"
     },
     "primitives_3d": {
