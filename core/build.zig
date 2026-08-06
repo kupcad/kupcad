@@ -40,7 +40,6 @@ pub fn build(b: *std.Build) void {
         // which requires us to specify a target.
         .target = target,
     });
-    
 
     if (target.result.os.tag == .freestanding) {
         // Build for the Web Browser
@@ -58,6 +57,11 @@ pub fn build(b: *std.Build) void {
 
         // Force the linker to export our `export fn` functions to JavaScript
         wasm.rdynamic = true;
+
+        // Apply Memory and Stack limits (Must be exact multiples of 65536)
+        wasm.initial_memory = 134217728; // 128 MB
+        wasm.max_memory = 4294967296; // 4 GB (Absolute WASM32 max)
+        wasm.stack_size = 67108864; // 64 MB stack for deep AST recursion
 
         b.installArtifact(wasm);
     } else {
