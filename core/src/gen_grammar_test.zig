@@ -22,7 +22,10 @@ test "gen_grammar: generates valid JSON using std.json" {
     }
 
     try testing.expect(std.mem.indexOf(u8, output, "\"source.kupcad\"") != null);
-    try testing.expect(std.mem.indexOf(u8, output, "\\\\b(import)\\\\b") != null);
-    try testing.expect(std.mem.indexOf(u8, output, "\\\\b(box)\\\\b") != null);
-    try testing.expect(std.mem.indexOf(u8, output, "\\\\b(translate)\\\\b") != null);
+
+    // Verify the negative lookaround regexes are present instead of \b
+    // We use \\\\\\\\ to match the double-escaped \\w in the generated JSON string.
+    try testing.expect(std.mem.indexOf(u8, output, "(?<![\\\\\\\\w.])(import)(?![\\\\\\\\w?!])") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "(?<![\\\\\\\\w])(box)(?![\\\\\\\\w?!])") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "(?<![\\\\\\\\w])(translate)(?![\\\\\\\\w?!])") != null);
 }

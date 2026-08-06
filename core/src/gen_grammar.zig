@@ -52,19 +52,28 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
     defer allocator.free(joined_insp);
 
     // Helper function to create the \b(word|word)\b regex
-    const makeMatch = struct {
+    const makeKeywordMatch = struct {
         fn apply(alloc: std.mem.Allocator, joined: []const u8) ![]const u8 {
-            return std.fmt.allocPrint(alloc, "\\b({s})\\b", .{joined});
+            return std.fmt.allocPrint(alloc, "(?<![\\\\w.])({s})(?![\\\\w?!])", .{joined});
         }
     }.apply;
 
-    const kw_match = try makeMatch(allocator, joined_kw);
-    const p3d_match = try makeMatch(allocator, joined_p3d);
-    const p2d_match = try makeMatch(allocator, joined_p2d);
-    const tf_match = try makeMatch(allocator, joined_tf);
-    const csg_match = try makeMatch(allocator, joined_csg);
-    const wp_match = try makeMatch(allocator, joined_wp);
-    const insp_match = try makeMatch(allocator, joined_insp);
+    // For methods/primitives: DO match after a dot, but not after a word char
+    const makeMethodMatch = struct {
+        fn apply(alloc: std.mem.Allocator, joined: []const u8) ![]const u8 {
+            return std.fmt.allocPrint(alloc, "(?<![\\\\w])({s})(?![\\\\w?!])", .{joined});
+        }
+    }.apply;
+
+    const kw_match = try makeKeywordMatch(allocator, joined_kw);
+
+    // Primitives and methods use the method matcher
+    const p3d_match = try makeMethodMatch(allocator, joined_p3d);
+    const p2d_match = try makeMethodMatch(allocator, joined_p2d);
+    const tf_match = try makeMethodMatch(allocator, joined_tf);
+    const csg_match = try makeMethodMatch(allocator, joined_csg);
+    const wp_match = try makeMethodMatch(allocator, joined_wp);
+    const insp_match = try makeMethodMatch(allocator, joined_insp);
 
     defer allocator.free(kw_match);
     defer allocator.free(p3d_match);
