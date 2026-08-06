@@ -10,7 +10,7 @@ export default defineConfig({
     },
     outDir: 'dist',
     rollupOptions: {
-      external: ['vscode', 'path', 'fs', 'crypto'],
+      external: ['vscode', 'path', 'fs', 'crypto', 'vscode-languageclient/node'],
     },
     sourcemap: true,
     minify: false

@@ -65,6 +65,11 @@ pub fn build(b: *std.Build) void {
 
         b.installArtifact(wasm);
     } else {
+        const lsp_kit = b.dependency("lsp_kit", .{
+            .target = target,
+            .optimize = optimize,
+        });
+
         // Here we define an executable. An executable needs to have a root module
         // which needs to expose a `main` function. While we could add a main function
         // to the module defined above, it's sometimes preferable to split business
@@ -103,6 +108,7 @@ pub fn build(b: *std.Build) void {
                     // can be extremely useful in case of collisions (which can happen
                     // importing modules from different packages).
                     .{ .name = "kupcad", .module = mod },
+                    .{ .name = "lsp", .module = lsp_kit.module("lsp") },
                 },
             }),
         });

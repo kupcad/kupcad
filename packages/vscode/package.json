@@ -56,5 +56,8 @@
     "concurrently": "^8.2.2",
     "vite": "^5.0.0",
     "vitest": "^1.4.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.1.0"
   }
 }
