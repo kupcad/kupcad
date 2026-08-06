@@ -1,0 +1,54 @@
+{
+  "name": "@kupcad/vscode",
+  "displayName": "kupcad-vscode",
+  "description": "KupCAD - code to CAD language",
+  "version": "0.0.1",
+  "type": "module",
+  "engines": {
+    "vscode": "^1.125.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "kupcad",
+        "aliases": [
+          "KupCAD",
+          "kupcad"
+        ],
+        "extensions": [
+          ".kup"
+        ],
+        "configuration": "./syntaxes/language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "kupcad",
+        "scopeName": "source.kupcad",
+        "path": "./syntaxes/kupcad.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "pnpm run lint",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.125.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x",
+    "eslint": "^10.5.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0"
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.0.6"
+  }
+}

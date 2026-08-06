@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Production/Build Output
+out/
+dist/
+
+# Test / Debug Artifacts
+.vscode-test/
+.vscode-test-web/
+*.log
+npm-debug.log*
+
+# IDE / Local Configurations
+.vscode/tasks.json
+.vscode/launch.json
+
+# OS Metadata
+.DS_Store
+Thumbs.db
+
+# TypeScript / Typings Build Artifacts
+*.tsbuildinfo
+tsconfig.lsif.json
+*.lsif
+
+# Package/Extension Artifacts
+*.vsix

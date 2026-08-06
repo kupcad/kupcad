@@ -91,6 +91,9 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
             .{ .include = "#param_docs" },
             .{ .include = "#comments" },
             .{ .include = "#strings" },
+            .{ .include = "#method_declarations" },
+            .{ .include = "#hash_keys" },
+            .{ .include = "#block_parameters" },
             .{ .include = "#symbols" },
             .{ .include = "#instance_vars" },
             .{ .include = "#global_vars" },
@@ -203,6 +206,38 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
             .inspections = .{
                 .match = insp_match,
                 .name = "support.function.inspection.kupcad",
+            },
+            // Hash Keys and Named Arguments (e.g., `x: 10`)
+            .hash_keys = .{
+                .match = "\\b([a-zA-Z_]\\w*[!?]?)(:)(?!:)",
+                .captures = .{
+                    .@"1" = .{ .name = "constant.language.symbol.hashkey.kupcad" },
+                    .@"2" = .{ .name = "punctuation.separator.key-value.kupcad" },
+                },
+            },
+            // Method Declarations (e.g., `def build`)
+            .method_declarations = .{
+                .match = "(?:^|\\s)(def)\\s+([a-zA-Z_]\\w*[!?]?)",
+                .captures = .{
+                    .@"1" = .{ .name = "keyword.control.def.kupcad" },
+                    .@"2" = .{ .name = "entity.name.function.kupcad" },
+                },
+            },
+            // Block Parameters (e.g., `|x, y|`)
+            .block_parameters = .{
+                .begin = "(?<=\\bdo\\b|\\{)\\s*(\\|)",
+                .beginCaptures = .{
+                    .@"1" = .{ .name = "punctuation.separator.variable.kupcad" },
+                },
+                .end = "(\\|)",
+                .endCaptures = .{
+                    .@"1" = .{ .name = "punctuation.separator.variable.kupcad" },
+                },
+                .name = "meta.block.parameters.kupcad",
+                .patterns = .{
+                    .{ .match = "[a-zA-Z_]\\w*", .name = "variable.parameter.block.kupcad" },
+                    .{ .match = ",", .name = "punctuation.separator.object.kupcad" },
+                },
             },
         },
     };
