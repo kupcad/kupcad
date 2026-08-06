@@ -11,7 +11,7 @@
     "Other"
   ],
   "activationEvents": [],
-  "main": "./extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "languages": [
       {
@@ -35,20 +35,16 @@
     ]
   },
   "scripts": {
-    "lint": "eslint .",
-    "pretest": "pnpm run lint",
-    "test": "vscode-test"
+    "dev:backend": "vite build --config vite.config.node.js --watch",
+    "dev:frontend": "vite --config webview/vite.config.js",
+    "watch": "concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "build": "vite build --config vite.config.node.js && vite build --config webview/vite.config.js",
+    "test": "vitest",
+    "test:ui": "vitest --ui"
   },
   "devDependencies": {
-    "@types/vscode": "^1.125.0",
-    "@types/mocha": "^10.0.10",
-    "@types/node": "24.x",
-    "eslint": "^10.5.0",
-    "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0"
-  },
-  "overrides": {
-    "diff": "^8.0.4",
-    "serialize-javascript": "^7.0.6"
+    "concurrently": "^8.2.2",
+    "vite": "^5.0.0",
+    "vitest": "^1.4.0"
   }
 }

@@ -149,6 +149,25 @@ kupcad/
     └── cnc_milled_bracket.kupcad
 ```
 
+```
+├── .vscode/
+│   ├── launch.json         # Debug configurations
+│   └── tasks.json          # Pre-launch compile tasks
+├── src/                    # Backend Extension Code
+│   ├── extension.ts        # Entry point
+│   └── utils.ts
+├── webview/                # Frontend Webview Code (React/Vue/Svelte)
+│   ├── src/
+│   ├── index.html
+│   └── vite.config.ts      # Frontend bundler setup
+├── tests/                  # Unit and Integration Tests
+│   └── extension.test.ts
+├── package.json            # Extension manifest
+├── vite.config.node.ts     # Backend extension bundler setup
+└── vitest.config.ts        # Vitest testing environment configuration
+
+```
+
 ## Wasm tests
 
 ```

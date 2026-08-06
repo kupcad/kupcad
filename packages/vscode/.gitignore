@@ -4,6 +4,7 @@ node_modules/
 # Production/Build Output
 out/
 dist/
+dist-webview/
 
 # Test / Debug Artifacts
 .vscode-test/
