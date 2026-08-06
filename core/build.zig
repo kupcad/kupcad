@@ -113,6 +113,7 @@ pub fn build(b: *std.Build) void {
         // by passing `--prefix` or `-p`.
         b.installArtifact(exe);
 
+        // return library too
         const lib = b.addLibrary(.{
             .linkage = .dynamic,
             .name = "kupcad_lib",
