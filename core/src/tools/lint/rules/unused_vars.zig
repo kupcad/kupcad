@@ -47,6 +47,34 @@ pub const UnusedVarsRule = struct {
         }
     }
 
+    fn declareLhsBindings(engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
+        if (node_idx == .none) return;
+        const node = tree.getNode(node_idx) orelse return;
+
+        switch (node.kind) {
+            .identifier => |id| {
+                try engine.declareVar(tree.getString(id), node.loc);
+            },
+            .array_literal => |span| {
+                for (tree.getNodes(span)) |elem_idx| {
+                    try declareLhsBindings(engine, tree, elem_idx);
+                }
+            },
+            .hash_literal => |span| {
+                for (tree.getHashEntries(span)) |entry| {
+                    try declareLhsBindings(engine, tree, entry.value);
+                }
+            },
+            .splat_expr => |inner| {
+                try declareLhsBindings(engine, tree, inner);
+            },
+            .double_splat_expr => |inner| {
+                try declareLhsBindings(engine, tree, inner);
+            },
+            else => {},
+        }
+    }
+
     fn enterScope(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         _ = ptr;
         const node = tree.getNode(node_idx) orelse return;
@@ -70,17 +98,7 @@ pub const UnusedVarsRule = struct {
             },
             .block => |b| {
                 for (tree.getNodes(b.params)) |p_idx| {
-                    const p_node = tree.getNode(p_idx).?;
-                    if (p_node.kind == .identifier) {
-                        try engine.declareVar(tree.getString(p_node.kind.identifier), p_node.loc);
-                    } else if (p_node.kind == .array_literal) {
-                        for (tree.getNodes(p_node.kind.array_literal)) |inner_idx| {
-                            const inner_node = tree.getNode(inner_idx).?;
-                            if (inner_node.kind == .identifier) {
-                                try engine.declareVar(tree.getString(inner_node.kind.identifier), inner_node.loc);
-                            }
-                        }
-                    }
+                    try declareLhsBindings(engine, tree, p_idx);
                 }
             },
             else => {},

@@ -72,3 +72,16 @@ test "Linter Rule: UnusedVarsRule flags unused function parameters" {
     try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
     try testing.expectEqualStrings("Unused variable 'height'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
 }
+
+test "Linter Rule: UnusedVarsRule handles arbitrary nested destructuring in block parameters" {
+    const source =
+        \\items.each do |((a, b), _c)|
+        \\  cube(a)
+        \\end
+    ;
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
+
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("Unused variable 'b'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
+}
