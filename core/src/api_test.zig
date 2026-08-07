@@ -29,22 +29,22 @@ test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
     // CSG Warning on Line 7
     try testing.expectEqual(.warning, diags[0].severity);
     try testing.expectEqual(@as(u32, 7), diags[0].loc.line);
-    try testing.expectEqualStrings("CSG Warning: Self-difference operation ('a - a') will result in empty geometry.", diags[0].message);
+    try testing.expectEqualStrings("CSG Warning: Self-difference operation ('part - part') will result in empty geometry.", diags[0].message);
 
     // Unreachable Code Warning on Line 11
     try testing.expectEqual(.warning, diags[1].severity);
     try testing.expectEqual(@as(u32, 11), diags[1].loc.line);
     try testing.expectEqualStrings("Unreachable code detected after explicit control flow return/break.", diags[1].message);
 
-    // Unused Variable Warning on Line 3
-    try testing.expectEqual(.warning, diags[2].severity);
-    try testing.expectEqual(@as(u32, 3), diags[2].loc.line);
-    try testing.expectEqualStrings("Unused variable 'unused_var'. Prefix with '_' if intentional.", diags[2].message);
-
     // ParamDoc Missing Reference Info on Line 1
-    try testing.expectEqual(.info, diags[3].severity);
-    try testing.expectEqual(@as(u32, 1), diags[3].loc.line);
-    try testing.expectEqualStrings("@param annotation references variable 'missing_var', which is never declared in standard scope.", diags[3].message);
+    try testing.expectEqual(.info, diags[2].severity);
+    try testing.expectEqual(@as(u32, 1), diags[2].loc.line);
+    try testing.expectEqualStrings("@param annotation references variable 'missing_var', which is never declared in standard scope.", diags[2].message);
+
+    // Unused Variable Warning on Line 3
+    try testing.expectEqual(.warning, diags[3].severity);
+    try testing.expectEqual(@as(u32, 3), diags[3].loc.line);
+    try testing.expectEqualStrings("Unused variable 'unused_var'. Prefix with '_' if intentional.", diags[3].message);
 }
 
 test "Document: successfully parses valid code and owns the AST" {
@@ -57,12 +57,16 @@ test "Document: successfully parses valid code and owns the AST" {
     defer doc.deinit();
 
     // Verify successful tree generation
-    try testing.expect(doc.tree != null);
+    try testing.expect(doc.tree.root != .none);
 
-    // Verify block statement holds our assignment
-    const block = doc.tree.?.kind.block;
+    // Verify block statement holds our assignment using Data-Oriented lookup
+    const root_node = doc.tree.getNode(doc.tree.root).?;
+    const block = root_node.kind.block;
+
     try testing.expectEqual(@as(usize, 1), block.stmts.len);
-    try testing.expectEqualStrings("width", block.stmts[0].kind.assignment.name);
+
+    const stmt_node = doc.tree.getNode(block.stmts[0]).?;
+    try testing.expectEqualStrings("width", stmt_node.kind.assignment.name);
 
     // Verify comment was captured
     try testing.expectEqual(@as(usize, 1), doc.comments.len);

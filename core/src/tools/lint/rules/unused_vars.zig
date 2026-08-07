@@ -4,20 +4,31 @@ const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 
 pub const UnusedVarsRule = struct {
-    pub fn rule(self: *UnusedVarsRule) LintRule {
-        return .{ .ptr = self, .vtable = &.{ .name = getName, .exitScope = exitScope } };
+    pub fn rule(self: *@This()) LintRule {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .name = name,
+                .exitScope = exitScope,
+            },
+        };
     }
 
-    fn getName(_: *anyopaque) []const u8 {
+    fn name(_: *anyopaque) []const u8 {
         return "Unused Variables Check";
     }
 
-    fn exitScope(_: *anyopaque, scope: *const linter.Scope, engine: *linter.Linter) !void {
-        var var_iter = scope.declared_vars.iterator();
-        while (var_iter.next()) |entry| {
+    fn exitScope(ptr: *anyopaque, scope: *const linter.Scope, engine: *linter.Linter) !void {
+        _ = ptr;
+        var iter = scope.declared_vars.iterator();
+
+        while (iter.next()) |entry| {
             const var_name = entry.key_ptr.*;
-            if (!scope.used_vars.contains(var_name) and var_name[0] != '_') {
-                try engine.addDiagnostic(entry.value_ptr.*, .warning, "Unused variable '{s}'. Prefix with '_' if intentional.", .{var_name});
+            const loc = entry.value_ptr.*;
+
+            // Flag if not used and doesn't start with an underscore (which marks intentional disuse)
+            if (!scope.used_vars.contains(var_name) and (var_name.len == 0 or var_name[0] != '_')) {
+                try engine.addDiagnostic(loc, .warning, "Unused variable '{s}'. Prefix with '_' if intentional.", .{var_name});
             }
         }
     }

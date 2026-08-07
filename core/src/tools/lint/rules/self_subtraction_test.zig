@@ -25,8 +25,8 @@ test "Linter Rule: SelfSubtractionRule catches a - a" {
     var doc = try api.Document.parse(testing.allocator, source);
     defer doc.deinit();
 
-    try linter.check(doc.tree, doc.diagnostics);
+    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
 
     try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);
-    try testing.expectEqualStrings("CSG Warning: Self-difference operation ('a - a') will result in empty geometry.", linter.diagnostics.items[0].message);
+    try testing.expectEqualStrings("CSG Warning: Self-difference operation ('part - part') will result in empty geometry.", linter.diagnostics.items[0].message);
 }

@@ -29,7 +29,7 @@ test "Linter Rule: UnusedVarsRule catches unused variables" {
     var doc = try api.Document.parse(testing.allocator, source);
     defer doc.deinit();
 
-    try linter.check(doc.tree, doc.diagnostics);
+    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
 
     try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);
     try testing.expectEqualStrings("Unused variable 'x'. Prefix with '_' if intentional.", linter.diagnostics.items[0].message);
@@ -55,7 +55,7 @@ test "Linter Rule: UnusedVarsRule detects usage across nested scopes" {
     var doc = try api.Document.parse(testing.allocator, source);
     defer doc.deinit();
 
-    try linter.check(doc.tree, doc.diagnostics);
+    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
 
     // Should be 0 diagnostics because `wall_thickness` is used in the inner block
     try testing.expectEqual(@as(usize, 0), linter.diagnostics.items.len);
@@ -80,7 +80,7 @@ test "Linter Rule: UnusedVarsRule flags unused function parameters" {
     var doc = try api.Document.parse(testing.allocator, source);
     defer doc.deinit();
 
-    try linter.check(doc.tree, doc.diagnostics);
+    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
 
     // Only `height` should trigger a warning; `width` is used
     try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);

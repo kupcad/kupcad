@@ -37,32 +37,42 @@ pub const ArgModifier = enum {
     block, // &
 };
 
+pub const NodeIndex = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+};
+
+pub const TokenIndex = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+};
+
 pub const Param = struct {
     name: []const u8,
-    default_value: ?*Node = null,
+    default_value: NodeIndex = .none,
     modifier: ?ArgModifier = null,
     is_keyword: bool = false,
 };
 
 pub const NamedArg = struct {
     name: []const u8,
-    value: *Node,
+    value: NodeIndex,
     modifier: ?ArgModifier = null,
 };
 
 pub const HashEntry = struct {
-    key: *Node,
-    value: *Node,
+    key: NodeIndex,
+    value: NodeIndex,
 };
 
 pub const ForBinding = struct {
     name: []const u8,
-    range: *Node,
+    range: NodeIndex,
 };
 
 pub const WhenBranch = struct {
-    conditions: []const *Node,
-    body: *Node,
+    conditions: []const NodeIndex,
+    body: NodeIndex,
 };
 
 pub const LhsExpr = struct {
@@ -73,139 +83,137 @@ pub const LhsExpr = struct {
 pub const RescueClause = struct {
     errors: []const []const u8,
     variable: ?[]const u8,
-    body: *Node,
+    body: NodeIndex,
 };
 
-// --- STANDALONE BOXED AST PAYLOADS ---
-
 pub const Range = struct {
-    start: *Node,
-    end: *Node,
-    step: ?*Node = null,
+    start: NodeIndex,
+    end: NodeIndex,
+    step: NodeIndex = .none,
     is_exclusive: bool = false,
 };
 
 pub const Assignment = struct {
     name: []const u8,
     op: ?BinaryOp = null,
-    value: *Node,
+    value: NodeIndex,
 };
 
 pub const MultipleAssignment = struct {
     lhs: []const LhsExpr,
     op: ?BinaryOp = null,
-    value: *Node,
+    value: NodeIndex,
 };
 
 pub const PropertyAssignment = struct {
-    target: *Node,
+    target: NodeIndex,
     property: []const u8,
     op: ?BinaryOp = null,
-    value: *Node,
+    value: NodeIndex,
 };
 
 pub const IndexAssignment = struct {
-    target: *Node,
-    index: *Node,
+    target: NodeIndex,
+    index: NodeIndex,
     op: ?BinaryOp = null,
-    value: *Node,
+    value: NodeIndex,
 };
 
 pub const BinaryExpr = struct {
     op: BinaryOp,
-    left: *Node,
-    right: *Node,
+    left: NodeIndex,
+    right: NodeIndex,
 };
 
 pub const TernaryExpr = struct {
-    condition: *Node,
-    then_branch: *Node,
-    else_branch: *Node,
+    condition: NodeIndex,
+    then_branch: NodeIndex,
+    else_branch: NodeIndex,
 };
 
 pub const MethodCall = struct {
-    receiver: ?*Node = null,
+    receiver: NodeIndex = .none,
     method_name: []const u8,
     args: []const NamedArg = &.{},
-    block: ?*Node = null,
+    block: NodeIndex = .none,
     is_safe: bool = false,
 };
 
 pub const SuperCall = struct {
     args: []const NamedArg = &.{},
-    block: ?*Node = null,
+    block: NodeIndex = .none,
 };
 
 pub const LambdaExpr = struct {
     params: []const Param,
-    body: *Node,
+    body: NodeIndex,
 };
 
 pub const ImportStmt = struct {
     symbols: []const []const u8 = &.{},
     path: []const u8,
-    attributes: ?*Node = null,
+    attributes: NodeIndex = .none,
 };
 
 pub const ExportStmt = struct {
     symbols: []const []const u8 = &.{},
     path: []const u8,
-    attributes: ?*Node = null,
+    attributes: NodeIndex = .none,
 };
 
 pub const IfStmt = struct {
-    condition: *Node,
-    then_branch: *Node,
-    else_branch: ?*Node = null,
+    condition: NodeIndex,
+    then_branch: NodeIndex,
+    else_branch: NodeIndex = .none,
     is_unless: bool = false,
 };
 
 pub const CaseStmt = struct {
-    condition: ?*Node = null,
+    condition: NodeIndex = .none,
     when_branches: []const WhenBranch = &.{},
-    else_branch: ?*Node = null,
+    else_branch: NodeIndex = .none,
 };
 
 pub const WhileStmt = struct {
-    condition: *Node,
-    body: *Node,
+    condition: NodeIndex,
+    body: NodeIndex,
     is_until: bool = false,
 };
 
 pub const ForStmt = struct {
     bindings: []const ForBinding,
-    body: *Node,
+    body: NodeIndex,
     is_intersection: bool = false,
 };
 
 pub const DefStmt = struct {
     name: []const u8,
     params: []const Param = &.{},
-    body: *Node,
+    body: NodeIndex,
     is_class_method: bool = false,
 };
 
 pub const ClassStmt = struct {
-    name: *Node,
-    super_class: ?*Node = null,
-    body: *Node,
+    name: NodeIndex,
+    super_class: NodeIndex = .none,
+    body: NodeIndex,
 };
 
 pub const ModuleStmt = struct {
     name: []const u8,
     params: []const Param = &.{},
-    body: *Node,
+    body: NodeIndex,
 };
 
 pub const BeginStmt = struct {
-    body: *Node,
+    body: NodeIndex,
     rescues: []const RescueClause = &.{},
-    ensure_body: ?*Node = null,
+    ensure_body: NodeIndex = .none,
 };
 
 pub const Block = struct {
-    params: []const *Node = &.{},
-    stmts: []const *Node,
+    params: []const NodeIndex = &.{},
+    stmts: []const NodeIndex,
 };
 
 pub const ParamDoc = struct {
@@ -213,92 +221,99 @@ pub const ParamDoc = struct {
     target_name: ?[]const u8 = null,
     type_name: ?[]const u8 = null,
     description: []const u8 = "",
-    options_expr: ?*Node = null,
+    options_expr: NodeIndex = .none,
 };
 
 pub const NodeKind = union(enum) {
     // Literals
     number: f64,
     string: []const u8,
-    interpolated_string: []const *Node,
+    interpolated_string: []const NodeIndex,
     symbol: []const u8,
     boolean: bool,
     nil,
     undef,
     self_expr,
-    array_literal: []const *Node,
+    array_literal: []const NodeIndex,
     hash_literal: []const HashEntry,
-
     // Range
-    range: *Range,
-
+    range: Range,
     // Variable lookup & Namespace Resolution
     identifier: []const u8,
     namespace_access: struct {
         path: []const []const u8,
     },
-
     // Assignments
-    assignment: *Assignment,
-    multiple_assignment: *MultipleAssignment,
-    property_assignment: *PropertyAssignment,
-    index_assignment: *IndexAssignment,
-
+    assignment: Assignment,
+    multiple_assignment: MultipleAssignment,
+    property_assignment: PropertyAssignment,
+    index_assignment: IndexAssignment,
     // Unary
     unary_op: struct {
         op: UnaryOp,
-        operand: *Node,
+        operand: NodeIndex,
     },
     rescue_modifier: struct {
-        expr: *Node,
-        rescue_expr: *Node,
+        expr: NodeIndex,
+        rescue_expr: NodeIndex,
     },
-
     // Binary & Ternary
-    binary_op: *BinaryExpr,
-    ternary_op: *TernaryExpr,
-
+    binary_op: BinaryExpr,
+    ternary_op: TernaryExpr,
     // Index Access
     index_access: struct {
-        target: *Node,
-        index: *Node,
+        target: NodeIndex,
+        index: NodeIndex,
     },
-    splat_expr: *Node,
-    double_splat_expr: *Node,
-    each_expr: *Node,
-
+    splat_expr: NodeIndex,
+    double_splat_expr: NodeIndex,
+    each_expr: NodeIndex,
     // Calls
-    method_call: *MethodCall,
-    super_call: *SuperCall,
-    lambda_expr: *LambdaExpr,
-
+    method_call: MethodCall,
+    super_call: SuperCall,
+    lambda_expr: LambdaExpr,
     // Statement Constructs
-    import_stmt: *ImportStmt,
-    export_stmt: *ExportStmt,
-    if_stmt: *IfStmt,
-    case_stmt: *CaseStmt,
-    while_stmt: *WhileStmt,
-    for_stmt: *ForStmt,
-    def_stmt: *DefStmt,
-    class_stmt: *ClassStmt,
-    module_stmt: *ModuleStmt,
-    begin_stmt: *BeginStmt,
-
-    return_stmt: ?*Node,
-    yield_stmt: []const *Node,
-    break_stmt: ?*Node,
-    next_stmt: ?*Node,
-
-    param_doc: *ParamDoc,
+    import_stmt: ImportStmt,
+    export_stmt: ExportStmt,
+    if_stmt: IfStmt,
+    case_stmt: CaseStmt,
+    while_stmt: WhileStmt,
+    for_stmt: ForStmt,
+    def_stmt: DefStmt,
+    class_stmt: ClassStmt,
+    module_stmt: ModuleStmt,
+    begin_stmt: BeginStmt,
+    return_stmt: NodeIndex,
+    yield_stmt: []const NodeIndex,
+    break_stmt: NodeIndex,
+    next_stmt: NodeIndex,
+    param_doc: ParamDoc,
     comment: []const u8,
-
     // Block Scope
-    block: *Block,
+    block: Block,
 };
 
 pub const Node = struct {
     kind: NodeKind,
     loc: Location,
+};
+
+pub const Tree = struct {
+    nodes: std.ArrayListUnmanaged(Node) = .empty,
+    extra_data: std.ArrayListUnmanaged(u32) = .empty,
+    root: NodeIndex = .none,
+
+    pub fn deinit(self: *Tree, allocator: std.mem.Allocator) void {
+        self.nodes.deinit(allocator);
+        self.extra_data.deinit(allocator);
+    }
+
+    pub inline fn getNode(self: *const Tree, index: NodeIndex) ?*const Node {
+        if (index == .none) return null;
+        const idx = @intFromEnum(index);
+        if (idx >= self.nodes.items.len) return null;
+        return &self.nodes.items[idx];
+    }
 };
 
 pub const StringPool = struct {
@@ -326,6 +341,7 @@ pub const StringPool = struct {
 pub const Builder = struct {
     allocator: std.mem.Allocator,
     pool: StringPool = .{},
+    tree: Tree = .{},
 
     pub fn init(allocator: std.mem.Allocator) Builder {
         return .{ .allocator = allocator };
@@ -333,25 +349,20 @@ pub const Builder = struct {
 
     pub fn deinit(self: *Builder) void {
         self.pool.deinit(self.allocator);
+        self.tree.deinit(self.allocator);
     }
 
     pub fn intern(self: *Builder, str: []const u8) ![]const u8 {
         return self.pool.intern(self.allocator, str);
     }
 
-    pub fn createNode(self: *const Builder, kind: NodeKind, loc: Location) !*Node {
-        const n = try self.allocator.create(Node);
-        n.* = .{ .kind = kind, .loc = loc };
-        return n;
+    pub fn createNode(self: *Builder, kind: NodeKind, loc: Location) !NodeIndex {
+        const idx: u32 = @intCast(self.tree.nodes.items.len);
+        try self.tree.nodes.append(self.allocator, .{ .kind = kind, .loc = loc });
+        return @enumFromInt(idx);
     }
 
-    pub fn box(self: *const Builder, comptime T: type, val: T) !*T {
-        const ptr = try self.allocator.create(T);
-        ptr.* = val;
-        return ptr;
-    }
-
-    pub fn number(self: *const Builder, lexeme: []const u8, loc: Location) !*Node {
+    pub fn number(self: *Builder, lexeme: []const u8, loc: Location) !NodeIndex {
         var buf: [128]u8 = undefined;
         var len: usize = 0;
         for (lexeme) |c| {
@@ -363,7 +374,6 @@ pub const Builder = struct {
         }
         const clean = buf[0..len];
         if (clean.len == 0) return error.InvalidExpression;
-
         var val: f64 = 0;
         if (clean.len > 2 and clean[0] == '0') {
             const prefix = clean[1];
@@ -382,61 +392,60 @@ pub const Builder = struct {
         } else {
             val = std.fmt.parseFloat(f64, clean) catch return error.InvalidExpression;
         }
-
         var final_loc = loc;
         if (final_loc.length == 0) final_loc.length = @as(u32, @intCast(lexeme.len));
         return self.createNode(.{ .number = val }, final_loc);
     }
 
-    pub fn binary(self: *const Builder, op: BinaryOp, left: *Node, right: *Node, loc: Location) !*Node {
-        return self.createNode(.{ .binary_op = try self.box(BinaryExpr, .{ .op = op, .left = left, .right = right }) }, loc);
+    pub fn binary(self: *Builder, op: BinaryOp, left: NodeIndex, right: NodeIndex, loc: Location) !NodeIndex {
+        return self.createNode(.{ .binary_op = .{ .op = op, .left = left, .right = right } }, loc);
     }
 
-    pub fn block(self: *const Builder, params: []const *Node, stmts: []const *Node, loc: Location) !*Node {
-        return self.createNode(.{ .block = try self.box(Block, .{ .params = params, .stmts = stmts }) }, loc);
+    pub fn block(self: *Builder, params: []const NodeIndex, stmts: []const NodeIndex, loc: Location) !NodeIndex {
+        return self.createNode(.{ .block = .{ .params = params, .stmts = stmts } }, loc);
     }
 
-    pub fn assignment(self: *const Builder, name: []const u8, op: ?BinaryOp, value: *Node, loc: Location) !*Node {
-        return self.createNode(.{ .assignment = try self.box(Assignment, .{ .name = name, .op = op, .value = value }) }, loc);
+    pub fn assignment(self: *Builder, name: []const u8, op: ?BinaryOp, value: NodeIndex, loc: Location) !NodeIndex {
+        return self.createNode(.{ .assignment = .{ .name = name, .op = op, .value = value } }, loc);
     }
 
-    pub fn methodCall(self: *const Builder, receiver: ?*Node, method_name: []const u8, args: []const NamedArg, block_node: ?*Node, is_safe: bool, loc: Location) !*Node {
-        return self.createNode(.{ .method_call = try self.box(MethodCall, .{ .receiver = receiver, .method_name = method_name, .args = args, .block = block_node, .is_safe = is_safe }) }, loc);
+    pub fn methodCall(self: *Builder, receiver: NodeIndex, method_name: []const u8, args: []const NamedArg, block_node: NodeIndex, is_safe: bool, loc: Location) !NodeIndex {
+        return self.createNode(.{ .method_call = .{ .receiver = receiver, .method_name = method_name, .args = args, .block = block_node, .is_safe = is_safe } }, loc);
     }
 
-    pub fn ifStmt(self: *const Builder, condition: *Node, then_branch: *Node, else_branch: ?*Node, is_unless: bool, loc: Location) !*Node {
-        return self.createNode(.{ .if_stmt = try self.box(IfStmt, .{ .condition = condition, .then_branch = then_branch, .else_branch = else_branch, .is_unless = is_unless }) }, loc);
+    pub fn ifStmt(self: *Builder, condition: NodeIndex, then_branch: NodeIndex, else_branch: NodeIndex, is_unless: bool, loc: Location) !NodeIndex {
+        return self.createNode(.{ .if_stmt = .{ .condition = condition, .then_branch = then_branch, .else_branch = else_branch, .is_unless = is_unless } }, loc);
     }
 
-    pub fn whileStmt(self: *const Builder, condition: *Node, body: *Node, is_until: bool, loc: Location) !*Node {
-        return self.createNode(.{ .while_stmt = try self.box(WhileStmt, .{ .condition = condition, .body = body, .is_until = is_until }) }, loc);
+    pub fn whileStmt(self: *Builder, condition: NodeIndex, body: NodeIndex, is_until: bool, loc: Location) !NodeIndex {
+        return self.createNode(.{ .while_stmt = .{ .condition = condition, .body = body, .is_until = is_until } }, loc);
     }
 
-    pub fn undefNode(self: *const Builder, loc: Location) !*Node {
+    pub fn undefNode(self: *Builder, loc: Location) !NodeIndex {
         return self.createNode(.undef, loc);
     }
 
-    pub fn booleanNode(self: *const Builder, val: bool, loc: Location) !*Node {
+    pub fn booleanNode(self: *Builder, val: bool, loc: Location) !NodeIndex {
         var final_loc = loc;
         if (final_loc.length == 0) final_loc.length = if (val) 4 else 5;
         return self.createNode(.{ .boolean = val }, final_loc);
     }
 
-    pub fn identifierNode(self: *Builder, name: []const u8, loc: Location) !*Node {
+    pub fn identifierNode(self: *Builder, name: []const u8, loc: Location) !NodeIndex {
         var final_loc = loc;
         if (final_loc.length == 0) final_loc.length = @as(u32, @intCast(name.len));
         const interned = try self.intern(name);
         return self.createNode(.{ .identifier = interned }, final_loc);
     }
 
-    pub fn stringNode(self: *Builder, str: []const u8, loc: Location) !*Node {
+    pub fn stringNode(self: *Builder, str: []const u8, loc: Location) !NodeIndex {
         var final_loc = loc;
         if (final_loc.length == 0) final_loc.length = @as(u32, @intCast(str.len));
         const interned = try self.intern(str);
         return self.createNode(.{ .string = interned }, final_loc);
     }
 
-    pub fn symbolNode(self: *Builder, sym: []const u8, loc: Location) !*Node {
+    pub fn symbolNode(self: *Builder, sym: []const u8, loc: Location) !NodeIndex {
         var final_loc = loc;
         if (final_loc.length == 0) final_loc.length = @as(u32, @intCast(sym.len));
         const interned = try self.intern(sym);
@@ -447,109 +456,112 @@ pub const Builder = struct {
 pub const Visitor = struct {
     ptr: *anyopaque,
     /// Return true to automatically traverse children, false to skip standard traversal
-    visitFn: *const fn (ptr: *anyopaque, node: *Node) anyerror!bool,
+    visitFn: *const fn (ptr: *anyopaque, tree: *const Tree, node_idx: NodeIndex) anyerror!bool,
 
-    pub fn walk(self: Visitor, node: *Node) anyerror!void {
-        const traverse_children = try self.visitFn(self.ptr, node);
+    pub fn walk(self: Visitor, tree: *const Tree, node_idx: NodeIndex) anyerror!void {
+        if (node_idx == .none) return;
+        const node = tree.getNode(node_idx) orelse return;
+
+        const traverse_children = try self.visitFn(self.ptr, tree, node_idx);
         if (!traverse_children) return;
 
         switch (node.kind) {
             .number, .string, .symbol, .boolean, .nil, .undef, .self_expr, .identifier, .comment, .param_doc, .namespace_access => {},
-            .interpolated_string => |parts| for (parts) |p| try self.walk(p),
-            .array_literal => |arr| for (arr) |elem| try self.walk(elem),
+            .interpolated_string => |parts| for (parts) |p| try self.walk(tree, p),
+            .array_literal => |arr| for (arr) |elem| try self.walk(tree, elem),
             .hash_literal => |entries| {
                 for (entries) |e| {
-                    try self.walk(e.key);
-                    try self.walk(e.value);
+                    try self.walk(tree, e.key);
+                    try self.walk(tree, e.value);
                 }
             },
             .range => |r| {
-                try self.walk(r.start);
-                try self.walk(r.end);
-                if (r.step) |s| try self.walk(s);
+                try self.walk(tree, r.start);
+                try self.walk(tree, r.end);
+                try self.walk(tree, r.step);
             },
-            .assignment => |a| try self.walk(a.value),
-            .multiple_assignment => |ma| try self.walk(ma.value),
+            .assignment => |a| try self.walk(tree, a.value),
+            .multiple_assignment => |ma| try self.walk(tree, ma.value),
             .property_assignment => |pa| {
-                try self.walk(pa.target);
-                try self.walk(pa.value);
+                try self.walk(tree, pa.target);
+                try self.walk(tree, pa.value);
             },
             .index_assignment => |ia| {
-                try self.walk(ia.target);
-                try self.walk(ia.index);
-                try self.walk(ia.value);
+                try self.walk(tree, ia.target);
+                try self.walk(tree, ia.index);
+                try self.walk(tree, ia.value);
             },
-            .unary_op => |u| try self.walk(u.operand),
+            .unary_op => |u| try self.walk(tree, u.operand),
             .rescue_modifier => |rm| {
-                try self.walk(rm.expr);
-                try self.walk(rm.rescue_expr);
+                try self.walk(tree, rm.expr);
+                try self.walk(tree, rm.rescue_expr);
             },
             .binary_op => |b| {
-                try self.walk(b.left);
-                try self.walk(b.right);
+                try self.walk(tree, b.left);
+                try self.walk(tree, b.right);
             },
             .ternary_op => |t| {
-                try self.walk(t.condition);
-                try self.walk(t.then_branch);
-                try self.walk(t.else_branch);
+                try self.walk(tree, t.condition);
+                try self.walk(tree, t.then_branch);
+                try self.walk(tree, t.else_branch);
             },
             .index_access => |ia| {
-                try self.walk(ia.target);
-                try self.walk(ia.index);
+                try self.walk(tree, ia.target);
+                try self.walk(tree, ia.index);
             },
-            .splat_expr => |s| try self.walk(s),
-            .double_splat_expr => |s| try self.walk(s),
-            .each_expr => |e| try self.walk(e),
+            .splat_expr => |s| try self.walk(tree, s),
+            .double_splat_expr => |s| try self.walk(tree, s),
+            .each_expr => |e| try self.walk(tree, e),
             .method_call => |mc| {
-                if (mc.receiver) |r| try self.walk(r);
-                for (mc.args) |a| try self.walk(a.value);
-                if (mc.block) |b| try self.walk(b);
+                try self.walk(tree, mc.receiver);
+                for (mc.args) |a| try self.walk(tree, a.value);
+                try self.walk(tree, mc.block);
             },
             .super_call => |sc| {
-                for (sc.args) |a| try self.walk(a.value);
-                if (sc.block) |b| try self.walk(b);
+                for (sc.args) |a| try self.walk(tree, a.value);
+                try self.walk(tree, sc.block);
             },
-            .lambda_expr => |le| try self.walk(le.body),
-            .import_stmt => |is| if (is.attributes) |attr| try self.walk(attr),
-            .export_stmt => |es| if (es.attributes) |attr| try self.walk(attr),
+            .lambda_expr => |le| try self.walk(tree, le.body),
+            .import_stmt => |is| try self.walk(tree, is.attributes),
+            .export_stmt => |es| try self.walk(tree, es.attributes),
             .if_stmt => |ifs| {
-                try self.walk(ifs.condition);
-                try self.walk(ifs.then_branch);
-                if (ifs.else_branch) |eb| try self.walk(eb);
+                try self.walk(tree, ifs.condition);
+                try self.walk(tree, ifs.then_branch);
+                try self.walk(tree, ifs.else_branch);
             },
             .case_stmt => |cs| {
-                if (cs.condition) |c| try self.walk(c);
+                try self.walk(tree, cs.condition);
                 for (cs.when_branches) |wb| {
-                    for (wb.conditions) |cond| try self.walk(cond);
-                    try self.walk(wb.body);
+                    for (wb.conditions) |cond| try self.walk(tree, cond);
+                    try self.walk(tree, wb.body);
                 }
-                if (cs.else_branch) |eb| try self.walk(eb);
+                try self.walk(tree, cs.else_branch);
             },
             .while_stmt => |ws| {
-                try self.walk(ws.condition);
-                try self.walk(ws.body);
+                try self.walk(tree, ws.condition);
+                try self.walk(tree, ws.body);
             },
             .for_stmt => |fs| {
-                for (fs.bindings) |b| try self.walk(b.range);
-                try self.walk(fs.body);
+                for (fs.bindings) |b| try self.walk(tree, b.range);
+                try self.walk(tree, fs.body);
             },
-            .def_stmt => |ds| try self.walk(ds.body),
+            .def_stmt => |ds| try self.walk(tree, ds.body),
             .class_stmt => |cs| {
-                try self.walk(cs.name);
-                if (cs.super_class) |sc| try self.walk(sc);
-                try self.walk(cs.body);
+                try self.walk(tree, cs.name);
+                try self.walk(tree, cs.super_class);
+                try self.walk(tree, cs.body);
             },
-            .module_stmt => |ms| try self.walk(ms.body),
+            .module_stmt => |ms| try self.walk(tree, ms.body),
             .begin_stmt => |bs| {
-                try self.walk(bs.body);
-                for (bs.rescues) |r| try self.walk(r.body);
-                if (bs.ensure_body) |eb| try self.walk(eb);
+                try self.walk(tree, bs.body);
+                for (bs.rescues) |r| try self.walk(tree, r.body);
+                try self.walk(tree, bs.ensure_body);
             },
-            .return_stmt => |r| if (r) |expr| try self.walk(expr),
-            .yield_stmt => |y| for (y) |expr| try self.walk(expr),
-            .break_stmt => |b| if (b) |expr| try self.walk(expr),
-            .next_stmt => |n| if (n) |expr| try self.walk(expr),
-            .block => |b| for (b.stmts) |s| try self.walk(s),
+            .return_stmt => |r| try self.walk(tree, r),
+            .yield_stmt => |y| for (y) |expr| try self.walk(tree, expr),
+            .break_stmt => |b| try self.walk(tree, b),
+            .next_stmt => |n| try self.walk(tree, n),
+            .block => |b| for (b.stmts) |s| try self.walk(tree, s),
         }
     }
 };

@@ -7,13 +7,14 @@ pub const DocstringParser = struct {
     allocator: std.mem.Allocator,
     b: *ast.Builder,
 
-    pub fn parse(self: *DocstringParser, raw: []const u8, loc: ast.Location) !*ast.ParamDoc {
+    pub fn parse(self: *DocstringParser, raw: []const u8, loc: ast.Location) !ast.NodeIndex {
         // Normalize the text (remove '#' and compress spaces, but PRESERVE newlines)
         var clean_text: std.ArrayListUnmanaged(u8) = .empty;
         defer clean_text.deinit(self.allocator);
-        var lines = std.mem.splitScalar(u8, raw, '\n');
 
+        var lines = std.mem.splitScalar(u8, raw, '\n');
         var is_first_line = true;
+
         while (lines.next()) |line| {
             const trimmed = std.mem.trim(u8, line, " \t\r#");
             if (trimmed.len > 0) {
@@ -27,7 +28,7 @@ pub const DocstringParser = struct {
 
         const text = std.mem.trim(u8, clean_text.items, " \n");
         if (text.len == 0 or text[0] != '@') {
-            return self.b.box(ast.ParamDoc, .{ .tag_name = try self.b.intern("") });
+            return self.b.createNode(.{ .param_doc = .{ .tag_name = try self.b.intern("") } }, loc);
         }
 
         var doc = ast.ParamDoc{ .tag_name = "" };
@@ -44,9 +45,13 @@ pub const DocstringParser = struct {
                 var parser = parser_mod.Parser.init(&lexer, self.allocator);
                 parser.b = self.b.*; // Clone builder so they share the StringPool and Allocator
 
-                if (parser.parseExpression(.none)) |node| {
-                    doc.options_expr = node;
+                if (parser.parseExpression(.none)) |node_idx| {
+                    doc.options_expr = node_idx;
                 } else |_| {}
+
+                // Sync the modified AST arrays back to the main builder!
+                self.b.* = parser.b;
+
                 parser.diagnostics.deinit(); // Clean up sub-parser errors
             }
         }
@@ -81,6 +86,6 @@ pub const DocstringParser = struct {
             doc.description = try self.b.intern(trimmed_rest);
         }
 
-        return self.b.box(ast.ParamDoc, doc);
+        return self.b.createNode(.{ .param_doc = doc }, loc);
     }
 };

@@ -96,23 +96,35 @@ pub const Linter = struct {
         self.scope_arena.deinit();
     }
 
-    pub fn check(self: *Linter, tree: ?*ast.Node, parser_diags: []const common_errors.Diagnostic) !void {
-        // Format and copy Parser syntax errors into the Linter Diagnostics Array
-        for (parser_diags) |diag| {
-            try self.addDiagnostic(diag.loc, .@"error", "{s}", .{diag.message});
+    pub fn check(self: *Linter, tree: *const ast.Tree, root: ast.NodeIndex, parser_diagnostics: []const common_errors.Diagnostic) !void {
+        // Pre-fill with syntax errors from the parser
+        for (parser_diagnostics) |diag| {
+            try self.diagnostics.append(self.allocator, .{
+                .loc = diag.loc,
+                .severity = .@"error",
+                .message = try self.allocator.dupe(u8, diag.message),
+            });
         }
 
-        if (tree) |root| {
-            try self.pushScope();
-            try self.analyzeNode(root);
-            try self.popScope();
+        if (root == .none) return;
 
-            // Fire EOF Hook on all plugins
-            for (self.rules.items) |rule| try rule.checkEOF(self);
+        // Push the global root scope so variables at the top level are tracked
+        try self.pushScope();
+
+        // Initiate the Visitor pattern using the new DoD Tree signature
+        const visitor = ast.Visitor{
+            .ptr = self,
+            .visitFn = visitNode,
+        };
+        try visitor.walk(tree, root);
+
+        // Run End-of-File checks for rules that need to resolve full-document state (like ParamDocs)
+        for (self.rules.items) |rule| {
+            try rule.checkEOF(self);
         }
 
-        _ = self.scope_arena.reset(.retain_capacity);
-        self.scopes = .empty;
+        // Pop the root scope to trigger UnusedVars reporting for global variables
+        try self.popScope();
     }
 
     // DRY: Unified formatting diagnostic helper for all plugins!
@@ -158,24 +170,27 @@ pub const Linter = struct {
         }
     }
 
-    fn analyzeNode(self: *Linter, node: *ast.Node) !void {
+    fn analyzeNode(self: *Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         var visitor = ast.Visitor{
             .ptr = self,
             .visitFn = visitNode,
         };
-        try visitor.walk(node);
+        try visitor.walk(tree, node_idx);
     }
 
-    fn visitNode(ptr: *anyopaque, node: *ast.Node) anyerror!bool {
-        const self = @as(*Linter, @ptrCast(@alignCast(ptr)));
+    fn visitNode(ptr: *anyopaque, tree: *const ast.Tree, node_idx: ast.NodeIndex) anyerror!bool {
+        var self = @as(*Linter, @ptrCast(@alignCast(ptr)));
+        const node = tree.getNode(node_idx) orelse return true;
 
-        // Fire all registered Linter plugins against this node
-        for (self.rules.items) |rule| try rule.checkNode(node, self);
+        for (self.rules.items) |rule| {
+            // Note: Update your `rules/rule.zig` signature to match this:
+            try rule.checkNode(self, tree, node_idx);
+        }
 
         // Handle specific nodes that require strict Scope management or ordering
         switch (node.kind) {
             .assignment => |a| {
-                try self.analyzeNode(a.value);
+                try self.analyzeNode(tree, a.value);
                 // Check if variable already exists in any scope (reassignment)
                 var exists = false;
                 var i = self.scopes.items.len;
@@ -192,7 +207,7 @@ pub const Linter = struct {
                 return false; // Skip default child traversal
             },
             .multiple_assignment => |ma| {
-                try self.analyzeNode(ma.value);
+                try self.analyzeNode(tree, ma.value);
                 for (ma.lhs) |l| {
                     var exists = false;
                     var i = self.scopes.items.len;
@@ -210,60 +225,66 @@ pub const Linter = struct {
                 return false;
             },
             .method_call => |mc| {
-                if (mc.receiver) |r| try self.analyzeNode(r);
-                for (mc.args) |a| try self.analyzeNode(a.value);
+                if (mc.receiver != .none) try self.analyzeNode(tree, mc.receiver);
+                for (mc.args) |a| try self.analyzeNode(tree, a.value);
 
-                if (mc.block) |b| {
+                if (mc.block != .none) {
                     try self.pushScope();
-                    for (b.kind.block.params) |p| {
+                    const block_node = tree.getNode(mc.block).?;
+                    for (block_node.kind.block.params) |p_idx| {
+                        const p = tree.getNode(p_idx).?;
                         if (p.kind == .identifier) {
                             try self.declareVariable(p.kind.identifier, p.loc);
                         } else if (p.kind == .array_literal) {
-                            for (p.kind.array_literal) |elem| {
+                            for (p.kind.array_literal) |elem_idx| {
+                                const elem = tree.getNode(elem_idx).?;
                                 if (elem.kind == .identifier) {
                                     try self.declareVariable(elem.kind.identifier, elem.loc);
                                 }
                             }
                         }
                     }
-                    for (b.kind.block.stmts) |s| try self.analyzeNode(s);
+                    for (block_node.kind.block.stmts) |s| try self.analyzeNode(tree, s);
                     try self.popScope();
                 }
                 return false; // We manually walked the children
             },
             .super_call => |sc| {
-                for (sc.args) |a| try self.analyzeNode(a.value);
+                for (sc.args) |a| try self.analyzeNode(tree, a.value);
 
-                if (sc.block) |b| {
+                if (sc.block != .none) {
                     try self.pushScope();
-                    for (b.kind.block.params) |p| {
+                    const block_node = tree.getNode(sc.block).?;
+                    for (block_node.kind.block.params) |p_idx| {
+                        const p = tree.getNode(p_idx).?;
                         if (p.kind == .identifier) {
                             try self.declareVariable(p.kind.identifier, p.loc);
                         } else if (p.kind == .array_literal) {
-                            for (p.kind.array_literal) |elem| {
+                            for (p.kind.array_literal) |elem_idx| {
+                                const elem = tree.getNode(elem_idx).?;
                                 if (elem.kind == .identifier) {
                                     try self.declareVariable(elem.kind.identifier, elem.loc);
                                 }
                             }
                         }
                     }
-                    for (b.kind.block.stmts) |s| try self.analyzeNode(s);
+                    for (block_node.kind.block.stmts) |s| try self.analyzeNode(tree, s);
                     try self.popScope();
                 }
                 return false;
             },
             .class_stmt => |cs| {
-                try self.analyzeNode(cs.name);
-                if (cs.super_class) |sc| try self.analyzeNode(sc);
+                try self.analyzeNode(tree, cs.name);
+                if (cs.super_class != .none) try self.analyzeNode(tree, cs.super_class);
 
                 try self.pushScope();
-                try self.analyzeNode(cs.body);
+                try self.analyzeNode(tree, cs.body);
                 try self.popScope();
                 return false;
             },
             .module_stmt => |ms| {
                 try self.pushScope();
-                try self.analyzeNode(ms.body);
+                try self.analyzeNode(tree, ms.body);
                 try self.popScope();
                 return false;
             },
@@ -274,35 +295,35 @@ pub const Linter = struct {
             .for_stmt => |fs| {
                 try self.pushScope();
                 for (fs.bindings) |b| {
-                    try self.analyzeNode(b.range);
+                    try self.analyzeNode(tree, b.range);
                     try self.declareVariable(b.name, node.loc);
                 }
-                try self.analyzeNode(fs.body);
+                try self.analyzeNode(tree, fs.body);
                 try self.popScope();
                 return false;
             },
             .begin_stmt => |bs| {
-                try self.analyzeNode(bs.body);
+                try self.analyzeNode(tree, bs.body);
                 for (bs.rescues) |r| {
                     try self.pushScope();
                     if (r.variable) |v| try self.declareVariable(v, node.loc);
-                    try self.analyzeNode(r.body);
+                    try self.analyzeNode(tree, r.body);
                     try self.popScope();
                 }
-                if (bs.ensure_body) |eb| try self.analyzeNode(eb);
+                if (bs.ensure_body != .none) try self.analyzeNode(tree, bs.ensure_body);
                 return false;
             },
             .def_stmt => |def| {
                 try self.pushScope();
                 for (def.params) |p| try self.declareVariable(p.name, node.loc);
-                try self.analyzeNode(def.body);
+                try self.analyzeNode(tree, def.body);
                 try self.popScope();
                 return false;
             },
             .lambda_expr => |le| {
                 try self.pushScope();
                 for (le.params) |p| try self.declareVariable(p.name, node.loc);
-                try self.analyzeNode(le.body);
+                try self.analyzeNode(tree, le.body);
                 try self.popScope();
                 return false;
             },

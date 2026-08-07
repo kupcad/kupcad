@@ -58,7 +58,7 @@ test "Linter: Surfaces syntax errors from the Parser as Linter Diagnostics" {
     var doc = try api.Document.parse(testing.allocator, source);
     defer doc.deinit();
 
-    try linter.check(doc.tree, doc.diagnostics);
+    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
 
     try testing.expect(linter.diagnostics.items.len > 0);
     try testing.expectEqual(linter_mod.DiagnosticSeverity.@"error", linter.diagnostics.items[0].severity);
@@ -98,7 +98,7 @@ test "Linter: Scope shadowing inside blocks (do ... end) and lambdas" {
     var doc = try api.Document.parse(testing.allocator, source);
     defer doc.deinit();
 
-    try linter.check(doc.tree, doc.diagnostics);
+    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
 
     // We expect exactly ONE warning: the outer `val` is shadowed and unused.
     try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);

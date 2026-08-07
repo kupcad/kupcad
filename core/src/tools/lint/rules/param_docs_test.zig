@@ -28,7 +28,7 @@ test "Linter Rule: ParamDocsRule catches missing variables" {
     var doc = try api.Document.parse(testing.allocator, source);
     defer doc.deinit();
 
-    try linter.check(doc.tree, doc.diagnostics);
+    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
 
     try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);
     try testing.expectEqualStrings("@param annotation references variable 'missing_var', which is never declared in standard scope.", linter.diagnostics.items[0].message);
@@ -58,7 +58,7 @@ test "Linter Rule: ParamDocsRule stays quiet on valid matching variables" {
     var doc = try api.Document.parse(testing.allocator, source);
     defer doc.deinit();
 
-    try linter.check(doc.tree, doc.diagnostics);
+    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
 
     // Should be perfectly quiet
     try testing.expectEqual(@as(usize, 0), linter.diagnostics.items.len);

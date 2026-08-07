@@ -8,13 +8,14 @@ pub const LintRule = struct {
 
     pub const VTable = struct {
         name: *const fn (ptr: *anyopaque) []const u8,
-        checkNode: ?*const fn (ptr: *anyopaque, node: *ast.Node, engine: *linter.Linter) anyerror!void = null,
+        // Updated to use the DoD Tree and NodeIndex
+        checkNode: ?*const fn (ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) anyerror!void = null,
         exitScope: ?*const fn (ptr: *anyopaque, scope: *const linter.Scope, engine: *linter.Linter) anyerror!void = null,
         checkEOF: ?*const fn (ptr: *anyopaque, engine: *linter.Linter) anyerror!void = null,
     };
 
-    pub fn checkNode(self: LintRule, node: *ast.Node, engine: *linter.Linter) !void {
-        if (self.vtable.checkNode) |func| try func(self.ptr, node, engine);
+    pub fn checkNode(self: LintRule, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
+        if (self.vtable.checkNode) |func| try func(self.ptr, engine, tree, node_idx);
     }
 
     pub fn exitScope(self: LintRule, scope: *const linter.Scope, engine: *linter.Linter) !void {
