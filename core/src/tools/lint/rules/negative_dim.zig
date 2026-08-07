@@ -34,7 +34,7 @@ pub const NegativeDimRule = struct {
         } else if (val.kind == .number and val.kind.number < 0) {
             try engine.addDiagnostic(val.loc, .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{prop_name});
         } else if (val.kind == .array_literal) {
-            for (val.kind.array_literal) |elem_idx| {
+            for (tree.getNodes(val.kind.array_literal)) |elem_idx| {
                 try checkValue(engine, tree, elem_idx, prop_name);
             }
         }
@@ -45,13 +45,15 @@ pub const NegativeDimRule = struct {
         const node = tree.getNode(node_idx) orelse return;
 
         if (node.kind == .method_call) {
-            for (node.kind.method_call.args) |arg| {
-                if (isCoordinate(arg.name)) continue;
-                try checkValue(engine, tree, arg.value, arg.name);
+            for (tree.getNamedArgs(node.kind.method_call.args)) |arg| {
+                const arg_name = tree.getString(arg.name);
+                if (isCoordinate(arg_name)) continue;
+                try checkValue(engine, tree, arg.value, arg_name);
             }
         } else if (node.kind == .property_assignment) {
-            if (isCoordinate(node.kind.property_assignment.property)) return;
-            try checkValue(engine, tree, node.kind.property_assignment.value, node.kind.property_assignment.property);
+            const prop_name = tree.getString(node.kind.property_assignment.property);
+            if (isCoordinate(prop_name)) return;
+            try checkValue(engine, tree, node.kind.property_assignment.value, prop_name);
         }
     }
 };

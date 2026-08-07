@@ -8,7 +8,7 @@ const Parser = @import("parser.zig").Parser;
 const KTest = ParserTest(Lexer, Parser);
 
 test "AST Node Memory Size Optimization" {
-    try testing.expect(@sizeOf(ast.NodeKind) <= 128);
+    try testing.expect(@sizeOf(ast.NodeKind) <= 40);
 }
 
 test "AST Builder: String Interning Memory Optimization" {

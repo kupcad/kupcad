@@ -24,11 +24,10 @@ pub const UnreachableCodeRule = struct {
 
         if (node.kind == .block) {
             var found_terminal = false;
-            for (node.kind.block.stmts) |stmt_idx| {
+            for (tree.getNodes(node.kind.block.stmts)) |stmt_idx| {
                 const stmt_node = tree.getNode(stmt_idx).?;
 
                 if (found_terminal) {
-                    // Access loc from the resolved node
                     try engine.addDiagnostic(stmt_node.loc, .warning, "Unreachable code detected after explicit control flow return/break.", .{});
                 }
 

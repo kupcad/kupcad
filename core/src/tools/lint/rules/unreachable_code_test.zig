@@ -1,8 +1,22 @@
 const std = @import("std");
 const testing = std.testing;
-const api = @import("../../../api.zig");
 const linter_mod = @import("../linter.zig");
 const UnreachableCodeRule = @import("unreachable_code.zig").UnreachableCodeRule;
+const parser_mod = @import("../../../frontend/kupcad/parser.zig");
+const lexer_mod = @import("../../../frontend/kupcad/lexer.zig");
+
+fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter {
+    var engine = linter_mod.Linter.init(allocator, .{});
+    var rule_impl = UnreachableCodeRule{};
+    try engine.rules.append(allocator, rule_impl.rule());
+
+    var lexer = lexer_mod.Lexer.init(source, 0);
+    var parser = parser_mod.Parser.init(&lexer, allocator);
+    const root = try parser.parseProgram();
+
+    try engine.check(&parser.b.tree, root, parser.diagnostics.list.items);
+    return engine;
+}
 
 test "Linter Rule: UnreachableCodeRule catches code after return" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -14,29 +28,10 @@ test "Linter Rule: UnreachableCodeRule catches code after return" {
         \\  cube()
         \\end
     ;
+    const engine = try runRule(arena.allocator(), source);
 
-    // Init linter with ALL rules turned off via config to isolate this test
-    var linter = linter_mod.Linter.init(arena.allocator(), .{
-        .check_negative_dims = false,
-        .check_unused_vars = false,
-        .check_unreachable_code = false,
-        .check_self_subtraction = false,
-        .check_param_docs = false,
-    });
-    defer linter.deinit();
-
-    // Manually register only the UnreachableCodeRule
-    var rule_impl = UnreachableCodeRule{};
-    try linter.rules.append(arena.allocator(), rule_impl.rule());
-
-    // Run the full engine pipeline
-    var doc = try api.Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
-
-    try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);
-    try testing.expectEqualStrings("Unreachable code detected after explicit control flow return/break.", linter.diagnostics.items[0].message);
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("Unreachable code detected after explicit control flow return/break.", engine.diagnostics.items[0].message);
 }
 
 test "Linter Rule: UnreachableCodeRule catches code after break and next" {
@@ -49,24 +44,8 @@ test "Linter Rule: UnreachableCodeRule catches code after break and next" {
         \\  cube() # Unreachable
         \\end
     ;
+    const engine = try runRule(arena.allocator(), source);
 
-    var linter = linter_mod.Linter.init(arena.allocator(), .{
-        .check_negative_dims = false,
-        .check_unused_vars = false,
-        .check_unreachable_code = false, // Overridden below
-        .check_self_subtraction = false,
-        .check_param_docs = false,
-    });
-    defer linter.deinit();
-
-    var rule_impl = UnreachableCodeRule{};
-    try linter.rules.append(arena.allocator(), rule_impl.rule());
-
-    var doc = try api.Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
-
-    try testing.expectEqual(@as(usize, 1), linter.diagnostics.items.len);
-    try testing.expectEqualStrings("Unreachable code detected after explicit control flow return/break.", linter.diagnostics.items[0].message);
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("Unreachable code detected after explicit control flow return/break.", engine.diagnostics.items[0].message);
 }

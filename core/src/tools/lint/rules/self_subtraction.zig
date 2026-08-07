@@ -27,8 +27,9 @@ pub const SelfSubtractionRule = struct {
             const right = tree.getNode(node.kind.binary_op.right).?;
 
             if (left.kind == .identifier and right.kind == .identifier) {
-                if (std.mem.eql(u8, left.kind.identifier, right.kind.identifier)) {
-                    try engine.addDiagnostic(node.loc, .warning, "CSG Warning: Self-difference operation ('{s} - {s}') will result in empty geometry.", .{ left.kind.identifier, right.kind.identifier });
+                if (left.kind.identifier == right.kind.identifier) {
+                    const var_name = tree.getString(left.kind.identifier);
+                    try engine.addDiagnostic(node.loc, .warning, "CSG Warning: Self-difference operation ('{s} - {s}') will result in empty geometry.", .{ var_name, var_name });
                 }
             }
         }

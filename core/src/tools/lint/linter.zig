@@ -1,44 +1,32 @@
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
-const common_errors = @import("../../core/errors.zig");
 const token = @import("../../core/token.zig");
-const lexer_mod = @import("../../frontend/kupcad/lexer.zig");
-const parser_mod = @import("../../frontend/kupcad/parser.zig");
-const LintRule = @import("rules/rule.zig").LintRule;
+const common_errors = @import("../../core/errors.zig");
 const Config = @import("config.zig").Config;
+const LintRule = @import("rules/rule.zig").LintRule;
 
-// Import our decoupled plugins
 const NegativeDimRule = @import("rules/negative_dim.zig").NegativeDimRule;
 const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;
 const UnreachableCodeRule = @import("rules/unreachable_code.zig").UnreachableCodeRule;
 const SelfSubtractionRule = @import("rules/self_subtraction.zig").SelfSubtractionRule;
 const ParamDocsRule = @import("rules/param_docs.zig").ParamDocsRule;
 
-pub const DiagnosticSeverity = enum {
+pub const LinterSeverity = enum {
     @"error",
     warning,
     info,
 
-    /// Returns the standard string representation (useful for JSON/WASM)
-    pub fn toString(self: DiagnosticSeverity) []const u8 {
+    pub fn toString(self: LinterSeverity) []const u8 {
+        return @tagName(self);
+    }
+    pub fn toColor(self: LinterSeverity) []const u8 {
         return switch (self) {
-            .@"error" => "error",
-            .warning => "warning",
-            .info => "info",
+            .@"error" => "\x1b[31m",
+            .warning => "\x1b[33m",
+            .info => "\x1b[36m",
         };
     }
-
-    /// Returns the ANSI color code for CLI output
-    pub fn toColor(self: DiagnosticSeverity) []const u8 {
-        return switch (self) {
-            .@"error" => "\x1b[31m", // Red
-            .warning => "\x1b[33m", // Yellow
-            .info => "\x1b[36m", // Cyan
-        };
-    }
-
-    /// Returns the single-character severity indicator for CLI output
-    pub fn toChar(self: DiagnosticSeverity) []const u8 {
+    pub fn toChar(self: LinterSeverity) []const u8 {
         return switch (self) {
             .@"error" => "E",
             .warning => "W",
@@ -49,129 +37,106 @@ pub const DiagnosticSeverity = enum {
 
 pub const LinterDiagnostic = struct {
     loc: token.Location,
+    severity: LinterSeverity,
     message: []const u8,
-    severity: DiagnosticSeverity,
 };
 
 pub const Scope = struct {
     declared_vars: std.StringHashMapUnmanaged(token.Location) = .empty,
     used_vars: std.StringHashMapUnmanaged(void) = .empty,
+
+    pub fn deinit(self: *Scope, allocator: std.mem.Allocator) void {
+        self.declared_vars.deinit(allocator);
+        self.used_vars.deinit(allocator);
+    }
 };
 
 pub const Linter = struct {
     allocator: std.mem.Allocator,
     config: Config,
     diagnostics: std.ArrayListUnmanaged(LinterDiagnostic) = .empty,
-    scopes: std.ArrayListUnmanaged(Scope) = .empty,
     rules: std.ArrayListUnmanaged(LintRule) = .empty,
-    scope_arena: std.heap.ArenaAllocator,
+    scopes: std.ArrayListUnmanaged(Scope) = .empty,
 
-    // Rule persistent states
-    negative_dim_rule: NegativeDimRule = .{},
-    unused_vars_rule: UnusedVarsRule = .{},
-    unreachable_code_rule: UnreachableCodeRule = .{},
-    self_subtraction_rule: SelfSubtractionRule = .{},
-    param_docs_rule: ParamDocsRule = .{},
+    // Rule instances
+    rule_negative_dim: NegativeDimRule = .{},
+    rule_unused_vars: UnusedVarsRule = .{},
+    rule_unreachable_code: UnreachableCodeRule = .{},
+    rule_self_subtraction: SelfSubtractionRule = .{},
+    rule_param_docs: ParamDocsRule = .{},
 
     pub fn init(allocator: std.mem.Allocator, config: Config) Linter {
         return .{
             .allocator = allocator,
             .config = config,
-            .scope_arena = std.heap.ArenaAllocator.init(allocator),
         };
-    }
-
-    pub fn registerDefaultRules(self: *Linter) !void {
-        if (self.config.check_negative_dims) try self.rules.append(self.allocator, self.negative_dim_rule.rule());
-        if (self.config.check_unused_vars) try self.rules.append(self.allocator, self.unused_vars_rule.rule());
-        if (self.config.check_unreachable_code) try self.rules.append(self.allocator, self.unreachable_code_rule.rule());
-        if (self.config.check_self_subtraction) try self.rules.append(self.allocator, self.self_subtraction_rule.rule());
-        if (self.config.check_param_docs) try self.rules.append(self.allocator, self.param_docs_rule.rule());
     }
 
     pub fn deinit(self: *Linter) void {
+        for (self.scopes.items) |*s| s.deinit(self.allocator);
+        self.scopes.deinit(self.allocator);
+        self.rules.deinit(self.allocator);
         for (self.diagnostics.items) |d| self.allocator.free(d.message);
         self.diagnostics.deinit(self.allocator);
-        self.rules.deinit(self.allocator);
-        self.scope_arena.deinit();
     }
 
-    pub fn check(self: *Linter, tree: *const ast.Tree, root: ast.NodeIndex, parser_diagnostics: []const common_errors.Diagnostic) !void {
-        // Pre-fill with syntax errors from the parser
-        for (parser_diagnostics) |diag| {
-            try self.diagnostics.append(self.allocator, .{
-                .loc = diag.loc,
-                .severity = .@"error",
-                .message = try self.allocator.dupe(u8, diag.message),
-            });
-        }
-
-        if (root == .none) return;
-
-        // Push the global root scope so variables at the top level are tracked
-        try self.pushScope();
-
-        // Initiate the Visitor pattern using the new DoD Tree signature
-        const visitor = ast.Visitor{
-            .ptr = self,
-            .visitFn = visitNode,
-        };
-        try visitor.walk(tree, root);
-
-        // Run End-of-File checks for rules that need to resolve full-document state (like ParamDocs)
-        for (self.rules.items) |rule| {
-            try rule.checkEOF(self);
-        }
-
-        // Pop the root scope to trigger UnusedVars reporting for global variables
-        try self.popScope();
+    pub fn registerDefaultRules(self: *Linter) !void {
+        if (self.config.check_negative_dims) try self.rules.append(self.allocator, self.rule_negative_dim.rule());
+        if (self.config.check_unused_vars) try self.rules.append(self.allocator, self.rule_unused_vars.rule());
+        if (self.config.check_unreachable_code) try self.rules.append(self.allocator, self.rule_unreachable_code.rule());
+        if (self.config.check_self_subtraction) try self.rules.append(self.allocator, self.rule_self_subtraction.rule());
+        if (self.config.check_param_docs) try self.rules.append(self.allocator, self.rule_param_docs.rule());
     }
 
-    // DRY: Unified formatting diagnostic helper for all plugins!
-    pub fn addDiagnostic(self: *Linter, loc: token.Location, severity: DiagnosticSeverity, comptime fmt: []const u8, args: anytype) !void {
+    pub fn addDiagnostic(self: *Linter, loc: token.Location, severity: LinterSeverity, comptime fmt: []const u8, args: anytype) !void {
         const msg = try std.fmt.allocPrint(self.allocator, fmt, args);
         try self.diagnostics.append(self.allocator, .{
             .loc = loc,
-            .message = msg,
             .severity = severity,
+            .message = msg,
         });
     }
 
-    fn pushScope(self: *Linter) !void {
-        try self.scopes.append(self.scope_arena.allocator(), Scope{});
+    pub fn pushScope(self: *Linter) !void {
+        try self.scopes.append(self.allocator, .{});
     }
 
-    fn popScope(self: *Linter) !void {
-        if (self.scopes.items.len > 0) {
-            var scope = self.scopes.items[self.scopes.items.len - 1];
-            self.scopes.shrinkRetainingCapacity(self.scopes.items.len - 1);
+    pub fn popScope(self: *Linter) !void {
+        if (self.scopes.items.len == 0) return;
 
-            // Fire exitScope hook on all plugins
-            for (self.rules.items) |rule| try rule.exitScope(&scope, self);
+        const last_idx = self.scopes.items.len - 1;
+        const scope_ptr = &self.scopes.items[last_idx];
+
+        // Run exit hooks (like UnusedVars missing usage checks)
+        for (self.rules.items) |rule| {
+            try rule.exitScope(scope_ptr, self);
+        }
+
+        scope_ptr.deinit(self.allocator);
+        self.scopes.items.len -= 1;
+    }
+
+    pub fn declareVar(self: *Linter, name: []const u8, loc: token.Location) !void {
+        if (self.scopes.items.len > 0) {
+            const scope = &self.scopes.items[self.scopes.items.len - 1];
+            try scope.declared_vars.put(self.allocator, name, loc);
         }
     }
 
-    fn declareVariable(self: *Linter, name: []const u8, loc: token.Location) !void {
-        if (self.scopes.items.len > 0) {
-            const current = &self.scopes.items[self.scopes.items.len - 1];
-            try current.declared_vars.put(self.scope_arena.allocator(), name, loc);
-        }
-    }
-
-    fn markVariableUsed(self: *Linter, name: []const u8) void {
-        var i = self.scopes.items.len;
+    pub fn markUsed(self: *Linter, name: []const u8) !void {
+        var i: usize = self.scopes.items.len;
         while (i > 0) {
             i -= 1;
-            var scope = &self.scopes.items[i];
+            const scope = &self.scopes.items[i];
             if (scope.declared_vars.contains(name)) {
-                scope.used_vars.put(self.scope_arena.allocator(), name, {}) catch {};
-                break;
+                try scope.used_vars.put(self.allocator, name, {});
+                return;
             }
         }
     }
 
-    fn analyzeNode(self: *Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
-        var visitor = ast.Visitor{
+    fn walk(self: *Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
+        const visitor = ast.Visitor{
             .ptr = self,
             .visitFn = visitNode,
         };
@@ -183,154 +148,96 @@ pub const Linter = struct {
         const node = tree.getNode(node_idx) orelse return true;
 
         for (self.rules.items) |rule| {
-            // Note: Update your `rules/rule.zig` signature to match this:
             try rule.checkNode(self, tree, node_idx);
         }
 
-        // Handle specific nodes that require strict Scope management or ordering
+        // Handle AST nodes that spawn a new lexical scope
         switch (node.kind) {
-            .assignment => |a| {
-                try self.analyzeNode(tree, a.value);
-                // Check if variable already exists in any scope (reassignment)
-                var exists = false;
-                var i = self.scopes.items.len;
-                while (i > 0) {
-                    i -= 1;
-                    if (self.scopes.items[i].declared_vars.contains(a.name)) {
-                        exists = true;
-                        break;
-                    }
-                }
-                if (!exists) {
-                    try self.declareVariable(a.name, node.loc);
-                }
-                return false; // Skip default child traversal
-            },
-            .multiple_assignment => |ma| {
-                try self.analyzeNode(tree, ma.value);
-                for (ma.lhs) |l| {
-                    var exists = false;
-                    var i = self.scopes.items.len;
-                    while (i > 0) {
-                        i -= 1;
-                        if (self.scopes.items[i].declared_vars.contains(l.name)) {
-                            exists = true;
-                            break;
-                        }
-                    }
-                    if (!exists) {
-                        try self.declareVariable(l.name, node.loc);
-                    }
-                }
-                return false;
-            },
-            .method_call => |mc| {
-                if (mc.receiver != .none) try self.analyzeNode(tree, mc.receiver);
-                for (mc.args) |a| try self.analyzeNode(tree, a.value);
-
-                if (mc.block != .none) {
-                    try self.pushScope();
-                    const block_node = tree.getNode(mc.block).?;
-                    for (block_node.kind.block.params) |p_idx| {
-                        const p = tree.getNode(p_idx).?;
-                        if (p.kind == .identifier) {
-                            try self.declareVariable(p.kind.identifier, p.loc);
-                        } else if (p.kind == .array_literal) {
-                            for (p.kind.array_literal) |elem_idx| {
-                                const elem = tree.getNode(elem_idx).?;
-                                if (elem.kind == .identifier) {
-                                    try self.declareVariable(elem.kind.identifier, elem.loc);
-                                }
-                            }
-                        }
-                    }
-                    for (block_node.kind.block.stmts) |s| try self.analyzeNode(tree, s);
-                    try self.popScope();
-                }
-                return false; // We manually walked the children
-            },
-            .super_call => |sc| {
-                for (sc.args) |a| try self.analyzeNode(tree, a.value);
-
-                if (sc.block != .none) {
-                    try self.pushScope();
-                    const block_node = tree.getNode(sc.block).?;
-                    for (block_node.kind.block.params) |p_idx| {
-                        const p = tree.getNode(p_idx).?;
-                        if (p.kind == .identifier) {
-                            try self.declareVariable(p.kind.identifier, p.loc);
-                        } else if (p.kind == .array_literal) {
-                            for (p.kind.array_literal) |elem_idx| {
-                                const elem = tree.getNode(elem_idx).?;
-                                if (elem.kind == .identifier) {
-                                    try self.declareVariable(elem.kind.identifier, elem.loc);
-                                }
-                            }
-                        }
-                    }
-                    for (block_node.kind.block.stmts) |s| try self.analyzeNode(tree, s);
-                    try self.popScope();
-                }
-                return false;
-            },
-            .class_stmt => |cs| {
-                try self.analyzeNode(tree, cs.name);
-                if (cs.super_class != .none) try self.analyzeNode(tree, cs.super_class);
-
+            .block => |b| {
                 try self.pushScope();
-                try self.analyzeNode(tree, cs.body);
-                try self.popScope();
-                return false;
-            },
-            .module_stmt => |ms| {
-                try self.pushScope();
-                try self.analyzeNode(tree, ms.body);
-                try self.popScope();
-                return false;
-            },
-            .identifier => |i| {
-                self.markVariableUsed(i);
-                return true;
-            },
-            .for_stmt => |fs| {
-                try self.pushScope();
-                for (fs.bindings) |b| {
-                    try self.analyzeNode(tree, b.range);
-                    try self.declareVariable(b.name, node.loc);
-                }
-                try self.analyzeNode(tree, fs.body);
-                try self.popScope();
-                return false;
-            },
-            .begin_stmt => |bs| {
-                try self.analyzeNode(tree, bs.body);
-                for (bs.rescues) |r| {
-                    try self.pushScope();
-                    if (r.variable) |v| try self.declareVariable(v, node.loc);
-                    try self.analyzeNode(tree, r.body);
-                    try self.popScope();
-                }
-                if (bs.ensure_body != .none) try self.analyzeNode(tree, bs.ensure_body);
-                return false;
-            },
-            .def_stmt => |def| {
-                try self.pushScope();
-                for (def.params) |p| try self.declareVariable(p.name, node.loc);
-                try self.analyzeNode(tree, def.body);
+                for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                // We intentionally do NOT walk `b.params` here so rules do not flag parameter declarations as usages.
+                for (tree.getNodes(b.stmts)) |s| try self.walk(tree, s);
                 try self.popScope();
                 return false;
             },
             .lambda_expr => |le| {
                 try self.pushScope();
-                for (le.params) |p| try self.declareVariable(p.name, node.loc);
-                try self.analyzeNode(tree, le.body);
+                for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                for (tree.getParams(le.params)) |p| {
+                    if (p.default_value != .none) try self.walk(tree, p.default_value);
+                }
+                try self.walk(tree, le.body);
                 try self.popScope();
                 return false;
             },
-            else => {}, // Yield to the fallback return
+            .for_stmt => |fs| {
+                try self.pushScope();
+                for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                for (tree.getForBindings(fs.bindings)) |b| try self.walk(tree, b.range);
+                try self.walk(tree, fs.body);
+                try self.popScope();
+                return false;
+            },
+            .while_stmt => |ws| {
+                try self.pushScope();
+                for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                try self.walk(tree, ws.condition);
+                try self.walk(tree, ws.body);
+                try self.popScope();
+                return false;
+            },
+            .def_stmt => |ds| {
+                try self.pushScope();
+                for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                for (tree.getParams(ds.params)) |p| {
+                    if (p.default_value != .none) try self.walk(tree, p.default_value);
+                }
+                try self.walk(tree, ds.body);
+                try self.popScope();
+                return false;
+            },
+            .class_stmt => |cs| {
+                try self.pushScope();
+                for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                try self.walk(tree, cs.name);
+                try self.walk(tree, cs.super_class);
+                try self.walk(tree, cs.body);
+                try self.popScope();
+                return false;
+            },
+            .module_stmt => |ms| {
+                try self.pushScope();
+                for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                for (tree.getParams(ms.params)) |p| {
+                    if (p.default_value != .none) try self.walk(tree, p.default_value);
+                }
+                try self.walk(tree, ms.body);
+                try self.popScope();
+                return false;
+            },
+            else => return true,
+        }
+    }
+
+    pub fn check(self: *Linter, tree: *const ast.Tree, root: ast.NodeIndex, parser_diagnostics: []const common_errors.Diagnostic) !void {
+        for (parser_diagnostics) |diag| {
+            try self.diagnostics.append(self.allocator, .{
+                .loc = diag.loc,
+                .severity = .@"error",
+                .message = try self.allocator.dupe(u8, diag.message),
+            });
         }
 
-        // Default behavior: automatically traverse children
-        return true;
+        if (root == .none) return;
+
+        try self.pushScope();
+        try self.walk(tree, root);
+
+        for (self.rules.items) |rule| {
+            try rule.checkEOF(self);
+        }
+
+        try self.popScope();
     }
 };

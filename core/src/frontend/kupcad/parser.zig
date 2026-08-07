@@ -11,7 +11,7 @@ const docstring = @import("docstring.zig");
 const Diagnostics = common_errors.Diagnostics;
 
 const RescueEnsurePayload = struct {
-    rescues: []const ast.RescueClause,
+    rescues: ast.Span,
     ensure_body: ast.NodeIndex,
 };
 
@@ -48,7 +48,7 @@ pub const Parser = struct {
         return Parser{
             .tokens = common_token.BufferedLexer(Lexer, Token, Tag).init(lexer),
             .allocator = allocator,
-            .b = ast.Builder.init(allocator), // Dialect parameter removed
+            .b = ast.Builder.init(allocator),
             .diagnostics = Diagnostics.init(allocator),
         };
     }
@@ -67,13 +67,9 @@ pub const Parser = struct {
     }
 
     pub fn synchronize(self: *Parser) void {
-        self.advance(); // Skip the token that triggered the error
-
+        self.advance();
         while (self.tokens.current.tag != .eof) {
-            // If we just consumed a newline, we are safely at the start of a new line
             if (self.tokens.previous.tag == .newline) return;
-
-            // Otherwise, look for keywords that definitively start a new statement
             switch (self.tokens.current.tag) {
                 .keyword_class, .keyword_def, .keyword_module, .keyword_if, .keyword_unless, .keyword_case, .keyword_while, .keyword_until, .keyword_return, .keyword_begin, .keyword_import, .keyword_export => return,
                 else => self.advance(),
@@ -165,7 +161,7 @@ pub const Parser = struct {
                 self.synchronize();
             }
         }
-        return self.b.block(&.{}, try stmts.toOwnedSlice(self.allocator), self.getSpan(start_loc)) catch ParseError.OutOfMemory;
+        return self.b.block(&.{}, stmts.items, self.getSpan(start_loc)) catch ParseError.OutOfMemory;
     }
 
     pub fn parseStatement(self: *Parser) ParseError!ast.NodeIndex {
@@ -198,7 +194,7 @@ pub const Parser = struct {
             var block_arr = try self.allocator.alloc(ast.NodeIndex, 1);
             block_arr[0] = stmt;
             const then_block = try self.createNode(.{
-                .block = .{ .stmts = block_arr, .params = &.{} },
+                .block = .{ .stmts = try self.b.addNodes(block_arr), .params = try self.b.addNodes(&.{}) },
             }, self.b.tree.getNode(stmt).?.loc);
 
             if (mod_tag == .keyword_if or mod_tag == .keyword_unless) {
@@ -228,7 +224,7 @@ pub const Parser = struct {
                 }
 
                 if (self.tokens.current.tag == .ident or self.tokens.current.tag == .constant) {
-                    try lhs_list.append(self.allocator, .{ .name = self.tokens.current.lexeme, .modifier = mod });
+                    try lhs_list.append(self.allocator, .{ .name = try self.b.intern(self.tokens.current.lexeme), .modifier = mod });
                     self.advance();
                 } else return ParseError.UnexpectedToken;
 
@@ -242,7 +238,7 @@ pub const Parser = struct {
                 self.advance();
                 const val_node = try self.parseExpressionList();
                 return self.createNode(.{ .multiple_assignment = .{
-                    .lhs = try lhs_list.toOwnedSlice(self.allocator),
+                    .lhs = try self.b.addLhsExprs(lhs_list.items),
                     .op = tagToAssignmentOp(op_tag),
                     .value = val_node,
                 } }, start_loc);
@@ -270,7 +266,7 @@ pub const Parser = struct {
             return ParseError.UnexpectedToken;
         }
 
-        return self.createNode(.{ .lambda_expr = .{ .params = params, .body = body } }, start_tok.loc);
+        return self.createNode(.{ .lambda_expr = .{ .params = try self.b.addParams(params), .body = body } }, start_tok.loc);
     }
 
     fn parseAssignmentExpr(self: *Parser, left: ast.NodeIndex) ParseError!ast.NodeIndex {
@@ -283,10 +279,10 @@ pub const Parser = struct {
 
         switch (left_node.kind) {
             .identifier => |i| {
-                return self.b.assignment(i, tagToAssignmentOp(op_tag), value, self.getSpan(left_node.loc)) catch ParseError.OutOfMemory;
+                return self.createNode(.{ .assignment = .{ .name = i, .op = tagToAssignmentOp(op_tag), .value = value } }, self.getSpan(left_node.loc));
             },
             .method_call => |mc| {
-                if (mc.args.len == 0 and mc.block == .none) {
+                if (mc.args.start == mc.args.end and mc.block == .none) {
                     return self.createNode(.{ .property_assignment = .{
                         .target = mc.receiver,
                         .property = mc.method_name,
@@ -333,9 +329,7 @@ pub const Parser = struct {
         const then_branch = try self.parseExpression(.none);
         _ = try self.expect(.colon);
         const else_branch = try self.parseExpression(.none);
-
         const cond_node = self.b.tree.getNode(condition) orelse return ParseError.InvalidExpression;
-
         return self.createNode(.{ .ternary_op = .{ .condition = condition, .then_branch = then_branch, .else_branch = else_branch } }, cond_node.loc);
     }
 
@@ -381,7 +375,7 @@ pub const Parser = struct {
         }
 
         const block_node = self.b.tree.getNode(block_node_idx) orelse return ParseError.InvalidExpression;
-        return self.b.block(params, block_node.kind.block.stmts, self.getSpan(start_tok.loc)) catch ParseError.OutOfMemory;
+        return self.b.block(params, self.b.tree.getNodes(block_node.kind.block.stmts), self.getSpan(start_tok.loc)) catch ParseError.OutOfMemory;
     }
 
     fn parseBeginStatement(self: *Parser) ParseError!ast.NodeIndex {
@@ -403,7 +397,7 @@ pub const Parser = struct {
     fn parseImportOrExportStatement(self: *Parser, is_export: bool) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(if (is_export) .keyword_export else .keyword_import);
 
-        var symbols: std.ArrayListUnmanaged([]const u8) = .empty;
+        var symbols: std.ArrayListUnmanaged(ast.StringId) = .empty;
         errdefer symbols.deinit(self.allocator);
 
         if (self.tokens.current.tag == .l_brace) {
@@ -438,9 +432,9 @@ pub const Parser = struct {
         }
 
         if (is_export) {
-            return self.createNode(.{ .export_stmt = .{ .symbols = try symbols.toOwnedSlice(self.allocator), .path = interned_path, .attributes = attributes } }, start_tok.loc);
+            return self.createNode(.{ .export_stmt = .{ .symbols = try self.b.addStringLists(symbols.items), .path = interned_path, .attributes = attributes } }, start_tok.loc);
         } else {
-            return self.createNode(.{ .import_stmt = .{ .symbols = try symbols.toOwnedSlice(self.allocator), .path = interned_path, .attributes = attributes } }, start_tok.loc);
+            return self.createNode(.{ .import_stmt = .{ .symbols = try self.b.addStringLists(symbols.items), .path = interned_path, .attributes = attributes } }, start_tok.loc);
         }
     }
 
@@ -499,7 +493,7 @@ pub const Parser = struct {
 
             const body = try self.parseBlock(&.{ .keyword_when, .keyword_else, .keyword_end });
             try when_branches.append(self.allocator, .{
-                .conditions = try conditions.toOwnedSlice(self.allocator),
+                .conditions = try self.b.addNodes(conditions.items),
                 .body = body,
             });
         }
@@ -514,7 +508,7 @@ pub const Parser = struct {
 
         return self.createNode(.{ .case_stmt = .{
             .condition = condition,
-            .when_branches = try when_branches.toOwnedSlice(self.allocator),
+            .when_branches = try self.b.addWhenBranches(when_branches.items),
             .else_branch = else_branch,
         } }, start_tok.loc);
     }
@@ -572,7 +566,7 @@ pub const Parser = struct {
         _ = try self.expect(.keyword_end);
 
         var final_body = body_node;
-        if (payload.rescues.len > 0 or payload.ensure_body != .none) {
+        if (payload.rescues.start != payload.rescues.end or payload.ensure_body != .none) {
             final_body = try self.createNode(.{ .begin_stmt = .{
                 .body = body_node,
                 .rescues = payload.rescues,
@@ -581,8 +575,8 @@ pub const Parser = struct {
         }
 
         return self.createNode(.{ .def_stmt = .{
-            .name = name_tok.lexeme,
-            .params = params,
+            .name = try self.b.intern(name_tok.lexeme),
+            .params = try self.b.addParams(params),
             .body = final_body,
             .is_class_method = is_class_method,
         } }, start_tok.loc);
@@ -597,7 +591,7 @@ pub const Parser = struct {
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
 
-        return self.createNode(.{ .module_stmt = .{ .name = name_tok.lexeme, .body = body, .params = &.{} } }, start_tok.loc);
+        return self.createNode(.{ .module_stmt = .{ .name = try self.b.intern(name_tok.lexeme), .body = body, .params = try self.b.addParams(&.{}) } }, start_tok.loc);
     }
 
     fn parseSuper(self: *Parser) ParseError!ast.NodeIndex {
@@ -607,19 +601,19 @@ pub const Parser = struct {
             var block_node: ast.NodeIndex = .none;
             if (self.tokens.current.tag == .keyword_do or self.tokens.current.tag == .l_brace) block_node = try self.parseBlockClosure();
             return self.createNode(.{
-                .super_call = .{ .args = args, .block = block_node },
+                .super_call = .{ .args = try self.b.addNamedArgs(args), .block = block_node },
             }, tok.loc);
         }
 
         if (self.isCommandCallStart()) {
             const cmd = try self.parseCommandArgsAndBlock();
             return self.createNode(.{
-                .super_call = .{ .args = cmd.args, .block = cmd.block orelse .none },
+                .super_call = .{ .args = try self.b.addNamedArgs(cmd.args), .block = cmd.block orelse .none },
             }, tok.loc);
         }
 
         return self.createNode(.{
-            .super_call = .{ .args = &.{}, .block = .none },
+            .super_call = .{ .args = try self.b.addNamedArgs(&.{}), .block = .none },
         }, tok.loc);
     }
 
@@ -632,11 +626,11 @@ pub const Parser = struct {
 
         if (rec_node.kind == .identifier) {
             return self.createNode(.{
-                .method_call = .{ .receiver = .none, .method_name = rec_node.kind.identifier, .args = args, .block = block_node, .is_safe = false },
+                .method_call = .{ .receiver = .none, .method_name = rec_node.kind.identifier, .args = try self.b.addNamedArgs(args), .block = block_node, .is_safe = false },
             }, rec_node.loc);
         } else {
             return self.createNode(.{
-                .method_call = .{ .receiver = receiver_expr, .method_name = "", .args = args, .block = block_node, .is_safe = false },
+                .method_call = .{ .receiver = receiver_expr, .method_name = try self.b.intern(""), .args = try self.b.addNamedArgs(args), .block = block_node, .is_safe = false },
             }, rec_node.loc);
         }
     }
@@ -652,19 +646,19 @@ pub const Parser = struct {
             var block_node: ast.NodeIndex = .none;
             if (self.tokens.current.tag == .keyword_do or self.tokens.current.tag == .l_brace) block_node = try self.parseBlockClosure();
             return self.createNode(.{
-                .method_call = .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = args, .block = block_node, .is_safe = is_safe },
+                .method_call = .{ .receiver = receiver, .method_name = try self.b.intern(method_tok.lexeme), .args = try self.b.addNamedArgs(args), .block = block_node, .is_safe = is_safe },
             }, rec_node.loc);
         }
 
         if (self.isCommandCallStart()) {
             const cmd = try self.parseCommandArgsAndBlock();
             return self.createNode(.{
-                .method_call = .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = cmd.args, .block = cmd.block orelse .none, .is_safe = is_safe },
+                .method_call = .{ .receiver = receiver, .method_name = try self.b.intern(method_tok.lexeme), .args = try self.b.addNamedArgs(cmd.args), .block = cmd.block orelse .none, .is_safe = is_safe },
             }, rec_node.loc);
         }
 
         return self.createNode(.{
-            .method_call = .{ .receiver = receiver, .method_name = method_tok.lexeme, .args = &.{}, .block = .none, .is_safe = is_safe },
+            .method_call = .{ .receiver = receiver, .method_name = try self.b.intern(method_tok.lexeme), .args = try self.b.addNamedArgs(&.{}), .block = .none, .is_safe = is_safe },
         }, rec_node.loc);
     }
 
@@ -685,8 +679,8 @@ pub const Parser = struct {
             return self.createNode(.{
                 .method_call = .{
                     .receiver = .none,
-                    .method_name = tok.lexeme,
-                    .args = args,
+                    .method_name = try self.b.intern(tok.lexeme),
+                    .args = try self.b.addNamedArgs(args),
                     .block = block_node,
                     .is_safe = false,
                 },
@@ -697,8 +691,8 @@ pub const Parser = struct {
             return self.createNode(.{
                 .method_call = .{
                     .receiver = .none,
-                    .method_name = tok.lexeme,
-                    .args = cmd.args,
+                    .method_name = try self.b.intern(tok.lexeme),
+                    .args = try self.b.addNamedArgs(cmd.args),
                     .block = cmd.block orelse .none,
                     .is_safe = false,
                 },
@@ -767,11 +761,11 @@ pub const Parser = struct {
             return ParseError.UnexpectedToken;
         }
 
-        var path_list: std.ArrayListUnmanaged([]const u8) = .empty;
+        var path_list: std.ArrayListUnmanaged(ast.StringId) = .empty;
         errdefer path_list.deinit(self.allocator);
 
         while (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) {
-            try path_list.append(self.allocator, self.tokens.current.lexeme);
+            try path_list.append(self.allocator, try self.b.intern(self.tokens.current.lexeme));
             self.advance();
             if (self.tokens.current.tag == .colon_colon) {
                 self.advance();
@@ -779,9 +773,9 @@ pub const Parser = struct {
         }
 
         if (path_list.items.len == 1) {
-            return self.b.identifierNode(path_list.items[0], start_loc);
+            return self.createNode(.{ .identifier = path_list.items[0] }, start_loc);
         } else {
-            return self.createNode(.{ .namespace_access = .{ .path = try path_list.toOwnedSlice(self.allocator) } }, start_loc);
+            return self.createNode(.{ .namespace_access = try self.b.addStringLists(path_list.items) }, start_loc);
         }
     }
 
@@ -821,7 +815,7 @@ pub const Parser = struct {
                 if (self.tokens.current.tag == .comma) self.advance() else break;
             }
         }
-        return self.createNode(.{ .yield_stmt = try args.toOwnedSlice(self.allocator) }, start_tok.loc);
+        return self.createNode(.{ .yield_stmt = try self.b.addNodes(args.items) }, start_tok.loc);
     }
 
     fn parseParamDoc(self: *Parser) ParseError!ast.NodeIndex {
@@ -876,13 +870,13 @@ pub const Parser = struct {
     fn parseNamedArg(self: *Parser) ParseError!ast.NamedArg {
         if (self.tokens.current.tag == .comma or self.tokens.current.tag == .r_paren) {
             const val = try self.b.undefNode(self.tokens.current.loc);
-            return .{ .name = "", .value = val, .modifier = null };
+            return .{ .name = .none, .value = val, .modifier = null };
         }
         const mod = self.parseArgModifier();
-        var arg_name: []const u8 = "";
+        var arg_name: ast.StringId = .none;
 
         if (self.tokens.current.tag == .ident and self.tokens.peekTag() == .colon) {
-            arg_name = self.tokens.current.lexeme;
+            arg_name = try self.b.intern(self.tokens.current.lexeme);
             self.advance();
             self.advance();
         }
@@ -905,7 +899,7 @@ pub const Parser = struct {
         const mod = self.parseArgModifier();
         if (self.tokens.current.tag != .ident) return ParseError.UnexpectedToken;
 
-        const param_name = self.tokens.current.lexeme;
+        const param_name = try self.b.intern(self.tokens.current.lexeme);
         self.advance();
 
         var is_keyword = false;
@@ -1078,7 +1072,7 @@ pub const Parser = struct {
                 try elements.append(self.allocator, try self.parseExpression(.none));
             }
             const first_node = self.b.tree.getNode(first).?;
-            return self.createNode(.{ .array_literal = try elements.toOwnedSlice(self.allocator) }, first_node.loc);
+            return self.createNode(.{ .array_literal = try self.b.addNodes(elements.items) }, first_node.loc);
         }
         return first;
     }
@@ -1088,7 +1082,7 @@ pub const Parser = struct {
         var parts: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
         errdefer parts.deinit(self.allocator);
 
-        try parts.append(self.allocator, try self.createNode(.{ .string = start_tok.lexeme }, start_tok.loc));
+        try parts.append(self.allocator, try self.createNode(.{ .string = try self.b.intern(start_tok.lexeme) }, start_tok.loc));
         self.advance();
 
         while (true) {
@@ -1099,17 +1093,17 @@ pub const Parser = struct {
             }
             self.skipIgnored();
             if (self.tokens.current.tag == .string_end) {
-                try parts.append(self.allocator, try self.createNode(.{ .string = self.tokens.current.lexeme }, self.tokens.current.loc));
+                try parts.append(self.allocator, try self.createNode(.{ .string = try self.b.intern(self.tokens.current.lexeme) }, self.tokens.current.loc));
                 self.advance();
                 break;
             } else if (self.tokens.current.tag == .string_mid) {
-                try parts.append(self.allocator, try self.createNode(.{ .string = self.tokens.current.lexeme }, self.tokens.current.loc));
+                try parts.append(self.allocator, try self.createNode(.{ .string = try self.b.intern(self.tokens.current.lexeme) }, self.tokens.current.loc));
                 self.advance();
             } else {
                 return ParseError.UnexpectedToken;
             }
         }
-        return self.createNode(.{ .interpolated_string = try parts.toOwnedSlice(self.allocator) }, start_tok.loc);
+        return self.createNode(.{ .interpolated_string = try self.b.addNodes(parts.items) }, start_tok.loc);
     }
 
     fn parsePercentArray(self: *Parser, tag: Tag) ParseError!ast.NodeIndex {
@@ -1129,7 +1123,7 @@ pub const Parser = struct {
                 elements.append(self.allocator, try self.createNode(.{ .symbol = interned }, tok.loc)) catch return ParseError.OutOfMemory;
             }
         }
-        return self.createNode(.{ .array_literal = try elements.toOwnedSlice(self.allocator) }, tok.loc);
+        return self.createNode(.{ .array_literal = try self.b.addNodes(elements.items) }, tok.loc);
     }
 
     fn parseRescueAndEnsure(self: *Parser) ParseError!RescueEnsurePayload {
@@ -1138,13 +1132,13 @@ pub const Parser = struct {
 
         while (self.tokens.current.tag == .keyword_rescue) {
             self.advance();
-            var errors: std.ArrayListUnmanaged([]const u8) = .empty;
+            var errors: std.ArrayListUnmanaged(ast.StringId) = .empty;
             errdefer errors.deinit(self.allocator);
-            var variable: ?[]const u8 = null;
+            var variable: ast.StringId = .none;
 
             if (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) {
                 while (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) {
-                    try errors.append(self.allocator, self.tokens.current.lexeme);
+                    try errors.append(self.allocator, try self.b.intern(self.tokens.current.lexeme));
                     self.advance();
                     if (self.tokens.current.tag == .comma) self.advance() else break;
                 }
@@ -1153,7 +1147,7 @@ pub const Parser = struct {
             if (self.tokens.current.tag == .arrow) { // => e
                 self.advance();
                 if (self.tokens.current.tag == .ident) {
-                    variable = self.tokens.current.lexeme;
+                    variable = try self.b.intern(self.tokens.current.lexeme);
                     self.advance();
                 }
             }
@@ -1162,7 +1156,7 @@ pub const Parser = struct {
             const rescue_body = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
 
             try rescues.append(self.allocator, .{
-                .errors = try errors.toOwnedSlice(self.allocator),
+                .errors = try self.b.addStringLists(errors.items),
                 .variable = variable,
                 .body = rescue_body,
             });
@@ -1176,7 +1170,7 @@ pub const Parser = struct {
         }
 
         return .{
-            .rescues = try rescues.toOwnedSlice(self.allocator),
+            .rescues = try self.b.addRescueClauses(rescues.items),
             .ensure_body = ensure_body,
         };
     }
@@ -1184,7 +1178,7 @@ pub const Parser = struct {
     fn parseRescueModifierExpr(self: *Parser, left: ast.NodeIndex) ParseError!ast.NodeIndex {
         self.advance();
         const rescue_expr = try self.parseExpression(getInfixPrecedence(.keyword_rescue));
-        const left_node = self.b.tree.getNode(left) orelse return ParseError.InvalidExpression;
+        const left_node = self.b.tree.getNode(left).?;
         return self.createNode(.{ .rescue_modifier = .{ .expr = left, .rescue_expr = rescue_expr } }, left_node.loc);
     }
 
@@ -1193,12 +1187,12 @@ pub const Parser = struct {
         const right_tok = if (self.tokens.current.tag == .constant or self.tokens.current.tag == .ident) self.tokens.current else return ParseError.UnexpectedToken;
         self.advance();
 
-        var path_list: std.ArrayListUnmanaged([]const u8) = .empty;
+        var path_list: std.ArrayListUnmanaged(ast.StringId) = .empty;
         errdefer path_list.deinit(self.allocator);
-        try path_list.append(self.allocator, right_tok.lexeme);
+        try path_list.append(self.allocator, try self.b.intern(right_tok.lexeme));
 
         return self.createNode(.{
-            .namespace_access = .{ .path = try path_list.toOwnedSlice(self.allocator) },
+            .namespace_access = try self.b.addStringLists(path_list.items),
         }, tok.loc);
     }
 
@@ -1276,20 +1270,20 @@ pub const Parser = struct {
         const left_node = self.b.tree.getNode(left) orelse return ParseError.InvalidExpression;
 
         if (left_node.kind == .namespace_access) {
-            var path_list: std.ArrayListUnmanaged([]const u8) = .empty;
+            var path_list: std.ArrayListUnmanaged(ast.StringId) = .empty;
             errdefer path_list.deinit(self.allocator);
-            try path_list.appendSlice(self.allocator, left_node.kind.namespace_access.path);
-            try path_list.append(self.allocator, right_tok.lexeme);
+            try path_list.appendSlice(self.allocator, self.b.tree.getStringLists(left_node.kind.namespace_access));
+            try path_list.append(self.allocator, try self.b.intern(right_tok.lexeme));
             return self.createNode(.{
-                .namespace_access = .{ .path = try path_list.toOwnedSlice(self.allocator) },
+                .namespace_access = try self.b.addStringLists(path_list.items),
             }, left_node.loc);
         } else if (left_node.kind == .identifier) {
-            var path_list: std.ArrayListUnmanaged([]const u8) = .empty;
+            var path_list: std.ArrayListUnmanaged(ast.StringId) = .empty;
             errdefer path_list.deinit(self.allocator);
             try path_list.append(self.allocator, left_node.kind.identifier);
-            try path_list.append(self.allocator, right_tok.lexeme);
+            try path_list.append(self.allocator, try self.b.intern(right_tok.lexeme));
             return self.createNode(.{
-                .namespace_access = .{ .path = try path_list.toOwnedSlice(self.allocator) },
+                .namespace_access = try self.b.addStringLists(path_list.items),
             }, left_node.loc);
         } else {
             return ParseError.InvalidExpression;
@@ -1300,14 +1294,14 @@ pub const Parser = struct {
         const start_tok = try self.expect(.l_bracket);
         const elements = try self.parseCommaSeparated(ast.NodeIndex, parseArrayElement, .r_bracket);
         _ = try self.expect(.r_bracket);
-        return self.createNode(.{ .array_literal = elements }, start_tok.loc);
+        return self.createNode(.{ .array_literal = try self.b.addNodes(elements) }, start_tok.loc);
     }
 
     fn parseHashLiteral(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.l_brace);
         const entries = try self.parseCommaSeparated(ast.HashEntry, parseHashEntry, .r_brace);
         _ = try self.expect(.r_brace);
-        return self.createNode(.{ .hash_literal = entries }, start_tok.loc);
+        return self.createNode(.{ .hash_literal = try self.b.addHashEntries(entries) }, start_tok.loc);
     }
 
     fn parseBlockParam(self: *Parser) ParseError!ast.NodeIndex {
@@ -1320,7 +1314,7 @@ pub const Parser = struct {
             self.advance();
             const tuple_params = try self.parseCommaSeparated(ast.NodeIndex, parseBlockParam, .r_paren);
             _ = try self.expect(.r_paren);
-            return self.createNode(.{ .array_literal = tuple_params }, start_loc);
+            return self.createNode(.{ .array_literal = try self.b.addNodes(tuple_params) }, start_loc);
         }
         return ParseError.UnexpectedToken;
     }

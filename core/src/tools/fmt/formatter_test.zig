@@ -40,7 +40,6 @@ test "Formatter: Empty Collections" {
 
 test "Formatter: Multi-line fluent method chains" {
     const source = "part = Box.new(10, 20).chamfer(2).translate(z: 5)";
-    // The formatter forces chained method calls onto new indented lines
     const expected =
         \\part = Box.new(10, 20)
         \\  .chamfer(2)
@@ -133,7 +132,6 @@ test "Formatter: Classes, Modules, and Namespace Access" {
 }
 
 test "Formatter: Loops (while, until)" {
-    // Replaced OpenSCAD `for` loop with a valid `until` loop to ensure syntax passes
     const source =
         \\while x<10
         \\x+=1
@@ -264,7 +262,6 @@ test "Formatter: Imports and Exports" {
 
 test "Formatter: Percent Arrays normalize to standard canonical arrays" {
     const source = "arr = %w[ gear shaft ]\nsyms = %i( a b )";
-    // The formatter canonicalizes obscure syntax back to the universal standard
     const expected =
         \\arr = ["gear", "shaft"]
         \\syms = [:a, :b]
@@ -293,7 +290,6 @@ test "Formatter: Aborts formatting when source contains syntax errors" {
     const allocator = testing.allocator;
     const result = api.formatCode(allocator, invalid_source, .{});
 
-    // Must return error.SyntaxError rather than returning partial code
     try testing.expectError(error.SyntaxError, result);
 }
 

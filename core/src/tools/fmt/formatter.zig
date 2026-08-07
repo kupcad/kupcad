@@ -127,21 +127,21 @@ pub const Formatter = struct {
 
         try self.flushLeadingComments(node.loc.line);
         switch (node.kind) {
-            .block => |b| try self.formatBlockStmts(tree, b.stmts),
+            .block => |b| try self.formatBlockStmts(tree, tree.getNodes(b.stmts)),
             .number => |n| {
                 var buf: [64]u8 = undefined;
                 try self.out.appendSlice(self.allocator, try std.fmt.bufPrint(&buf, "{d}", .{n}));
             },
-            .string => |s| try self.formatWrappedString(s, '"'),
-            .interpolated_string => |parts| try self.formatInterpolatedString(tree, parts),
-            .symbol => |s| try self.formatWrappedString(s, ':'),
+            .string => |s| try self.formatWrappedString(tree.getString(s), '"'),
+            .interpolated_string => |parts| try self.formatInterpolatedString(tree, tree.getNodes(parts)),
+            .symbol => |s| try self.formatWrappedString(tree.getString(s), ':'),
             .boolean => |b| try self.out.appendSlice(self.allocator, if (b) "true" else "false"),
             .nil => try self.out.appendSlice(self.allocator, "nil"),
             .undef => try self.out.appendSlice(self.allocator, "undef"),
             .self_expr => try self.out.appendSlice(self.allocator, "self"),
-            .identifier => |i| try self.out.appendSlice(self.allocator, i),
-            .array_literal => |arr| try self.formatArray(tree, arr),
-            .hash_literal => |entries| try self.formatHash(tree, entries),
+            .identifier => |i| try self.out.appendSlice(self.allocator, tree.getString(i)),
+            .array_literal => |arr| try self.formatArray(tree, tree.getNodes(arr)),
+            .hash_literal => |entries| try self.formatHash(tree, tree.getHashEntries(entries)),
             .if_stmt => |ifs| try self.formatIfStmt(tree, ifs, node.loc.line),
             .while_stmt => |ws| try self.formatWhileStmt(tree, ws, node.loc.line),
             .for_stmt => |fs| try self.formatForStmt(tree, fs, node.loc.line),
@@ -151,7 +151,7 @@ pub const Formatter = struct {
             .class_stmt => |cls| try self.formatClassStmt(tree, cls, node.loc.line),
             .module_stmt => |m| try self.formatModuleStmt(tree, m, node.loc.line),
             .lambda_expr => |l| try self.formatLambda(tree, l, node.loc.line),
-            .namespace_access => |ns| try self.formatNamespace(ns),
+            .namespace_access => |ns| try self.formatNamespace(tree, tree.getStringLists(ns)),
             .range => |r| try self.formatRange(tree, r),
             .assignment => |a| try self.formatAssignment(tree, a),
             .multiple_assignment => |ma| try self.formatMultipleAssignment(tree, ma),
@@ -170,11 +170,11 @@ pub const Formatter = struct {
             .return_stmt => |r| try self.formatFlowControl(tree, "return", r),
             .break_stmt => |b| try self.formatFlowControl(tree, "break", b),
             .next_stmt => |n| try self.formatFlowControl(tree, "next", n),
-            .yield_stmt => |y| try self.formatYield(tree, y),
-            .import_stmt => |is| try self.formatImportExport(tree, "import", is.symbols, is.path, is.attributes),
-            .export_stmt => |es| try self.formatImportExport(tree, "export", es.symbols, es.path, es.attributes),
-            .param_doc => |doc| try self.formatParamDoc(tree, doc),
-            .comment => |c| try self.out.appendSlice(self.allocator, c),
+            .yield_stmt => |y| try self.formatYield(tree, tree.getNodes(y)),
+            .import_stmt => |is| try self.formatImportExport(tree, "import", tree.getStringLists(is.symbols), tree.getString(is.path), is.attributes),
+            .export_stmt => |es| try self.formatImportExport(tree, "export", tree.getStringLists(es.symbols), tree.getString(es.path), es.attributes),
+            .param_doc => |doc_idx| try self.formatParamDoc(tree, tree.param_docs.items[doc_idx]),
+            .comment => |c| try self.out.appendSlice(self.allocator, tree.getString(c)),
         }
     }
 
@@ -218,7 +218,7 @@ pub const Formatter = struct {
         for (parts) |part_idx| {
             const part = tree.getNode(part_idx).?;
             if (part.kind == .string) {
-                try self.out.appendSlice(self.allocator, part.kind.string);
+                try self.out.appendSlice(self.allocator, tree.getString(part.kind.string));
             } else {
                 try self.out.appendSlice(self.allocator, "#{");
                 try self.formatNode(tree, part_idx);
@@ -248,12 +248,12 @@ pub const Formatter = struct {
 
             if (key_node.kind == .double_splat_expr) {
                 try self.formatNode(tree, entry.key);
-            } else if (key_node.kind == .symbol and val_node.kind == .identifier and std.mem.eql(u8, key_node.kind.symbol, val_node.kind.identifier)) {
-                try self.out.appendSlice(self.allocator, key_node.kind.symbol);
+            } else if (key_node.kind == .symbol and val_node.kind == .identifier and std.mem.eql(u8, tree.getString(key_node.kind.symbol), tree.getString(val_node.kind.identifier))) {
+                try self.out.appendSlice(self.allocator, tree.getString(key_node.kind.symbol));
                 try self.out.append(self.allocator, ':');
             } else {
                 if (key_node.kind == .symbol) {
-                    try self.out.appendSlice(self.allocator, key_node.kind.symbol);
+                    try self.out.appendSlice(self.allocator, tree.getString(key_node.kind.symbol));
                     try self.out.appendSlice(self.allocator, ": ");
                 } else {
                     try self.formatNode(tree, entry.key);
@@ -299,9 +299,9 @@ pub const Formatter = struct {
     fn formatForStmt(self: *Formatter, tree: *const ast.Tree, fs: ast.ForStmt, start_line: u32) Error!void {
         const kw = if (fs.is_intersection) "intersection_for(" else "for(";
         try self.out.appendSlice(self.allocator, kw);
-        for (fs.bindings, 0..) |b, idx| {
+        for (tree.getForBindings(fs.bindings), 0..) |b, idx| {
             if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-            try self.out.appendSlice(self.allocator, b.name);
+            try self.out.appendSlice(self.allocator, tree.getString(b.name));
             try self.out.appendSlice(self.allocator, " = ");
             try self.formatNode(tree, b.range);
         }
@@ -319,10 +319,10 @@ pub const Formatter = struct {
         try self.flushInlineComments(start_line);
         try self.out.append(self.allocator, '\n');
 
-        for (cs.when_branches) |wb| {
+        for (tree.getWhenBranches(cs.when_branches)) |wb| {
             try self.writeIndent();
             try self.out.appendSlice(self.allocator, "when ");
-            for (wb.conditions, 0..) |cond, idx| {
+            for (tree.getNodes(wb.conditions), 0..) |cond, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
                 try self.formatNode(tree, cond);
             }
@@ -356,19 +356,21 @@ pub const Formatter = struct {
         self.indent_level -= 1;
         try self.ensureNewline(); // Force a newline before 'rescue', 'ensure', or 'end'
 
-        for (bs.rescues) |r| {
+        for (tree.getRescueClauses(bs.rescues)) |r| {
             try self.writeIndent();
             try self.out.appendSlice(self.allocator, "rescue");
-            if (r.errors.len > 0) {
+
+            const errors = tree.getStringLists(r.errors);
+            if (errors.len > 0) {
                 try self.out.append(self.allocator, ' ');
-                for (r.errors, 0..) |e, i| {
+                for (errors, 0..) |e_id, i| {
                     if (i > 0) try self.out.appendSlice(self.allocator, ", ");
-                    try self.out.appendSlice(self.allocator, e);
+                    try self.out.appendSlice(self.allocator, tree.getString(e_id));
                 }
             }
-            if (r.variable) |v| {
+            if (r.variable != .none) {
                 try self.out.appendSlice(self.allocator, " => ");
-                try self.out.appendSlice(self.allocator, v);
+                try self.out.appendSlice(self.allocator, tree.getString(r.variable));
             }
             try self.ensureNewline();
             self.indent_level += 1;
@@ -393,13 +395,15 @@ pub const Formatter = struct {
     fn formatDefStmt(self: *Formatter, tree: *const ast.Tree, def: ast.DefStmt, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "def ");
         if (def.is_class_method) try self.out.appendSlice(self.allocator, "self.");
-        try self.out.appendSlice(self.allocator, def.name);
-        if (def.params.len > 0) {
+        try self.out.appendSlice(self.allocator, tree.getString(def.name));
+
+        const params = tree.getParams(def.params);
+        if (params.len > 0) {
             try self.out.append(self.allocator, '(');
-            for (def.params, 0..) |p, idx| {
+            for (params, 0..) |p, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
                 if (p.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
-                try self.out.appendSlice(self.allocator, p.name);
+                try self.out.appendSlice(self.allocator, tree.getString(p.name));
                 if (p.is_keyword) try self.out.append(self.allocator, ':');
                 if (p.default_value != .none) {
                     try self.out.appendSlice(self.allocator, if (p.is_keyword) " " else " = ");
@@ -425,18 +429,19 @@ pub const Formatter = struct {
 
     fn formatModuleStmt(self: *Formatter, tree: *const ast.Tree, m: ast.ModuleStmt, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "module ");
-        try self.out.appendSlice(self.allocator, m.name);
+        try self.out.appendSlice(self.allocator, tree.getString(m.name));
         try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(tree, m.body);
     }
 
     fn formatLambda(self: *Formatter, tree: *const ast.Tree, l: ast.LambdaExpr, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "->");
-        if (l.params.len > 0) {
+        const params = tree.getParams(l.params);
+        if (params.len > 0) {
             try self.out.append(self.allocator, '(');
-            for (l.params, 0..) |p, i| {
+            for (params, 0..) |p, i| {
                 if (i > 0) try self.out.appendSlice(self.allocator, ", ");
-                try self.out.appendSlice(self.allocator, p.name);
+                try self.out.appendSlice(self.allocator, tree.getString(p.name));
             }
             try self.out.append(self.allocator, ')');
         }
@@ -452,10 +457,10 @@ pub const Formatter = struct {
         }
     }
 
-    fn formatNamespace(self: *Formatter, ns: anytype) Error!void {
-        for (ns.path, 0..) |p, idx| {
+    fn formatNamespace(self: *Formatter, tree: *const ast.Tree, path: []const ast.StringId) Error!void {
+        for (path, 0..) |p_id, idx| {
             if (idx > 0) try self.out.appendSlice(self.allocator, "::");
-            try self.out.appendSlice(self.allocator, p);
+            try self.out.appendSlice(self.allocator, tree.getString(p_id));
         }
     }
 
@@ -466,7 +471,7 @@ pub const Formatter = struct {
     }
 
     fn formatAssignment(self: *Formatter, tree: *const ast.Tree, a: ast.Assignment) Error!void {
-        try self.out.appendSlice(self.allocator, a.name);
+        try self.out.appendSlice(self.allocator, tree.getString(a.name));
         try self.out.append(self.allocator, ' ');
         if (a.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op));
         try self.out.appendSlice(self.allocator, "= ");
@@ -474,10 +479,10 @@ pub const Formatter = struct {
     }
 
     fn formatMultipleAssignment(self: *Formatter, tree: *const ast.Tree, ma: ast.MultipleAssignment) Error!void {
-        for (ma.lhs, 0..) |item, idx| {
+        for (tree.getLhsExprs(ma.lhs), 0..) |item, idx| {
             if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
             if (item.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
-            try self.out.appendSlice(self.allocator, item.name);
+            try self.out.appendSlice(self.allocator, tree.getString(item.name));
         }
         try self.out.appendSlice(self.allocator, " = ");
         try self.formatNode(tree, ma.value);
@@ -486,7 +491,7 @@ pub const Formatter = struct {
     fn formatPropertyAssignment(self: *Formatter, tree: *const ast.Tree, pa: ast.PropertyAssignment) Error!void {
         try self.formatNode(tree, pa.target);
         try self.out.append(self.allocator, '.');
-        try self.out.appendSlice(self.allocator, pa.property);
+        try self.out.appendSlice(self.allocator, tree.getString(pa.property));
         try self.out.append(self.allocator, ' ');
         if (pa.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op));
         try self.out.appendSlice(self.allocator, "= ");
@@ -561,14 +566,18 @@ pub const Formatter = struct {
             }
             try self.out.appendSlice(self.allocator, if (mc.is_safe) "&." else ".");
         }
-        try self.out.appendSlice(self.allocator, mc.method_name);
-        if (mc.args.len > 0) {
+        try self.out.appendSlice(self.allocator, tree.getString(mc.method_name));
+
+        const args = tree.getNamedArgs(mc.args);
+        if (args.len > 0) {
             try self.out.append(self.allocator, '(');
-            for (mc.args, 0..) |arg, idx| {
+            for (args, 0..) |arg, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
                 if (arg.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
-                if (arg.name.len > 0) {
-                    try self.out.appendSlice(self.allocator, arg.name);
+
+                const arg_name = tree.getString(arg.name);
+                if (arg_name.len > 0) {
+                    try self.out.appendSlice(self.allocator, arg_name);
                     try self.out.appendSlice(self.allocator, ": ");
                 }
                 try self.formatNode(tree, arg.value);
@@ -590,9 +599,10 @@ pub const Formatter = struct {
         const b = block_node.kind.block;
 
         try self.out.appendSlice(self.allocator, "do");
-        if (b.params.len > 0) {
+        const params = tree.getNodes(b.params);
+        if (params.len > 0) {
             try self.out.appendSlice(self.allocator, " |");
-            for (b.params, 0..) |p_idx, idx| {
+            for (params, 0..) |p_idx, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
                 try self.formatNode(tree, p_idx);
             }
@@ -604,12 +614,14 @@ pub const Formatter = struct {
 
     fn formatSuperCall(self: *Formatter, tree: *const ast.Tree, sc: ast.SuperCall, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "super");
-        if (sc.args.len > 0) {
+        const args = tree.getNamedArgs(sc.args);
+        if (args.len > 0) {
             try self.out.append(self.allocator, '(');
-            for (sc.args, 0..) |arg, idx| {
+            for (args, 0..) |arg, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                if (arg.name.len > 0) {
-                    try self.out.appendSlice(self.allocator, arg.name);
+                const arg_name = tree.getString(arg.name);
+                if (arg_name.len > 0) {
+                    try self.out.appendSlice(self.allocator, arg_name);
                     try self.out.appendSlice(self.allocator, ": ");
                 }
                 try self.formatNode(tree, arg.value);
@@ -641,14 +653,14 @@ pub const Formatter = struct {
         }
     }
 
-    fn formatImportExport(self: *Formatter, tree: *const ast.Tree, kw: []const u8, symbols: []const []const u8, path: []const u8, attrs: ast.NodeIndex) Error!void {
+    fn formatImportExport(self: *Formatter, tree: *const ast.Tree, kw: []const u8, symbols: []const ast.StringId, path: []const u8, attrs: ast.NodeIndex) Error!void {
         try self.out.appendSlice(self.allocator, kw);
         try self.out.append(self.allocator, ' ');
         if (symbols.len > 0) {
             try self.out.appendSlice(self.allocator, "{ ");
-            for (symbols, 0..) |sym, idx| {
+            for (symbols, 0..) |sym_id, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                try self.out.appendSlice(self.allocator, sym);
+                try self.out.appendSlice(self.allocator, tree.getString(sym_id));
             }
             try self.out.appendSlice(self.allocator, " } from ");
         }
@@ -664,23 +676,29 @@ pub const Formatter = struct {
 
     fn formatParamDoc(self: *Formatter, tree: *const ast.Tree, doc: ast.ParamDoc) Error!void {
         try self.out.appendSlice(self.allocator, "# @");
-        try self.out.appendSlice(self.allocator, doc.tag_name);
+        const tag_name = tree.getString(doc.tag_name);
+        try self.out.appendSlice(self.allocator, tag_name);
 
-        var current_line_len: usize = self.indent_level * self.config.indent_width + 3 + doc.tag_name.len;
+        var current_line_len: usize = self.indent_level * self.config.indent_width + 3 + tag_name.len;
 
-        if (doc.target_name) |tn| {
+        if (doc.target_name != .none) {
+            const tn = tree.getString(doc.target_name);
             try self.out.append(self.allocator, ' ');
             try self.out.appendSlice(self.allocator, tn);
             current_line_len += 1 + tn.len;
         }
-        if (doc.type_name) |tn| {
+        if (doc.type_name != .none) {
+            const tn = tree.getString(doc.type_name);
             try self.out.appendSlice(self.allocator, " [");
             try self.out.appendSlice(self.allocator, tn);
             try self.out.append(self.allocator, ']');
             current_line_len += 3 + tn.len;
         }
 
-        if (doc.description.len > 0) try self.formatWrappedText(doc.description, &current_line_len);
+        if (doc.description != .none) {
+            const desc = tree.getString(doc.description);
+            if (desc.len > 0) try self.formatWrappedText(desc, &current_line_len);
+        }
 
         if (doc.options_expr != .none) {
             try self.out.append(self.allocator, ' ');

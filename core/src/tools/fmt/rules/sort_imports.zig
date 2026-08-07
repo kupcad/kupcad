@@ -3,18 +3,18 @@ const ast = @import("../../../core/ast.zig");
 const FormatRule = @import("rule.zig").FormatRule;
 
 pub const SortImportsRule = struct {
-    pub fn rule(self: *SortImportsRule) FormatRule {
+    pub fn rule(self: *@This()) FormatRule {
         return .{
             .ptr = self,
             .vtable = &.{
-                .name = getName,
+                .name = name,
                 .processBlockStmts = processBlockStmts,
             },
         };
     }
 
-    fn getName(_: *anyopaque) []const u8 {
-        return "Sort Imports";
+    fn name(_: *anyopaque) []const u8 {
+        return "sort_imports";
     }
 
     fn processBlockStmts(ptr: *anyopaque, temp_allocator: std.mem.Allocator, tree: *const ast.Tree, stmts: []const ast.NodeIndex) []const ast.NodeIndex {
@@ -43,7 +43,11 @@ pub const SortImportsRule = struct {
                         fn lessThan(ctx_tree: *const ast.Tree, a_idx: ast.NodeIndex, b_idx: ast.NodeIndex) bool {
                             const a = ctx_tree.getNode(a_idx).?;
                             const b = ctx_tree.getNode(b_idx).?;
-                            return std.mem.lessThan(u8, a.kind.import_stmt.path, b.kind.import_stmt.path);
+
+                            const path_a = ctx_tree.getString(a.kind.import_stmt.path);
+                            const path_b = ctx_tree.getString(b.kind.import_stmt.path);
+
+                            return std.mem.lessThan(u8, path_a, path_b);
                         }
                     }.lessThan);
                 }
@@ -54,11 +58,5 @@ pub const SortImportsRule = struct {
         }
 
         return new_stmts;
-    }
-
-    fn importLessThan(_: void, a: *ast.Node, b: *ast.Node) bool {
-        const path_a = a.kind.import_stmt.path;
-        const path_b = b.kind.import_stmt.path;
-        return std.mem.order(u8, path_a, path_b) == .lt;
     }
 };
