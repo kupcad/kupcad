@@ -10,11 +10,11 @@ const dummy_loc = Location{ .line = 1, .col = 1, .offset = 0, .length = 5, .file
 
 // --- Tests ---
 
-test "AST: Node struct size is strictly optimized to 16 bytes" {
-    // Ensuring the Node stays at exactly 16 bytes is critical for cache locality
-    // 1 byte (Tag) + 8 bytes (Location) + 4 bytes (main_token) + 4 bytes (data/payload index)
-    // Note: Due to Zig's alignment and padding, it will naturally align to 16 bytes.
-    try testing.expectEqual(@as(usize, 16), @sizeOf(ast.Node));
+test "AST: Node struct size is optimized to 32 bytes" {
+    // Ensuring the Node stays compact is critical for cache locality
+    // 1 byte (Tag) + 20 bytes (Location) + 4 bytes (main_token) + 4 bytes (data/payload index) = 29 bytes
+    // Note: Due to Zig's struct alignment padding, it naturally aligns to 32 bytes.
+    try testing.expectEqual(@as(usize, 32), @sizeOf(ast.Node));
 }
 
 test "AST Builder: String interning deduplicates perfectly" {

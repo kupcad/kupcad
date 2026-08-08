@@ -423,6 +423,12 @@ pub const Tree = struct {
 
     pub fn deinit(self: *Tree, allocator: std.mem.Allocator) void {
         self.nodes.deinit(allocator);
+
+        // Free the dynamically allocated interned string slices
+        for (self.strings.items) |str| {
+            allocator.free(str);
+        }
+
         self.strings.deinit(allocator);
         self.string_indices.deinit(allocator);
         self.spans.deinit(allocator);
