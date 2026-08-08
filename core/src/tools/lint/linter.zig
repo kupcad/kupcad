@@ -262,7 +262,7 @@ pub const Linter = struct {
                         },
 
                         // Non-scope opening nodes
-                        .number, .string, .symbol, .boolean, .nil, .undef, .self_expr, .identifier, .comment, .namespace_access => {},
+                        .number, .string, .symbol, .boolean, .nil, .undef, .self_expr, .identifier, .namespace_access => {},
                         .param_doc => {
                             const doc = tree.param_docs.items[node.data];
                             try pushNode(&stack, self.allocator, doc.options_expr);

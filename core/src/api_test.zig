@@ -62,11 +62,13 @@ test "Document: successfully parses valid code and owns the AST" {
     try testing.expect(doc.tree.root != .none);
 
     const root_node = doc.tree.getNode(doc.tree.root).?;
-    const stmts = doc.tree.getNodes(root_node.kind.block.stmts);
+    const root_block = doc.tree.blocks.items[root_node.data];
+    const stmts = doc.tree.getNodes(root_block.stmts);
     try testing.expectEqual(@as(usize, 1), stmts.len);
 
     const stmt_node = doc.tree.getNode(stmts[0]).?;
-    try testing.expectEqualStrings("width", doc.tree.getString(stmt_node.kind.assignment.name));
+    const assign_payload = doc.tree.assignment(stmt_node);
+    try testing.expectEqualStrings("width", doc.tree.getString(assign_payload.name));
 
     try testing.expectEqual(@as(usize, 1), doc.comments.len);
     try testing.expectEqualStrings("# A comment", doc.comments[0].lexeme);

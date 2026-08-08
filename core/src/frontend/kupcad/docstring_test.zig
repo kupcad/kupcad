@@ -17,7 +17,7 @@ test "Docstring Parser: Standard @param with type and description" {
     const doc_idx = try parser.parse(raw, dummy_loc);
 
     const doc_node = b.tree.getNode(doc_idx).?;
-    const doc = b.tree.param_docs.items[doc_node.kind.param_doc];
+    const doc = b.tree.param_docs.items[doc_node.data];
 
     try testing.expectEqualStrings("param", b.tree.getString(doc.tag_name));
     try testing.expect(doc.target_name != .none);
@@ -39,7 +39,7 @@ test "Docstring Parser: @param with Lookbook options hash" {
     const doc_idx = try parser.parse(raw, dummy_loc);
 
     const doc_node = b.tree.getNode(doc_idx).?;
-    const doc = b.tree.param_docs.items[doc_node.kind.param_doc];
+    const doc = b.tree.param_docs.items[doc_node.data];
 
     try testing.expectEqualStrings("param", b.tree.getString(doc.tag_name));
     try testing.expect(doc.target_name != .none);
@@ -50,10 +50,11 @@ test "Docstring Parser: @param with Lookbook options hash" {
     try testing.expect(doc.options_expr != .none);
 
     const hash_node = b.tree.getNode(doc.options_expr).?;
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).hash_literal, std.meta.activeTag(hash_node.kind));
-    const hash = b.tree.getHashEntries(hash_node.kind.hash_literal);
+    try testing.expectEqual(ast.Tag.hash_literal, hash_node.tag);
+
+    const hash = b.tree.getHashEntries(b.tree.getSpan(hash_node.data));
     const key_node = b.tree.getNode(hash[0].key).?;
-    try testing.expectEqualStrings("min", b.tree.getString(key_node.kind.symbol));
+    try testing.expectEqualStrings("min", b.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data))));
 }
 
 test "Docstring Parser: Multi-line description condensation" {
@@ -71,7 +72,7 @@ test "Docstring Parser: Multi-line description condensation" {
     const doc_idx = try parser.parse(raw, dummy_loc);
 
     const doc_node = b.tree.getNode(doc_idx).?;
-    const doc = b.tree.param_docs.items[doc_node.kind.param_doc];
+    const doc = b.tree.param_docs.items[doc_node.data];
 
     try testing.expectEqualStrings("param", b.tree.getString(doc.tag_name));
     try testing.expect(doc.target_name != .none);
@@ -94,7 +95,7 @@ test "Docstring Parser: Non-annotation comment evaluates to empty tag" {
     const doc_idx = try parser.parse(raw, dummy_loc);
 
     const doc_node = b.tree.getNode(doc_idx).?;
-    const doc = b.tree.param_docs.items[doc_node.kind.param_doc];
+    const doc = b.tree.param_docs.items[doc_node.data];
 
     try testing.expectEqualStrings("", b.tree.getString(doc.tag_name));
 }
@@ -111,7 +112,7 @@ test "Docstring Parser: Graceful handling of invalid options hash" {
     const doc_idx = try parser.parse(raw, dummy_loc);
 
     const doc_node = b.tree.getNode(doc_idx).?;
-    const doc = b.tree.param_docs.items[doc_node.kind.param_doc];
+    const doc = b.tree.param_docs.items[doc_node.data];
 
     try testing.expectEqualStrings("param", b.tree.getString(doc.tag_name));
     try testing.expect(doc.target_name != .none);
@@ -135,7 +136,7 @@ test "Docstring Parser: Graceful handling of missing closing brackets and incomp
     // Missing closing bracket for type
     const doc1_idx = try parser.parse("# @param width [Length", dummy_loc);
     const doc1_node = b.tree.getNode(doc1_idx).?;
-    const doc1 = b.tree.param_docs.items[doc1_node.kind.param_doc];
+    const doc1 = b.tree.param_docs.items[doc1_node.data];
 
     try testing.expectEqualStrings("param", b.tree.getString(doc1.tag_name));
     try testing.expect(doc1.target_name != .none);
@@ -146,7 +147,7 @@ test "Docstring Parser: Graceful handling of missing closing brackets and incomp
     // Incomplete param tag (missing name and description)
     const doc2_idx = try parser.parse("# @param", dummy_loc);
     const doc2_node = b.tree.getNode(doc2_idx).?;
-    const doc2 = b.tree.param_docs.items[doc2_node.kind.param_doc];
+    const doc2 = b.tree.param_docs.items[doc2_node.data];
 
     try testing.expectEqualStrings("param", b.tree.getString(doc2.tag_name));
     try testing.expect(doc2.target_name == .none);
@@ -156,7 +157,7 @@ test "Docstring Parser: Graceful handling of missing closing brackets and incomp
     // Bare @ symbol
     const doc3_idx = try parser.parse("# @", dummy_loc);
     const doc3_node = b.tree.getNode(doc3_idx).?;
-    const doc3 = b.tree.param_docs.items[doc3_node.kind.param_doc];
+    const doc3 = b.tree.param_docs.items[doc3_node.data];
 
     try testing.expectEqualStrings("", b.tree.getString(doc3.tag_name));
     try testing.expect(doc3.target_name == .none);

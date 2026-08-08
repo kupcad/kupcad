@@ -34,7 +34,7 @@ pub const DocstringParser = struct {
                 .description = try self.b.intern(""),
                 .options_expr = .none,
             });
-            return self.b.createNode(.{ .param_doc = empty_doc_idx }, loc);
+            return self.b.createNode(.param_doc, loc, empty_doc_idx);
         }
 
         var doc = ast.ParamDoc{
@@ -93,6 +93,6 @@ pub const DocstringParser = struct {
         }
 
         const final_doc_idx = try self.b.addParamDoc(doc);
-        return self.b.createNode(.{ .param_doc = final_doc_idx }, loc);
+        return self.b.createNode(.param_doc, loc, final_doc_idx);
     }
 };
