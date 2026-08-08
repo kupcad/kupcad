@@ -43,7 +43,7 @@ const FoldingContext = struct {
                     };
 
                     if (folded_val) |val| {
-                        // Create the new number node using our deduplication pool!
+                        // Create the new number node using our deduplication pool
                         const new_node_idx = try self.folder.b.numberRaw(val, node.main_token);
 
                         // Mutate the AST by copying the newly created number node over the old binary node
