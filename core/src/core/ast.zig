@@ -893,6 +893,17 @@ pub const Builder = struct {
         return self.createNode(.number, main_token, gop.value_ptr.*);
     }
 
+    // Direct value constructor (Used by Constant Folding)
+    pub fn numberRaw(self: *Builder, val: f64, main_token: u24) !NodeIndex {
+        const bits: u64 = @bitCast(val);
+        const gop = try self.number_map.getOrPut(self.allocator, bits);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = @as(u32, @intCast(self.tree.numbers.items.len));
+            try self.tree.numbers.append(self.allocator, val);
+        }
+        return self.createNode(.number, main_token, gop.value_ptr.*);
+    }
+
     pub fn stringNode(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
         const str_id = try self.intern(lexeme_str);
         return self.createNode(.string, main_token, @intFromEnum(str_id));
