@@ -398,15 +398,12 @@ pub const Lexer = struct {
     }
 
     fn consumeSymbolOrColon(self: *Lexer, start_loc: common_token.Location) Token {
-        self.advance();
-
-        // Handle `::`
+        self.advance(); // consume ':'
         if (self.index < self.buffer.len and self.peek() == ':') {
             self.advance();
             return .{ .tag = .colon_colon, .loc = start_loc, .lexeme = "::" };
         }
 
-        // Check if the character *before* the ':' indicates this is a hash/param label, not a symbol prefix.
         var is_symbol = true;
         if (self.index >= 2) {
             const prev = self.buffer[self.index - 2];
@@ -415,7 +412,6 @@ pub const Lexer = struct {
             }
         }
 
-        // Quoted symbols (e.g. :'complex name')
         if (is_symbol and self.index < self.buffer.len and (self.peek() == '"' or self.peek() == '\'')) {
             const quote = self.peek();
             self.advance();
@@ -424,17 +420,22 @@ pub const Lexer = struct {
                 self.advance();
             }
             const lexeme = self.buffer[start..self.index];
-            if (self.index < self.buffer.len) self.advance(); // consume quote
-            return .{ .tag = .symbol, .loc = start_loc, .lexeme = lexeme };
+            if (self.index < self.buffer.len) self.advance();
+
+            var content_loc = start_loc;
+            content_loc.offset = @intCast(start);
+            return .{ .tag = .symbol, .loc = content_loc, .lexeme = lexeme };
         }
 
-        // Standard alphanumeric symbols (e.g. :name)
         if (is_symbol and self.index < self.buffer.len and std.ascii.isAlphabetic(self.peek())) {
             const start = self.index;
             while (self.index < self.buffer.len and (std.ascii.isAlphanumeric(self.peek()) or self.peek() == '_')) {
                 self.advance();
             }
-            return .{ .tag = .symbol, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+
+            var content_loc = start_loc;
+            content_loc.offset = @intCast(start);
+            return .{ .tag = .symbol, .loc = content_loc, .lexeme = self.buffer[start..self.index] };
         }
 
         return .{ .tag = .colon, .loc = start_loc, .lexeme = ":" };

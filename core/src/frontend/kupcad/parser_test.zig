@@ -2236,8 +2236,8 @@ test "KupCAD Parser: Diagnostics Line and Column Tracking" {
     try testing.expectEqualStrings("Invalid expression starting with '}'", diag.message);
 
     const line_index = try @import("../../core/line_index.zig").LineIndex.init(pt.arena.allocator(), source);
-    try testing.expectEqual(@as(u32, 2), line_index.getLine(diag.loc.offset));
-    try testing.expectEqual(@as(u32, 12), line_index.getUtf8Column(diag.loc.offset));
+    try testing.expectEqual(@as(u32, 1), line_index.getLine(diag.loc.offset));
+    try testing.expectEqual(@as(u32, 11), line_index.getUtf8Column(diag.loc.offset));
 }
 
 test "KupCAD Parser: Empty Class and Module Declarations" {

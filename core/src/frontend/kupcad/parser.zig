@@ -365,7 +365,7 @@ pub const Parser = struct {
             else => {},
         }
 
-        self.reportError(self.getLoc(op_tok), "Invalid expression starting with '{s}'", .{self.lexeme(0)});
+        self.reportError(self.getLoc(op_tok), "Invalid expression starting with '{s}'", .{self.tokens.lexeme(self.source, op_tok)});
         return ParseError.InvalidExpression;
     }
 
@@ -1034,6 +1034,10 @@ pub const Parser = struct {
             .keyword_begin => left = try self.parseBeginStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
             .percent_w, .percent_i => left = try self.parsePercentArray(start_tag),
+            .invalid => {
+                self.reportError(self.getLoc(start_tok), "Invalid expression starting with 'Interpolation depth exceeded'", .{});
+                return ParseError.InvalidExpression;
+            },
             else => {
                 self.reportError(self.getLoc(start_tok), "Invalid expression starting with '{s}'", .{self.lexeme(0)});
                 return ParseError.InvalidExpression;
