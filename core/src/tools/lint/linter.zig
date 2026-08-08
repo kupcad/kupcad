@@ -4,6 +4,7 @@ const token = @import("../../core/token.zig");
 const common_errors = @import("../../core/errors.zig");
 const Config = @import("config.zig").Config;
 const LintRule = @import("rules/rule.zig").LintRule;
+const visitor = @import("../../core/visitor.zig");
 
 const NegativeDimRule = @import("rules/negative_dim.zig").NegativeDimRule;
 const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;
@@ -51,9 +52,37 @@ pub const Scope = struct {
     }
 };
 
-pub const WorkItem = union(enum) {
-    visit: ast.NodeIndex,
-    pop_scope,
+pub fn isScopeNode(tag: ast.Tag) bool {
+    return switch (tag) {
+        .block, .lambda_expr, .for_stmt, .while_stmt, .def_stmt, .class_stmt, .module_stmt => true,
+        else => false,
+    };
+}
+
+const LintContext = struct {
+    linter: *Linter,
+
+    pub fn enterNode(self: *LintContext, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
+        const node = tree.getNode(node_idx).?;
+
+        // 1. Trigger general lint rules
+        for (self.linter.rules.items) |rule| try rule.checkNode(self.linter, tree, node_idx);
+
+        // 2. Open a new scope if we entered a block or function
+        if (isScopeNode(node.tag)) {
+            try self.linter.pushScope();
+            for (self.linter.rules.items) |rule| try rule.enterScope(self.linter, tree, node_idx);
+        }
+    }
+
+    pub fn leaveNode(self: *LintContext, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
+        const node = tree.getNode(node_idx).?;
+
+        // Close the scope now that all children have been traversed
+        if (isScopeNode(node.tag)) {
+            try self.linter.popScope();
+        }
+    }
 };
 
 pub const Linter = struct {
@@ -155,20 +184,6 @@ pub const Linter = struct {
         }
     }
 
-    inline fn pushNode(stack: *std.ArrayListUnmanaged(WorkItem), allocator: std.mem.Allocator, node_idx: ast.NodeIndex) !void {
-        if (node_idx != .none) {
-            try stack.append(allocator, .{ .visit = node_idx });
-        }
-    }
-
-    inline fn pushNodesReverse(stack: *std.ArrayListUnmanaged(WorkItem), allocator: std.mem.Allocator, nodes: []const ast.NodeIndex) !void {
-        var i: usize = nodes.len;
-        while (i > 0) {
-            i -= 1;
-            try pushNode(stack, allocator, nodes[i]);
-        }
-    }
-
     pub fn check(self: *Linter, tree: *const ast.Tree, token_starts: []const u32, token_lengths: []const u32, root: ast.NodeIndex, parser_diagnostics: []const common_errors.Diagnostic) !void {
         self.token_starts = token_starts;
         self.token_lengths = token_lengths;
@@ -183,272 +198,17 @@ pub const Linter = struct {
 
         if (root == .none) return;
 
-        var stack: std.ArrayListUnmanaged(WorkItem) = .empty;
-        defer stack.deinit(self.allocator);
-
+        // Establish the global scope
         try self.pushScope();
-        try pushNode(&stack, self.allocator, root);
 
-        while (stack.pop()) |item| {
-            switch (item) {
-                .pop_scope => {
-                    try self.popScope();
-                },
-                .visit => |node_idx| {
-                    if (node_idx == .none) continue;
-                    const node = tree.getNode(node_idx) orelse continue;
+        // Automatically walk the AST
+        var ctx = LintContext{ .linter = self };
+        try visitor.walk(LintContext, &ctx, tree, root);
 
-                    for (self.rules.items) |rule| {
-                        try rule.checkNode(self, tree, node_idx);
-                    }
-
-                    switch (node.tag) {
-                        .block => {
-                            const b = tree.block(node);
-                            try self.pushScope();
-                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
-                            try stack.append(self.allocator, .pop_scope);
-                            try pushNodesReverse(&stack, self.allocator, tree.getNodes(b.stmts));
-                        },
-                        .lambda_expr => {
-                            const le = tree.lambdaExpr(node);
-                            try self.pushScope();
-                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
-                            try stack.append(self.allocator, .pop_scope);
-                            try pushNode(&stack, self.allocator, le.body);
-                            const params = tree.getParams(le.params);
-                            var i: usize = params.len;
-                            while (i > 0) {
-                                i -= 1;
-                                try pushNode(&stack, self.allocator, params[i].default_value);
-                            }
-                        },
-                        .for_stmt => {
-                            const fs = tree.forStmt(node);
-                            try self.pushScope();
-                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
-                            try stack.append(self.allocator, .pop_scope);
-                            try pushNode(&stack, self.allocator, fs.body);
-                            const bindings = tree.getForBindings(fs.bindings);
-                            var i: usize = bindings.len;
-                            while (i > 0) {
-                                i -= 1;
-                                try pushNode(&stack, self.allocator, bindings[i].range);
-                            }
-                        },
-                        .while_stmt => {
-                            const ws = tree.whileStmt(node);
-                            try self.pushScope();
-                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
-                            try stack.append(self.allocator, .pop_scope);
-                            try pushNode(&stack, self.allocator, ws.body);
-                            try pushNode(&stack, self.allocator, ws.condition);
-                        },
-                        .def_stmt => {
-                            const ds = tree.defStmt(node);
-                            try self.pushScope();
-                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
-                            try stack.append(self.allocator, .pop_scope);
-                            try pushNode(&stack, self.allocator, ds.body);
-                            const params = tree.getParams(ds.params);
-                            var i: usize = params.len;
-                            while (i > 0) {
-                                i -= 1;
-                                try pushNode(&stack, self.allocator, params[i].default_value);
-                            }
-                        },
-                        .class_stmt => {
-                            const cs = tree.classStmt(node);
-                            try self.pushScope();
-                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
-                            try stack.append(self.allocator, .pop_scope);
-                            try pushNode(&stack, self.allocator, cs.body);
-                            try pushNode(&stack, self.allocator, cs.super_class);
-                            try pushNode(&stack, self.allocator, cs.name);
-                        },
-                        .module_stmt => {
-                            const ms = tree.moduleStmt(node);
-                            try self.pushScope();
-                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
-                            try stack.append(self.allocator, .pop_scope);
-                            try pushNode(&stack, self.allocator, ms.body);
-                            const params = tree.getParams(ms.params);
-                            var i: usize = params.len;
-                            while (i > 0) {
-                                i -= 1;
-                                try pushNode(&stack, self.allocator, params[i].default_value);
-                            }
-                        },
-
-                        // Non-scope opening nodes
-                        .number, .string, .symbol, .boolean, .nil, .undef, .self_expr, .identifier, .namespace_access, .invalid => {},
-                        .param_doc => {
-                            const doc = tree.paramDoc(node);
-                            try pushNode(&stack, self.allocator, doc.options_expr);
-                        },
-                        .interpolated_string => {
-                            const span = tree.nodeSpan(node);
-                            try pushNodesReverse(&stack, self.allocator, tree.getNodes(span));
-                        },
-                        .array_literal => {
-                            const span = tree.nodeSpan(node);
-                            try pushNodesReverse(&stack, self.allocator, tree.getNodes(span));
-                        },
-                        .hash_literal => {
-                            const span = tree.nodeSpan(node);
-                            const entries = tree.getHashEntries(span);
-                            var i: usize = entries.len;
-                            while (i > 0) {
-                                i -= 1;
-                                try pushNode(&stack, self.allocator, entries[i].value);
-                                try pushNode(&stack, self.allocator, entries[i].key);
-                            }
-                        },
-                        .range => {
-                            const r = tree.range(node);
-                            try pushNode(&stack, self.allocator, r.step);
-                            try pushNode(&stack, self.allocator, r.end);
-                            try pushNode(&stack, self.allocator, r.start);
-                        },
-                        .assignment => {
-                            const a = tree.assignment(node);
-                            try pushNode(&stack, self.allocator, a.value);
-                        },
-                        .multiple_assignment => {
-                            const ma = tree.multipleAssignment(node);
-                            try pushNode(&stack, self.allocator, ma.value);
-                        },
-                        .property_assignment => {
-                            const pa = tree.propertyAssignment(node);
-                            try pushNode(&stack, self.allocator, pa.value);
-                            try pushNode(&stack, self.allocator, pa.target);
-                        },
-                        .index_assignment => {
-                            const ia = tree.indexAssignment(node);
-                            try pushNode(&stack, self.allocator, ia.value);
-                            try pushNode(&stack, self.allocator, ia.index);
-                            try pushNode(&stack, self.allocator, ia.target);
-                        },
-                        .unary_op => {
-                            const u = tree.unaryExpr(node);
-                            try pushNode(&stack, self.allocator, u.operand);
-                        },
-                        .rescue_modifier => {
-                            const rm = tree.rescueModifier(node);
-                            try pushNode(&stack, self.allocator, rm.rescue_expr);
-                            try pushNode(&stack, self.allocator, rm.expr);
-                        },
-                        .binary_op => {
-                            const b = tree.binaryExpr(node);
-                            try pushNode(&stack, self.allocator, b.right);
-                            try pushNode(&stack, self.allocator, b.left);
-                        },
-                        .ternary_op => {
-                            const t = tree.ternaryExpr(node);
-                            try pushNode(&stack, self.allocator, t.else_branch);
-                            try pushNode(&stack, self.allocator, t.then_branch);
-                            try pushNode(&stack, self.allocator, t.condition);
-                        },
-                        .index_access => {
-                            const ia = tree.indexAccess(node);
-                            try pushNode(&stack, self.allocator, ia.index);
-                            try pushNode(&stack, self.allocator, ia.target);
-                        },
-                        .splat_expr => {
-                            const s = tree.nodeIndex(node);
-                            try pushNode(&stack, self.allocator, s);
-                        },
-                        .double_splat_expr => {
-                            const s = tree.nodeIndex(node);
-                            try pushNode(&stack, self.allocator, s);
-                        },
-                        .each_expr => {
-                            const e = tree.nodeIndex(node);
-                            try pushNode(&stack, self.allocator, e);
-                        },
-                        .method_call => {
-                            const mc = tree.methodCall(node);
-                            try pushNode(&stack, self.allocator, mc.block);
-                            const args = tree.getNamedArgs(mc.args);
-                            var i: usize = args.len;
-                            while (i > 0) {
-                                i -= 1;
-                                try pushNode(&stack, self.allocator, args[i].value);
-                            }
-                            try pushNode(&stack, self.allocator, mc.receiver);
-                        },
-                        .super_call => {
-                            const sc = tree.superCall(node);
-                            try pushNode(&stack, self.allocator, sc.block);
-                            const args = tree.getNamedArgs(sc.args);
-                            var i: usize = args.len;
-                            while (i > 0) {
-                                i -= 1;
-                                try pushNode(&stack, self.allocator, args[i].value);
-                            }
-                        },
-                        .import_stmt => {
-                            const is_stmt = tree.importStmt(node);
-                            try pushNode(&stack, self.allocator, is_stmt.attributes);
-                        },
-                        .export_stmt => {
-                            const es_stmt = tree.exportStmt(node);
-                            try pushNode(&stack, self.allocator, es_stmt.attributes);
-                        },
-                        .if_stmt => {
-                            const ifs = tree.ifStmt(node);
-                            try pushNode(&stack, self.allocator, ifs.else_branch);
-                            try pushNode(&stack, self.allocator, ifs.then_branch);
-                            try pushNode(&stack, self.allocator, ifs.condition);
-                        },
-                        .case_stmt => {
-                            const cs = tree.caseStmt(node);
-                            try pushNode(&stack, self.allocator, cs.else_branch);
-                            const branches = tree.getWhenBranches(cs.when_branches);
-                            var i: usize = branches.len;
-                            while (i > 0) {
-                                i -= 1;
-                                try pushNode(&stack, self.allocator, branches[i].body);
-                                try pushNodesReverse(&stack, self.allocator, tree.getNodes(branches[i].conditions));
-                            }
-                            try pushNode(&stack, self.allocator, cs.condition);
-                        },
-                        .begin_stmt => {
-                            const bs = tree.beginStmt(node);
-                            try pushNode(&stack, self.allocator, bs.ensure_body);
-                            const rescues = tree.getRescueClauses(bs.rescues);
-                            var i: usize = rescues.len;
-                            while (i > 0) {
-                                i -= 1;
-                                try pushNode(&stack, self.allocator, rescues[i].body);
-                            }
-                            try pushNode(&stack, self.allocator, bs.body);
-                        },
-                        .return_stmt => {
-                            const r = tree.nodeIndex(node);
-                            try pushNode(&stack, self.allocator, r);
-                        },
-                        .yield_stmt => {
-                            const span = tree.nodeSpan(node);
-                            try pushNodesReverse(&stack, self.allocator, tree.getNodes(span));
-                        },
-                        .break_stmt => {
-                            const b = tree.nodeIndex(node);
-                            try pushNode(&stack, self.allocator, b);
-                        },
-                        .next_stmt => {
-                            const n = tree.nodeIndex(node);
-                            try pushNode(&stack, self.allocator, n);
-                        },
-                    }
-                },
-            }
-        }
-
+        // Conclude linting
         for (self.rules.items) |rule| {
             try rule.checkEOF(self);
         }
-
         try self.popScope();
     }
 };
