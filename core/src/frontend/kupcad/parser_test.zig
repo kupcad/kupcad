@@ -1110,15 +1110,26 @@ test "KupCAD Parser: Diagnostics for Unexpected Token" {
     try testing.expectEqualStrings("Expected 'r_paren', but found ']'", pt.parser.diagnostics.list.items[0].message);
 }
 
-test "KupCAD Parser: Diagnostics for Invalid Expression" {
-    const source = "val = }";
+test "KupCAD Parser: Diagnostics for Invalid Expression (AST Poisoning)" {
+    const source = "val = 10 + }";
     var pt = try KTest.init(source);
     defer pt.deinit();
 
-    const result = pt.parser.parseStatement();
-    try testing.expectError(error.InvalidExpression, result);
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+
+    // The parser survived and generated an Assignment node!
+    try testing.expectEqual(ast.Tag.assignment, stmt.tag);
+
+    const bin_expr = pt.getNode(pt.parser.b.tree.assignment(stmt).value);
+    try testing.expectEqual(ast.Tag.binary_op, bin_expr.tag);
+
+    // The right side of the binary op is POISONED, allowing the LSP to still see the `10 + `
+    const right_side = pt.getNode(pt.parser.b.tree.binaryExpr(bin_expr).right);
+    try testing.expectEqual(ast.Tag.invalid, right_side.tag);
+
+    // The diagnostic was still safely captured
     try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
-    try testing.expectEqualStrings("Invalid expression starting with '}'", pt.parser.diagnostics.list.items[0].message);
 }
 
 test "KupCAD Parser: Combinators and Trailing Commas" {
@@ -2433,15 +2444,19 @@ test "KupCAD Parser: Error Recovery (synchronize)" {
     ;
     var pt = try KTest.init(source);
     defer pt.deinit();
-    const tree = &pt.parser.b.tree;
 
+    const tree = &pt.parser.b.tree;
     const result_idx = try pt.parser.parseProgram();
     const result = pt.getNode(result_idx);
     const stmts = tree.getNodes(tree.block(result).stmts);
-    try testing.expectEqual(@as(usize, 1), stmts.len);
 
-    const valid_stmt = pt.getNode(stmts[0]);
+    // Thanks to AST Poisoning, all 3 statements are mapped!
+    try testing.expectEqual(@as(usize, 3), stmts.len);
+
+    const valid_stmt = pt.getNode(stmts[2]);
     try testing.expectEqualStrings("z", tree.getString(tree.assignment(valid_stmt).name));
+
+    // Two syntax errors were recorded inside the poisoned nodes
     try testing.expectEqual(@as(usize, 2), pt.parser.diagnostics.list.items.len);
 }
 
@@ -2920,15 +2935,14 @@ test "KupCAD Parser: Ignore trailing comments on binary operations and calls" {
 
 test "KupCAD Parser: Deeply Nested String Interpolation gracefully fails" {
     const source = "\"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"deep\" }\" }\" }\" }\" }\" }\" }\" }\" }\"";
-
     var pt = try KTest.init(source);
     defer pt.deinit();
 
     const result = pt.parser.parseExpression(.none);
+    try testing.expectError(error.UnexpectedToken, result);
 
-    try testing.expectError(error.InvalidExpression, result);
     try testing.expect(pt.parser.diagnostics.list.items.len > 0);
-    try testing.expectEqualStrings("Invalid expression starting with 'Interpolation depth exceeded'", pt.parser.diagnostics.list.items[0].message);
+    try testing.expectEqualStrings("Interpolation depth exceeded", pt.parser.diagnostics.list.items[0].message);
 }
 
 test "KupCAD Parser: Trailing commas in multiple assignment" {

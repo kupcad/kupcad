@@ -684,20 +684,28 @@ test "OpenSCAD Parser: Diagnostics for Unexpected Token" {
     try testing.expectEqualStrings("Expected 'r_paren', but found ']'", parser.diagnostics.list.items[0].message);
 }
 
-test "OpenSCAD Parser: Diagnostics for Invalid Expression" {
+test "OpenSCAD Parser: Diagnostics for Invalid Expression (AST Poisoning)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    // We intentionally start an expression with a stray multiplication symbol
     const source = "x = * 5;";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
     var parser = try Parser.init(tokens, source, arena.allocator());
-    const result = parser.parseStatement();
 
-    try testing.expectError(error.InvalidExpression, result);
+    const stmt_idx = try parser.parseStatement();
+    const stmt = getNode(&parser, stmt_idx);
+
+    // The parser survived and mapped the assignment target `x`
+    try testing.expectEqual(ast.Tag.assignment, stmt.tag);
+
+    // The value of the assignment is POISONED but parsed as a binary op with an invalid left side
+    const right_side = getNode(&parser, parser.b.tree.assignment(stmt).value);
+    try testing.expectEqual(ast.Tag.binary_op, right_side.tag);
+    const bin = parser.b.tree.binaryExpr(right_side);
+    try testing.expectEqual(ast.Tag.invalid, getNode(&parser, bin.left).tag);
+
     try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
-    try testing.expectEqualStrings("Invalid expression starting with '*'", parser.diagnostics.list.items[0].message);
 }
 
 test "OpenSCAD Parser: Deeply Nested Let Expressions & Chained Expression Modifiers" {
@@ -812,18 +820,25 @@ test "OpenSCAD Parser: Error Recovery (synchronize)" {
 
     const source =
         \\x = 10 * ];
-        \\y = 20 + };
+        \\y = 20 + );
         \\z = 30;
     ;
+
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
     var parser = try Parser.init(tokens, source, arena.allocator());
+
     const result_idx = try parser.parseProgram();
     const result = getNode(&parser, result_idx);
 
-    // The successful statement (z = 30;) was preserved
-    try testing.expectEqual(@as(usize, 1), getNodes(&parser, parser.b.tree.block(result).stmts).len);
+    // Due to AST poisoning, all 3 assignments are retained.
+    const stmts = getNodes(&parser, parser.b.tree.block(result).stmts);
+    try testing.expectEqual(@as(usize, 3), stmts.len);
 
-    // Both errors were captured
+    // z = 30 parsed perfectly
+    const valid_stmt = getNode(&parser, stmts[2]);
+    try testing.expectEqualStrings("z", getStr(&parser, parser.b.tree.assignment(valid_stmt).name));
+
+    // Two syntax errors were captured
     try testing.expectEqual(@as(usize, 2), parser.diagnostics.list.items.len);
 }

@@ -42,6 +42,7 @@ pub const Span = struct {
 
 // --- Node Tag ---
 pub const Tag = enum(u8) {
+    invalid,
     number,
     string,
     boolean,
@@ -781,6 +782,10 @@ pub const Builder = struct {
     }
 
     // --- AST Node Constructors ---
+
+    pub fn invalidNode(self: *Builder, main_token: u24) !NodeIndex {
+        return self.createNode(.invalid, main_token, 0);
+    }
 
     pub fn number(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
         var clean_buf: [128]u8 = undefined;

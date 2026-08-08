@@ -129,6 +129,11 @@ pub const Parser = struct {
     }
 
     pub fn reportError(self: *Parser, loc: ast.Location, comptime fmt: []const u8, args: anytype) void {
+        // Prevent duplicate errors at the exact same token offset
+        if (self.diagnostics.list.items.len > 0) {
+            const last = self.diagnostics.list.items[self.diagnostics.list.items.len - 1];
+            if (last.loc.offset == loc.offset) return;
+        }
         self.diagnostics.add(loc, fmt, args);
     }
 
@@ -257,6 +262,7 @@ pub const Parser = struct {
 
     pub fn parseStatement(self: *Parser) ParseError!ast.NodeIndex {
         self.skipIgnored();
+        const start_idx = self.tok_idx;
 
         var stmt = switch (self.tag(0)) {
             .keyword_import => try self.parseImportOrExportStatement(false),
@@ -282,13 +288,10 @@ pub const Parser = struct {
             const mod_tok = self.tok_idx;
             self.advance();
             const cond = try self.parseExpression(.none);
-
             const stmt_main_token = self.b.tree.getNode(stmt).?.main_token;
-
             const s_len = self.scratch_nodes.items.len;
             defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
             try self.scratch_nodes.append(self.allocator, stmt);
-
             const then_block = self.b.block(&.{}, self.scratch_nodes.items[s_len..], stmt_main_token) catch return ParseError.OutOfMemory;
 
             if (mod_tag == .keyword_if or mod_tag == .keyword_unless) {
@@ -297,6 +300,12 @@ pub const Parser = struct {
                 stmt = self.b.whileStmt(cond, then_block, mod_tag == .keyword_until, mod_tok) catch return ParseError.OutOfMemory;
             }
         }
+
+        // Infinite Loop Prevention: If we processed a statement but consumed no tokens, trigger synchronization
+        if (self.tok_idx == start_idx) {
+            return ParseError.InvalidExpression;
+        }
+
         return stmt;
     }
 
@@ -1053,12 +1062,12 @@ pub const Parser = struct {
             .keyword_case => left = try self.parseCaseStatement(),
             .percent_w, .percent_i => left = try self.parsePercentArray(start_tag),
             .invalid => {
-                self.reportError(self.getLoc(start_tok), "Invalid expression starting with 'Interpolation depth exceeded'", .{});
-                return ParseError.InvalidExpression;
+                self.reportError(self.getLoc(start_tok), "Interpolation depth exceeded", .{});
+                left = try self.b.invalidNode(start_tok);
             },
             else => {
                 self.reportError(self.getLoc(start_tok), "Invalid expression starting with '{s}'", .{self.lexeme(0)});
-                return ParseError.InvalidExpression;
+                left = try self.b.invalidNode(start_tok);
             },
         }
 
@@ -1071,11 +1080,11 @@ pub const Parser = struct {
                     break;
                 }
             }
+
             self.skipComments();
-
             if (@intFromEnum(precedence) >= @intFromEnum(getInfixPrecedence(self.tag(0)))) break;
-            const op_tag = self.tag(0);
 
+            const op_tag = self.tag(0);
             left = switch (op_tag) {
                 .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => try self.parseAssignmentExpr(left),
                 .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or, .dot_dot, .dot_dot_dot, .less_less, .greater_greater, .keyword_and, .keyword_or, .ampersand, .pipe, .caret => try self.parseBinary(left),
@@ -1089,6 +1098,7 @@ pub const Parser = struct {
                 else => break,
             };
         }
+
         return left;
     }
 
@@ -1120,11 +1130,21 @@ pub const Parser = struct {
 
         while (true) {
             self.skipIgnored();
+
+            if (self.tag(0) == .invalid) {
+                self.reportError(self.getLoc(self.tok_idx), "Interpolation depth exceeded", .{});
+                try self.scratch_nodes.append(self.allocator, try self.b.invalidNode(self.tok_idx));
+                self.advance();
+                break;
+            }
+
             if (self.tag(0) != .string_mid and self.tag(0) != .string_end) {
                 const expr = try self.parseExpression(.none);
                 try self.scratch_nodes.append(self.allocator, expr);
             }
+
             self.skipIgnored();
+
             if (self.tag(0) == .string_end) {
                 try self.scratch_nodes.append(self.allocator, try self.b.stringNode(self.lexeme(0), self.tok_idx));
                 self.advance();
@@ -1136,6 +1156,7 @@ pub const Parser = struct {
                 return ParseError.UnexpectedToken;
             }
         }
+
         const span = try self.b.addNodes(self.scratch_nodes.items[s_len..]);
         return self.b.interpolatedString(span, start_tok) catch ParseError.OutOfMemory;
     }

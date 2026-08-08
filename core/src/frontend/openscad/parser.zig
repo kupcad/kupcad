@@ -107,6 +107,11 @@ pub const Parser = struct {
     }
 
     pub fn reportError(self: *Parser, loc: ast.Location, comptime fmt: []const u8, args: anytype) void {
+        // Prevent duplicate errors at the exact same token offset
+        if (self.diagnostics.list.items.len > 0) {
+            const last = self.diagnostics.list.items[self.diagnostics.list.items.len - 1];
+            if (last.loc.offset == loc.offset) return;
+        }
         self.diagnostics.add(loc, fmt, args);
     }
 
@@ -143,7 +148,9 @@ pub const Parser = struct {
 
     pub fn parseStatement(self: *Parser) ParseError!ast.NodeIndex {
         self.skipIgnored();
-        return switch (self.tag(0)) {
+        const start_idx = self.tok_idx;
+
+        const stmt = switch (self.tag(0)) {
             .keyword_module => try self.parseModuleDecl(),
             .keyword_function => try self.parseFunctionDecl(),
             .keyword_include, .keyword_use => try self.parseIncludeOrUse(),
@@ -155,6 +162,13 @@ pub const Parser = struct {
             .l_brace => try self.parseScopedBlock(),
             else => try self.parseInstantiationOrAssignment(),
         };
+
+        // Infinite Loop Prevention: Trigger sync if parsing failed to consume any tokens
+        if (self.tok_idx == start_idx) {
+            return ParseError.InvalidExpression;
+        }
+
+        return stmt;
     }
 
     fn parseScopedBlock(self: *Parser) ParseError!ast.NodeIndex {
@@ -552,7 +566,7 @@ pub const Parser = struct {
             },
             else => {
                 self.reportError(self.getLoc(start_tok), "Invalid expression starting with '{s}'", .{self.lexeme(0)});
-                return ParseError.InvalidExpression;
+                left = try self.b.invalidNode(start_tok);
             },
         }
 
@@ -567,6 +581,7 @@ pub const Parser = struct {
                 else => break,
             };
         }
+
         return left;
     }
 

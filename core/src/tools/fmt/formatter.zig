@@ -7,7 +7,7 @@ const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
 
 pub const Formatter = struct {
-    pub const Error = error{ OutOfMemory, NoSpaceLeft };
+    pub const Error = error{ OutOfMemory, NoSpaceLeft, SyntaxError };
 
     allocator: std.mem.Allocator,
     out: std.ArrayListUnmanaged(u8) = .empty,
@@ -145,6 +145,7 @@ pub const Formatter = struct {
         try self.flushLeadingComments(node_line);
 
         switch (node.tag) {
+            .invalid => return error.SyntaxError,
             .block => {
                 const b = tree.block(node);
                 try self.formatBlockStmts(tree, tree.getNodes(b.stmts));
