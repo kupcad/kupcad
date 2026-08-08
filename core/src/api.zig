@@ -33,7 +33,12 @@ pub const Document = struct {
         const arena_alloc = arena.allocator();
 
         var lexer = lexer_mod.Lexer.init(source, 0);
-        var parser = parser_mod.Parser.init(&lexer, arena_alloc);
+
+        // Execute Ahead-Of-Time SoA Lexing
+        const tokens = try lexer.lexAll(arena_alloc);
+
+        // Pass tokens and source directly to the Parser
+        var parser = parser_mod.Parser.init(tokens, source, arena_alloc);
 
         const root_index = parser.parseProgram() catch |err| switch (err) {
             error.OutOfMemory => return err,

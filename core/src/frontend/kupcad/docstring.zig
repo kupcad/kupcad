@@ -52,15 +52,19 @@ pub const DocstringParser = struct {
                 desc_end = brace_idx;
 
                 var lexer = lexer_mod.Lexer.init(options_str, loc.file_id);
-                var parser = parser_mod.Parser.init(&lexer, self.allocator);
-                parser.b = self.b.*;
+                // Lex AOT
+                const tokens = try lexer.lexAll(self.allocator);
 
+                // Initialize with tokens
+                var parser = parser_mod.Parser.init(tokens, options_str, self.allocator);
+                parser.b = self.b.*;
                 if (parser.parseExpression(.none)) |node_idx| {
                     doc.options_expr = node_idx;
                 } else |_| {}
-
                 self.b.* = parser.b;
                 parser.diagnostics.deinit();
+                // We must free the docstring tokens immediately since they aren't arena-backed here
+                tokens.deinit(self.allocator);
             }
         }
 

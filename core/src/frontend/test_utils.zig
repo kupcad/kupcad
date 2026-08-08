@@ -32,21 +32,22 @@ pub fn ParserTest(comptime LexerType: type, comptime ParserType: type) type {
         const Self = @This();
 
         pub fn init(source: []const u8) !Self {
-            // Allocate the arena itself on the heap so it has a stable address
             const arena = try testing.allocator.create(std.heap.ArenaAllocator);
             errdefer testing.allocator.destroy(arena);
-
-            // Initialize it
             arena.* = std.heap.ArenaAllocator.init(testing.allocator);
             errdefer arena.deinit();
 
-            // Now it is perfectly safe to take a pointer to it
             const allocator = arena.allocator();
+
             const lexer = try allocator.create(LexerType);
             lexer.* = LexerType.init(source, 0);
 
+            // Lex everything upfront in tests
+            const tokens = try lexer.lexAll(allocator);
+
             const parser = try allocator.create(ParserType);
-            parser.* = ParserType.init(lexer, allocator);
+            // Pass tokens and source
+            parser.* = ParserType.init(tokens, source, allocator);
 
             return .{
                 .arena = arena,

@@ -493,6 +493,30 @@ pub const Lexer = struct {
         return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
+    pub fn lexAll(self: *Lexer, allocator: std.mem.Allocator) !common_token.TokenList(Tag) {
+        var tags = std.ArrayListUnmanaged(Tag).empty;
+        errdefer tags.deinit(allocator);
+        var starts = std.ArrayListUnmanaged(u32).empty;
+        errdefer starts.deinit(allocator);
+        var lengths = std.ArrayListUnmanaged(u32).empty;
+        errdefer lengths.deinit(allocator);
+
+        while (true) {
+            const tok = self.next();
+            try tags.append(allocator, tok.tag);
+            try starts.append(allocator, tok.loc.offset);
+            try lengths.append(allocator, @intCast(tok.lexeme.len));
+
+            if (tok.tag == .eof) break;
+        }
+
+        return .{
+            .tags = try tags.toOwnedSlice(allocator),
+            .starts = try starts.toOwnedSlice(allocator),
+            .lengths = try lengths.toOwnedSlice(allocator),
+        };
+    }
+
     inline fn peek(self: *const Lexer) u8 {
         return self.buffer[self.index];
     }

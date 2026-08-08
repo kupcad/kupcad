@@ -7,8 +7,8 @@ const Parser = @import("parser.zig").Parser;
 const KTest = ParserTest(Lexer, Parser);
 
 test "AST Node Memory Size Optimization" {
-    // Ensures the Node stays at exactly 32 bytes for cache locality
-    try testing.expectEqual(@as(usize, 32), @sizeOf(ast.Node));
+    // Ensures the Node stays at exactly 8 bytes for cache locality
+    try testing.expectEqual(@as(usize, 8), @sizeOf(ast.Node));
 }
 
 test "AST Builder: String Interning Memory Optimization" {
