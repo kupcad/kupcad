@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const token = @import("../../core/token.zig");
+const LineIndex = @import("../../core/line_index.zig").LineIndex;
 const Config = @import("config.zig").Config;
 const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
@@ -10,6 +11,8 @@ pub const Formatter = struct {
 
     allocator: std.mem.Allocator,
     out: std.ArrayListUnmanaged(u8) = .empty,
+    token_starts: []const u32,
+    line_index: *const LineIndex,
     comments: []const token.Comment,
     config: Config,
     rules: std.ArrayListUnmanaged(FormatRule) = .empty,
@@ -19,9 +22,11 @@ pub const Formatter = struct {
 
     sort_imports_rule: SortImportsRule = .{},
 
-    pub fn init(allocator: std.mem.Allocator, comments: []const token.Comment, config: Config) Formatter {
+    pub fn init(allocator: std.mem.Allocator, token_starts: []const u32, line_index: *const LineIndex, comments: []const token.Comment, config: Config) Formatter {
         return .{
             .allocator = allocator,
+            .token_starts = token_starts,
+            .line_index = line_index,
             .comments = comments,
             .config = config,
         };
@@ -46,6 +51,11 @@ pub const Formatter = struct {
     }
 
     // --- State & Spacing Helpers ---
+
+    fn getNodeLine(self: *Formatter, node: *const ast.Node) u32 {
+        if (node.main_token >= self.token_starts.len) return 0;
+        return self.line_index.getLine(self.token_starts[node.main_token]);
+    }
 
     fn isAtLineStartOrEmpty(self: *Formatter) bool {
         return self.out.items.len == 0 or self.out.items[self.out.items.len - 1] == '\n';
@@ -124,27 +134,28 @@ pub const Formatter = struct {
     fn formatNode(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) Error!void {
         if (node_idx == .none) return;
         const node = tree.getNode(node_idx) orelse return;
+        const node_line = self.getNodeLine(node);
 
-        try self.flushLeadingComments(node.loc.line);
+        try self.flushLeadingComments(node_line);
 
         switch (node.tag) {
             .block => {
-                const b = tree.blocks.items[node.data];
+                const b = tree.block(node);
                 try self.formatBlockStmts(tree, tree.getNodes(b.stmts));
             },
             .number => {
-                const n = tree.numbers.items[node.data];
+                const n = tree.number(node);
                 var buf: [64]u8 = undefined;
                 try self.out.appendSlice(self.allocator, try std.fmt.bufPrint(&buf, "{d}", .{n}));
             },
             .string => try self.formatWrappedString(tree.getString(@enumFromInt(node.data)), '"'),
             .interpolated_string => {
-                const parts = tree.getSpan(node.data);
+                const parts = tree.nodeSpan(node);
                 try self.formatInterpolatedString(tree, tree.getNodes(parts));
             },
             .symbol => try self.formatWrappedString(tree.getString(@enumFromInt(node.data)), ':'),
             .boolean => {
-                const b = node.data != 0;
+                const b = tree.boolean(node);
                 try self.out.appendSlice(self.allocator, if (b) "true" else "false");
             },
             .nil => try self.out.appendSlice(self.allocator, "nil"),
@@ -152,57 +163,57 @@ pub const Formatter = struct {
             .self_expr => try self.out.appendSlice(self.allocator, "self"),
             .identifier => try self.out.appendSlice(self.allocator, tree.getString(@enumFromInt(node.data))),
             .array_literal => {
-                const arr = tree.getSpan(node.data);
+                const arr = tree.nodeSpan(node);
                 try self.formatArray(tree, tree.getNodes(arr));
             },
             .hash_literal => {
-                const entries = tree.getSpan(node.data);
+                const entries = tree.nodeSpan(node);
                 try self.formatHash(tree, tree.getHashEntries(entries));
             },
-            .if_stmt => try self.formatIfStmt(tree, tree.ifStmt(node).*, node.loc.line),
-            .while_stmt => try self.formatWhileStmt(tree, tree.while_stmts.items[node.data], node.loc.line),
-            .for_stmt => try self.formatForStmt(tree, tree.for_stmts.items[node.data], node.loc.line),
-            .case_stmt => try self.formatCaseStmt(tree, tree.case_stmts.items[node.data], node.loc.line),
-            .begin_stmt => try self.formatBeginStmt(tree, tree.begin_stmts.items[node.data], node.loc.line),
-            .def_stmt => try self.formatDefStmt(tree, tree.def_stmts.items[node.data], node.loc.line),
-            .class_stmt => try self.formatClassStmt(tree, tree.class_stmts.items[node.data], node.loc.line),
-            .module_stmt => try self.formatModuleStmt(tree, tree.module_stmts.items[node.data], node.loc.line),
-            .lambda_expr => try self.formatLambda(tree, tree.lambda_exprs.items[node.data], node.loc.line),
+            .if_stmt => try self.formatIfStmt(tree, tree.ifStmt(node), node_line),
+            .while_stmt => try self.formatWhileStmt(tree, tree.whileStmt(node), node_line),
+            .for_stmt => try self.formatForStmt(tree, tree.forStmt(node), node_line),
+            .case_stmt => try self.formatCaseStmt(tree, tree.caseStmt(node), node_line),
+            .begin_stmt => try self.formatBeginStmt(tree, tree.beginStmt(node), node_line),
+            .def_stmt => try self.formatDefStmt(tree, tree.defStmt(node), node_line),
+            .class_stmt => try self.formatClassStmt(tree, tree.classStmt(node), node_line),
+            .module_stmt => try self.formatModuleStmt(tree, tree.moduleStmt(node), node_line),
+            .lambda_expr => try self.formatLambda(tree, tree.lambdaExpr(node), node_line),
             .namespace_access => {
-                const ns = tree.getSpan(node.data);
+                const ns = tree.nodeSpan(node);
                 try self.formatNamespace(tree, tree.getStringLists(ns));
             },
-            .range => try self.formatRange(tree, tree.ranges.items[node.data]),
-            .assignment => try self.formatAssignment(tree, tree.assignment(node).*),
-            .multiple_assignment => try self.formatMultipleAssignment(tree, tree.multiple_assignments.items[node.data]),
-            .property_assignment => try self.formatPropertyAssignment(tree, tree.property_assignments.items[node.data]),
-            .index_assignment => try self.formatIndexAssignment(tree, tree.index_assignments.items[node.data]),
-            .index_access => try self.formatIndexAccess(tree, tree.index_accesses.items[node.data]),
-            .binary_op => try self.formatBinaryOp(tree, tree.binaryExpr(node).*),
-            .unary_op => try self.formatUnaryOp(tree, tree.unaryExpr(node).*),
-            .ternary_op => try self.formatTernaryOp(tree, tree.ternary_exprs.items[node.data]),
-            .splat_expr => try self.formatSplat(tree, @enumFromInt(node.data), "*"),
-            .double_splat_expr => try self.formatSplat(tree, @enumFromInt(node.data), "**"),
-            .each_expr => try self.formatSplat(tree, @enumFromInt(node.data), "each "),
-            .rescue_modifier => try self.formatRescueModifier(tree, tree.rescue_modifiers.items[node.data]),
-            .method_call => try self.formatMethodCall(tree, tree.methodCall(node).*, node.loc.line),
-            .super_call => try self.formatSuperCall(tree, tree.super_calls.items[node.data], node.loc.line),
-            .return_stmt => try self.formatFlowControl(tree, "return", @enumFromInt(node.data)),
-            .break_stmt => try self.formatFlowControl(tree, "break", @enumFromInt(node.data)),
-            .next_stmt => try self.formatFlowControl(tree, "next", @enumFromInt(node.data)),
+            .range => try self.formatRange(tree, tree.range(node)),
+            .assignment => try self.formatAssignment(tree, tree.assignment(node)),
+            .multiple_assignment => try self.formatMultipleAssignment(tree, tree.multipleAssignment(node)),
+            .property_assignment => try self.formatPropertyAssignment(tree, tree.propertyAssignment(node)),
+            .index_assignment => try self.formatIndexAssignment(tree, tree.indexAssignment(node)),
+            .index_access => try self.formatIndexAccess(tree, tree.indexAccess(node)),
+            .binary_op => try self.formatBinaryOp(tree, tree.binaryExpr(node)),
+            .unary_op => try self.formatUnaryOp(tree, tree.unaryExpr(node)),
+            .ternary_op => try self.formatTernaryOp(tree, tree.ternaryExpr(node)),
+            .splat_expr => try self.formatSplat(tree, tree.nodeIndex(node), "*"),
+            .double_splat_expr => try self.formatSplat(tree, tree.nodeIndex(node), "**"),
+            .each_expr => try self.formatSplat(tree, tree.nodeIndex(node), "each "),
+            .rescue_modifier => try self.formatRescueModifier(tree, tree.rescueModifier(node)),
+            .method_call => try self.formatMethodCall(tree, tree.methodCall(node), node_line),
+            .super_call => try self.formatSuperCall(tree, tree.superCall(node), node_line),
+            .return_stmt => try self.formatFlowControl(tree, "return", tree.nodeIndex(node)),
+            .break_stmt => try self.formatFlowControl(tree, "break", tree.nodeIndex(node)),
+            .next_stmt => try self.formatFlowControl(tree, "next", tree.nodeIndex(node)),
             .yield_stmt => {
-                const y = tree.getSpan(node.data);
+                const y = tree.nodeSpan(node);
                 try self.formatYield(tree, tree.getNodes(y));
             },
             .import_stmt => {
-                const is_stmt = tree.import_stmts.items[node.data];
+                const is_stmt = tree.importStmt(node);
                 try self.formatImportExport(tree, "import", tree.getStringLists(is_stmt.symbols), tree.getString(is_stmt.path), is_stmt.attributes);
             },
             .export_stmt => {
-                const es_stmt = tree.export_stmts.items[node.data];
+                const es_stmt = tree.exportStmt(node);
                 try self.formatImportExport(tree, "export", tree.getStringLists(es_stmt.symbols), tree.getString(es_stmt.path), es_stmt.attributes);
             },
-            .param_doc => try self.formatParamDoc(tree, tree.param_docs.items[node.data]),
+            .param_doc => try self.formatParamDoc(tree, tree.paramDoc(node)),
         }
     }
 
@@ -226,10 +237,10 @@ pub const Formatter = struct {
                 }
             }
 
-            try self.flushLeadingComments(stmt.loc.line);
+            try self.flushLeadingComments(self.getNodeLine(stmt));
             if (self.isAtLineStartOrEmpty()) try self.writeIndent();
             try self.formatNode(tree, stmt_idx);
-            try self.flushInlineComments(stmt.loc.line);
+            try self.flushInlineComments(self.getNodeLine(stmt));
             try self.ensureNewline();
         }
     }
@@ -624,7 +635,7 @@ pub const Formatter = struct {
         if (block_idx == .none) return;
         const block_node = tree.getNode(block_idx).?;
         if (block_node.tag != .block) return;
-        const b = tree.blocks.items[block_node.data];
+        const b = tree.block(block_node);
 
         try self.out.appendSlice(self.allocator, "do");
         const params = tree.getNodes(b.params);

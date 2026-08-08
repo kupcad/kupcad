@@ -1,12 +1,41 @@
 const std = @import("std");
 const testing = std.testing;
-const api = @import("../../api.zig");
+
+const LineIndex = @import("../../core/line_index.zig").LineIndex;
+const lexer_mod = @import("../../frontend/kupcad/lexer.zig");
+const parser_mod = @import("../../frontend/kupcad/parser.zig");
+const Formatter = @import("formatter.zig").Formatter;
+const FormatterConfig = @import("config.zig").Config;
+
+/// Completely local wrapper that uses our strict Phase 2 & 3 structures for isolated testing
+fn formatCodeLocal(allocator: std.mem.Allocator, source: []const u8, config: FormatterConfig) ![]const u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const arena_alloc = arena.allocator();
+
+    var lexer = lexer_mod.Lexer.init(source, 0);
+    const tokens = try lexer.lexAll(arena_alloc);
+
+    var parser = parser_mod.Parser.init(tokens, source, arena_alloc);
+    const root = parser.parseProgram() catch .none;
+
+    if (parser.diagnostics.list.items.len > 0) return error.SyntaxError;
+    if (root == .none) return error.SyntaxError;
+
+    const line_index = try LineIndex.init(arena_alloc, source);
+
+    var formatter = Formatter.init(allocator, tokens.starts, &line_index, parser.comments.items, config);
+    defer formatter.deinit();
+    try formatter.registerDefaultRules();
+
+    return formatter.format(&parser.b.tree, root);
+}
 
 /// Helper to parse, format, and strictly compare the output.
 /// We disable `sort_imports` here to strictly test the canonical layout engine.
 fn expectFormat(source: []const u8, expected: []const u8) !void {
     const allocator = testing.allocator;
-    const formatted = try api.formatCode(allocator, source, .{ .sort_imports = false });
+    const formatted = try formatCodeLocal(allocator, source, .{ .sort_imports = false });
     defer allocator.free(formatted);
 
     try testing.expectEqualStrings(expected, formatted);
@@ -288,7 +317,7 @@ test "Formatter: Aborts formatting when source contains syntax errors" {
     ;
 
     const allocator = testing.allocator;
-    const result = api.formatCode(allocator, invalid_source, .{});
+    const result = formatCodeLocal(allocator, invalid_source, .{});
 
     try testing.expectError(error.SyntaxError, result);
 }
@@ -317,18 +346,14 @@ test "Formatter: properly adds newline before 'end' in multi-statement blocks" {
         \\  a += 1
         \\end
     ;
-    const allocator = testing.allocator;
-
-    const formatted = try api.formatCode(allocator, source, .{});
-    defer allocator.free(formatted);
-
-    try testing.expectEqualStrings(
+    const expected =
         \\def test
         \\  return
         \\  a += 1
         \\end
         \\
-    , formatted);
+    ;
+    try expectFormat(source, expected);
 }
 
 test "Formatter: inserts blank lines between methods and classes" {
@@ -361,9 +386,5 @@ test "Formatter: inserts blank lines between methods and classes" {
         \\x = 10
         \\
     ;
-    const allocator = testing.allocator;
-    const formatted = try api.formatCode(allocator, source, .{});
-    defer allocator.free(formatted);
-
-    try testing.expectEqualStrings(expected, formatted);
+    try expectFormat(source, expected);
 }
