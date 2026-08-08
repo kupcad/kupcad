@@ -36,10 +36,7 @@ fn inner_check(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
     // Note: checkCode safely returns syntax errors as part of the diagnostics array.
     // It only throws an error on catastrophic failures (e.g., OutOfMemory).
     const diags = try api.checkCode(allocator, source, .{});
-    defer {
-        for (diags) |d| allocator.free(d.message);
-        allocator.free(diags);
-    }
+    defer api.freeDiagnostics(allocator, diags);
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();

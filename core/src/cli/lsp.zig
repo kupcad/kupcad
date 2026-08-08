@@ -162,10 +162,7 @@ pub const Handler = struct {
             self.log("Linter crashed: {}", .{err});
             return;
         };
-        defer {
-            for (diags) |d| self.allocator.free(d.message);
-            self.allocator.free(diags);
-        }
+        defer api.freeDiagnostics(self.allocator, diags);
 
         const Position = struct { line: u32, character: u32 };
         const Range = struct { start: Position, end: Position };

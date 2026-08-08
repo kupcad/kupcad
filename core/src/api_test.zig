@@ -16,11 +16,9 @@ test "Formatter: formats raw KupCAD code to expected layout" {
 test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
     const bad_code = @embedFile("fixtures/linter_bad.kup");
     const allocator = testing.allocator;
+
     const diags = try api.checkCode(allocator, bad_code, .{});
-    defer {
-        for (diags) |d| allocator.free(d.message);
-        allocator.free(diags);
-    }
+    defer api.freeDiagnostics(allocator, diags);
 
     // Must surface exactly 5 diagnostics:
     // 1. Unused variable 'unused_var'

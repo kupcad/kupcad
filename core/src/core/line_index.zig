@@ -42,6 +42,23 @@ pub const LineIndex = struct {
         return @intCast(left - 1);
     }
 
+    /// Extracts a specific line of text from the source code (1-based index)
+    pub fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
+        var line_num: u32 = 1;
+        var iter = std.mem.splitScalar(u8, source, '\n');
+        while (iter.next()) |line| {
+            if (line_num == target_line) {
+                var trimmed = line;
+                if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '\r') {
+                    trimmed = trimmed[0 .. trimmed.len - 1];
+                }
+                return trimmed;
+            }
+            line_num += 1;
+        }
+        return "";
+    }
+
     /// Returns the 0-indexed UTF-8 byte column.
     /// (Use this if the LSP client successfully negotiates "utf-8" PositionEncodingKind).
     pub fn getUtf8Column(self: *const LineIndex, offset: u32) u32 {

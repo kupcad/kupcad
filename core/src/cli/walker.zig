@@ -1,6 +1,5 @@
 const std = @import("std");
-
-pub const MAX_FILE_SIZE = 1024 * 1024 * 10; // 10MB
+const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
 /// Generic file processor callback.
 pub const ProcessFileFn = *const fn (io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void;

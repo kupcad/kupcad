@@ -95,3 +95,9 @@ pub fn checkCode(allocator: std.mem.Allocator, source: []const u8, config: Linte
     defer doc.deinit();
     return checkDocument(allocator, &doc, config);
 }
+
+/// Safely frees an array of LinterDiagnostics and their inner allocated strings.
+pub fn freeDiagnostics(allocator: std.mem.Allocator, diags: []LinterDiagnostic) void {
+    for (diags) |d| allocator.free(d.message);
+    allocator.free(diags);
+}

@@ -1,4 +1,5 @@
 const std = @import("std");
+const ProjectConfig = @import("config.zig").ProjectConfig;
 
 pub const CommandOptions = struct {
     config_path: ?[]const u8 = null,
@@ -47,5 +48,27 @@ pub const CommandOptions = struct {
 
     pub fn deinit(self: *CommandOptions, allocator: std.mem.Allocator) void {
         self.paths.deinit(allocator);
+    }
+};
+
+/// A centralized bootstrapping struct that handles parsing arguments,
+/// loading the configuration file, and gracefully handling errors.
+pub const CommandSetup = struct {
+    options: CommandOptions,
+    config: ProjectConfig,
+
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, args_iter: anytype, command_name: []const u8) !CommandSetup {
+        const options = try CommandOptions.parseOrExit(allocator, args_iter, command_name);
+
+        const config = ProjectConfig.load(io, allocator, options.config_path) catch |err| {
+            std.debug.print("Error parsing configuration file: {}\n", .{err});
+            std.process.exit(1);
+        };
+
+        return .{ .options = options, .config = config };
+    }
+
+    pub fn deinit(self: *CommandSetup, allocator: std.mem.Allocator) void {
+        self.options.deinit(allocator);
     }
 };
