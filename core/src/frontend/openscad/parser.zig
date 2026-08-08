@@ -250,6 +250,27 @@ pub const Parser = struct {
         return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
     }
 
+    fn parseLetExpression(self: *Parser) ParseError!ast.NodeIndex {
+        const start_tok = try self.expect(.keyword_let);
+        _ = try self.expect(.l_paren);
+
+        const s_len = self.scratch_nodes.items.len;
+        defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+
+        while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
+            const var_tok = try self.expect(.ident);
+            _ = try self.expect(.equal);
+            const val_expr = try self.parseExpression(.none);
+            const assign_node = try self.b.assignment(try self.b.intern(self.tokens.lexeme(self.source, var_tok)), null, val_expr, var_tok);
+            try self.scratch_nodes.append(self.allocator, assign_node);
+            if (self.tag(0) == .comma) self.advance() else break;
+        }
+        _ = try self.expect(.r_paren);
+        const yield_expr = try self.parseExpression(.none);
+        try self.scratch_nodes.append(self.allocator, yield_expr);
+        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
+    }
+
     fn parseModifierCall(self: *Parser) ParseError!ast.NodeIndex {
         const mod_tok = self.tok_idx;
         const mod_lexeme = self.lexeme(0);
@@ -840,8 +861,8 @@ pub const Parser = struct {
         return self.b.indexAccess(target, index, target_node.main_token) catch ParseError.OutOfMemory;
     }
 
-    fn getInfixPrecedence(tag: Tag) Precedence {
-        return switch (tag) {
+    fn getInfixPrecedence(t: Tag) Precedence {
+        return switch (t) {
             .question => .ternary,
             .or_or => .logical_or,
             .and_and => .logical_and,
@@ -855,8 +876,8 @@ pub const Parser = struct {
         };
     }
 
-    fn tagToBinaryOp(tag: Tag) ?ast.BinaryOp {
-        return switch (tag) {
+    fn tagToBinaryOp(t: Tag) ?ast.BinaryOp {
+        return switch (t) {
             .plus => .add,
             .minus => .subtract,
             .star => .multiply,
