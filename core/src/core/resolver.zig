@@ -37,18 +37,21 @@ pub const Resolver = struct {
     scopes: std.ArrayListUnmanaged(Scope) = .empty,
     diagnostics: *errors.Diagnostics,
 
+    token_starts: []const u32,
+    token_lengths: []const u32,
+
     // Tracks the current nesting of while/for loops
     loop_depth: usize = 0,
 
-    pub fn init(allocator: std.mem.Allocator, tree: *const ast.Tree, diagnostics: *errors.Diagnostics) !Resolver {
+    pub fn init(allocator: std.mem.Allocator, tree: *const ast.Tree, token_starts: []const u32, token_lengths: []const u32, diagnostics: *errors.Diagnostics) !Resolver {
         const symbols = try allocator.alloc(ResolvedSymbol, tree.nodes.items.len);
-
-        // Default initialize the parallel array to unresolved
         @memset(symbols, .{ .kind = .unresolved, .index = 0 });
 
         return Resolver{
             .allocator = allocator,
             .tree = tree,
+            .token_starts = token_starts,
+            .token_lengths = token_lengths,
             .symbols = symbols,
             .diagnostics = diagnostics,
             .loop_depth = 0,
@@ -188,12 +191,14 @@ const ResolverContext = struct {
                 self.resolver.loop_depth += 1;
             },
             .break_stmt, .next_stmt => {
-                // Instantly throw a semantic error if used outside a loop!
                 if (self.resolver.loop_depth == 0) {
                     const stmt_name = if (node.tag == .break_stmt) "break" else "next";
-                    // Note: Resolver does not currently have token offsets, so we pass a zeroed location.
-                    // This will still safely surface the correct message to the diagnostic array.
-                    self.resolver.diagnostics.add(.{ .line = 0, .col = 0, .offset = 0, .length = 0, .file_id = 0 }, "Cannot use '{s}' outside of a loop", .{stmt_name});
+
+                    // Extract exact source code coordinates for the error!
+                    const offset = self.resolver.token_starts[node.main_token];
+                    const length = self.resolver.token_lengths[node.main_token];
+
+                    self.resolver.diagnostics.add(.{ .line = 0, .col = 0, .offset = offset, .length = length, .file_id = 0 }, "Cannot use '{s}' outside of a loop", .{stmt_name});
                 }
             },
 

@@ -46,7 +46,8 @@ pub const Document = struct {
         tree.root = root_index;
 
         const line_index = try LineIndex.init(arena_alloc, source);
-        var res = try resolver.Resolver.init(arena_alloc, &tree, &parser.diagnostics);
+
+        var res = try resolver.Resolver.init(arena_alloc, &tree, tokens.starts, tokens.lengths, &parser.diagnostics);
         try res.resolve(root_index);
 
         return .{

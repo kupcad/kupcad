@@ -54,7 +54,7 @@ test "Resolver: correctly classifies local, instance, and global variables" {
     var diags = errors.Diagnostics.init(testing.allocator);
     defer diags.deinit();
 
-    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, &diags);
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
     defer res.deinit();
 
     try res.resolve(root_idx);
@@ -90,7 +90,7 @@ test "Resolver: correctly resolves upvalues across closure boundaries" {
     var diags = errors.Diagnostics.init(testing.allocator);
     defer diags.deinit();
 
-    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, &diags);
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
     defer res.deinit();
 
     try res.resolve(root_idx);
@@ -119,7 +119,7 @@ test "Resolver: block parameters resolve as local variables" {
     var diags = errors.Diagnostics.init(testing.allocator);
     defer diags.deinit();
 
-    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, &diags);
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
     defer res.deinit();
 
     try res.resolve(root_idx);
@@ -146,7 +146,7 @@ test "Resolver: permits break and next inside loops" {
     var diags = errors.Diagnostics.init(testing.allocator);
     defer diags.deinit();
 
-    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, &diags);
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
     defer res.deinit();
 
     try res.resolve(root_idx);
@@ -170,7 +170,7 @@ test "Resolver: rejects break and next outside loops" {
     var diags = errors.Diagnostics.init(testing.allocator);
     defer diags.deinit();
 
-    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, &diags);
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
     defer res.deinit();
 
     try res.resolve(root_idx);
@@ -197,7 +197,7 @@ test "Resolver: prevents break from escaping closure boundaries" {
     var diags = errors.Diagnostics.init(testing.allocator);
     defer diags.deinit();
 
-    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, &diags);
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
     defer res.deinit();
 
     try res.resolve(root_idx);
