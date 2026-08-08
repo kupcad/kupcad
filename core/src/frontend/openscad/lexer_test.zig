@@ -143,3 +143,17 @@ test "OpenSCAD Lexer: Special variables, ranges, and escaped strings" {
         t(.eof, ""),
     });
 }
+
+test "OpenSCAD Lexer: UTF-8 Identifiers" {
+    try expectTokens("π = 3.14;\nΔx = 10;", &.{
+        t(.ident, "π"),
+        t(.equal, "="),
+        t(.number, "3.14"),
+        t(.semicolon, ";"),
+        t(.ident, "Δx"),
+        t(.equal, "="),
+        t(.number, "10"),
+        t(.semicolon, ";"),
+        t(.eof, ""),
+    });
+}

@@ -99,6 +99,7 @@ pub const LexerUtils = struct {
         if (std.ascii.isAlphabetic(c)) return true;
         if (c == '_' or c == '$') return true;
         if (allow_at and c == '@') return true;
+        if (c >= 0xC0) return true; // Allow UTF-8 multi-byte start characters
         return false;
     }
 
@@ -106,6 +107,7 @@ pub const LexerUtils = struct {
         if (std.ascii.isAlphanumeric(c)) return true;
         if (c == '_' or c == '$') return true;
         if (!is_openscad and (c == '?' or c == '!' or c == '@')) return true;
+        if (c >= 0x80) return true; // Allow UTF-8 continuation bytes
         return false;
     }
 
@@ -117,10 +119,28 @@ pub const LexerUtils = struct {
     ) []const u8 {
         const start = index.*;
         while (index.* < buffer.len) {
-            if (isIdentChar(buffer[index.*], is_openscad)) {
-                index.* += 1;
-                col.* += 1;
-            } else break;
+            const c = buffer[index.*];
+            if (c < 0x80) {
+                // Standard ASCII parsing
+                if (isIdentChar(c, is_openscad)) {
+                    index.* += 1;
+                    col.* += 1;
+                } else {
+                    break;
+                }
+            } else {
+                // UTF-8 Validation and Stepping
+                const seq_len = std.unicode.utf8ByteSequenceLength(c) catch break;
+                if (index.* + seq_len <= buffer.len) {
+                    const slice = buffer[index.* .. index.* + seq_len];
+                    // Validate it forms a legal Unicode codepoint
+                    _ = std.unicode.utf8Decode(slice) catch break;
+                    index.* += seq_len;
+                    col.* += 1; // Advance col by 1 visual character
+                } else {
+                    break;
+                }
+            }
         }
         return buffer[start..index.*];
     }

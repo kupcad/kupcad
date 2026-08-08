@@ -427,3 +427,50 @@ test "KupCAD Lexer: Whitespace between method names and parentheses" {
         t(.ident, "foo"), t(.l_paren, "("), t(.r_paren, ")"), t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: UTF-8 Identifiers (Math Variables)" {
+    try expectTokens("π = 3.14159\nΔx = 10\nθ_angle = 90", &.{
+        t(.ident, "π"),
+        t(.equal, "="),
+        t(.number, "3.14159"),
+        t(.newline, "\n"),
+        t(.ident, "Δx"),
+        t(.equal, "="),
+        t(.number, "10"),
+        t(.newline, "\n"),
+        t(.ident, "θ_angle"),
+        t(.equal, "="),
+        t(.number, "90"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: UTF-8 Identifier Column Tracking" {
+    // String indices:
+    // 01 2 34 5 67 8 9
+    // Δx = 10 \n π = 5
+    const source = "Δx = 10\nπ = 5";
+    var lexer = Lexer.init(source, 0);
+
+    // 'Δx' (length: 2 characters, 3 bytes)
+    var tok = lexer.next();
+    try testing.expectEqualStrings("Δx", tok.lexeme);
+    try testing.expectEqual(@as(u32, 1), tok.loc.col);
+    try testing.expectEqual(@as(u32, 0), tok.loc.offset);
+
+    // '='
+    tok = lexer.next();
+    try testing.expectEqualStrings("=", tok.lexeme);
+    try testing.expectEqual(@as(u32, 4), tok.loc.col); // Should be 4, as Δ (col 1) + x (col 2) + space (col 3)
+
+    // '10'
+    _ = lexer.next();
+    // '\n'
+    _ = lexer.next();
+
+    // 'π'
+    tok = lexer.next();
+    try testing.expectEqualStrings("π", tok.lexeme);
+    try testing.expectEqual(@as(u32, 2), tok.loc.line);
+    try testing.expectEqual(@as(u32, 1), tok.loc.col);
+}
