@@ -2767,3 +2767,41 @@ test "KupCAD Parser: Deep recursion safety (Stack Overflow Prevention)" {
     try testing.expectEqual(std.meta.Tag(ast.NodeKind).number, std.meta.activeTag(expr.kind));
     try testing.expectEqual(@as(f64, 1.0), expr.kind.number);
 }
+
+test "KupCAD Parser: Right-Associative Assignment Chaining" {
+    var pt = try KTest.init("a = b = c = 1");
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+
+    try testing.expectEqual(ast.NodeKind.assignment, @as(std.meta.Tag(ast.NodeKind), stmt.kind));
+    try testing.expectEqualStrings("a", tree.getString(stmt.kind.assignment.name));
+
+    const b_assign = pt.getNode(stmt.kind.assignment.value);
+    try testing.expectEqual(ast.NodeKind.assignment, @as(std.meta.Tag(ast.NodeKind), b_assign.kind));
+    try testing.expectEqualStrings("b", tree.getString(b_assign.kind.assignment.name));
+
+    const c_assign = pt.getNode(b_assign.kind.assignment.value);
+    try testing.expectEqual(ast.NodeKind.assignment, @as(std.meta.Tag(ast.NodeKind), c_assign.kind));
+    try testing.expectEqualStrings("c", tree.getString(c_assign.kind.assignment.name));
+
+    try testing.expectEqual(@as(f64, 1.0), pt.getNode(c_assign.kind.assignment.value).kind.number);
+}
+
+test "KupCAD Parser: Empty Arrays and Hashes" {
+    var pt = try KTest.init("[]\n{}");
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const arr_idx = try pt.parser.parseStatement();
+    const arr = pt.getNode(arr_idx);
+    try testing.expectEqual(ast.NodeKind.array_literal, @as(std.meta.Tag(ast.NodeKind), arr.kind));
+    try testing.expectEqual(@as(usize, 0), tree.getNodes(arr.kind.array_literal).len);
+
+    const hash_idx = try pt.parser.parseStatement();
+    const hash = pt.getNode(hash_idx);
+    try testing.expectEqual(ast.NodeKind.hash_literal, @as(std.meta.Tag(ast.NodeKind), hash.kind));
+    try testing.expectEqual(@as(usize, 0), tree.getHashEntries(hash.kind.hash_literal).len);
+}

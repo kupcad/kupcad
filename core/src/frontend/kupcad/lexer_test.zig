@@ -413,3 +413,17 @@ test "KupCAD Lexer: EOF handling for unclosed strings and interpolations" {
     // The interpolation was never closed with `}` and hits EOF safely
     try testing.expectEqual(.eof, lexer2.next().tag);
 }
+
+test "KupCAD Lexer: Hexadecimal, Octal, Binary, and Underscore Floats" {
+    try expectTokens("a = 0xFF + 0b1010 + 0o77\nb = 1_000_000.5e-3", &.{
+        t(.ident, "a"),       t(.equal, "="), t(.number, "0xFF"),           t(.plus, "+"),
+        t(.number, "0b1010"), t(.plus, "+"),  t(.number, "0o77"),           t(.newline, "\n"),
+        t(.ident, "b"),       t(.equal, "="), t(.number, "1_000_000.5e-3"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Whitespace between method names and parentheses" {
+    try expectTokens("foo ()", &.{
+        t(.ident, "foo"), t(.l_paren, "("), t(.r_paren, ")"), t(.eof, ""),
+    });
+}
