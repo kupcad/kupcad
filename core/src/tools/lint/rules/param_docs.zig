@@ -25,20 +25,21 @@ pub const ParamDocsRule = struct {
         var self = @as(*ParamDocsRule, @ptrCast(@alignCast(ptr)));
         const node = tree.getNode(node_idx) orelse return;
 
-        if (node.kind == .param_doc) {
-            const doc_idx = node.kind.param_doc;
-            const doc = tree.param_docs.items[doc_idx];
+        if (node.tag == .param_doc) {
+            const doc = tree.param_docs.items[node.data];
             if (doc.target_name != .none) {
                 const target_str = tree.getString(doc.target_name);
                 try self.documented_vars.put(engine.allocator, target_str, node.loc);
             }
-        } else if (node.kind == .def_stmt) {
-            for (tree.getParams(node.kind.def_stmt.params)) |p| {
+        } else if (node.tag == .def_stmt) {
+            const ds = tree.def_stmts.items[node.data];
+            for (tree.getParams(ds.params)) |p| {
                 const p_name = tree.getString(p.name);
                 _ = self.documented_vars.remove(p_name);
             }
-        } else if (node.kind == .assignment) {
-            const a_name = tree.getString(node.kind.assignment.name);
+        } else if (node.tag == .assignment) {
+            const a = tree.assignment(node);
+            const a_name = tree.getString(a.name);
             _ = self.documented_vars.remove(a_name);
         }
     }

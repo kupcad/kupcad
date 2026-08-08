@@ -22,14 +22,17 @@ pub const SelfSubtractionRule = struct {
         _ = ptr;
         const node = tree.getNode(node_idx) orelse return;
 
-        if (node.kind == .binary_op and node.kind.binary_op.op == .subtract) {
-            const left = tree.getNode(node.kind.binary_op.left).?;
-            const right = tree.getNode(node.kind.binary_op.right).?;
+        if (node.tag == .binary_op) {
+            const bin = tree.binaryExpr(node);
+            if (bin.op == .subtract) {
+                const left = tree.getNode(bin.left).?;
+                const right = tree.getNode(bin.right).?;
 
-            if (left.kind == .identifier and right.kind == .identifier) {
-                if (left.kind.identifier == right.kind.identifier) {
-                    const var_name = tree.getString(left.kind.identifier);
-                    try engine.addDiagnostic(node.loc, .warning, "CSG Warning: Self-difference operation ('{s} - {s}') will result in empty geometry.", .{ var_name, var_name });
+                if (left.tag == .identifier and right.tag == .identifier) {
+                    if (left.data == right.data) {
+                        const var_name = tree.getString(@as(ast.StringId, @enumFromInt(left.data)));
+                        try engine.addDiagnostic(node.loc, .warning, "CSG Warning: Self-difference operation ('{s} - {s}') will result in empty geometry.", .{ var_name, var_name });
+                    }
                 }
             }
         }

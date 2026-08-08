@@ -26,15 +26,15 @@ pub const NegativeDimRule = struct {
         if (val_idx == .none) return;
         const val = tree.getNode(val_idx) orelse return;
 
-        if (val.kind == .unary_op and val.kind.unary_op.op == .negate) {
-            const operand = tree.getNode(val.kind.unary_op.operand).?;
-            if (operand.kind == .number) {
+        if (val.tag == .unary_op and tree.unaryExpr(val).op == .negate) {
+            const operand = tree.getNode(tree.unaryExpr(val).operand).?;
+            if (operand.tag == .number) {
                 try engine.addDiagnostic(val.loc, .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{prop_name});
             }
-        } else if (val.kind == .number and val.kind.number < 0) {
+        } else if (val.tag == .number and tree.numbers.items[val.data] < 0) {
             try engine.addDiagnostic(val.loc, .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{prop_name});
-        } else if (val.kind == .array_literal) {
-            for (tree.getNodes(val.kind.array_literal)) |elem_idx| {
+        } else if (val.tag == .array_literal) {
+            for (tree.getNodes(tree.getSpan(val.data))) |elem_idx| {
                 try checkValue(engine, tree, elem_idx, prop_name);
             }
         }
@@ -44,16 +44,17 @@ pub const NegativeDimRule = struct {
         _ = ptr;
         const node = tree.getNode(node_idx) orelse return;
 
-        if (node.kind == .method_call) {
-            for (tree.getNamedArgs(node.kind.method_call.args)) |arg| {
+        if (node.tag == .method_call) {
+            for (tree.getNamedArgs(tree.methodCall(node).args)) |arg| {
                 const arg_name = tree.getString(arg.name);
                 if (isCoordinate(arg_name)) continue;
                 try checkValue(engine, tree, arg.value, arg_name);
             }
-        } else if (node.kind == .property_assignment) {
-            const prop_name = tree.getString(node.kind.property_assignment.property);
+        } else if (node.tag == .property_assignment) {
+            const pa = tree.property_assignments.items[node.data];
+            const prop_name = tree.getString(pa.property);
             if (isCoordinate(prop_name)) return;
-            try checkValue(engine, tree, node.kind.property_assignment.value, prop_name);
+            try checkValue(engine, tree, pa.value, prop_name);
         }
     }
 };

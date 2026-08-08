@@ -183,14 +183,16 @@ pub const Linter = struct {
                         try rule.checkNode(self, tree, node_idx);
                     }
 
-                    switch (node.kind) {
-                        .block => |b| {
+                    switch (node.tag) {
+                        .block => {
+                            const b = tree.blocks.items[node.data];
                             try self.pushScope();
                             for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
                             try stack.append(self.allocator, .pop_scope);
                             try pushNodesReverse(&stack, self.allocator, tree.getNodes(b.stmts));
                         },
-                        .lambda_expr => |le| {
+                        .lambda_expr => {
+                            const le = tree.lambda_exprs.items[node.data];
                             try self.pushScope();
                             for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
                             try stack.append(self.allocator, .pop_scope);
@@ -202,7 +204,8 @@ pub const Linter = struct {
                                 try pushNode(&stack, self.allocator, params[i].default_value);
                             }
                         },
-                        .for_stmt => |fs| {
+                        .for_stmt => {
+                            const fs = tree.for_stmts.items[node.data];
                             try self.pushScope();
                             for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
                             try stack.append(self.allocator, .pop_scope);
@@ -214,14 +217,16 @@ pub const Linter = struct {
                                 try pushNode(&stack, self.allocator, bindings[i].range);
                             }
                         },
-                        .while_stmt => |ws| {
+                        .while_stmt => {
+                            const ws = tree.while_stmts.items[node.data];
                             try self.pushScope();
                             for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
                             try stack.append(self.allocator, .pop_scope);
                             try pushNode(&stack, self.allocator, ws.body);
                             try pushNode(&stack, self.allocator, ws.condition);
                         },
-                        .def_stmt => |ds| {
+                        .def_stmt => {
+                            const ds = tree.def_stmts.items[node.data];
                             try self.pushScope();
                             for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
                             try stack.append(self.allocator, .pop_scope);
@@ -233,7 +238,8 @@ pub const Linter = struct {
                                 try pushNode(&stack, self.allocator, params[i].default_value);
                             }
                         },
-                        .class_stmt => |cs| {
+                        .class_stmt => {
+                            const cs = tree.class_stmts.items[node.data];
                             try self.pushScope();
                             for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
                             try stack.append(self.allocator, .pop_scope);
@@ -241,7 +247,8 @@ pub const Linter = struct {
                             try pushNode(&stack, self.allocator, cs.super_class);
                             try pushNode(&stack, self.allocator, cs.name);
                         },
-                        .module_stmt => |ms| {
+                        .module_stmt => {
+                            const ms = tree.module_stmts.items[node.data];
                             try self.pushScope();
                             for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
                             try stack.append(self.allocator, .pop_scope);
@@ -256,13 +263,20 @@ pub const Linter = struct {
 
                         // Non-scope opening nodes
                         .number, .string, .symbol, .boolean, .nil, .undef, .self_expr, .identifier, .comment, .namespace_access => {},
-                        .param_doc => |doc_idx| {
-                            const doc = tree.param_docs.items[doc_idx];
+                        .param_doc => {
+                            const doc = tree.param_docs.items[node.data];
                             try pushNode(&stack, self.allocator, doc.options_expr);
                         },
-                        .interpolated_string => |span| try pushNodesReverse(&stack, self.allocator, tree.getNodes(span)),
-                        .array_literal => |span| try pushNodesReverse(&stack, self.allocator, tree.getNodes(span)),
-                        .hash_literal => |span| {
+                        .interpolated_string => {
+                            const span = tree.getSpan(node.data);
+                            try pushNodesReverse(&stack, self.allocator, tree.getNodes(span));
+                        },
+                        .array_literal => {
+                            const span = tree.getSpan(node.data);
+                            try pushNodesReverse(&stack, self.allocator, tree.getNodes(span));
+                        },
+                        .hash_literal => {
+                            const span = tree.getSpan(node.data);
                             const entries = tree.getHashEntries(span);
                             var i: usize = entries.len;
                             while (i > 0) {
@@ -271,44 +285,70 @@ pub const Linter = struct {
                                 try pushNode(&stack, self.allocator, entries[i].key);
                             }
                         },
-                        .range => |r| {
+                        .range => {
+                            const r = tree.ranges.items[node.data];
                             try pushNode(&stack, self.allocator, r.step);
                             try pushNode(&stack, self.allocator, r.end);
                             try pushNode(&stack, self.allocator, r.start);
                         },
-                        .assignment => |a| try pushNode(&stack, self.allocator, a.value),
-                        .multiple_assignment => |ma| try pushNode(&stack, self.allocator, ma.value),
-                        .property_assignment => |pa| {
+                        .assignment => {
+                            const a = tree.assignment(node).*;
+                            try pushNode(&stack, self.allocator, a.value);
+                        },
+                        .multiple_assignment => {
+                            const ma = tree.multiple_assignments.items[node.data];
+                            try pushNode(&stack, self.allocator, ma.value);
+                        },
+                        .property_assignment => {
+                            const pa = tree.property_assignments.items[node.data];
                             try pushNode(&stack, self.allocator, pa.value);
                             try pushNode(&stack, self.allocator, pa.target);
                         },
-                        .index_assignment => |ia| {
+                        .index_assignment => {
+                            const ia = tree.index_assignments.items[node.data];
                             try pushNode(&stack, self.allocator, ia.value);
                             try pushNode(&stack, self.allocator, ia.index);
                             try pushNode(&stack, self.allocator, ia.target);
                         },
-                        .unary_op => |u| try pushNode(&stack, self.allocator, u.operand),
-                        .rescue_modifier => |rm| {
+                        .unary_op => {
+                            const u = tree.unaryExpr(node).*;
+                            try pushNode(&stack, self.allocator, u.operand);
+                        },
+                        .rescue_modifier => {
+                            const rm = tree.rescue_modifiers.items[node.data];
                             try pushNode(&stack, self.allocator, rm.rescue_expr);
                             try pushNode(&stack, self.allocator, rm.expr);
                         },
-                        .binary_op => |b| {
+                        .binary_op => {
+                            const b = tree.binaryExpr(node).*;
                             try pushNode(&stack, self.allocator, b.right);
                             try pushNode(&stack, self.allocator, b.left);
                         },
-                        .ternary_op => |t| {
+                        .ternary_op => {
+                            const t = tree.ternary_exprs.items[node.data];
                             try pushNode(&stack, self.allocator, t.else_branch);
                             try pushNode(&stack, self.allocator, t.then_branch);
                             try pushNode(&stack, self.allocator, t.condition);
                         },
-                        .index_access => |ia| {
+                        .index_access => {
+                            const ia = tree.index_accesses.items[node.data];
                             try pushNode(&stack, self.allocator, ia.index);
                             try pushNode(&stack, self.allocator, ia.target);
                         },
-                        .splat_expr => |s| try pushNode(&stack, self.allocator, s),
-                        .double_splat_expr => |s| try pushNode(&stack, self.allocator, s),
-                        .each_expr => |e| try pushNode(&stack, self.allocator, e),
-                        .method_call => |mc| {
+                        .splat_expr => {
+                            const s = @as(ast.NodeIndex, @enumFromInt(node.data));
+                            try pushNode(&stack, self.allocator, s);
+                        },
+                        .double_splat_expr => {
+                            const s = @as(ast.NodeIndex, @enumFromInt(node.data));
+                            try pushNode(&stack, self.allocator, s);
+                        },
+                        .each_expr => {
+                            const e = @as(ast.NodeIndex, @enumFromInt(node.data));
+                            try pushNode(&stack, self.allocator, e);
+                        },
+                        .method_call => {
+                            const mc = tree.methodCall(node).*;
                             try pushNode(&stack, self.allocator, mc.block);
                             const args = tree.getNamedArgs(mc.args);
                             var i: usize = args.len;
@@ -318,7 +358,8 @@ pub const Linter = struct {
                             }
                             try pushNode(&stack, self.allocator, mc.receiver);
                         },
-                        .super_call => |sc| {
+                        .super_call => {
+                            const sc = tree.super_calls.items[node.data];
                             try pushNode(&stack, self.allocator, sc.block);
                             const args = tree.getNamedArgs(sc.args);
                             var i: usize = args.len;
@@ -327,14 +368,22 @@ pub const Linter = struct {
                                 try pushNode(&stack, self.allocator, args[i].value);
                             }
                         },
-                        .import_stmt => |is| try pushNode(&stack, self.allocator, is.attributes),
-                        .export_stmt => |es| try pushNode(&stack, self.allocator, es.attributes),
-                        .if_stmt => |ifs| {
+                        .import_stmt => {
+                            const is_stmt = tree.import_stmts.items[node.data];
+                            try pushNode(&stack, self.allocator, is_stmt.attributes);
+                        },
+                        .export_stmt => {
+                            const es_stmt = tree.export_stmts.items[node.data];
+                            try pushNode(&stack, self.allocator, es_stmt.attributes);
+                        },
+                        .if_stmt => {
+                            const ifs = tree.ifStmt(node).*;
                             try pushNode(&stack, self.allocator, ifs.else_branch);
                             try pushNode(&stack, self.allocator, ifs.then_branch);
                             try pushNode(&stack, self.allocator, ifs.condition);
                         },
-                        .case_stmt => |cs| {
+                        .case_stmt => {
+                            const cs = tree.case_stmts.items[node.data];
                             try pushNode(&stack, self.allocator, cs.else_branch);
                             const branches = tree.getWhenBranches(cs.when_branches);
                             var i: usize = branches.len;
@@ -345,7 +394,8 @@ pub const Linter = struct {
                             }
                             try pushNode(&stack, self.allocator, cs.condition);
                         },
-                        .begin_stmt => |bs| {
+                        .begin_stmt => {
+                            const bs = tree.begin_stmts.items[node.data];
                             try pushNode(&stack, self.allocator, bs.ensure_body);
                             const rescues = tree.getRescueClauses(bs.rescues);
                             var i: usize = rescues.len;
@@ -355,10 +405,22 @@ pub const Linter = struct {
                             }
                             try pushNode(&stack, self.allocator, bs.body);
                         },
-                        .return_stmt => |r| try pushNode(&stack, self.allocator, r),
-                        .yield_stmt => |span| try pushNodesReverse(&stack, self.allocator, tree.getNodes(span)),
-                        .break_stmt => |b| try pushNode(&stack, self.allocator, b),
-                        .next_stmt => |n| try pushNode(&stack, self.allocator, n),
+                        .return_stmt => {
+                            const r = @as(ast.NodeIndex, @enumFromInt(node.data));
+                            try pushNode(&stack, self.allocator, r);
+                        },
+                        .yield_stmt => {
+                            const span = tree.getSpan(node.data);
+                            try pushNodesReverse(&stack, self.allocator, tree.getNodes(span));
+                        },
+                        .break_stmt => {
+                            const b = @as(ast.NodeIndex, @enumFromInt(node.data));
+                            try pushNode(&stack, self.allocator, b);
+                        },
+                        .next_stmt => {
+                            const n = @as(ast.NodeIndex, @enumFromInt(node.data));
+                            try pushNode(&stack, self.allocator, n);
+                        },
                     }
                 },
             }
