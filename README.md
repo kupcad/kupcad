@@ -173,3 +173,15 @@ kupcad/
 ```
 brew install wasmtime
 ```
+
+
+## License
+
+KupCAD is dual-licensed:
+
+* **Open-Source:** Released under the [GNU Affero General Public License v3.0 (AGPLv3)](./LICENSE.txt).
+* **Commercial:** For proprietary integrations, closed-source SaaS backends, or enterprise support, see our [Commercial Licensing Options](#).
+
+> **Note on Model Output:** 3D files (STL, 3MF, STEP) exported by KupCAD belong 100% to you and are **not** subject to AGPL copyleft terms.
+
+For common questions regarding commercial usage, derivative works, and contribution guidelines, read our [License FAQ](./LICENSE-FAQ.md) and [Contributor License Agreement (CLA)](./.github/CLA.md).
