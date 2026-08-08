@@ -47,7 +47,7 @@ pub fn ParserTest(comptime LexerType: type, comptime ParserType: type) type {
 
             const parser = try allocator.create(ParserType);
             // Pass tokens and source
-            parser.* = ParserType.init(tokens, source, allocator);
+            parser.* = try ParserType.init(tokens, source, allocator);
 
             return .{
                 .arena = arena,

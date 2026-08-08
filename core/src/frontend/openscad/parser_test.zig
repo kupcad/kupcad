@@ -48,7 +48,7 @@ test "OpenSCAD Parser: Module definition and CSG Tree" {
     ;
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const mod_idx = try parser.parseStatement();
     const mod_node = getNode(&parser, mod_idx);
@@ -87,7 +87,7 @@ test "OpenSCAD Parser: For Loop and Range [start:step:end]" {
     const source = "for (i = [0 : 2 : 10]) { cube(i); }";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const node_idx = try parser.parseStatement();
     const node = getNode(&parser, node_idx);
@@ -119,7 +119,7 @@ test "OpenSCAD Parser: Function Definition & Includes" {
     ;
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const inc_idx = try parser.parseStatement();
     const inc_node = getNode(&parser, inc_idx);
@@ -143,7 +143,7 @@ test "OpenSCAD Parser: Vector Comprehension" {
     const source = "pts = [ for (x = [0:5]) x * 2 ];";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const assign_idx = try parser.parseStatement();
     const assign_node = getNode(&parser, assign_idx);
@@ -168,7 +168,7 @@ test "OpenSCAD Parser: Unbraced Operator Module Chaining" {
     const source = "translate([10, 0, 0]) rotate([0, 0, 90]) cube(10);";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const top_idx = try parser.parseStatement();
     const top_node = getNode(&parser, top_idx);
@@ -204,7 +204,7 @@ test "OpenSCAD Parser: Scoped Block and Variable Shadowing" {
     ;
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const program_idx = try parser.parseProgram();
     const program = getNode(&parser, program_idx);
@@ -250,7 +250,7 @@ test "OpenSCAD Parser: Special Variables and Children Calls" {
     ;
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const p1_idx = try parser.parseStatement();
     const p1 = getNode(&parser, p1_idx);
@@ -285,7 +285,7 @@ test "OpenSCAD Parser: Assert and Echo Prefixes" {
     const source = "echo(\"Rendering\", size = 20) assert(size > 0) cube(size);";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const echo_idx = try parser.parseStatement();
     const echo_node = getNode(&parser, echo_idx);
@@ -307,7 +307,7 @@ test "OpenSCAD Parser: Let and If Expressions" {
     const source = "x = let(a = 10, b = 2) if (a > b) a else b;";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
@@ -345,7 +345,7 @@ test "OpenSCAD Parser: Local Quoted Includes and Unary Plus" {
     ;
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     // Test Quoted Include Path lowers to Import
     const inc_idx = try parser.parseStatement();
@@ -368,7 +368,7 @@ test "OpenSCAD Parser: Expression-level Assert and Echo" {
     const source = "val = assert(a > 0) echo(a) a * 2;";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
@@ -404,7 +404,7 @@ test "OpenSCAD Parser: Array Literal Expansion (each)" {
     const source = "merged = [1, each sub_array, 4];";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
@@ -435,7 +435,7 @@ test "OpenSCAD Parser: Comprehension with Else" {
     const source = "pts = [ for (i = [0:5]) if (i % 2 == 0) i else -i ];";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
@@ -464,7 +464,7 @@ test "OpenSCAD Parser: Empty Arguments and Array Elements" {
     const source = "translate([10, , 20]) cube(10, , 20);";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const node_idx = try parser.parseStatement();
     const node = getNode(&parser, node_idx);
 
@@ -494,7 +494,7 @@ test "OpenSCAD Parser: Adjacency String Concatenation" {
     const source = "echo(\"Path: \" \"to/file.stl\");";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const node_idx = try parser.parseStatement();
     const node = getNode(&parser, node_idx);
 
@@ -510,7 +510,7 @@ test "OpenSCAD Parser: Trailing Commas Leniency" {
     const source = "module test(a, b, ) { let(x=1, y=2, ) cube(); }";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
     const def_stmt = parser.b.tree.defStmt(stmt);
@@ -546,7 +546,7 @@ test "OpenSCAD Parser: Mid-Expression Comments & Empty Statements" {
     const source = "module foo() { ;; x = 10 /* offset */ + 5; ; }";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const mod_idx = try parser.parseStatement();
     const mod_node = getNode(&parser, mod_idx);
     const mod_stmt = parser.b.tree.defStmt(mod_node);
@@ -570,7 +570,7 @@ test "OpenSCAD Parser: C-Style Hexadecimal Constants" {
     const source = "val = 0xFF;";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
 
@@ -587,7 +587,7 @@ test "OpenSCAD Parser: Leading-Dot Float Literals" {
     const source = "val = .5 + .125;";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
 
@@ -608,7 +608,7 @@ test "OpenSCAD Parser: C-Style For Loops" {
     const source = "for (a = 0, b = 1; a < 10; a = a + 1, b = b * 2) cube(a);";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const node_idx = try parser.parseStatement();
     const node = getNode(&parser, node_idx);
 
@@ -648,7 +648,7 @@ test "OpenSCAD Parser: Function Literals (Anonymous)" {
     const source = "f = function(x, y) x * y;";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
 
@@ -673,7 +673,7 @@ test "OpenSCAD Parser: Diagnostics for Unexpected Token" {
     const source = "cube(10 ];";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const result = parser.parseStatement();
 
     // Assert it fails with the correct error
@@ -692,7 +692,7 @@ test "OpenSCAD Parser: Diagnostics for Invalid Expression" {
     const source = "x = * 5;";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const result = parser.parseStatement();
 
     try testing.expectError(error.InvalidExpression, result);
@@ -708,7 +708,7 @@ test "OpenSCAD Parser: Deeply Nested Let Expressions & Chained Expression Modifi
     const source = "val = let(a = 5) let(b = a * 2) assert(b > 0) echo(b) b + 1;";
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
 
@@ -750,7 +750,7 @@ test "OpenSCAD Parser: Children Module Invocation with Modulo Index" {
     ;
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
 
     const mod_idx = try parser.parseStatement();
     const mod_node = getNode(&parser, mod_idx);
@@ -791,7 +791,7 @@ test "OpenSCAD Parser: Diagnostics Line and Column Tracking" {
     ;
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     _ = try parser.parseProgram();
 
     try testing.expectEqual(@as(usize, 1), parser.diagnostics.list.items.len);
@@ -817,7 +817,7 @@ test "OpenSCAD Parser: Error Recovery (synchronize)" {
     ;
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
-    var parser = Parser.init(tokens, source, arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
     const result_idx = try parser.parseProgram();
     const result = getNode(&parser, result_idx);
 

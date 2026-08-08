@@ -38,7 +38,7 @@ test "Linter: Scope shadowing inside blocks (do ... end) and lambdas" {
     var lexer = lexer_mod.Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
 
-    var parser = parser_mod.Parser.init(tokens, source, arena.allocator());
+    var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const root = try parser.parseProgram();
 
     try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
@@ -69,7 +69,7 @@ test "Linter: Iterative traversal prevents stack overflow on deeply nested AST" 
     var lexer = lexer_mod.Lexer.init(source_buf.items, 0);
     const tokens = try lexer.lexAll(arena.allocator());
 
-    var parser = parser_mod.Parser.init(tokens, source_buf.items, arena.allocator());
+    var parser = try parser_mod.Parser.init(tokens, source_buf.items, arena.allocator());
     const root = try parser.parseProgram();
 
     // Verify linter runs on 500-deep nested AST without stack overflow

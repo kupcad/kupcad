@@ -16,7 +16,7 @@ fn formatCodeLocal(allocator: std.mem.Allocator, source: []const u8, config: For
     var lexer = lexer_mod.Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena_alloc);
 
-    var parser = parser_mod.Parser.init(tokens, source, arena_alloc);
+    var parser = try parser_mod.Parser.init(tokens, source, arena_alloc);
     const root = parser.parseProgram() catch .none;
 
     if (parser.diagnostics.list.items.len > 0) return error.SyntaxError;

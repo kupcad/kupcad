@@ -16,7 +16,7 @@ fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter 
     const tokens = try lexer.lexAll(allocator);
 
     // Initialize parser with tokens and source
-    var parser = parser_mod.Parser.init(tokens, source, allocator);
+    var parser = try parser_mod.Parser.init(tokens, source, allocator);
     const root = try parser.parseProgram();
 
     // Pass token bounds to the linter engine for diagnostic locations

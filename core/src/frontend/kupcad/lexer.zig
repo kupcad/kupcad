@@ -490,10 +490,17 @@ pub const Lexer = struct {
 
     pub fn lexAll(self: *Lexer, allocator: std.mem.Allocator) !common_token.TokenList(Tag) {
         var tags = std.ArrayListUnmanaged(Tag).empty;
-        errdefer tags.deinit(allocator);
         var starts = std.ArrayListUnmanaged(u32).empty;
-        errdefer starts.deinit(allocator);
         var lengths = std.ArrayListUnmanaged(u32).empty;
+
+        // Pre-allocation heuristic: ~1 token per 4 bytes of source code
+        const estimated_tokens = self.buffer.len / 4;
+        try tags.ensureTotalCapacity(allocator, estimated_tokens);
+        try starts.ensureTotalCapacity(allocator, estimated_tokens);
+        try lengths.ensureTotalCapacity(allocator, estimated_tokens);
+
+        errdefer tags.deinit(allocator);
+        errdefer starts.deinit(allocator);
         errdefer lengths.deinit(allocator);
 
         while (true) {
@@ -503,6 +510,7 @@ pub const Lexer = struct {
             try lengths.append(allocator, @intCast(tok.lexeme.len));
             if (tok.tag == .eof) break;
         }
+
         return .{
             .tags = try tags.toOwnedSlice(allocator),
             .starts = try starts.toOwnedSlice(allocator),

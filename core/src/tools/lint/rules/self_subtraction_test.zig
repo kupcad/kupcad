@@ -13,7 +13,7 @@ fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter 
     var lexer = lexer_mod.Lexer.init(source, 0);
     const tokens = try lexer.lexAll(allocator);
 
-    var parser = parser_mod.Parser.init(tokens, source, allocator);
+    var parser = try parser_mod.Parser.init(tokens, source, allocator);
     const root = try parser.parseProgram();
 
     try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);

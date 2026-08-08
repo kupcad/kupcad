@@ -675,6 +675,13 @@ pub const Builder = struct {
         self.tree.deinit(self.allocator);
     }
 
+    /// Pre-allocates memory for the AST to prevent dynamic resizing during parsing.
+    pub fn ensureTotalCapacity(self: *Builder, allocator: std.mem.Allocator, node_capacity: usize) !void {
+        // Adapt these field names to whatever arrays your ast.Tree actually uses
+        try self.tree.nodes.ensureTotalCapacity(allocator, node_capacity);
+        try self.tree.extra_data.ensureTotalCapacity(allocator, node_capacity * 2);
+    }
+
     /// Core allocation method for the 8-byte Tiny Node
     pub fn createNode(self: *Builder, tag: Tag, main_token: u24, data: u32) !NodeIndex {
         const index = @as(u32, @intCast(self.tree.nodes.items.len));

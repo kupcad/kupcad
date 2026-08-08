@@ -34,7 +34,7 @@ pub const Document = struct {
         var lexer = lexer_mod.Lexer.init(source, 0);
         const tokens = try lexer.lexAll(arena_alloc);
 
-        var parser = parser_mod.Parser.init(tokens, source, arena_alloc);
+        var parser = try parser_mod.Parser.init(tokens, source, arena_alloc);
         const root_index = parser.parseProgram() catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => .none,

@@ -18,7 +18,7 @@ test "Formatter Rule: SortImportsRule sorts standard contiguous imports" {
     var lexer = lexer_mod.Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
 
-    var parser = parser_mod.Parser.init(tokens, source, arena.allocator());
+    var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const tree_idx = try parser.parseProgram();
 
     var rule_impl = SortImportsRule{};
@@ -50,7 +50,7 @@ test "Formatter Rule: SortImportsRule handles named and destructured imports" {
     var lexer = lexer_mod.Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
 
-    var parser = parser_mod.Parser.init(tokens, source, arena.allocator());
+    var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const tree_idx = try parser.parseProgram();
 
     var rule_impl = SortImportsRule{};
@@ -92,7 +92,7 @@ test "Formatter Rule: SortImportsRule respects non-contiguous blocks" {
     var lexer = lexer_mod.Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
 
-    var parser = parser_mod.Parser.init(tokens, source, arena.allocator());
+    var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const tree_idx = try parser.parseProgram();
 
     var rule_impl = SortImportsRule{};
@@ -133,7 +133,7 @@ test "Formatter Rule: SortImportsRule handles imports with trailing attributes" 
     var lexer = lexer_mod.Lexer.init(source, 0);
     const tokens = try lexer.lexAll(arena.allocator());
 
-    var parser = parser_mod.Parser.init(tokens, source, arena.allocator());
+    var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const tree_idx = try parser.parseProgram();
 
     var rule_impl = SortImportsRule{};

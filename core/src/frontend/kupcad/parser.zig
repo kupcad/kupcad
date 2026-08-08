@@ -56,8 +56,8 @@ pub const Parser = struct {
     scratch_strings: std.ArrayListUnmanaged(ast.StringId) = .empty,
     scratch_hash_entries: std.ArrayListUnmanaged(ast.HashEntry) = .empty,
 
-    pub fn init(tokens: common_token.TokenList(Tag), source: []const u8, allocator: std.mem.Allocator) Parser {
-        return Parser{
+    pub fn init(tokens: common_token.TokenList(Tag), source: []const u8, allocator: std.mem.Allocator) !Parser {
+        var parser = Parser{
             .tokens = tokens,
             .source = source,
             .tok_idx = 0,
@@ -65,6 +65,24 @@ pub const Parser = struct {
             .b = ast.Builder.init(allocator),
             .diagnostics = Diagnostics.init(allocator),
         };
+
+        // Pre-allocation heuristic: ~1 AST node per 2 tokens
+        const estimated_nodes = tokens.tags.len / 2;
+
+        // Pre-allocate AST arrays
+        try parser.b.ensureTotalCapacity(allocator, estimated_nodes);
+
+        // Pre-allocate Parser scratch buffers
+        try parser.scratch_nodes.ensureTotalCapacity(allocator, estimated_nodes);
+        try parser.scratch_named_args.ensureTotalCapacity(allocator, estimated_nodes / 4);
+        try parser.scratch_params.ensureTotalCapacity(allocator, estimated_nodes / 8);
+        try parser.scratch_lhs_exprs.ensureTotalCapacity(allocator, estimated_nodes / 8);
+        try parser.scratch_when_branches.ensureTotalCapacity(allocator, estimated_nodes / 8);
+        try parser.scratch_rescue_clauses.ensureTotalCapacity(allocator, estimated_nodes / 8);
+        try parser.scratch_strings.ensureTotalCapacity(allocator, estimated_nodes / 4);
+        try parser.scratch_hash_entries.ensureTotalCapacity(allocator, estimated_nodes / 4);
+
+        return parser;
     }
 
     pub fn deinit(self: *Parser) void {
