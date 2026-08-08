@@ -3089,3 +3089,24 @@ test "AST Builder: String Interner Hash Map resizing is safe" {
         try testing.expectEqualStrings(expected, b.tree.getString(ids[i]));
     }
 }
+
+test "AST Builder: Number Deduplication merges identical floats" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Parse the same logical value 4 times using different syntactic representations
+    _ = try b.number("10", 0);
+    _ = try b.number("10.0", 0);
+    _ = try b.number("0xA", 0);
+    _ = try b.number("1_0", 0);
+
+    // Parse a different value
+    _ = try b.number("99", 0);
+
+    // It should have only allocated exactly 2 floats in the tree payload
+    try testing.expectEqual(@as(usize, 2), b.tree.numbers.items.len);
+    try testing.expectEqual(@as(f64, 10.0), b.tree.numbers.items[0]);
+    try testing.expectEqual(@as(f64, 99.0), b.tree.numbers.items[1]);
+}

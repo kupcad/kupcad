@@ -681,6 +681,7 @@ pub const Tree = struct {
 pub const Builder = struct {
     allocator: std.mem.Allocator,
     tree: Tree,
+    number_map: std.AutoHashMapUnmanaged(u64, u32) = .empty,
     intern_map: std.HashMapUnmanaged(StringId, void, InternContext, std.hash_map.default_max_load_percentage) = .empty,
 
     // The Map Context (Used when the hash map resizes and moves StringIds around)
@@ -718,6 +719,7 @@ pub const Builder = struct {
     }
 
     pub fn deinit(self: *Builder) void {
+        self.number_map.deinit(self.allocator);
         self.intern_map.deinit(self.allocator);
         self.tree.deinit(self.allocator);
     }
@@ -728,6 +730,8 @@ pub const Builder = struct {
         try self.tree.extra_data.ensureTotalCapacity(allocator, node_capacity * 2);
         try self.tree.string_bytes.ensureTotalCapacity(allocator, node_capacity * 8);
         try self.tree.string_spans.ensureTotalCapacity(allocator, node_capacity);
+        // Pre-allocate the number map. (We assume ~1/4 of nodes are numbers)
+        try self.number_map.ensureTotalCapacity(allocator, @intCast(node_capacity / 4));
     }
 
     /// Core allocation method for the 8-byte Tiny Node
@@ -876,9 +880,17 @@ pub const Builder = struct {
             val = std.fmt.parseFloat(f64, cleaned) catch 0.0;
         }
 
-        const data_idx = @as(u32, @intCast(self.tree.numbers.items.len));
-        try self.tree.numbers.append(self.allocator, val);
-        return self.createNode(.number, main_token, data_idx);
+        // --- Float Deduplication Logic ---
+        const bits: u64 = @bitCast(val);
+        const gop = try self.number_map.getOrPut(self.allocator, bits);
+        if (!gop.found_existing) {
+            // It's a new unique number, append it to the tree
+            gop.value_ptr.* = @as(u32, @intCast(self.tree.numbers.items.len));
+            try self.tree.numbers.append(self.allocator, val);
+        }
+
+        // Return the node pointing to the shared index
+        return self.createNode(.number, main_token, gop.value_ptr.*);
     }
 
     pub fn stringNode(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
