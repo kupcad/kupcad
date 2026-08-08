@@ -22,10 +22,12 @@ fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter 
     defer arena.deinit();
 
     var lexer = lexer_mod.Lexer.init(source, 0);
-    var parser = parser_mod.Parser.init(&lexer, arena.allocator());
+    const tokens = try lexer.lexAll(arena.allocator());
+
+    var parser = parser_mod.Parser.init(tokens, source, arena.allocator());
 
     const root = try parser.parseProgram();
-    try engine.check(&parser.b.tree, root, parser.diagnostics.list.items);
+    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
 
     return engine;
 }
