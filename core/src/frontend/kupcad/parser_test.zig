@@ -33,17 +33,17 @@ test "KupCAD Parser: Operator Precedence (* vs +)" {
 
     try testing.expectEqual(ast.BinaryOp.add, bin_stmt.op);
     const left = pt.getNode(bin_stmt.left);
-    try testing.expectEqual(@as(f64, 1.0), tree.numbers.items[left.data]);
+    try testing.expectEqual(@as(f64, 1.0), tree.number(left));
 
     const right = pt.getNode(bin_stmt.right);
     const bin_right = tree.binaryExpr(right);
     try testing.expectEqual(ast.BinaryOp.multiply, bin_right.op);
 
     const r_left = pt.getNode(bin_right.left);
-    try testing.expectEqual(@as(f64, 2.0), tree.numbers.items[r_left.data]);
+    try testing.expectEqual(@as(f64, 2.0), tree.number(r_left));
 
     const r_right = pt.getNode(bin_right.right);
-    try testing.expectEqual(@as(f64, 3.0), tree.numbers.items[r_right.data]);
+    try testing.expectEqual(@as(f64, 3.0), tree.number(r_right));
 }
 
 test "KupCAD Parser: Right Associativity for Exponentiation (**)" {
@@ -57,14 +57,14 @@ test "KupCAD Parser: Right Associativity for Exponentiation (**)" {
 
     try testing.expectEqual(ast.BinaryOp.exponent, bin_stmt.op);
     const left = pt.getNode(bin_stmt.left);
-    try testing.expectEqual(@as(f64, 2.0), tree.numbers.items[left.data]);
+    try testing.expectEqual(@as(f64, 2.0), tree.number(left));
 
     const right = pt.getNode(bin_stmt.right);
     const bin_right = tree.binaryExpr(right);
     try testing.expectEqual(ast.BinaryOp.exponent, bin_right.op);
 
     const r_left = pt.getNode(bin_right.left);
-    try testing.expectEqual(@as(f64, 3.0), tree.numbers.items[r_left.data]);
+    try testing.expectEqual(@as(f64, 3.0), tree.number(r_left));
 }
 
 test "KupCAD Parser: Method Chaining with Named Args" {
@@ -81,7 +81,7 @@ test "KupCAD Parser: Method Chaining with Named Args" {
     try testing.expectEqualStrings("z", tree.getString(args[0].name));
 
     const arg_val = pt.getNode(args[0].value);
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[arg_val.data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(arg_val));
 
     const receiver = pt.getNode(mc.receiver);
     const rec_mc = tree.methodCall(receiver);
@@ -99,7 +99,7 @@ test "KupCAD Parser: Import Statement" {
 
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
-    const import_stmt = tree.import_stmts.items[stmt.data];
+    const import_stmt = tree.importStmt(stmt);
 
     try testing.expectEqualStrings("./hardware.kup", tree.getString(import_stmt.path));
     const symbols = tree.getStringLists(import_stmt.symbols);
@@ -130,7 +130,7 @@ test "KupCAD Parser: If / Elsif / Else Control Flow" {
     try testing.expectEqual(ast.BinaryOp.greater, tree.binaryExpr(cond).op);
 
     const then_branch = pt.getNode(if_stmt.then_branch);
-    const then_stmts = tree.getNodes(tree.blocks.items[then_branch.data].stmts);
+    const then_stmts = tree.getNodes(tree.block(then_branch).stmts);
     const then_stmt = pt.getNode(then_stmts[0]);
     try testing.expectEqualStrings("a", tree.getString(tree.assignment(then_stmt).name));
 
@@ -141,7 +141,7 @@ test "KupCAD Parser: If / Elsif / Else Control Flow" {
     try testing.expectEqual(ast.BinaryOp.equal, tree.binaryExpr(elsif_cond).op);
 
     const else_block = pt.getNode(elsif_stmt.else_branch);
-    const else_stmts = tree.getNodes(tree.blocks.items[else_block.data].stmts);
+    const else_stmts = tree.getNodes(tree.block(else_block).stmts);
     const else_stmt = pt.getNode(else_stmts[0]);
     try testing.expectEqualStrings("a", tree.getString(tree.assignment(else_stmt).name));
 }
@@ -162,7 +162,7 @@ test "KupCAD Parser: Method Call with Do Block and Parameters" {
     try testing.expectEqualStrings("on_face", tree.getString(mc.method_name));
 
     const block = pt.getNode(mc.block);
-    const block_payload = tree.blocks.items[block.data];
+    const block_payload = tree.block(block);
     const params = tree.getNodes(block_payload.params);
     try testing.expectEqual(@as(usize, 2), params.len);
 
@@ -189,9 +189,9 @@ test "KupCAD Parser: Statement Modifiers (Yield Unless)" {
     try testing.expectEqual(ast.BinaryOp.equal, tree.binaryExpr(cond).op);
 
     const then_branch = pt.getNode(if_stmt.then_branch);
-    const then_stmts = tree.getNodes(tree.blocks.items[then_branch.data].stmts);
+    const then_stmts = tree.getNodes(tree.block(then_branch).stmts);
     const inner_yield = pt.getNode(then_stmts[0]);
-    const yield_args = tree.getNodes(tree.getSpan(inner_yield.data));
+    const yield_args = tree.getNodes(tree.nodeSpan(inner_yield));
     try testing.expectEqual(@as(usize, 0), yield_args.len);
 }
 
@@ -211,44 +211,44 @@ test "KupCAD Parser: Functions, Classes, Arrays, and Range" {
 
     const class_stmt_index = try pt.parser.parseStatement();
     const class_stmt = pt.getNode(class_stmt_index);
-    const class_payload = tree.class_stmts.items[class_stmt.data];
+    const class_payload = tree.classStmt(class_stmt);
 
     try testing.expectEqualStrings("MyPart", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(class_payload.name).data))));
     try testing.expectEqualStrings("Base", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(class_payload.super_class).data))));
 
     const class_body = pt.getNode(class_payload.body);
-    const class_stmts = tree.getNodes(tree.blocks.items[class_body.data].stmts);
+    const class_stmts = tree.getNodes(tree.block(class_body).stmts);
     const def_node = pt.getNode(class_stmts[0]);
-    const def_payload = tree.def_stmts.items[def_node.data];
+    const def_payload = tree.defStmt(def_node);
     try testing.expectEqualStrings("is_valid?", tree.getString(def_payload.name));
 
     const def_params = tree.getParams(def_payload.params);
     try testing.expectEqualStrings("x", tree.getString(def_params[0].name));
 
     const default_val = pt.getNode(def_params[0].default_value);
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[default_val.data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(default_val));
 
     const def_body = pt.getNode(def_payload.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[def_body.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(def_body).stmts);
 
     const stmt0 = pt.getNode(body_stmts[0]);
     const range_node = pt.getNode(tree.assignment(stmt0).value);
-    const range_payload = tree.ranges.items[range_node.data];
-    try testing.expectEqual(@as(f64, 20.0), tree.numbers.items[pt.getNode(range_payload.start).data]);
-    try testing.expectEqual(@as(f64, 100.0), tree.numbers.items[pt.getNode(range_payload.end).data]);
+    const range_payload = tree.range(range_node);
+    try testing.expectEqual(@as(f64, 20.0), tree.number(pt.getNode(range_payload.start)));
+    try testing.expectEqual(@as(f64, 100.0), tree.number(pt.getNode(range_payload.end)));
 
     const stmt1 = pt.getNode(body_stmts[1]);
     const array_node = pt.getNode(tree.assignment(stmt1).value);
-    const array_elements = tree.getNodes(tree.getSpan(array_node.data));
+    const array_elements = tree.getNodes(tree.nodeSpan(array_node));
     try testing.expectEqual(@as(usize, 2), array_elements.len);
 
     const stmt2 = pt.getNode(body_stmts[2]);
-    const ret_val_node = pt.getNode(@as(ast.NodeIndex, @enumFromInt(stmt2.data)));
-    const ternary_payload = tree.ternary_exprs.items[ret_val_node.data];
+    const ret_val_node = pt.getNode(tree.nodeIndex(stmt2));
+    const ternary_payload = tree.ternaryExpr(ret_val_node);
 
     try testing.expectEqualStrings("x", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(ternary_payload.condition).data))));
-    try testing.expectEqual(true, pt.getNode(ternary_payload.then_branch).data != 0);
-    try testing.expectEqual(false, pt.getNode(ternary_payload.else_branch).data != 0);
+    try testing.expectEqual(true, tree.boolean(pt.getNode(ternary_payload.then_branch)));
+    try testing.expectEqual(false, tree.boolean(pt.getNode(ternary_payload.else_branch)));
 }
 
 test "KupCAD Parser: Shorthand Assignment and Hash Rocket" {
@@ -269,7 +269,7 @@ test "KupCAD Parser: Shorthand Assignment and Hash Rocket" {
     const hash_assign_index = try pt.parser.parseStatement();
     const hash_assign = pt.getNode(hash_assign_index);
     const hash_node = pt.getNode(tree.assignment(hash_assign).value);
-    const hash_entries = tree.getHashEntries(tree.getSpan(hash_node.data));
+    const hash_entries = tree.getHashEntries(tree.nodeSpan(hash_node));
     const key_node = pt.getNode(hash_entries[0].key);
     try testing.expectEqualStrings("key", tree.getString(@as(ast.StringId, @enumFromInt(key_node.data))));
 }
@@ -285,7 +285,7 @@ test "KupCAD Parser: String Interpolation" {
     const args = tree.getNamedArgs(tree.methodCall(echo_call).args);
 
     const interp_node = pt.getNode(args[0].value);
-    const parts = tree.getNodes(tree.getSpan(interp_node.data));
+    const parts = tree.getNodes(tree.nodeSpan(interp_node));
     try testing.expectEqual(@as(usize, 3), parts.len);
 
     const part0 = pt.getNode(parts[0]);
@@ -356,7 +356,7 @@ test "KupCAD Parser: Namespace Resolution (Scope Operator ::)" {
     const receiver = pt.getNode(tree.methodCall(call_node).receiver);
     try testing.expectEqual(ast.Tag.namespace_access, receiver.tag);
 
-    const path = tree.getStringLists(tree.getSpan(receiver.data));
+    const path = tree.getStringLists(tree.nodeSpan(receiver));
     try testing.expectEqualStrings("Hardware", tree.getString(path[0]));
     try testing.expectEqualStrings("Fasteners", tree.getString(path[1]));
     try testing.expectEqualStrings("M3_Bolt", tree.getString(path[2]));
@@ -380,7 +380,7 @@ test "KupCAD Parser: Case / When Control Flow" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.case_stmt, stmt.tag);
-    const case_stmt = tree.case_stmts.items[stmt.data];
+    const case_stmt = tree.caseStmt(stmt);
 
     const condition = pt.getNode(case_stmt.condition);
     try testing.expectEqualStrings("part_type", tree.getString(@as(ast.StringId, @enumFromInt(condition.data))));
@@ -397,7 +397,7 @@ test "KupCAD Parser: Case / When Control Flow" {
     try testing.expectEqualStrings("nut", tree.getString(@as(ast.StringId, @enumFromInt(branch1_cond.data))));
 
     const else_branch = pt.getNode(case_stmt.else_branch);
-    const else_stmts = tree.getNodes(tree.blocks.items[else_branch.data].stmts);
+    const else_stmts = tree.getNodes(tree.block(else_branch).stmts);
     const else_stmt = pt.getNode(else_stmts[0]);
     try testing.expectEqualStrings("new", tree.getString(tree.methodCall(else_stmt).method_name));
 }
@@ -412,7 +412,7 @@ test "KupCAD Parser: Multiple Assignment" {
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.multiple_assignment, stmt.tag);
 
-    const ma = tree.multiple_assignments.items[stmt.data];
+    const ma = tree.multipleAssignment(stmt);
     const lhs = tree.getLhsExprs(ma.lhs);
     try testing.expectEqual(@as(usize, 3), lhs.len);
     try testing.expectEqualStrings("x", tree.getString(lhs[0].name));
@@ -433,13 +433,13 @@ test "KupCAD Parser: Self and Super constructs" {
 
     const def_node_idx = try pt.parser.parseStatement();
     const def_node = pt.getNode(def_node_idx);
-    const body_node = pt.getNode(tree.def_stmts.items[def_node.data].body);
+    const body_node = pt.getNode(tree.defStmt(def_node).body);
 
-    const stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const stmts = tree.getNodes(tree.block(body_node).stmts);
     const stmt0 = pt.getNode(stmts[0]);
     try testing.expectEqual(ast.Tag.super_call, stmt0.tag);
 
-    const sc = tree.super_calls.items[stmt0.data];
+    const sc = tree.superCall(stmt0);
     const args = tree.getNamedArgs(sc.args);
     try testing.expectEqualStrings("x", tree.getString(args[0].name));
 
@@ -460,13 +460,13 @@ test "KupCAD Parser: Stabby Lambda (Anonymous Function)" {
     const lambda = pt.getNode(tree.assignment(stmt).value);
     try testing.expectEqual(ast.Tag.lambda_expr, lambda.tag);
 
-    const le = tree.lambda_exprs.items[lambda.data];
+    const le = tree.lambdaExpr(lambda);
     const params = tree.getParams(le.params);
     try testing.expectEqualStrings("x", tree.getString(params[0].name));
     try testing.expectEqualStrings("y", tree.getString(params[1].name));
 
     const body_node = pt.getNode(le.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     const stmt0 = pt.getNode(body_stmts[0]);
     try testing.expectEqual(ast.BinaryOp.add, tree.binaryExpr(stmt0).op);
 }
@@ -481,11 +481,11 @@ test "KupCAD Parser: Exclusive Range (...)" {
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.range, stmt.tag);
 
-    const r = tree.ranges.items[stmt.data];
+    const r = tree.range(stmt);
     try testing.expectEqual(true, r.is_exclusive);
 
     const end_node = pt.getNode(r.end);
-    try testing.expectEqual(@as(f64, 5.0), tree.numbers.items[end_node.data]);
+    try testing.expectEqual(@as(f64, 5.0), tree.number(end_node));
 }
 
 test "KupCAD Parser: Statement Modifiers (Trailing if)" {
@@ -503,7 +503,7 @@ test "KupCAD Parser: Statement Modifiers (Trailing if)" {
     try testing.expectEqualStrings("render_chamfer", tree.getString(@as(ast.StringId, @enumFromInt(cond.data))));
 
     const then_branch = pt.getNode(ifs.then_branch);
-    const then_stmts = tree.getNodes(tree.blocks.items[then_branch.data].stmts);
+    const then_stmts = tree.getNodes(tree.block(then_branch).stmts);
     const then_stmt0 = pt.getNode(then_stmts[0]);
     try testing.expectEqual(ast.Tag.method_call, then_stmt0.tag);
 }
@@ -535,7 +535,7 @@ test "KupCAD Parser: Splats and Block Forwarding" {
 
     const def_node_idx = try pt.parser.parseStatement();
     const def_node = pt.getNode(def_node_idx);
-    const ds = tree.def_stmts.items[def_node.data];
+    const ds = tree.defStmt(def_node);
 
     const params = tree.getParams(ds.params);
     try testing.expectEqual(ast.ArgModifier.splat, params[0].modifier.?);
@@ -546,7 +546,7 @@ test "KupCAD Parser: Splats and Block Forwarding" {
     try testing.expectEqualStrings("block", tree.getString(params[2].name));
 
     const body_node = pt.getNode(ds.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     const call_node = pt.getNode(body_stmts[0]);
 
     const args = tree.getNamedArgs(tree.methodCall(call_node).args);
@@ -566,7 +566,7 @@ test "KupCAD Parser: Shift/Append (<<) and Safe Navigation (&.)" {
     const bin_shift = tree.binaryExpr(shift_node);
     try testing.expectEqual(ast.BinaryOp.shift_left, bin_shift.op);
     try testing.expectEqualStrings("arr", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(bin_shift.left).data))));
-    try testing.expectEqual(@as(f64, 5.0), tree.numbers.items[pt.getNode(bin_shift.right).data]);
+    try testing.expectEqual(@as(f64, 5.0), tree.number(pt.getNode(bin_shift.right)));
 
     const safe_call_idx = try pt.parser.parseStatement();
     const safe_call = pt.getNode(safe_call_idx);
@@ -619,7 +619,7 @@ test "KupCAD Parser: Curly Brace Method Blocks" {
     try testing.expectEqualStrings("each", tree.getString(mc.method_name));
 
     const block = pt.getNode(mc.block);
-    const block_payload = tree.blocks.items[block.data];
+    const block_payload = tree.block(block);
     const params = tree.getNodes(block_payload.params);
     try testing.expectEqualStrings("f", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(params[0]).data))));
 
@@ -637,16 +637,16 @@ test "KupCAD Parser: Next Statement and Until/While Modifiers" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.while_stmt, stmt.tag);
-    const ws = tree.while_stmts.items[stmt.data];
+    const ws = tree.whileStmt(stmt);
     try testing.expectEqual(true, ws.is_until);
 
     const body_node = pt.getNode(ws.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     const inner_next = pt.getNode(body_stmts[0]);
     try testing.expectEqual(ast.Tag.next_stmt, inner_next.tag);
 
-    const next_val = pt.getNode(@as(ast.NodeIndex, @enumFromInt(inner_next.data)));
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[next_val.data]);
+    const next_val = pt.getNode(tree.nodeIndex(inner_next));
+    try testing.expectEqual(@as(f64, 10.0), tree.number(next_val));
 }
 
 test "KupCAD Parser: LHS Splats and Multiple Assignment" {
@@ -657,7 +657,7 @@ test "KupCAD Parser: LHS Splats and Multiple Assignment" {
 
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
-    const ma = tree.multiple_assignments.items[stmt.data];
+    const ma = tree.multipleAssignment(stmt);
 
     const lhs = tree.getLhsExprs(ma.lhs);
     try testing.expectEqual(@as(usize, 2), lhs.len);
@@ -674,7 +674,7 @@ test "KupCAD Parser: Keyword Arguments in Definitions" {
 
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
-    const ds = tree.def_stmts.items[stmt.data];
+    const ds = tree.defStmt(stmt);
 
     const params = tree.getParams(ds.params);
     try testing.expectEqual(true, params[0].is_keyword);
@@ -684,7 +684,7 @@ test "KupCAD Parser: Keyword Arguments in Definitions" {
     try testing.expectEqualStrings("height", tree.getString(params[1].name));
 
     const default_val = pt.getNode(params[1].default_value);
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[default_val.data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(default_val));
 }
 
 test "KupCAD Parser: Begin / Rescue / Ensure" {
@@ -696,21 +696,21 @@ test "KupCAD Parser: Begin / Rescue / Ensure" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.begin_stmt, stmt.tag);
-    const bs = tree.begin_stmts.items[stmt.data];
+    const bs = tree.beginStmt(stmt);
 
     const body_node = pt.getNode(bs.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     const body_stmt0 = pt.getNode(body_stmts[0]);
     try testing.expectEqualStrings("build", tree.getString(tree.methodCall(body_stmt0).method_name));
 
     const rescues = tree.getRescueClauses(bs.rescues);
     const rescue_body = pt.getNode(rescues[0].body);
-    const rescue_stmts = tree.getNodes(tree.blocks.items[rescue_body.data].stmts);
+    const rescue_stmts = tree.getNodes(tree.block(rescue_body).stmts);
     const rescue_stmt0 = pt.getNode(rescue_stmts[0]);
     try testing.expectEqualStrings("log", tree.getString(tree.methodCall(rescue_stmt0).method_name));
 
     const ensure_body = pt.getNode(bs.ensure_body);
-    const ensure_stmts = tree.getNodes(tree.blocks.items[ensure_body.data].stmts);
+    const ensure_stmts = tree.getNodes(tree.block(ensure_body).stmts);
     const ensure_stmt0 = pt.getNode(ensure_stmts[0]);
     try testing.expectEqualStrings("clean", tree.getString(tree.methodCall(ensure_stmt0).method_name));
 }
@@ -724,11 +724,11 @@ test "KupCAD Parser: Object Property Assignment" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.property_assignment, stmt.tag);
-    const pa = tree.property_assignments.items[stmt.data];
+    const pa = tree.propertyAssignment(stmt);
 
     try testing.expectEqualStrings("box", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(pa.target).data))));
     try testing.expectEqualStrings("width", tree.getString(pa.property));
-    try testing.expectEqual(@as(f64, 100.0), tree.numbers.items[pt.getNode(pa.value).data]);
+    try testing.expectEqual(@as(f64, 100.0), tree.number(pt.getNode(pa.value)));
 }
 
 test "KupCAD Parser: Receiver Command Syntax" {
@@ -760,10 +760,10 @@ test "KupCAD Parser: Begin / Rescue / Ensure with Classes" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.begin_stmt, stmt.tag);
-    const bs = tree.begin_stmts.items[stmt.data];
+    const bs = tree.beginStmt(stmt);
 
     const body_node = pt.getNode(bs.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     const body_stmt0 = pt.getNode(body_stmts[0]);
     try testing.expectEqualStrings("build", tree.getString(tree.methodCall(body_stmt0).method_name));
 
@@ -776,12 +776,12 @@ test "KupCAD Parser: Begin / Rescue / Ensure with Classes" {
     try testing.expectEqualStrings("e", tree.getString(rescue_clause.variable));
 
     const rescue_body = pt.getNode(rescue_clause.body);
-    const rescue_stmts = tree.getNodes(tree.blocks.items[rescue_body.data].stmts);
+    const rescue_stmts = tree.getNodes(tree.block(rescue_body).stmts);
     const rescue_stmt0 = pt.getNode(rescue_stmts[0]);
     try testing.expectEqualStrings("log", tree.getString(tree.methodCall(rescue_stmt0).method_name));
 
     const ensure_node = pt.getNode(bs.ensure_body);
-    const ensure_stmts = tree.getNodes(tree.blocks.items[ensure_node.data].stmts);
+    const ensure_stmts = tree.getNodes(tree.block(ensure_node).stmts);
     const ensure_stmt0 = pt.getNode(ensure_stmts[0]);
     try testing.expectEqualStrings("clean", tree.getString(tree.methodCall(ensure_stmt0).method_name));
 }
@@ -796,13 +796,13 @@ test "KupCAD Parser: Inline Rescue Modifier" {
     const stmt = pt.getNode(stmt_idx);
     const res_mod = pt.getNode(tree.assignment(stmt).value);
     try testing.expectEqual(ast.Tag.rescue_modifier, res_mod.tag);
-    const rm = tree.rescue_modifiers.items[res_mod.data];
+    const rm = tree.rescueModifier(res_mod);
 
     const expr = pt.getNode(rm.expr);
     try testing.expectEqualStrings("dangerous", tree.getString(tree.methodCall(expr).method_name));
 
     const rescue_expr = pt.getNode(rm.rescue_expr);
-    try testing.expectEqual(@as(f64, 0.0), tree.numbers.items[rescue_expr.data]);
+    try testing.expectEqual(@as(f64, 0.0), tree.number(rescue_expr));
 }
 
 test "KupCAD Lexer and Parser: Percent Literals (%w, %i)" {
@@ -814,7 +814,7 @@ test "KupCAD Lexer and Parser: Percent Literals (%w, %i)" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     const arr_node = pt.getNode(tree.assignment(stmt).value);
-    const arr = tree.getNodes(tree.getSpan(arr_node.data));
+    const arr = tree.getNodes(tree.nodeSpan(arr_node));
     try testing.expectEqual(@as(usize, 3), arr.len);
 
     try testing.expectEqualStrings("gear", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(arr[0]).data))));
@@ -830,20 +830,20 @@ test "KupCAD Parser: Class Methods and Namespaced Inheritance" {
 
     const class_stmt_idx = try pt.parser.parseStatement();
     const class_stmt = pt.getNode(class_stmt_idx);
-    const cs = tree.class_stmts.items[class_stmt.data];
+    const cs = tree.classStmt(class_stmt);
 
     const name_node = pt.getNode(cs.name);
-    const name_path = tree.getStringLists(tree.getSpan(name_node.data));
+    const name_path = tree.getStringLists(tree.nodeSpan(name_node));
     try testing.expectEqualStrings("Hardware", tree.getString(name_path[0]));
 
     const super_node = pt.getNode(cs.super_class);
-    const super_path = tree.getStringLists(tree.getSpan(super_node.data));
+    const super_path = tree.getStringLists(tree.nodeSpan(super_node));
     try testing.expectEqualStrings("Base", tree.getString(super_path[0]));
 
     const body_node = pt.getNode(cs.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     const def_node = pt.getNode(body_stmts[0]);
-    const ds = tree.def_stmts.items[def_node.data];
+    const ds = tree.defStmt(def_node);
     try testing.expectEqual(true, ds.is_class_method);
     try testing.expectEqualStrings("build", tree.getString(ds.name));
 }
@@ -856,22 +856,22 @@ test "KupCAD Parser: Implicit RHS Tuples and Array/Hash Splats" {
 
     const multi_assign_idx = try pt.parser.parseStatement();
     const multi_assign = pt.getNode(multi_assign_idx);
-    const ma = tree.multiple_assignments.items[multi_assign.data];
+    const ma = tree.multipleAssignment(multi_assign);
     const multi_val = pt.getNode(ma.value);
-    const multi_arr = tree.getNodes(tree.getSpan(multi_val.data));
+    const multi_arr = tree.getNodes(tree.nodeSpan(multi_val));
     try testing.expectEqual(@as(usize, 2), multi_arr.len);
 
     const arr_assign_idx = try pt.parser.parseStatement();
     const arr_assign = pt.getNode(arr_assign_idx);
     const arr_node = pt.getNode(tree.assignment(arr_assign).value);
-    const arr_lit = tree.getNodes(tree.getSpan(arr_node.data));
+    const arr_lit = tree.getNodes(tree.nodeSpan(arr_node));
     const splat_node = pt.getNode(arr_lit[1]);
     try testing.expectEqual(ast.Tag.splat_expr, splat_node.tag);
 
     const hash_assign_idx = try pt.parser.parseStatement();
     const hash_assign = pt.getNode(hash_assign_idx);
     const hash_node = pt.getNode(tree.assignment(hash_assign).value);
-    const hash_lit = tree.getHashEntries(tree.getSpan(hash_node.data));
+    const hash_lit = tree.getHashEntries(tree.nodeSpan(hash_node));
     const double_splat_node = pt.getNode(hash_lit[1].key);
     try testing.expectEqual(ast.Tag.double_splat_expr, double_splat_node.tag);
 }
@@ -890,13 +890,13 @@ test "KupCAD Parser: Quoted Symbols, Single Quotes, Destructuring" {
     try testing.expectEqualStrings("key name", tree.getString(@as(ast.StringId, @enumFromInt(arg0.data))));
 
     const block = pt.getNode(mc.block);
-    const block_payload = tree.blocks.items[block.data];
+    const block_payload = tree.block(block);
     const params = tree.getNodes(block_payload.params);
 
     const param0 = pt.getNode(params[0]);
     try testing.expectEqual(ast.Tag.array_literal, param0.tag);
 
-    const param0_elems = tree.getNodes(tree.getSpan(param0.data));
+    const param0_elems = tree.getNodes(tree.nodeSpan(param0));
     try testing.expectEqualStrings("x", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(param0_elems[0]).data))));
     try testing.expectEqualStrings("y", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(param0_elems[1]).data))));
 
@@ -913,7 +913,7 @@ test "KupCAD Parser: Super with Command Syntax and Blocks" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.super_call, stmt.tag);
-    const sc = tree.super_calls.items[stmt.data];
+    const sc = tree.superCall(stmt);
 
     const args = tree.getNamedArgs(sc.args);
     try testing.expectEqualStrings("x", tree.getString(args[0].name));
@@ -932,7 +932,7 @@ test "KupCAD Parser: Optional 'then' Keyword" {
     const ifs = tree.ifStmt(stmt);
 
     const then_branch = pt.getNode(ifs.then_branch);
-    const then_stmts = tree.getNodes(tree.blocks.items[then_branch.data].stmts);
+    const then_stmts = tree.getNodes(tree.block(then_branch).stmts);
     const then_stmt0 = pt.getNode(then_stmts[0]);
     try testing.expectEqualStrings("a", tree.getString(tree.assignment(then_stmt0).name));
 }
@@ -953,15 +953,15 @@ test "KupCAD Parser: Implicit Def Rescue / Ensure" {
 
     const def_node_idx = try pt.parser.parseStatement();
     const def_node = pt.getNode(def_node_idx);
-    const ds = tree.def_stmts.items[def_node.data];
+    const ds = tree.defStmt(def_node);
     try testing.expectEqualStrings("process", tree.getString(ds.name));
 
     const begin_node = pt.getNode(ds.body);
     try testing.expectEqual(ast.Tag.begin_stmt, begin_node.tag);
-    const bs = tree.begin_stmts.items[begin_node.data];
+    const bs = tree.beginStmt(begin_node);
 
     const body_node = pt.getNode(bs.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     const body_stmt0 = pt.getNode(body_stmts[0]);
     try testing.expectEqualStrings("run_step", tree.getString(tree.methodCall(body_stmt0).method_name));
 
@@ -970,12 +970,12 @@ test "KupCAD Parser: Implicit Def Rescue / Ensure" {
     try testing.expectEqualStrings("err", tree.getString(rescue_clause.variable));
 
     const rescue_body = pt.getNode(rescue_clause.body);
-    const rescue_stmts = tree.getNodes(tree.blocks.items[rescue_body.data].stmts);
+    const rescue_stmts = tree.getNodes(tree.block(rescue_body).stmts);
     const rescue_stmt0 = pt.getNode(rescue_stmts[0]);
     try testing.expectEqualStrings("handle_error", tree.getString(tree.methodCall(rescue_stmt0).method_name));
 
     const ensure_node = pt.getNode(bs.ensure_body);
-    const ensure_stmts = tree.getNodes(tree.blocks.items[ensure_node.data].stmts);
+    const ensure_stmts = tree.getNodes(tree.block(ensure_node).stmts);
     const ensure_stmt0 = pt.getNode(ensure_stmts[0]);
     try testing.expectEqualStrings("cleanup", tree.getString(tree.methodCall(ensure_stmt0).method_name));
 }
@@ -994,22 +994,22 @@ test "KupCAD Parser: Advanced Number Literals (0x, 0b, 0o, Scientific, Underscor
     const tree = &pt.parser.b.tree;
 
     const n1 = pt.getNode(try pt.parser.parseStatement());
-    try testing.expectEqual(@as(f64, 31.0), tree.numbers.items[pt.getNode(tree.assignment(n1).value).data]);
+    try testing.expectEqual(@as(f64, 31.0), tree.number(pt.getNode(tree.assignment(n1).value)));
 
     const n2 = pt.getNode(try pt.parser.parseStatement());
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[pt.getNode(tree.assignment(n2).value).data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(tree.assignment(n2).value)));
 
     const n3 = pt.getNode(try pt.parser.parseStatement());
-    try testing.expectEqual(@as(f64, 493.0), tree.numbers.items[pt.getNode(tree.assignment(n3).value).data]);
+    try testing.expectEqual(@as(f64, 493.0), tree.number(pt.getNode(tree.assignment(n3).value)));
 
     const n4 = pt.getNode(try pt.parser.parseStatement());
-    try testing.expectEqual(@as(f64, 1500.0), tree.numbers.items[pt.getNode(tree.assignment(n4).value).data]);
+    try testing.expectEqual(@as(f64, 1500.0), tree.number(pt.getNode(tree.assignment(n4).value)));
 
     const n5 = pt.getNode(try pt.parser.parseStatement());
-    try testing.expectEqual(@as(f64, 1000000.0), tree.numbers.items[pt.getNode(tree.assignment(n5).value).data]);
+    try testing.expectEqual(@as(f64, 1000000.0), tree.number(pt.getNode(tree.assignment(n5).value)));
 
     const n6 = pt.getNode(try pt.parser.parseStatement());
-    try testing.expectEqual(@as(f64, 0.56), tree.numbers.items[pt.getNode(tree.assignment(n6).value).data]);
+    try testing.expectEqual(@as(f64, 0.56), tree.number(pt.getNode(tree.assignment(n6).value)));
 }
 
 test "KupCAD Parser: Multi-line Method Chaining (Fluent API)" {
@@ -1048,25 +1048,25 @@ test "KupCAD Parser: Import / Export with Attributes (with {})" {
     const imp_node_idx = try pt.parser.parseStatement();
     const imp_node = pt.getNode(imp_node_idx);
     try testing.expectEqual(ast.Tag.import_stmt, imp_node.tag);
-    const is_stmt = tree.import_stmts.items[imp_node.data];
+    const is_stmt = tree.importStmt(imp_node);
     try testing.expectEqualStrings("module-name", tree.getString(is_stmt.path));
 
     const imp_symbols = tree.getStringLists(is_stmt.symbols);
     try testing.expectEqualStrings("names", tree.getString(imp_symbols[0]));
 
     const attrs = pt.getNode(is_stmt.attributes);
-    const hash_entries = tree.getHashEntries(tree.getSpan(attrs.data));
+    const hash_entries = tree.getHashEntries(tree.nodeSpan(attrs));
     try testing.expectEqual(@as(usize, 2), hash_entries.len);
     try testing.expectEqualStrings("key", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(hash_entries[0].key).data))));
 
     const exp_node_idx = try pt.parser.parseStatement();
     const exp_node = pt.getNode(exp_node_idx);
     try testing.expectEqual(ast.Tag.export_stmt, exp_node.tag);
-    const es_stmt = tree.export_stmts.items[exp_node.data];
+    const es_stmt = tree.exportStmt(exp_node);
     try testing.expectEqualStrings("module-name", tree.getString(es_stmt.path));
 
     const exp_attrs = pt.getNode(es_stmt.attributes);
-    const exp_hash_entries = tree.getHashEntries(tree.getSpan(exp_attrs.data));
+    const exp_hash_entries = tree.getHashEntries(tree.nodeSpan(exp_attrs));
     try testing.expectEqual(@as(usize, 0), exp_hash_entries.len);
 }
 
@@ -1081,13 +1081,13 @@ test "KupCAD Parser: Optional Imports and Trailing Call Commas" {
     const tree = &pt.parser.b.tree;
 
     const imp_node_1 = pt.getNode(try pt.parser.parseStatement());
-    const is1 = tree.import_stmts.items[imp_node_1.data];
+    const is1 = tree.importStmt(imp_node_1);
     try testing.expectEqualStrings("global_config.kup", tree.getString(is1.path));
     const symbols1 = tree.getStringLists(is1.symbols);
     try testing.expectEqual(@as(usize, 0), symbols1.len);
 
     const imp_node_2 = pt.getNode(try pt.parser.parseStatement());
-    const is2 = tree.import_stmts.items[imp_node_2.data];
+    const is2 = tree.importStmt(imp_node_2);
     try testing.expectEqualStrings("hardware.kup", tree.getString(is2.path));
     const symbols2 = tree.getStringLists(is2.symbols);
     try testing.expectEqualStrings("Hardware", tree.getString(symbols2[0]));
@@ -1134,17 +1134,17 @@ test "KupCAD Parser: Combinators and Trailing Commas" {
 
     const n1 = pt.getNode(try pt.parser.parseStatement());
     const arr_node = pt.getNode(tree.assignment(n1).value);
-    const arr_elems = tree.getNodes(tree.getSpan(arr_node.data));
+    const arr_elems = tree.getNodes(tree.nodeSpan(arr_node));
     try testing.expectEqual(@as(usize, 2), arr_elems.len);
 
     const n2 = pt.getNode(try pt.parser.parseStatement());
     const hash_node = pt.getNode(tree.assignment(n2).value);
-    const hash_entries = tree.getHashEntries(tree.getSpan(hash_node.data));
+    const hash_entries = tree.getHashEntries(tree.nodeSpan(hash_node));
     try testing.expectEqual(@as(usize, 2), hash_entries.len);
 
     const n3 = pt.getNode(try pt.parser.parseStatement());
     const block = pt.getNode(tree.methodCall(n3).block);
-    const params = tree.getNodes(tree.blocks.items[block.data].params);
+    const params = tree.getNodes(tree.block(block).params);
     try testing.expectEqual(@as(usize, 2), params.len);
 }
 
@@ -1157,10 +1157,10 @@ test "KupCAD Parser: Index Access and Index Compound Assignment" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.index_assignment, stmt.tag);
-    const ia = tree.index_assignments.items[stmt.data];
+    const ia = tree.indexAssignment(stmt);
 
     try testing.expectEqualStrings("points", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(ia.target).data))));
-    try testing.expectEqual(@as(f64, 0.0), tree.numbers.items[pt.getNode(ia.index).data]);
+    try testing.expectEqual(@as(f64, 0.0), tree.number(pt.getNode(ia.index)));
     try testing.expectEqual(ast.BinaryOp.add, ia.op.?);
 
     const val_node = pt.getNode(ia.value);
@@ -1181,7 +1181,7 @@ test "KupCAD Parser: Nested Module Definitions and Export Statements" {
 
     const export_node = pt.getNode(try pt.parser.parseStatement());
     try testing.expectEqual(ast.Tag.export_stmt, export_node.tag);
-    const es = tree.export_stmts.items[export_node.data];
+    const es = tree.exportStmt(export_node);
     try testing.expectEqualStrings("./housing.kup", tree.getString(es.path));
 
     const export_symbols = tree.getStringLists(es.symbols);
@@ -1190,13 +1190,13 @@ test "KupCAD Parser: Nested Module Definitions and Export Statements" {
 
     const mod_node = pt.getNode(try pt.parser.parseStatement());
     try testing.expectEqual(ast.Tag.module_stmt, mod_node.tag);
-    const ms = tree.module_stmts.items[mod_node.data];
+    const ms = tree.moduleStmt(mod_node);
     try testing.expectEqualStrings("Hardware", tree.getString(ms.name));
 
     const body_node = pt.getNode(ms.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     const inner_class = pt.getNode(body_stmts[0]);
-    const cs = tree.class_stmts.items[inner_class.data];
+    const cs = tree.classStmt(inner_class);
     const class_name = pt.getNode(cs.name);
     try testing.expectEqualStrings("Screw", tree.getString(@as(ast.StringId, @enumFromInt(class_name.data))));
 }
@@ -1218,12 +1218,12 @@ test "KupCAD Parser: Multi-line Arrays with Interspersed Comments" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     const arr_node = pt.getNode(tree.assignment(stmt).value);
-    const arr = tree.getNodes(tree.getSpan(arr_node.data));
+    const arr = tree.getNodes(tree.nodeSpan(arr_node));
     try testing.expectEqual(@as(usize, 3), arr.len);
 
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[pt.getNode(arr[0]).data]);
-    try testing.expectEqual(@as(f64, 20.0), tree.numbers.items[pt.getNode(arr[1]).data]);
-    try testing.expectEqual(@as(f64, 30.0), tree.numbers.items[pt.getNode(arr[2]).data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(arr[0])));
+    try testing.expectEqual(@as(f64, 20.0), tree.number(pt.getNode(arr[1])));
+    try testing.expectEqual(@as(f64, 30.0), tree.number(pt.getNode(arr[2])));
 }
 
 test "KupCAD Parser: Safe Navigation Multi-line Fluent API" {
@@ -1259,17 +1259,17 @@ test "KupCAD Parser: Parametric Doc Comments Parsing" {
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.param_doc, stmt.tag);
 
-    const doc = tree.param_docs.items[stmt.data];
+    const doc = tree.paramDoc(stmt);
     try testing.expectEqualStrings("param", tree.getString(doc.tag_name));
     try testing.expectEqualStrings("length", tree.getString(doc.target_name));
     try testing.expectEqualStrings("Length", tree.getString(doc.type_name));
     try testing.expectEqualStrings("Screw length", tree.getString(doc.description));
 
     const options_hash_node = pt.getNode(doc.options_expr);
-    const options_hash = tree.getHashEntries(tree.getSpan(options_hash_node.data));
+    const options_hash = tree.getHashEntries(tree.nodeSpan(options_hash_node));
     try testing.expectEqual(@as(usize, 2), options_hash.len);
     try testing.expectEqualStrings("min", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(options_hash[0].key).data))));
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[pt.getNode(options_hash[0].value).data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(options_hash[0].value)));
 }
 
 test "KupCAD Parser: Diagnostics for Malformed Class Declaration" {
@@ -1330,13 +1330,13 @@ test "KupCAD Parser: Nested Command Syntax Transforms with Blocks" {
     try testing.expectEqual(@as(usize, 2), top_args.len);
 
     const top_block = pt.getNode(top_mc.block);
-    const top_stmts = tree.getNodes(tree.blocks.items[top_block.data].stmts);
+    const top_stmts = tree.getNodes(tree.block(top_block).stmts);
     const rotate_call = pt.getNode(top_stmts[0]);
     const rotate_mc = tree.methodCall(rotate_call);
     try testing.expectEqualStrings("rotate", tree.getString(rotate_mc.method_name));
 
     const rotate_block = pt.getNode(rotate_mc.block);
-    const rotate_stmts = tree.getNodes(tree.blocks.items[rotate_block.data].stmts);
+    const rotate_stmts = tree.getNodes(tree.block(rotate_block).stmts);
     const cube_call = pt.getNode(rotate_stmts[0]);
     const cube_mc = tree.methodCall(cube_call);
     try testing.expectEqualStrings("cube", tree.getString(cube_mc.method_name));
@@ -1357,14 +1357,14 @@ test "KupCAD Parser: Range Slicing inside Indexing Operations" {
 
     const index_access = pt.getNode(tree.assignment(stmt).value);
     try testing.expectEqual(ast.Tag.index_access, index_access.tag);
-    const ia = tree.index_accesses.items[index_access.data];
+    const ia = tree.indexAccess(index_access);
     try testing.expectEqualStrings("vertices", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(ia.target).data))));
 
     const range_node = pt.getNode(ia.index);
     try testing.expectEqual(ast.Tag.range, range_node.tag);
-    const r = tree.ranges.items[range_node.data];
-    try testing.expectEqual(@as(f64, 1.0), tree.numbers.items[pt.getNode(r.start).data]);
-    try testing.expectEqual(@as(f64, 4.0), tree.numbers.items[pt.getNode(r.end).data]);
+    const r = tree.range(range_node);
+    try testing.expectEqual(@as(f64, 1.0), tree.number(pt.getNode(r.start)));
+    try testing.expectEqual(@as(f64, 4.0), tree.number(pt.getNode(r.end)));
     try testing.expectEqual(false, r.is_exclusive);
 }
 
@@ -1377,7 +1377,7 @@ test "KupCAD Parser: Complex Nested Hashes with Symbol Arrays (%i)" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     const hash_node = pt.getNode(tree.assignment(stmt).value);
-    const hash = tree.getHashEntries(tree.getSpan(hash_node.data));
+    const hash = tree.getHashEntries(tree.nodeSpan(hash_node));
     try testing.expectEqual(@as(usize, 3), hash.len);
 
     try testing.expectEqualStrings("style", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(hash[0].key).data))));
@@ -1385,15 +1385,15 @@ test "KupCAD Parser: Complex Nested Hashes with Symbol Arrays (%i)" {
 
     try testing.expectEqualStrings("keys", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(hash[1].key).data))));
     const sym_array_node = pt.getNode(hash[1].value);
-    const sym_array = tree.getNodes(tree.getSpan(sym_array_node.data));
+    const sym_array = tree.getNodes(tree.nodeSpan(sym_array_node));
     try testing.expectEqual(@as(usize, 3), sym_array.len);
     try testing.expectEqualStrings("r", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(sym_array[0]).data))));
 
     try testing.expectEqualStrings("inner", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(hash[2].key).data))));
     const nested_hash_node = pt.getNode(hash[2].value);
-    const nested_hash = tree.getHashEntries(tree.getSpan(nested_hash_node.data));
+    const nested_hash = tree.getHashEntries(tree.nodeSpan(nested_hash_node));
     try testing.expectEqualStrings("depth", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(nested_hash[0].key).data))));
-    try testing.expectEqual(@as(f64, 5.0), tree.numbers.items[pt.getNode(nested_hash[0].value).data]);
+    try testing.expectEqual(@as(f64, 5.0), tree.number(pt.getNode(nested_hash[0].value)));
 }
 
 test "KupCAD Parser: Multiple Destructuring Assignment with Splats" {
@@ -1405,7 +1405,7 @@ test "KupCAD Parser: Multiple Destructuring Assignment with Splats" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.multiple_assignment, stmt.tag);
-    const ma = tree.multiple_assignments.items[stmt.data];
+    const ma = tree.multipleAssignment(stmt);
 
     const lhs = tree.getLhsExprs(ma.lhs);
     try testing.expectEqual(@as(usize, 3), lhs.len);
@@ -1433,7 +1433,7 @@ test "KupCAD Parser: Hexadecimal, Scientific, and Negative Math Operations" {
 
     // Root is subtraction `- 0b10`
     try testing.expectEqual(ast.BinaryOp.subtract, bin_math.op);
-    try testing.expectEqual(@as(f64, 2.0), tree.numbers.items[pt.getNode(bin_math.right).data]); // 0b10 = 2
+    try testing.expectEqual(@as(f64, 2.0), tree.number(pt.getNode(bin_math.right))); // 0b10 = 2
 
     // Left is `-0x1F + (.5 * 1.5e2)`
     const add_node = pt.getNode(bin_math.left);
@@ -1444,14 +1444,14 @@ test "KupCAD Parser: Hexadecimal, Scientific, and Negative Math Operations" {
     const neg_hex = pt.getNode(bin_add.left);
     const un_neg = tree.unaryExpr(neg_hex);
     try testing.expectEqual(ast.UnaryOp.negate, un_neg.op);
-    try testing.expectEqual(@as(f64, 31.0), tree.numbers.items[pt.getNode(un_neg.operand).data]);
+    try testing.expectEqual(@as(f64, 31.0), tree.number(pt.getNode(un_neg.operand)));
 
     // Multiplication: .5 * 150.0 = 75.0
     const mult_node = pt.getNode(bin_add.right);
     const bin_mult = tree.binaryExpr(mult_node);
     try testing.expectEqual(ast.BinaryOp.multiply, bin_mult.op);
-    try testing.expectEqual(@as(f64, 0.5), tree.numbers.items[pt.getNode(bin_mult.left).data]);
-    try testing.expectEqual(@as(f64, 150.0), tree.numbers.items[pt.getNode(bin_mult.right).data]);
+    try testing.expectEqual(@as(f64, 0.5), tree.number(pt.getNode(bin_mult.left)));
+    try testing.expectEqual(@as(f64, 150.0), tree.number(pt.getNode(bin_mult.right)));
 }
 
 test "KupCAD Parser: Class Inheritance with Scope Resolution and Class Methods" {
@@ -1469,11 +1469,11 @@ test "KupCAD Parser: Class Inheritance with Scope Resolution and Class Methods" 
     const class_stmt_idx = try pt.parser.parseStatement();
     const class_stmt = pt.getNode(class_stmt_idx);
     try testing.expectEqual(ast.Tag.class_stmt, class_stmt.tag);
-    const cs = tree.class_stmts.items[class_stmt.data];
+    const cs = tree.classStmt(class_stmt);
 
     // Name: CAD::Fastener::Bolt
     const name_node = pt.getNode(cs.name);
-    const name_ns = tree.getStringLists(tree.getSpan(name_node.data));
+    const name_ns = tree.getStringLists(tree.nodeSpan(name_node));
     try testing.expectEqual(@as(usize, 3), name_ns.len);
     try testing.expectEqualStrings("CAD", tree.getString(name_ns[0]));
     try testing.expectEqualStrings("Fastener", tree.getString(name_ns[1]));
@@ -1481,16 +1481,16 @@ test "KupCAD Parser: Class Inheritance with Scope Resolution and Class Methods" 
 
     // Super: Hardware::Base
     const super_node = pt.getNode(cs.super_class);
-    const super_ns = tree.getStringLists(tree.getSpan(super_node.data));
+    const super_ns = tree.getStringLists(tree.nodeSpan(super_node));
     try testing.expectEqual(@as(usize, 2), super_ns.len);
     try testing.expectEqualStrings("Hardware", tree.getString(super_ns[0]));
     try testing.expectEqualStrings("Base", tree.getString(super_ns[1]));
 
     // Class Method: def self.m3
     const body_node = pt.getNode(cs.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     const def_node = pt.getNode(body_stmts[0]);
-    const ds = tree.def_stmts.items[def_node.data];
+    const ds = tree.defStmt(def_node);
     try testing.expectEqual(true, ds.is_class_method);
     try testing.expectEqualStrings("m3", tree.getString(ds.name));
 
@@ -1515,7 +1515,7 @@ test "KupCAD Parser: Top-Level Scope Resolution with Chained Calls" {
     const ns_access = pt.getNode(mc.receiver);
     try testing.expectEqual(ast.Tag.namespace_access, ns_access.tag);
 
-    const path = tree.getStringLists(tree.getSpan(ns_access.data));
+    const path = tree.getStringLists(tree.nodeSpan(ns_access));
     try testing.expectEqual(@as(usize, 3), path.len);
     try testing.expectEqualStrings("Hardware", tree.getString(path[0]));
     try testing.expectEqualStrings("Fastener", tree.getString(path[1]));
@@ -1609,10 +1609,10 @@ test "KupCAD Parser: Control Flow Statements with Payloads and Modifiers" {
     try testing.expectEqualStrings("finished?", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(if1.condition).data))));
 
     const then1_block = pt.getNode(if1.then_branch);
-    const then1_stmts = tree.getNodes(tree.blocks.items[then1_block.data].stmts);
+    const then1_stmts = tree.getNodes(tree.block(then1_block).stmts);
     const break_node = pt.getNode(then1_stmts[0]);
-    const break_val = pt.getNode(@as(ast.NodeIndex, @enumFromInt(break_node.data)));
-    try testing.expectEqual(@as(f64, 42.0), tree.numbers.items[break_val.data]);
+    const break_val = pt.getNode(tree.nodeIndex(break_node));
+    try testing.expectEqual(@as(f64, 42.0), tree.number(break_val));
 
     // return x, y unless error?
     const s2 = pt.getNode(try pt.parser.parseStatement());
@@ -1621,22 +1621,22 @@ test "KupCAD Parser: Control Flow Statements with Payloads and Modifiers" {
     try testing.expectEqual(true, if2.is_unless);
 
     const then2_block = pt.getNode(if2.then_branch);
-    const then2_stmts = tree.getNodes(tree.blocks.items[then2_block.data].stmts);
+    const then2_stmts = tree.getNodes(tree.block(then2_block).stmts);
     const ret_node = pt.getNode(then2_stmts[0]);
-    const ret_val_node = pt.getNode(@as(ast.NodeIndex, @enumFromInt(ret_node.data)));
-    const ret_arr = tree.getNodes(tree.getSpan(ret_val_node.data));
+    const ret_val_node = pt.getNode(tree.nodeIndex(ret_node));
+    const ret_arr = tree.getNodes(tree.nodeSpan(ret_val_node));
     try testing.expectEqual(@as(usize, 2), ret_arr.len);
 
     // next val until done?
     const s3 = pt.getNode(try pt.parser.parseStatement());
     try testing.expectEqual(ast.Tag.while_stmt, s3.tag);
-    const ws3 = tree.while_stmts.items[s3.data];
+    const ws3 = tree.whileStmt(s3);
     try testing.expectEqual(true, ws3.is_until);
 
     const while3_body = pt.getNode(ws3.body);
-    const while3_stmts = tree.getNodes(tree.blocks.items[while3_body.data].stmts);
+    const while3_stmts = tree.getNodes(tree.block(while3_body).stmts);
     const next_node = pt.getNode(while3_stmts[0]);
-    const next_val = pt.getNode(@as(ast.NodeIndex, @enumFromInt(next_node.data)));
+    const next_val = pt.getNode(tree.nodeIndex(next_node));
     try testing.expectEqualStrings("val", tree.getString(@as(ast.StringId, @enumFromInt(next_val.data))));
 }
 
@@ -1650,7 +1650,7 @@ test "KupCAD Parser: Multi-Interpolation String with Expressions and Method Call
     const expr = pt.getNode(expr_idx);
     try testing.expectEqual(ast.Tag.interpolated_string, expr.tag);
 
-    const parts = tree.getNodes(tree.getSpan(expr.data));
+    const parts = tree.getNodes(tree.nodeSpan(expr));
     try testing.expectEqual(@as(usize, 7), parts.len);
 
     try testing.expectEqualStrings("Part: ", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(parts[0]).data))));
@@ -1680,17 +1680,17 @@ test "KupCAD Parser: Module Namespaces with Doc Comments and Class Constructors"
     const mod_node_idx = try pt.parser.parseStatement();
     const mod_node = pt.getNode(mod_node_idx);
     try testing.expectEqual(ast.Tag.module_stmt, mod_node.tag);
-    const ms = tree.module_stmts.items[mod_node.data];
+    const ms = tree.moduleStmt(mod_node);
     try testing.expectEqualStrings("Enclosures", tree.getString(ms.name));
 
     const body_node = pt.getNode(ms.body);
-    const block_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const block_stmts = tree.getNodes(tree.block(body_node).stmts);
     try testing.expectEqual(@as(usize, 2), block_stmts.len);
 
     // Statement 0: Doc Comment
     const doc_node = pt.getNode(block_stmts[0]);
     try testing.expectEqual(ast.Tag.param_doc, doc_node.tag);
-    const doc = tree.param_docs.items[doc_node.data];
+    const doc = tree.paramDoc(doc_node);
     try testing.expectEqualStrings("param", tree.getString(doc.tag_name));
     try testing.expectEqualStrings("wall_thickness", tree.getString(doc.target_name));
     try testing.expectEqualStrings("Length", tree.getString(doc.type_name));
@@ -1698,19 +1698,19 @@ test "KupCAD Parser: Module Namespaces with Doc Comments and Class Constructors"
 
     // Statement 1: Class Statement
     const class_stmt = pt.getNode(block_stmts[1]);
-    const cs = tree.class_stmts.items[class_stmt.data];
+    const cs = tree.classStmt(class_stmt);
     try testing.expectEqualStrings("Box", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(cs.name).data))));
     try testing.expectEqualStrings("Base", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(cs.super_class).data))));
 
     const class_body = pt.getNode(cs.body);
-    const class_stmts = tree.getNodes(tree.blocks.items[class_body.data].stmts);
+    const class_stmts = tree.getNodes(tree.block(class_body).stmts);
     const init_def = pt.getNode(class_stmts[0]);
-    const init_ds = tree.def_stmts.items[init_def.data];
+    const init_ds = tree.defStmt(init_def);
     try testing.expectEqualStrings("initialize", tree.getString(init_ds.name));
 
     const init_params = tree.getParams(init_ds.params);
     try testing.expectEqualStrings("w", tree.getString(init_params[0].name));
-    try testing.expectEqual(@as(f64, 100.0), tree.numbers.items[pt.getNode(init_params[0].default_value).data]);
+    try testing.expectEqual(@as(f64, 100.0), tree.number(pt.getNode(init_params[0].default_value)));
 }
 
 test "KupCAD Parser: Command-Syntax Calls with Trailing Statement Modifiers" {
@@ -1727,7 +1727,7 @@ test "KupCAD Parser: Command-Syntax Calls with Trailing Statement Modifiers" {
     try testing.expectEqualStrings("draft_mode?", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(ifs.condition).data))));
 
     const then_branch = pt.getNode(ifs.then_branch);
-    const then_stmts = tree.getNodes(tree.blocks.items[then_branch.data].stmts);
+    const then_stmts = tree.getNodes(tree.block(then_branch).stmts);
     const inner_stmt = pt.getNode(then_stmts[0]);
     try testing.expectEqual(ast.Tag.method_call, inner_stmt.tag);
     const mc = tree.methodCall(inner_stmt);
@@ -1750,7 +1750,7 @@ test "KupCAD Parser: Safe Navigation inside Ternary Conditions and Global Scope 
 
     const ternary = pt.getNode(a.value);
     try testing.expectEqual(ast.Tag.ternary_op, ternary.tag);
-    const t = tree.ternary_exprs.items[ternary.data];
+    const t = tree.ternaryExpr(ternary);
 
     // Condition: part&.is_valid?
     const cond = pt.getNode(t.condition);
@@ -1766,7 +1766,7 @@ test "KupCAD Parser: Safe Navigation inside Ternary Conditions and Global Scope 
     const receiver_ns = pt.getNode(else_mc.receiver);
     try testing.expectEqual(ast.Tag.namespace_access, receiver_ns.tag);
 
-    const path = tree.getStringLists(tree.getSpan(receiver_ns.data));
+    const path = tree.getStringLists(tree.nodeSpan(receiver_ns));
     try testing.expectEqualStrings("CAD", tree.getString(path[0]));
     try testing.expectEqualStrings("Default", tree.getString(path[1]));
 }
@@ -1786,14 +1786,14 @@ test "KupCAD Parser: Class Method Definitions with Rescue Blocks" {
     const def_node_idx = try pt.parser.parseStatement();
     const def_node = pt.getNode(def_node_idx);
     try testing.expectEqual(ast.Tag.def_stmt, def_node.tag);
-    const ds = tree.def_stmts.items[def_node.data];
+    const ds = tree.defStmt(def_node);
     try testing.expectEqual(true, ds.is_class_method);
     try testing.expectEqualStrings("create", tree.getString(ds.name));
 
     // Def body wrapped in begin_stmt due to rescue clause
     const begin_node = pt.getNode(ds.body);
     try testing.expectEqual(ast.Tag.begin_stmt, begin_node.tag);
-    const bs = tree.begin_stmts.items[begin_node.data];
+    const bs = tree.beginStmt(begin_node);
 
     const rescues = tree.getRescueClauses(bs.rescues);
     const rescue = rescues[0];
@@ -1817,14 +1817,14 @@ test "KupCAD Parser: Multi-line Array Destructuring in Method Arguments" {
     try testing.expectEqual(@as(usize, 2), args.len);
 
     const arg0 = pt.getNode(args[0].value);
-    const arr1 = tree.getNodes(tree.getSpan(arg0.data));
+    const arr1 = tree.getNodes(tree.nodeSpan(arg0));
     try testing.expectEqual(@as(usize, 3), arr1.len);
     try testing.expectEqualStrings("x", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(arr1[0]).data))));
 
     const arg1 = pt.getNode(args[1].value);
-    const arr2 = tree.getNodes(tree.getSpan(arg1.data));
+    const arr2 = tree.getNodes(tree.nodeSpan(arg1));
     try testing.expectEqual(@as(usize, 3), arr2.len);
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[pt.getNode(arr2[0]).data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(arr2[0])));
 }
 
 test "KupCAD Parser: Destructuring with Nested Tuple Patterns" {
@@ -1837,11 +1837,11 @@ test "KupCAD Parser: Destructuring with Nested Tuple Patterns" {
     const stmt = pt.getNode(stmt_idx);
     const mc = tree.methodCall(stmt);
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.blocks.items[block.data].params);
+    const params = tree.getNodes(tree.block(block).params);
     try testing.expectEqual(@as(usize, 2), params.len);
 
     const param0 = pt.getNode(params[0]);
-    const tuple_param = tree.getNodes(tree.getSpan(param0.data));
+    const tuple_param = tree.getNodes(tree.nodeSpan(param0));
     try testing.expectEqual(@as(usize, 2), tuple_param.len);
     try testing.expectEqualStrings("x", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(tuple_param[0]).data))));
     try testing.expectEqualStrings("y", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(tuple_param[1]).data))));
@@ -1867,7 +1867,7 @@ test "KupCAD Parser: Complex Nested Modifier Precedence" {
     try testing.expectEqualStrings("z", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(bin_cond.left).data))));
 
     const then_branch = pt.getNode(ifs.then_branch);
-    const then_stmts = tree.getNodes(tree.blocks.items[then_branch.data].stmts);
+    const then_stmts = tree.getNodes(tree.block(then_branch).stmts);
     const assign = pt.getNode(then_stmts[0]);
     const a = tree.assignment(assign);
     try testing.expectEqualStrings("x", tree.getString(a.name));
@@ -1883,13 +1883,13 @@ test "KupCAD Parser: Global Namespace Property Assignment" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.property_assignment, stmt.tag);
-    const pa = tree.property_assignments.items[stmt.data];
+    const pa = tree.propertyAssignment(stmt);
     try testing.expectEqualStrings("debug_mode", tree.getString(pa.property));
-    try testing.expectEqual(true, pt.getNode(pa.value).data != 0);
+    try testing.expectEqual(true, tree.boolean(pt.getNode(pa.value)));
 
     const target_ns = pt.getNode(pa.target);
     try testing.expectEqual(ast.Tag.namespace_access, target_ns.tag);
-    const path = tree.getStringLists(tree.getSpan(target_ns.data));
+    const path = tree.getStringLists(tree.nodeSpan(target_ns));
     try testing.expectEqual(@as(usize, 2), path.len);
     try testing.expectEqualStrings("App", tree.getString(path[0]));
     try testing.expectEqualStrings("Config", tree.getString(path[1]));
@@ -1936,22 +1936,22 @@ test "KupCAD Parser: Multi-Line Nested Array and Range Expressions" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     const arr_node = pt.getNode(tree.assignment(stmt).value);
-    const arr = tree.getNodes(tree.getSpan(arr_node.data));
+    const arr = tree.getNodes(tree.nodeSpan(arr_node));
     try testing.expectEqual(@as(usize, 3), arr.len);
 
     const item0 = pt.getNode(arr[0]);
     try testing.expectEqual(ast.Tag.array_literal, item0.tag);
-    const item0_elems = tree.getNodes(tree.getSpan(item0.data));
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[pt.getNode(item0_elems[0]).data]);
+    const item0_elems = tree.getNodes(tree.nodeSpan(item0));
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(item0_elems[0])));
 
     const item1 = pt.getNode(arr[1]);
     try testing.expectEqual(ast.Tag.range, item1.tag);
-    const r1 = tree.ranges.items[item1.data];
+    const r1 = tree.range(item1);
     try testing.expectEqual(true, r1.is_exclusive);
 
     const item2 = pt.getNode(arr[2]);
     try testing.expectEqual(ast.Tag.array_literal, item2.tag);
-    const item2_elems = tree.getNodes(tree.getSpan(item2.data));
+    const item2_elems = tree.getNodes(tree.nodeSpan(item2));
     try testing.expectEqualStrings("x", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(item2_elems[0]).data))));
 }
 
@@ -1995,28 +1995,28 @@ test "KupCAD Parser: Return and Next with Multi-value Tuples" {
 
     const def_node_idx = try pt.parser.parseStatement();
     const def_node = pt.getNode(def_node_idx);
-    const ds = tree.def_stmts.items[def_node.data];
+    const ds = tree.defStmt(def_node);
     const body_node = pt.getNode(ds.body);
-    const stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const stmts = tree.getNodes(tree.block(body_node).stmts);
 
     const if_node = pt.getNode(stmts[0]);
     const ifs = tree.ifStmt(if_node);
     try testing.expectEqualStrings("skip?", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(ifs.condition).data))));
 
     const then_branch = pt.getNode(ifs.then_branch);
-    const then_stmts = tree.getNodes(tree.blocks.items[then_branch.data].stmts);
+    const then_stmts = tree.getNodes(tree.block(then_branch).stmts);
     const next_node = pt.getNode(then_stmts[0]);
 
-    const next_vals_node = pt.getNode(@as(ast.NodeIndex, @enumFromInt(next_node.data)));
-    const next_vals = tree.getNodes(tree.getSpan(next_vals_node.data));
+    const next_vals_node = pt.getNode(tree.nodeIndex(next_node));
+    const next_vals = tree.getNodes(tree.nodeSpan(next_vals_node));
     try testing.expectEqual(@as(usize, 3), next_vals.len);
-    try testing.expectEqual(@as(f64, 2.0), tree.numbers.items[pt.getNode(next_vals[1]).data]);
+    try testing.expectEqual(@as(f64, 2.0), tree.number(pt.getNode(next_vals[1])));
 
     const ret_node = pt.getNode(stmts[1]);
-    const ret_vals_node = pt.getNode(@as(ast.NodeIndex, @enumFromInt(ret_node.data)));
-    const ret_vals = tree.getNodes(tree.getSpan(ret_vals_node.data));
+    const ret_vals_node = pt.getNode(tree.nodeIndex(ret_node));
+    const ret_vals = tree.getNodes(tree.nodeSpan(ret_vals_node));
     try testing.expectEqual(@as(usize, 2), ret_vals.len);
-    try testing.expectEqual(true, pt.getNode(ret_vals[0]).data != 0);
+    try testing.expectEqual(true, tree.boolean(pt.getNode(ret_vals[0])));
     try testing.expectEqualStrings("done", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(ret_vals[1]).data))));
 }
 
@@ -2029,15 +2029,15 @@ test "KupCAD Parser: Property and Index Assignment Interactions" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.property_assignment, stmt.tag);
-    const pa = tree.property_assignments.items[stmt.data];
+    const pa = tree.propertyAssignment(stmt);
 
     try testing.expectEqualStrings("name", tree.getString(pa.property));
     try testing.expectEqualStrings("Top", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(pa.value).data))));
 
     const target = pt.getNode(pa.target);
     try testing.expectEqual(ast.Tag.index_access, target.tag);
-    const ia = tree.index_accesses.items[target.data];
-    try testing.expectEqual(@as(f64, 0.0), tree.numbers.items[pt.getNode(ia.index).data]);
+    const ia = tree.indexAccess(target);
+    try testing.expectEqual(@as(f64, 0.0), tree.number(pt.getNode(ia.index)));
 
     const access_target = pt.getNode(ia.target);
     try testing.expectEqual(ast.Tag.method_call, access_target.tag);
@@ -2063,7 +2063,7 @@ test "KupCAD Parser: Multiple Sequential Rescue Clauses" {
     const node_idx = try pt.parser.parseStatement();
     const node = pt.getNode(node_idx);
     try testing.expectEqual(ast.Tag.begin_stmt, node.tag);
-    const bs = tree.begin_stmts.items[node.data];
+    const bs = tree.beginStmt(node);
 
     const rescues = tree.getRescueClauses(bs.rescues);
     try testing.expectEqual(@as(usize, 2), rescues.len);
@@ -2076,8 +2076,8 @@ test "KupCAD Parser: Multiple Sequential Rescue Clauses" {
     try testing.expectEqualStrings("e", tree.getString(rescues[0].variable));
 
     const r0_body = pt.getNode(rescues[0].body);
-    const r0_stmts = tree.getNodes(tree.blocks.items[r0_body.data].stmts);
-    try testing.expectEqual(@as(f64, 1.0), tree.numbers.items[pt.getNode(r0_stmts[0]).data]);
+    const r0_stmts = tree.getNodes(tree.block(r0_body).stmts);
+    try testing.expectEqual(@as(f64, 1.0), tree.number(pt.getNode(r0_stmts[0])));
 
     // Second rescue (catch-all)
     const r1_errors = tree.getStringLists(rescues[1].errors);
@@ -2085,8 +2085,8 @@ test "KupCAD Parser: Multiple Sequential Rescue Clauses" {
     try testing.expectEqualStrings("fallback", tree.getString(rescues[1].variable));
 
     const r1_body = pt.getNode(rescues[1].body);
-    const r1_stmts = tree.getNodes(tree.blocks.items[r1_body.data].stmts);
-    try testing.expectEqual(@as(f64, 2.0), tree.numbers.items[pt.getNode(r1_stmts[0]).data]);
+    const r1_stmts = tree.getNodes(tree.block(r1_body).stmts);
+    try testing.expectEqual(@as(f64, 2.0), tree.number(pt.getNode(r1_stmts[0])));
 }
 
 test "KupCAD Parser: Trailing Modifiers on Compound Begin/End Blocks" {
@@ -2103,18 +2103,18 @@ test "KupCAD Parser: Trailing Modifiers on Compound Begin/End Blocks" {
     const stmt = pt.getNode(stmt_idx);
 
     try testing.expectEqual(ast.Tag.while_stmt, stmt.tag);
-    const ws = tree.while_stmts.items[stmt.data];
+    const ws = tree.whileStmt(stmt);
     try testing.expectEqual(true, ws.is_until);
     try testing.expectEqualStrings("done?", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(ws.condition).data))));
 
     const body_node = pt.getNode(ws.body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     const wrapped_begin = pt.getNode(body_stmts[0]);
     try testing.expectEqual(ast.Tag.begin_stmt, wrapped_begin.tag);
-    const bs = tree.begin_stmts.items[wrapped_begin.data];
+    const bs = tree.beginStmt(wrapped_begin);
 
     const begin_body = pt.getNode(bs.body);
-    const begin_stmts = tree.getNodes(tree.blocks.items[begin_body.data].stmts);
+    const begin_stmts = tree.getNodes(tree.block(begin_body).stmts);
     try testing.expectEqualStrings("step", tree.getString(tree.methodCall(pt.getNode(begin_stmts[0])).method_name));
 }
 
@@ -2157,13 +2157,13 @@ test "KupCAD Parser: Empty Literals and Blocks" {
     const s1_idx = try pt.parser.parseStatement();
     const s1 = pt.getNode(s1_idx);
     const arr_node = pt.getNode(tree.assignment(s1).value);
-    const arr_elems = tree.getNodes(tree.getSpan(arr_node.data));
+    const arr_elems = tree.getNodes(tree.nodeSpan(arr_node));
     try testing.expectEqual(@as(usize, 0), arr_elems.len);
 
     const s2_idx = try pt.parser.parseStatement();
     const s2 = pt.getNode(s2_idx);
     const hash_node = pt.getNode(tree.assignment(s2).value);
-    const hash_entries = tree.getHashEntries(tree.getSpan(hash_node.data));
+    const hash_entries = tree.getHashEntries(tree.nodeSpan(hash_node));
     try testing.expectEqual(@as(usize, 0), hash_entries.len);
 
     const s3_idx = try pt.parser.parseStatement();
@@ -2172,7 +2172,7 @@ test "KupCAD Parser: Empty Literals and Blocks" {
     try testing.expectEqualStrings("run", tree.getString(mc.method_name));
 
     const block = pt.getNode(mc.block);
-    const block_stmts = tree.getNodes(tree.blocks.items[block.data].stmts);
+    const block_stmts = tree.getNodes(tree.block(block).stmts);
     try testing.expectEqual(@as(usize, 0), block_stmts.len);
 }
 
@@ -2198,9 +2198,9 @@ test "KupCAD Parser: Method Calls on Array and Hash Literals" {
 
     const receiver1 = pt.getNode(mc1.receiver);
     try testing.expectEqual(ast.Tag.array_literal, receiver1.tag);
-    const rec1_elems = tree.getNodes(tree.getSpan(receiver1.data));
+    const rec1_elems = tree.getNodes(tree.nodeSpan(receiver1));
     try testing.expectEqual(@as(usize, 3), rec1_elems.len);
-    try testing.expectEqual(@as(f64, 1.0), tree.numbers.items[pt.getNode(rec1_elems[0]).data]);
+    try testing.expectEqual(@as(f64, 1.0), tree.number(pt.getNode(rec1_elems[0])));
 
     // hash_keys = { a: 1 }.keys()
     const stmt2_idx = try pt.parser.parseStatement();
@@ -2215,7 +2215,7 @@ test "KupCAD Parser: Method Calls on Array and Hash Literals" {
 
     const receiver2 = pt.getNode(mc2.receiver);
     try testing.expectEqual(ast.Tag.hash_literal, receiver2.tag);
-    const rec2_entries = tree.getHashEntries(tree.getSpan(receiver2.data));
+    const rec2_entries = tree.getHashEntries(tree.nodeSpan(receiver2));
     try testing.expectEqual(@as(usize, 1), rec2_entries.len);
     try testing.expectEqualStrings("a", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(rec2_entries[0].key).data))));
 }
@@ -2234,8 +2234,10 @@ test "KupCAD Parser: Diagnostics Line and Column Tracking" {
     const diag = pt.parser.diagnostics.list.items[0];
 
     try testing.expectEqualStrings("Invalid expression starting with '}'", diag.message);
-    try testing.expectEqual(@as(u32, 2), diag.loc.line);
-    try testing.expectEqual(@as(u32, 12), diag.loc.col);
+
+    const line_index = try @import("../../core/line_index.zig").LineIndex.init(pt.arena.allocator(), source);
+    try testing.expectEqual(@as(u32, 2), line_index.getLine(diag.loc.offset));
+    try testing.expectEqual(@as(u32, 12), line_index.getUtf8Column(diag.loc.offset));
 }
 
 test "KupCAD Parser: Empty Class and Module Declarations" {
@@ -2252,22 +2254,22 @@ test "KupCAD Parser: Empty Class and Module Declarations" {
     const mod_stmt_idx = try pt.parser.parseStatement();
     const mod_stmt = pt.getNode(mod_stmt_idx);
     try testing.expectEqual(ast.Tag.module_stmt, mod_stmt.tag);
-    const ms = tree.module_stmts.items[mod_stmt.data];
+    const ms = tree.moduleStmt(mod_stmt);
     try testing.expectEqualStrings("Math", tree.getString(ms.name));
 
     const mod_body = pt.getNode(ms.body);
-    const mod_stmts = tree.getNodes(tree.blocks.items[mod_body.data].stmts);
+    const mod_stmts = tree.getNodes(tree.block(mod_body).stmts);
     try testing.expectEqual(@as(usize, 0), mod_stmts.len);
 
     const class_stmt_idx = try pt.parser.parseStatement();
     const class_stmt = pt.getNode(class_stmt_idx);
     try testing.expectEqual(ast.Tag.class_stmt, class_stmt.tag);
-    const cs = tree.class_stmts.items[class_stmt.data];
+    const cs = tree.classStmt(class_stmt);
     const name_node = pt.getNode(cs.name);
     try testing.expectEqualStrings("Vector", tree.getString(@as(ast.StringId, @enumFromInt(name_node.data))));
 
     const class_body = pt.getNode(cs.body);
-    const class_stmts = tree.getNodes(tree.blocks.items[class_body.data].stmts);
+    const class_stmts = tree.getNodes(tree.block(class_body).stmts);
     try testing.expectEqual(@as(usize, 0), class_stmts.len);
 }
 
@@ -2284,18 +2286,18 @@ test "KupCAD Parser: Block Passing in Property Assignment" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.property_assignment, stmt.tag);
-    const pa = tree.property_assignments.items[stmt.data];
+    const pa = tree.propertyAssignment(stmt);
     try testing.expectEqualStrings("callback", tree.getString(pa.property));
 
     const lambda = pt.getNode(pa.value);
     try testing.expectEqual(ast.Tag.lambda_expr, lambda.tag);
-    const le = tree.lambda_exprs.items[lambda.data];
+    const le = tree.lambdaExpr(lambda);
 
     const params = tree.getParams(le.params);
     try testing.expectEqualStrings("event", tree.getString(params[0].name));
 
     const lambda_body = pt.getNode(le.body);
-    const lambda_stmts = tree.getNodes(tree.blocks.items[lambda_body.data].stmts);
+    const lambda_stmts = tree.getNodes(tree.block(lambda_body).stmts);
     const call_node = pt.getNode(lambda_stmts[0]);
     try testing.expectEqualStrings("log", tree.getString(tree.methodCall(call_node).method_name));
 }
@@ -2312,19 +2314,19 @@ test "KupCAD Parser: Naked Return Statement (No Arguments)" {
 
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
-    const ds = tree.def_stmts.items[stmt.data];
+    const ds = tree.defStmt(stmt);
 
     const def_body = pt.getNode(ds.body);
-    const def_stmts = tree.getNodes(tree.blocks.items[def_body.data].stmts);
+    const def_stmts = tree.getNodes(tree.block(def_body).stmts);
     const body_stmt = pt.getNode(def_stmts[0]);
     try testing.expectEqual(ast.Tag.if_stmt, body_stmt.tag);
 
     const ifs = tree.ifStmt(body_stmt);
     const then_branch = pt.getNode(ifs.then_branch);
-    const then_stmts = tree.getNodes(tree.blocks.items[then_branch.data].stmts);
+    const then_stmts = tree.getNodes(tree.block(then_branch).stmts);
     const ret_stmt = pt.getNode(then_stmts[0]);
     try testing.expectEqual(ast.Tag.return_stmt, ret_stmt.tag);
-    try testing.expectEqual(ast.NodeIndex.none, @as(ast.NodeIndex, @enumFromInt(ret_stmt.data)));
+    try testing.expectEqual(ast.NodeIndex.none, tree.nodeIndex(ret_stmt));
 }
 
 test "KupCAD Parser: Inline Array/Hash Creation within Command Arguments" {
@@ -2345,14 +2347,14 @@ test "KupCAD Parser: Inline Array/Hash Creation within Command Arguments" {
     // Arg 1 is Array
     const arg0 = pt.getNode(args[0].value);
     try testing.expectEqual(ast.Tag.array_literal, arg0.tag);
-    const arg0_elems = tree.getNodes(tree.getSpan(arg0.data));
+    const arg0_elems = tree.getNodes(tree.nodeSpan(arg0));
     try testing.expectEqual(@as(usize, 3), arg0_elems.len);
 
     // Arg 2 is Hash
     try testing.expectEqualStrings("opts", tree.getString(args[1].name));
     const arg1 = pt.getNode(args[1].value);
     try testing.expectEqual(ast.Tag.hash_literal, arg1.tag);
-    const arg1_entries = tree.getHashEntries(tree.getSpan(arg1.data));
+    const arg1_entries = tree.getHashEntries(tree.nodeSpan(arg1));
     try testing.expectEqualStrings("twist", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(arg1_entries[0].key).data))));
 }
 
@@ -2369,7 +2371,7 @@ test "KupCAD Parser: Multiple Comma-Separated Conditions in 'When' Clauses" {
 
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
-    const cs = tree.case_stmts.items[stmt.data];
+    const cs = tree.caseStmt(stmt);
     const branches = tree.getWhenBranches(cs.when_branches);
     try testing.expectEqual(@as(usize, 1), branches.len);
 
@@ -2392,14 +2394,14 @@ test "KupCAD Parser: Parenthesis-less Method Definitions" {
 
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
-    const ds = tree.def_stmts.items[stmt.data];
+    const ds = tree.defStmt(stmt);
     try testing.expectEqualStrings("build", tree.getString(ds.name));
 
     const params = tree.getParams(ds.params);
     try testing.expectEqual(@as(usize, 2), params.len);
     try testing.expectEqualStrings("width", tree.getString(params[0].name));
     try testing.expectEqualStrings("height", tree.getString(params[1].name));
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[pt.getNode(params[1].default_value).data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(params[1].default_value)));
 }
 
 test "KupCAD Parser: Multiline Command Arguments" {
@@ -2434,7 +2436,7 @@ test "KupCAD Parser: Error Recovery (synchronize)" {
 
     const result_idx = try pt.parser.parseProgram();
     const result = pt.getNode(result_idx);
-    const stmts = tree.getNodes(tree.blocks.items[result.data].stmts);
+    const stmts = tree.getNodes(tree.block(result).stmts);
     try testing.expectEqual(@as(usize, 1), stmts.len);
 
     const valid_stmt = pt.getNode(stmts[0]);
@@ -2452,13 +2454,13 @@ test "KupCAD Parser: Nested String Interpolation AST" {
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.interpolated_string, stmt.tag);
 
-    const outer_parts = tree.getNodes(tree.getSpan(stmt.data));
+    const outer_parts = tree.getNodes(tree.nodeSpan(stmt));
     try testing.expectEqualStrings("Outer ", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(outer_parts[0]).data))));
 
     const inner_node = pt.getNode(outer_parts[1]);
     try testing.expectEqual(ast.Tag.interpolated_string, inner_node.tag);
 
-    const inner_parts = tree.getNodes(tree.getSpan(inner_node.data));
+    const inner_parts = tree.getNodes(tree.nodeSpan(inner_node));
     try testing.expectEqualStrings("Inner ", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(inner_parts[0]).data))));
     try testing.expectEqual(ast.BinaryOp.add, tree.binaryExpr(pt.getNode(inner_parts[1])).op);
     try testing.expectEqualStrings("", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(inner_parts[2]).data))));
@@ -2484,7 +2486,7 @@ test "KupCAD Parser: Begin Block as Expression" {
 
     const begin_expr = pt.getNode(a.value);
     try testing.expectEqual(ast.Tag.begin_stmt, begin_expr.tag);
-    const bs = tree.begin_stmts.items[begin_expr.data];
+    const bs = tree.beginStmt(begin_expr);
 
     const rescues = tree.getRescueClauses(bs.rescues);
     try testing.expectEqual(@as(usize, 1), rescues.len);
@@ -2503,17 +2505,17 @@ test "KupCAD Parser: Single-line Case When with 'then'" {
 
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
-    const cs = tree.case_stmts.items[stmt.data];
+    const cs = tree.caseStmt(stmt);
     const branches = tree.getWhenBranches(cs.when_branches);
     try testing.expectEqual(@as(usize, 2), branches.len);
 
     const branch0_body = pt.getNode(branches[0].body);
-    const b0_stmts = tree.getNodes(tree.blocks.items[branch0_body.data].stmts);
+    const b0_stmts = tree.getNodes(tree.block(branch0_body).stmts);
     const call0 = pt.getNode(b0_stmts[0]);
     try testing.expectEqualStrings("cube", tree.getString(tree.methodCall(call0).method_name));
 
     const branch1_body = pt.getNode(branches[1].body);
-    const b1_stmts = tree.getNodes(tree.blocks.items[branch1_body.data].stmts);
+    const b1_stmts = tree.getNodes(tree.block(branch1_body).stmts);
     const call1 = pt.getNode(b1_stmts[0]);
     try testing.expectEqualStrings("sphere", tree.getString(tree.methodCall(call1).method_name));
 }
@@ -2538,7 +2540,7 @@ test "KupCAD Parser: Top-Level Method Call with Parens and Block" {
     try testing.expectEqual(@as(usize, 2), args.len);
 
     const block = pt.getNode(mc.block);
-    const params = tree.getNodes(tree.blocks.items[block.data].params);
+    const params = tree.getNodes(tree.block(block).params);
     try testing.expectEqual(@as(usize, 2), params.len);
     try testing.expectEqualStrings("x", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(params[0]).data))));
 }
@@ -2552,13 +2554,13 @@ test "KupCAD Parser: Multi-Assignment with Raw Comma Values" {
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
     try testing.expectEqual(ast.Tag.multiple_assignment, stmt.tag);
-    const ma = tree.multiple_assignments.items[stmt.data];
+    const ma = tree.multipleAssignment(stmt);
 
     const val_node = pt.getNode(ma.value);
-    const rhs_array = tree.getNodes(tree.getSpan(val_node.data));
+    const rhs_array = tree.getNodes(tree.nodeSpan(val_node));
     try testing.expectEqual(@as(usize, 2), rhs_array.len);
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[pt.getNode(rhs_array[0]).data]);
-    try testing.expectEqual(@as(f64, 20.0), tree.numbers.items[pt.getNode(rhs_array[1]).data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(rhs_array[0])));
+    try testing.expectEqual(@as(f64, 20.0), tree.number(pt.getNode(rhs_array[1])));
 }
 
 test "KupCAD Parser: Implicit RHS Array on Single Assignment" {
@@ -2574,18 +2576,18 @@ test "KupCAD Parser: Implicit RHS Array on Single Assignment" {
     const stmt1_idx = try pt.parser.parseStatement();
     const stmt1 = pt.getNode(stmt1_idx);
     const rhs_arr1_node = pt.getNode(tree.assignment(stmt1).value);
-    const rhs_arr1 = tree.getNodes(tree.getSpan(rhs_arr1_node.data));
+    const rhs_arr1 = tree.getNodes(tree.nodeSpan(rhs_arr1_node));
     try testing.expectEqual(@as(usize, 3), rhs_arr1.len);
-    try testing.expectEqual(@as(f64, 30.0), tree.numbers.items[pt.getNode(rhs_arr1[2]).data]);
+    try testing.expectEqual(@as(f64, 30.0), tree.number(pt.getNode(rhs_arr1[2])));
 
     // Verify `points[0] = 5, 5`
     const stmt2_idx = try pt.parser.parseStatement();
     const stmt2 = pt.getNode(stmt2_idx);
-    const ia = tree.index_assignments.items[stmt2.data];
+    const ia = tree.indexAssignment(stmt2);
     const rhs_arr2_node = pt.getNode(ia.value);
-    const rhs_arr2 = tree.getNodes(tree.getSpan(rhs_arr2_node.data));
+    const rhs_arr2 = tree.getNodes(tree.nodeSpan(rhs_arr2_node));
     try testing.expectEqual(@as(usize, 2), rhs_arr2.len);
-    try testing.expectEqual(@as(f64, 5.0), tree.numbers.items[pt.getNode(rhs_arr2[1]).data]);
+    try testing.expectEqual(@as(f64, 5.0), tree.number(pt.getNode(rhs_arr2[1])));
 }
 
 test "KupCAD Parser: Multi-Dimensional Array Indexing" {
@@ -2599,10 +2601,10 @@ test "KupCAD Parser: Multi-Dimensional Array Indexing" {
     const index_node = pt.getNode(tree.assignment(stmt).value);
 
     try testing.expectEqual(ast.Tag.index_access, index_node.tag);
-    const ia = tree.index_accesses.items[index_node.data];
+    const ia = tree.indexAccess(index_node);
 
     const index_args_node = pt.getNode(ia.index);
-    const index_args = tree.getNodes(tree.getSpan(index_args_node.data));
+    const index_args = tree.getNodes(tree.nodeSpan(index_args_node));
     try testing.expectEqual(@as(usize, 2), index_args.len);
     try testing.expectEqualStrings("x", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(index_args[0]).data))));
     try testing.expectEqualStrings("y", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(index_args[1]).data))));
@@ -2619,7 +2621,7 @@ test "KupCAD Parser: Empty Parentheses evaluate to Nil" {
     const mc = tree.methodCall(stmt);
 
     const block_node = pt.getNode(mc.block);
-    const block_stmts = tree.getNodes(tree.blocks.items[block_node.data].stmts);
+    const block_stmts = tree.getNodes(tree.block(block_node).stmts);
     const block_stmt = pt.getNode(block_stmts[0]);
 
     try testing.expectEqual(ast.Tag.nil, block_stmt.tag);
@@ -2645,7 +2647,7 @@ test "KupCAD Parser: Chained and Compound Assignment Right-Associativity" {
     try testing.expectEqual(ast.Tag.assignment, assign_c.tag);
     const ac = tree1.assignment(assign_c);
     try testing.expectEqualStrings("c", tree1.getString(ac.name));
-    try testing.expectEqual(@as(f64, 10.0), tree1.numbers.items[pt1.getNode(ac.value).data]);
+    try testing.expectEqual(@as(f64, 10.0), tree1.number(pt1.getNode(ac.value)));
 
     const source2 = "x += y += 5";
     var pt2 = try KTest.init(source2);
@@ -2663,7 +2665,7 @@ test "KupCAD Parser: Chained and Compound Assignment Right-Associativity" {
     const ay = tree2.assignment(assign_y);
     try testing.expectEqual(ast.BinaryOp.add, ay.op.?);
     try testing.expectEqualStrings("y", tree2.getString(ay.name));
-    try testing.expectEqual(@as(f64, 5.0), tree2.numbers.items[pt2.getNode(ay.value).data]);
+    try testing.expectEqual(@as(f64, 5.0), tree2.number(pt2.getNode(ay.value)));
 }
 
 test "KupCAD Parser: Nested Ternary Right-Associativity" {
@@ -2676,13 +2678,13 @@ test "KupCAD Parser: Nested Ternary Right-Associativity" {
     const expr = pt.getNode(expr_idx);
 
     try testing.expectEqual(ast.Tag.ternary_op, expr.tag);
-    const t1 = tree.ternary_exprs.items[expr.data];
+    const t1 = tree.ternaryExpr(expr);
     try testing.expectEqualStrings("a", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(t1.condition).data))));
     try testing.expectEqualStrings("b", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(t1.then_branch).data))));
 
     const else_ternary = pt.getNode(t1.else_branch);
     try testing.expectEqual(ast.Tag.ternary_op, else_ternary.tag);
-    const t2 = tree.ternary_exprs.items[else_ternary.data];
+    const t2 = tree.ternaryExpr(else_ternary);
     try testing.expectEqualStrings("c", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(t2.condition).data))));
     try testing.expectEqualStrings("d", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(t2.then_branch).data))));
     try testing.expectEqualStrings("e", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(t2.else_branch).data))));
@@ -2702,7 +2704,7 @@ test "KupCAD Parser: Multiple Unary Prefix Right-Associativity" {
     const inner_not = pt.getNode(un1.operand);
     const un2 = tree.unaryExpr(inner_not);
     try testing.expectEqual(ast.UnaryOp.not, un2.op);
-    try testing.expectEqual(true, pt.getNode(un2.operand).data != 0);
+    try testing.expectEqual(true, tree.boolean(pt.getNode(un2.operand)));
 }
 
 test "KupCAD Parser: Ruby 3.1 Shorthand Hash Syntax" {
@@ -2715,7 +2717,7 @@ test "KupCAD Parser: Ruby 3.1 Shorthand Hash Syntax" {
     const stmt = pt.getNode(stmt_idx);
 
     const hash_node = pt.getNode(tree.assignment(stmt).value);
-    const hash = tree.getHashEntries(tree.getSpan(hash_node.data));
+    const hash = tree.getHashEntries(tree.nodeSpan(hash_node));
     try testing.expectEqual(@as(usize, 2), hash.len);
 
     try testing.expectEqualStrings("width", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(hash[0].key).data))));
@@ -2739,7 +2741,7 @@ test "KupCAD Parser: Multi-line Indented Docstring Tag Node" {
     const doc_stmt1_idx = try pt.parser.parseStatement();
     const doc_stmt1 = pt.getNode(doc_stmt1_idx);
     try testing.expectEqual(ast.Tag.param_doc, doc_stmt1.tag);
-    const doc = tree.param_docs.items[doc_stmt1.data];
+    const doc = tree.paramDoc(doc_stmt1);
 
     try testing.expectEqualStrings("deprecated", tree.getString(doc.tag_name));
     try testing.expectEqual(ast.StringId.none, doc.target_name);
@@ -2749,7 +2751,7 @@ test "KupCAD Parser: Multi-line Indented Docstring Tag Node" {
     const def_stmt_idx = try pt.parser.parseStatement();
     const def_stmt = pt.getNode(def_stmt_idx);
     try testing.expectEqual(ast.Tag.def_stmt, def_stmt.tag);
-    try testing.expectEqualStrings("mymethod", tree.getString(tree.def_stmts.items[def_stmt.data].name));
+    try testing.expectEqualStrings("mymethod", tree.getString(tree.defStmt(def_stmt).name));
 }
 
 test "KupCAD Parser: AST Node offset and length calculation for LSP" {
@@ -2762,24 +2764,22 @@ test "KupCAD Parser: AST Node offset and length calculation for LSP" {
     const stmt = pt.getNode(stmt_idx);
 
     try testing.expectEqual(ast.Tag.assignment, stmt.tag);
-    try testing.expectEqual(@as(u32, 0), stmt.loc.offset);
-    try testing.expectEqual(@as(u32, 14), stmt.loc.length);
+    try testing.expectEqual(@as(u32, 0), pt.parser.tokens.starts[stmt.main_token]);
 
     const bin_expr = pt.getNode(tree.assignment(stmt).value);
     try testing.expectEqual(ast.Tag.binary_op, bin_expr.tag);
-    try testing.expectEqual(@as(u32, 6), bin_expr.loc.offset);
-    try testing.expectEqual(@as(u32, 8), bin_expr.loc.length);
+    try testing.expectEqual(@as(u32, 6), pt.parser.tokens.starts[bin_expr.main_token]);
 
     const bin_payload = tree.binaryExpr(bin_expr);
     const left_num = pt.getNode(bin_payload.left);
     try testing.expectEqual(ast.Tag.number, left_num.tag);
-    try testing.expectEqual(@as(u32, 6), left_num.loc.offset);
-    try testing.expectEqual(@as(u32, 2), left_num.loc.length);
+    try testing.expectEqual(@as(u32, 6), pt.parser.tokens.starts[left_num.main_token]);
+    try testing.expectEqual(@as(u32, 2), pt.parser.tokens.lengths[left_num.main_token]);
 
     const right_num = pt.getNode(bin_payload.right);
     try testing.expectEqual(ast.Tag.number, right_num.tag);
-    try testing.expectEqual(@as(u32, 11), right_num.loc.offset);
-    try testing.expectEqual(@as(u32, 3), right_num.loc.length);
+    try testing.expectEqual(@as(u32, 11), pt.parser.tokens.starts[right_num.main_token]);
+    try testing.expectEqual(@as(u32, 3), pt.parser.tokens.lengths[right_num.main_token]);
 }
 
 test "KupCAD Parser: Compound Node Spans and Comment Side-Table Extraction" {
@@ -2797,22 +2797,19 @@ test "KupCAD Parser: Compound Node Spans and Comment Side-Table Extraction" {
     const stmt = pt.getNode(stmt_idx);
 
     try testing.expectEqual(ast.Tag.def_stmt, stmt.tag);
-    try testing.expectEqual(@as(u32, 0), stmt.loc.offset);
-    try testing.expectEqual(@as(u32, 42), stmt.loc.length);
+    try testing.expectEqual(@as(u32, 0), pt.parser.tokens.starts[stmt.main_token]);
 
-    const body_node = pt.getNode(tree.def_stmts.items[stmt.data].body);
-    const body_stmts = tree.getNodes(tree.blocks.items[body_node.data].stmts);
+    const body_node = pt.getNode(tree.defStmt(stmt).body);
+    const body_stmts = tree.getNodes(tree.block(body_node).stmts);
     try testing.expectEqual(@as(usize, 1), body_stmts.len);
 
     const math_expr = pt.getNode(body_stmts[0]);
     try testing.expectEqual(ast.Tag.binary_op, math_expr.tag);
-    try testing.expectEqual(@as(u32, 33), math_expr.loc.offset);
-    try testing.expectEqual(@as(u32, 5), math_expr.loc.length);
+    try testing.expectEqual(@as(u32, 33), pt.parser.tokens.starts[math_expr.main_token]);
 
     try testing.expectEqual(@as(usize, 1), pt.parser.comments.items.len);
     const captured_comment = pt.parser.comments.items[0];
     try testing.expectEqualStrings("# a comment", captured_comment.lexeme);
-    try testing.expectEqual(@as(u32, 2), captured_comment.loc.line);
     try testing.expectEqual(@as(u32, 19), captured_comment.loc.offset);
 }
 
@@ -2833,22 +2830,22 @@ test "KupCAD Parser: Standard Block While and Until Loops" {
     const while_stmt_idx = try pt.parser.parseStatement();
     const while_stmt = pt.getNode(while_stmt_idx);
     try testing.expectEqual(ast.Tag.while_stmt, while_stmt.tag);
-    const ws1 = tree.while_stmts.items[while_stmt.data];
+    const ws1 = tree.whileStmt(while_stmt);
     try testing.expectEqual(false, ws1.is_until);
 
     const while_body = pt.getNode(ws1.body);
-    const while_stmts = tree.getNodes(tree.blocks.items[while_body.data].stmts);
+    const while_stmts = tree.getNodes(tree.block(while_body).stmts);
     const while_assign = pt.getNode(while_stmts[0]);
     try testing.expectEqual(ast.BinaryOp.add, tree.assignment(while_assign).op.?);
 
     const until_stmt_idx = try pt.parser.parseStatement();
     const until_stmt = pt.getNode(until_stmt_idx);
     try testing.expectEqual(ast.Tag.while_stmt, until_stmt.tag);
-    const ws2 = tree.while_stmts.items[until_stmt.data];
+    const ws2 = tree.whileStmt(until_stmt);
     try testing.expectEqual(true, ws2.is_until);
 
     const until_body = pt.getNode(ws2.body);
-    const until_stmts = tree.getNodes(tree.blocks.items[until_body.data].stmts);
+    const until_stmts = tree.getNodes(tree.block(until_body).stmts);
     const until_assign = pt.getNode(until_stmts[0]);
     try testing.expectEqual(ast.BinaryOp.subtract, tree.assignment(until_assign).op.?);
 }
@@ -2863,11 +2860,11 @@ test "KupCAD Parser: Index Compound Assignment" {
     const stmt = pt.getNode(stmt_idx);
 
     try testing.expectEqual(ast.Tag.index_assignment, stmt.tag);
-    const ia = tree.index_assignments.items[stmt.data];
+    const ia = tree.indexAssignment(stmt);
     try testing.expectEqualStrings("arr", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(ia.target).data))));
-    try testing.expectEqual(@as(f64, 0.0), tree.numbers.items[pt.getNode(ia.index).data]);
+    try testing.expectEqual(@as(f64, 0.0), tree.number(pt.getNode(ia.index)));
     try testing.expectEqual(ast.BinaryOp.multiply, ia.op.?);
-    try testing.expectEqual(@as(f64, 5.0), tree.numbers.items[pt.getNode(ia.value).data]);
+    try testing.expectEqual(@as(f64, 5.0), tree.number(pt.getNode(ia.value)));
 }
 
 test "KupCAD Parser: Property Compound Assignment" {
@@ -2880,11 +2877,11 @@ test "KupCAD Parser: Property Compound Assignment" {
     const stmt = pt.getNode(stmt_idx);
 
     try testing.expectEqual(ast.Tag.property_assignment, stmt.tag);
-    const pa = tree.property_assignments.items[stmt.data];
+    const pa = tree.propertyAssignment(stmt);
     try testing.expectEqualStrings("obj", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(pa.target).data))));
     try testing.expectEqualStrings("x", tree.getString(pa.property));
     try testing.expectEqual(ast.BinaryOp.add, pa.op.?);
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[pt.getNode(pa.value).data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(pa.value)));
 }
 
 test "KupCAD Parser: Strict Index Assignment Rejects Spaces" {
@@ -2943,7 +2940,7 @@ test "KupCAD Parser: Trailing commas in multiple assignment" {
     const stmt = pt.getNode(stmt_idx);
 
     try testing.expectEqual(ast.Tag.multiple_assignment, stmt.tag);
-    const ma = tree.multiple_assignments.items[stmt.data];
+    const ma = tree.multipleAssignment(stmt);
     const lhs = tree.getLhsExprs(ma.lhs);
 
     try testing.expectEqual(@as(usize, 2), lhs.len);
@@ -2951,10 +2948,10 @@ test "KupCAD Parser: Trailing commas in multiple assignment" {
     try testing.expectEqualStrings("y", tree.getString(lhs[1].name));
 
     const rhs_val = pt.getNode(ma.value);
-    const rhs_array = tree.getNodes(tree.getSpan(rhs_val.data));
+    const rhs_array = tree.getNodes(tree.nodeSpan(rhs_val));
     try testing.expectEqual(@as(usize, 2), rhs_array.len);
-    try testing.expectEqual(@as(f64, 10.0), tree.numbers.items[pt.getNode(rhs_array[0]).data]);
-    try testing.expectEqual(@as(f64, 20.0), tree.numbers.items[pt.getNode(rhs_array[1]).data]);
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(rhs_array[0])));
+    try testing.expectEqual(@as(f64, 20.0), tree.number(pt.getNode(rhs_array[1])));
 }
 
 test "KupCAD Parser: Deep recursion safety (Stack Overflow Prevention)" {
@@ -2973,7 +2970,7 @@ test "KupCAD Parser: Deep recursion safety (Stack Overflow Prevention)" {
     const expr = pt.getNode(expr_idx);
 
     try testing.expectEqual(ast.Tag.number, expr.tag);
-    try testing.expectEqual(@as(f64, 1.0), pt.parser.b.tree.numbers.items[expr.data]);
+    try testing.expectEqual(@as(f64, 1.0), pt.parser.b.tree.number(expr));
 }
 
 test "KupCAD Parser: Right-Associative Assignment Chaining" {
@@ -2998,7 +2995,7 @@ test "KupCAD Parser: Right-Associative Assignment Chaining" {
     const c_assign = tree.assignment(c_assign_node);
     try testing.expectEqualStrings("c", tree.getString(c_assign.name));
 
-    try testing.expectEqual(@as(f64, 1.0), tree.numbers.items[pt.getNode(c_assign.value).data]);
+    try testing.expectEqual(@as(f64, 1.0), tree.number(pt.getNode(c_assign.value)));
 }
 
 test "KupCAD Parser: Empty Arrays and Hashes" {
@@ -3009,10 +3006,10 @@ test "KupCAD Parser: Empty Arrays and Hashes" {
     const arr_idx = try pt.parser.parseStatement();
     const arr = pt.getNode(arr_idx);
     try testing.expectEqual(ast.Tag.array_literal, arr.tag);
-    try testing.expectEqual(@as(usize, 0), tree.getNodes(tree.getSpan(arr.data)).len);
+    try testing.expectEqual(@as(usize, 0), tree.getNodes(tree.nodeSpan(arr)).len);
 
     const hash_idx = try pt.parser.parseStatement();
     const hash = pt.getNode(hash_idx);
     try testing.expectEqual(ast.Tag.hash_literal, hash.tag);
-    try testing.expectEqual(@as(usize, 0), tree.getHashEntries(tree.getSpan(hash.data)).len);
+    try testing.expectEqual(@as(usize, 0), tree.getHashEntries(tree.nodeSpan(hash)).len);
 }
