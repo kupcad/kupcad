@@ -44,8 +44,8 @@ pub const SortImportsRule = struct {
                             const a = ctx_tree.getNode(a_idx).?;
                             const b = ctx_tree.getNode(b_idx).?;
 
-                            const path_a = ctx_tree.getString(ctx_tree.import_stmts.items[a.data].path);
-                            const path_b = ctx_tree.getString(ctx_tree.import_stmts.items[b.data].path);
+                            const path_a = ctx_tree.getString(ctx_tree.importStmt(a).path);
+                            const path_b = ctx_tree.getString(ctx_tree.importStmt(b).path);
 
                             return std.mem.lessThan(u8, path_a, path_b);
                         }
