@@ -2,6 +2,16 @@ const std = @import("std");
 const lsp = @import("lsp");
 const api = @import("../api.zig");
 
+pub const DocumentBuffer = struct {
+    uri: []const u8,
+    text: std.ArrayListUnmanaged(u8),
+
+    pub fn deinit(self: *DocumentBuffer, allocator: std.mem.Allocator) void {
+        allocator.free(self.uri);
+        self.text.deinit(allocator);
+    }
+};
+
 pub const Handler = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -9,7 +19,7 @@ pub const Handler = struct {
     use_utf8: bool = false,
 
     // We need to store the open files in memory so the formatter can access their text
-    files: std.StringHashMapUnmanaged([]const u8) = .empty,
+    files: std.StringHashMapUnmanaged(DocumentBuffer) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, transport: *lsp.Transport) Handler {
         return .{ .allocator = allocator, .io = io, .transport = transport };
@@ -19,8 +29,7 @@ pub const Handler = struct {
         // Clean up our file memory when the server shuts down
         var it = self.files.iterator();
         while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
+            entry.value_ptr.deinit(self.allocator);
         }
         self.files.deinit(self.allocator);
     }
@@ -75,11 +84,22 @@ pub const Handler = struct {
     ) !void {
         self.log("Opened {s}", .{params.textDocument.uri});
 
-        // Store the file text in our hash map
-        const uri_dup = try self.allocator.dupe(u8, params.textDocument.uri);
-        const text_dup = try self.allocator.dupe(u8, params.textDocument.text);
-        try self.files.put(self.allocator, uri_dup, text_dup);
+        // Prevent leaking if the client sends didOpen for an already tracked file
+        if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
+            var old_doc = kv.value;
+            old_doc.deinit(self.allocator);
+        }
 
+        const uri_dup = try self.allocator.dupe(u8, params.textDocument.uri);
+        var text_buf = std.ArrayListUnmanaged(u8).empty;
+        try text_buf.appendSlice(self.allocator, params.textDocument.text);
+
+        const doc = DocumentBuffer{
+            .uri = uri_dup,
+            .text = text_buf,
+        };
+
+        try self.files.put(self.allocator, uri_dup, doc);
         try self.runDiagnostics(arena, params.textDocument.uri, params.textDocument.text);
     }
 
@@ -89,15 +109,16 @@ pub const Handler = struct {
         params: lsp.types.TextDocument.DidChangeParams,
     ) !void {
         self.log("Changed {s}", .{params.textDocument.uri});
+
         if (params.contentChanges.len > 0) {
             switch (params.contentChanges[0]) {
-                .text_document_content_change_whole_document => |doc| {
-                    // Update our stored file text
-                    if (self.files.getPtr(params.textDocument.uri)) |ptr| {
-                        self.allocator.free(ptr.*);
-                        ptr.* = try self.allocator.dupe(u8, doc.text);
+                .text_document_content_change_whole_document => |doc_change| {
+                    // Update our stored file text by reusing capacity to prevent fragmentation
+                    if (self.files.getPtr(params.textDocument.uri)) |doc| {
+                        doc.text.clearRetainingCapacity();
+                        try doc.text.appendSlice(self.allocator, doc_change.text);
                     }
-                    try self.runDiagnostics(arena, params.textDocument.uri, doc.text);
+                    try self.runDiagnostics(arena, params.textDocument.uri, doc_change.text);
                 },
                 else => {},
             }
@@ -112,9 +133,10 @@ pub const Handler = struct {
     ) !void {
         _ = arena;
         self.log("Closed {s}", .{params.textDocument.uri});
+
         if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
-            self.allocator.free(kv.key);
-            self.allocator.free(kv.value);
+            var old_doc = kv.value;
+            old_doc.deinit(self.allocator);
         }
     }
 
@@ -127,7 +149,8 @@ pub const Handler = struct {
         self.log("Formatting requested for {s}", .{params.textDocument.uri});
 
         // Fetch the code from our internal state
-        const source = self.files.get(params.textDocument.uri) orelse return null;
+        const doc = self.files.get(params.textDocument.uri) orelse return null;
+        const source = doc.text.items;
 
         // Run the KupCAD formatter
         const formatted = api.formatCode(arena, source, .{}) catch |err| {
