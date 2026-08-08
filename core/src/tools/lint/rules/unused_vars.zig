@@ -26,25 +26,25 @@ pub const UnusedVarsRule = struct {
 
         switch (node.tag) {
             .assignment => {
-                const a = tree.assignment(node).*;
-                try engine.declareVar(tree.getString(a.name), node.loc);
+                const a = tree.assignment(node);
+                try engine.declareVar(tree.getString(a.name), engine.getLoc(node.main_token));
             },
             .multiple_assignment => {
-                const ma = tree.multiple_assignments.items[node.data];
+                const ma = tree.multipleAssignment(node);
                 for (tree.getLhsExprs(ma.lhs)) |lhs| {
-                    try engine.declareVar(tree.getString(lhs.name), node.loc);
+                    try engine.declareVar(tree.getString(lhs.name), engine.getLoc(node.main_token));
                 }
             },
             .def_stmt => {
-                const ds = tree.def_stmts.items[node.data];
+                const ds = tree.defStmt(node);
                 // Function names belong to the scope they are declared in
-                try engine.declareVar(tree.getString(ds.name), node.loc);
+                try engine.declareVar(tree.getString(ds.name), engine.getLoc(node.main_token));
             },
             .identifier => {
                 try engine.markUsed(tree.getString(@as(ast.StringId, @enumFromInt(node.data))));
             },
             .method_call => {
-                const mc = tree.methodCall(node).*;
+                const mc = tree.methodCall(node);
                 try engine.markUsed(tree.getString(mc.method_name));
             },
             else => {},
@@ -57,26 +57,26 @@ pub const UnusedVarsRule = struct {
 
         switch (node.tag) {
             .identifier => {
-                try engine.declareVar(tree.getString(@as(ast.StringId, @enumFromInt(node.data))), node.loc);
+                try engine.declareVar(tree.getString(@as(ast.StringId, @enumFromInt(node.data))), engine.getLoc(node.main_token));
             },
             .array_literal => {
-                const span = tree.getSpan(node.data);
+                const span = tree.nodeSpan(node);
                 for (tree.getNodes(span)) |elem_idx| {
                     try declareLhsBindings(engine, tree, elem_idx);
                 }
             },
             .hash_literal => {
-                const span = tree.getSpan(node.data);
+                const span = tree.nodeSpan(node);
                 for (tree.getHashEntries(span)) |entry| {
                     try declareLhsBindings(engine, tree, entry.value);
                 }
             },
             .splat_expr => {
-                const inner = @as(ast.NodeIndex, @enumFromInt(node.data));
+                const inner = tree.nodeIndex(node);
                 try declareLhsBindings(engine, tree, inner);
             },
             .double_splat_expr => {
-                const inner = @as(ast.NodeIndex, @enumFromInt(node.data));
+                const inner = tree.nodeIndex(node);
                 try declareLhsBindings(engine, tree, inner);
             },
             else => {},
@@ -90,25 +90,25 @@ pub const UnusedVarsRule = struct {
         // Variables declared here belong specifically to the newly pushed inner scope
         switch (node.tag) {
             .for_stmt => {
-                const fs = tree.for_stmts.items[node.data];
+                const fs = tree.forStmt(node);
                 for (tree.getForBindings(fs.bindings)) |b| {
-                    try engine.declareVar(tree.getString(b.name), node.loc);
+                    try engine.declareVar(tree.getString(b.name), engine.getLoc(node.main_token));
                 }
             },
             .def_stmt => {
-                const ds = tree.def_stmts.items[node.data];
+                const ds = tree.defStmt(node);
                 for (tree.getParams(ds.params)) |p| {
-                    try engine.declareVar(tree.getString(p.name), node.loc);
+                    try engine.declareVar(tree.getString(p.name), engine.getLoc(node.main_token));
                 }
             },
             .lambda_expr => {
-                const le = tree.lambda_exprs.items[node.data];
+                const le = tree.lambdaExpr(node);
                 for (tree.getParams(le.params)) |p| {
-                    try engine.declareVar(tree.getString(p.name), node.loc);
+                    try engine.declareVar(tree.getString(p.name), engine.getLoc(node.main_token));
                 }
             },
             .block => {
-                const b = tree.blocks.items[node.data];
+                const b = tree.block(node);
                 for (tree.getNodes(b.params)) |p_idx| {
                     try declareLhsBindings(engine, tree, p_idx);
                 }

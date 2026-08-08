@@ -1,10 +1,11 @@
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
+const token = @import("../../../core/token.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 
 pub const ParamDocsRule = struct {
-    documented_vars: std.StringHashMapUnmanaged(ast.Location) = .empty,
+    documented_vars: std.StringHashMapUnmanaged(token.Location) = .empty,
 
     pub fn rule(self: *@This()) LintRule {
         return .{
@@ -26,13 +27,13 @@ pub const ParamDocsRule = struct {
         const node = tree.getNode(node_idx) orelse return;
 
         if (node.tag == .param_doc) {
-            const doc = tree.param_docs.items[node.data];
+            const doc = tree.paramDoc(node);
             if (doc.target_name != .none) {
                 const target_str = tree.getString(doc.target_name);
-                try self.documented_vars.put(engine.allocator, target_str, node.loc);
+                try self.documented_vars.put(engine.allocator, target_str, engine.getLoc(node.main_token));
             }
         } else if (node.tag == .def_stmt) {
-            const ds = tree.def_stmts.items[node.data];
+            const ds = tree.defStmt(node);
             for (tree.getParams(ds.params)) |p| {
                 const p_name = tree.getString(p.name);
                 _ = self.documented_vars.remove(p_name);

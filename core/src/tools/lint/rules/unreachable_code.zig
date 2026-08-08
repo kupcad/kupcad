@@ -23,13 +23,13 @@ pub const UnreachableCodeRule = struct {
         const node = tree.getNode(node_idx) orelse return;
 
         if (node.tag == .block) {
-            const b = tree.blocks.items[node.data];
+            const b = tree.block(node);
             var found_terminal = false;
             for (tree.getNodes(b.stmts)) |stmt_idx| {
                 const stmt_node = tree.getNode(stmt_idx).?;
 
                 if (found_terminal) {
-                    try engine.addDiagnostic(stmt_node.loc, .warning, "Unreachable code detected after explicit control flow return/break.", .{});
+                    try engine.addDiagnostic(engine.getLoc(stmt_node.main_token), .warning, "Unreachable code detected after explicit control flow return/break.", .{});
                 }
 
                 if (stmt_node.tag == .return_stmt or stmt_node.tag == .break_stmt or stmt_node.tag == .next_stmt) {
