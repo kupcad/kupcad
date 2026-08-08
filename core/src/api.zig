@@ -5,6 +5,7 @@ const common_token = @import("core/token.zig");
 const common_errors = @import("core/errors.zig");
 const ast = @import("core/ast.zig");
 const resolver = @import("core/resolver.zig");
+const parent_map = @import("core/parent_map.zig");
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const Linter = @import("tools/lint/linter.zig").Linter;
 
@@ -27,6 +28,7 @@ pub const Document = struct {
     diagnostics: []const common_errors.Diagnostic,
     line_index: LineIndex,
     symbols: []resolver.ResolvedSymbol,
+    parents: []ast.NodeIndex,
 
     pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Document {
         var arena = std.heap.ArenaAllocator.init(allocator);
@@ -50,6 +52,9 @@ pub const Document = struct {
         var res = try resolver.Resolver.init(arena_alloc, &tree, tokens.starts, tokens.lengths, &parser.diagnostics);
         try res.resolve(root_index);
 
+        var pmap = try parent_map.ParentMap.init(arena_alloc, &tree);
+        try pmap.build(&tree, root_index);
+
         return .{
             .arena = arena,
             .tree = tree,
@@ -58,6 +63,7 @@ pub const Document = struct {
             .diagnostics = parser.diagnostics.list.items,
             .line_index = line_index,
             .symbols = res.symbols,
+            .parents = pmap.parents,
         };
     }
 
