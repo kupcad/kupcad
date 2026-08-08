@@ -59,7 +59,7 @@ pub const Formatter = struct {
 
     // Determines if a node is a definition that requires visual separation
     fn requiresBlankLineSeparation(node: *const ast.Node) bool {
-        return switch (node.kind) {
+        return switch (node.tag) {
             .def_stmt, .class_stmt, .module_stmt => true,
             else => false,
         };
@@ -126,55 +126,83 @@ pub const Formatter = struct {
         const node = tree.getNode(node_idx) orelse return;
 
         try self.flushLeadingComments(node.loc.line);
-        switch (node.kind) {
-            .block => |b| try self.formatBlockStmts(tree, tree.getNodes(b.stmts)),
-            .number => |n| {
+
+        switch (node.tag) {
+            .block => {
+                const b = tree.blocks.items[node.data];
+                try self.formatBlockStmts(tree, tree.getNodes(b.stmts));
+            },
+            .number => {
+                const n = tree.numbers.items[node.data];
                 var buf: [64]u8 = undefined;
                 try self.out.appendSlice(self.allocator, try std.fmt.bufPrint(&buf, "{d}", .{n}));
             },
-            .string => |s| try self.formatWrappedString(tree.getString(s), '"'),
-            .interpolated_string => |parts| try self.formatInterpolatedString(tree, tree.getNodes(parts)),
-            .symbol => |s| try self.formatWrappedString(tree.getString(s), ':'),
-            .boolean => |b| try self.out.appendSlice(self.allocator, if (b) "true" else "false"),
+            .string => try self.formatWrappedString(tree.getString(@enumFromInt(node.data)), '"'),
+            .interpolated_string => {
+                const parts = tree.getSpan(node.data);
+                try self.formatInterpolatedString(tree, tree.getNodes(parts));
+            },
+            .symbol => try self.formatWrappedString(tree.getString(@enumFromInt(node.data)), ':'),
+            .boolean => {
+                const b = node.data != 0;
+                try self.out.appendSlice(self.allocator, if (b) "true" else "false");
+            },
             .nil => try self.out.appendSlice(self.allocator, "nil"),
             .undef => try self.out.appendSlice(self.allocator, "undef"),
             .self_expr => try self.out.appendSlice(self.allocator, "self"),
-            .identifier => |i| try self.out.appendSlice(self.allocator, tree.getString(i)),
-            .array_literal => |arr| try self.formatArray(tree, tree.getNodes(arr)),
-            .hash_literal => |entries| try self.formatHash(tree, tree.getHashEntries(entries)),
-            .if_stmt => |ifs| try self.formatIfStmt(tree, ifs, node.loc.line),
-            .while_stmt => |ws| try self.formatWhileStmt(tree, ws, node.loc.line),
-            .for_stmt => |fs| try self.formatForStmt(tree, fs, node.loc.line),
-            .case_stmt => |cs| try self.formatCaseStmt(tree, cs, node.loc.line),
-            .begin_stmt => |bs| try self.formatBeginStmt(tree, bs, node.loc.line),
-            .def_stmt => |def| try self.formatDefStmt(tree, def, node.loc.line),
-            .class_stmt => |cls| try self.formatClassStmt(tree, cls, node.loc.line),
-            .module_stmt => |m| try self.formatModuleStmt(tree, m, node.loc.line),
-            .lambda_expr => |l| try self.formatLambda(tree, l, node.loc.line),
-            .namespace_access => |ns| try self.formatNamespace(tree, tree.getStringLists(ns)),
-            .range => |r| try self.formatRange(tree, r),
-            .assignment => |a| try self.formatAssignment(tree, a),
-            .multiple_assignment => |ma| try self.formatMultipleAssignment(tree, ma),
-            .property_assignment => |pa| try self.formatPropertyAssignment(tree, pa),
-            .index_assignment => |ia| try self.formatIndexAssignment(tree, ia),
-            .index_access => |ia| try self.formatIndexAccess(tree, ia),
-            .binary_op => |b| try self.formatBinaryOp(tree, b),
-            .unary_op => |u| try self.formatUnaryOp(tree, u),
-            .ternary_op => |t| try self.formatTernaryOp(tree, t),
-            .splat_expr => |s| try self.formatSplat(tree, s, "*"),
-            .double_splat_expr => |s| try self.formatSplat(tree, s, "**"),
-            .each_expr => |e| try self.formatSplat(tree, e, "each "),
-            .rescue_modifier => |rm| try self.formatRescueModifier(tree, rm),
-            .method_call => |mc| try self.formatMethodCall(tree, mc, node.loc.line),
-            .super_call => |sc| try self.formatSuperCall(tree, sc, node.loc.line),
-            .return_stmt => |r| try self.formatFlowControl(tree, "return", r),
-            .break_stmt => |b| try self.formatFlowControl(tree, "break", b),
-            .next_stmt => |n| try self.formatFlowControl(tree, "next", n),
-            .yield_stmt => |y| try self.formatYield(tree, tree.getNodes(y)),
-            .import_stmt => |is| try self.formatImportExport(tree, "import", tree.getStringLists(is.symbols), tree.getString(is.path), is.attributes),
-            .export_stmt => |es| try self.formatImportExport(tree, "export", tree.getStringLists(es.symbols), tree.getString(es.path), es.attributes),
-            .param_doc => |doc_idx| try self.formatParamDoc(tree, tree.param_docs.items[doc_idx]),
-            .comment => |c| try self.out.appendSlice(self.allocator, tree.getString(c)),
+            .identifier => try self.out.appendSlice(self.allocator, tree.getString(@enumFromInt(node.data))),
+            .array_literal => {
+                const arr = tree.getSpan(node.data);
+                try self.formatArray(tree, tree.getNodes(arr));
+            },
+            .hash_literal => {
+                const entries = tree.getSpan(node.data);
+                try self.formatHash(tree, tree.getHashEntries(entries));
+            },
+            .if_stmt => try self.formatIfStmt(tree, tree.ifStmt(node).*, node.loc.line),
+            .while_stmt => try self.formatWhileStmt(tree, tree.while_stmts.items[node.data], node.loc.line),
+            .for_stmt => try self.formatForStmt(tree, tree.for_stmts.items[node.data], node.loc.line),
+            .case_stmt => try self.formatCaseStmt(tree, tree.case_stmts.items[node.data], node.loc.line),
+            .begin_stmt => try self.formatBeginStmt(tree, tree.begin_stmts.items[node.data], node.loc.line),
+            .def_stmt => try self.formatDefStmt(tree, tree.def_stmts.items[node.data], node.loc.line),
+            .class_stmt => try self.formatClassStmt(tree, tree.class_stmts.items[node.data], node.loc.line),
+            .module_stmt => try self.formatModuleStmt(tree, tree.module_stmts.items[node.data], node.loc.line),
+            .lambda_expr => try self.formatLambda(tree, tree.lambda_exprs.items[node.data], node.loc.line),
+            .namespace_access => {
+                const ns = tree.getSpan(node.data);
+                try self.formatNamespace(tree, tree.getStringLists(ns));
+            },
+            .range => try self.formatRange(tree, tree.ranges.items[node.data]),
+            .assignment => try self.formatAssignment(tree, tree.assignment(node).*),
+            .multiple_assignment => try self.formatMultipleAssignment(tree, tree.multiple_assignments.items[node.data]),
+            .property_assignment => try self.formatPropertyAssignment(tree, tree.property_assignments.items[node.data]),
+            .index_assignment => try self.formatIndexAssignment(tree, tree.index_assignments.items[node.data]),
+            .index_access => try self.formatIndexAccess(tree, tree.index_accesses.items[node.data]),
+            .binary_op => try self.formatBinaryOp(tree, tree.binaryExpr(node).*),
+            .unary_op => try self.formatUnaryOp(tree, tree.unaryExpr(node).*),
+            .ternary_op => try self.formatTernaryOp(tree, tree.ternary_exprs.items[node.data]),
+            .splat_expr => try self.formatSplat(tree, @enumFromInt(node.data), "*"),
+            .double_splat_expr => try self.formatSplat(tree, @enumFromInt(node.data), "**"),
+            .each_expr => try self.formatSplat(tree, @enumFromInt(node.data), "each "),
+            .rescue_modifier => try self.formatRescueModifier(tree, tree.rescue_modifiers.items[node.data]),
+            .method_call => try self.formatMethodCall(tree, tree.methodCall(node).*, node.loc.line),
+            .super_call => try self.formatSuperCall(tree, tree.super_calls.items[node.data], node.loc.line),
+            .return_stmt => try self.formatFlowControl(tree, "return", @enumFromInt(node.data)),
+            .break_stmt => try self.formatFlowControl(tree, "break", @enumFromInt(node.data)),
+            .next_stmt => try self.formatFlowControl(tree, "next", @enumFromInt(node.data)),
+            .yield_stmt => {
+                const y = tree.getSpan(node.data);
+                try self.formatYield(tree, tree.getNodes(y));
+            },
+            .import_stmt => {
+                const is_stmt = tree.import_stmts.items[node.data];
+                try self.formatImportExport(tree, "import", tree.getStringLists(is_stmt.symbols), tree.getString(is_stmt.path), is_stmt.attributes);
+            },
+            .export_stmt => {
+                const es_stmt = tree.export_stmts.items[node.data];
+                try self.formatImportExport(tree, "export", tree.getStringLists(es_stmt.symbols), tree.getString(es_stmt.path), es_stmt.attributes);
+            },
+            .param_doc => try self.formatParamDoc(tree, tree.param_docs.items[node.data]),
         }
     }
 
@@ -217,8 +245,8 @@ pub const Formatter = struct {
         try self.out.append(self.allocator, '"');
         for (parts) |part_idx| {
             const part = tree.getNode(part_idx).?;
-            if (part.kind == .string) {
-                try self.out.appendSlice(self.allocator, tree.getString(part.kind.string));
+            if (part.tag == .string) {
+                try self.out.appendSlice(self.allocator, tree.getString(@enumFromInt(part.data)));
             } else {
                 try self.out.appendSlice(self.allocator, "#{");
                 try self.formatNode(tree, part_idx);
@@ -246,14 +274,14 @@ pub const Formatter = struct {
             const key_node = tree.getNode(entry.key).?;
             const val_node = tree.getNode(entry.value).?;
 
-            if (key_node.kind == .double_splat_expr) {
+            if (key_node.tag == .double_splat_expr) {
                 try self.formatNode(tree, entry.key);
-            } else if (key_node.kind == .symbol and val_node.kind == .identifier and std.mem.eql(u8, tree.getString(key_node.kind.symbol), tree.getString(val_node.kind.identifier))) {
-                try self.out.appendSlice(self.allocator, tree.getString(key_node.kind.symbol));
+            } else if (key_node.tag == .symbol and val_node.tag == .identifier and std.mem.eql(u8, tree.getString(@enumFromInt(key_node.data)), tree.getString(@enumFromInt(val_node.data)))) {
+                try self.out.appendSlice(self.allocator, tree.getString(@enumFromInt(key_node.data)));
                 try self.out.append(self.allocator, ':');
             } else {
-                if (key_node.kind == .symbol) {
-                    try self.out.appendSlice(self.allocator, tree.getString(key_node.kind.symbol));
+                if (key_node.tag == .symbol) {
+                    try self.out.appendSlice(self.allocator, tree.getString(@enumFromInt(key_node.data)));
                     try self.out.appendSlice(self.allocator, ": ");
                 } else {
                     try self.formatNode(tree, entry.key);
@@ -447,7 +475,7 @@ pub const Formatter = struct {
         }
 
         const body_node = tree.getNode(l.body).?;
-        if (body_node.kind == .block) {
+        if (body_node.tag == .block) {
             try self.out.appendSlice(self.allocator, " ");
             try self.formatBlockClosure(tree, l.body, start_line);
         } else {
@@ -558,7 +586,7 @@ pub const Formatter = struct {
             try self.formatNode(tree, mc.receiver);
             // Multi-line indentation alignment for fluent method chains
             const r_node = tree.getNode(mc.receiver).?;
-            if (r_node.kind == .method_call) {
+            if (r_node.tag == .method_call) {
                 try self.ensureNewline();
                 self.indent_level += 1;
                 try self.writeIndent();
@@ -595,8 +623,8 @@ pub const Formatter = struct {
     fn formatBlockClosure(self: *Formatter, tree: *const ast.Tree, block_idx: ast.NodeIndex, start_line: u32) Error!void {
         if (block_idx == .none) return;
         const block_node = tree.getNode(block_idx).?;
-        if (block_node.kind != .block) return;
-        const b = block_node.kind.block;
+        if (block_node.tag != .block) return;
+        const b = tree.blocks.items[block_node.data];
 
         try self.out.appendSlice(self.allocator, "do");
         const params = tree.getNodes(b.params);
