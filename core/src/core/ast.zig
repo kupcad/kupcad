@@ -40,6 +40,12 @@ pub const Span = struct {
     end: u32,
 };
 
+/// A memory-efficient slice pointing to the contiguous string_bytes buffer
+pub const StringSpan = struct {
+    offset: u32,
+    length: u32,
+};
+
 // --- Node Tag ---
 pub const Tag = enum(u8) {
     invalid,
@@ -300,8 +306,8 @@ pub const Tree = struct {
     extra_data: std.ArrayListUnmanaged(u32) = .empty,
 
     // String interning pool (storing slices backed by arena)
-    strings: std.ArrayListUnmanaged([]const u8) = .empty,
-    string_indices: std.StringHashMapUnmanaged(StringId) = .empty,
+    string_bytes: std.ArrayListUnmanaged(u8) = .empty,
+    string_spans: std.ArrayListUnmanaged(StringSpan) = .empty,
 
     // Specific typed pools for precision arrays
     numbers: std.ArrayListUnmanaged(f64) = .empty,
@@ -326,11 +332,8 @@ pub const Tree = struct {
         self.nodes.deinit(allocator);
         self.extra_data.deinit(allocator);
 
-        for (self.strings.items) |str| {
-            allocator.free(str);
-        }
-        self.strings.deinit(allocator);
-        self.string_indices.deinit(allocator);
+        self.string_bytes.deinit(allocator);
+        self.string_spans.deinit(allocator);
 
         self.numbers.deinit(allocator);
         self.extra_node_indices.deinit(allocator);
@@ -352,7 +355,8 @@ pub const Tree = struct {
 
     pub fn getString(self: *const Tree, id: StringId) []const u8 {
         if (id == .none) return "";
-        return self.strings.items[@intFromEnum(id)];
+        const span = self.string_spans.items[@intFromEnum(id)];
+        return self.string_bytes.items[span.offset .. span.offset + span.length];
     }
 
     pub fn getNodes(self: *const Tree, span: Span) []const NodeIndex {
@@ -389,18 +393,6 @@ pub const Tree = struct {
 
     pub fn getRescueClauses(self: *const Tree, span: Span) []const RescueClause {
         return self.rescue_clauses.items[span.start..span.end];
-    }
-
-    pub fn intern(self: *Tree, allocator: std.mem.Allocator, str: []const u8) !StringId {
-        if (self.string_indices.get(str)) |id| {
-            return id;
-        }
-        const copied = try allocator.dupe(u8, str);
-        const index = @as(u32, @intCast(self.strings.items.len));
-        const id = @as(StringId, @enumFromInt(index));
-        try self.strings.append(allocator, copied);
-        try self.string_indices.put(allocator, copied, id);
-        return id;
     }
 
     // --- Dynamic Payload Reconstructors ---
@@ -664,6 +656,36 @@ pub const Tree = struct {
 pub const Builder = struct {
     allocator: std.mem.Allocator,
     tree: Tree,
+    // The deduplication map stores StringId -> void.
+    // We use a custom Context to do lookups using raw string slices!
+    intern_map: std.HashMapUnmanaged(StringId, void, InternContext, std.hash_map.default_max_load_percentage) = .empty,
+
+    // The Map Context (Used when the hash map resizes and moves StringIds around)
+    const InternContext = struct {
+        tree: *const Tree,
+
+        pub fn hash(self: InternContext, key: StringId) u64 {
+            return std.hash_map.hashString(self.tree.getString(key));
+        }
+
+        pub fn eql(self: InternContext, a: StringId, b: StringId) bool {
+            return std.mem.eql(u8, self.tree.getString(a), self.tree.getString(b));
+        }
+    };
+
+    // The Adapter Context (Used when looking up a raw []const u8 slice against stored StringIds)
+    const StringAdapter = struct {
+        tree: *const Tree,
+
+        pub fn hash(self: StringAdapter, adapted_key: []const u8) u64 {
+            _ = self;
+            return std.hash_map.hashString(adapted_key);
+        }
+
+        pub fn eql(self: StringAdapter, adapted_key: []const u8, key: StringId) bool {
+            return std.mem.eql(u8, adapted_key, self.tree.getString(key));
+        }
+    };
 
     pub fn init(allocator: std.mem.Allocator) Builder {
         return .{
@@ -673,6 +695,7 @@ pub const Builder = struct {
     }
 
     pub fn deinit(self: *Builder) void {
+        self.intern_map.deinit(self.allocator);
         self.tree.deinit(self.allocator);
     }
 
@@ -695,7 +718,35 @@ pub const Builder = struct {
     }
 
     pub fn intern(self: *Builder, str: []const u8) !StringId {
-        return self.tree.intern(self.allocator, str);
+        if (str.len == 0) return .none;
+
+        const map_ctx = InternContext{ .tree = &self.tree };
+        const adapter = StringAdapter{ .tree = &self.tree };
+
+        // Pass BOTH contexts manually because they contain state (the Tree pointer)
+        const gop = try self.intern_map.getOrPutContextAdapted(self.allocator, str, adapter, map_ctx);
+
+        if (gop.found_existing) {
+            return gop.key_ptr.*;
+        }
+
+        // Calculate the new offset
+        const offset: u32 = @intCast(self.tree.string_bytes.items.len);
+
+        // Append the actual bytes to the contiguous buffer
+        try self.tree.string_bytes.appendSlice(self.allocator, str);
+
+        // Append the span information
+        const id = @as(StringId, @enumFromInt(self.tree.string_spans.items.len));
+        try self.tree.string_spans.append(self.allocator, .{
+            .offset = offset,
+            .length = @intCast(str.len),
+        });
+
+        // Save the new ID in the deduplication map
+        gop.key_ptr.* = id;
+
+        return id;
     }
 
     /// Serializes payloads sequentially into the global DoD extra_data array

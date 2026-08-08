@@ -3028,3 +3028,64 @@ test "KupCAD Parser: Empty Arrays and Hashes" {
     try testing.expectEqual(ast.Tag.hash_literal, hash.tag);
     try testing.expectEqual(@as(usize, 0), tree.getHashEntries(tree.nodeSpan(hash)).len);
 }
+
+test "AST Builder: Contiguous String Interner tightly packs bytes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const id1 = try b.intern("hello");
+    const id2 = try b.intern("world");
+    const id3 = try b.intern("zig");
+
+    // Verify IDs are distinct
+    try testing.expect(id1 != id2);
+    try testing.expect(id2 != id3);
+
+    // Verify contiguous packing! (5 + 5 + 3 = 13 bytes total)
+    try testing.expectEqual(@as(usize, 13), b.tree.string_bytes.items.len);
+    try testing.expectEqualStrings("helloworldzig", b.tree.string_bytes.items);
+
+    // Verify retrieval uses the spans correctly to extract the exact slices
+    try testing.expectEqualStrings("hello", b.tree.getString(id1));
+    try testing.expectEqualStrings("world", b.tree.getString(id2));
+    try testing.expectEqualStrings("zig", b.tree.getString(id3));
+}
+
+test "AST Builder: String Interner handles empty strings" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const id = try b.intern("");
+
+    // Should map directly to the `.none` enum without allocating
+    try testing.expectEqual(ast.StringId.none, id);
+    try testing.expectEqualStrings("", b.tree.getString(id));
+
+    // Ensure absolutely no bytes were appended to the global buffer
+    try testing.expectEqual(@as(usize, 0), b.tree.string_bytes.items.len);
+}
+
+test "AST Builder: String Interner Hash Map resizing is safe" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Insert enough strings to force the HashMap to resize/rehash.
+    // If our custom InternContext is broken, this will panic or corrupt data.
+    var ids: [1000]ast.StringId = undefined;
+    for (0..1000) |i| {
+        const str = try std.fmt.allocPrint(arena.allocator(), "var_{d}", .{i});
+        ids[i] = try b.intern(str);
+    }
+
+    // Verify retrieval after resizes
+    for (0..1000) |i| {
+        const expected = try std.fmt.allocPrint(arena.allocator(), "var_{d}", .{i});
+        try testing.expectEqualStrings(expected, b.tree.getString(ids[i]));
+    }
+}
