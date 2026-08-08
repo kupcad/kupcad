@@ -1,14 +1,18 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const lsp = @import("lsp");
 const api = @import("../api.zig");
+const ast = @import("../core/ast.zig");
 
 pub const DocumentBuffer = struct {
     uri: []const u8,
-    text: std.ArrayListUnmanaged(u8),
+    source: []const u8,
+    doc: ?api.Document = null,
 
     pub fn deinit(self: *DocumentBuffer, allocator: std.mem.Allocator) void {
         allocator.free(self.uri);
-        self.text.deinit(allocator);
+        allocator.free(self.source);
+        if (self.doc) |*d| d.deinit();
     }
 };
 
@@ -16,17 +20,22 @@ pub const Handler = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     transport: *lsp.Transport,
-    use_utf8: bool = false,
+    offset_encoding: lsp.offsets.Encoding = .@"utf-16",
 
-    // We need to store the open files in memory so the formatter can access their text
+    // Tracks open files with their full AST and side-tables retained in memory
     files: std.StringHashMapUnmanaged(DocumentBuffer) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, transport: *lsp.Transport) Handler {
-        return .{ .allocator = allocator, .io = io, .transport = transport };
+        return .{
+            .allocator = allocator,
+            .io = io,
+            .transport = transport,
+            .offset_encoding = .@"utf-16",
+            .files = .empty,
+        };
     }
 
     pub fn deinit(self: *Handler) void {
-        // Clean up our file memory when the server shuts down
         var it = self.files.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.deinit(self.allocator);
@@ -41,21 +50,41 @@ pub const Handler = struct {
 
     pub fn initialize(
         self: *Handler,
-        arena: std.mem.Allocator,
+        _: std.mem.Allocator,
         request: lsp.types.InitializeParams,
     ) lsp.types.InitializeResult {
-        _ = arena;
         self.log("Initializing Server...", .{});
 
         if (request.capabilities.general) |general| {
-            if (general.positionEncodings) |encodings| {
-                for (encodings) |enc| {
-                    if (enc == .@"utf-8") {
-                        self.use_utf8 = true;
-                        break;
-                    }
-                }
+            for (general.positionEncodings orelse &.{}) |encoding| {
+                self.offset_encoding = switch (encoding) {
+                    .@"utf-8" => .@"utf-8",
+                    .@"utf-16" => .@"utf-16",
+                    .@"utf-32" => .@"utf-32",
+                    .custom_value => continue,
+                };
+                break;
             }
+        }
+
+        const server_capabilities: lsp.types.ServerCapabilities = .{
+            .positionEncoding = switch (self.offset_encoding) {
+                .@"utf-8" => .@"utf-8",
+                .@"utf-16" => .@"utf-16",
+                .@"utf-32" => .@"utf-32",
+            },
+            .textDocumentSync = .{
+                .text_document_sync_options = .{
+                    .openClose = true,
+                    .change = .Full,
+                },
+            },
+            .documentFormattingProvider = .{ .bool = true },
+            .hoverProvider = .{ .bool = true },
+        };
+
+        if (builtin.mode == .Debug) {
+            lsp.basic_server.validateServerCapabilities(Handler, server_capabilities);
         }
 
         return .{
@@ -63,18 +92,20 @@ pub const Handler = struct {
                 .name = "kupcad-lsp",
                 .version = "0.1.0",
             },
-            .capabilities = .{
-                .positionEncoding = if (self.use_utf8) .@"utf-8" else .@"utf-16",
-                .textDocumentSync = .{
-                    .text_document_sync_options = .{
-                        .openClose = true,
-                        .change = .Full,
-                    },
-                },
-                // NEW: Tell VS Code we are ready to format documents!
-                .documentFormattingProvider = .{ .bool = true },
-            },
+            .capabilities = server_capabilities,
         };
+    }
+
+    pub fn initialized(_: *Handler, _: std.mem.Allocator, _: lsp.types.InitializedParams) void {}
+
+    pub fn shutdown(_: *Handler, _: std.mem.Allocator, _: void) ?void {
+        return null;
+    }
+
+    pub fn exit(_: *Handler, _: std.mem.Allocator, _: void) void {}
+
+    inline fn useUtf8(self: *const Handler) bool {
+        return self.offset_encoding == .@"utf-8";
     }
 
     pub fn @"textDocument/didOpen"(
@@ -83,23 +114,24 @@ pub const Handler = struct {
         params: lsp.types.TextDocument.DidOpenParams,
     ) !void {
         self.log("Opened {s}", .{params.textDocument.uri});
-
-        // Prevent leaking if the client sends didOpen for an already tracked file
         if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
             var old_doc = kv.value;
             old_doc.deinit(self.allocator);
         }
 
         const uri_dup = try self.allocator.dupe(u8, params.textDocument.uri);
-        var text_buf = std.ArrayListUnmanaged(u8).empty;
-        try text_buf.appendSlice(self.allocator, params.textDocument.text);
+        const source_dup = try self.allocator.dupe(u8, params.textDocument.text);
 
-        const doc = DocumentBuffer{
+        // Parse into full Document state
+        const parsed_doc = api.Document.parse(self.allocator, source_dup) catch null;
+
+        const doc_buf = DocumentBuffer{
             .uri = uri_dup,
-            .text = text_buf,
+            .source = source_dup,
+            .doc = parsed_doc,
         };
+        try self.files.put(self.allocator, uri_dup, doc_buf);
 
-        try self.files.put(self.allocator, uri_dup, doc);
         try self.runDiagnostics(arena, params.textDocument.uri, params.textDocument.text);
     }
 
@@ -109,14 +141,15 @@ pub const Handler = struct {
         params: lsp.types.TextDocument.DidChangeParams,
     ) !void {
         self.log("Changed {s}", .{params.textDocument.uri});
-
         if (params.contentChanges.len > 0) {
             switch (params.contentChanges[0]) {
                 .text_document_content_change_whole_document => |doc_change| {
-                    // Update our stored file text by reusing capacity to prevent fragmentation
-                    if (self.files.getPtr(params.textDocument.uri)) |doc| {
-                        doc.text.clearRetainingCapacity();
-                        try doc.text.appendSlice(self.allocator, doc_change.text);
+                    if (self.files.getPtr(params.textDocument.uri)) |buf| {
+                        self.allocator.free(buf.source);
+                        if (buf.doc) |*d| d.deinit();
+
+                        buf.source = try self.allocator.dupe(u8, doc_change.text);
+                        buf.doc = api.Document.parse(self.allocator, buf.source) catch null;
                     }
                     try self.runDiagnostics(arena, params.textDocument.uri, doc_change.text);
                 },
@@ -125,7 +158,6 @@ pub const Handler = struct {
         }
     }
 
-    // Clean up memory when the user closes the tab in VS Code
     pub fn @"textDocument/didClose"(
         self: *Handler,
         arena: std.mem.Allocator,
@@ -133,41 +165,34 @@ pub const Handler = struct {
     ) !void {
         _ = arena;
         self.log("Closed {s}", .{params.textDocument.uri});
-
         if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
             var old_doc = kv.value;
             old_doc.deinit(self.allocator);
         }
     }
 
-    // Handle the format request
     pub fn @"textDocument/formatting"(
         self: *Handler,
         arena: std.mem.Allocator,
         params: lsp.types.document_formatting.Params,
     ) !?[]const lsp.types.TextEdit {
         self.log("Formatting requested for {s}", .{params.textDocument.uri});
+        const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
+        const source = doc_buf.source;
 
-        // Fetch the code from our internal state
-        const doc = self.files.get(params.textDocument.uri) orelse return null;
-        const source = doc.text.items;
-
-        // Run the KupCAD formatter
         const formatted = api.formatCode(arena, source, .{}) catch |err| {
             self.log("Formatter failed: {}", .{err});
-            return null; // Return null to indicate no changes on error
+            return null;
         };
 
-        // Calculate the end position to replace the entire document
         var line_index = try api.LineIndex.init(arena, source);
         const end_offset: u32 = @intCast(source.len);
         const end_line = line_index.getLine(end_offset);
-        const end_char = if (self.use_utf8)
+        const end_char = if (self.useUtf8())
             line_index.getUtf8Column(end_offset)
         else
             line_index.getUtf16Column(end_offset);
 
-        // Create the TextEdit payload
         var edits = std.ArrayListUnmanaged(lsp.types.TextEdit).empty;
         try edits.append(arena, .{
             .range = .{
@@ -176,8 +201,116 @@ pub const Handler = struct {
             },
             .newText = formatted,
         });
-
         return edits.items;
+    }
+
+    /// Context-Aware Hover Provider using doc.parents, doc.symbols, and lsp.offsets.positionToIndex
+    /// Context-Aware Hover Provider using doc.parents, doc.symbols, and lsp.offsets.positionToIndex
+    pub fn @"textDocument/hover"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.Hover.Params,
+    ) ?lsp.types.Hover {
+        self.log("Hover requested for {s}", .{params.textDocument.uri});
+        const buf = self.files.get(params.textDocument.uri) orelse return null;
+        const doc = buf.doc orelse return null;
+
+        // Use lsp_kit's native positionToIndex offset resolver
+        const target_offset = lsp.offsets.positionToIndex(buf.source, params.position, self.offset_encoding);
+
+        // Find the token under the cursor offset
+        var found_token_idx: ?u24 = null;
+        for (doc.tokens.starts, 0..) |start, i| {
+            const len = doc.tokens.lengths[i];
+            if (target_offset >= start and target_offset < start + len) {
+                found_token_idx = @intCast(i);
+                break;
+            }
+        }
+
+        const tok_idx = found_token_idx orelse return null;
+
+        // Find the AST node associated with this token
+        var found_node_idx: ast.NodeIndex = .none;
+        for (doc.tree.nodes.items, 0..) |node, i| {
+            if (node.main_token == tok_idx) {
+                found_node_idx = @enumFromInt(i);
+                break;
+            }
+        }
+
+        if (found_node_idx == .none) return null;
+        const target_node = doc.tree.getNode(found_node_idx).?;
+
+        // Walk parents using `doc.parents` side-table to gather enclosing context
+        var current = found_node_idx;
+        var def_name: ?[]const u8 = null;
+        var class_name: ?[]const u8 = null;
+
+        while (current != .none) {
+            const p_idx = doc.parents[@intFromEnum(current)];
+            if (p_idx == .none) break;
+            const p_node = doc.tree.getNode(p_idx) orelse break;
+
+            switch (p_node.tag) {
+                .def_stmt => {
+                    if (def_name == null) {
+                        const ds = doc.tree.defStmt(p_node);
+                        def_name = doc.tree.getString(ds.name);
+                    }
+                },
+                .class_stmt => {
+                    if (class_name == null) {
+                        const cs = doc.tree.classStmt(p_node);
+                        const name_node = doc.tree.getNode(cs.name);
+                        if (name_node) |nn| {
+                            if (nn.tag == .identifier) {
+                                class_name = doc.tree.getString(@as(ast.StringId, @enumFromInt(nn.data)));
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
+            current = p_idx;
+        }
+
+        // Build Markdown response string using std.Io.Writer.Allocating
+        var out: std.Io.Writer.Allocating = .init(arena);
+        defer out.deinit();
+
+        if (target_node.tag == .identifier) {
+            const name = doc.tree.getString(@as(ast.StringId, @enumFromInt(target_node.data)));
+            const sym = doc.symbols[@intFromEnum(found_node_idx)];
+
+            out.writer.print("```kupcad\n(variable) {s}\n```\n", .{name}) catch return null;
+            out.writer.print("**Scope:** `{s}` (slot `{d}`)\n\n", .{ @tagName(sym.kind), sym.index }) catch return null;
+        } else if (target_node.tag == .method_call) {
+            const mc = doc.tree.methodCall(target_node);
+            const m_name = doc.tree.getString(mc.method_name);
+            out.writer.print("```kupcad\n(method) {s}(...)\n```\n", .{m_name}) catch return null;
+        } else if (target_node.tag == .number) {
+            const num_val = doc.tree.number(target_node);
+            out.writer.print("```kupcad\n(number) {d}\n```\n", .{num_val}) catch return null;
+        } else {
+            out.writer.print("```kupcad\n({s})\n```\n", .{@tagName(target_node.tag)}) catch return null;
+        }
+
+        if (def_name) |dn| {
+            out.writer.print("*Enclosing Method:* `{s}`\n", .{dn}) catch return null;
+        }
+        if (class_name) |cn| {
+            out.writer.print("*Enclosing Class:* `{s}`\n", .{cn}) catch return null;
+        }
+
+        return .{
+            .contents = .{
+                .markup_content = .{
+                    .kind = .markdown,
+                    .value = out.written(),
+                },
+            },
+        };
     }
 
     fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, source: []const u8) !void {
@@ -207,9 +340,8 @@ pub const Handler = struct {
             const start_line = line_index.getLine(d.loc.offset);
             const end_offset = d.loc.offset + if (d.loc.length > 0) d.loc.length else 1;
             const end_line = line_index.getLine(end_offset);
-
-            const start_char = if (self.use_utf8) line_index.getUtf8Column(d.loc.offset) else line_index.getUtf16Column(d.loc.offset);
-            const end_char = if (self.use_utf8) line_index.getUtf8Column(end_offset) else line_index.getUtf16Column(end_offset);
+            const start_char = if (self.useUtf8()) line_index.getUtf8Column(d.loc.offset) else line_index.getUtf16Column(d.loc.offset);
+            const end_char = if (self.useUtf8()) line_index.getUtf8Column(end_offset) else line_index.getUtf16Column(end_offset);
 
             try lsp_diags.append(arena, .{
                 .range = .{
