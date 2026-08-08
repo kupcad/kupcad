@@ -7,20 +7,15 @@ pub const FormatRule = struct {
 
     pub const VTable = struct {
         name: *const fn (ptr: *anyopaque) []const u8,
-
-        /// Allows a rule to non-destructively reorder or filter statements in a block.
-        /// Must return either the original slice or a new slice allocated using `temp_allocator`.
-        processBlockStmts: ?*const fn (ptr: *anyopaque, temp_allocator: std.mem.Allocator, stmts: []const *ast.Node) []const *ast.Node = null,
+        processBlockStmts: ?*const fn (ptr: *anyopaque, temp_allocator: std.mem.Allocator, tree: *const ast.Tree, stmts: []const ast.NodeIndex) []const ast.NodeIndex = null,
     };
 
     pub fn name(self: FormatRule) []const u8 {
         return self.vtable.name(self.ptr);
     }
 
-    pub fn processBlockStmts(self: FormatRule, temp_allocator: std.mem.Allocator, stmts: []const *ast.Node) []const *ast.Node {
-        if (self.vtable.processBlockStmts) |hook| {
-            return hook(self.ptr, temp_allocator, stmts);
-        }
-        return stmts; // Pass-through if rule doesn't implement this hook
+    pub fn processBlockStmts(self: FormatRule, temp_allocator: std.mem.Allocator, tree: *const ast.Tree, stmts: []const ast.NodeIndex) []const ast.NodeIndex {
+        if (self.vtable.processBlockStmts) |func| return func(self.ptr, temp_allocator, tree, stmts);
+        return stmts;
     }
 };

@@ -1,42 +1,55 @@
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");
-const token = @import("../../../core/token.zig");
 const LintRule = @import("rule.zig").LintRule;
 
 pub const ParamDocsRule = struct {
-    param_docs: std.StringHashMapUnmanaged(token.Location) = .empty,
+    documented_vars: std.StringHashMapUnmanaged(ast.Location) = .empty,
 
-    pub fn rule(self: *ParamDocsRule) LintRule {
-        return .{ .ptr = self, .vtable = &.{ .name = getName, .checkNode = checkNode, .exitScope = exitScope } };
+    pub fn rule(self: *@This()) LintRule {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .name = name,
+                .checkNode = checkNode,
+                .checkEOF = checkEOF,
+            },
+        };
     }
 
-    fn getName(_: *anyopaque) []const u8 {
-        return "Param Doc Match Check";
+    fn name(_: *anyopaque) []const u8 {
+        return "Param Docs Check";
     }
 
-    fn checkNode(ptr: *anyopaque, node: *ast.Node, engine: *linter.Linter) !void {
-        var self: *ParamDocsRule = @ptrCast(@alignCast(ptr));
+    fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
+        var self = @as(*ParamDocsRule, @ptrCast(@alignCast(ptr)));
+        const node = tree.getNode(node_idx) orelse return;
+
         if (node.kind == .param_doc) {
-            if (node.kind.param_doc.target_name) |target| {
-                try self.param_docs.put(engine.allocator, target, node.loc);
+            const doc_idx = node.kind.param_doc;
+            const doc = tree.param_docs.items[doc_idx];
+            if (doc.target_name != .none) {
+                const target_str = tree.getString(doc.target_name);
+                try self.documented_vars.put(engine.allocator, target_str, node.loc);
             }
+        } else if (node.kind == .def_stmt) {
+            for (tree.getParams(node.kind.def_stmt.params)) |p| {
+                const p_name = tree.getString(p.name);
+                _ = self.documented_vars.remove(p_name);
+            }
+        } else if (node.kind == .assignment) {
+            const a_name = tree.getString(node.kind.assignment.name);
+            _ = self.documented_vars.remove(a_name);
         }
     }
 
-    fn exitScope(ptr: *anyopaque, scope: *const linter.Scope, engine: *linter.Linter) !void {
-        var self: *ParamDocsRule = @ptrCast(@alignCast(ptr));
-        // The root scope is popped last, leaving 0 scopes in the engine stack
-        if (engine.scopes.items.len == 0) {
-            var doc_iter = self.param_docs.iterator();
-            while (doc_iter.next()) |entry| {
-                const param_name = entry.key_ptr.*;
-                if (!scope.declared_vars.contains(param_name)) {
-                    try engine.addDiagnostic(entry.value_ptr.*, .info, "@param annotation references variable '{s}', which is never declared in standard scope.", .{param_name});
-                }
-            }
-            self.param_docs.deinit(engine.allocator);
-            self.param_docs = .empty; // crucial reset for Linter reuse
+    fn checkEOF(ptr: *anyopaque, engine: *linter.Linter) !void {
+        var self = @as(*ParamDocsRule, @ptrCast(@alignCast(ptr)));
+        defer self.documented_vars.deinit(engine.allocator);
+
+        var it = self.documented_vars.iterator();
+        while (it.next()) |entry| {
+            try engine.addDiagnostic(entry.value_ptr.*, .info, "@param annotation references variable '{s}', which is never declared in standard scope.", .{entry.key_ptr.*});
         }
     }
 };

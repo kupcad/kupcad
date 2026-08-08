@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const ast = @import("../core/ast.zig");
 
 pub fn ExpectedToken(comptime TagType: type) type {
     return struct {
@@ -41,7 +42,6 @@ pub fn ParserTest(comptime LexerType: type, comptime ParserType: type) type {
 
             // Now it is perfectly safe to take a pointer to it
             const allocator = arena.allocator();
-
             const lexer = try allocator.create(LexerType);
             lexer.* = LexerType.init(source, 0);
 
@@ -60,6 +60,11 @@ pub fn ParserTest(comptime LexerType: type, comptime ParserType: type) type {
             self.arena.deinit();
             // Clean up the arena struct itself
             testing.allocator.destroy(self.arena);
+        }
+
+        // Convenience method for data-oriented AST access in tests
+        pub fn getNode(self: *Self, index: ast.NodeIndex) *const ast.Node {
+            return self.parser.b.tree.getNode(index).?;
         }
     };
 }

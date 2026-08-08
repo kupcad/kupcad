@@ -3,53 +3,60 @@ const ast = @import("../../../core/ast.zig");
 const FormatRule = @import("rule.zig").FormatRule;
 
 pub const SortImportsRule = struct {
-    pub fn rule(self: *SortImportsRule) FormatRule {
+    pub fn rule(self: *@This()) FormatRule {
         return .{
             .ptr = self,
             .vtable = &.{
-                .name = getName,
+                .name = name,
                 .processBlockStmts = processBlockStmts,
             },
         };
     }
 
-    fn getName(_: *anyopaque) []const u8 {
-        return "Sort Imports";
+    fn name(_: *anyopaque) []const u8 {
+        return "sort_imports";
     }
 
-    fn processBlockStmts(_: *anyopaque, temp_allocator: std.mem.Allocator, stmts: []const *ast.Node) []const *ast.Node {
-        if (stmts.len <= 1) return stmts;
+    fn processBlockStmts(ptr: *anyopaque, temp_allocator: std.mem.Allocator, tree: *const ast.Tree, stmts: []const ast.NodeIndex) []const ast.NodeIndex {
+        _ = ptr;
+        if (stmts.len < 2) return stmts;
 
-        // Allocate a temporary slice so we don't mutate the original AST
-        var sorted = std.ArrayListUnmanaged(*ast.Node).empty;
-        sorted.appendSlice(temp_allocator, stmts) catch return stmts;
+        // Note: Because rules must be non-destructive to the original AST slice,
+        // we copy the slice into the temporary arena passed by the Formatter.
+        var new_stmts = temp_allocator.dupe(ast.NodeIndex, stmts) catch return stmts;
 
-        var start_idx: ?usize = null;
-        for (sorted.items, 0..) |stmt, i| {
-            if (stmt.kind == .import_stmt) {
-                if (start_idx == null) start_idx = i;
-            } else {
-                if (start_idx) |start| {
-                    if (i - start > 1) {
-                        std.mem.sort(*ast.Node, sorted.items[start..i], {}, importLessThan);
-                    }
+        var i: usize = 0;
+        while (i < new_stmts.len) {
+            const start_node = tree.getNode(new_stmts[i]).?;
+            if (start_node.kind == .import_stmt) {
+                var j = i + 1;
+                while (j < new_stmts.len) {
+                    const next_node = tree.getNode(new_stmts[j]).?;
+                    if (next_node.kind != .import_stmt) break;
+                    j += 1;
                 }
-                start_idx = null;
-            }
-        }
-        if (start_idx) |start| {
-            if (sorted.items.len - start > 1) {
-                std.mem.sort(*ast.Node, sorted.items[start..], {}, importLessThan);
+
+                if (j - i > 1) {
+                    const block = new_stmts[i..j];
+                    // Sort the indices based on the path of their resolved nodes
+                    std.mem.sort(ast.NodeIndex, block, tree, struct {
+                        fn lessThan(ctx_tree: *const ast.Tree, a_idx: ast.NodeIndex, b_idx: ast.NodeIndex) bool {
+                            const a = ctx_tree.getNode(a_idx).?;
+                            const b = ctx_tree.getNode(b_idx).?;
+
+                            const path_a = ctx_tree.getString(a.kind.import_stmt.path);
+                            const path_b = ctx_tree.getString(b.kind.import_stmt.path);
+
+                            return std.mem.lessThan(u8, path_a, path_b);
+                        }
+                    }.lessThan);
+                }
+                i = j;
+            } else {
+                i += 1;
             }
         }
 
-        // Return the ephemerally sorted array
-        return sorted.items;
-    }
-
-    fn importLessThan(_: void, a: *ast.Node, b: *ast.Node) bool {
-        const path_a = a.kind.import_stmt.path;
-        const path_b = b.kind.import_stmt.path;
-        return std.mem.order(u8, path_a, path_b) == .lt;
+        return new_stmts;
     }
 };

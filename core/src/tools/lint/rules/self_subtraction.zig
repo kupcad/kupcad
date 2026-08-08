@@ -4,19 +4,32 @@ const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 
 pub const SelfSubtractionRule = struct {
-    pub fn rule(self: *SelfSubtractionRule) LintRule {
-        return .{ .ptr = self, .vtable = &.{ .name = getName, .checkNode = checkNode } };
+    pub fn rule(self: *@This()) LintRule {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .name = name,
+                .checkNode = checkNode,
+            },
+        };
     }
-    fn getName(_: *anyopaque) []const u8 {
+
+    fn name(_: *anyopaque) []const u8 {
         return "Self Subtraction Check";
     }
 
-    fn checkNode(_: *anyopaque, node: *ast.Node, engine: *linter.Linter) !void {
-        if (node.kind == .binary_op) {
-            const b = node.kind.binary_op;
-            if (b.op == .subtract and b.left.kind == .identifier and b.right.kind == .identifier) {
-                if (std.mem.eql(u8, b.left.kind.identifier, b.right.kind.identifier)) {
-                    try engine.addDiagnostic(node.loc, .warning, "CSG Warning: Self-difference operation ('a - a') will result in empty geometry.", .{});
+    fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
+        _ = ptr;
+        const node = tree.getNode(node_idx) orelse return;
+
+        if (node.kind == .binary_op and node.kind.binary_op.op == .subtract) {
+            const left = tree.getNode(node.kind.binary_op.left).?;
+            const right = tree.getNode(node.kind.binary_op.right).?;
+
+            if (left.kind == .identifier and right.kind == .identifier) {
+                if (left.kind.identifier == right.kind.identifier) {
+                    const var_name = tree.getString(left.kind.identifier);
+                    try engine.addDiagnostic(node.loc, .warning, "CSG Warning: Self-difference operation ('{s} - {s}') will result in empty geometry.", .{ var_name, var_name });
                 }
             }
         }

@@ -7,8 +7,9 @@ const TestContext = struct {
     node_count: usize = 0,
 };
 
-fn countNodes(ptr: *anyopaque, node: *ast.Node) anyerror!bool {
-    _ = node;
+fn countNodes(ptr: *anyopaque, tree: *const ast.Tree, node_idx: ast.NodeIndex) anyerror!bool {
+    _ = tree;
+    _ = node_idx;
     var ctx = @as(*TestContext, @ptrCast(@alignCast(ptr)));
     ctx.node_count += 1;
     // Returning true tells the Visitor to automatically traverse children
@@ -18,6 +19,7 @@ fn countNodes(ptr: *anyopaque, node: *ast.Node) anyerror!bool {
 test "AST Visitor: Successfully walks all nodes automatically" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
+
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
@@ -26,7 +28,7 @@ test "AST Visitor: Successfully walks all nodes automatically" {
     // Construct a simulated manual AST: `1 + 2`
     const left = try b.number("1", loc);
     const right = try b.number("2", loc);
-    const bin_op = try b.createNode(.{ .binary_op = try b.box(ast.BinaryExpr, .{ .op = .add, .left = left, .right = right }) }, loc);
+    const bin_op = try b.binary(.add, left, right, loc);
 
     var ctx = TestContext{};
     const visitor = ast.Visitor{
@@ -34,7 +36,7 @@ test "AST Visitor: Successfully walks all nodes automatically" {
         .visitFn = countNodes,
     };
 
-    try visitor.walk(bin_op);
+    try visitor.walk(&b.tree, bin_op);
 
     // It should have successfully traversed the binary_op, the left number, and the right number
     try testing.expectEqual(@as(usize, 3), ctx.node_count);

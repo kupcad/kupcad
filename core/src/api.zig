@@ -22,7 +22,7 @@ pub const FormatError = error{
 /// Owns the ArenaAllocator that backs the AST, comments, and diagnostics.
 pub const Document = struct {
     arena: std.heap.ArenaAllocator,
-    tree: ?*ast.Node,
+    tree: ast.Tree,
     comments: []const common_token.Comment,
     diagnostics: []const common_errors.Diagnostic,
     line_index: LineIndex,
@@ -35,10 +35,14 @@ pub const Document = struct {
         var lexer = lexer_mod.Lexer.init(source, 0);
         var parser = parser_mod.Parser.init(&lexer, arena_alloc);
 
-        const tree = parser.parseProgram() catch |err| switch (err) {
+        const root_index = parser.parseProgram() catch |err| switch (err) {
             error.OutOfMemory => return err,
-            else => null,
+            else => .none,
         };
+
+        // Extract the populated tree from the builder and set the root
+        var tree = parser.b.tree;
+        tree.root = root_index;
 
         // Initialize the LineIndex using the Arena Allocator
         const line_index = try LineIndex.init(arena_alloc, source);
@@ -53,6 +57,8 @@ pub const Document = struct {
     }
 
     pub fn deinit(self: *Document) void {
+        // Because the Tree's MultiArrayList/ArrayListUnmanaged uses the arena allocator,
+        // calling arena.deinit() safely frees all AST nodes and strings at once.
         self.arena.deinit();
     }
 };
@@ -61,14 +67,16 @@ pub const Document = struct {
 pub fn formatDocument(allocator: std.mem.Allocator, doc: *const Document, config: FormatterConfig) ![]const u8 {
     // Abort formatting if any syntax errors occurred during parsing!
     if (doc.diagnostics.len > 0) return error.SyntaxError;
-    const tree = doc.tree orelse return error.SyntaxError;
+    if (doc.tree.root == .none) return error.SyntaxError;
 
     // Feed the original allocator to the Formatter and apply the passed Config
     var formatter = Formatter.init(allocator, doc.comments, config);
     defer formatter.deinit();
+
     try formatter.registerDefaultRules();
 
-    return formatter.format(tree);
+    // Pass the tree and the root index instead of a pointer
+    return formatter.format(&doc.tree, doc.tree.root);
 }
 
 /// Formats raw KupCAD source code (Convenience wrapper).
@@ -82,9 +90,12 @@ pub fn formatCode(allocator: std.mem.Allocator, source: []const u8, config: Form
 pub fn checkDocument(allocator: std.mem.Allocator, doc: *const Document, config: LinterConfig) ![]LinterDiagnostic {
     var linter = Linter.init(allocator, config);
     defer linter.deinit();
+
     try linter.registerDefaultRules();
 
-    try linter.check(doc.tree, doc.diagnostics);
+    // Pass the tree and the root index instead of a pointer
+    try linter.check(&doc.tree, doc.tree.root, doc.diagnostics);
+
     return linter.diagnostics.toOwnedSlice(allocator);
 }
 

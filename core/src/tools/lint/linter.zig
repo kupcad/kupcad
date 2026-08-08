@@ -1,44 +1,32 @@
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
-const common_errors = @import("../../core/errors.zig");
 const token = @import("../../core/token.zig");
-const lexer_mod = @import("../../frontend/kupcad/lexer.zig");
-const parser_mod = @import("../../frontend/kupcad/parser.zig");
-const LintRule = @import("rules/rule.zig").LintRule;
+const common_errors = @import("../../core/errors.zig");
 const Config = @import("config.zig").Config;
+const LintRule = @import("rules/rule.zig").LintRule;
 
-// Import our decoupled plugins
 const NegativeDimRule = @import("rules/negative_dim.zig").NegativeDimRule;
 const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;
 const UnreachableCodeRule = @import("rules/unreachable_code.zig").UnreachableCodeRule;
 const SelfSubtractionRule = @import("rules/self_subtraction.zig").SelfSubtractionRule;
 const ParamDocsRule = @import("rules/param_docs.zig").ParamDocsRule;
 
-pub const DiagnosticSeverity = enum {
+pub const LinterSeverity = enum {
     @"error",
     warning,
     info,
 
-    /// Returns the standard string representation (useful for JSON/WASM)
-    pub fn toString(self: DiagnosticSeverity) []const u8 {
+    pub fn toString(self: LinterSeverity) []const u8 {
+        return @tagName(self);
+    }
+    pub fn toColor(self: LinterSeverity) []const u8 {
         return switch (self) {
-            .@"error" => "error",
-            .warning => "warning",
-            .info => "info",
+            .@"error" => "\x1b[31m",
+            .warning => "\x1b[33m",
+            .info => "\x1b[36m",
         };
     }
-
-    /// Returns the ANSI color code for CLI output
-    pub fn toColor(self: DiagnosticSeverity) []const u8 {
-        return switch (self) {
-            .@"error" => "\x1b[31m", // Red
-            .warning => "\x1b[33m", // Yellow
-            .info => "\x1b[36m", // Cyan
-        };
-    }
-
-    /// Returns the single-character severity indicator for CLI output
-    pub fn toChar(self: DiagnosticSeverity) []const u8 {
+    pub fn toChar(self: LinterSeverity) []const u8 {
         return switch (self) {
             .@"error" => "E",
             .warning => "W",
@@ -49,267 +37,337 @@ pub const DiagnosticSeverity = enum {
 
 pub const LinterDiagnostic = struct {
     loc: token.Location,
+    severity: LinterSeverity,
     message: []const u8,
-    severity: DiagnosticSeverity,
 };
 
 pub const Scope = struct {
     declared_vars: std.StringHashMapUnmanaged(token.Location) = .empty,
     used_vars: std.StringHashMapUnmanaged(void) = .empty,
+
+    pub fn deinit(self: *Scope, allocator: std.mem.Allocator) void {
+        self.declared_vars.deinit(allocator);
+        self.used_vars.deinit(allocator);
+    }
+};
+
+pub const WorkItem = union(enum) {
+    visit: ast.NodeIndex,
+    pop_scope,
 };
 
 pub const Linter = struct {
     allocator: std.mem.Allocator,
     config: Config,
     diagnostics: std.ArrayListUnmanaged(LinterDiagnostic) = .empty,
-    scopes: std.ArrayListUnmanaged(Scope) = .empty,
     rules: std.ArrayListUnmanaged(LintRule) = .empty,
-    scope_arena: std.heap.ArenaAllocator,
+    scopes: std.ArrayListUnmanaged(Scope) = .empty,
 
-    // Rule persistent states
-    negative_dim_rule: NegativeDimRule = .{},
-    unused_vars_rule: UnusedVarsRule = .{},
-    unreachable_code_rule: UnreachableCodeRule = .{},
-    self_subtraction_rule: SelfSubtractionRule = .{},
-    param_docs_rule: ParamDocsRule = .{},
+    // Rule instances
+    rule_negative_dim: NegativeDimRule = .{},
+    rule_unused_vars: UnusedVarsRule = .{},
+    rule_unreachable_code: UnreachableCodeRule = .{},
+    rule_self_subtraction: SelfSubtractionRule = .{},
+    rule_param_docs: ParamDocsRule = .{},
 
     pub fn init(allocator: std.mem.Allocator, config: Config) Linter {
         return .{
             .allocator = allocator,
             .config = config,
-            .scope_arena = std.heap.ArenaAllocator.init(allocator),
         };
     }
 
-    pub fn registerDefaultRules(self: *Linter) !void {
-        if (self.config.check_negative_dims) try self.rules.append(self.allocator, self.negative_dim_rule.rule());
-        if (self.config.check_unused_vars) try self.rules.append(self.allocator, self.unused_vars_rule.rule());
-        if (self.config.check_unreachable_code) try self.rules.append(self.allocator, self.unreachable_code_rule.rule());
-        if (self.config.check_self_subtraction) try self.rules.append(self.allocator, self.self_subtraction_rule.rule());
-        if (self.config.check_param_docs) try self.rules.append(self.allocator, self.param_docs_rule.rule());
-    }
-
     pub fn deinit(self: *Linter) void {
+        for (self.scopes.items) |*s| s.deinit(self.allocator);
+        self.scopes.deinit(self.allocator);
+        self.rules.deinit(self.allocator);
         for (self.diagnostics.items) |d| self.allocator.free(d.message);
         self.diagnostics.deinit(self.allocator);
-        self.rules.deinit(self.allocator);
-        self.scope_arena.deinit();
     }
 
-    pub fn check(self: *Linter, tree: ?*ast.Node, parser_diags: []const common_errors.Diagnostic) !void {
-        // Format and copy Parser syntax errors into the Linter Diagnostics Array
-        for (parser_diags) |diag| {
-            try self.addDiagnostic(diag.loc, .@"error", "{s}", .{diag.message});
-        }
-
-        if (tree) |root| {
-            try self.pushScope();
-            try self.analyzeNode(root);
-            try self.popScope();
-
-            // Fire EOF Hook on all plugins
-            for (self.rules.items) |rule| try rule.checkEOF(self);
-        }
-
-        _ = self.scope_arena.reset(.retain_capacity);
-        self.scopes = .empty;
+    pub fn registerDefaultRules(self: *Linter) !void {
+        if (self.config.check_negative_dims) try self.rules.append(self.allocator, self.rule_negative_dim.rule());
+        if (self.config.check_unused_vars) try self.rules.append(self.allocator, self.rule_unused_vars.rule());
+        if (self.config.check_unreachable_code) try self.rules.append(self.allocator, self.rule_unreachable_code.rule());
+        if (self.config.check_self_subtraction) try self.rules.append(self.allocator, self.rule_self_subtraction.rule());
+        if (self.config.check_param_docs) try self.rules.append(self.allocator, self.rule_param_docs.rule());
     }
 
-    // DRY: Unified formatting diagnostic helper for all plugins!
-    pub fn addDiagnostic(self: *Linter, loc: token.Location, severity: DiagnosticSeverity, comptime fmt: []const u8, args: anytype) !void {
+    pub fn addDiagnostic(self: *Linter, loc: token.Location, severity: LinterSeverity, comptime fmt: []const u8, args: anytype) !void {
         const msg = try std.fmt.allocPrint(self.allocator, fmt, args);
         try self.diagnostics.append(self.allocator, .{
             .loc = loc,
-            .message = msg,
             .severity = severity,
+            .message = msg,
         });
     }
 
-    fn pushScope(self: *Linter) !void {
-        try self.scopes.append(self.scope_arena.allocator(), Scope{});
+    pub fn pushScope(self: *Linter) !void {
+        try self.scopes.append(self.allocator, .{});
     }
 
-    fn popScope(self: *Linter) !void {
-        if (self.scopes.items.len > 0) {
-            var scope = self.scopes.items[self.scopes.items.len - 1];
-            self.scopes.shrinkRetainingCapacity(self.scopes.items.len - 1);
+    pub fn popScope(self: *Linter) !void {
+        if (self.scopes.items.len == 0) return;
 
-            // Fire exitScope hook on all plugins
-            for (self.rules.items) |rule| try rule.exitScope(&scope, self);
+        const last_idx = self.scopes.items.len - 1;
+        const scope_ptr = &self.scopes.items[last_idx];
+
+        for (self.rules.items) |rule| {
+            try rule.exitScope(scope_ptr, self);
+        }
+
+        scope_ptr.deinit(self.allocator);
+        self.scopes.items.len -= 1;
+    }
+
+    pub fn declareVar(self: *Linter, name: []const u8, loc: token.Location) !void {
+        if (self.scopes.items.len > 0) {
+            const scope = &self.scopes.items[self.scopes.items.len - 1];
+            try scope.declared_vars.put(self.allocator, name, loc);
         }
     }
 
-    fn declareVariable(self: *Linter, name: []const u8, loc: token.Location) !void {
-        if (self.scopes.items.len > 0) {
-            const current = &self.scopes.items[self.scopes.items.len - 1];
-            try current.declared_vars.put(self.scope_arena.allocator(), name, loc);
-        }
-    }
-
-    fn markVariableUsed(self: *Linter, name: []const u8) void {
-        var i = self.scopes.items.len;
+    pub fn markUsed(self: *Linter, name: []const u8) !void {
+        var i: usize = self.scopes.items.len;
         while (i > 0) {
             i -= 1;
-            var scope = &self.scopes.items[i];
+            const scope = &self.scopes.items[i];
             if (scope.declared_vars.contains(name)) {
-                scope.used_vars.put(self.scope_arena.allocator(), name, {}) catch {};
-                break;
+                try scope.used_vars.put(self.allocator, name, {});
+                return;
             }
         }
     }
 
-    fn analyzeNode(self: *Linter, node: *ast.Node) !void {
-        var visitor = ast.Visitor{
-            .ptr = self,
-            .visitFn = visitNode,
-        };
-        try visitor.walk(node);
+    inline fn pushNode(stack: *std.ArrayListUnmanaged(WorkItem), allocator: std.mem.Allocator, node_idx: ast.NodeIndex) !void {
+        if (node_idx != .none) {
+            try stack.append(allocator, .{ .visit = node_idx });
+        }
     }
 
-    fn visitNode(ptr: *anyopaque, node: *ast.Node) anyerror!bool {
-        const self = @as(*Linter, @ptrCast(@alignCast(ptr)));
+    inline fn pushNodesReverse(stack: *std.ArrayListUnmanaged(WorkItem), allocator: std.mem.Allocator, nodes: []const ast.NodeIndex) !void {
+        var i: usize = nodes.len;
+        while (i > 0) {
+            i -= 1;
+            try pushNode(stack, allocator, nodes[i]);
+        }
+    }
 
-        // Fire all registered Linter plugins against this node
-        for (self.rules.items) |rule| try rule.checkNode(node, self);
-
-        // Handle specific nodes that require strict Scope management or ordering
-        switch (node.kind) {
-            .assignment => |a| {
-                try self.analyzeNode(a.value);
-                // Check if variable already exists in any scope (reassignment)
-                var exists = false;
-                var i = self.scopes.items.len;
-                while (i > 0) {
-                    i -= 1;
-                    if (self.scopes.items[i].declared_vars.contains(a.name)) {
-                        exists = true;
-                        break;
-                    }
-                }
-                if (!exists) {
-                    try self.declareVariable(a.name, node.loc);
-                }
-                return false; // Skip default child traversal
-            },
-            .multiple_assignment => |ma| {
-                try self.analyzeNode(ma.value);
-                for (ma.lhs) |l| {
-                    var exists = false;
-                    var i = self.scopes.items.len;
-                    while (i > 0) {
-                        i -= 1;
-                        if (self.scopes.items[i].declared_vars.contains(l.name)) {
-                            exists = true;
-                            break;
-                        }
-                    }
-                    if (!exists) {
-                        try self.declareVariable(l.name, node.loc);
-                    }
-                }
-                return false;
-            },
-            .method_call => |mc| {
-                if (mc.receiver) |r| try self.analyzeNode(r);
-                for (mc.args) |a| try self.analyzeNode(a.value);
-
-                if (mc.block) |b| {
-                    try self.pushScope();
-                    for (b.kind.block.params) |p| {
-                        if (p.kind == .identifier) {
-                            try self.declareVariable(p.kind.identifier, p.loc);
-                        } else if (p.kind == .array_literal) {
-                            for (p.kind.array_literal) |elem| {
-                                if (elem.kind == .identifier) {
-                                    try self.declareVariable(elem.kind.identifier, elem.loc);
-                                }
-                            }
-                        }
-                    }
-                    for (b.kind.block.stmts) |s| try self.analyzeNode(s);
-                    try self.popScope();
-                }
-                return false; // We manually walked the children
-            },
-            .super_call => |sc| {
-                for (sc.args) |a| try self.analyzeNode(a.value);
-
-                if (sc.block) |b| {
-                    try self.pushScope();
-                    for (b.kind.block.params) |p| {
-                        if (p.kind == .identifier) {
-                            try self.declareVariable(p.kind.identifier, p.loc);
-                        } else if (p.kind == .array_literal) {
-                            for (p.kind.array_literal) |elem| {
-                                if (elem.kind == .identifier) {
-                                    try self.declareVariable(elem.kind.identifier, elem.loc);
-                                }
-                            }
-                        }
-                    }
-                    for (b.kind.block.stmts) |s| try self.analyzeNode(s);
-                    try self.popScope();
-                }
-                return false;
-            },
-            .class_stmt => |cs| {
-                try self.analyzeNode(cs.name);
-                if (cs.super_class) |sc| try self.analyzeNode(sc);
-
-                try self.pushScope();
-                try self.analyzeNode(cs.body);
-                try self.popScope();
-                return false;
-            },
-            .module_stmt => |ms| {
-                try self.pushScope();
-                try self.analyzeNode(ms.body);
-                try self.popScope();
-                return false;
-            },
-            .identifier => |i| {
-                self.markVariableUsed(i);
-                return true;
-            },
-            .for_stmt => |fs| {
-                try self.pushScope();
-                for (fs.bindings) |b| {
-                    try self.analyzeNode(b.range);
-                    try self.declareVariable(b.name, node.loc);
-                }
-                try self.analyzeNode(fs.body);
-                try self.popScope();
-                return false;
-            },
-            .begin_stmt => |bs| {
-                try self.analyzeNode(bs.body);
-                for (bs.rescues) |r| {
-                    try self.pushScope();
-                    if (r.variable) |v| try self.declareVariable(v, node.loc);
-                    try self.analyzeNode(r.body);
-                    try self.popScope();
-                }
-                if (bs.ensure_body) |eb| try self.analyzeNode(eb);
-                return false;
-            },
-            .def_stmt => |def| {
-                try self.pushScope();
-                for (def.params) |p| try self.declareVariable(p.name, node.loc);
-                try self.analyzeNode(def.body);
-                try self.popScope();
-                return false;
-            },
-            .lambda_expr => |le| {
-                try self.pushScope();
-                for (le.params) |p| try self.declareVariable(p.name, node.loc);
-                try self.analyzeNode(le.body);
-                try self.popScope();
-                return false;
-            },
-            else => {}, // Yield to the fallback return
+    pub fn check(self: *Linter, tree: *const ast.Tree, root: ast.NodeIndex, parser_diagnostics: []const common_errors.Diagnostic) !void {
+        for (parser_diagnostics) |diag| {
+            try self.diagnostics.append(self.allocator, .{
+                .loc = diag.loc,
+                .severity = .@"error",
+                .message = try self.allocator.dupe(u8, diag.message),
+            });
         }
 
-        // Default behavior: automatically traverse children
-        return true;
+        if (root == .none) return;
+
+        var stack: std.ArrayListUnmanaged(WorkItem) = .empty;
+        defer stack.deinit(self.allocator);
+
+        try self.pushScope();
+        try pushNode(&stack, self.allocator, root);
+
+        while (stack.pop()) |item| {
+            switch (item) {
+                .pop_scope => {
+                    try self.popScope();
+                },
+                .visit => |node_idx| {
+                    if (node_idx == .none) continue;
+                    const node = tree.getNode(node_idx) orelse continue;
+
+                    for (self.rules.items) |rule| {
+                        try rule.checkNode(self, tree, node_idx);
+                    }
+
+                    switch (node.kind) {
+                        .block => |b| {
+                            try self.pushScope();
+                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                            try stack.append(self.allocator, .pop_scope);
+                            try pushNodesReverse(&stack, self.allocator, tree.getNodes(b.stmts));
+                        },
+                        .lambda_expr => |le| {
+                            try self.pushScope();
+                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                            try stack.append(self.allocator, .pop_scope);
+                            try pushNode(&stack, self.allocator, le.body);
+                            const params = tree.getParams(le.params);
+                            var i: usize = params.len;
+                            while (i > 0) {
+                                i -= 1;
+                                try pushNode(&stack, self.allocator, params[i].default_value);
+                            }
+                        },
+                        .for_stmt => |fs| {
+                            try self.pushScope();
+                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                            try stack.append(self.allocator, .pop_scope);
+                            try pushNode(&stack, self.allocator, fs.body);
+                            const bindings = tree.getForBindings(fs.bindings);
+                            var i: usize = bindings.len;
+                            while (i > 0) {
+                                i -= 1;
+                                try pushNode(&stack, self.allocator, bindings[i].range);
+                            }
+                        },
+                        .while_stmt => |ws| {
+                            try self.pushScope();
+                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                            try stack.append(self.allocator, .pop_scope);
+                            try pushNode(&stack, self.allocator, ws.body);
+                            try pushNode(&stack, self.allocator, ws.condition);
+                        },
+                        .def_stmt => |ds| {
+                            try self.pushScope();
+                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                            try stack.append(self.allocator, .pop_scope);
+                            try pushNode(&stack, self.allocator, ds.body);
+                            const params = tree.getParams(ds.params);
+                            var i: usize = params.len;
+                            while (i > 0) {
+                                i -= 1;
+                                try pushNode(&stack, self.allocator, params[i].default_value);
+                            }
+                        },
+                        .class_stmt => |cs| {
+                            try self.pushScope();
+                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                            try stack.append(self.allocator, .pop_scope);
+                            try pushNode(&stack, self.allocator, cs.body);
+                            try pushNode(&stack, self.allocator, cs.super_class);
+                            try pushNode(&stack, self.allocator, cs.name);
+                        },
+                        .module_stmt => |ms| {
+                            try self.pushScope();
+                            for (self.rules.items) |rule| try rule.enterScope(self, tree, node_idx);
+                            try stack.append(self.allocator, .pop_scope);
+                            try pushNode(&stack, self.allocator, ms.body);
+                            const params = tree.getParams(ms.params);
+                            var i: usize = params.len;
+                            while (i > 0) {
+                                i -= 1;
+                                try pushNode(&stack, self.allocator, params[i].default_value);
+                            }
+                        },
+
+                        // Non-scope opening nodes
+                        .number, .string, .symbol, .boolean, .nil, .undef, .self_expr, .identifier, .comment, .namespace_access => {},
+                        .param_doc => |doc_idx| {
+                            const doc = tree.param_docs.items[doc_idx];
+                            try pushNode(&stack, self.allocator, doc.options_expr);
+                        },
+                        .interpolated_string => |span| try pushNodesReverse(&stack, self.allocator, tree.getNodes(span)),
+                        .array_literal => |span| try pushNodesReverse(&stack, self.allocator, tree.getNodes(span)),
+                        .hash_literal => |span| {
+                            const entries = tree.getHashEntries(span);
+                            var i: usize = entries.len;
+                            while (i > 0) {
+                                i -= 1;
+                                try pushNode(&stack, self.allocator, entries[i].value);
+                                try pushNode(&stack, self.allocator, entries[i].key);
+                            }
+                        },
+                        .range => |r| {
+                            try pushNode(&stack, self.allocator, r.step);
+                            try pushNode(&stack, self.allocator, r.end);
+                            try pushNode(&stack, self.allocator, r.start);
+                        },
+                        .assignment => |a| try pushNode(&stack, self.allocator, a.value),
+                        .multiple_assignment => |ma| try pushNode(&stack, self.allocator, ma.value),
+                        .property_assignment => |pa| {
+                            try pushNode(&stack, self.allocator, pa.value);
+                            try pushNode(&stack, self.allocator, pa.target);
+                        },
+                        .index_assignment => |ia| {
+                            try pushNode(&stack, self.allocator, ia.value);
+                            try pushNode(&stack, self.allocator, ia.index);
+                            try pushNode(&stack, self.allocator, ia.target);
+                        },
+                        .unary_op => |u| try pushNode(&stack, self.allocator, u.operand),
+                        .rescue_modifier => |rm| {
+                            try pushNode(&stack, self.allocator, rm.rescue_expr);
+                            try pushNode(&stack, self.allocator, rm.expr);
+                        },
+                        .binary_op => |b| {
+                            try pushNode(&stack, self.allocator, b.right);
+                            try pushNode(&stack, self.allocator, b.left);
+                        },
+                        .ternary_op => |t| {
+                            try pushNode(&stack, self.allocator, t.else_branch);
+                            try pushNode(&stack, self.allocator, t.then_branch);
+                            try pushNode(&stack, self.allocator, t.condition);
+                        },
+                        .index_access => |ia| {
+                            try pushNode(&stack, self.allocator, ia.index);
+                            try pushNode(&stack, self.allocator, ia.target);
+                        },
+                        .splat_expr => |s| try pushNode(&stack, self.allocator, s),
+                        .double_splat_expr => |s| try pushNode(&stack, self.allocator, s),
+                        .each_expr => |e| try pushNode(&stack, self.allocator, e),
+                        .method_call => |mc| {
+                            try pushNode(&stack, self.allocator, mc.block);
+                            const args = tree.getNamedArgs(mc.args);
+                            var i: usize = args.len;
+                            while (i > 0) {
+                                i -= 1;
+                                try pushNode(&stack, self.allocator, args[i].value);
+                            }
+                            try pushNode(&stack, self.allocator, mc.receiver);
+                        },
+                        .super_call => |sc| {
+                            try pushNode(&stack, self.allocator, sc.block);
+                            const args = tree.getNamedArgs(sc.args);
+                            var i: usize = args.len;
+                            while (i > 0) {
+                                i -= 1;
+                                try pushNode(&stack, self.allocator, args[i].value);
+                            }
+                        },
+                        .import_stmt => |is| try pushNode(&stack, self.allocator, is.attributes),
+                        .export_stmt => |es| try pushNode(&stack, self.allocator, es.attributes),
+                        .if_stmt => |ifs| {
+                            try pushNode(&stack, self.allocator, ifs.else_branch);
+                            try pushNode(&stack, self.allocator, ifs.then_branch);
+                            try pushNode(&stack, self.allocator, ifs.condition);
+                        },
+                        .case_stmt => |cs| {
+                            try pushNode(&stack, self.allocator, cs.else_branch);
+                            const branches = tree.getWhenBranches(cs.when_branches);
+                            var i: usize = branches.len;
+                            while (i > 0) {
+                                i -= 1;
+                                try pushNode(&stack, self.allocator, branches[i].body);
+                                try pushNodesReverse(&stack, self.allocator, tree.getNodes(branches[i].conditions));
+                            }
+                            try pushNode(&stack, self.allocator, cs.condition);
+                        },
+                        .begin_stmt => |bs| {
+                            try pushNode(&stack, self.allocator, bs.ensure_body);
+                            const rescues = tree.getRescueClauses(bs.rescues);
+                            var i: usize = rescues.len;
+                            while (i > 0) {
+                                i -= 1;
+                                try pushNode(&stack, self.allocator, rescues[i].body);
+                            }
+                            try pushNode(&stack, self.allocator, bs.body);
+                        },
+                        .return_stmt => |r| try pushNode(&stack, self.allocator, r),
+                        .yield_stmt => |span| try pushNodesReverse(&stack, self.allocator, tree.getNodes(span)),
+                        .break_stmt => |b| try pushNode(&stack, self.allocator, b),
+                        .next_stmt => |n| try pushNode(&stack, self.allocator, n),
+                    }
+                },
+            }
+        }
+
+        for (self.rules.items) |rule| {
+            try rule.checkEOF(self);
+        }
+
+        try self.popScope();
     }
 };

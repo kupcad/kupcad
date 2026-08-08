@@ -7,13 +7,13 @@ pub const DocstringParser = struct {
     allocator: std.mem.Allocator,
     b: *ast.Builder,
 
-    pub fn parse(self: *DocstringParser, raw: []const u8, loc: ast.Location) !*ast.ParamDoc {
-        // Normalize the text (remove '#' and compress spaces, but PRESERVE newlines)
+    pub fn parse(self: *DocstringParser, raw: []const u8, loc: ast.Location) !ast.NodeIndex {
         var clean_text: std.ArrayListUnmanaged(u8) = .empty;
         defer clean_text.deinit(self.allocator);
-        var lines = std.mem.splitScalar(u8, raw, '\n');
 
+        var lines = std.mem.splitScalar(u8, raw, '\n');
         var is_first_line = true;
+
         while (lines.next()) |line| {
             const trimmed = std.mem.trim(u8, line, " \t\r#");
             if (trimmed.len > 0) {
@@ -27,46 +27,57 @@ pub const DocstringParser = struct {
 
         const text = std.mem.trim(u8, clean_text.items, " \n");
         if (text.len == 0 or text[0] != '@') {
-            return self.b.box(ast.ParamDoc, .{ .tag_name = try self.b.intern("") });
+            const empty_doc_idx = try self.b.addParamDoc(.{
+                .tag_name = try self.b.intern(""),
+                .target_name = .none,
+                .type_name = .none,
+                .description = try self.b.intern(""),
+                .options_expr = .none,
+            });
+            return self.b.createNode(.{ .param_doc = empty_doc_idx }, loc);
         }
 
-        var doc = ast.ParamDoc{ .tag_name = "" };
+        var doc = ast.ParamDoc{
+            .tag_name = .none,
+            .target_name = .none,
+            .type_name = .none,
+            .description = try self.b.intern(""),
+            .options_expr = .none,
+        };
 
-        // Extract options `{ ... }` at the end
         var desc_end: usize = text.len;
         if (text[text.len - 1] == '}') {
             if (std.mem.lastIndexOfScalar(u8, text, '{')) |brace_idx| {
                 const options_str = text[brace_idx..];
                 desc_end = brace_idx;
 
-                // Spin up the KupCAD parser to natively parse the options hash
                 var lexer = lexer_mod.Lexer.init(options_str, loc.file_id);
                 var parser = parser_mod.Parser.init(&lexer, self.allocator);
-                parser.b = self.b.*; // Clone builder so they share the StringPool and Allocator
+                parser.b = self.b.*;
 
-                if (parser.parseExpression(.none)) |node| {
-                    doc.options_expr = node;
+                if (parser.parseExpression(.none)) |node_idx| {
+                    doc.options_expr = node_idx;
                 } else |_| {}
-                parser.diagnostics.deinit(); // Clean up sub-parser errors
+
+                self.b.* = parser.b;
+                parser.diagnostics.deinit();
             }
         }
 
-        // Tokenize the remaining string, splitting by spaces OR newlines to extract tags safely
         const header_str = std.mem.trim(u8, text[0..desc_end], " \n\r\t");
         var iter = std.mem.tokenizeAny(u8, header_str, " \n\r\t");
 
         if (iter.next()) |tag| {
-            doc.tag_name = try self.b.intern(tag[1..]); // skip '@'
+            doc.tag_name = try self.b.intern(tag[1..]);
         }
 
-        // Only @param and @option have a target variable name
-        if (std.mem.eql(u8, doc.tag_name, "param") or std.mem.eql(u8, doc.tag_name, "option")) {
+        const tag_str = self.b.tree.getString(doc.tag_name);
+        if (std.mem.eql(u8, tag_str, "param") or std.mem.eql(u8, tag_str, "option")) {
             if (iter.next()) |name| {
                 doc.target_name = try self.b.intern(name);
             }
         }
 
-        // Check for Type `[Type]` and Description
         const rest = iter.rest();
         const trimmed_rest = std.mem.trim(u8, rest, " \n\r\t");
 
@@ -81,6 +92,7 @@ pub const DocstringParser = struct {
             doc.description = try self.b.intern(trimmed_rest);
         }
 
-        return self.b.box(ast.ParamDoc, doc);
+        const final_doc_idx = try self.b.addParamDoc(doc);
+        return self.b.createNode(.{ .param_doc = final_doc_idx }, loc);
     }
 };
