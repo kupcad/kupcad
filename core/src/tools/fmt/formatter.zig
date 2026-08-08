@@ -52,9 +52,13 @@ pub const Formatter = struct {
 
     // --- State & Spacing Helpers ---
 
-    fn getNodeLine(self: *Formatter, node: *const ast.Node) u32 {
+    inline fn getNodeLine(self: *Formatter, node: *const ast.Node) u32 {
         if (node.main_token >= self.token_starts.len) return 0;
         return self.line_index.getLine(self.token_starts[node.main_token]);
+    }
+
+    inline fn getCommentLine(self: *Formatter, comment: token.Comment) u32 {
+        return self.line_index.getLine(comment.loc.offset);
     }
 
     fn isAtLineStartOrEmpty(self: *Formatter) bool {
@@ -104,7 +108,8 @@ pub const Formatter = struct {
     fn flushLeadingComments(self: *Formatter, up_to_line: u32) Error!void {
         while (self.comment_idx < self.comments.len) {
             const c = self.comments[self.comment_idx];
-            if (c.loc.line < up_to_line) {
+            const c_line = self.getCommentLine(c);
+            if (c_line < up_to_line) {
                 if (self.isAtLineStartOrEmpty()) try self.writeIndent();
                 try self.out.appendSlice(self.allocator, c.lexeme);
                 try self.out.append(self.allocator, '\n');
@@ -116,7 +121,8 @@ pub const Formatter = struct {
     fn flushInlineComments(self: *Formatter, exact_line: u32) Error!void {
         while (self.comment_idx < self.comments.len) {
             const c = self.comments[self.comment_idx];
-            if (c.loc.line == exact_line) {
+            const c_line = self.getCommentLine(c);
+            if (c_line == exact_line) {
                 if (!self.isAtLineStartOrEmpty()) {
                     try self.out.append(self.allocator, ' ');
                 } else {

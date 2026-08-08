@@ -202,7 +202,10 @@ pub const Lexer = struct {
 
     fn consumeString(self: *Lexer, start_loc: common_token.Location) Token {
         const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, &self.line, &self.col, '"');
-        return .{ .tag = .string, .loc = start_loc, .lexeme = lexeme };
+        var content_loc = start_loc;
+        content_loc.offset += 1;
+        content_loc.col += 1;
+        return .{ .tag = .string, .loc = content_loc, .lexeme = lexeme };
     }
 
     fn consumeNumber(self: *Lexer, start_loc: common_token.Location) Token {

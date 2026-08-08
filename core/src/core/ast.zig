@@ -409,10 +409,12 @@ pub const Tree = struct {
     }
 
     pub fn boolean(self: *const Tree, node: *const Node) bool {
+        _ = self;
         return node.data != 0;
     }
 
     pub fn nodeIndex(self: *const Tree, node: *const Node) NodeIndex {
+        _ = self;
         return @enumFromInt(node.data);
     }
 
@@ -700,13 +702,13 @@ pub const Builder = struct {
             } else if (T == Span) {
                 try self.tree.extra_data.append(self.allocator, item.start);
                 try self.tree.extra_data.append(self.allocator, item.end);
-            } else if (@typeInfo(T) == .Optional) {
+            } else if (@typeInfo(T) == .optional) {
                 if (item) |v| {
                     try self.tree.extra_data.append(self.allocator, @intFromEnum(v));
                 } else {
                     try self.tree.extra_data.append(self.allocator, std.math.maxInt(u32));
                 }
-            } else if (@typeInfo(T) == .Enum) {
+            } else if (@typeInfo(T) == .@"enum") {
                 try self.tree.extra_data.append(self.allocator, @intFromEnum(item));
             } else {
                 @compileError("Unsupported type for addExtra: " ++ @typeName(T));

@@ -837,7 +837,7 @@ pub const Parser = struct {
     fn parseParamDoc(self: *Parser) ParseError!ast.NodeIndex {
         const tok_idx = try self.expect(.param_doc);
         var doc_parser = docstring.DocstringParser{ .allocator = self.allocator, .b = &self.b };
-        return doc_parser.parse(self.tokens.lexeme(self.source, tok_idx), self.getLoc(tok_idx)) catch return ParseError.OutOfMemory;
+        return doc_parser.parse(self.tokens.lexeme(self.source, tok_idx), tok_idx) catch return ParseError.OutOfMemory;
     }
 
     fn parseArgModifier(self: *Parser) ?ast.ArgModifier {
@@ -1286,7 +1286,8 @@ pub const Parser = struct {
         if (left_tag == .namespace_access) {
             const s_len = self.scratch_strings.items.len;
             defer self.scratch_strings.shrinkRetainingCapacity(s_len);
-            const span = self.b.tree.getSpan(left_data);
+            // Use nodeSpan(left_node) instead of getSpan(left_data)
+            const span = self.b.tree.nodeSpan(left_node);
 
             try self.scratch_strings.appendSlice(self.allocator, self.b.tree.getStringLists(span));
             try self.scratch_strings.append(self.allocator, try self.b.intern(self.tokens.lexeme(self.source, right_idx)));

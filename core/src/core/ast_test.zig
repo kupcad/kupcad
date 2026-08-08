@@ -1,20 +1,18 @@
 const std = @import("std");
 const testing = std.testing;
 const ast = @import("ast.zig");
-const Location = @import("token.zig").Location;
 
 // --- Test Helpers ---
 
-// Dummy location for testing
-const dummy_loc = Location{ .line = 1, .col = 1, .offset = 0, .length = 5, .file_id = 1 };
+// Dummy token index for testing
+const dummy_token: u24 = 0;
 
 // --- Tests ---
 
-test "AST: Node struct size is optimized to 32 bytes" {
+test "AST: Node struct size is optimized to 8 bytes" {
     // Ensuring the Node stays compact is critical for cache locality
-    // 1 byte (Tag) + 20 bytes (Location) + 4 bytes (main_token) + 4 bytes (data/payload index) = 29 bytes
-    // Note: Due to Zig's struct alignment padding, it naturally aligns to 32 bytes.
-    try testing.expectEqual(@as(usize, 32), @sizeOf(ast.Node));
+    // 1 byte (Tag) + 3 bytes (main_token) + 4 bytes (data/payload index) = 8 bytes
+    try testing.expectEqual(@as(usize, 8), @sizeOf(ast.Node));
 }
 
 test "AST Builder: String interning deduplicates perfectly" {
@@ -40,13 +38,13 @@ test "AST Builder: Constructs and stores primitive Number payloads" {
     defer builder.deinit();
 
     // The builder handles underscores and advanced parsing natively before pushing
-    const num_idx = try builder.number("1_000_000.5", dummy_loc);
+    const num_idx = try builder.number("1_000_000.5", dummy_token);
     const node = builder.tree.getNode(num_idx).?;
 
     try testing.expectEqual(ast.Tag.number, node.tag);
 
-    // The node's `data` field is the index into the numbers pool
-    const actual_val = builder.tree.numbers.items[node.data];
+    // Retrieve the value via the unified data reconstructor helper
+    const actual_val = builder.tree.number(node);
     try testing.expectEqual(@as(f64, 1000000.5), actual_val);
 }
 
@@ -54,24 +52,24 @@ test "AST Builder: Safely parses hex and binary Number literals" {
     var builder = ast.Builder.init(testing.allocator);
     defer builder.deinit();
 
-    const hex_idx = try builder.number("0xFF", dummy_loc);
-    const bin_idx = try builder.number("0b1010", dummy_loc);
+    const hex_idx = try builder.number("0xFF", dummy_token);
+    const bin_idx = try builder.number("0b1010", dummy_token);
 
     const hex_node = builder.tree.getNode(hex_idx).?;
     const bin_node = builder.tree.getNode(bin_idx).?;
 
-    try testing.expectEqual(@as(f64, 255.0), builder.tree.numbers.items[hex_node.data]);
-    try testing.expectEqual(@as(f64, 10.0), builder.tree.numbers.items[bin_node.data]);
+    try testing.expectEqual(@as(f64, 255.0), builder.tree.number(hex_node));
+    try testing.expectEqual(@as(f64, 10.0), builder.tree.number(bin_node));
 }
 
 test "AST Builder: Constructs and retrieves complex Binary Expressions" {
     var builder = ast.Builder.init(testing.allocator);
     defer builder.deinit();
 
-    const left_idx = try builder.number("10", dummy_loc);
-    const right_idx = try builder.number("20", dummy_loc);
+    const left_idx = try builder.number("10", dummy_token);
+    const right_idx = try builder.number("20", dummy_token);
 
-    const bin_idx = try builder.binary(.add, left_idx, right_idx, dummy_loc);
+    const bin_idx = try builder.binary(.add, left_idx, right_idx, dummy_token);
     const node = builder.tree.getNode(bin_idx).?;
 
     try testing.expectEqual(ast.Tag.binary_op, node.tag);
@@ -89,20 +87,20 @@ test "AST Builder: Constructs span-based Block nodes accurately" {
     defer builder.deinit();
 
     // Create 3 dummy statements
-    const stmt1 = try builder.number("1", dummy_loc);
-    const stmt2 = try builder.number("2", dummy_loc);
-    const stmt3 = try builder.number("3", dummy_loc);
+    const stmt1 = try builder.number("1", dummy_token);
+    const stmt2 = try builder.number("2", dummy_token);
+    const stmt3 = try builder.number("3", dummy_token);
 
     const stmts = [_]ast.NodeIndex{ stmt1, stmt2, stmt3 };
     const params = [_]ast.NodeIndex{}; // Empty params for this block
 
-    const block_idx = try builder.block(&params, &stmts, dummy_loc);
+    const block_idx = try builder.block(&params, &stmts, dummy_token);
     const node = builder.tree.getNode(block_idx).?;
 
     try testing.expectEqual(ast.Tag.block, node.tag);
 
-    // The data points to the block payloads pool
-    const block_payload = builder.tree.blocks.items[node.data];
+    // Reconstruct the block payload from extra_data
+    const block_payload = builder.tree.block(node);
 
     // Extract the span of statements from the auxiliary indices array
     const extracted_stmts = builder.tree.getNodes(block_payload.stmts);
@@ -116,11 +114,11 @@ test "AST Builder: Assignment node generation with interning" {
     var builder = ast.Builder.init(testing.allocator);
     defer builder.deinit();
 
-    const val_idx = try builder.number("42", dummy_loc);
+    const val_idx = try builder.number("42", dummy_token);
     const var_name = try builder.intern("my_var");
 
     // Test a compound assignment `my_var += 42`
-    const assign_idx = try builder.assignment(var_name, .add, val_idx, dummy_loc);
+    const assign_idx = try builder.assignment(var_name, .add, val_idx, dummy_token);
     const node = builder.tree.getNode(assign_idx).?;
 
     try testing.expectEqual(ast.Tag.assignment, node.tag);

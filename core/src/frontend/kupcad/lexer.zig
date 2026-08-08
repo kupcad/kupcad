@@ -204,8 +204,9 @@ pub const Lexer = struct {
                 } else if (self.interp_depth > 0) {
                     self.interp_depth -= 1;
                     self.brace_depth = self.interp_stack[self.interp_depth];
-                    self.advance();
-                    return self.consumeStringBody(start_loc, false, '"');
+                    self.advance(); // consume '}'
+                    const content_loc = self.getLoc();
+                    return self.consumeStringBody(content_loc, false, '"');
                 } else {
                     return self.consumeChar(.r_brace, start_loc);
                 }
@@ -386,10 +387,14 @@ pub const Lexer = struct {
     fn consumeString(self: *Lexer, start_loc: common_token.Location, quote: u8) Token {
         if (quote == '\'') {
             const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, &self.line, &self.col, '\'');
-            return .{ .tag = .string, .loc = start_loc, .lexeme = lexeme };
+            var content_loc = start_loc;
+            content_loc.offset += 1;
+            content_loc.col += 1;
+            return .{ .tag = .string, .loc = content_loc, .lexeme = lexeme };
         }
-        self.advance();
-        return self.consumeStringBody(start_loc, true, quote);
+        self.advance(); // consume opening quote '"'
+        const content_loc = self.getLoc();
+        return self.consumeStringBody(content_loc, true, quote);
     }
 
     fn consumeSymbolOrColon(self: *Lexer, start_loc: common_token.Location) Token {
