@@ -94,13 +94,14 @@ test "AST Builder: Constructs span-based Block nodes accurately" {
     const stmts = [_]ast.NodeIndex{ stmt1, stmt2, stmt3 };
     const params = [_]ast.NodeIndex{}; // Empty params for this block
 
-    const block_idx = try builder.block(&params, &stmts, dummy_token);
+    const block_idx = try builder.block(&params, &stmts, dummy_token, dummy_token);
     const node = builder.tree.getNode(block_idx).?;
 
     try testing.expectEqual(ast.Tag.block, node.tag);
 
     // Reconstruct the block payload from extra_data
     const block_payload = builder.tree.block(node);
+    try testing.expectEqual(@as(u32, dummy_token), block_payload.end_token);
 
     // Extract the span of statements from the auxiliary indices array
     const extracted_stmts = builder.tree.getNodes(block_payload.stmts);

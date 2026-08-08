@@ -198,6 +198,7 @@ pub const MethodCall = struct {
     args: Span, // Span of NamedArg
     block: NodeIndex = .none,
     is_safe: bool = false,
+    end_token: u32 = 0,
 };
 
 pub const SuperCall = struct {
@@ -227,6 +228,7 @@ pub const IfStmt = struct {
     then_branch: NodeIndex,
     else_branch: NodeIndex = .none,
     is_unless: bool = false,
+    end_token: u32 = 0,
 };
 
 pub const WhileStmt = struct {
@@ -252,18 +254,21 @@ pub const DefStmt = struct {
     params: Span, // Span of Param
     body: NodeIndex,
     is_class_method: bool = false,
+    end_token: u32 = 0,
 };
 
 pub const ClassStmt = struct {
     name: NodeIndex,
     super_class: NodeIndex = .none,
     body: NodeIndex,
+    end_token: u32 = 0,
 };
 
 pub const ModuleStmt = struct {
     name: StringId,
     params: Span, // Span of Param
     body: NodeIndex,
+    end_token: u32 = 0,
 };
 
 pub const BeginStmt = struct {
@@ -283,6 +288,12 @@ pub const ParamDoc = struct {
 pub const Block = struct {
     params: Span, // Span of NodeIndex
     stmts: Span, // Span of NodeIndex
+    end_token: u32 = 0,
+};
+
+pub const ArrayLiteral = struct {
+    span: Span, // Span of NodeIndex
+    end_token: u32 = 0,
 };
 
 pub const IndexAccess = struct {
@@ -305,7 +316,7 @@ pub const Tree = struct {
     // Unified DoD Storage for all AST Payloads
     extra_data: std.ArrayListUnmanaged(u32) = .empty,
 
-    // String interning pool (storing slices backed by arena)
+    // Contiguous String Interner Pool
     string_bytes: std.ArrayListUnmanaged(u8) = .empty,
     string_spans: std.ArrayListUnmanaged(StringSpan) = .empty,
 
@@ -495,6 +506,7 @@ pub const Tree = struct {
             .args = .{ .start = self.extra_data.items[base + 2], .end = self.extra_data.items[base + 3] },
             .block = @enumFromInt(self.extra_data.items[base + 4]),
             .is_safe = self.extra_data.items[base + 5] != 0,
+            .end_token = self.extra_data.items[base + 6],
         };
     }
 
@@ -539,6 +551,7 @@ pub const Tree = struct {
             .then_branch = @enumFromInt(self.extra_data.items[base + 1]),
             .else_branch = @enumFromInt(self.extra_data.items[base + 2]),
             .is_unless = self.extra_data.items[base + 3] != 0,
+            .end_token = self.extra_data.items[base + 4],
         };
     }
 
@@ -576,6 +589,7 @@ pub const Tree = struct {
             .params = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
             .body = @enumFromInt(self.extra_data.items[base + 3]),
             .is_class_method = self.extra_data.items[base + 4] != 0,
+            .end_token = self.extra_data.items[base + 5],
         };
     }
 
@@ -585,6 +599,7 @@ pub const Tree = struct {
             .name = @enumFromInt(self.extra_data.items[base]),
             .super_class = @enumFromInt(self.extra_data.items[base + 1]),
             .body = @enumFromInt(self.extra_data.items[base + 2]),
+            .end_token = self.extra_data.items[base + 3],
         };
     }
 
@@ -594,6 +609,7 @@ pub const Tree = struct {
             .name = @enumFromInt(self.extra_data.items[base]),
             .params = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
             .body = @enumFromInt(self.extra_data.items[base + 3]),
+            .end_token = self.extra_data.items[base + 4],
         };
     }
 
@@ -622,6 +638,15 @@ pub const Tree = struct {
         return .{
             .params = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
             .stmts = .{ .start = self.extra_data.items[base + 2], .end = self.extra_data.items[base + 3] },
+            .end_token = self.extra_data.items[base + 4],
+        };
+    }
+
+    pub fn arrayLiteral(self: *const Tree, node: *const Node) ArrayLiteral {
+        const base = node.data;
+        return .{
+            .span = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
+            .end_token = self.extra_data.items[base + 2],
         };
     }
 
@@ -656,8 +681,6 @@ pub const Tree = struct {
 pub const Builder = struct {
     allocator: std.mem.Allocator,
     tree: Tree,
-    // The deduplication map stores StringId -> void.
-    // We use a custom Context to do lookups using raw string slices!
     intern_map: std.HashMapUnmanaged(StringId, void, InternContext, std.hash_map.default_max_load_percentage) = .empty,
 
     // The Map Context (Used when the hash map resizes and moves StringIds around)
@@ -701,9 +724,10 @@ pub const Builder = struct {
 
     /// Pre-allocates memory for the AST to prevent dynamic resizing during parsing.
     pub fn ensureTotalCapacity(self: *Builder, allocator: std.mem.Allocator, node_capacity: usize) !void {
-        // Adapt these field names to whatever arrays your ast.Tree actually uses
         try self.tree.nodes.ensureTotalCapacity(allocator, node_capacity);
         try self.tree.extra_data.ensureTotalCapacity(allocator, node_capacity * 2);
+        try self.tree.string_bytes.ensureTotalCapacity(allocator, node_capacity * 8);
+        try self.tree.string_spans.ensureTotalCapacity(allocator, node_capacity);
     }
 
     /// Core allocation method for the 8-byte Tiny Node
@@ -723,29 +747,19 @@ pub const Builder = struct {
         const map_ctx = InternContext{ .tree = &self.tree };
         const adapter = StringAdapter{ .tree = &self.tree };
 
-        // Pass BOTH contexts manually because they contain state (the Tree pointer)
         const gop = try self.intern_map.getOrPutContextAdapted(self.allocator, str, adapter, map_ctx);
-
         if (gop.found_existing) {
             return gop.key_ptr.*;
         }
 
-        // Calculate the new offset
         const offset: u32 = @intCast(self.tree.string_bytes.items.len);
-
-        // Append the actual bytes to the contiguous buffer
         try self.tree.string_bytes.appendSlice(self.allocator, str);
-
-        // Append the span information
         const id = @as(StringId, @enumFromInt(self.tree.string_spans.items.len));
         try self.tree.string_spans.append(self.allocator, .{
             .offset = offset,
             .length = @intCast(str.len),
         });
-
-        // Save the new ID in the deduplication map
         gop.key_ptr.* = id;
-
         return id;
     }
 
@@ -933,8 +947,8 @@ pub const Builder = struct {
         return self.createNode(.ternary_op, main_token, data_idx);
     }
 
-    pub fn methodCall(self: *Builder, receiver: NodeIndex, name: StringId, args: Span, block_idx: NodeIndex, is_safe: bool, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ receiver, name, args, block_idx, is_safe });
+    pub fn methodCall(self: *Builder, receiver: NodeIndex, name: StringId, args: Span, block_idx: NodeIndex, is_safe: bool, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ receiver, name, args, block_idx, is_safe, end_token });
         return self.createNode(.method_call, main_token, data_idx);
     }
 
@@ -958,8 +972,8 @@ pub const Builder = struct {
         return self.createNode(.export_stmt, main_token, data_idx);
     }
 
-    pub fn ifStmt(self: *Builder, cond: NodeIndex, then_b: NodeIndex, else_b: NodeIndex, is_unless: bool, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ cond, then_b, else_b, is_unless });
+    pub fn ifStmt(self: *Builder, cond: NodeIndex, then_b: NodeIndex, else_b: NodeIndex, is_unless: bool, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ cond, then_b, else_b, is_unless, end_token });
         return self.createNode(.if_stmt, main_token, data_idx);
     }
 
@@ -978,18 +992,18 @@ pub const Builder = struct {
         return self.createNode(.case_stmt, main_token, data_idx);
     }
 
-    pub fn defStmt(self: *Builder, name: StringId, params: Span, body: NodeIndex, is_class_method: bool, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ name, params, body, is_class_method });
+    pub fn defStmt(self: *Builder, name: StringId, params: Span, body: NodeIndex, is_class_method: bool, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ name, params, body, is_class_method, end_token });
         return self.createNode(.def_stmt, main_token, data_idx);
     }
 
-    pub fn classStmt(self: *Builder, name: NodeIndex, super_class: NodeIndex, body: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ name, super_class, body });
+    pub fn classStmt(self: *Builder, name: NodeIndex, super_class: NodeIndex, body: NodeIndex, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ name, super_class, body, end_token });
         return self.createNode(.class_stmt, main_token, data_idx);
     }
 
-    pub fn moduleStmt(self: *Builder, name: StringId, params: Span, body: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ name, params, body });
+    pub fn moduleStmt(self: *Builder, name: StringId, params: Span, body: NodeIndex, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ name, params, body, end_token });
         return self.createNode(.module_stmt, main_token, data_idx);
     }
 
@@ -998,9 +1012,14 @@ pub const Builder = struct {
         return self.createNode(.begin_stmt, main_token, data_idx);
     }
 
-    pub fn block(self: *Builder, params: []const NodeIndex, stmts: []const NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ try self.addNodes(params), try self.addNodes(stmts) });
+    pub fn block(self: *Builder, params: []const NodeIndex, stmts: []const NodeIndex, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ try self.addNodes(params), try self.addNodes(stmts), end_token });
         return self.createNode(.block, main_token, data_idx);
+    }
+
+    pub fn arrayLiteral(self: *Builder, span: Span, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ span, end_token });
+        return self.createNode(.array_literal, main_token, data_idx);
     }
 
     pub fn range(self: *Builder, start: NodeIndex, end: NodeIndex, step: NodeIndex, is_excl: bool, main_token: u24) !NodeIndex {
@@ -1016,11 +1035,6 @@ pub const Builder = struct {
     pub fn rescueModifier(self: *Builder, expr: NodeIndex, rescue_expr: NodeIndex, main_token: u24) !NodeIndex {
         const data_idx = try self.addExtra(.{ expr, rescue_expr });
         return self.createNode(.rescue_modifier, main_token, data_idx);
-    }
-
-    pub fn arrayLiteral(self: *Builder, nodes: Span, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{nodes});
-        return self.createNode(.array_literal, main_token, data_idx);
     }
 
     pub fn hashLiteral(self: *Builder, entries: Span, main_token: u24) !NodeIndex {

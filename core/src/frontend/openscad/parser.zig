@@ -77,7 +77,6 @@ pub const Parser = struct {
     }
 
     // --- O(1) Lookahead Helpers ---
-
     inline fn advance(self: *Parser) void {
         if (self.tok_idx < self.tokens.tags.len - 1) {
             self.tok_idx += 1;
@@ -206,7 +205,6 @@ pub const Parser = struct {
         const start_tok = self.tok_idx;
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
-
         while (self.tag(0) != .eof and self.tag(0) != .r_brace) {
             self.skipIgnored();
             if (self.tag(0) == .semicolon) {
@@ -221,7 +219,8 @@ pub const Parser = struct {
                 self.synchronize();
             }
         }
-        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
+        const end_tok = self.tok_idx;
+        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, start_tok);
     }
 
     fn parseIncludeOrUse(self: *Parser) ParseError!ast.NodeIndex {
@@ -251,10 +250,8 @@ pub const Parser = struct {
     fn parseLetStatement(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.keyword_let);
         _ = try self.expect(.l_paren);
-
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
-
         while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
             const var_tok = try self.expect(.ident);
             _ = try self.expect(.equal);
@@ -274,18 +271,16 @@ pub const Parser = struct {
             _ = try self.expect(.r_brace);
             break :blk b;
         } else try self.parseStatement();
-
         try self.scratch_nodes.append(self.allocator, body);
-        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
+        const end_tok = self.tok_idx;
+        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, start_tok);
     }
 
     fn parseLetExpression(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.keyword_let);
         _ = try self.expect(.l_paren);
-
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
-
         while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
             const var_tok = try self.expect(.ident);
             _ = try self.expect(.equal);
@@ -297,7 +292,8 @@ pub const Parser = struct {
         _ = try self.expect(.r_paren);
         const yield_expr = try self.parseExpression(.none);
         try self.scratch_nodes.append(self.allocator, yield_expr);
-        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
+        const end_tok = self.tok_idx;
+        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, start_tok);
     }
 
     fn parseModifierCall(self: *Parser) ParseError!ast.NodeIndex {
@@ -313,15 +309,14 @@ pub const Parser = struct {
             else => "modifier",
         };
         const interned_name = try self.b.intern(mod_name);
-
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
         try self.scratch_nodes.append(self.allocator, child);
-
         const child_loc = self.b.tree.getNode(child).?.main_token;
-        const child_block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], child_loc);
+        const end_tok = self.tok_idx;
+        const child_block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, child_loc);
         const empty_args = try self.b.addNamedArgs(&.{});
-        return self.b.methodCall(.none, interned_name, empty_args, child_block, false, mod_tok) catch ParseError.OutOfMemory;
+        return self.b.methodCall(.none, interned_name, empty_args, child_block, false, end_tok, mod_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseForLoop(self: *Parser) ParseError!ast.NodeIndex {
@@ -329,31 +324,25 @@ pub const Parser = struct {
         const start_tok = self.tok_idx;
         self.advance();
         _ = try self.expect(.l_paren);
-
         const s_nodes_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_nodes_len);
-
         const s_bindings_len = self.scratch_for_bindings.items.len;
         defer self.scratch_for_bindings.shrinkRetainingCapacity(s_bindings_len);
-
         while (self.tag(0) != .r_paren and self.tag(0) != .semicolon and self.tag(0) != .eof) {
             const var_tok = try self.expect(.ident);
             _ = try self.expect(.equal);
             const val_expr = try self.parseExpression(.none);
             const interned_name = try self.b.intern(self.tokens.lexeme(self.source, var_tok));
             const assign_node = try self.b.assignment(interned_name, null, val_expr, var_tok);
-
             try self.scratch_nodes.append(self.allocator, assign_node);
             try self.scratch_for_bindings.append(self.allocator, .{ .name = interned_name, .range = val_expr });
             if (self.tag(0) == .comma) self.advance() else break;
         }
-
         if (self.tag(0) == .semicolon) {
             self.advance();
             var condition: ast.NodeIndex = .none;
             if (self.tag(0) != .semicolon) condition = try self.parseExpression(.none);
             _ = try self.expect(.semicolon);
-
             const updates_s_len = self.scratch_nodes.items.len;
             while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
                 const target_tok = try self.expect(.ident);
@@ -364,30 +353,26 @@ pub const Parser = struct {
                 if (self.tag(0) == .comma) self.advance() else break;
             }
             _ = try self.expect(.r_paren);
-
             const body = if (self.tag(0) == .l_brace) blk: {
                 self.advance();
                 const b = try self.parseBlock();
                 _ = try self.expect(.r_brace);
                 break :blk b;
             } else try self.parseStatement();
-
             const updates_slice = self.scratch_nodes.items[updates_s_len..];
             const while_stmts_start = self.scratch_nodes.items.len;
             try self.scratch_nodes.append(self.allocator, body);
             try self.scratch_nodes.appendSlice(self.allocator, updates_slice);
-
             const body_loc = self.b.tree.getNode(body).?.main_token;
-            const while_body = try self.b.block(&.{}, self.scratch_nodes.items[while_stmts_start..], body_loc);
+            const end_tok = self.tok_idx;
+            const while_body = try self.b.block(&.{}, self.scratch_nodes.items[while_stmts_start..], end_tok, body_loc);
             const true_cond = try self.b.booleanNode(true, start_tok);
             const while_node = try self.b.whileStmt(if (condition == .none) true_cond else condition, while_body, false, start_tok);
-
             const init_assignments = self.scratch_nodes.items[s_nodes_len..updates_s_len];
             const outer_start = self.scratch_nodes.items.len;
             try self.scratch_nodes.appendSlice(self.allocator, init_assignments);
             try self.scratch_nodes.append(self.allocator, while_node);
-
-            return try self.b.block(&.{}, self.scratch_nodes.items[outer_start..], start_tok);
+            return try self.b.block(&.{}, self.scratch_nodes.items[outer_start..], end_tok, start_tok);
         } else {
             _ = try self.expect(.r_paren);
             const body = if (self.tag(0) == .l_brace) blk: {
@@ -396,7 +381,6 @@ pub const Parser = struct {
                 _ = try self.expect(.r_brace);
                 break :blk b;
             } else try self.parseStatement();
-
             const bindings_span = try self.b.addForBindings(self.scratch_for_bindings.items[s_bindings_len..]);
             return self.b.forStmt(bindings_span, body, is_intersection, start_tok) catch ParseError.OutOfMemory;
         }
@@ -408,10 +392,8 @@ pub const Parser = struct {
             const start_tag = self.tag(0);
             self.advance();
             _ = try self.expect(.l_paren);
-
             const s_len = self.scratch_for_bindings.items.len;
             defer self.scratch_for_bindings.shrinkRetainingCapacity(s_len);
-
             while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
                 const var_tok = try self.expect(.ident);
                 _ = try self.expect(.equal);
@@ -426,10 +408,8 @@ pub const Parser = struct {
         } else if (self.tag(0) == .keyword_let) {
             const start_tok = try self.expect(.keyword_let);
             _ = try self.expect(.l_paren);
-
             const s_len = self.scratch_nodes.items.len;
             defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
-
             while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
                 const var_tok = try self.expect(.ident);
                 _ = try self.expect(.equal);
@@ -441,7 +421,8 @@ pub const Parser = struct {
             _ = try self.expect(.r_paren);
             const yield_expr = try self.parseComprehensionElement();
             try self.scratch_nodes.append(self.allocator, yield_expr);
-            return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
+            const end_tok = self.tok_idx;
+            return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, start_tok);
         } else if (self.tag(0) == .keyword_if) {
             const start_tok = try self.expect(.keyword_if);
             _ = try self.expect(.l_paren);
@@ -453,7 +434,8 @@ pub const Parser = struct {
                 self.advance();
                 else_branch = try self.parseComprehensionElement();
             }
-            return self.b.ifStmt(cond, then_branch, else_branch, false, start_tok) catch ParseError.OutOfMemory;
+            const end_tok = self.tok_idx;
+            return self.b.ifStmt(cond, then_branch, else_branch, false, end_tok, start_tok) catch ParseError.OutOfMemory;
         } else {
             var is_each = false;
             if (self.tag(0) == .keyword_each) {
@@ -482,26 +464,22 @@ pub const Parser = struct {
             return self.b.assignment(try self.b.intern(self.tokens.lexeme(self.source, target_tok)), null, val, target_tok);
         }
         const expr = try self.parseExpression(.none);
-
         const expr_node = self.b.tree.getNode(expr) orelse return ParseError.InvalidExpression;
         if (expr_node.tag == .method_call) {
             if (self.tag(0) == .l_brace) {
                 self.advance();
                 const children_block = try self.parseBlock();
                 _ = try self.expect(.r_brace);
-
                 const expr_data = self.b.tree.getNode(expr).?.data;
                 self.b.tree.extra_data.items[expr_data + 4] = @intFromEnum(children_block);
             } else if (self.tag(0) != .semicolon and self.tag(0) != .r_brace and self.tag(0) != .eof) {
                 const child_stmt = try self.parseStatement();
-
                 const s_len = self.scratch_nodes.items.len;
                 defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
                 try self.scratch_nodes.append(self.allocator, child_stmt);
-
                 const child_loc = self.b.tree.getNode(child_stmt).?.main_token;
-                const child_block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], child_loc);
-
+                const end_tok = self.tok_idx;
+                const child_block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, child_loc);
                 const expr_data = self.b.tree.getNode(expr).?.data;
                 self.b.tree.extra_data.items[expr_data + 4] = @intFromEnum(child_block);
             }
@@ -590,59 +568,51 @@ pub const Parser = struct {
         self.advance();
         const args = try self.parseParenArgs();
         const yield_expr = try self.parseExpression(.none);
-        const call_node = self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, start_tok)), args, .none, false, start_tok) catch return ParseError.OutOfMemory;
-
+        const end_tok = self.tok_idx;
+        const call_node = self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, start_tok)), args, .none, false, end_tok, start_tok) catch return ParseError.OutOfMemory;
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
         try self.scratch_nodes.append(self.allocator, call_node);
         try self.scratch_nodes.append(self.allocator, yield_expr);
-
-        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
+        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, start_tok);
     }
 
     fn parseArrayOrRangeOrComprehension(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.l_bracket);
         while (self.tag(0) == .comment or self.tag(0) == .block_comment) self.advance();
-
         if (self.tag(0) == .keyword_for or self.tag(0) == .keyword_let or self.tag(0) == .keyword_if or self.tag(0) == .keyword_intersection_for) {
             const root = try self.parseComprehensionElement();
             while (self.tag(0) == .comment or self.tag(0) == .block_comment) self.advance();
+            const end_tok = self.tok_idx;
             _ = try self.expect(.r_bracket);
-
             const s_len = self.scratch_nodes.items.len;
             defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
             try self.scratch_nodes.append(self.allocator, root);
             const span = try self.b.addNodes(self.scratch_nodes.items[s_len..]);
-
-            return self.b.arrayLiteral(span, start_tok) catch ParseError.OutOfMemory;
+            return self.b.arrayLiteral(span, end_tok, start_tok) catch ParseError.OutOfMemory;
         }
-
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
-
         if (self.tag(0) == .r_bracket) {
+            const end_tok = self.tok_idx;
             self.advance();
             const span = try self.b.addNodes(&.{});
-            return self.b.arrayLiteral(span, start_tok) catch ParseError.OutOfMemory;
+            return self.b.arrayLiteral(span, end_tok, start_tok) catch ParseError.OutOfMemory;
         }
-
         var is_each = false;
         if (self.tag(0) == .keyword_each) {
             is_each = true;
             self.advance();
         }
-
         var first: ast.NodeIndex = undefined;
         if (self.tag(0) == .comma or self.tag(0) == .r_bracket) {
             first = try self.b.undefNode(self.tok_idx);
         } else {
             first = try self.parseExpression(.none);
         }
-
         if (is_each) {
             first = self.b.eachExpr(first, start_tok) catch return ParseError.OutOfMemory;
         }
-
         if (self.tag(0) == .colon) {
             if (is_each) return ParseError.InvalidExpression;
             self.advance();
@@ -656,37 +626,32 @@ pub const Parser = struct {
             _ = try self.expect(.r_bracket);
             return self.b.range(first, second, .none, false, start_tok) catch ParseError.OutOfMemory;
         }
-
         try self.scratch_nodes.append(self.allocator, first);
         if (self.tag(0) == .comma) self.advance();
-
         while (self.tag(0) != .r_bracket and self.tag(0) != .eof) {
             while (self.tag(0) == .comment or self.tag(0) == .block_comment) self.advance();
             if (self.tag(0) == .r_bracket) break;
-
             is_each = false;
             if (self.tag(0) == .keyword_each) {
                 is_each = true;
                 self.advance();
             }
-
             var elem: ast.NodeIndex = undefined;
             if (self.tag(0) == .comma or self.tag(0) == .r_bracket) {
                 elem = try self.b.undefNode(self.tok_idx);
             } else {
                 elem = try self.parseExpression(.none);
             }
-
             if (is_each) {
                 elem = self.b.eachExpr(elem, start_tok) catch return ParseError.OutOfMemory;
             }
             try self.scratch_nodes.append(self.allocator, elem);
             if (self.tag(0) == .comma) self.advance() else break;
         }
-
+        const end_tok = self.tok_idx;
         _ = try self.expect(.r_bracket);
         const span = try self.b.addNodes(self.scratch_nodes.items[s_len..]);
-        return self.b.arrayLiteral(span, start_tok) catch ParseError.OutOfMemory;
+        return self.b.arrayLiteral(span, end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseNamedArg(self: *Parser) ParseError!ast.NamedArg {
@@ -708,7 +673,6 @@ pub const Parser = struct {
         _ = try self.expect(.l_paren);
         const s_len = self.scratch_named_args.items.len;
         defer self.scratch_named_args.shrinkRetainingCapacity(s_len);
-
         const args = try self.parseCommaSeparated(ast.NamedArg, &self.scratch_named_args, parseNamedArg, .r_paren);
         _ = try self.expect(.r_paren);
         return try self.b.addNamedArgs(args);
@@ -730,7 +694,6 @@ pub const Parser = struct {
         _ = try self.expect(.l_paren);
         const s_len = self.scratch_params.items.len;
         defer self.scratch_params.shrinkRetainingCapacity(s_len);
-
         const params = try self.parseCommaSeparated(ast.Param, &self.scratch_params, parseParam, .r_paren);
         _ = try self.expect(.r_paren);
         return try self.b.addParams(params);
@@ -747,7 +710,8 @@ pub const Parser = struct {
             self.advance();
             else_branch = try self.parseExpression(.none);
         }
-        return self.b.ifStmt(cond, then_branch, else_branch, false, start_tok) catch ParseError.OutOfMemory;
+        const end_tok = self.tok_idx;
+        return self.b.ifStmt(cond, then_branch, else_branch, false, end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseModuleDecl(self: *Parser) ParseError!ast.NodeIndex {
@@ -763,7 +727,8 @@ pub const Parser = struct {
             _ = try self.expect(.r_brace);
             break :blk b;
         } else try self.parseStatement();
-        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), params, body, false, start_tok) catch ParseError.OutOfMemory;
+        const end_tok = self.tok_idx;
+        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), params, body, false, end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseFunctionDecl(self: *Parser) ParseError!ast.NodeIndex {
@@ -778,7 +743,8 @@ pub const Parser = struct {
         if (self.tag(0) == .semicolon) {
             self.advance();
         }
-        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), params, body_expr, false, start_tok) catch ParseError.OutOfMemory;
+        const end_tok = self.tok_idx;
+        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), params, body_expr, false, end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseIfStatement(self: *Parser) ParseError!ast.NodeIndex {
@@ -802,15 +768,16 @@ pub const Parser = struct {
                 break :blk b;
             } else try self.parseStatement();
         }
-        return self.b.ifStmt(cond, then_branch, else_branch, false, start_tok) catch ParseError.OutOfMemory;
+        const end_tok = self.tok_idx;
+        return self.b.ifStmt(cond, then_branch, else_branch, false, end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseAssertOrEcho(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = self.tok_idx;
         self.advance();
         const args = try self.parseParenArgs();
-        const call_node = self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, start_tok)), args, .none, false, start_tok) catch return ParseError.OutOfMemory;
-
+        const end_tok = self.tok_idx;
+        const call_node = self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, start_tok)), args, .none, false, end_tok, start_tok) catch return ParseError.OutOfMemory;
         if (self.tag(0) == .semicolon) {
             self.advance();
             return call_node;
@@ -823,12 +790,12 @@ pub const Parser = struct {
             return call_node;
         } else if (self.tag(0) != .r_brace and self.tag(0) != .eof) {
             const child_stmt = try self.parseStatement();
-
             const s_len = self.scratch_nodes.items.len;
             defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
             try self.scratch_nodes.append(self.allocator, child_stmt);
-
-            const block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], self.b.tree.getNode(child_stmt).?.main_token);
+            const child_loc = self.b.tree.getNode(child_stmt).?.main_token;
+            const child_end_tok = self.tok_idx;
+            const block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], child_end_tok, child_loc);
             const call_data = self.b.tree.getNode(call_node).?.data;
             self.b.tree.extra_data.items[call_data + 4] = @intFromEnum(block);
             return call_node;
@@ -840,7 +807,8 @@ pub const Parser = struct {
         const tok_idx = try self.expect(.ident);
         if (self.tag(0) == .l_paren) {
             const args = try self.parseParenArgs();
-            return self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, tok_idx)), args, .none, false, tok_idx) catch ParseError.OutOfMemory;
+            const end_tok = self.tok_idx;
+            return self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, tok_idx)), args, .none, false, end_tok, tok_idx) catch ParseError.OutOfMemory;
         }
         return self.b.identifierNode(self.tokens.lexeme(self.source, tok_idx), tok_idx) catch ParseError.OutOfMemory;
     }
