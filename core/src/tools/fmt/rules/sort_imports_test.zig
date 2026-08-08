@@ -22,12 +22,17 @@ test "Formatter Rule: SortImportsRule sorts standard contiguous imports" {
     var rule_impl = SortImportsRule{};
     const rule = rule_impl.rule();
     const root_node = parser.b.tree.getNode(tree_idx).?;
+    const root_block = parser.b.tree.blocks.items[root_node.data];
 
-    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_node.kind.block.stmts));
+    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts));
 
-    try testing.expectEqualStrings("a_lib.kup", parser.b.tree.getString(parser.b.tree.getNode(sorted_stmts[0]).?.kind.import_stmt.path));
-    try testing.expectEqualStrings("m_lib.kup", parser.b.tree.getString(parser.b.tree.getNode(sorted_stmts[1]).?.kind.import_stmt.path));
-    try testing.expectEqualStrings("z_lib.kup", parser.b.tree.getString(parser.b.tree.getNode(sorted_stmts[2]).?.kind.import_stmt.path));
+    const n0 = parser.b.tree.getNode(sorted_stmts[0]).?;
+    const n1 = parser.b.tree.getNode(sorted_stmts[1]).?;
+    const n2 = parser.b.tree.getNode(sorted_stmts[2]).?;
+
+    try testing.expectEqualStrings("a_lib.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n0.data].path));
+    try testing.expectEqualStrings("m_lib.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n1.data].path));
+    try testing.expectEqualStrings("z_lib.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n2.data].path));
 }
 
 test "Formatter Rule: SortImportsRule handles named and destructured imports" {
@@ -47,16 +52,21 @@ test "Formatter Rule: SortImportsRule handles named and destructured imports" {
     var rule_impl = SortImportsRule{};
     const rule = rule_impl.rule();
     const root_node = parser.b.tree.getNode(tree_idx).?;
+    const root_block = parser.b.tree.blocks.items[root_node.data];
 
-    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_node.kind.block.stmts));
+    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts));
+
+    const n0 = parser.b.tree.getNode(sorted_stmts[0]).?;
+    const n1 = parser.b.tree.getNode(sorted_stmts[1]).?;
+    const n2 = parser.b.tree.getNode(sorted_stmts[2]).?;
 
     // Should sort entirely by the path string, ignoring the symbol bindings
-    try testing.expectEqualStrings("a_global.kup", parser.b.tree.getString(parser.b.tree.getNode(sorted_stmts[0]).?.kind.import_stmt.path));
-    try testing.expectEqualStrings("b_math.kup", parser.b.tree.getString(parser.b.tree.getNode(sorted_stmts[1]).?.kind.import_stmt.path));
-    try testing.expectEqualStrings("z_hardware.kup", parser.b.tree.getString(parser.b.tree.getNode(sorted_stmts[2]).?.kind.import_stmt.path));
+    try testing.expectEqualStrings("a_global.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n0.data].path));
+    try testing.expectEqualStrings("b_math.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n1.data].path));
+    try testing.expectEqualStrings("z_hardware.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n2.data].path));
 
     // Verify payload is preserved safely (B_Math should be at index 1 now)
-    const math_symbols_span = parser.b.tree.getNode(sorted_stmts[1]).?.kind.import_stmt.symbols;
+    const math_symbols_span = parser.b.tree.import_stmts.items[n1.data].symbols;
     const math_symbols = parser.b.tree.getStringLists(math_symbols_span);
     try testing.expectEqualStrings("Math", parser.b.tree.getString(math_symbols[0]));
 }
@@ -82,20 +92,27 @@ test "Formatter Rule: SortImportsRule respects non-contiguous blocks" {
     var rule_impl = SortImportsRule{};
     const rule = rule_impl.rule();
     const root_node = parser.b.tree.getNode(tree_idx).?;
+    const root_block = parser.b.tree.blocks.items[root_node.data];
 
-    const stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_node.kind.block.stmts));
+    const stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts));
+
+    const n0 = parser.b.tree.getNode(stmts[0]).?;
+    const n1 = parser.b.tree.getNode(stmts[1]).?;
+    const n2 = parser.b.tree.getNode(stmts[2]).?;
+    const n3 = parser.b.tree.getNode(stmts[3]).?;
+    const n4 = parser.b.tree.getNode(stmts[4]).?;
 
     // Block 1 (Indexes 0, 1)
-    try testing.expectEqualStrings("a.kup", parser.b.tree.getString(parser.b.tree.getNode(stmts[0]).?.kind.import_stmt.path));
-    try testing.expectEqualStrings("z.kup", parser.b.tree.getString(parser.b.tree.getNode(stmts[1]).?.kind.import_stmt.path));
+    try testing.expectEqualStrings("a.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n0.data].path));
+    try testing.expectEqualStrings("z.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n1.data].path));
 
     // Middle statement (Index 2)
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).assignment, std.meta.activeTag(parser.b.tree.getNode(stmts[2]).?.kind));
-    try testing.expectEqualStrings("x", parser.b.tree.getString(parser.b.tree.getNode(stmts[2]).?.kind.assignment.name));
+    try testing.expectEqual(ast.Tag.assignment, n2.tag);
+    try testing.expectEqualStrings("x", parser.b.tree.getString(parser.b.tree.assignment(n2).name));
 
     // Block 2 (Indexes 3, 4)
-    try testing.expectEqualStrings("b.kup", parser.b.tree.getString(parser.b.tree.getNode(stmts[3]).?.kind.import_stmt.path));
-    try testing.expectEqualStrings("y.kup", parser.b.tree.getString(parser.b.tree.getNode(stmts[4]).?.kind.import_stmt.path));
+    try testing.expectEqualStrings("b.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n3.data].path));
+    try testing.expectEqualStrings("y.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n4.data].path));
 }
 
 test "Formatter Rule: SortImportsRule handles imports with trailing attributes" {
@@ -114,15 +131,23 @@ test "Formatter Rule: SortImportsRule handles imports with trailing attributes" 
     var rule_impl = SortImportsRule{};
     const rule = rule_impl.rule();
     const root_node = parser.b.tree.getNode(tree_idx).?;
+    const root_block = parser.b.tree.blocks.items[root_node.data];
 
-    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_node.kind.block.stmts));
+    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts));
 
-    try testing.expectEqualStrings("a.kup", parser.b.tree.getString(parser.b.tree.getNode(sorted_stmts[0]).?.kind.import_stmt.path));
-    try testing.expectEqualStrings("z.kup", parser.b.tree.getString(parser.b.tree.getNode(sorted_stmts[1]).?.kind.import_stmt.path));
+    const n0 = parser.b.tree.getNode(sorted_stmts[0]).?;
+    const n1 = parser.b.tree.getNode(sorted_stmts[1]).?;
+
+    try testing.expectEqualStrings("a.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n0.data].path));
+    try testing.expectEqualStrings("z.kup", parser.b.tree.getString(parser.b.tree.import_stmts.items[n1.data].path));
 
     // Ensure the attributes hash is kept intact on the right node
-    const a_attrs_idx = parser.b.tree.getNode(sorted_stmts[0]).?.kind.import_stmt.attributes;
+    const a_attrs_idx = parser.b.tree.import_stmts.items[n0.data].attributes;
     const a_attrs_node = parser.b.tree.getNode(a_attrs_idx).?;
-    const a_attrs = parser.b.tree.getHashEntries(a_attrs_node.kind.hash_literal);
-    try testing.expectEqual(@as(f64, 1.0), parser.b.tree.getNode(a_attrs[0].value).?.kind.number);
+
+    // Hash literals now extract their data via tree.getSpan
+    const a_attrs = parser.b.tree.getHashEntries(parser.b.tree.getSpan(a_attrs_node.data));
+
+    const val_node = parser.b.tree.getNode(a_attrs[0].value).?;
+    try testing.expectEqual(@as(f64, 1.0), parser.b.tree.numbers.items[val_node.data]);
 }

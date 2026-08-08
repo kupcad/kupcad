@@ -14,7 +14,7 @@ pub const SortImportsRule = struct {
     }
 
     fn name(_: *anyopaque) []const u8 {
-        return "sort_imports";
+        return "Sort Imports";
     }
 
     fn processBlockStmts(ptr: *anyopaque, temp_allocator: std.mem.Allocator, tree: *const ast.Tree, stmts: []const ast.NodeIndex) []const ast.NodeIndex {
@@ -28,11 +28,11 @@ pub const SortImportsRule = struct {
         var i: usize = 0;
         while (i < new_stmts.len) {
             const start_node = tree.getNode(new_stmts[i]).?;
-            if (start_node.kind == .import_stmt) {
+            if (start_node.tag == .import_stmt) {
                 var j = i + 1;
                 while (j < new_stmts.len) {
                     const next_node = tree.getNode(new_stmts[j]).?;
-                    if (next_node.kind != .import_stmt) break;
+                    if (next_node.tag != .import_stmt) break;
                     j += 1;
                 }
 
@@ -44,8 +44,8 @@ pub const SortImportsRule = struct {
                             const a = ctx_tree.getNode(a_idx).?;
                             const b = ctx_tree.getNode(b_idx).?;
 
-                            const path_a = ctx_tree.getString(a.kind.import_stmt.path);
-                            const path_b = ctx_tree.getString(b.kind.import_stmt.path);
+                            const path_a = ctx_tree.getString(ctx_tree.import_stmts.items[a.data].path);
+                            const path_b = ctx_tree.getString(ctx_tree.import_stmts.items[b.data].path);
 
                             return std.mem.lessThan(u8, path_a, path_b);
                         }
