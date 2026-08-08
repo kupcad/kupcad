@@ -11,10 +11,17 @@ fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter 
     try engine.rules.append(allocator, rule_impl.rule());
 
     var lexer = lexer_mod.Lexer.init(source, 0);
-    var parser = parser_mod.Parser.init(&lexer, allocator);
+
+    // Lex everything upfront to SoA tokens
+    const tokens = try lexer.lexAll(allocator);
+
+    // Initialize parser with tokens and source
+    var parser = parser_mod.Parser.init(tokens, source, allocator);
     const root = try parser.parseProgram();
 
-    try engine.check(&parser.b.tree, root, parser.diagnostics.list.items);
+    // Pass token bounds to the linter engine for diagnostic locations
+    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
+
     return engine;
 }
 

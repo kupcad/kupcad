@@ -95,7 +95,7 @@ pub const Node = packed struct {
     data: u32, // 4 bytes (Index into the extra_data arrays)
 };
 
-// --- Node Payloads ---
+// --- Node Payloads (Reconstructed from extra_data) ---
 pub const Param = struct {
     name: StringId,
     default_value: NodeIndex = .none,
@@ -288,29 +288,6 @@ pub const RescueModifier = struct {
     rescue_expr: NodeIndex,
 };
 
-/// Struct-of-Arrays (SoA) for Tokens.
-/// Drastically improves cache locality during parsing and lookahead.
-pub fn TokenList(comptime TagType: type) type {
-    return struct {
-        tags: []TagType,
-        starts: []u32,
-        lengths: []u32,
-
-        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-            allocator.free(self.tags);
-            allocator.free(self.starts);
-            allocator.free(self.lengths);
-        }
-
-        /// Helper to extract the exact lexeme on demand
-        pub fn lexeme(self: @This(), source: []const u8, index: usize) []const u8 {
-            if (index >= self.starts.len) return "";
-            const start = self.starts[index];
-            return source[start .. start + self.lengths[index]];
-        }
-    };
-}
-
 // --- Tree Structure ---
 pub const Tree = struct {
     root: NodeIndex = .none,
@@ -318,46 +295,19 @@ pub const Tree = struct {
     // Core node storage
     nodes: std.ArrayListUnmanaged(Node) = .empty,
 
+    // Unified DoD Storage for all AST Payloads
+    extra_data: std.ArrayListUnmanaged(u32) = .empty,
+
     // String interning pool (storing slices backed by arena)
     strings: std.ArrayListUnmanaged([]const u8) = .empty,
     string_indices: std.StringHashMapUnmanaged(StringId) = .empty,
 
-    // Generic span storage (for ArrayLiterals, HashLiterals, NamespaceAccess, etc.)
-    spans: std.ArrayListUnmanaged(Span) = .empty,
+    // Specific typed pools for precision arrays
+    numbers: std.ArrayListUnmanaged(f64) = .empty,
 
-    // Auxiliary lists for spans
+    // Auxiliary typed lists for spans
     extra_node_indices: std.ArrayListUnmanaged(NodeIndex) = .empty,
     extra_string_indices: std.ArrayListUnmanaged(StringId) = .empty,
-
-    // ---- Payload Pools ----
-    numbers: std.ArrayListUnmanaged(f64) = .empty,
-    assignments: std.ArrayListUnmanaged(Assignment) = .empty,
-    multiple_assignments: std.ArrayListUnmanaged(MultipleAssignment) = .empty,
-    property_assignments: std.ArrayListUnmanaged(PropertyAssignment) = .empty,
-    index_assignments: std.ArrayListUnmanaged(IndexAssignment) = .empty,
-    binary_exprs: std.ArrayListUnmanaged(BinaryExpr) = .empty,
-    unary_exprs: std.ArrayListUnmanaged(UnaryExpr) = .empty,
-    ternary_exprs: std.ArrayListUnmanaged(TernaryExpr) = .empty,
-    method_calls: std.ArrayListUnmanaged(MethodCall) = .empty,
-    super_calls: std.ArrayListUnmanaged(SuperCall) = .empty,
-    lambda_exprs: std.ArrayListUnmanaged(LambdaExpr) = .empty,
-    import_stmts: std.ArrayListUnmanaged(ImportStmt) = .empty,
-    export_stmts: std.ArrayListUnmanaged(ExportStmt) = .empty,
-    if_stmts: std.ArrayListUnmanaged(IfStmt) = .empty,
-    while_stmts: std.ArrayListUnmanaged(WhileStmt) = .empty,
-    for_stmts: std.ArrayListUnmanaged(ForStmt) = .empty,
-    case_stmts: std.ArrayListUnmanaged(CaseStmt) = .empty,
-    def_stmts: std.ArrayListUnmanaged(DefStmt) = .empty,
-    class_stmts: std.ArrayListUnmanaged(ClassStmt) = .empty,
-    module_stmts: std.ArrayListUnmanaged(ModuleStmt) = .empty,
-    begin_stmts: std.ArrayListUnmanaged(BeginStmt) = .empty,
-    param_docs: std.ArrayListUnmanaged(ParamDoc) = .empty,
-    blocks: std.ArrayListUnmanaged(Block) = .empty,
-    ranges: std.ArrayListUnmanaged(Range) = .empty,
-    index_accesses: std.ArrayListUnmanaged(IndexAccess) = .empty,
-    rescue_modifiers: std.ArrayListUnmanaged(RescueModifier) = .empty,
-
-    // Auxiliary sub-struct pools (used via Spans)
     named_args: std.ArrayListUnmanaged(NamedArg) = .empty,
     params: std.ArrayListUnmanaged(Param) = .empty,
     hash_entries: std.ArrayListUnmanaged(HashEntry) = .empty,
@@ -365,6 +315,33 @@ pub const Tree = struct {
     when_branches: std.ArrayListUnmanaged(WhenBranch) = .empty,
     lhs_exprs: std.ArrayListUnmanaged(LhsExpr) = .empty,
     rescue_clauses: std.ArrayListUnmanaged(RescueClause) = .empty,
+
+    pub fn init(allocator: std.mem.Allocator) Tree {
+        _ = allocator;
+        return .{};
+    }
+
+    pub fn deinit(self: *Tree, allocator: std.mem.Allocator) void {
+        self.nodes.deinit(allocator);
+        self.extra_data.deinit(allocator);
+
+        for (self.strings.items) |str| {
+            allocator.free(str);
+        }
+        self.strings.deinit(allocator);
+        self.string_indices.deinit(allocator);
+
+        self.numbers.deinit(allocator);
+        self.extra_node_indices.deinit(allocator);
+        self.extra_string_indices.deinit(allocator);
+        self.named_args.deinit(allocator);
+        self.params.deinit(allocator);
+        self.hash_entries.deinit(allocator);
+        self.for_bindings.deinit(allocator);
+        self.when_branches.deinit(allocator);
+        self.lhs_exprs.deinit(allocator);
+        self.rescue_clauses.deinit(allocator);
+    }
 
     // --- Accessor Helpers ---
     pub fn getNode(self: *const Tree, index: NodeIndex) ?*const Node {
@@ -375,10 +352,6 @@ pub const Tree = struct {
     pub fn getString(self: *const Tree, id: StringId) []const u8 {
         if (id == .none) return "";
         return self.strings.items[@intFromEnum(id)];
-    }
-
-    pub fn getSpan(self: *const Tree, index: u32) Span {
-        return self.spans.items[index];
     }
 
     pub fn getNodes(self: *const Tree, span: Span) []const NodeIndex {
@@ -417,80 +390,270 @@ pub const Tree = struct {
         return self.rescue_clauses.items[span.start..span.end];
     }
 
-    // Typed Data Extractors
-    pub fn binaryExpr(self: *const Tree, node: *const Node) *const BinaryExpr {
-        std.debug.assert(node.tag == .binary_op);
-        return &self.binary_exprs.items[node.data];
-    }
-
-    pub fn unaryExpr(self: *const Tree, node: *const Node) *const UnaryExpr {
-        std.debug.assert(node.tag == .unary_op);
-        return &self.unary_exprs.items[node.data];
-    }
-
-    pub fn ifStmt(self: *const Tree, node: *const Node) *const IfStmt {
-        std.debug.assert(node.tag == .if_stmt);
-        return &self.if_stmts.items[node.data];
-    }
-
-    pub fn methodCall(self: *const Tree, node: *const Node) *const MethodCall {
-        std.debug.assert(node.tag == .method_call);
-        return &self.method_calls.items[node.data];
-    }
-
-    pub fn assignment(self: *const Tree, node: *const Node) *const Assignment {
-        std.debug.assert(node.tag == .assignment);
-        return &self.assignments.items[node.data];
-    }
-
-    pub fn deinit(self: *Tree, allocator: std.mem.Allocator) void {
-        self.nodes.deinit(allocator);
-
-        // Free the dynamically allocated interned string slices
-        for (self.strings.items) |str| {
-            allocator.free(str);
+    pub fn intern(self: *Tree, allocator: std.mem.Allocator, str: []const u8) !StringId {
+        if (self.string_indices.get(str)) |id| {
+            return id;
         }
+        const copied = try allocator.dupe(u8, str);
+        const index = @as(u32, @intCast(self.strings.items.len));
+        const id = @as(StringId, @enumFromInt(index));
+        try self.strings.append(allocator, copied);
+        try self.string_indices.put(allocator, copied, id);
+        return id;
+    }
 
-        self.strings.deinit(allocator);
-        self.string_indices.deinit(allocator);
-        self.spans.deinit(allocator);
-        self.extra_node_indices.deinit(allocator);
-        self.extra_string_indices.deinit(allocator);
+    // --- Dynamic Payload Reconstructors ---
 
-        self.numbers.deinit(allocator);
-        self.assignments.deinit(allocator);
-        self.multiple_assignments.deinit(allocator);
-        self.property_assignments.deinit(allocator);
-        self.index_assignments.deinit(allocator);
-        self.binary_exprs.deinit(allocator);
-        self.unary_exprs.deinit(allocator);
-        self.ternary_exprs.deinit(allocator);
-        self.method_calls.deinit(allocator);
-        self.super_calls.deinit(allocator);
-        self.lambda_exprs.deinit(allocator);
-        self.import_stmts.deinit(allocator);
-        self.export_stmts.deinit(allocator);
-        self.if_stmts.deinit(allocator);
-        self.while_stmts.deinit(allocator);
-        self.for_stmts.deinit(allocator);
-        self.case_stmts.deinit(allocator);
-        self.def_stmts.deinit(allocator);
-        self.class_stmts.deinit(allocator);
-        self.module_stmts.deinit(allocator);
-        self.begin_stmts.deinit(allocator);
-        self.param_docs.deinit(allocator);
-        self.blocks.deinit(allocator);
-        self.ranges.deinit(allocator);
-        self.index_accesses.deinit(allocator);
-        self.rescue_modifiers.deinit(allocator);
+    pub fn number(self: *const Tree, node: *const Node) f64 {
+        return self.numbers.items[node.data];
+    }
 
-        self.named_args.deinit(allocator);
-        self.params.deinit(allocator);
-        self.hash_entries.deinit(allocator);
-        self.for_bindings.deinit(allocator);
-        self.when_branches.deinit(allocator);
-        self.lhs_exprs.deinit(allocator);
-        self.rescue_clauses.deinit(allocator);
+    pub fn boolean(self: *const Tree, node: *const Node) bool {
+        return node.data != 0;
+    }
+
+    pub fn nodeIndex(self: *const Tree, node: *const Node) NodeIndex {
+        return @enumFromInt(node.data);
+    }
+
+    pub fn nodeSpan(self: *const Tree, node: *const Node) Span {
+        const base = node.data;
+        return .{
+            .start = self.extra_data.items[base],
+            .end = self.extra_data.items[base + 1],
+        };
+    }
+
+    pub fn assignment(self: *const Tree, node: *const Node) Assignment {
+        const base = node.data;
+        const op_val = self.extra_data.items[base + 1];
+        return .{
+            .name = @enumFromInt(self.extra_data.items[base]),
+            .op = if (op_val == std.math.maxInt(u32)) null else @enumFromInt(op_val),
+            .value = @enumFromInt(self.extra_data.items[base + 2]),
+        };
+    }
+
+    pub fn multipleAssignment(self: *const Tree, node: *const Node) MultipleAssignment {
+        const base = node.data;
+        const op_val = self.extra_data.items[base + 2];
+        return .{
+            .lhs = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
+            .op = if (op_val == std.math.maxInt(u32)) null else @enumFromInt(op_val),
+            .value = @enumFromInt(self.extra_data.items[base + 3]),
+        };
+    }
+
+    pub fn propertyAssignment(self: *const Tree, node: *const Node) PropertyAssignment {
+        const base = node.data;
+        const op_val = self.extra_data.items[base + 2];
+        return .{
+            .target = @enumFromInt(self.extra_data.items[base]),
+            .property = @enumFromInt(self.extra_data.items[base + 1]),
+            .op = if (op_val == std.math.maxInt(u32)) null else @enumFromInt(op_val),
+            .value = @enumFromInt(self.extra_data.items[base + 3]),
+        };
+    }
+
+    pub fn indexAssignment(self: *const Tree, node: *const Node) IndexAssignment {
+        const base = node.data;
+        const op_val = self.extra_data.items[base + 2];
+        return .{
+            .target = @enumFromInt(self.extra_data.items[base]),
+            .index = @enumFromInt(self.extra_data.items[base + 1]),
+            .op = if (op_val == std.math.maxInt(u32)) null else @enumFromInt(op_val),
+            .value = @enumFromInt(self.extra_data.items[base + 3]),
+        };
+    }
+
+    pub fn binaryExpr(self: *const Tree, node: *const Node) BinaryExpr {
+        const base = node.data;
+        return .{
+            .op = @enumFromInt(self.extra_data.items[base]),
+            .left = @enumFromInt(self.extra_data.items[base + 1]),
+            .right = @enumFromInt(self.extra_data.items[base + 2]),
+        };
+    }
+
+    pub fn unaryExpr(self: *const Tree, node: *const Node) UnaryExpr {
+        const base = node.data;
+        return .{
+            .op = @enumFromInt(self.extra_data.items[base]),
+            .operand = @enumFromInt(self.extra_data.items[base + 1]),
+        };
+    }
+
+    pub fn ternaryExpr(self: *const Tree, node: *const Node) TernaryExpr {
+        const base = node.data;
+        return .{
+            .condition = @enumFromInt(self.extra_data.items[base]),
+            .then_branch = @enumFromInt(self.extra_data.items[base + 1]),
+            .else_branch = @enumFromInt(self.extra_data.items[base + 2]),
+        };
+    }
+
+    pub fn methodCall(self: *const Tree, node: *const Node) MethodCall {
+        const base = node.data;
+        return .{
+            .receiver = @enumFromInt(self.extra_data.items[base]),
+            .method_name = @enumFromInt(self.extra_data.items[base + 1]),
+            .args = .{ .start = self.extra_data.items[base + 2], .end = self.extra_data.items[base + 3] },
+            .block = @enumFromInt(self.extra_data.items[base + 4]),
+            .is_safe = self.extra_data.items[base + 5] != 0,
+        };
+    }
+
+    pub fn superCall(self: *const Tree, node: *const Node) SuperCall {
+        const base = node.data;
+        return .{
+            .args = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
+            .block = @enumFromInt(self.extra_data.items[base + 2]),
+        };
+    }
+
+    pub fn lambdaExpr(self: *const Tree, node: *const Node) LambdaExpr {
+        const base = node.data;
+        return .{
+            .params = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
+            .body = @enumFromInt(self.extra_data.items[base + 2]),
+        };
+    }
+
+    pub fn importStmt(self: *const Tree, node: *const Node) ImportStmt {
+        const base = node.data;
+        return .{
+            .symbols = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
+            .path = @enumFromInt(self.extra_data.items[base + 2]),
+            .attributes = @enumFromInt(self.extra_data.items[base + 3]),
+        };
+    }
+
+    pub fn exportStmt(self: *const Tree, node: *const Node) ExportStmt {
+        const base = node.data;
+        return .{
+            .symbols = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
+            .path = @enumFromInt(self.extra_data.items[base + 2]),
+            .attributes = @enumFromInt(self.extra_data.items[base + 3]),
+        };
+    }
+
+    pub fn ifStmt(self: *const Tree, node: *const Node) IfStmt {
+        const base = node.data;
+        return .{
+            .condition = @enumFromInt(self.extra_data.items[base]),
+            .then_branch = @enumFromInt(self.extra_data.items[base + 1]),
+            .else_branch = @enumFromInt(self.extra_data.items[base + 2]),
+            .is_unless = self.extra_data.items[base + 3] != 0,
+        };
+    }
+
+    pub fn whileStmt(self: *const Tree, node: *const Node) WhileStmt {
+        const base = node.data;
+        return .{
+            .condition = @enumFromInt(self.extra_data.items[base]),
+            .body = @enumFromInt(self.extra_data.items[base + 1]),
+            .is_until = self.extra_data.items[base + 2] != 0,
+        };
+    }
+
+    pub fn forStmt(self: *const Tree, node: *const Node) ForStmt {
+        const base = node.data;
+        return .{
+            .bindings = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
+            .body = @enumFromInt(self.extra_data.items[base + 2]),
+            .is_intersection = self.extra_data.items[base + 3] != 0,
+        };
+    }
+
+    pub fn caseStmt(self: *const Tree, node: *const Node) CaseStmt {
+        const base = node.data;
+        return .{
+            .condition = @enumFromInt(self.extra_data.items[base]),
+            .when_branches = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
+            .else_branch = @enumFromInt(self.extra_data.items[base + 3]),
+        };
+    }
+
+    pub fn defStmt(self: *const Tree, node: *const Node) DefStmt {
+        const base = node.data;
+        return .{
+            .name = @enumFromInt(self.extra_data.items[base]),
+            .params = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
+            .body = @enumFromInt(self.extra_data.items[base + 3]),
+            .is_class_method = self.extra_data.items[base + 4] != 0,
+        };
+    }
+
+    pub fn classStmt(self: *const Tree, node: *const Node) ClassStmt {
+        const base = node.data;
+        return .{
+            .name = @enumFromInt(self.extra_data.items[base]),
+            .super_class = @enumFromInt(self.extra_data.items[base + 1]),
+            .body = @enumFromInt(self.extra_data.items[base + 2]),
+        };
+    }
+
+    pub fn moduleStmt(self: *const Tree, node: *const Node) ModuleStmt {
+        const base = node.data;
+        return .{
+            .name = @enumFromInt(self.extra_data.items[base]),
+            .params = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
+            .body = @enumFromInt(self.extra_data.items[base + 3]),
+        };
+    }
+
+    pub fn beginStmt(self: *const Tree, node: *const Node) BeginStmt {
+        const base = node.data;
+        return .{
+            .body = @enumFromInt(self.extra_data.items[base]),
+            .rescues = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
+            .ensure_body = @enumFromInt(self.extra_data.items[base + 3]),
+        };
+    }
+
+    pub fn paramDoc(self: *const Tree, node: *const Node) ParamDoc {
+        const base = node.data;
+        return .{
+            .tag_name = @enumFromInt(self.extra_data.items[base]),
+            .target_name = @enumFromInt(self.extra_data.items[base + 1]),
+            .type_name = @enumFromInt(self.extra_data.items[base + 2]),
+            .description = @enumFromInt(self.extra_data.items[base + 3]),
+            .options_expr = @enumFromInt(self.extra_data.items[base + 4]),
+        };
+    }
+
+    pub fn block(self: *const Tree, node: *const Node) Block {
+        const base = node.data;
+        return .{
+            .params = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
+            .stmts = .{ .start = self.extra_data.items[base + 2], .end = self.extra_data.items[base + 3] },
+        };
+    }
+
+    pub fn range(self: *const Tree, node: *const Node) Range {
+        const base = node.data;
+        return .{
+            .start = @enumFromInt(self.extra_data.items[base]),
+            .end = @enumFromInt(self.extra_data.items[base + 1]),
+            .step = @enumFromInt(self.extra_data.items[base + 2]),
+            .is_exclusive = self.extra_data.items[base + 3] != 0,
+        };
+    }
+
+    pub fn indexAccess(self: *const Tree, node: *const Node) IndexAccess {
+        const base = node.data;
+        return .{
+            .target = @enumFromInt(self.extra_data.items[base]),
+            .index = @enumFromInt(self.extra_data.items[base + 1]),
+        };
+    }
+
+    pub fn rescueModifier(self: *const Tree, node: *const Node) RescueModifier {
+        const base = node.data;
+        return .{
+            .expr = @enumFromInt(self.extra_data.items[base]),
+            .rescue_expr = @enumFromInt(self.extra_data.items[base + 1]),
+        };
     }
 };
 
@@ -525,6 +688,33 @@ pub const Builder = struct {
         return self.tree.intern(self.allocator, str);
     }
 
+    /// Serializes payloads sequentially into the global DoD extra_data array
+    fn addExtra(self: *Builder, items: anytype) !u32 {
+        const start = @as(u32, @intCast(self.tree.extra_data.items.len));
+        inline for (items) |item| {
+            const T = @TypeOf(item);
+            if (T == u32) {
+                try self.tree.extra_data.append(self.allocator, item);
+            } else if (T == bool) {
+                try self.tree.extra_data.append(self.allocator, if (item) 1 else 0);
+            } else if (T == Span) {
+                try self.tree.extra_data.append(self.allocator, item.start);
+                try self.tree.extra_data.append(self.allocator, item.end);
+            } else if (@typeInfo(T) == .Optional) {
+                if (item) |v| {
+                    try self.tree.extra_data.append(self.allocator, @intFromEnum(v));
+                } else {
+                    try self.tree.extra_data.append(self.allocator, std.math.maxInt(u32));
+                }
+            } else if (@typeInfo(T) == .Enum) {
+                try self.tree.extra_data.append(self.allocator, @intFromEnum(item));
+            } else {
+                @compileError("Unsupported type for addExtra: " ++ @typeName(T));
+            }
+        }
+        return start;
+    }
+
     // --- Span Generators (Side-Table Arrays) ---
 
     pub fn addNodes(self: *Builder, items: []const NodeIndex) !Span {
@@ -534,57 +724,56 @@ pub const Builder = struct {
     }
 
     pub fn addStringLists(self: *Builder, items: []const StringId) !Span {
-        const start = @as(u32, @intCast(self.tree.extra_string_ids.items.len));
-        try self.tree.extra_string_ids.appendSlice(self.allocator, items);
+        const start = @as(u32, @intCast(self.tree.extra_string_indices.items.len));
+        try self.tree.extra_string_indices.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addNamedArgs(self: *Builder, items: []const NamedArg) !Span {
-        const start = @as(u32, @intCast(self.tree.extra_named_args.items.len));
-        try self.tree.extra_named_args.appendSlice(self.allocator, items);
+        const start = @as(u32, @intCast(self.tree.named_args.items.len));
+        try self.tree.named_args.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addParams(self: *Builder, items: []const Param) !Span {
-        const start = @as(u32, @intCast(self.tree.extra_params.items.len));
-        try self.tree.extra_params.appendSlice(self.allocator, items);
+        const start = @as(u32, @intCast(self.tree.params.items.len));
+        try self.tree.params.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addLhsExprs(self: *Builder, items: []const LhsExpr) !Span {
-        const start = @as(u32, @intCast(self.tree.extra_lhs_exprs.items.len));
-        try self.tree.extra_lhs_exprs.appendSlice(self.allocator, items);
+        const start = @as(u32, @intCast(self.tree.lhs_exprs.items.len));
+        try self.tree.lhs_exprs.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addWhenBranches(self: *Builder, items: []const WhenBranch) !Span {
-        const start = @as(u32, @intCast(self.tree.extra_when_branches.items.len));
-        try self.tree.extra_when_branches.appendSlice(self.allocator, items);
+        const start = @as(u32, @intCast(self.tree.when_branches.items.len));
+        try self.tree.when_branches.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addRescueClauses(self: *Builder, items: []const RescueClause) !Span {
-        const start = @as(u32, @intCast(self.tree.extra_rescue_clauses.items.len));
-        try self.tree.extra_rescue_clauses.appendSlice(self.allocator, items);
+        const start = @as(u32, @intCast(self.tree.rescue_clauses.items.len));
+        try self.tree.rescue_clauses.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addForBindings(self: *Builder, items: []const ForBinding) !Span {
-        const start = @as(u32, @intCast(self.tree.extra_for_bindings.items.len));
-        try self.tree.extra_for_bindings.appendSlice(self.allocator, items);
+        const start = @as(u32, @intCast(self.tree.for_bindings.items.len));
+        try self.tree.for_bindings.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addHashEntries(self: *Builder, items: []const HashEntry) !Span {
-        const start = @as(u32, @intCast(self.tree.extra_hash_entries.items.len));
-        try self.tree.extra_hash_entries.appendSlice(self.allocator, items);
+        const start = @as(u32, @intCast(self.tree.hash_entries.items.len));
+        try self.tree.hash_entries.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     // --- AST Node Constructors ---
 
     pub fn number(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
-        // Strip underscores for numeric parsing (e.g. 1_000_000)
         var clean_buf: [128]u8 = undefined;
         var clean_len: usize = 0;
         for (lexeme_str) |c| {
@@ -645,186 +834,148 @@ pub const Builder = struct {
     }
 
     pub fn assignment(self: *Builder, name: StringId, op: ?BinaryOp, val: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.assignments.items.len));
-        try self.tree.assignments.append(self.allocator, .{ .name = name, .op = op, .value = val });
+        const data_idx = try self.addExtra(.{ name, op, val });
         return self.createNode(.assignment, main_token, data_idx);
     }
 
     pub fn multipleAssignment(self: *Builder, lhs: Span, op: ?BinaryOp, val: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.multiple_assignments.items.len));
-        try self.tree.multiple_assignments.append(self.allocator, .{ .lhs = lhs, .op = op, .value = val });
+        const data_idx = try self.addExtra(.{ lhs, op, val });
         return self.createNode(.multiple_assignment, main_token, data_idx);
     }
 
     pub fn propertyAssignment(self: *Builder, target: NodeIndex, prop: StringId, op: ?BinaryOp, val: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.property_assignments.items.len));
-        try self.tree.property_assignments.append(self.allocator, .{ .target = target, .property = prop, .op = op, .value = val });
+        const data_idx = try self.addExtra(.{ target, prop, op, val });
         return self.createNode(.property_assignment, main_token, data_idx);
     }
 
     pub fn indexAssignment(self: *Builder, target: NodeIndex, index: NodeIndex, op: ?BinaryOp, val: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.index_assignments.items.len));
-        try self.tree.index_assignments.append(self.allocator, .{ .target = target, .index = index, .op = op, .value = val });
+        const data_idx = try self.addExtra(.{ target, index, op, val });
         return self.createNode(.index_assignment, main_token, data_idx);
     }
 
     pub fn binary(self: *Builder, op: BinaryOp, left: NodeIndex, right: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.binary_exprs.items.len));
-        try self.tree.binary_exprs.append(self.allocator, .{ .op = op, .left = left, .right = right });
+        const data_idx = try self.addExtra(.{ op, left, right });
         return self.createNode(.binary_op, main_token, data_idx);
     }
 
     pub fn unary(self: *Builder, op: UnaryOp, operand: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.unary_exprs.items.len));
-        try self.tree.unary_exprs.append(self.allocator, .{ .op = op, .operand = operand });
+        const data_idx = try self.addExtra(.{ op, operand });
         return self.createNode(.unary_op, main_token, data_idx);
     }
 
     pub fn ternary(self: *Builder, cond: NodeIndex, then_b: NodeIndex, else_b: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.ternary_exprs.items.len));
-        try self.tree.ternary_exprs.append(self.allocator, .{ .condition = cond, .then_branch = then_b, .else_branch = else_b });
+        const data_idx = try self.addExtra(.{ cond, then_b, else_b });
         return self.createNode(.ternary_op, main_token, data_idx);
     }
 
     pub fn methodCall(self: *Builder, receiver: NodeIndex, name: StringId, args: Span, block_idx: NodeIndex, is_safe: bool, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.method_calls.items.len));
-        try self.tree.method_calls.append(self.allocator, .{
-            .receiver = receiver,
-            .method_name = name,
-            .args = args,
-            .block = block_idx,
-            .is_safe = is_safe,
-        });
+        const data_idx = try self.addExtra(.{ receiver, name, args, block_idx, is_safe });
         return self.createNode(.method_call, main_token, data_idx);
     }
 
     pub fn superCall(self: *Builder, args: Span, block_idx: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.super_calls.items.len));
-        try self.tree.super_calls.append(self.allocator, .{ .args = args, .block = block_idx });
+        const data_idx = try self.addExtra(.{ args, block_idx });
         return self.createNode(.super_call, main_token, data_idx);
     }
 
     pub fn lambdaExpr(self: *Builder, params: Span, body: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.lambda_exprs.items.len));
-        try self.tree.lambda_exprs.append(self.allocator, .{ .params = params, .body = body });
+        const data_idx = try self.addExtra(.{ params, body });
         return self.createNode(.lambda_expr, main_token, data_idx);
     }
 
     pub fn importStmt(self: *Builder, symbols: Span, path: StringId, attrs: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.import_stmts.items.len));
-        try self.tree.import_stmts.append(self.allocator, .{ .symbols = symbols, .path = path, .attributes = attrs });
+        const data_idx = try self.addExtra(.{ symbols, path, attrs });
         return self.createNode(.import_stmt, main_token, data_idx);
     }
 
     pub fn exportStmt(self: *Builder, symbols: Span, path: StringId, attrs: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.export_stmts.items.len));
-        try self.tree.export_stmts.append(self.allocator, .{ .symbols = symbols, .path = path, .attributes = attrs });
+        const data_idx = try self.addExtra(.{ symbols, path, attrs });
         return self.createNode(.export_stmt, main_token, data_idx);
     }
 
     pub fn ifStmt(self: *Builder, cond: NodeIndex, then_b: NodeIndex, else_b: NodeIndex, is_unless: bool, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.if_stmts.items.len));
-        try self.tree.if_stmts.append(self.allocator, .{ .condition = cond, .then_branch = then_b, .else_branch = else_b, .is_unless = is_unless });
+        const data_idx = try self.addExtra(.{ cond, then_b, else_b, is_unless });
         return self.createNode(.if_stmt, main_token, data_idx);
     }
 
     pub fn whileStmt(self: *Builder, cond: NodeIndex, body: NodeIndex, is_until: bool, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.while_stmts.items.len));
-        try self.tree.while_stmts.append(self.allocator, .{ .condition = cond, .body = body, .is_until = is_until });
+        const data_idx = try self.addExtra(.{ cond, body, is_until });
         return self.createNode(.while_stmt, main_token, data_idx);
     }
 
     pub fn forStmt(self: *Builder, bindings: Span, body: NodeIndex, is_intersection: bool, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.for_stmts.items.len));
-        try self.tree.for_stmts.append(self.allocator, .{ .bindings = bindings, .body = body, .is_intersection = is_intersection });
+        const data_idx = try self.addExtra(.{ bindings, body, is_intersection });
         return self.createNode(.for_stmt, main_token, data_idx);
     }
 
     pub fn caseStmt(self: *Builder, cond: NodeIndex, branches: Span, else_b: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.case_stmts.items.len));
-        try self.tree.case_stmts.append(self.allocator, .{ .condition = cond, .when_branches = branches, .else_branch = else_b });
+        const data_idx = try self.addExtra(.{ cond, branches, else_b });
         return self.createNode(.case_stmt, main_token, data_idx);
     }
 
     pub fn defStmt(self: *Builder, name: StringId, params: Span, body: NodeIndex, is_class_method: bool, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.def_stmts.items.len));
-        try self.tree.def_stmts.append(self.allocator, .{ .name = name, .params = params, .body = body, .is_class_method = is_class_method });
+        const data_idx = try self.addExtra(.{ name, params, body, is_class_method });
         return self.createNode(.def_stmt, main_token, data_idx);
     }
 
     pub fn classStmt(self: *Builder, name: NodeIndex, super_class: NodeIndex, body: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.class_stmts.items.len));
-        try self.tree.class_stmts.append(self.allocator, .{ .name = name, .super_class = super_class, .body = body });
+        const data_idx = try self.addExtra(.{ name, super_class, body });
         return self.createNode(.class_stmt, main_token, data_idx);
     }
 
     pub fn moduleStmt(self: *Builder, name: StringId, params: Span, body: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.module_stmts.items.len));
-        try self.tree.module_stmts.append(self.allocator, .{ .name = name, .params = params, .body = body });
+        const data_idx = try self.addExtra(.{ name, params, body });
         return self.createNode(.module_stmt, main_token, data_idx);
     }
 
     pub fn beginStmt(self: *Builder, body: NodeIndex, rescues: Span, ensure_body: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.begin_stmts.items.len));
-        try self.tree.begin_stmts.append(self.allocator, .{ .body = body, .rescues = rescues, .ensure_body = ensure_body });
+        const data_idx = try self.addExtra(.{ body, rescues, ensure_body });
         return self.createNode(.begin_stmt, main_token, data_idx);
     }
 
     pub fn block(self: *Builder, params: []const NodeIndex, stmts: []const NodeIndex, main_token: u24) !NodeIndex {
-        const payload_idx = @as(u32, @intCast(self.tree.blocks.items.len));
-        try self.tree.blocks.append(self.allocator, .{
-            .params = try self.addNodes(params),
-            .stmts = try self.addNodes(stmts),
-        });
-        return self.createNode(.block, main_token, payload_idx);
+        const data_idx = try self.addExtra(.{ try self.addNodes(params), try self.addNodes(stmts) });
+        return self.createNode(.block, main_token, data_idx);
     }
 
     pub fn range(self: *Builder, start: NodeIndex, end: NodeIndex, step: NodeIndex, is_excl: bool, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.ranges.items.len));
-        try self.tree.ranges.append(self.allocator, .{ .start = start, .end = end, .step = step, .is_exclusive = is_excl });
+        const data_idx = try self.addExtra(.{ start, end, step, is_excl });
         return self.createNode(.range, main_token, data_idx);
     }
 
     pub fn indexAccess(self: *Builder, target: NodeIndex, idx: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.index_accesses.items.len));
-        try self.tree.index_accesses.append(self.allocator, .{ .target = target, .index = idx });
+        const data_idx = try self.addExtra(.{ target, idx });
         return self.createNode(.index_access, main_token, data_idx);
     }
 
     pub fn rescueModifier(self: *Builder, expr: NodeIndex, rescue_expr: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = @as(u32, @intCast(self.tree.rescue_modifiers.items.len));
-        try self.tree.rescue_modifiers.append(self.allocator, .{ .expr = expr, .rescue_expr = rescue_expr });
+        const data_idx = try self.addExtra(.{ expr, rescue_expr });
         return self.createNode(.rescue_modifier, main_token, data_idx);
     }
 
     pub fn arrayLiteral(self: *Builder, nodes: Span, main_token: u24) !NodeIndex {
-        const span_idx = @as(u32, @intCast(self.tree.spans.items.len));
-        try self.tree.spans.append(self.allocator, nodes);
-        return self.createNode(.array_literal, main_token, span_idx);
+        const data_idx = try self.addExtra(.{nodes});
+        return self.createNode(.array_literal, main_token, data_idx);
     }
 
     pub fn hashLiteral(self: *Builder, entries: Span, main_token: u24) !NodeIndex {
-        const span_idx = @as(u32, @intCast(self.tree.spans.items.len));
-        try self.tree.spans.append(self.allocator, entries);
-        return self.createNode(.hash_literal, main_token, span_idx);
+        const data_idx = try self.addExtra(.{entries});
+        return self.createNode(.hash_literal, main_token, data_idx);
     }
 
     pub fn namespaceAccess(self: *Builder, path: Span, main_token: u24) !NodeIndex {
-        const span_idx = @as(u32, @intCast(self.tree.spans.items.len));
-        try self.tree.spans.append(self.allocator, path);
-        return self.createNode(.namespace_access, main_token, span_idx);
+        const data_idx = try self.addExtra(.{path});
+        return self.createNode(.namespace_access, main_token, data_idx);
     }
 
     pub fn interpolatedString(self: *Builder, parts: Span, main_token: u24) !NodeIndex {
-        const span_idx = @as(u32, @intCast(self.tree.spans.items.len));
-        try self.tree.spans.append(self.allocator, parts);
-        return self.createNode(.interpolated_string, main_token, span_idx);
+        const data_idx = try self.addExtra(.{parts});
+        return self.createNode(.interpolated_string, main_token, data_idx);
     }
 
     pub fn yieldStmt(self: *Builder, args: Span, main_token: u24) !NodeIndex {
-        const span_idx = @as(u32, @intCast(self.tree.spans.items.len));
-        try self.tree.spans.append(self.allocator, args);
-        return self.createNode(.yield_stmt, main_token, span_idx);
+        const data_idx = try self.addExtra(.{args});
+        return self.createNode(.yield_stmt, main_token, data_idx);
     }
 
     pub fn returnStmt(self: *Builder, val: NodeIndex, main_token: u24) !NodeIndex {
@@ -851,11 +1002,7 @@ pub const Builder = struct {
         return self.createNode(.each_expr, main_token, @intFromEnum(expr));
     }
 
-    // --- Side-Table Utilities ---
-
     pub fn addParamDoc(self: *Builder, doc: ParamDoc) !u32 {
-        const idx = @as(u32, @intCast(self.tree.param_docs.items.len));
-        try self.tree.param_docs.append(self.allocator, doc);
-        return idx;
+        return try self.addExtra(.{ doc.tag_name, doc.target_name, doc.type_name, doc.description, doc.options_expr });
     }
 };

@@ -33,6 +33,13 @@ pub const Parser = struct {
     b: ast.Builder,
     diagnostics: Diagnostics,
 
+    // --- Phase 3: Zero-Waste Scratch Buffers ---
+    scratch_nodes: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
+    scratch_named_args: std.ArrayListUnmanaged(ast.NamedArg) = .empty,
+    scratch_params: std.ArrayListUnmanaged(ast.Param) = .empty,
+    scratch_for_bindings: std.ArrayListUnmanaged(ast.ForBinding) = .empty,
+    scratch_strings: std.ArrayListUnmanaged(ast.StringId) = .empty,
+
     pub fn init(tokens: common_token.TokenList(Tag), source: []const u8, allocator: std.mem.Allocator) Parser {
         return Parser{
             .tokens = tokens,
@@ -47,6 +54,11 @@ pub const Parser = struct {
     pub fn deinit(self: *Parser) void {
         self.b.deinit();
         self.diagnostics.deinit();
+        self.scratch_nodes.deinit(self.allocator);
+        self.scratch_named_args.deinit(self.allocator);
+        self.scratch_params.deinit(self.allocator);
+        self.scratch_for_bindings.deinit(self.allocator);
+        self.scratch_strings.deinit(self.allocator);
     }
 
     // --- O(1) Lookahead Helpers ---
@@ -140,15 +152,15 @@ pub const Parser = struct {
     inline fn parseCommaSeparated(
         self: *Parser,
         comptime ItemType: type,
+        scratch_list: *std.ArrayListUnmanaged(ItemType),
         comptime parseItemFn: fn (*Parser) ParseError!ItemType,
         end_tag: Tag,
     ) ParseError![]const ItemType {
-        var items: std.ArrayListUnmanaged(ItemType) = .empty;
-        errdefer items.deinit(self.allocator);
+        const start_idx = scratch_list.items.len;
         while (self.tag(0) != end_tag and self.tag(0) != .eof) {
             self.skipIgnored();
             if (self.tag(0) == end_tag) break;
-            try items.append(self.allocator, try parseItemFn(self));
+            try scratch_list.append(self.allocator, try parseItemFn(self));
             self.skipIgnored();
             if (self.tag(0) == .comma) {
                 self.advance();
@@ -158,13 +170,14 @@ pub const Parser = struct {
             }
         }
         self.skipIgnored();
-        return items.toOwnedSlice(self.allocator);
+        return scratch_list.items[start_idx..];
     }
 
     pub fn parseBlock(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = self.tok_idx;
-        var stmts: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
-        errdefer stmts.deinit(self.allocator);
+        const s_len = self.scratch_nodes.items.len;
+        defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+
         while (self.tag(0) != .eof and self.tag(0) != .r_brace) {
             self.skipIgnored();
             if (self.tag(0) == .semicolon) {
@@ -173,13 +186,13 @@ pub const Parser = struct {
             }
             if (self.tag(0) == .r_brace) break;
             if (self.parseStatement()) |parsed_stmt| {
-                try stmts.append(self.allocator, parsed_stmt);
+                try self.scratch_nodes.append(self.allocator, parsed_stmt);
             } else |err| {
                 if (err == ParseError.OutOfMemory) return err;
                 self.synchronize();
             }
         }
-        return try self.b.block(&.{}, stmts.items, start_tok);
+        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
     }
 
     fn parseIncludeOrUse(self: *Parser) ParseError!ast.NodeIndex {
@@ -202,20 +215,23 @@ pub const Parser = struct {
         } else {
             return ParseError.UnexpectedToken;
         }
-        return self.b.importStmt(try self.b.addStringLists(&.{}), path_str, .none, start_tok) catch ParseError.OutOfMemory;
+        const span = try self.b.addStringLists(&.{});
+        return self.b.importStmt(span, path_str, .none, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseLetStatement(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.keyword_let);
         _ = try self.expect(.l_paren);
-        var assignments: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
-        errdefer assignments.deinit(self.allocator);
+
+        const s_len = self.scratch_nodes.items.len;
+        defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+
         while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
             const var_tok = try self.expect(.ident);
             _ = try self.expect(.equal);
             const val_expr = try self.parseExpression(.none);
             const assign_node = try self.b.assignment(try self.b.intern(self.tokens.lexeme(self.source, var_tok)), null, val_expr, var_tok);
-            try assignments.append(self.allocator, assign_node);
+            try self.scratch_nodes.append(self.allocator, assign_node);
             if (self.tag(0) == .comma) {
                 self.advance();
             } else {
@@ -229,10 +245,9 @@ pub const Parser = struct {
             _ = try self.expect(.r_brace);
             break :blk b;
         } else try self.parseStatement();
-        var stmts_list: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
-        try stmts_list.appendSlice(self.allocator, assignments.items);
-        try stmts_list.append(self.allocator, body);
-        return try self.b.block(&.{}, stmts_list.items, start_tok);
+
+        try self.scratch_nodes.append(self.allocator, body);
+        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
     }
 
     fn parseModifierCall(self: *Parser) ParseError!ast.NodeIndex {
@@ -248,11 +263,15 @@ pub const Parser = struct {
             else => "modifier",
         };
         const interned_name = try self.b.intern(mod_name);
-        const stmts_arr = [_]ast.NodeIndex{child};
+
+        const s_len = self.scratch_nodes.items.len;
+        defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+        try self.scratch_nodes.append(self.allocator, child);
 
         const child_loc = self.b.tree.getNode(child).?.main_token;
-        const child_block = try self.b.block(&.{}, &stmts_arr, child_loc);
-        return self.b.methodCall(.none, interned_name, try self.b.addNamedArgs(&.{}), child_block, false, mod_tok) catch ParseError.OutOfMemory;
+        const child_block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], child_loc);
+        const empty_args = try self.b.addNamedArgs(&.{});
+        return self.b.methodCall(.none, interned_name, empty_args, child_block, false, mod_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseForLoop(self: *Parser) ParseError!ast.NodeIndex {
@@ -260,53 +279,65 @@ pub const Parser = struct {
         const start_tok = self.tok_idx;
         self.advance();
         _ = try self.expect(.l_paren);
-        var init_assignments: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
-        errdefer init_assignments.deinit(self.allocator);
-        var standard_bindings: std.ArrayListUnmanaged(ast.ForBinding) = .empty;
-        errdefer standard_bindings.deinit(self.allocator);
+
+        const s_nodes_len = self.scratch_nodes.items.len;
+        defer self.scratch_nodes.shrinkRetainingCapacity(s_nodes_len);
+
+        const s_bindings_len = self.scratch_for_bindings.items.len;
+        defer self.scratch_for_bindings.shrinkRetainingCapacity(s_bindings_len);
+
         while (self.tag(0) != .r_paren and self.tag(0) != .semicolon and self.tag(0) != .eof) {
             const var_tok = try self.expect(.ident);
             _ = try self.expect(.equal);
             const val_expr = try self.parseExpression(.none);
             const interned_name = try self.b.intern(self.tokens.lexeme(self.source, var_tok));
             const assign_node = try self.b.assignment(interned_name, null, val_expr, var_tok);
-            try init_assignments.append(self.allocator, assign_node);
-            try standard_bindings.append(self.allocator, .{ .name = interned_name, .range = val_expr });
+
+            try self.scratch_nodes.append(self.allocator, assign_node);
+            try self.scratch_for_bindings.append(self.allocator, .{ .name = interned_name, .range = val_expr });
             if (self.tag(0) == .comma) self.advance() else break;
         }
+
         if (self.tag(0) == .semicolon) {
             self.advance();
             var condition: ast.NodeIndex = .none;
             if (self.tag(0) != .semicolon) condition = try self.parseExpression(.none);
             _ = try self.expect(.semicolon);
-            var updates: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
-            errdefer updates.deinit(self.allocator);
+
+            const updates_s_len = self.scratch_nodes.items.len;
             while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
                 const target_tok = try self.expect(.ident);
                 _ = try self.expect(.equal);
                 const val = try self.parseExpression(.none);
                 const interned_name = try self.b.intern(self.tokens.lexeme(self.source, target_tok));
-                try updates.append(self.allocator, try self.b.assignment(interned_name, null, val, target_tok));
+                try self.scratch_nodes.append(self.allocator, try self.b.assignment(interned_name, null, val, target_tok));
                 if (self.tag(0) == .comma) self.advance() else break;
             }
             _ = try self.expect(.r_paren);
+
             const body = if (self.tag(0) == .l_brace) blk: {
                 self.advance();
                 const b = try self.parseBlock();
                 _ = try self.expect(.r_brace);
                 break :blk b;
             } else try self.parseStatement();
-            var while_stmts = std.ArrayListUnmanaged(ast.NodeIndex).empty;
-            try while_stmts.append(self.allocator, body);
-            try while_stmts.appendSlice(self.allocator, updates.items);
+
+            const updates_slice = self.scratch_nodes.items[updates_s_len..];
+            const while_stmts_start = self.scratch_nodes.items.len;
+            try self.scratch_nodes.append(self.allocator, body);
+            try self.scratch_nodes.appendSlice(self.allocator, updates_slice);
+
             const body_loc = self.b.tree.getNode(body).?.main_token;
-            const while_body = try self.b.block(&.{}, while_stmts.items, body_loc);
+            const while_body = try self.b.block(&.{}, self.scratch_nodes.items[while_stmts_start..], body_loc);
             const true_cond = try self.b.booleanNode(true, start_tok);
             const while_node = try self.b.whileStmt(if (condition == .none) true_cond else condition, while_body, false, start_tok);
-            var outer_stmts = std.ArrayListUnmanaged(ast.NodeIndex).empty;
-            try outer_stmts.appendSlice(self.allocator, init_assignments.items);
-            try outer_stmts.append(self.allocator, while_node);
-            return try self.b.block(&.{}, outer_stmts.items, start_tok);
+
+            const init_assignments = self.scratch_nodes.items[s_nodes_len..updates_s_len];
+            const outer_start = self.scratch_nodes.items.len;
+            try self.scratch_nodes.appendSlice(self.allocator, init_assignments);
+            try self.scratch_nodes.append(self.allocator, while_node);
+
+            return try self.b.block(&.{}, self.scratch_nodes.items[outer_start..], start_tok);
         } else {
             _ = try self.expect(.r_paren);
             const body = if (self.tag(0) == .l_brace) blk: {
@@ -315,7 +346,9 @@ pub const Parser = struct {
                 _ = try self.expect(.r_brace);
                 break :blk b;
             } else try self.parseStatement();
-            return self.b.forStmt(try self.b.addForBindings(standard_bindings.items), body, is_intersection, start_tok) catch ParseError.OutOfMemory;
+
+            const bindings_span = try self.b.addForBindings(self.scratch_for_bindings.items[s_bindings_len..]);
+            return self.b.forStmt(bindings_span, body, is_intersection, start_tok) catch ParseError.OutOfMemory;
         }
     }
 
@@ -325,37 +358,40 @@ pub const Parser = struct {
             const start_tag = self.tag(0);
             self.advance();
             _ = try self.expect(.l_paren);
-            var bindings: std.ArrayListUnmanaged(ast.ForBinding) = .empty;
-            errdefer bindings.deinit(self.allocator);
+
+            const s_len = self.scratch_for_bindings.items.len;
+            defer self.scratch_for_bindings.shrinkRetainingCapacity(s_len);
+
             while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
                 const var_tok = try self.expect(.ident);
                 _ = try self.expect(.equal);
                 const range_node = try self.parseExpression(.none);
-                try bindings.append(self.allocator, .{ .name = try self.b.intern(self.tokens.lexeme(self.source, var_tok)), .range = range_node });
+                try self.scratch_for_bindings.append(self.allocator, .{ .name = try self.b.intern(self.tokens.lexeme(self.source, var_tok)), .range = range_node });
                 if (self.tag(0) == .comma) self.advance() else break;
             }
             _ = try self.expect(.r_paren);
             const body = try self.parseComprehensionElement();
-            return self.b.forStmt(try self.b.addForBindings(bindings.items), body, (start_tag == .keyword_intersection_for), start_tok) catch ParseError.OutOfMemory;
+            const span = try self.b.addForBindings(self.scratch_for_bindings.items[s_len..]);
+            return self.b.forStmt(span, body, (start_tag == .keyword_intersection_for), start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .keyword_let) {
             const start_tok = try self.expect(.keyword_let);
             _ = try self.expect(.l_paren);
-            var assignments: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
-            errdefer assignments.deinit(self.allocator);
+
+            const s_len = self.scratch_nodes.items.len;
+            defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+
             while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
                 const var_tok = try self.expect(.ident);
                 _ = try self.expect(.equal);
                 const val_expr = try self.parseExpression(.none);
                 const assign_node = try self.b.assignment(try self.b.intern(self.tokens.lexeme(self.source, var_tok)), null, val_expr, var_tok);
-                try assignments.append(self.allocator, assign_node);
+                try self.scratch_nodes.append(self.allocator, assign_node);
                 if (self.tag(0) == .comma) self.advance() else break;
             }
             _ = try self.expect(.r_paren);
             const yield_expr = try self.parseComprehensionElement();
-            var stmts_list = std.ArrayListUnmanaged(ast.NodeIndex).empty;
-            try stmts_list.appendSlice(self.allocator, assignments.items);
-            try stmts_list.append(self.allocator, yield_expr);
-            return try self.b.block(&.{}, stmts_list.items, start_tok);
+            try self.scratch_nodes.append(self.allocator, yield_expr);
+            return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
         } else if (self.tag(0) == .keyword_if) {
             const start_tok = try self.expect(.keyword_if);
             _ = try self.expect(.l_paren);
@@ -405,15 +441,19 @@ pub const Parser = struct {
                 _ = try self.expect(.r_brace);
 
                 const expr_data = self.b.tree.getNode(expr).?.data;
-                self.b.tree.method_calls.items[expr_data].block = children_block;
+                self.b.tree.extra_data.items[expr_data + 4] = @intFromEnum(children_block);
             } else if (self.tag(0) != .semicolon and self.tag(0) != .r_brace and self.tag(0) != .eof) {
                 const child_stmt = try self.parseStatement();
-                const stmts_arr = [_]ast.NodeIndex{child_stmt};
+
+                const s_len = self.scratch_nodes.items.len;
+                defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+                try self.scratch_nodes.append(self.allocator, child_stmt);
+
                 const child_loc = self.b.tree.getNode(child_stmt).?.main_token;
-                const child_block = try self.b.block(&.{}, &stmts_arr, child_loc);
+                const child_block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], child_loc);
 
                 const expr_data = self.b.tree.getNode(expr).?.data;
-                self.b.tree.method_calls.items[expr_data].block = child_block;
+                self.b.tree.extra_data.items[expr_data + 4] = @intFromEnum(child_block);
             }
         }
         if (self.tag(0) == .semicolon) {
@@ -423,9 +463,9 @@ pub const Parser = struct {
     }
 
     pub fn parseExpression(self: *Parser, precedence: Precedence) ParseError!ast.NodeIndex {
+        self.skipIgnored();
         const start_tok = self.tok_idx;
         var left: ast.NodeIndex = undefined;
-        self.skipIgnored();
 
         switch (self.tag(0)) {
             .number => {
@@ -472,7 +512,7 @@ pub const Parser = struct {
                 self.advance();
                 const params = try self.parseParenParams();
                 const body = try self.parseExpression(.none);
-                left = try self.b.lambdaExpr(try self.b.addParams(params), body, start_tok);
+                left = try self.b.lambdaExpr(params, body, start_tok);
             },
             else => {
                 self.reportError(self.getLoc(start_tok), "Invalid expression starting with '{s}'", .{self.lexeme(0)});
@@ -494,37 +534,19 @@ pub const Parser = struct {
         return left;
     }
 
-    fn parseLetExpression(self: *Parser) ParseError!ast.NodeIndex {
-        const start_tok = try self.expect(.keyword_let);
-        _ = try self.expect(.l_paren);
-        var assignments: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
-        errdefer assignments.deinit(self.allocator);
-        while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
-            const var_tok = try self.expect(.ident);
-            _ = try self.expect(.equal);
-            const val_expr = try self.parseExpression(.none);
-            const assign_node = try self.b.assignment(try self.b.intern(self.tokens.lexeme(self.source, var_tok)), null, val_expr, var_tok);
-            try assignments.append(self.allocator, assign_node);
-            if (self.tag(0) == .comma) self.advance() else break;
-        }
-        _ = try self.expect(.r_paren);
-        const yield_expr = try self.parseExpression(.none);
-        var stmts = std.ArrayListUnmanaged(ast.NodeIndex).empty;
-        try stmts.appendSlice(self.allocator, assignments.items);
-        try stmts.append(self.allocator, yield_expr);
-        return try self.b.block(&.{}, stmts.items, start_tok);
-    }
-
     fn parseAssertOrEchoExpr(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = self.tok_idx;
         self.advance();
         const args = try self.parseParenArgs();
         const yield_expr = try self.parseExpression(.none);
-        const call_node = self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, start_tok)), try self.b.addNamedArgs(args), .none, false, start_tok) catch return ParseError.OutOfMemory;
-        var stmts = try self.allocator.alloc(ast.NodeIndex, 2);
-        stmts[0] = call_node;
-        stmts[1] = yield_expr;
-        return try self.b.block(&.{}, stmts, start_tok);
+        const call_node = self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, start_tok)), args, .none, false, start_tok) catch return ParseError.OutOfMemory;
+
+        const s_len = self.scratch_nodes.items.len;
+        defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+        try self.scratch_nodes.append(self.allocator, call_node);
+        try self.scratch_nodes.append(self.allocator, yield_expr);
+
+        return try self.b.block(&.{}, self.scratch_nodes.items[s_len..], start_tok);
     }
 
     fn parseArrayOrRangeOrComprehension(self: *Parser) ParseError!ast.NodeIndex {
@@ -535,17 +557,22 @@ pub const Parser = struct {
             const root = try self.parseComprehensionElement();
             while (self.tag(0) == .comment or self.tag(0) == .block_comment) self.advance();
             _ = try self.expect(.r_bracket);
-            var arr = try self.allocator.alloc(ast.NodeIndex, 1);
-            arr[0] = root;
-            return self.b.arrayLiteral(try self.b.addNodes(arr), start_tok) catch ParseError.OutOfMemory;
+
+            const s_len = self.scratch_nodes.items.len;
+            defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+            try self.scratch_nodes.append(self.allocator, root);
+            const span = try self.b.addNodes(self.scratch_nodes.items[s_len..]);
+
+            return self.b.arrayLiteral(span, start_tok) catch ParseError.OutOfMemory;
         }
 
-        var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
-        errdefer elements.deinit(self.allocator);
+        const s_len = self.scratch_nodes.items.len;
+        defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
 
         if (self.tag(0) == .r_bracket) {
             self.advance();
-            return self.b.arrayLiteral(try self.b.addNodes(&.{}), start_tok) catch ParseError.OutOfMemory;
+            const span = try self.b.addNodes(&.{});
+            return self.b.arrayLiteral(span, start_tok) catch ParseError.OutOfMemory;
         }
 
         var is_each = false;
@@ -579,7 +606,7 @@ pub const Parser = struct {
             return self.b.range(first, second, .none, false, start_tok) catch ParseError.OutOfMemory;
         }
 
-        try elements.append(self.allocator, first);
+        try self.scratch_nodes.append(self.allocator, first);
         if (self.tag(0) == .comma) self.advance();
 
         while (self.tag(0) != .r_bracket and self.tag(0) != .eof) {
@@ -602,12 +629,13 @@ pub const Parser = struct {
             if (is_each) {
                 elem = self.b.eachExpr(elem, start_tok) catch return ParseError.OutOfMemory;
             }
-            try elements.append(self.allocator, elem);
+            try self.scratch_nodes.append(self.allocator, elem);
             if (self.tag(0) == .comma) self.advance() else break;
         }
 
         _ = try self.expect(.r_bracket);
-        return self.b.arrayLiteral(try self.b.addNodes(elements.items), start_tok) catch ParseError.OutOfMemory;
+        const span = try self.b.addNodes(self.scratch_nodes.items[s_len..]);
+        return self.b.arrayLiteral(span, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseNamedArg(self: *Parser) ParseError!ast.NamedArg {
@@ -625,11 +653,14 @@ pub const Parser = struct {
         return .{ .name = arg_name, .value = val, .modifier = null };
     }
 
-    fn parseParenArgs(self: *Parser) ParseError![]const ast.NamedArg {
+    fn parseParenArgs(self: *Parser) ParseError!ast.Span {
         _ = try self.expect(.l_paren);
-        const args = try self.parseCommaSeparated(ast.NamedArg, parseNamedArg, .r_paren);
+        const s_len = self.scratch_named_args.items.len;
+        defer self.scratch_named_args.shrinkRetainingCapacity(s_len);
+
+        const args = try self.parseCommaSeparated(ast.NamedArg, &self.scratch_named_args, parseNamedArg, .r_paren);
         _ = try self.expect(.r_paren);
-        return args;
+        return try self.b.addNamedArgs(args);
     }
 
     fn parseParam(self: *Parser) ParseError!ast.Param {
@@ -644,11 +675,14 @@ pub const Parser = struct {
         return .{ .name = param_name, .default_value = default_val, .modifier = null, .is_keyword = false };
     }
 
-    fn parseParenParams(self: *Parser) ParseError![]const ast.Param {
+    fn parseParenParams(self: *Parser) ParseError!ast.Span {
         _ = try self.expect(.l_paren);
-        const params = try self.parseCommaSeparated(ast.Param, parseParam, .r_paren);
+        const s_len = self.scratch_params.items.len;
+        defer self.scratch_params.shrinkRetainingCapacity(s_len);
+
+        const params = try self.parseCommaSeparated(ast.Param, &self.scratch_params, parseParam, .r_paren);
         _ = try self.expect(.r_paren);
-        return params;
+        return try self.b.addParams(params);
     }
 
     fn parseIfExpression(self: *Parser) ParseError!ast.NodeIndex {
@@ -668,7 +702,7 @@ pub const Parser = struct {
     fn parseModuleDecl(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.keyword_module);
         const name_tok = try self.expect(.ident);
-        var params: []const ast.Param = &.{};
+        var params: ast.Span = .{ .start = 0, .end = 0 };
         if (self.tag(0) == .l_paren) {
             params = try self.parseParenParams();
         }
@@ -678,13 +712,13 @@ pub const Parser = struct {
             _ = try self.expect(.r_brace);
             break :blk b;
         } else try self.parseStatement();
-        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), try self.b.addParams(params), body, false, start_tok) catch ParseError.OutOfMemory;
+        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), params, body, false, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseFunctionDecl(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.keyword_function);
         const name_tok = try self.expect(.ident);
-        var params: []const ast.Param = &.{};
+        var params: ast.Span = .{ .start = 0, .end = 0 };
         if (self.tag(0) == .l_paren) {
             params = try self.parseParenParams();
         }
@@ -693,7 +727,7 @@ pub const Parser = struct {
         if (self.tag(0) == .semicolon) {
             self.advance();
         }
-        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), try self.b.addParams(params), body_expr, false, start_tok) catch ParseError.OutOfMemory;
+        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), params, body_expr, false, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseIfStatement(self: *Parser) ParseError!ast.NodeIndex {
@@ -724,7 +758,7 @@ pub const Parser = struct {
         const start_tok = self.tok_idx;
         self.advance();
         const args = try self.parseParenArgs();
-        const call_node = self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, start_tok)), try self.b.addNamedArgs(args), .none, false, start_tok) catch return ParseError.OutOfMemory;
+        const call_node = self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, start_tok)), args, .none, false, start_tok) catch return ParseError.OutOfMemory;
 
         if (self.tag(0) == .semicolon) {
             self.advance();
@@ -734,14 +768,18 @@ pub const Parser = struct {
             const child_block = try self.parseBlock();
             _ = try self.expect(.r_brace);
             const call_data = self.b.tree.getNode(call_node).?.data;
-            self.b.tree.method_calls.items[call_data].block = child_block;
+            self.b.tree.extra_data.items[call_data + 4] = @intFromEnum(child_block);
             return call_node;
         } else if (self.tag(0) != .r_brace and self.tag(0) != .eof) {
             const child_stmt = try self.parseStatement();
-            const stmts_arr = [_]ast.NodeIndex{child_stmt};
-            const block = try self.b.block(&.{}, &stmts_arr, self.b.tree.getNode(child_stmt).?.main_token);
+
+            const s_len = self.scratch_nodes.items.len;
+            defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+            try self.scratch_nodes.append(self.allocator, child_stmt);
+
+            const block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], self.b.tree.getNode(child_stmt).?.main_token);
             const call_data = self.b.tree.getNode(call_node).?.data;
-            self.b.tree.method_calls.items[call_data].block = block;
+            self.b.tree.extra_data.items[call_data + 4] = @intFromEnum(block);
             return call_node;
         }
         return call_node;
@@ -751,7 +789,7 @@ pub const Parser = struct {
         const tok_idx = try self.expect(.ident);
         if (self.tag(0) == .l_paren) {
             const args = try self.parseParenArgs();
-            return self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, tok_idx)), try self.b.addNamedArgs(args), .none, false, tok_idx) catch ParseError.OutOfMemory;
+            return self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, tok_idx)), args, .none, false, tok_idx) catch ParseError.OutOfMemory;
         }
         return self.b.identifierNode(self.tokens.lexeme(self.source, tok_idx), tok_idx) catch ParseError.OutOfMemory;
     }

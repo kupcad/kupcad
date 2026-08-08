@@ -29,12 +29,12 @@ pub const NegativeDimRule = struct {
         if (val.tag == .unary_op and tree.unaryExpr(val).op == .negate) {
             const operand = tree.getNode(tree.unaryExpr(val).operand).?;
             if (operand.tag == .number) {
-                try engine.addDiagnostic(val.loc, .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{prop_name});
+                try engine.addDiagnostic(engine.getLoc(val.main_token), .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{prop_name});
             }
-        } else if (val.tag == .number and tree.numbers.items[val.data] < 0) {
-            try engine.addDiagnostic(val.loc, .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{prop_name});
+        } else if (val.tag == .number and tree.number(val) < 0) {
+            try engine.addDiagnostic(engine.getLoc(val.main_token), .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{prop_name});
         } else if (val.tag == .array_literal) {
-            for (tree.getNodes(tree.getSpan(val.data))) |elem_idx| {
+            for (tree.getNodes(tree.nodeSpan(val))) |elem_idx| {
                 try checkValue(engine, tree, elem_idx, prop_name);
             }
         }
@@ -51,7 +51,7 @@ pub const NegativeDimRule = struct {
                 try checkValue(engine, tree, arg.value, arg_name);
             }
         } else if (node.tag == .property_assignment) {
-            const pa = tree.property_assignments.items[node.data];
+            const pa = tree.propertyAssignment(node);
             const prop_name = tree.getString(pa.property);
             if (isCoordinate(prop_name)) return;
             try checkValue(engine, tree, pa.value, prop_name);

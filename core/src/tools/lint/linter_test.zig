@@ -36,10 +36,12 @@ test "Linter: Scope shadowing inside blocks (do ... end) and lambdas" {
     defer arena.deinit();
 
     var lexer = lexer_mod.Lexer.init(source, 0);
-    var parser = parser_mod.Parser.init(&lexer, arena.allocator());
+    const tokens = try lexer.lexAll(arena.allocator());
+
+    var parser = parser_mod.Parser.init(tokens, source, arena.allocator());
     const root = try parser.parseProgram();
 
-    try engine.check(&parser.b.tree, root, parser.diagnostics.list.items);
+    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
 
     // We expect exactly two warnings here: one for the global `a` and one for the shadowed block param `a`
     try testing.expectEqual(@as(usize, 2), engine.diagnostics.items.len);
@@ -65,9 +67,11 @@ test "Linter: Iterative traversal prevents stack overflow on deeply nested AST" 
     defer arena.deinit();
 
     var lexer = lexer_mod.Lexer.init(source_buf.items, 0);
-    var parser = parser_mod.Parser.init(&lexer, arena.allocator());
+    const tokens = try lexer.lexAll(arena.allocator());
+
+    var parser = parser_mod.Parser.init(tokens, source_buf.items, arena.allocator());
     const root = try parser.parseProgram();
 
     // Verify linter runs on 500-deep nested AST without stack overflow
-    try engine.check(&parser.b.tree, root, parser.diagnostics.list.items);
+    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
 }

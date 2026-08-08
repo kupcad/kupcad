@@ -14,6 +14,7 @@ pub const Comment = struct {
 };
 
 /// A generic Token wrapper that takes a language-specific Tag enum.
+/// Used by the Lexer before tokens are packed into the SoA TokenList.
 pub fn Token(comptime TagType: type) type {
     return struct {
         tag: TagType,
@@ -26,40 +27,25 @@ pub fn Token(comptime TagType: type) type {
     };
 }
 
-/// A generic 2-token buffered lexer wrapper providing unified lookahead for parsers.
-pub fn BufferedLexer(comptime LexerType: type, comptime TokenType: type, comptime TagType: type) type {
+/// Struct-of-Arrays (SoA) for Tokens.
+/// Drastically improves cache locality during parsing and lookahead.
+pub fn TokenList(comptime TagType: type) type {
     return struct {
-        lexer: *LexerType,
-        previous: TokenType,
-        current: TokenType,
-        next_tok: TokenType,
+        tags: []TagType,
+        starts: []u32,
+        lengths: []u32,
 
-        const Self = @This();
-
-        pub fn init(lexer: *LexerType) Self {
-            var self = Self{
-                .lexer = lexer,
-                .previous = .{ .tag = .eof, .loc = .{ .line = 1, .col = 1, .offset = 0, .length = 0, .file_id = 0 }, .lexeme = "" },
-                .current = undefined,
-                .next_tok = undefined,
-            };
-            self.next_tok = lexer.next();
-            self.advance();
-            return self;
+        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+            allocator.free(self.tags);
+            allocator.free(self.starts);
+            allocator.free(self.lengths);
         }
 
-        pub fn advance(self: *Self) void {
-            self.previous = self.current;
-            self.current = self.next_tok;
-            self.next_tok = self.lexer.next();
-        }
-
-        pub inline fn peekTag(self: *const Self) TagType {
-            return self.next_tok.tag;
-        }
-
-        pub inline fn peekToken(self: *const Self) TokenType {
-            return self.next_tok;
+        /// Helper to extract the exact lexeme on demand
+        pub fn lexeme(self: @This(), source: []const u8, index: usize) []const u8 {
+            if (index >= self.starts.len) return "";
+            const start = self.starts[index];
+            return source[start .. start + self.lengths[index]];
         }
     };
 }
