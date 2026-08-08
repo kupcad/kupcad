@@ -51,26 +51,30 @@ test "OpenSCAD Parser: Module definition and CSG Tree" {
     const mod_node = getNode(&parser, mod_idx);
 
     // Module lowers to DefStmt
-    try testing.expectEqualStrings("housing", getStr(&parser, mod_node.kind.def_stmt.name));
-    try testing.expectEqualStrings("w", getStr(&parser, getParams(&parser, mod_node.kind.def_stmt.params)[0].name));
+    const def_stmt = parser.b.tree.def_stmts.items[mod_node.data];
+    try testing.expectEqualStrings("housing", getStr(&parser, def_stmt.name));
+    try testing.expectEqualStrings("w", getStr(&parser, getParams(&parser, def_stmt.params)[0].name));
 
-    const body_node = getNode(&parser, mod_node.kind.def_stmt.body);
-    const diff_call = getNode(&parser, getNodes(&parser, body_node.kind.block.stmts)[0]);
-    try testing.expectEqualStrings("difference", getStr(&parser, diff_call.kind.method_call.method_name));
+    const body_node = getNode(&parser, def_stmt.body);
+    const body_block = parser.b.tree.blocks.items[body_node.data];
+    const diff_call = getNode(&parser, getNodes(&parser, body_block.stmts)[0]);
+    try testing.expectEqualStrings("difference", getStr(&parser, parser.b.tree.methodCall(diff_call).method_name));
 
-    const diff_block = getNode(&parser, diff_call.kind.method_call.block);
-    const diff_children = getNodes(&parser, diff_block.kind.block.stmts);
-    
+    const diff_block = getNode(&parser, parser.b.tree.methodCall(diff_call).block);
+    const diff_block_payload = parser.b.tree.blocks.items[diff_block.data];
+    const diff_children = getNodes(&parser, diff_block_payload.stmts);
+
     const cube_node = getNode(&parser, diff_children[0]);
-    try testing.expectEqualStrings("cube", getStr(&parser, cube_node.kind.method_call.method_name));
+    try testing.expectEqualStrings("cube", getStr(&parser, parser.b.tree.methodCall(cube_node).method_name));
 
     const mod_call = getNode(&parser, diff_children[1]);
     // Modifiers lower to method calls with the child trapped in a block!
-    try testing.expectEqualStrings("debug", getStr(&parser, mod_call.kind.method_call.method_name));
-    
-    const mod_call_block = getNode(&parser, mod_call.kind.method_call.block);
-    const mod_call_child0 = getNode(&parser, getNodes(&parser, mod_call_block.kind.block.stmts)[0]);
-    try testing.expectEqualStrings("cylinder", getStr(&parser, mod_call_child0.kind.method_call.method_name));
+    try testing.expectEqualStrings("debug", getStr(&parser, parser.b.tree.methodCall(mod_call).method_name));
+
+    const mod_call_block = getNode(&parser, parser.b.tree.methodCall(mod_call).block);
+    const mod_call_block_payload = parser.b.tree.blocks.items[mod_call_block.data];
+    const mod_call_child0 = getNode(&parser, getNodes(&parser, mod_call_block_payload.stmts)[0]);
+    try testing.expectEqualStrings("cylinder", getStr(&parser, parser.b.tree.methodCall(mod_call_child0).method_name));
 }
 
 test "OpenSCAD Parser: For Loop and Range [start:step:end]" {
@@ -83,18 +87,21 @@ test "OpenSCAD Parser: For Loop and Range [start:step:end]" {
     const node_idx = try parser.parseStatement();
     const node = getNode(&parser, node_idx);
 
-    const bindings = getForBindings(&parser, node.kind.for_stmt.bindings);
+    const for_stmt = parser.b.tree.for_stmts.items[node.data];
+    const bindings = getForBindings(&parser, for_stmt.bindings);
     try testing.expectEqualStrings("i", getStr(&parser, bindings[0].name));
     const range = getNode(&parser, bindings[0].range);
-    
-    const start = getNode(&parser, range.kind.range.start);
-    try testing.expectEqual(@as(f64, 0.0), start.kind.number);
-    
-    const step = getNode(&parser, range.kind.range.step);
-    try testing.expectEqual(@as(f64, 2.0), step.kind.number);
-    
-    const end = getNode(&parser, range.kind.range.end);
-    try testing.expectEqual(@as(f64, 10.0), end.kind.number);
+
+    const range_payload = parser.b.tree.ranges.items[range.data];
+
+    const start = getNode(&parser, range_payload.start);
+    try testing.expectEqual(@as(f64, 0.0), parser.b.tree.numbers.items[start.data]);
+
+    const step = getNode(&parser, range_payload.step);
+    try testing.expectEqual(@as(f64, 2.0), parser.b.tree.numbers.items[step.data]);
+
+    const end = getNode(&parser, range_payload.end);
+    try testing.expectEqual(@as(f64, 10.0), parser.b.tree.numbers.items[end.data]);
 }
 
 test "OpenSCAD Parser: Function Definition & Includes" {
@@ -111,14 +118,16 @@ test "OpenSCAD Parser: Function Definition & Includes" {
     const inc_idx = try parser.parseStatement();
     const inc_node = getNode(&parser, inc_idx);
     // Includes lower to ImportStmt
-    try testing.expectEqualStrings("BOSL2/std.scad", getStr(&parser, inc_node.kind.import_stmt.path));
+    const import_stmt = parser.b.tree.import_stmts.items[inc_node.data];
+    try testing.expectEqualStrings("BOSL2/std.scad", getStr(&parser, import_stmt.path));
 
     const fn_idx = try parser.parseStatement();
     const fn_node = getNode(&parser, fn_idx);
-    try testing.expectEqualStrings("double", getStr(&parser, fn_node.kind.def_stmt.name));
-    
-    const fn_body = getNode(&parser, fn_node.kind.def_stmt.body);
-    try testing.expectEqual(ast.BinaryOp.multiply, fn_body.kind.binary_op.op);
+    const def_stmt = parser.b.tree.def_stmts.items[fn_node.data];
+    try testing.expectEqualStrings("double", getStr(&parser, def_stmt.name));
+
+    const fn_body = getNode(&parser, def_stmt.body);
+    try testing.expectEqual(ast.BinaryOp.multiply, parser.b.tree.binaryExpr(fn_body).op);
 }
 
 test "OpenSCAD Parser: Vector Comprehension" {
@@ -131,16 +140,17 @@ test "OpenSCAD Parser: Vector Comprehension" {
     const assign_idx = try parser.parseStatement();
     const assign_node = getNode(&parser, assign_idx);
 
-    const comp_node = getNode(&parser, assign_node.kind.assignment.value);
+    const comp_node = getNode(&parser, parser.b.tree.assignment(assign_node).value);
     // Comprehensions lower to Array Literals with nested loop nodes
-    const for_node = getNode(&parser, getNodes(&parser, comp_node.kind.array_literal)[0]);
+    const for_node = getNode(&parser, getNodes(&parser, parser.b.tree.getSpan(comp_node.data))[0]);
 
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).for_stmt, std.meta.activeTag(for_node.kind));
-    try testing.expectEqualStrings("x", getStr(&parser, getForBindings(&parser, for_node.kind.for_stmt.bindings)[0].name));
+    try testing.expectEqual(ast.Tag.for_stmt, for_node.tag);
+    const for_stmt = parser.b.tree.for_stmts.items[for_node.data];
+    try testing.expectEqualStrings("x", getStr(&parser, getForBindings(&parser, for_stmt.bindings)[0].name));
 
     // The body of the FOR is the mathematical expression
-    const math_node = getNode(&parser, for_node.kind.for_stmt.body);
-    try testing.expectEqual(ast.BinaryOp.multiply, math_node.kind.binary_op.op);
+    const math_node = getNode(&parser, for_stmt.body);
+    try testing.expectEqual(ast.BinaryOp.multiply, parser.b.tree.binaryExpr(math_node).op);
 }
 
 test "OpenSCAD Parser: Unbraced Operator Module Chaining" {
@@ -154,20 +164,20 @@ test "OpenSCAD Parser: Unbraced Operator Module Chaining" {
     const top_node = getNode(&parser, top_idx);
 
     // Verify outer `translate`
-    try testing.expectEqualStrings("translate", getStr(&parser, top_node.kind.method_call.method_name));
+    try testing.expectEqualStrings("translate", getStr(&parser, parser.b.tree.methodCall(top_node).method_name));
 
-    const top_block = getNode(&parser, top_node.kind.method_call.block);
-    const rotate_node = getNode(&parser, getNodes(&parser, top_block.kind.block.stmts)[0]);
+    const top_block = getNode(&parser, parser.b.tree.methodCall(top_node).block);
+    const rotate_node = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[top_block.data].stmts)[0]);
 
     // Verify middle `rotate`
-    try testing.expectEqualStrings("rotate", getStr(&parser, rotate_node.kind.method_call.method_name));
+    try testing.expectEqualStrings("rotate", getStr(&parser, parser.b.tree.methodCall(rotate_node).method_name));
 
-    const rotate_block = getNode(&parser, rotate_node.kind.method_call.block);
-    const cube_node = getNode(&parser, getNodes(&parser, rotate_block.kind.block.stmts)[0]);
+    const rotate_block = getNode(&parser, parser.b.tree.methodCall(rotate_node).block);
+    const cube_node = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[rotate_block.data].stmts)[0]);
 
     // Verify leaf `cube`
-    try testing.expectEqualStrings("cube", getStr(&parser, cube_node.kind.method_call.method_name));
-    try testing.expectEqual(ast.NodeIndex.none, cube_node.kind.method_call.block);
+    try testing.expectEqualStrings("cube", getStr(&parser, parser.b.tree.methodCall(cube_node).method_name));
+    try testing.expectEqual(ast.NodeIndex.none, parser.b.tree.methodCall(cube_node).block);
 }
 
 test "OpenSCAD Parser: Scoped Block and Variable Shadowing" {
@@ -187,31 +197,31 @@ test "OpenSCAD Parser: Scoped Block and Variable Shadowing" {
     const program_idx = try parser.parseProgram();
     const program = getNode(&parser, program_idx);
 
-    const stmts = getNodes(&parser, program.kind.block.stmts);
+    const stmts = getNodes(&parser, parser.b.tree.blocks.items[program.data].stmts);
 
     // Statement 0: Outer assignment `a = 10`
     const stmt0 = getNode(&parser, stmts[0]);
-    try testing.expectEqualStrings("a", getStr(&parser, stmt0.kind.assignment.name));
-    
-    const stmt0_val = getNode(&parser, stmt0.kind.assignment.value);
-    try testing.expectEqual(@as(f64, 10.0), stmt0_val.kind.number);
+    try testing.expectEqualStrings("a", getStr(&parser, parser.b.tree.assignment(stmt0).name));
+
+    const stmt0_val = getNode(&parser, parser.b.tree.assignment(stmt0).value);
+    try testing.expectEqual(@as(f64, 10.0), parser.b.tree.numbers.items[stmt0_val.data]);
 
     // Statement 1: Standalone scope block
     const stmt1 = getNode(&parser, stmts[1]);
-    const inner_stmts = getNodes(&parser, stmt1.kind.block.stmts);
-    
+    const inner_stmts = getNodes(&parser, parser.b.tree.blocks.items[stmt1.data].stmts);
+
     const inner_stmt0 = getNode(&parser, inner_stmts[0]);
-    try testing.expectEqualStrings("a", getStr(&parser, inner_stmt0.kind.assignment.name));
-    
-    const inner_stmt0_val = getNode(&parser, inner_stmt0.kind.assignment.value);
-    try testing.expectEqual(@as(f64, 20.0), inner_stmt0_val.kind.number);
-    
+    try testing.expectEqualStrings("a", getStr(&parser, parser.b.tree.assignment(inner_stmt0).name));
+
+    const inner_stmt0_val = getNode(&parser, parser.b.tree.assignment(inner_stmt0).value);
+    try testing.expectEqual(@as(f64, 20.0), parser.b.tree.numbers.items[inner_stmt0_val.data]);
+
     const inner_stmt1 = getNode(&parser, inner_stmts[1]);
-    try testing.expectEqualStrings("cube", getStr(&parser, inner_stmt1.kind.method_call.method_name));
+    try testing.expectEqualStrings("cube", getStr(&parser, parser.b.tree.methodCall(inner_stmt1).method_name));
 
     // Statement 2: Outer `cube(a)`
     const stmt2 = getNode(&parser, stmts[2]);
-    try testing.expectEqualStrings("cube", getStr(&parser, stmt2.kind.method_call.method_name));
+    try testing.expectEqualStrings("cube", getStr(&parser, parser.b.tree.methodCall(stmt2).method_name));
 }
 
 test "OpenSCAD Parser: Special Variables and Children Calls" {
@@ -231,27 +241,28 @@ test "OpenSCAD Parser: Special Variables and Children Calls" {
 
     const p1_idx = try parser.parseStatement();
     const p1 = getNode(&parser, p1_idx);
-    try testing.expectEqualStrings("$fn", getStr(&parser, p1.kind.assignment.name));
+    try testing.expectEqualStrings("$fn", getStr(&parser, parser.b.tree.assignment(p1).name));
 
     const mod_idx = try parser.parseStatement();
     const mod = getNode(&parser, mod_idx);
-    try testing.expectEqualStrings("array", getStr(&parser, mod.kind.def_stmt.name));
+    try testing.expectEqualStrings("array", getStr(&parser, parser.b.tree.def_stmts.items[mod.data].name));
 
-    const mod_body = getNode(&parser, mod.kind.def_stmt.body);
-    const for_node = getNode(&parser, getNodes(&parser, mod_body.kind.block.stmts)[0]);
-    
-    const range = getNode(&parser, getForBindings(&parser, for_node.kind.for_stmt.bindings)[0].range);
-    const range_end = getNode(&parser, range.kind.range.end);
-    
-    const range_end_left = getNode(&parser, range_end.kind.binary_op.left);
-    try testing.expectEqualStrings("$children", getStr(&parser, range_end_left.kind.identifier));
+    const mod_body = getNode(&parser, parser.b.tree.def_stmts.items[mod.data].body);
+    const for_node = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[mod_body.data].stmts)[0]);
 
-    const for_body = getNode(&parser, for_node.kind.for_stmt.body);
-    const trans_node = getNode(&parser, getNodes(&parser, for_body.kind.block.stmts)[0]);
+    const for_stmt = parser.b.tree.for_stmts.items[for_node.data];
+    const range = getNode(&parser, getForBindings(&parser, for_stmt.bindings)[0].range);
+    const range_end = getNode(&parser, parser.b.tree.ranges.items[range.data].end);
 
-    const trans_block = getNode(&parser, trans_node.kind.method_call.block);
-    const child_call = getNode(&parser, getNodes(&parser, trans_block.kind.block.stmts)[0]);
-    try testing.expectEqualStrings("children", getStr(&parser, child_call.kind.method_call.method_name));
+    const range_end_left = getNode(&parser, parser.b.tree.binaryExpr(range_end).left);
+    try testing.expectEqualStrings("$children", getStr(&parser, @as(ast.StringId, @enumFromInt(range_end_left.data))));
+
+    const for_body = getNode(&parser, for_stmt.body);
+    const trans_node = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[for_body.data].stmts)[0]);
+
+    const trans_block = getNode(&parser, parser.b.tree.methodCall(trans_node).block);
+    const child_call = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[trans_block.data].stmts)[0]);
+    try testing.expectEqualStrings("children", getStr(&parser, parser.b.tree.methodCall(child_call).method_name));
 }
 
 test "OpenSCAD Parser: Assert and Echo Prefixes" {
@@ -264,15 +275,15 @@ test "OpenSCAD Parser: Assert and Echo Prefixes" {
 
     const echo_idx = try parser.parseStatement();
     const echo_node = getNode(&parser, echo_idx);
-    try testing.expectEqualStrings("echo", getStr(&parser, echo_node.kind.method_call.method_name));
+    try testing.expectEqualStrings("echo", getStr(&parser, parser.b.tree.methodCall(echo_node).method_name));
 
-    const echo_block = getNode(&parser, echo_node.kind.method_call.block);
-    const assert_node = getNode(&parser, getNodes(&parser, echo_block.kind.block.stmts)[0]);
-    try testing.expectEqualStrings("assert", getStr(&parser, assert_node.kind.method_call.method_name));
+    const echo_block = getNode(&parser, parser.b.tree.methodCall(echo_node).block);
+    const assert_node = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[echo_block.data].stmts)[0]);
+    try testing.expectEqualStrings("assert", getStr(&parser, parser.b.tree.methodCall(assert_node).method_name));
 
-    const assert_block = getNode(&parser, assert_node.kind.method_call.block);
-    const cube_node = getNode(&parser, getNodes(&parser, assert_block.kind.block.stmts)[0]);
-    try testing.expectEqualStrings("cube", getStr(&parser, cube_node.kind.method_call.method_name));
+    const assert_block = getNode(&parser, parser.b.tree.methodCall(assert_node).block);
+    const cube_node = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[assert_block.data].stmts)[0]);
+    try testing.expectEqualStrings("cube", getStr(&parser, parser.b.tree.methodCall(cube_node).method_name));
 }
 
 test "OpenSCAD Parser: Let and If Expressions" {
@@ -287,25 +298,26 @@ test "OpenSCAD Parser: Let and If Expressions" {
     const stmt = getNode(&parser, stmt_idx);
 
     // Validate target assignment
-    try testing.expectEqualStrings("x", getStr(&parser, stmt.kind.assignment.name));
+    try testing.expectEqualStrings("x", getStr(&parser, parser.b.tree.assignment(stmt).name));
 
     // Validate Let Expression lowers to Block Scope
-    const let_block = getNode(&parser, stmt.kind.assignment.value);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).block, std.meta.activeTag(let_block.kind));
-    
-    const let_stmts = getNodes(&parser, let_block.kind.block.stmts);
+    const let_block = getNode(&parser, parser.b.tree.assignment(stmt).value);
+    try testing.expectEqual(ast.Tag.block, let_block.tag);
+
+    const let_stmts = getNodes(&parser, parser.b.tree.blocks.items[let_block.data].stmts);
     const let_assign0 = getNode(&parser, let_stmts[0]);
-    try testing.expectEqualStrings("a", getStr(&parser, let_assign0.kind.assignment.name));
+    try testing.expectEqualStrings("a", getStr(&parser, parser.b.tree.assignment(let_assign0).name));
 
     // Validate Yield Expression (If Expression) at end of block
     const yield_node = getNode(&parser, let_stmts[2]);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).if_stmt, std.meta.activeTag(yield_node.kind));
-    
-    const then_branch = getNode(&parser, yield_node.kind.if_stmt.then_branch);
-    try testing.expectEqualStrings("a", getStr(&parser, then_branch.kind.identifier));
-    
-    const else_branch = getNode(&parser, yield_node.kind.if_stmt.else_branch);
-    try testing.expectEqualStrings("b", getStr(&parser, else_branch.kind.identifier));
+    try testing.expectEqual(ast.Tag.if_stmt, yield_node.tag);
+
+    const yield_if = parser.b.tree.ifStmt(yield_node);
+    const then_branch = getNode(&parser, yield_if.then_branch);
+    try testing.expectEqualStrings("a", getStr(&parser, @as(ast.StringId, @enumFromInt(then_branch.data))));
+
+    const else_branch = getNode(&parser, yield_if.else_branch);
+    try testing.expectEqualStrings("b", getStr(&parser, @as(ast.StringId, @enumFromInt(else_branch.data))));
 }
 
 test "OpenSCAD Parser: Local Quoted Includes and Unary Plus" {
@@ -322,15 +334,15 @@ test "OpenSCAD Parser: Local Quoted Includes and Unary Plus" {
     // Test Quoted Include Path lowers to Import
     const inc_idx = try parser.parseStatement();
     const inc_node = getNode(&parser, inc_idx);
-    try testing.expectEqualStrings("local_lib.scad", getStr(&parser, inc_node.kind.import_stmt.path));
+    try testing.expectEqualStrings("local_lib.scad", getStr(&parser, parser.b.tree.import_stmts.items[inc_node.data].path));
 
     // Test Unary Plus
     const assign_idx = try parser.parseStatement();
     const assign_node = getNode(&parser, assign_idx);
-    try testing.expectEqualStrings("val", getStr(&parser, assign_node.kind.assignment.name));
-    
-    const assign_val = getNode(&parser, assign_node.kind.assignment.value);
-    try testing.expectEqual(ast.UnaryOp.positive, assign_val.kind.unary_op.op);
+    try testing.expectEqualStrings("val", getStr(&parser, parser.b.tree.assignment(assign_node).name));
+
+    const assign_val = getNode(&parser, parser.b.tree.assignment(assign_node).value);
+    try testing.expectEqual(ast.UnaryOp.positive, parser.b.tree.unaryExpr(assign_val).op);
 }
 
 test "OpenSCAD Parser: Expression-level Assert and Echo" {
@@ -345,27 +357,27 @@ test "OpenSCAD Parser: Expression-level Assert and Echo" {
     const stmt = getNode(&parser, stmt_idx);
 
     // Assigning to `val`
-    try testing.expectEqualStrings("val", getStr(&parser, stmt.kind.assignment.name));
+    try testing.expectEqualStrings("val", getStr(&parser, parser.b.tree.assignment(stmt).name));
 
     // Top expression lowers to a block with `assert` call and inner yield
-    const assert_block = getNode(&parser, stmt.kind.assignment.value);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).block, std.meta.activeTag(assert_block.kind));
-    
-    const assert_stmts = getNodes(&parser, assert_block.kind.block.stmts);
+    const assert_block = getNode(&parser, parser.b.tree.assignment(stmt).value);
+    try testing.expectEqual(ast.Tag.block, assert_block.tag);
+
+    const assert_stmts = getNodes(&parser, parser.b.tree.blocks.items[assert_block.data].stmts);
     const assert_call = getNode(&parser, assert_stmts[0]);
-    try testing.expectEqualStrings("assert", getStr(&parser, assert_call.kind.method_call.method_name));
+    try testing.expectEqualStrings("assert", getStr(&parser, parser.b.tree.methodCall(assert_call).method_name));
 
     // Inner yield is another block for `echo`
     const echo_block = getNode(&parser, assert_stmts[1]);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).block, std.meta.activeTag(echo_block.kind));
-    
-    const echo_stmts = getNodes(&parser, echo_block.kind.block.stmts);
+    try testing.expectEqual(ast.Tag.block, echo_block.tag);
+
+    const echo_stmts = getNodes(&parser, parser.b.tree.blocks.items[echo_block.data].stmts);
     const echo_call = getNode(&parser, echo_stmts[0]);
-    try testing.expectEqualStrings("echo", getStr(&parser, echo_call.kind.method_call.method_name));
+    try testing.expectEqualStrings("echo", getStr(&parser, parser.b.tree.methodCall(echo_call).method_name));
 
     // Yield expression of echo should be `a * 2`
     const math_node = getNode(&parser, echo_stmts[1]);
-    try testing.expectEqual(ast.BinaryOp.multiply, math_node.kind.binary_op.op);
+    try testing.expectEqual(ast.BinaryOp.multiply, parser.b.tree.binaryExpr(math_node).op);
 }
 
 test "OpenSCAD Parser: Array Literal Expansion (each)" {
@@ -378,24 +390,24 @@ test "OpenSCAD Parser: Array Literal Expansion (each)" {
 
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
-    const array_node = getNode(&parser, stmt.kind.assignment.value);
+    const array_node = getNode(&parser, parser.b.tree.assignment(stmt).value);
 
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).array_literal, std.meta.activeTag(array_node.kind));
-    const elements = getNodes(&parser, array_node.kind.array_literal);
+    try testing.expectEqual(ast.Tag.array_literal, array_node.tag);
+    const elements = getNodes(&parser, parser.b.tree.getSpan(array_node.data));
     try testing.expectEqual(@as(usize, 3), elements.len);
-    
+
     const el0 = getNode(&parser, elements[0]);
-    try testing.expectEqual(@as(f64, 1.0), el0.kind.number);
+    try testing.expectEqual(@as(f64, 1.0), parser.b.tree.numbers.items[el0.data]);
 
     // Verify the inner `each_expr` unpack node maps identically to KupCAD
     const el1 = getNode(&parser, elements[1]);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).each_expr, std.meta.activeTag(el1.kind));
-    
-    const each_val = getNode(&parser, el1.kind.each_expr);
-    try testing.expectEqualStrings("sub_array", getStr(&parser, each_val.kind.identifier));
-    
+    try testing.expectEqual(ast.Tag.each_expr, el1.tag);
+
+    const each_val = getNode(&parser, @as(ast.NodeIndex, @enumFromInt(el1.data)));
+    try testing.expectEqualStrings("sub_array", getStr(&parser, @as(ast.StringId, @enumFromInt(each_val.data))));
+
     const el2 = getNode(&parser, elements[2]);
-    try testing.expectEqual(@as(f64, 4.0), el2.kind.number);
+    try testing.expectEqual(@as(f64, 4.0), parser.b.tree.numbers.items[el2.data]);
 }
 
 test "OpenSCAD Parser: Comprehension with Else" {
@@ -408,20 +420,22 @@ test "OpenSCAD Parser: Comprehension with Else" {
 
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
-    const comp_node = getNode(&parser, stmt.kind.assignment.value);
+    const comp_node = getNode(&parser, parser.b.tree.assignment(stmt).value);
 
     // The top node of the comprehension yield logic is the FOR statement
-    const for_node = getNode(&parser, getNodes(&parser, comp_node.kind.array_literal)[0]);
-    try testing.expectEqualStrings("i", getStr(&parser, getForBindings(&parser, for_node.kind.for_stmt.bindings)[0].name));
+    const for_node = getNode(&parser, getNodes(&parser, parser.b.tree.getSpan(comp_node.data))[0]);
+    const for_stmt = parser.b.tree.for_stmts.items[for_node.data];
+    try testing.expectEqualStrings("i", getStr(&parser, getForBindings(&parser, for_stmt.bindings)[0].name));
 
     // The body of the FOR is the nested IF statement
-    const if_node = getNode(&parser, for_node.kind.for_stmt.body);
-    
-    const then_branch = getNode(&parser, if_node.kind.if_stmt.then_branch);
-    try testing.expectEqualStrings("i", getStr(&parser, then_branch.kind.identifier));
-    
-    const else_branch = getNode(&parser, if_node.kind.if_stmt.else_branch);
-    try testing.expectEqual(ast.UnaryOp.negate, else_branch.kind.unary_op.op);
+    const if_node = getNode(&parser, for_stmt.body);
+    const if_payload = parser.b.tree.ifStmt(if_node);
+
+    const then_branch = getNode(&parser, if_payload.then_branch);
+    try testing.expectEqualStrings("i", getStr(&parser, @as(ast.StringId, @enumFromInt(then_branch.data))));
+
+    const else_branch = getNode(&parser, if_payload.else_branch);
+    try testing.expectEqual(ast.UnaryOp.negate, parser.b.tree.unaryExpr(else_branch).op);
 }
 
 test "OpenSCAD Parser: Empty Arguments and Array Elements" {
@@ -435,22 +449,22 @@ test "OpenSCAD Parser: Empty Arguments and Array Elements" {
     const node = getNode(&parser, node_idx);
 
     // Check empty array element inside arguments maps to undef
-    const args0 = getNamedArgs(&parser, node.kind.method_call.args)[0];
+    const args0 = getNamedArgs(&parser, parser.b.tree.methodCall(node).args)[0];
     const arg0_val = getNode(&parser, args0.value);
-    const arr = getNodes(&parser, arg0_val.kind.array_literal);
-    
-    const arr0 = getNode(&parser, arr[0]);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).number, std.meta.activeTag(arr0.kind));
-    
-    const arr1 = getNode(&parser, arr[1]);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).undef, std.meta.activeTag(arr1.kind));
+    const arr = getNodes(&parser, parser.b.tree.getSpan(arg0_val.data));
 
-    const block = getNode(&parser, node.kind.method_call.block);
-    const cube_call = getNode(&parser, getNodes(&parser, block.kind.block.stmts)[0]);
-    const cube_args = getNamedArgs(&parser, cube_call.kind.method_call.args);
-    
+    const arr0 = getNode(&parser, arr[0]);
+    try testing.expectEqual(ast.Tag.number, arr0.tag);
+
+    const arr1 = getNode(&parser, arr[1]);
+    try testing.expectEqual(ast.Tag.undef, arr1.tag);
+
+    const block = getNode(&parser, parser.b.tree.methodCall(node).block);
+    const cube_call = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[block.data].stmts)[0]);
+    const cube_args = getNamedArgs(&parser, parser.b.tree.methodCall(cube_call).args);
+
     const cube_arg1 = getNode(&parser, cube_args[1].value);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).undef, std.meta.activeTag(cube_arg1.kind));
+    try testing.expectEqual(ast.Tag.undef, cube_arg1.tag);
 }
 
 test "OpenSCAD Parser: Adjacency String Concatenation" {
@@ -463,9 +477,9 @@ test "OpenSCAD Parser: Adjacency String Concatenation" {
     const node_idx = try parser.parseStatement();
     const node = getNode(&parser, node_idx);
 
-    const args = getNamedArgs(&parser, node.kind.method_call.args);
+    const args = getNamedArgs(&parser, parser.b.tree.methodCall(node).args);
     const arg0 = getNode(&parser, args[0].value);
-    try testing.expectEqualStrings("Path: to/file.stl", getStr(&parser, arg0.kind.string));
+    try testing.expectEqualStrings("Path: to/file.stl", getStr(&parser, @as(ast.StringId, @enumFromInt(arg0.data))));
 }
 
 test "OpenSCAD Parser: Trailing Commas Leniency" {
@@ -477,29 +491,30 @@ test "OpenSCAD Parser: Trailing Commas Leniency" {
     var parser = Parser.init(&lexer, arena.allocator());
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
+    const def_stmt = parser.b.tree.def_stmts.items[stmt.data];
 
-    try testing.expectEqualStrings("test", getStr(&parser, stmt.kind.def_stmt.name));
-    
-    const params = getParams(&parser, stmt.kind.def_stmt.params);
+    try testing.expectEqualStrings("test", getStr(&parser, def_stmt.name));
+
+    const params = getParams(&parser, def_stmt.params);
     try testing.expectEqual(@as(usize, 2), params.len); // Ignored trailing comma
 
     // Statement-level let() compiles into a scoped block!
-    const body = getNode(&parser, stmt.kind.def_stmt.body);
-    const let_block = getNode(&parser, getNodes(&parser, body.kind.block.stmts)[0]);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).block, std.meta.activeTag(let_block.kind));
+    const body = getNode(&parser, def_stmt.body);
+    const let_block = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[body.data].stmts)[0]);
+    try testing.expectEqual(ast.Tag.block, let_block.tag);
 
     // Verify it ignored the comma and collected 2 assignments + 1 body statement
-    const let_stmts = getNodes(&parser, let_block.kind.block.stmts);
+    const let_stmts = getNodes(&parser, parser.b.tree.blocks.items[let_block.data].stmts);
     try testing.expectEqual(@as(usize, 3), let_stmts.len);
-    
+
     const let_stmt0 = getNode(&parser, let_stmts[0]);
-    try testing.expectEqualStrings("x", getStr(&parser, let_stmt0.kind.assignment.name));
-    
+    try testing.expectEqualStrings("x", getStr(&parser, parser.b.tree.assignment(let_stmt0).name));
+
     const let_stmt1 = getNode(&parser, let_stmts[1]);
-    try testing.expectEqualStrings("y", getStr(&parser, let_stmt1.kind.assignment.name));
-    
+    try testing.expectEqualStrings("y", getStr(&parser, parser.b.tree.assignment(let_stmt1).name));
+
     const let_stmt2 = getNode(&parser, let_stmts[2]);
-    try testing.expectEqualStrings("cube", getStr(&parser, let_stmt2.kind.method_call.method_name));
+    try testing.expectEqualStrings("cube", getStr(&parser, parser.b.tree.methodCall(let_stmt2).method_name));
 }
 
 test "OpenSCAD Parser: Mid-Expression Comments & Empty Statements" {
@@ -511,17 +526,18 @@ test "OpenSCAD Parser: Mid-Expression Comments & Empty Statements" {
     var parser = Parser.init(&lexer, arena.allocator());
     const mod_idx = try parser.parseStatement();
     const mod_node = getNode(&parser, mod_idx);
+    const mod_stmt = parser.b.tree.def_stmts.items[mod_node.data];
 
-    const body = getNode(&parser, mod_node.kind.def_stmt.body);
-    const block_stmts = getNodes(&parser, body.kind.block.stmts);
+    const body = getNode(&parser, mod_stmt.body);
+    const block_stmts = getNodes(&parser, parser.b.tree.blocks.items[body.data].stmts);
     // Only the actual assignment should survive the block
     try testing.expectEqual(@as(usize, 1), block_stmts.len);
 
     const assign = getNode(&parser, block_stmts[0]);
-    try testing.expectEqualStrings("x", getStr(&parser, assign.kind.assignment.name));
-    
-    const assign_val = getNode(&parser, assign.kind.assignment.value);
-    try testing.expectEqual(ast.BinaryOp.add, assign_val.kind.binary_op.op);
+    try testing.expectEqualStrings("x", getStr(&parser, parser.b.tree.assignment(assign).name));
+
+    const assign_val = getNode(&parser, parser.b.tree.assignment(assign).value);
+    try testing.expectEqual(ast.BinaryOp.add, parser.b.tree.binaryExpr(assign_val).op);
 }
 
 test "OpenSCAD Parser: C-Style Hexadecimal Constants" {
@@ -534,10 +550,10 @@ test "OpenSCAD Parser: C-Style Hexadecimal Constants" {
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
 
-    try testing.expectEqualStrings("val", getStr(&parser, stmt.kind.assignment.name));
-    
-    const val = getNode(&parser, stmt.kind.assignment.value);
-    try testing.expectEqual(@as(f64, 255.0), val.kind.number);
+    try testing.expectEqualStrings("val", getStr(&parser, parser.b.tree.assignment(stmt).name));
+
+    const val = getNode(&parser, parser.b.tree.assignment(stmt).value);
+    try testing.expectEqual(@as(f64, 255.0), parser.b.tree.numbers.items[val.data]);
 }
 
 test "OpenSCAD Parser: Leading-Dot Float Literals" {
@@ -550,12 +566,14 @@ test "OpenSCAD Parser: Leading-Dot Float Literals" {
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
 
-    const math_node = getNode(&parser, stmt.kind.assignment.value);
-    const left = getNode(&parser, math_node.kind.binary_op.left);
-    try testing.expectEqual(@as(f64, 0.5), left.kind.number);
-    
-    const right = getNode(&parser, math_node.kind.binary_op.right);
-    try testing.expectEqual(@as(f64, 0.125), right.kind.number);
+    const math_node = getNode(&parser, parser.b.tree.assignment(stmt).value);
+    const bin = parser.b.tree.binaryExpr(math_node);
+
+    const left = getNode(&parser, bin.left);
+    try testing.expectEqual(@as(f64, 0.5), parser.b.tree.numbers.items[left.data]);
+
+    const right = getNode(&parser, bin.right);
+    try testing.expectEqual(@as(f64, 0.125), parser.b.tree.numbers.items[right.data]);
 }
 
 test "OpenSCAD Parser: C-Style For Loops" {
@@ -569,31 +587,32 @@ test "OpenSCAD Parser: C-Style For Loops" {
     const node = getNode(&parser, node_idx);
 
     // Desugars down to an isolated block scope containing while loop
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).block, std.meta.activeTag(node.kind));
+    try testing.expectEqual(ast.Tag.block, node.tag);
 
-    const stmts = getNodes(&parser, node.kind.block.stmts);
+    const stmts = getNodes(&parser, parser.b.tree.blocks.items[node.data].stmts);
 
     // Check Multi-Init at start of block
     const stmt0 = getNode(&parser, stmts[0]);
-    try testing.expectEqualStrings("a", getStr(&parser, stmt0.kind.assignment.name));
-    
+    try testing.expectEqualStrings("a", getStr(&parser, parser.b.tree.assignment(stmt0).name));
+
     const stmt1 = getNode(&parser, stmts[1]);
-    try testing.expectEqualStrings("b", getStr(&parser, stmt1.kind.assignment.name));
+    try testing.expectEqualStrings("b", getStr(&parser, parser.b.tree.assignment(stmt1).name));
 
     // Check Condition of internal while loop
     const while_node = getNode(&parser, stmts[2]);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).while_stmt, std.meta.activeTag(while_node.kind));
-    
-    const cond = getNode(&parser, while_node.kind.while_stmt.condition);
-    try testing.expectEqual(ast.BinaryOp.less, cond.kind.binary_op.op);
+    try testing.expectEqual(ast.Tag.while_stmt, while_node.tag);
+    const while_stmt = parser.b.tree.while_stmts.items[while_node.data];
+
+    const cond = getNode(&parser, while_stmt.condition);
+    try testing.expectEqual(ast.BinaryOp.less, parser.b.tree.binaryExpr(cond).op);
 
     // Check updates appended to end of while loop body
-    const while_body = getNode(&parser, while_node.kind.while_stmt.body);
-    const while_stmts = getNodes(&parser, while_body.kind.block.stmts);
-    
+    const while_body = getNode(&parser, while_stmt.body);
+    const while_stmts = getNodes(&parser, parser.b.tree.blocks.items[while_body.data].stmts);
+
     const assign2 = getNode(&parser, while_stmts[1]);
-    const assign2_val = getNode(&parser, assign2.kind.assignment.value);
-    try testing.expectEqual(ast.BinaryOp.add, assign2_val.kind.binary_op.op);
+    const assign2_val = getNode(&parser, parser.b.tree.assignment(assign2).value);
+    try testing.expectEqual(ast.BinaryOp.add, parser.b.tree.binaryExpr(assign2_val).op);
 }
 
 test "OpenSCAD Parser: Function Literals (Anonymous)" {
@@ -606,16 +625,17 @@ test "OpenSCAD Parser: Function Literals (Anonymous)" {
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
 
-    const func_lit = getNode(&parser, stmt.kind.assignment.value);
+    const func_lit = getNode(&parser, parser.b.tree.assignment(stmt).value);
 
     // Function literals compile down to Lambda Expressions!
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).lambda_expr, std.meta.activeTag(func_lit.kind));
-    
-    const params = getParams(&parser, func_lit.kind.lambda_expr.params);
+    try testing.expectEqual(ast.Tag.lambda_expr, func_lit.tag);
+    const lambda = parser.b.tree.lambda_exprs.items[func_lit.data];
+
+    const params = getParams(&parser, lambda.params);
     try testing.expectEqualStrings("x", getStr(&parser, params[0].name));
-    
-    const body = getNode(&parser, func_lit.kind.lambda_expr.body);
-    try testing.expectEqual(ast.BinaryOp.multiply, body.kind.binary_op.op);
+
+    const body = getNode(&parser, lambda.body);
+    try testing.expectEqual(ast.BinaryOp.multiply, parser.b.tree.binaryExpr(body).op);
 }
 
 test "OpenSCAD Parser: Diagnostics for Unexpected Token" {
@@ -662,29 +682,29 @@ test "OpenSCAD Parser: Deeply Nested Let Expressions & Chained Expression Modifi
     const stmt_idx = try parser.parseStatement();
     const stmt = getNode(&parser, stmt_idx);
 
-    try testing.expectEqualStrings("val", getStr(&parser, stmt.kind.assignment.name));
+    try testing.expectEqualStrings("val", getStr(&parser, parser.b.tree.assignment(stmt).name));
 
     // Outer let: a = 5 (lowers to block)
-    const let1 = getNode(&parser, stmt.kind.assignment.value);
-    try testing.expectEqual(std.meta.Tag(ast.NodeKind).block, std.meta.activeTag(let1.kind));
-    
-    const let1_stmts = getNodes(&parser, let1.kind.block.stmts);
+    const let1 = getNode(&parser, parser.b.tree.assignment(stmt).value);
+    try testing.expectEqual(ast.Tag.block, let1.tag);
+
+    const let1_stmts = getNodes(&parser, parser.b.tree.blocks.items[let1.data].stmts);
     const let1_assign0 = getNode(&parser, let1_stmts[0]);
-    try testing.expectEqualStrings("a", getStr(&parser, let1_assign0.kind.assignment.name));
+    try testing.expectEqualStrings("a", getStr(&parser, parser.b.tree.assignment(let1_assign0).name));
 
     // Inner let: b = a * 2
     const let2 = getNode(&parser, let1_stmts[1]);
-    const let2_stmts = getNodes(&parser, let2.kind.block.stmts);
-    
+    const let2_stmts = getNodes(&parser, parser.b.tree.blocks.items[let2.data].stmts);
+
     const let2_assign0 = getNode(&parser, let2_stmts[0]);
-    try testing.expectEqualStrings("b", getStr(&parser, let2_assign0.kind.assignment.name));
+    try testing.expectEqualStrings("b", getStr(&parser, parser.b.tree.assignment(let2_assign0).name));
 
     // Assert -> Echo -> Addition
     const assert_block = getNode(&parser, let2_stmts[1]);
-    const assert_stmts = getNodes(&parser, assert_block.kind.block.stmts);
-    
+    const assert_stmts = getNodes(&parser, parser.b.tree.blocks.items[assert_block.data].stmts);
+
     const assert_call = getNode(&parser, assert_stmts[0]);
-    try testing.expectEqualStrings("assert", getStr(&parser, assert_call.kind.method_call.method_name));
+    try testing.expectEqualStrings("assert", getStr(&parser, parser.b.tree.methodCall(assert_call).method_name));
 }
 
 test "OpenSCAD Parser: Children Module Invocation with Modulo Index" {
@@ -703,28 +723,30 @@ test "OpenSCAD Parser: Children Module Invocation with Modulo Index" {
 
     const mod_idx = try parser.parseStatement();
     const mod_node = getNode(&parser, mod_idx);
-    try testing.expectEqualStrings("grid", getStr(&parser, mod_node.kind.def_stmt.name));
+    const def_stmt = parser.b.tree.def_stmts.items[mod_node.data];
+    try testing.expectEqualStrings("grid", getStr(&parser, def_stmt.name));
 
-    const mod_body = getNode(&parser, mod_node.kind.def_stmt.body);
-    const for_node = getNode(&parser, getNodes(&parser, mod_body.kind.block.stmts)[0]);
-    
-    const for_body = getNode(&parser, for_node.kind.for_stmt.body);
-    const trans_call = getNode(&parser, getNodes(&parser, for_body.kind.block.stmts)[0]);
-    try testing.expectEqualStrings("translate", getStr(&parser, trans_call.kind.method_call.method_name));
+    const mod_body = getNode(&parser, def_stmt.body);
+    const for_node = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[mod_body.data].stmts)[0]);
+    const for_stmt = parser.b.tree.for_stmts.items[for_node.data];
 
-    const trans_block = getNode(&parser, trans_call.kind.method_call.block);
-    const child_call = getNode(&parser, getNodes(&parser, trans_block.kind.block.stmts)[0]);
-    try testing.expectEqualStrings("children", getStr(&parser, child_call.kind.method_call.method_name));
+    const for_body = getNode(&parser, for_stmt.body);
+    const trans_call = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[for_body.data].stmts)[0]);
+    try testing.expectEqualStrings("translate", getStr(&parser, parser.b.tree.methodCall(trans_call).method_name));
 
-    const args = getNamedArgs(&parser, child_call.kind.method_call.args);
+    const trans_block = getNode(&parser, parser.b.tree.methodCall(trans_call).block);
+    const child_call = getNode(&parser, getNodes(&parser, parser.b.tree.blocks.items[trans_block.data].stmts)[0]);
+    try testing.expectEqualStrings("children", getStr(&parser, parser.b.tree.methodCall(child_call).method_name));
+
+    const args = getNamedArgs(&parser, parser.b.tree.methodCall(child_call).args);
     const arg_expr = getNode(&parser, args[0].value);
-    try testing.expectEqual(ast.BinaryOp.modulo, arg_expr.kind.binary_op.op);
-    
-    const left = getNode(&parser, arg_expr.kind.binary_op.left);
-    try testing.expectEqualStrings("i", getStr(&parser, left.kind.identifier));
-    
-    const right = getNode(&parser, arg_expr.kind.binary_op.right);
-    try testing.expectEqualStrings("$children", getStr(&parser, right.kind.identifier));
+    try testing.expectEqual(ast.BinaryOp.modulo, parser.b.tree.binaryExpr(arg_expr).op);
+
+    const left = getNode(&parser, parser.b.tree.binaryExpr(arg_expr).left);
+    try testing.expectEqualStrings("i", getStr(&parser, @as(ast.StringId, @enumFromInt(left.data))));
+
+    const right = getNode(&parser, parser.b.tree.binaryExpr(arg_expr).right);
+    try testing.expectEqualStrings("$children", getStr(&parser, @as(ast.StringId, @enumFromInt(right.data))));
 }
 
 test "OpenSCAD Parser: Diagnostics Line and Column Tracking" {
@@ -769,7 +791,7 @@ test "OpenSCAD Parser: Error Recovery (synchronize)" {
     const result = getNode(&parser, result_idx);
 
     // The successful statement (z = 30;) was preserved
-    try testing.expectEqual(@as(usize, 1), getNodes(&parser, result.kind.block.stmts).len);
+    try testing.expectEqual(@as(usize, 1), getNodes(&parser, parser.b.tree.blocks.items[result.data].stmts).len);
 
     // Both errors were captured
     try testing.expectEqual(@as(usize, 2), parser.diagnostics.list.items.len);

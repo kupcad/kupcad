@@ -235,7 +235,10 @@ pub const Parser = struct {
 
         const interned_name = try self.b.intern(mod_name);
         const stmts_arr = [_]ast.NodeIndex{child};
-        const child_block = try self.b.block(&.{}, &stmts_arr, self.b.tree.nodes.items[@intFromEnum(child)].loc);
+
+        // Fetch safely
+        const child_loc = self.b.tree.getNode(child).?.loc;
+        const child_block = try self.b.block(&.{}, &stmts_arr, child_loc);
 
         return self.b.methodCall(.none, interned_name, try self.b.addNamedArgs(&.{}), child_block, false, mod_tok.loc) catch ParseError.OutOfMemory;
     }
@@ -296,7 +299,8 @@ pub const Parser = struct {
             try while_stmts.append(self.allocator, body);
             try while_stmts.appendSlice(self.allocator, updates.items);
 
-            const while_body = try self.b.block(&.{}, while_stmts.items, self.b.tree.nodes.items[@intFromEnum(body)].loc);
+            const body_loc = self.b.tree.getNode(body).?.loc;
+            const while_body = try self.b.block(&.{}, while_stmts.items, body_loc);
             const true_cond = try self.b.booleanNode(true, start_tok.loc);
 
             const while_node = try self.b.whileStmt(if (condition == .none) true_cond else condition, while_body, false, start_tok.loc);
@@ -386,7 +390,8 @@ pub const Parser = struct {
             }
             var expr = try self.parseExpression(.none);
             if (is_each) {
-                expr = self.b.eachExpr(expr, self.b.tree.nodes.items[@intFromEnum(expr)].loc) catch return ParseError.OutOfMemory;
+                const loc = self.b.tree.getNode(expr).?.loc;
+                expr = self.b.eachExpr(expr, loc) catch return ParseError.OutOfMemory;
             }
             return expr;
         }
@@ -406,19 +411,26 @@ pub const Parser = struct {
 
         const expr = try self.parseExpression(.none);
 
-        // Swap to properly checking .tag and mutating the new array pool system
-        const expr_node = self.b.tree.getNode(expr).?;
-        if (expr_node.tag == .method_call) {
+        // Do not cache the pointer across allocations
+        const expr_tag = self.b.tree.getNode(expr).?.tag;
+        if (expr_tag == .method_call) {
             if (self.tokens.current.tag == .l_brace) {
                 self.advance();
                 const children_block = try self.parseBlock();
                 _ = try self.expect(.r_brace);
-                self.b.tree.method_calls.items[expr_node.data].block = children_block;
+
+                // Fetch data safely AFTER block allocation
+                const expr_data = self.b.tree.getNode(expr).?.data;
+                self.b.tree.method_calls.items[expr_data].block = children_block;
             } else if (self.tokens.current.tag != .semicolon and self.tokens.current.tag != .r_brace and self.tokens.current.tag != .eof) {
                 const child_stmt = try self.parseStatement();
                 const stmts_arr = [_]ast.NodeIndex{child_stmt};
-                const child_block = try self.b.block(&.{}, &stmts_arr, self.b.tree.nodes.items[@intFromEnum(child_stmt)].loc);
-                self.b.tree.method_calls.items[expr_node.data].block = child_block;
+                const child_loc = self.b.tree.getNode(child_stmt).?.loc;
+                const child_block = try self.b.block(&.{}, &stmts_arr, child_loc);
+
+                // Fetch data safely AFTER block allocation
+                const expr_data = self.b.tree.getNode(expr).?.data;
+                self.b.tree.method_calls.items[expr_data].block = child_block;
             }
         }
 
@@ -479,7 +491,7 @@ pub const Parser = struct {
                 self.advance();
                 const params = try self.parseParenParams();
                 const body = try self.parseExpression(.none);
-                left = self.b.lambdaExpr(try self.b.addParams(params), body, func_tok.loc) catch return ParseError.OutOfMemory;
+                left = try self.b.lambdaExpr(try self.b.addParams(params), body, func_tok.loc);
             },
             else => {
                 self.reportError(start_tok.loc, "Invalid expression starting with '{s}'", .{start_tok.lexeme});
@@ -751,13 +763,19 @@ pub const Parser = struct {
             self.advance();
             const child_block = try self.parseBlock();
             _ = try self.expect(.r_brace);
-            self.b.tree.method_calls.items[self.b.tree.getNode(call_node).?.data].block = child_block;
+
+            // Safely re-fetch
+            const call_data = self.b.tree.getNode(call_node).?.data;
+            self.b.tree.method_calls.items[call_data].block = child_block;
             return call_node;
         } else if (self.tokens.current.tag != .r_brace and self.tokens.current.tag != .eof) {
             const child_stmt = try self.parseStatement();
             const stmts_arr = [_]ast.NodeIndex{child_stmt};
-            const block = try self.b.block(&.{}, &stmts_arr, self.b.tree.nodes.items[@intFromEnum(child_stmt)].loc);
-            self.b.tree.method_calls.items[self.b.tree.getNode(call_node).?.data].block = block;
+            const block = try self.b.block(&.{}, &stmts_arr, self.b.tree.getNode(child_stmt).?.loc);
+
+            // Safely re-fetch
+            const call_data = self.b.tree.getNode(call_node).?.data;
+            self.b.tree.method_calls.items[call_data].block = block;
             return call_node;
         }
         return call_node;
@@ -796,7 +814,7 @@ pub const Parser = struct {
         self.advance();
         const op = tagToBinaryOp(tok.tag) orelse return ParseError.InvalidExpression;
         const right = try self.parseExpression(getInfixPrecedence(tok.tag));
-        return self.b.binary(op, left, right, self.b.tree.nodes.items[@intFromEnum(left)].loc) catch ParseError.OutOfMemory;
+        return self.b.binary(op, left, right, self.b.tree.getNode(left).?.loc) catch ParseError.OutOfMemory;
     }
 
     fn parseTernary(self: *Parser, condition: ast.NodeIndex) ParseError!ast.NodeIndex {
@@ -804,14 +822,14 @@ pub const Parser = struct {
         const then_branch = try self.parseExpression(.none);
         _ = try self.expect(.colon);
         const else_branch = try self.parseExpression(.none);
-        return self.b.ternary(condition, then_branch, else_branch, self.b.tree.nodes.items[@intFromEnum(condition)].loc) catch ParseError.OutOfMemory;
+        return self.b.ternary(condition, then_branch, else_branch, self.b.tree.getNode(condition).?.loc) catch ParseError.OutOfMemory;
     }
 
     fn parseIndexAccess(self: *Parser, target: ast.NodeIndex) ParseError!ast.NodeIndex {
         _ = try self.expect(.l_bracket);
         const index = try self.parseExpression(.none);
         _ = try self.expect(.r_bracket);
-        return self.b.indexAccess(target, index, self.b.tree.nodes.items[@intFromEnum(target)].loc) catch ParseError.OutOfMemory;
+        return self.b.indexAccess(target, index, self.b.tree.getNode(target).?.loc) catch ParseError.OutOfMemory;
     }
 
     fn getInfixPrecedence(tag: Tag) Precedence {

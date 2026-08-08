@@ -362,10 +362,14 @@ pub const Parser = struct {
         }
 
         const block_node = self.b.tree.getNode(block_node_idx) orelse return ParseError.InvalidExpression;
-
-        // Pass the properly accessed payload inner statement span, not the raw `u32` data integer
         const b = self.b.tree.blocks.items[block_node.data];
-        return self.b.block(params, self.b.tree.getNodes(b.stmts), self.getSpan(start_tok.loc)) catch ParseError.OutOfMemory;
+
+        // --- FIX IS HERE ---
+        // Dupe to avoid memory invalidation when addNodes is called inside `self.b.block`
+        const stmts_dupe = self.allocator.dupe(ast.NodeIndex, self.b.tree.getNodes(b.stmts)) catch return ParseError.OutOfMemory;
+        defer self.allocator.free(stmts_dupe);
+
+        return self.b.block(params, stmts_dupe, self.getSpan(start_tok.loc)) catch ParseError.OutOfMemory;
     }
 
     fn parseBeginStatement(self: *Parser) ParseError!ast.NodeIndex {
