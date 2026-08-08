@@ -2228,14 +2228,15 @@ test "KupCAD Parser: Diagnostics Line and Column Tracking" {
     ;
     var pt = try KTest.init(source);
     defer pt.deinit();
-
     _ = try pt.parser.parseStatement();
+
     try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
     const diag = pt.parser.diagnostics.list.items[0];
-
     try testing.expectEqualStrings("Invalid expression starting with '}'", diag.message);
 
     const line_index = try @import("../../core/line_index.zig").LineIndex.init(pt.arena.allocator(), source);
+
+    // LineIndex returns a 0-based index. "x = 10 + }" is on physical line 2, which corresponds to index 1.
     try testing.expectEqual(@as(u32, 1), line_index.getLine(diag.loc.offset));
     try testing.expectEqual(@as(u32, 11), line_index.getUtf8Column(diag.loc.offset));
 }

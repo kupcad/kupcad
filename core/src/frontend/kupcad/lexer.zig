@@ -71,7 +71,6 @@ pub const Tag = enum {
     tilde, // ~
     percent_w,
     percent_i,
-
     // Assignments & Rockets
     equal,
     plus_equal,
@@ -158,7 +157,6 @@ pub const Lexer = struct {
     line: u32,
     col: u32,
     file_id: u32,
-
     brace_depth: u32 = 0,
     interp_stack: [8]u32 = undefined,
     interp_depth: usize = 0,
@@ -301,13 +299,10 @@ pub const Lexer = struct {
         // Check if this is a YARD/Lookbook docstring annotation (@tag)
         if (i < first_line.len and first_line[i] == '@') {
             const base_indent = i - 1; // Number of spaces between '#' and '@'
-
-            // Scan for multi-line continuation lines
             while (self.index < self.buffer.len and self.peek() == '\n') {
                 var lookahead = self.index + 1;
                 // Skip horizontal whitespace leading up to '#'
                 while (lookahead < self.buffer.len and (self.buffer[lookahead] == ' ' or self.buffer[lookahead] == '\t')) : (lookahead += 1) {}
-
                 if (lookahead < self.buffer.len and self.buffer[lookahead] == '#') {
                     lookahead += 1; // Skip '#'
                     var spaces_after_hash: usize = 0;
@@ -318,7 +313,6 @@ pub const Lexer = struct {
                     // Continuation rule:
                     // Must have strictly MORE spaces after '#' than the tag line AND must NOT start a new '@' tag
                     if (spaces_after_hash > base_indent and lookahead < self.buffer.len and self.buffer[lookahead] != '@') {
-                        // Swallow the newline and the continuation comment line
                         self.advance(); // consume '\n'
                         self.line += 1;
                         self.col = 1;
@@ -330,7 +324,6 @@ pub const Lexer = struct {
             }
             return .{ .tag = .param_doc, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
         }
-
         return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
@@ -338,10 +331,8 @@ pub const Lexer = struct {
         const start = self.index;
         const c1 = self.peek();
         self.advance();
-
         const c2 = if (self.index < self.buffer.len) self.peek() else 0;
         const c3 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
-
         const tag: Tag = switch (c1) {
             '=' => if (c2 == '=') .equal_equal else if (c2 == '>') .arrow else .equal,
             '+' => if (c2 == '=') .plus_equal else .plus,
@@ -360,6 +351,7 @@ pub const Lexer = struct {
             else => return self.makeToken(.eof),
         };
 
+        // Ensure proper multi-char operator advances for *= and other augmented assignments
         if (tag == .star_star_equal or tag == .or_or_equal or tag == .and_and_equal or tag == .less_less_equal or tag == .greater_greater_equal) {
             self.advance();
             self.advance();
@@ -370,17 +362,14 @@ pub const Lexer = struct {
         {
             self.advance();
         }
-
         return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
         const is_constant = std.ascii.isUpper(self.peek());
         const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index, &self.col, false);
-
         var tag = if (is_constant) Tag.constant else Tag.ident;
         if (keywords.get(lexeme)) |kw_tag| tag = kw_tag;
-
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }
 
@@ -392,7 +381,7 @@ pub const Lexer = struct {
             content_loc.col += 1;
             return .{ .tag = .string, .loc = content_loc, .lexeme = lexeme };
         }
-        self.advance(); // consume opening quote '"'
+        self.advance();
         const content_loc = self.getLoc();
         return self.consumeStringBody(content_loc, true, quote);
     }
@@ -403,7 +392,6 @@ pub const Lexer = struct {
             self.advance();
             return .{ .tag = .colon_colon, .loc = start_loc, .lexeme = "::" };
         }
-
         var is_symbol = true;
         if (self.index >= 2) {
             const prev = self.buffer[self.index - 2];
@@ -412,6 +400,7 @@ pub const Lexer = struct {
             }
         }
 
+        // Quoted Symbols (e.g. :"key name")
         if (is_symbol and self.index < self.buffer.len and (self.peek() == '"' or self.peek() == '\'')) {
             const quote = self.peek();
             self.advance();
@@ -422,22 +411,25 @@ pub const Lexer = struct {
             const lexeme = self.buffer[start..self.index];
             if (self.index < self.buffer.len) self.advance();
 
+            // Shift the start offset forward so the AST maps to the inner content
             var content_loc = start_loc;
             content_loc.offset = @intCast(start);
             return .{ .tag = .symbol, .loc = content_loc, .lexeme = lexeme };
         }
 
+        // Standard Symbols (e.g. :name)
         if (is_symbol and self.index < self.buffer.len and std.ascii.isAlphabetic(self.peek())) {
             const start = self.index;
             while (self.index < self.buffer.len and (std.ascii.isAlphanumeric(self.peek()) or self.peek() == '_')) {
                 self.advance();
             }
 
+            // Shift the start offset forward so the AST maps to the inner content
+            // instead of including the ':' in the offset (which causes strings like ":scre" on length bounds).
             var content_loc = start_loc;
             content_loc.offset = @intCast(start);
             return .{ .tag = .symbol, .loc = content_loc, .lexeme = self.buffer[start..self.index] };
         }
-
         return .{ .tag = .colon, .loc = start_loc, .lexeme = ":" };
     }
 
@@ -452,24 +444,21 @@ pub const Lexer = struct {
             const c = self.peek();
             if (c == '\n') {
                 self.line += 1;
-                self.col = 0; // Will become 1 on advance() below
+                self.col = 0;
             }
             if (c == '\\') {
                 self.advance();
                 if (self.index < self.buffer.len) self.advance();
                 continue;
             }
-            // Interpolation is ONLY for double-quoted strings
             if (quote == '"' and c == '#' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '{') {
                 const lexeme = self.buffer[start..self.index];
                 self.advance();
                 self.advance();
 
-                // Gracefully throw a lexical error token instead of overflowing
                 if (self.interp_depth >= self.interp_stack.len) {
                     return .{ .tag = .invalid, .loc = start_loc, .lexeme = "Interpolation depth exceeded" };
                 }
-
                 self.interp_stack[self.interp_depth] = self.brace_depth;
                 self.interp_depth += 1;
                 self.brace_depth = 0;
@@ -512,10 +501,8 @@ pub const Lexer = struct {
             try tags.append(allocator, tok.tag);
             try starts.append(allocator, tok.loc.offset);
             try lengths.append(allocator, @intCast(tok.lexeme.len));
-
             if (tok.tag == .eof) break;
         }
-
         return .{
             .tags = try tags.toOwnedSlice(allocator),
             .starts = try starts.toOwnedSlice(allocator),
