@@ -2696,13 +2696,13 @@ test "KupCAD Parser: Multiple Unary Prefix Right-Associativity" {
 
     const expr_idx = try pt.parser.parseExpression(.none);
     const expr = pt.getNode(expr_idx);
-    const u1 = tree.unaryExpr(expr);
+    const un1 = tree.unaryExpr(expr);
 
-    try testing.expectEqual(ast.UnaryOp.not, u1.op);
-    const inner_not = pt.getNode(u1.operand);
-    const u2 = tree.unaryExpr(inner_not);
-    try testing.expectEqual(ast.UnaryOp.not, u2.op);
-    try testing.expectEqual(true, pt.getNode(u2.operand).data != 0);
+    try testing.expectEqual(ast.UnaryOp.not, un1.op);
+    const inner_not = pt.getNode(un1.operand);
+    const un2 = tree.unaryExpr(inner_not);
+    try testing.expectEqual(ast.UnaryOp.not, un2.op);
+    try testing.expectEqual(true, pt.getNode(un2.operand).data != 0);
 }
 
 test "KupCAD Parser: Ruby 3.1 Shorthand Hash Syntax" {
