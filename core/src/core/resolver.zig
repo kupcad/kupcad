@@ -23,6 +23,7 @@ const Scope = struct {
     locals: std.AutoHashMapUnmanaged(ast.StringId, u24) = .empty,
     next_slot: u24 = 0,
     is_closure: bool, // Distinguishes between true closures and simple blocks
+    saved_loop_depth: usize = 0, // Preserves the parent's loop depth across closures
 
     pub fn deinit(self: *Scope, allocator: std.mem.Allocator) void {
         self.locals.deinit(allocator);
@@ -36,6 +37,9 @@ pub const Resolver = struct {
     scopes: std.ArrayListUnmanaged(Scope) = .empty,
     diagnostics: *errors.Diagnostics,
 
+    // Tracks the current nesting of while/for loops
+    loop_depth: usize = 0,
+
     pub fn init(allocator: std.mem.Allocator, tree: *const ast.Tree, diagnostics: *errors.Diagnostics) !Resolver {
         const symbols = try allocator.alloc(ResolvedSymbol, tree.nodes.items.len);
 
@@ -47,6 +51,7 @@ pub const Resolver = struct {
             .tree = tree,
             .symbols = symbols,
             .diagnostics = diagnostics,
+            .loop_depth = 0,
         };
     }
 
@@ -73,15 +78,23 @@ pub const Resolver = struct {
 
     pub fn pushScope(self: *Resolver, is_closure: bool) !void {
         var start_slot: u24 = 0;
+        const current_loop_depth = self.loop_depth;
 
         // If this is a standard block, inherit the local stack slot counter from the parent scope
         if (!is_closure and self.scopes.items.len > 0) {
             start_slot = self.scopes.items[self.scopes.items.len - 1].next_slot;
         }
 
+        // If we are crossing a closure boundary (like a function def), you cannot break
+        // out of a loop that is outside the function. We reset the loop depth safely.
+        if (is_closure) {
+            self.loop_depth = 0;
+        }
+
         try self.scopes.append(self.allocator, .{
             .is_closure = is_closure,
             .next_slot = start_slot,
+            .saved_loop_depth = current_loop_depth,
         });
     }
 
@@ -91,6 +104,11 @@ pub const Resolver = struct {
         // If it wasn't a closure, propagate the highest stack slot count back up to the parent
         if (!scope.is_closure and self.scopes.items.len > 0) {
             self.scopes.items[self.scopes.items.len - 1].next_slot = scope.next_slot;
+        }
+
+        // Restore the outer loop depth when escaping the closure boundary
+        if (scope.is_closure) {
+            self.loop_depth = scope.saved_loop_depth;
         }
 
         scope.deinit(self.allocator);
@@ -165,6 +183,20 @@ const ResolverContext = struct {
         const node = tree.getNode(node_idx).?;
 
         switch (node.tag) {
+            // --- Loop Control Constraints ---
+            .while_stmt => {
+                self.resolver.loop_depth += 1;
+            },
+            .break_stmt, .next_stmt => {
+                // Instantly throw a semantic error if used outside a loop!
+                if (self.resolver.loop_depth == 0) {
+                    const stmt_name = if (node.tag == .break_stmt) "break" else "next";
+                    // Note: Resolver does not currently have token offsets, so we pass a zeroed location.
+                    // This will still safely surface the correct message to the diagnostic array.
+                    self.resolver.diagnostics.add(.{ .line = 0, .col = 0, .offset = 0, .length = 0, .file_id = 0 }, "Cannot use '{s}' outside of a loop", .{stmt_name});
+                }
+            },
+
             // --- Scope Creating Nodes ---
             .block => {
                 try self.resolver.pushScope(false); // Standard block (inherits locals)
@@ -195,6 +227,7 @@ const ResolverContext = struct {
             },
             .for_stmt => {
                 try self.resolver.pushScope(false);
+                self.resolver.loop_depth += 1; // It is a loop!
                 const fs = tree.forStmt(node);
                 for (tree.getForBindings(fs.bindings)) |binding| {
                     _ = try self.resolver.declareLocal(binding.name);
@@ -229,7 +262,14 @@ const ResolverContext = struct {
     pub fn leaveNode(self: *ResolverContext, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         const node = tree.getNode(node_idx).?;
         switch (node.tag) {
-            .block, .def_stmt, .lambda_expr, .for_stmt, .class_stmt, .module_stmt => {
+            .while_stmt => {
+                self.resolver.loop_depth -= 1;
+            },
+            .for_stmt => {
+                self.resolver.loop_depth -= 1;
+                try self.resolver.popScope();
+            },
+            .block, .def_stmt, .lambda_expr, .class_stmt, .module_stmt => {
                 try self.resolver.popScope();
             },
             else => {},

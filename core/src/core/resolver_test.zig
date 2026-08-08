@@ -130,3 +130,80 @@ test "Resolver: block parameters resolve as local variables" {
     try expectResolved(&res, tree, "i", .local, 0);
     try expectResolved(&res, tree, "val", .local, 1);
 }
+
+test "Resolver: permits break and next inside loops" {
+    const source =
+        \\while true
+        \\  break if false
+        \\  next
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const root_idx = try pt.parser.parseProgram();
+
+    var diags = errors.Diagnostics.init(testing.allocator);
+    defer diags.deinit();
+
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, &diags);
+    defer res.deinit();
+
+    try res.resolve(root_idx);
+
+    // Should have 0 errors since break and next are legally inside the while loop
+    try testing.expectEqual(@as(usize, 0), diags.list.items.len);
+}
+
+test "Resolver: rejects break and next outside loops" {
+    const source =
+        \\if true
+        \\  break
+        \\end
+        \\next
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const root_idx = try pt.parser.parseProgram();
+
+    var diags = errors.Diagnostics.init(testing.allocator);
+    defer diags.deinit();
+
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, &diags);
+    defer res.deinit();
+
+    try res.resolve(root_idx);
+
+    // Should catch exactly 2 errors
+    try testing.expectEqual(@as(usize, 2), diags.list.items.len);
+    try testing.expectEqualStrings("Cannot use 'break' outside of a loop", diags.list.items[0].message);
+    try testing.expectEqualStrings("Cannot use 'next' outside of a loop", diags.list.items[1].message);
+}
+
+test "Resolver: prevents break from escaping closure boundaries" {
+    const source =
+        \\while true
+        \\  def inner()
+        \\    break
+        \\  end
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const root_idx = try pt.parser.parseProgram();
+
+    var diags = errors.Diagnostics.init(testing.allocator);
+    defer diags.deinit();
+
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, &diags);
+    defer res.deinit();
+
+    try res.resolve(root_idx);
+
+    // The break is technically inside a while loop, but it crosses a function boundary!
+    // It should be completely illegal.
+    try testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try testing.expectEqualStrings("Cannot use 'break' outside of a loop", diags.list.items[0].message);
+}
