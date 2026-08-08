@@ -4,6 +4,7 @@ const parser_mod = @import("frontend/kupcad/parser.zig");
 const common_token = @import("core/token.zig");
 const common_errors = @import("core/errors.zig");
 const ast = @import("core/ast.zig");
+const resolver = @import("core/resolver.zig");
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const Linter = @import("tools/lint/linter.zig").Linter;
 
@@ -25,6 +26,7 @@ pub const Document = struct {
     comments: []const common_token.Comment,
     diagnostics: []const common_errors.Diagnostic,
     line_index: LineIndex,
+    symbols: []resolver.ResolvedSymbol,
 
     pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Document {
         var arena = std.heap.ArenaAllocator.init(allocator);
@@ -44,6 +46,8 @@ pub const Document = struct {
         tree.root = root_index;
 
         const line_index = try LineIndex.init(arena_alloc, source);
+        var res = try resolver.Resolver.init(arena_alloc, &tree, &parser.diagnostics);
+        try res.resolve(root_index);
 
         return .{
             .arena = arena,
@@ -52,6 +56,7 @@ pub const Document = struct {
             .comments = parser.comments.items,
             .diagnostics = parser.diagnostics.list.items,
             .line_index = line_index,
+            .symbols = res.symbols,
         };
     }
 

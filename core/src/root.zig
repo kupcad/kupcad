@@ -12,6 +12,7 @@ test {
     _ = @import("api_test.zig");
     _ = @import("gen_grammar_test.zig");
     _ = @import("core/ast_test.zig");
+    _ = @import("core/resolver_test.zig");
     _ = @import("core/line_index_test.zig");
     _ = @import("frontend/kupcad/docstring_test.zig");
     _ = @import("frontend/kupcad/lexer_test.zig");
