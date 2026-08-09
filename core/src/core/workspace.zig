@@ -9,11 +9,14 @@ pub const Module = struct {
     path: []const u8,
     doc: Document,
     deps: std.ArrayListUnmanaged(ModuleId) = .empty,
+    // Maps the string representation of an exported symbol to its original AST NodeIndex
+    exports: std.StringHashMapUnmanaged(ast.NodeIndex) = .empty,
 
     pub fn deinit(self: *Module, allocator: std.mem.Allocator) void {
         allocator.free(self.path);
-        self.deps.deinit(allocator);
         self.doc.deinit();
+        self.deps.deinit(allocator);
+        self.exports.deinit(allocator);
     }
 };
 
@@ -55,17 +58,26 @@ pub const Workspace = struct {
     pub fn linkDependencies(self: *Workspace) !void {
         for (self.modules.items) |*mod| {
             mod.deps.clearRetainingCapacity();
+            mod.exports.clearRetainingCapacity();
 
-            // Capture 'node' by pointer (*node) instead of by value
-            for (mod.doc.tree.nodes.items) |*node| {
+            for (mod.doc.tree.nodes.items, 0..) |*node, i| {
+                const node_idx: ast.NodeIndex = @enumFromInt(i);
+
                 if (node.tag == .import_stmt) {
                     const import_stmt = mod.doc.tree.importStmt(node);
                     const dep_path = mod.doc.tree.getString(import_stmt.path);
 
-                    // In a real CLI, we would resolve relative paths and load missing files here.
-                    // For now, we link it if it exists in the workspace.
                     if (self.path_to_id.get(dep_path)) |dep_id| {
                         try mod.deps.append(self.allocator, dep_id);
+                    }
+                } else if (node.tag == .export_stmt) {
+                    // Extract exported symbols and populate the Export Table
+                    const export_stmt = mod.doc.tree.exportStmt(node);
+                    const symbols = mod.doc.tree.getStringLists(export_stmt.symbols);
+
+                    for (symbols) |sym_id| {
+                        const sym_name = mod.doc.tree.getString(sym_id);
+                        try mod.exports.put(self.allocator, sym_name, node_idx);
                     }
                 }
             }

@@ -44,3 +44,24 @@ test "Workspace: Kahn's Algorithm detects circular dependencies" {
     const result = ws.sortModules();
     try testing.expectError(error.CircularDependency, result);
 }
+
+test "Workspace: correctly populates Module Export Tables" {
+    var ws = workspace.Workspace.init(testing.allocator);
+    defer ws.deinit();
+
+    const source =
+        \\export { ThreadedInsert, Screw } from "hardware.kup"
+        \\export { Box } from "housing.kup"
+    ;
+
+    const id = try ws.addModule("main.kup", source);
+    try ws.linkDependencies();
+
+    const mod = &ws.modules.items[@intFromEnum(id)];
+
+    // It should have extracted 3 exported symbols!
+    try testing.expectEqual(@as(usize, 3), mod.exports.count());
+    try testing.expect(mod.exports.contains("ThreadedInsert"));
+    try testing.expect(mod.exports.contains("Screw"));
+    try testing.expect(mod.exports.contains("Box"));
+}
