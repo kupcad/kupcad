@@ -18,26 +18,23 @@ fn countObjects(gc: *GC) usize {
 test "GC: Mark and Sweep reclaims unreferenced objects" {
     var vm = try VM.init(testing.allocator);
     defer vm.deinit();
+    // Note: VM.init() registers the "cube" native function (1 object)
 
     // 1. Allocate a string but DO NOT push it to the stack
-    // Pass string literals directly. The GC handles allocating its own heap memory.
     _ = try vm.allocateString("I am dead");
 
     // 2. Allocate a string and DO push it to the stack (keeping it alive)
     const alive_val = try vm.allocateString("I am alive");
     try vm.push(alive_val);
 
-    // Verify both objects are in the linked list
-    try testing.expectEqual(@as(usize, 2), countObjects(&vm.gc));
+    // Verify both strings + global "cube" native are in the linked list (3 total)
+    try testing.expectEqual(@as(usize, 3), countObjects(&vm.gc));
 
     // 3. Run the Garbage Collector
     vm.gc.collectGarbage(&vm, false);
 
-    // 4. Verify the orphaned string was destroyed, but the stacked one survived
-    try testing.expectEqual(@as(usize, 1), countObjects(&vm.gc));
-
-    const surviving_obj = vm.gc.first_object.?;
-    try testing.expectEqual(value.ObjType.string, surviving_obj.obj_type);
+    // 4. Verify the orphaned string was destroyed, but stacked & global survived (2 total)
+    try testing.expectEqual(@as(usize, 2), countObjects(&vm.gc));
 }
 
 test "GC: ObjMesh allocation and lifecycle tracking" {
@@ -51,8 +48,8 @@ test "GC: ObjMesh allocation and lifecycle tracking" {
     const mesh_val = try vm.allocateMesh(dummy_handle, 8, 12);
     try vm.push(mesh_val);
 
-    // Verify it was registered in the GC linked list
-    try testing.expectEqual(@as(usize, 1), countObjects(&vm.gc));
+    // Verify it was registered in the GC linked list (1 mesh + 1 global = 2 total)
+    try testing.expectEqual(@as(usize, 2), countObjects(&vm.gc));
 
     // Verify properties
     try testing.expect(mesh_val.isMesh());
@@ -63,12 +60,12 @@ test "GC: ObjMesh allocation and lifecycle tracking" {
 
     // Run GC. The mesh should survive because it's on the stack.
     vm.gc.collectGarbage(&vm, false);
-    try testing.expectEqual(@as(usize, 1), countObjects(&vm.gc));
+    try testing.expectEqual(@as(usize, 2), countObjects(&vm.gc));
 
     // Pop the mesh off the stack, making it unreachable
     _ = vm.pop();
 
-    // Run GC again. The orphaned mesh should be swept and destroyed.
+    // Run GC again. The orphaned mesh should be swept. Only "cube" global survives.
     vm.gc.collectGarbage(&vm, false);
-    try testing.expectEqual(@as(usize, 0), countObjects(&vm.gc));
+    try testing.expectEqual(@as(usize, 1), countObjects(&vm.gc));
 }

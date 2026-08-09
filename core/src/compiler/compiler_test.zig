@@ -4,6 +4,7 @@ const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("compiler.zig").Compiler;
+const VM = @import("../vm/vm.zig").VM;
 
 test "Compiler: compiles basic binary addition" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -19,8 +20,12 @@ test "Compiler: compiles basic binary addition" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    // Fixed: Passing an empty slice for the symbols parameter
-    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk);
+    // Initialize the VM so the Compiler can use it for managed allocations
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+
+    // Pass &vm as the 5th argument
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
     try comp.compile(bin_node);
 
     try testing.expectEqual(@as(usize, 7), out_chunk.code.items.len);

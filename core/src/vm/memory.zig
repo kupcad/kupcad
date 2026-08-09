@@ -100,16 +100,22 @@ pub const GC = struct {
     // --- Phase 1: Mark ---
 
     fn markRoots(self: *GC, vm: *VM) void {
-        // 1. Mark the Shadow Stack (WASM-Safe!)
+        // Mark the Shadow Stack (WASM-Safe!)
         for (vm.stack[0..vm.stack_top]) |val| {
             self.markValue(val);
         }
 
-        // 2. Mark constants in active call frames
+        // Mark constants in active call frames
         for (vm.frames.items) |frame| {
             for (frame.chunk.constants.items) |val| {
                 self.markValue(val);
             }
+        }
+
+        // Mark Global Variables (Built-ins and Script Globals)
+        var globals_it = vm.globals.valueIterator();
+        while (globals_it.next()) |val| {
+            self.markValue(val.*);
         }
     }
 

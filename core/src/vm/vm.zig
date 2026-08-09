@@ -17,6 +17,17 @@ pub const CallFrame = struct {
     base_slot: usize, // Stack offset where this frame's local variables start
 };
 
+/// A mock implementation of OpenSCAD's cube()
+fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    _ = args;
+    const self: *VM = @ptrCast(@alignCast(vm_opaque));
+
+    // In a real engine, we'd extract arguments and pass them to a C/C++ CAD Kernel here.
+    // For now, we simulate allocating a 3D Mesh object (e.g., a cube has 8 vertices, 12 faces).
+    return self.allocateMesh(null, 8, 12);
+}
+
 pub const VM = struct {
     allocator: std.mem.Allocator,
 
@@ -35,7 +46,7 @@ pub const VM = struct {
 
     pub fn init(allocator: std.mem.Allocator) !VM {
         const initial_stack = try allocator.alloc(value.Value, INITIAL_STACK_CAPACITY);
-        return .{
+        var self = VM{
             .allocator = allocator,
             .stack = initial_stack,
             .stack_top = 0,
@@ -43,6 +54,11 @@ pub const VM = struct {
             .gc = memory.GC.init(allocator),
             .globals = .empty,
         };
+
+        // Register built-in native functions
+        try self.defineNative("cube", nativeCube);
+
+        return self;
     }
 
     pub fn deinit(self: *VM) void {
@@ -166,6 +182,41 @@ pub const VM = struct {
                 },
 
                 .op_return => return .ok,
+
+                .op_get_global => {
+                    const name_idx = frame.chunk.code.items[frame.ip];
+                    frame.ip += 1;
+
+                    const name_val = frame.chunk.constants.items[name_idx];
+                    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", name_val.asObj()));
+
+                    if (self.globals.get(str_obj.chars)) |val| {
+                        self.push(val) catch return .runtime_error;
+                    } else {
+                        std.debug.print("Runtime Error: Undefined variable '{s}'\n", .{str_obj.chars});
+                        return .runtime_error;
+                    }
+                },
+                .op_call => {
+                    const arg_count = frame.chunk.code.items[frame.ip];
+                    frame.ip += 1;
+
+                    const callee = self.stack[self.stack_top - 1 - arg_count];
+                    if (callee.isNative()) {
+                        const native_obj = callee.asNative();
+                        const args_ptr = self.stack.ptr + self.stack_top - arg_count;
+
+                        // Execute the Zig/C function natively
+                        const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
+
+                        // Pop arguments and callee off the stack, push the result
+                        self.stack_top -= arg_count + 1;
+                        self.push(result) catch return .runtime_error;
+                    } else {
+                        std.debug.print("Runtime Error: Can only call functions and classes.\n", .{});
+                        return .runtime_error;
+                    }
+                },
 
                 else => {
                     std.debug.print("Runtime Error: Unhandled OpCode {}\n", .{op});
