@@ -13,6 +13,7 @@ test {
     _ = @import("gen_grammar_test.zig");
     _ = @import("core/ast_test.zig");
     _ = @import("core/constant_folder_test.zig");
+    _ = @import("core/document_test.zig");
     _ = @import("core/line_index_test.zig");
     _ = @import("core/resolver_test.zig");
     _ = @import("core/parent_map_test.zig");

@@ -22,7 +22,7 @@ pub const Document = struct {
     parents: []ast.NodeIndex,
     closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const resolver.UpvalueCapture),
 
-    pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Document {
+    fn parseInternal(allocator: std.mem.Allocator, source: []const u8, resolve_semantics: bool) !Document {
         var arena = std.heap.ArenaAllocator.init(allocator);
         errdefer arena.deinit();
         const arena_alloc = arena.allocator();
@@ -41,11 +41,20 @@ pub const Document = struct {
 
         const line_index = try LineIndex.init(arena_alloc, source);
 
-        var res = try resolver.Resolver.init(arena_alloc, &tree, tokens.starts, tokens.lengths, &parser.diagnostics);
-        try res.resolve(root_index);
+        var symbols: []resolver.ResolvedSymbol = &[_]resolver.ResolvedSymbol{};
+        var closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const resolver.UpvalueCapture) = .empty;
+        var parents: []ast.NodeIndex = &[_]ast.NodeIndex{};
 
-        var pmap = try parent_map.ParentMap.init(arena_alloc, &tree);
-        try pmap.build(&tree, root_index);
+        if (resolve_semantics) {
+            var res = try resolver.Resolver.init(arena_alloc, &tree, tokens.starts, tokens.lengths, &parser.diagnostics);
+            try res.resolve(root_index);
+            symbols = res.symbols;
+            closure_captures = res.closure_captures;
+
+            var pmap = try parent_map.ParentMap.init(arena_alloc, &tree);
+            try pmap.build(&tree, root_index);
+            parents = pmap.parents;
+        }
 
         return .{
             .arena = arena,
@@ -54,43 +63,20 @@ pub const Document = struct {
             .comments = parser.comments.items,
             .diagnostics = parser.diagnostics.list.items,
             .line_index = line_index,
-            .symbols = res.symbols,
-            .closure_captures = res.closure_captures,
-            .parents = pmap.parents,
+            .symbols = symbols,
+            .closure_captures = closure_captures,
+            .parents = parents,
         };
+    }
+
+    pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Document {
+        return parseInternal(allocator, source, true);
     }
 
     /// Only runs the Lexer and Parser. Does NOT run semantic resolution.
     /// This allows the Workspace to build the module graph before resolving symbols.
     pub fn parseRaw(allocator: std.mem.Allocator, source: []const u8) !Document {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        errdefer arena.deinit();
-        const arena_alloc = arena.allocator();
-
-        var lexer = lexer_mod.Lexer.init(source, 0);
-        const tokens = try lexer.lexAll(arena_alloc);
-
-        var parser = try parser_mod.Parser.init(tokens, source, arena_alloc);
-        const root_index = parser.parseProgram() catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => .none,
-        };
-
-        var tree = parser.b.tree;
-        tree.root = root_index;
-        const line_index = try LineIndex.init(arena_alloc, source);
-
-        return .{
-            .arena = arena,
-            .tree = tree,
-            .tokens = tokens,
-            .comments = parser.comments.items,
-            .diagnostics = parser.diagnostics.list.items,
-            .line_index = line_index,
-            .symbols = &[_]resolver.ResolvedSymbol{},
-            .closure_captures = .empty,
-            .parents = &[_]ast.NodeIndex{},
-        };
+        return parseInternal(allocator, source, false);
     }
 
     pub fn deinit(self: *Document) void {
