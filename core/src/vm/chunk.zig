@@ -51,12 +51,14 @@ pub const Chunk = struct {
     code: std.ArrayListUnmanaged(u8),
     lines: std.ArrayListUnmanaged(LineStart),
     constants: value.ValueArray,
+    max_stack_slots: usize,
 
     pub fn init() Chunk {
         return .{
             .code = .empty,
             .lines = .empty,
             .constants = .empty,
+            .max_stack_slots = 0,
         };
     }
 
