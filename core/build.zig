@@ -51,6 +51,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             }),
         });
+        linkManifold(b, wasm, target);
 
         // Tell Zig this is a library-like module with no main() function
         wasm.entry = .disabled;
@@ -113,6 +114,8 @@ pub fn build(b: *std.Build) void {
             }),
         });
 
+        linkManifold(b, exe, target);
+
         // This declares intent for the executable to be installed into the
         // install prefix when running `zig build` (i.e. when executing the default
         // step). By default the install prefix is `zig-out/` but can be overridden
@@ -129,6 +132,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             }),
         });
+        linkManifold(b, lib, target);
         b.installArtifact(lib);
 
         // This creates a top level step. Top level steps have a name and can be
@@ -163,6 +167,7 @@ pub fn build(b: *std.Build) void {
         const mod_tests = b.addTest(.{
             .root_module = mod,
         });
+        linkManifold(b, mod_tests, target);
 
         // A run step that will run the test executable.
         const run_mod_tests = b.addRunArtifact(mod_tests);
@@ -173,6 +178,8 @@ pub fn build(b: *std.Build) void {
         const exe_tests = b.addTest(.{
             .root_module = exe.root_module,
         });
+
+        linkManifold(b, exe_tests, target);
 
         // A run step that will run the second test executable.
         const run_exe_tests = b.addRunArtifact(exe_tests);
@@ -216,4 +223,32 @@ pub fn build(b: *std.Build) void {
     //
     // Lastly, the Zig build system is relatively simple and self-contained,
     // and reading its source code will allow you to master it.
+}
+
+/// Universal helper to link Manifold and C++ across OS platforms
+fn linkManifold(b: *std.Build, step: *std.Build.Step.Compile, target: std.Build.ResolvedTarget) void {
+    _ = b;
+
+    // Get the module by value (dereferencing the pointer)
+    const mod = step.root_module;
+    mod.link_libc = true;
+
+    // Link the C++ standard library correctly for the target OS
+    if (target.result.os.tag == .macos) {
+        mod.link_libcpp = true; // Use the 0.16 native way to link libc++
+
+        // Homebrew paths for Apple Silicon
+        mod.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
+        mod.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+
+        // Homebrew paths for Intel Macs
+        mod.addSystemIncludePath(.{ .cwd_relative = "/usr/local/include" });
+        mod.addLibraryPath(.{ .cwd_relative = "/usr/local/lib" });
+    } else if (target.result.os.tag == .linux) {
+        mod.link_libcpp = true; // Use the 0.16 native way to link libc++ (handles stdc++ automatically)
+    }
+
+    // Link the core library and the C-API wrapper
+    mod.linkSystemLibrary("manifold", .{});
+    mod.linkSystemLibrary("manifoldc", .{});
 }

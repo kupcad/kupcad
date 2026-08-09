@@ -32,7 +32,7 @@ test "GC: ObjMesh allocation and lifecycle tracking" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    const dummy_handle: ?*anyopaque = @ptrFromInt(0xDEADBEEF);
+    const dummy_handle: ?*anyopaque = null;
     const mock_vertices = [_]value.Vec3{};
     const mock_faces = [_][3]u32{};
     const mesh_val = try vm.allocateMesh(dummy_handle, &mock_vertices, &mock_faces);

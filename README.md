@@ -168,10 +168,10 @@ kupcad/
 
 ```
 
-## Wasm tests
+## Deps
 
 ```
-brew install wasmtime
+brew install manifold wasmtime
 ```
 
 

@@ -1,6 +1,5 @@
 const std = @import("std");
 
-/// Opaque pointer to the C++ Manifold object
 pub const ManifoldObj = opaque {};
 
 pub const OpType = enum(c_int) {
@@ -9,26 +8,22 @@ pub const OpType = enum(c_int) {
     intersect = 2,
 };
 
-// --- Mock FFI Bindings ---
-// (In production, replace the bodies with `extern "C"` declarations)
+// --- Real FFI Bindings ---
+extern "C" fn manifold_alloc_manifold() *ManifoldObj;
+extern "C" fn manifold_cube(mem: *ManifoldObj, x: f64, y: f64, z: f64, center: c_int) *ManifoldObj;
+extern "C" fn manifold_boolean(mem: *ManifoldObj, a: *ManifoldObj, b: *ManifoldObj, op: OpType) *ManifoldObj;
+extern "C" fn manifold_delete_manifold(m: *ManifoldObj) void;
 
 pub fn cube(x: f32, y: f32, z: f32, center: bool) *ManifoldObj {
-    _ = x;
-    _ = y;
-    _ = z;
-    _ = center;
-    // Return a dummy pointer for testing
-    return @ptrFromInt(0xDEADBEEF);
+    const mem = manifold_alloc_manifold();
+    return manifold_cube(mem, x, y, z, if (center) 1 else 0);
 }
 
 pub fn boolean(a: *ManifoldObj, b: *ManifoldObj, op: OpType) *ManifoldObj {
-    _ = a;
-    _ = b;
-    _ = op;
-    // Return a dummy pointer for testing
-    return @ptrFromInt(0xCAFEF00D);
+    const mem = manifold_alloc_manifold();
+    return manifold_boolean(mem, a, b, op);
 }
 
 pub fn destruct(m: *ManifoldObj) void {
-    _ = m;
+    manifold_delete_manifold(m);
 }

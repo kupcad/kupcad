@@ -260,6 +260,5 @@ test "VM: Executes CSG Operator Overloading (cube() + cube())" {
     try testing.expectEqual(@as(usize, 2), vm.stack_top);
     try testing.expect(vm.stack[0].isMesh());
 
-    // The merged mesh should have the C++ handle CAFEFOOD assigned by our boolean mock
-    try testing.expectEqual(@as(?*anyopaque, @ptrFromInt(0xCAFEF00D)), vm.stack[0].asMesh().kernel_handle);
+    try testing.expect(vm.stack[0].asMesh().kernel_handle != null);
 }
