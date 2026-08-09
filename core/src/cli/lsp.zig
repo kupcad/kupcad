@@ -205,7 +205,6 @@ pub const Handler = struct {
     }
 
     /// Context-Aware Hover Provider using doc.parents, doc.symbols, and lsp.offsets.positionToIndex
-    /// Context-Aware Hover Provider using doc.parents, doc.symbols, and lsp.offsets.positionToIndex
     pub fn @"textDocument/hover"(
         self: *Handler,
         arena: std.mem.Allocator,
