@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs.zig");
 const FmtConfig = @import("../tools/fmt/config.zig").Config;
 const LintConfig = @import("../tools/lint/config.zig").Config;
 
@@ -21,18 +22,17 @@ pub const ProjectConfig = struct {
     }
 
     pub fn load(io: std.Io, allocator: std.mem.Allocator, custom_path: ?[]const u8) !ProjectConfig {
-        const cwd = std.Io.Dir.cwd();
         const target_path = custom_path orelse DEFAULT_CONFIG_NAME;
 
-        const source = cwd.readFileAlloc(io, target_path, allocator, .limited(MAX_FILE_SIZE)) catch |err| {
-            if (err == error.FileNotFound) {
-                if (custom_path == null) {
-                    return ProjectConfig{};
-                }
+        const source = fs.readFileLimit(io, allocator, target_path, MAX_FILE_SIZE) catch |err| {
+            // If the user didn't explicitly provide a config path, it's okay if the default is missing
+            if (err == error.FileNotFound and custom_path == null) {
+                return ProjectConfig{};
             }
             return err;
         };
         defer allocator.free(source);
+
         return parse(allocator, source);
     }
 };

@@ -29,23 +29,6 @@ pub const CommandOptions = struct {
         };
     }
 
-    /// Helper that calls `parse` and automatically handles printing nice error
-    /// messages and exiting the process on invalid user input.
-    pub fn parseOrExit(allocator: std.mem.Allocator, args_iter: anytype, command_name: []const u8) !CommandOptions {
-        return parse(allocator, args_iter) catch |err| {
-            if (err == error.OutOfMemory) return err;
-
-            if (err == error.MissingConfigValue) {
-                std.debug.print("Error: Missing value for --config. Usage: kupcad {s} [--config <file>] <file|dir>...\n", .{command_name});
-            } else if (err == error.MissingFilePath) {
-                std.debug.print("Error: Missing file path. Usage: kupcad {s} [--config <file>] <file|dir>...\n", .{command_name});
-            } else {
-                std.debug.print("Error parsing arguments: {}\n", .{err});
-            }
-            std.process.exit(1);
-        };
-    }
-
     pub fn deinit(self: *CommandOptions, allocator: std.mem.Allocator) void {
         self.paths.deinit(allocator);
     }
@@ -58,11 +41,20 @@ pub const CommandSetup = struct {
     config: ProjectConfig,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, args_iter: anytype, command_name: []const u8) !CommandSetup {
-        const options = try CommandOptions.parseOrExit(allocator, args_iter, command_name);
+        const options = CommandOptions.parse(allocator, args_iter) catch |err| {
+            if (err == error.MissingConfigValue) {
+                std.log.err("Missing value for --config. Usage: kupcad {s} [--config <file>] <file|dir>...", .{command_name});
+            } else if (err == error.MissingFilePath) {
+                std.log.err("Missing file path. Usage: kupcad {s} [--config <file>] <file|dir>...", .{command_name});
+            } else {
+                std.log.err("Error parsing arguments: {}", .{err});
+            }
+            return err;
+        };
 
         const config = ProjectConfig.load(io, allocator, options.config_path) catch |err| {
-            std.debug.print("Error parsing configuration file: {}\n", .{err});
-            std.process.exit(1);
+            std.log.err("Error parsing configuration file: {}", .{err});
+            return err;
         };
 
         return .{ .options = options, .config = config };

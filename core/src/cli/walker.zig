@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs.zig");
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
 /// Generic file processor callback.
@@ -26,17 +27,16 @@ pub fn walkPaths(io: std.Io, allocator: std.mem.Allocator, paths: []const []cons
             if (err == error.NotDir) {
                 try readAndProcess(io, allocator, path, context, processFn);
             } else {
-                std.debug.print("Error accessing '{s}': {}\n", .{ path, err });
+                std.log.err("Error accessing '{s}': {}", .{ path, err });
             }
         }
     }
 }
 
 fn readAndProcess(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, context: ?*anyopaque, processFn: ProcessFileFn) !void {
-    const cwd = std.Io.Dir.cwd();
-    const source = cwd.readFileAlloc(io, file_path, allocator, .limited(MAX_FILE_SIZE)) catch |err| {
-        std.debug.print("Error reading '{s}': {}\n", .{ file_path, err });
-        return;
+    const source = fs.readFileLimit(io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+        std.log.err("Error reading '{s}': {}", .{ file_path, err });
+        return; // Skip this file and continue walking
     };
     defer allocator.free(source);
 
