@@ -46,6 +46,26 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// Allocates an ObjMesh, registering it with the VM's Garbage Collector.
+    pub fn allocateMesh(self: *GC, handle: ?*anyopaque, v_count: usize, f_count: usize) !*value.ObjMesh {
+        const ptr = try self.allocator.create(value.ObjMesh);
+
+        self.bytes_allocated += @sizeOf(value.ObjMesh);
+
+        ptr.obj = .{
+            .obj_type = .mesh,
+            .is_marked = false,
+            .next = self.first_object,
+        };
+        self.first_object = &ptr.obj;
+
+        ptr.kernel_handle = handle;
+        ptr.vertex_count = v_count;
+        ptr.face_count = f_count;
+
+        return ptr;
+    }
+
     /// The main entry point for the Garbage Collector
     pub fn collectGarbage(self: *GC, vm: *VM, force_full: bool) void {
         // std.debug.print("-- GC Begin --\n", .{});
@@ -125,12 +145,21 @@ pub const GC = struct {
         switch (obj.obj_type) {
             .string => {
                 const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", obj));
-                // Free the string slice buffer
                 self.allocator.free(str_obj.chars);
                 self.bytes_allocated -= str_obj.chars.len;
-                // Free the struct wrapper
                 self.allocator.destroy(str_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjString);
+            },
+            .mesh => {
+                const mesh_obj: *value.ObjMesh = @alignCast(@fieldParentPtr("obj", obj));
+
+                // TODO: FFI Call to free the C/C++ kernel data goes here.
+                // if (mesh_obj.kernel_handle) |handle| {
+                //     native_csg_free(handle);
+                // }
+
+                self.allocator.destroy(mesh_obj);
+                self.bytes_allocated -= @sizeOf(value.ObjMesh);
             },
             .array => {
                 // Future Implementation

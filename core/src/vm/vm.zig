@@ -181,4 +181,14 @@ pub const VM = struct {
         const str_obj = try self.gc.allocateString(chars);
         return value.Value.initObj(&str_obj.obj);
     }
+
+    /// Safely allocates a CAD Mesh and pushes it to the stack.
+    /// Triggers GC automatically if memory pressure is high.
+    pub fn allocateMesh(self: *VM, handle: ?*anyopaque, v_count: usize, f_count: usize) !value.Value {
+        if (self.gc.bytes_allocated > self.gc.next_gc_threshold) {
+            self.gc.collectGarbage(self, false);
+        }
+        const mesh_obj = try self.gc.allocateMesh(handle, v_count, f_count);
+        return value.Value.initObj(&mesh_obj.obj);
+    }
 };

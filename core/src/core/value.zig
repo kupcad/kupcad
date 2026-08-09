@@ -13,6 +13,7 @@ pub const ValueTag = enum(u8) {
 pub const ObjType = enum(u8) {
     string,
     array,
+    mesh,
     // Future additions: part, mesh, transform, etc.
 };
 
@@ -28,6 +29,16 @@ pub const Obj = struct {
 pub const ObjString = struct {
     obj: Obj,
     chars: []const u8,
+};
+
+/// Represents a 3D Geometry Object in the VM
+pub const ObjMesh = struct {
+    obj: Obj,
+    /// Pointer to the underlying C/C++ CAD kernel structure (e.g., CSG Node or BRep)
+    kernel_handle: ?*anyopaque,
+    /// Cached metadata for quick access in the VM without crossing the FFI boundary
+    vertex_count: usize,
+    face_count: usize,
 };
 
 /// The Universal 16-Byte Dynamic Value.
@@ -89,6 +100,10 @@ pub const Value = extern struct {
         return self.isObject() and self.asObj().obj_type == obj_type;
     }
 
+    pub inline fn isMesh(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .mesh;
+    }
+
     // --- Safe Accessors (with safety assertions) ---
 
     pub inline fn asNumber(self: Value) f64 {
@@ -113,6 +128,11 @@ pub const Value = extern struct {
 
     pub inline fn asString(self: Value) *ObjString {
         std.debug.assert(self.isObjType(.string));
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asMesh(self: Value) *ObjMesh {
+        std.debug.assert(self.isMesh());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
