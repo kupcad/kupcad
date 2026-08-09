@@ -14,6 +14,7 @@ pub const ObjType = enum(u8) {
     string,
     array,
     mesh,
+    native,
     // Future additions: part, mesh, transform, etc.
 };
 
@@ -39,6 +40,15 @@ pub const ObjMesh = struct {
     /// Cached metadata for quick access in the VM without crossing the FFI boundary
     vertex_count: usize,
     face_count: usize,
+};
+
+/// Signature for all Native CAD Built-ins
+/// Takes an opaque VM pointer to avoid circular imports, argument count, and a pointer to the first argument on the stack.
+pub const NativeFn = *const fn (vm: *anyopaque, arg_count: u8, args: [*]Value) anyerror!Value;
+
+pub const ObjNative = struct {
+    obj: Obj,
+    function: NativeFn,
 };
 
 /// The Universal 16-Byte Dynamic Value.
@@ -104,6 +114,10 @@ pub const Value = extern struct {
         return self.isObject() and self.asObj().obj_type == .mesh;
     }
 
+    pub inline fn isNative(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .native;
+    }
+
     // --- Safe Accessors (with safety assertions) ---
 
     pub inline fn asNumber(self: Value) f64 {
@@ -133,6 +147,11 @@ pub const Value = extern struct {
 
     pub inline fn asMesh(self: Value) *ObjMesh {
         std.debug.assert(self.isMesh());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asNative(self: Value) *ObjNative {
+        std.debug.assert(self.isNative());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 

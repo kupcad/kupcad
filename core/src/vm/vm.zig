@@ -28,6 +28,8 @@ pub const VM = struct {
     frames: std.ArrayListUnmanaged(CallFrame),
     // memory GC
     gc: memory.GC,
+    // Global variables and built-in function registry
+    globals: std.StringHashMapUnmanaged(value.Value),
 
     const INITIAL_STACK_CAPACITY: usize = 1024;
 
@@ -39,12 +41,14 @@ pub const VM = struct {
             .stack_top = 0,
             .frames = .empty,
             .gc = memory.GC.init(allocator),
+            .globals = .empty,
         };
     }
 
     pub fn deinit(self: *VM) void {
         self.gc.collectGarbage(self, true);
         self.allocator.free(self.stack);
+        self.globals.deinit(self.allocator);
         self.frames.deinit(self.allocator);
     }
 
@@ -190,5 +194,21 @@ pub const VM = struct {
         }
         const mesh_obj = try self.gc.allocateMesh(handle, v_count, f_count);
         return value.Value.initObj(&mesh_obj.obj);
+    }
+
+    /// Registers a native Zig/C function into the VM's global environment
+    pub fn defineNative(self: *VM, name: []const u8, function: value.NativeFn) !void {
+        // Wrap the Zig function in a GC-managed object
+        const native_obj = try self.gc.allocateNative(function);
+        const native_val = value.Value.initObj(&native_obj.obj);
+
+        // Push to stack temporarily to protect from GC during map allocation
+        try self.push(native_val);
+
+        // Insert into the global symbol table
+        try self.globals.put(self.allocator, name, native_val);
+
+        // Pop the temporary protection
+        _ = self.pop();
     }
 };

@@ -66,6 +66,22 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// Allocates an ObjNative, registering it with the GC.
+    pub fn allocateNative(self: *GC, function: value.NativeFn) !*value.ObjNative {
+        const ptr = try self.allocator.create(value.ObjNative);
+        self.bytes_allocated += @sizeOf(value.ObjNative);
+
+        ptr.obj = .{
+            .obj_type = .native,
+            .is_marked = false,
+            .next = self.first_object,
+        };
+        self.first_object = &ptr.obj;
+        ptr.function = function;
+
+        return ptr;
+    }
+
     /// The main entry point for the Garbage Collector
     pub fn collectGarbage(self: *GC, vm: *VM, force_full: bool) void {
         // std.debug.print("-- GC Begin --\n", .{});
@@ -149,6 +165,11 @@ pub const GC = struct {
                 self.bytes_allocated -= str_obj.chars.len;
                 self.allocator.destroy(str_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjString);
+            },
+            .native => {
+                const native_obj: *value.ObjNative = @alignCast(@fieldParentPtr("obj", obj));
+                self.allocator.destroy(native_obj);
+                self.bytes_allocated -= @sizeOf(value.ObjNative);
             },
             .mesh => {
                 const mesh_obj: *value.ObjMesh = @alignCast(@fieldParentPtr("obj", obj));
