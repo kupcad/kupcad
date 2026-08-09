@@ -50,19 +50,29 @@ pub const DocstringParser = struct {
             if (std.mem.lastIndexOfScalar(u8, text, '{')) |brace_idx| {
                 const options_str = text[brace_idx..];
                 desc_end = brace_idx;
+
                 var lexer = lexer_mod.Lexer.init(options_str, 0);
-                // Lex AOT - Declared as `var` so it can be mutated by deinit
                 var tokens = try lexer.lexAll(self.allocator);
-                // Initialize with tokens
+                defer tokens.deinit(self.allocator);
+
                 var parser = try parser_mod.Parser.init(tokens, options_str, self.allocator);
+                // Free temporary builder memory pre-allocated inside Parser.init
+                parser.b.deinit();
+                // Direct sub-parser to emit nodes into the parent AST builder
                 parser.b = self.b.*;
+
+                defer {
+                    // Copy mutated AST builder state back to self.b
+                    self.b.* = parser.b;
+                    // Re-init parser.b so parser.deinit() won't free parent AST memory
+                    parser.b = ast.Builder.init(self.allocator);
+                    // Clean up parser scratch buffers and diagnostics safely
+                    parser.deinit();
+                }
+
                 if (parser.parseExpression(.none)) |node_idx| {
                     doc.options_expr = node_idx;
                 } else |_| {}
-                self.b.* = parser.b;
-                parser.diagnostics.deinit();
-                // We must free the docstring tokens immediately since they aren't arena-backed here
-                tokens.deinit(self.allocator);
             }
         }
 

@@ -104,9 +104,8 @@ pub const VM = struct {
     }
 
     fn run(self: *VM) InterpretResult {
-        var frame = &self.frames.items[self.frames.items.len - 1];
-
         while (true) {
+            var frame = &self.frames.items[self.frames.items.len - 1];
             const instruction = frame.chunk.code.items[frame.ip];
             frame.ip += 1;
             const op: chunk.OpCode = @enumFromInt(instruction);

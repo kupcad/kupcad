@@ -42,9 +42,14 @@ pub const OpCode = enum(u8) {
     op_return,
 };
 
+pub const LineStart = struct {
+    line: u32,
+    count: u32,
+};
+
 pub const Chunk = struct {
     code: std.ArrayListUnmanaged(u8),
-    lines: std.ArrayListUnmanaged(u32),
+    lines: std.ArrayListUnmanaged(LineStart),
     constants: value.ValueArray,
 
     pub fn init() Chunk {
@@ -58,7 +63,11 @@ pub const Chunk = struct {
     /// Writes a single byte (either an OpCode or an Operand)
     pub fn write(self: *Chunk, allocator: std.mem.Allocator, byte: u8, line: u32) !void {
         try self.code.append(allocator, byte);
-        try self.lines.append(allocator, line);
+        if (self.lines.items.len > 0 and self.lines.items[self.lines.items.len - 1].line == line) {
+            self.lines.items[self.lines.items.len - 1].count += 1;
+        } else {
+            try self.lines.append(allocator, .{ .line = line, .count = 1 });
+        }
     }
 
     /// Convenience wrapper to write an OpCode enum
