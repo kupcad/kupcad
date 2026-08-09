@@ -10,101 +10,13 @@ const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const Linter = @import("tools/lint/linter.zig").Linter;
 
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
+pub const Document = @import("core/document.zig").Document;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 pub const LinterDiagnostic = @import("tools/lint/linter.zig").LinterDiagnostic;
 pub const FormatError = error{
     SyntaxError,
     OutOfMemory,
-};
-
-/// Represents a fully parsed KupCAD source file.
-/// Owns the ArenaAllocator that backs the AST, tokens, comments, and diagnostics.
-pub const Document = struct {
-    arena: std.heap.ArenaAllocator,
-    tree: ast.Tree,
-    tokens: common_token.TokenList(lexer_mod.Tag),
-    comments: []const common_token.Comment,
-    diagnostics: []const common_errors.Diagnostic,
-    line_index: LineIndex,
-    symbols: []resolver.ResolvedSymbol,
-    parents: []ast.NodeIndex,
-    closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const resolver.UpvalueCapture),
-
-    pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Document {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        errdefer arena.deinit();
-        const arena_alloc = arena.allocator();
-
-        var lexer = lexer_mod.Lexer.init(source, 0);
-        const tokens = try lexer.lexAll(arena_alloc);
-
-        var parser = try parser_mod.Parser.init(tokens, source, arena_alloc);
-        const root_index = parser.parseProgram() catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => .none,
-        };
-
-        var tree = parser.b.tree;
-        tree.root = root_index;
-
-        const line_index = try LineIndex.init(arena_alloc, source);
-
-        var res = try resolver.Resolver.init(arena_alloc, &tree, tokens.starts, tokens.lengths, &parser.diagnostics);
-        try res.resolve(root_index);
-
-        var pmap = try parent_map.ParentMap.init(arena_alloc, &tree);
-        try pmap.build(&tree, root_index);
-
-        return .{
-            .arena = arena,
-            .tree = tree,
-            .tokens = tokens,
-            .comments = parser.comments.items,
-            .diagnostics = parser.diagnostics.list.items,
-            .line_index = line_index,
-            .symbols = res.symbols,
-            .closure_captures = res.closure_captures,
-            .parents = pmap.parents,
-        };
-    }
-
-    /// Only runs the Lexer and Parser. Does NOT run semantic resolution.
-    /// This allows the Workspace to build the module graph before resolving symbols.
-    pub fn parseRaw(allocator: std.mem.Allocator, source: []const u8) !Document {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        errdefer arena.deinit();
-        const arena_alloc = arena.allocator();
-
-        var lexer = lexer_mod.Lexer.init(source, 0);
-        const tokens = try lexer.lexAll(arena_alloc);
-
-        var parser = try parser_mod.Parser.init(tokens, source, arena_alloc);
-        const root_index = parser.parseProgram() catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => .none,
-        };
-
-        var tree = parser.b.tree;
-        tree.root = root_index;
-        const line_index = try LineIndex.init(arena_alloc, source);
-
-        return .{
-            .arena = arena,
-            .tree = tree,
-            .tokens = tokens,
-            .comments = parser.comments.items,
-            .diagnostics = parser.diagnostics.list.items,
-            .line_index = line_index,
-            .symbols = &[_]resolver.ResolvedSymbol{},
-            .closure_captures = .empty,
-            .parents = &[_]ast.NodeIndex{},
-        };
-    }
-
-    pub fn deinit(self: *Document) void {
-        self.arena.deinit();
-    }
 };
 
 /// Formats an already parsed Document. Caller owns the returned slice.

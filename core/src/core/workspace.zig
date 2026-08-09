@@ -1,13 +1,13 @@
 const std = @import("std");
-const api = @import("../api.zig");
 const ast = @import("ast.zig");
+const Document = @import("document.zig").Document;
 
 pub const ModuleId = enum(u32) { _ };
 
 pub const Module = struct {
     id: ModuleId,
     path: []const u8,
-    doc: api.Document,
+    doc: Document,
     deps: std.ArrayListUnmanaged(ModuleId) = .empty,
 
     pub fn deinit(self: *Module, allocator: std.mem.Allocator) void {
@@ -38,7 +38,7 @@ pub const Workspace = struct {
     pub fn addModule(self: *Workspace, path: []const u8, source: []const u8) !ModuleId {
         if (self.path_to_id.get(path)) |existing_id| return existing_id;
 
-        const doc = try api.Document.parseRaw(self.allocator, source);
+        const doc = try Document.parseRaw(self.allocator, source);
         const id: ModuleId = @enumFromInt(self.modules.items.len);
 
         try self.modules.append(self.allocator, .{
