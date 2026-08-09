@@ -43,6 +43,12 @@ const FoldingContext = struct {
                     };
 
                     if (folded_val) |val| {
+                        // --- NaN and Infinity ---
+                        // Abort folding if the result is not a finite number.
+                        if (std.math.isNan(val) or std.math.isInf(val)) {
+                            return;
+                        }
+
                         // Create the new number node using our deduplication pool
                         const new_node_idx = try self.folder.b.numberRaw(val, node.main_token);
 
@@ -70,6 +76,11 @@ const FoldingContext = struct {
                     };
 
                     if (folded_val) |val| {
+                        // --- NaN and Infinity ---
+                        if (std.math.isNan(val) or std.math.isInf(val)) {
+                            return;
+                        }
+
                         const new_node_idx = try self.folder.b.numberRaw(val, node.main_token);
 
                         const target_node = &self.folder.b.tree.nodes.items[@intFromEnum(node_idx)];
