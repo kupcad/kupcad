@@ -69,6 +69,39 @@ pub const Document = struct {
         };
     }
 
+    /// Only runs the Lexer and Parser. Does NOT run semantic resolution.
+    /// This allows the Workspace to build the module graph before resolving symbols.
+    pub fn parseRaw(allocator: std.mem.Allocator, source: []const u8) !Document {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        errdefer arena.deinit();
+        const arena_alloc = arena.allocator();
+
+        var lexer = lexer_mod.Lexer.init(source, 0);
+        const tokens = try lexer.lexAll(arena_alloc);
+
+        var parser = try parser_mod.Parser.init(tokens, source, arena_alloc);
+        const root_index = parser.parseProgram() catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => .none,
+        };
+
+        var tree = parser.b.tree;
+        tree.root = root_index;
+        const line_index = try LineIndex.init(arena_alloc, source);
+
+        return .{
+            .arena = arena,
+            .tree = tree,
+            .tokens = tokens,
+            .comments = parser.comments.items,
+            .diagnostics = parser.diagnostics.list.items,
+            .line_index = line_index,
+            .symbols = &[_]resolver.ResolvedSymbol{},
+            .closure_captures = .empty,
+            .parents = &[_]ast.NodeIndex{},
+        };
+    }
+
     pub fn deinit(self: *Document) void {
         self.arena.deinit();
     }

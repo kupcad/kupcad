@@ -16,6 +16,7 @@ test {
     _ = @import("core/line_index_test.zig");
     _ = @import("core/resolver_test.zig");
     _ = @import("core/parent_map_test.zig");
+    _ = @import("core/workspace_test.zig");
     _ = @import("frontend/kupcad/docstring_test.zig");
     _ = @import("frontend/kupcad/lexer_test.zig");
     _ = @import("frontend/kupcad/parser_test.zig");
