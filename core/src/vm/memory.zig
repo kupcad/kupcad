@@ -47,10 +47,16 @@ pub const GC = struct {
     }
 
     /// Allocates an ObjMesh, registering it with the VM's Garbage Collector.
-    pub fn allocateMesh(self: *GC, handle: ?*anyopaque, v_count: usize, f_count: usize) !*value.ObjMesh {
+    pub fn allocateMesh(self: *GC, handle: ?*anyopaque, vertices: []const value.Vec3, faces: []const [3]u32) !*value.ObjMesh {
         const ptr = try self.allocator.create(value.ObjMesh);
 
-        self.bytes_allocated += @sizeOf(value.ObjMesh);
+        // Deep copy the geometry so the VM safely owns the memory
+        const owned_vertices = try self.allocator.dupe(value.Vec3, vertices);
+        const owned_faces = try self.allocator.dupe([3]u32, faces);
+
+        self.bytes_allocated += @sizeOf(value.ObjMesh) +
+            (owned_vertices.len * @sizeOf(value.Vec3)) +
+            (owned_faces.len * @sizeOf([3]u32));
 
         ptr.obj = .{
             .obj_type = .mesh,
@@ -60,8 +66,8 @@ pub const GC = struct {
         self.first_object = &ptr.obj;
 
         ptr.kernel_handle = handle;
-        ptr.vertex_count = v_count;
-        ptr.face_count = f_count;
+        ptr.vertices = owned_vertices;
+        ptr.faces = owned_faces;
 
         return ptr;
     }
@@ -179,6 +185,12 @@ pub const GC = struct {
             },
             .mesh => {
                 const mesh_obj: *value.ObjMesh = @alignCast(@fieldParentPtr("obj", obj));
+
+                // Free the dynamically allocated geometry arrays!
+                self.allocator.free(mesh_obj.vertices);
+                self.allocator.free(mesh_obj.faces);
+                self.bytes_allocated -= (mesh_obj.vertices.len * @sizeOf(value.Vec3)) +
+                    (mesh_obj.faces.len * @sizeOf([3]u32));
 
                 // TODO: FFI Call to free the C/C++ kernel data goes here.
                 // if (mesh_obj.kernel_handle) |handle| {

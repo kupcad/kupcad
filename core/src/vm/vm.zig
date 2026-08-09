@@ -19,7 +19,36 @@ fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerr
     _ = arg_count;
     _ = args;
     const self: *VM = @ptrCast(@alignCast(vm_opaque));
-    return self.allocateMesh(null, 8, 12);
+
+    // A standard 1x1x1 cube centered at the origin
+    const vertices = [_]value.Vec3{
+        .{ .x = -0.5, .y = -0.5, .z = -0.5 }, // 0: left, front, bottom
+        .{ .x = 0.5, .y = -0.5, .z = -0.5 }, // 1: right, front, bottom
+        .{ .x = 0.5, .y = 0.5, .z = -0.5 }, // 2: right, back, bottom
+        .{ .x = -0.5, .y = 0.5, .z = -0.5 }, // 3: left, back, bottom
+        .{ .x = -0.5, .y = -0.5, .z = 0.5 }, // 4: left, front, top
+        .{ .x = 0.5, .y = -0.5, .z = 0.5 }, // 5: right, front, top
+        .{ .x = 0.5, .y = 0.5, .z = 0.5 }, // 6: right, back, top
+        .{ .x = -0.5, .y = 0.5, .z = 0.5 }, // 7: left, back, top
+    };
+
+    // Note: Triangles must be wound counter-clockwise (CCW) to face outwards
+    const faces = [_][3]u32{
+        // Bottom
+        .{ 0, 2, 1 }, .{ 0, 3, 2 },
+        // Top
+        .{ 4, 5, 6 }, .{ 4, 6, 7 },
+        // Front
+        .{ 0, 1, 5 }, .{ 0, 5, 4 },
+        // Right
+        .{ 1, 2, 6 }, .{ 1, 6, 5 },
+        // Back
+        .{ 2, 3, 7 }, .{ 2, 7, 6 },
+        // Left
+        .{ 3, 0, 4 }, .{ 3, 4, 7 },
+    };
+
+    return self.allocateMesh(null, &vertices, &faces);
 }
 
 pub const VM = struct {
@@ -240,11 +269,11 @@ pub const VM = struct {
         return value.Value.initObj(&str_obj.obj);
     }
 
-    pub fn allocateMesh(self: *VM, handle: ?*anyopaque, v_count: usize, f_count: usize) !value.Value {
+    pub fn allocateMesh(self: *VM, handle: ?*anyopaque, vertices: []const value.Vec3, faces: []const [3]u32) !value.Value {
         if (self.gc.bytes_allocated > self.gc.next_gc_threshold) {
             self.gc.collectGarbage(self, false);
         }
-        const mesh_obj = try self.gc.allocateMesh(handle, v_count, f_count);
+        const mesh_obj = try self.gc.allocateMesh(handle, vertices, faces);
         return value.Value.initObj(&mesh_obj.obj);
     }
 

@@ -97,8 +97,8 @@ test "VM: Execute native CAD function (cube)" {
     try testing.expect(returned_mesh.isMesh());
 
     const mesh = returned_mesh.asMesh();
-    try testing.expectEqual(@as(usize, 8), mesh.vertex_count);
-    try testing.expectEqual(@as(usize, 12), mesh.face_count);
+    try testing.expectEqual(@as(usize, 8), mesh.vertices.len);
+    try testing.expectEqual(@as(usize, 12), mesh.faces.len);
 }
 
 test "VM: End-to-end compilation and execution of native CAD function (cube)" {
@@ -129,8 +129,8 @@ test "VM: End-to-end compilation and execution of native CAD function (cube)" {
     try testing.expect(returned_mesh.isMesh());
 
     const mesh = returned_mesh.asMesh();
-    try testing.expectEqual(@as(usize, 8), mesh.vertex_count);
-    try testing.expectEqual(@as(usize, 12), mesh.face_count);
+    try testing.expectEqual(@as(usize, 8), mesh.vertices.len);
+    try testing.expectEqual(@as(usize, 12), mesh.faces.len);
 }
 
 test "VM: End-to-end compilation of fluent API method chaining (cube().translate())" {

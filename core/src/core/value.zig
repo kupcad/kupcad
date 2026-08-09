@@ -32,14 +32,20 @@ pub const ObjString = struct {
     chars: []const u8,
 };
 
+pub const Vec3 = struct {
+    x: f32,
+    y: f32,
+    z: f32,
+};
+
 /// Represents a 3D Geometry Object in the VM
 pub const ObjMesh = struct {
     obj: Obj,
     /// Pointer to the underlying C/C++ CAD kernel structure (e.g., CSG Node or BRep)
     kernel_handle: ?*anyopaque,
     /// Cached metadata for quick access in the VM without crossing the FFI boundary
-    vertex_count: usize,
-    face_count: usize,
+    vertices: []Vec3,
+    faces: [][3]u32,
 };
 
 /// Signature for all Native CAD Built-ins

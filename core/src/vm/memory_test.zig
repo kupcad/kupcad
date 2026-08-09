@@ -33,16 +33,18 @@ test "GC: ObjMesh allocation and lifecycle tracking" {
     defer vm.deinit();
 
     const dummy_handle: ?*anyopaque = @ptrFromInt(0xDEADBEEF);
-    const mesh_val = try vm.allocateMesh(dummy_handle, 8, 12);
+    const mock_vertices = [_]value.Vec3{};
+    const mock_faces = [_][3]u32{};
+    const mesh_val = try vm.allocateMesh(dummy_handle, &mock_vertices, &mock_faces);
 
-    vm.push(mesh_val); // Drop `try`
+    vm.push(mesh_val);
 
     try testing.expectEqual(@as(usize, 2), countObjects(&vm.gc));
     try testing.expect(mesh_val.isMesh());
 
     const mesh = mesh_val.asMesh();
-    try testing.expectEqual(@as(usize, 8), mesh.vertex_count);
-    try testing.expectEqual(@as(usize, 12), mesh.face_count);
+    try testing.expectEqual(@as(usize, 0), mesh.vertices.len);
+    try testing.expectEqual(@as(usize, 0), mesh.faces.len);
     try testing.expectEqual(dummy_handle, mesh.kernel_handle);
 
     vm.gc.collectGarbage(&vm, false);
