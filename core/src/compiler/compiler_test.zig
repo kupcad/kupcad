@@ -21,7 +21,7 @@ test "Compiler: compiles basic binary addition" {
     defer out_chunk.free(testing.allocator);
 
     // Initialize the VM so the Compiler can use it for managed allocations
-    var vm = try VM.init(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
     // Pass &vm as the 5th argument

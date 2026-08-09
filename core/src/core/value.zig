@@ -112,6 +112,10 @@ pub const Value = extern struct {
         return self.tag == .object;
     }
 
+    pub inline fn isString(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .string;
+    }
+
     pub inline fn isObjType(self: Value, obj_type: ObjType) bool {
         return self.isObject() and self.asObj().obj_type == obj_type;
     }
@@ -146,9 +150,10 @@ pub const Value = extern struct {
         return self.payload.obj;
     }
 
-    pub inline fn asString(self: Value) *ObjString {
-        std.debug.assert(self.isObjType(.string));
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    pub inline fn asString(self: Value) []const u8 {
+        std.debug.assert(self.isString());
+        const str_obj: *ObjString = @alignCast(@fieldParentPtr("obj", self.asObj()));
+        return str_obj.chars;
     }
 
     pub inline fn asMesh(self: Value) *ObjMesh {

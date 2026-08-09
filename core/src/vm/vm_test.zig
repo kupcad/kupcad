@@ -22,7 +22,7 @@ test "VM: End-to-end compilation and execution of math expression" {
 
     const root_math = try b.binary(.multiply, add_node, neg_two, 0);
 
-    var vm = try VM.init(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
     var out_chunk = chunk.Chunk.init();
@@ -45,7 +45,7 @@ test "VM: End-to-end compilation and execution of math expression" {
 }
 
 test "VM: Dynamic stack growth handles thousands of pushes without overflow" {
-    var vm = try VM.init(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
     const push_count: usize = 5000;
@@ -69,7 +69,7 @@ test "VM: Dynamic stack growth handles thousands of pushes without overflow" {
 }
 
 test "VM: Execute native CAD function (cube)" {
-    var vm = try VM.init(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
     var out_chunk = chunk.Chunk.init();
@@ -112,7 +112,7 @@ test "VM: End-to-end compilation and execution of native CAD function (cube)" {
     const empty_args = try b.addNamedArgs(&.{});
     const cube_call = try b.methodCall(.none, cube_str, empty_args, .none, false, 0, 0);
 
-    var vm = try VM.init(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
     var out_chunk = chunk.Chunk.init();
@@ -149,7 +149,7 @@ test "VM: End-to-end compilation of fluent API method chaining (cube().translate
     const translate_str = try b.intern("translate");
     const translate_call = try b.methodCall(cube_call, translate_str, empty_args, .none, false, 0, 0);
 
-    var vm = try VM.init(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
     var out_chunk = chunk.Chunk.init();
@@ -171,4 +171,58 @@ test "VM: End-to-end compilation of fluent API method chaining (cube().translate
 
     // Clean execution implicit nil check
     try testing.expect(vm.stack[1].isNil());
+}
+
+test "VM: Generates a real physical .stl file from a compiled script" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Build AST for `cube()`
+    const cube_str = try b.intern("cube");
+    const empty_args = try b.addNamedArgs(&.{});
+    const cube_call = try b.methodCall(.none, cube_str, empty_args, .none, false, 0, 0);
+
+    // Build AST for `export_stl("test_cube.stl", cube())`
+    const export_str = try b.intern("export_stl");
+
+    // Create the string argument
+    const filename_node = try b.stringNode("test_cube.stl", 0);
+
+    // Assemble the two arguments
+    var args_buf = [_]ast.NamedArg{
+        .{ .name = .none, .value = filename_node, .modifier = null },
+        .{ .name = .none, .value = cube_call, .modifier = null },
+    };
+    const export_args = try b.addNamedArgs(&args_buf);
+
+    const export_call = try b.methodCall(.none, export_str, export_args, .none, false, 0, 0);
+
+    // Setup VM & Compile
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    vm.cwd = tmp.dir;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    try comp.compile(export_call);
+
+    // Run the VM!
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Verify the file was written safely to the temp directory
+    const file = try tmp.dir.openFile(testing.io, "test_cube.stl", .{});
+    defer file.close(testing.io);
+
+    const stat = try file.stat(testing.io);
+    // 80 bytes (header) + 4 bytes (count) + 12 faces * 50 bytes = 684 bytes
+    try testing.expectEqual(@as(u64, 684), stat.size);
 }

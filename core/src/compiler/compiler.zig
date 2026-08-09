@@ -68,6 +68,23 @@ pub const Compiler = struct {
                 const val = self.tree.number(node);
                 try self.emitConstant(value.Value.initNumber(val), line);
             },
+            .string => {
+                // Get the raw string text from the AST
+                const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
+
+                // Allocate an ObjString on the VM heap
+                const str_val = try self.vm.allocateString(str_content);
+
+                // Temporarily push to stack to prevent GC during constant creation
+                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                self.vm.push(str_val);
+                const str_idx = try self.makeConstant(str_val);
+                _ = self.vm.pop();
+
+                // Emit the bytecode instruction
+                try self.emitOp(.op_constant, line);
+                try self.emitByte(str_idx, line);
+            },
             .identifier => {
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 switch (sym.kind) {
@@ -122,7 +139,7 @@ pub const Compiler = struct {
                 } else {
                     // Method call on an object (e.g., `box.translate()`)
 
-                    // Compile the receiver (leaves the object on the stack)
+                    //  Compile the receiver (leaves the object on the stack)
                     try self.compileNode(mc.receiver);
 
                     // Compile the arguments (leaves them on the stack)
