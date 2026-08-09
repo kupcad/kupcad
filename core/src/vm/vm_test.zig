@@ -27,7 +27,8 @@ test "VM: End-to-end compilation and execution of math expression" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &out_chunk);
+    // FIX: Passed `&.{}` as the 3rd argument for the empty symbols side-table
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk);
     try comp.compile(root_math);
 
     // Execute in the VM

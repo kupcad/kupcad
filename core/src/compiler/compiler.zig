@@ -2,22 +2,31 @@ const std = @import("std");
 const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
+const resolver = @import("../core/resolver.zig");
 
 pub const CompileError = error{
     OutOfMemory,
     UnknownNode,
     TooManyConstants,
+    UnsupportedScope, // Added to catch unimplemented variable scopes
 };
 
 pub const Compiler = struct {
     allocator: std.mem.Allocator,
     tree: *const ast.Tree,
+    symbols: []const resolver.ResolvedSymbol,
     current_chunk: *chunk.Chunk,
 
-    pub fn init(allocator: std.mem.Allocator, tree: *const ast.Tree, output_chunk: *chunk.Chunk) Compiler {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        tree: *const ast.Tree,
+        symbols: []const resolver.ResolvedSymbol,
+        output_chunk: *chunk.Chunk,
+    ) Compiler {
         return .{
             .allocator = allocator,
             .tree = tree,
+            .symbols = symbols,
             .current_chunk = output_chunk,
         };
     }
@@ -42,6 +51,43 @@ pub const Compiler = struct {
             .number => {
                 const val = self.tree.number(node);
                 try self.emitConstant(value.Value.initNumber(val), line);
+            },
+
+            .identifier => {
+                const sym = self.symbols[@intFromEnum(node_idx)];
+
+                // Best Practice: Switch on the resolved scope kind
+                switch (sym.kind) {
+                    .local => {
+                        try self.emitOp(.op_get_local, line);
+                        try self.emitByte(@intCast(sym.index), line);
+                    },
+                    .global => {
+                        // For Step 4/5, we will emit op_get_global here
+                        return error.UnsupportedScope;
+                    },
+                    else => return error.UnsupportedScope,
+                }
+            },
+
+            .assignment => {
+                const assign_payload = self.tree.assignment(node);
+
+                // Compile the Right-Hand Side (leaves value on top of stack)
+                try self.compileNode(assign_payload.value);
+
+                const sym = self.symbols[@intFromEnum(node_idx)];
+
+                switch (sym.kind) {
+                    .local => {
+                        try self.emitOp(.op_set_local, line);
+                        try self.emitByte(@intCast(sym.index), line);
+                    },
+                    .global => {
+                        return error.UnsupportedScope;
+                    },
+                    else => return error.UnsupportedScope,
+                }
             },
 
             .binary_op => {

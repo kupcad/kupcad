@@ -19,7 +19,8 @@ test "Compiler: compiles basic binary addition" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &out_chunk);
+    // Fixed: Passing an empty slice for the symbols parameter
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk);
     try comp.compile(bin_node);
 
     try testing.expectEqual(@as(usize, 7), out_chunk.code.items.len);
