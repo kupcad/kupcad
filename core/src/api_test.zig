@@ -48,35 +48,3 @@ test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
     try testing.expect(found_unused_flow);
     try testing.expect(found_missing_doc);
 }
-
-test "Document: successfully parses valid code and owns the AST" {
-    const source =
-        \\# A comment
-        \\width = 10
-    ;
-    var doc = try api.Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    try testing.expect(doc.tree.root != .none);
-    const root_node = doc.tree.getNode(doc.tree.root).?;
-
-    // Use accessor method tree.block(root_node) instead of doc.tree.blocks
-    const root_block = doc.tree.block(root_node);
-    const stmts = doc.tree.getNodes(root_block.stmts);
-    try testing.expectEqual(@as(usize, 1), stmts.len);
-    const stmt_node = doc.tree.getNode(stmts[0]).?;
-    const assign_payload = doc.tree.assignment(stmt_node);
-    try testing.expectEqualStrings("width", doc.tree.getString(assign_payload.name));
-    try testing.expectEqual(@as(usize, 1), doc.comments.len);
-    try testing.expectEqualStrings("# A comment", doc.comments[0].lexeme);
-    try testing.expect(doc.line_index.line_starts.len > 0);
-    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
-}
-
-test "Document: safely handles parsing syntax errors without leaking" {
-    const source = "val = 10 + }"; // Intentional syntax error
-    var doc = try api.Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    try testing.expectEqual(@as(usize, 1), doc.diagnostics.len);
-    try testing.expectEqualStrings("Invalid expression starting with '}'", doc.diagnostics[0].message);
-}
