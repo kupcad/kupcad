@@ -18,11 +18,11 @@ fn dumpNode(
     const tree = &doc.tree;
     const node = tree.getNode(node_idx) orelse return;
 
-    // 1. Draw the tree lines
+    // Draw the tree lines
     const branch = if (is_last) "└── " else "├── ";
     out.writer.print("{s}{s}{s}", .{ prefix, branch, @tagName(node.tag) }) catch return error.OutOfMemory;
 
-    // 2. Extract and print specific Node payloads
+    // Extract and print specific Node payloads
     switch (node.tag) {
         .identifier, .symbol, .string => {
             out.writer.print(" '{s}'", .{tree.getString(@as(ast.StringId, @enumFromInt(node.data)))}) catch {};
@@ -48,7 +48,7 @@ fn dumpNode(
         else => {},
     }
 
-    // 3. Print Semantic Resolver Scope data (if available)
+    // Print Semantic Resolver Scope data (if available)
     const sym = doc.symbols[@intFromEnum(node_idx)];
     if (sym.kind != .unresolved) {
         out.writer.print(" (symbol: {s} slot {d})", .{ @tagName(sym.kind), sym.index }) catch {};
@@ -61,12 +61,12 @@ fn dumpNode(
 
     out.writer.print("\n", .{}) catch {};
 
-    // 4. Calculate indentation for children
+    // Calculate indentation for children
     const next_prefix_chunk = if (is_last) "    " else "│   ";
     const next_prefix = try std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, next_prefix_chunk });
     defer allocator.free(next_prefix);
 
-    // 5. Gather children dynamically based on AST Tag
+    // Gather children dynamically based on AST Tag
     var children = std.ArrayListUnmanaged(ast.NodeIndex).empty;
     defer children.deinit(allocator);
 
@@ -116,7 +116,7 @@ fn dumpNode(
         else => {}, // No children, or unhandled in quick-dump
     }
 
-    // 6. Recursively dump children
+    // Recursively dump children
     for (children.items, 0..) |child, i| {
         try dumpNode(allocator, doc, child, out, next_prefix, i == children.items.len - 1);
     }

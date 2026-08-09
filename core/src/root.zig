@@ -11,6 +11,11 @@ pub const LineIndex = api.LineIndex;
 test {
     _ = @import("api_test.zig");
     _ = @import("gen_grammar_test.zig");
+
+    // Compiler
+    _ = @import("compiler/compiler_test.zig");
+
+    // Core
     _ = @import("core/ast_test.zig");
     _ = @import("core/ast_dumper_test.zig");
     _ = @import("core/constant_folder_test.zig");
@@ -19,6 +24,9 @@ test {
     _ = @import("core/resolver_test.zig");
     _ = @import("core/parent_map_test.zig");
     _ = @import("core/workspace_test.zig");
+    _ = @import("core/value_test.zig");
+
+    // Frontends
     _ = @import("frontend/kupcad/docstring_test.zig");
     _ = @import("frontend/kupcad/lexer_test.zig");
     _ = @import("frontend/kupcad/parser_test.zig");
@@ -41,4 +49,7 @@ test {
     _ = @import("tools/lint/rules/unreachable_code_test.zig");
     _ = @import("tools/lint/rules/self_subtraction_test.zig");
     _ = @import("tools/lint/rules/param_docs_test.zig");
+
+    // VM
+    _ = @import("vm/chunk_test.zig");
 }
