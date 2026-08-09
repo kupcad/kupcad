@@ -132,3 +132,43 @@ test "VM: End-to-end compilation and execution of native CAD function (cube)" {
     try testing.expectEqual(@as(usize, 8), mesh.vertex_count);
     try testing.expectEqual(@as(usize, 12), mesh.face_count);
 }
+
+test "VM: End-to-end compilation of fluent API method chaining (cube().translate())" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Build AST for `cube()`
+    const cube_str = try b.intern("cube");
+    const empty_args = try b.addNamedArgs(&.{});
+    const cube_call = try b.methodCall(.none, cube_str, empty_args, .none, false, 0, 0);
+
+    // Wrap it in `.translate()` -> `cube().translate()`
+    const translate_str = try b.intern("translate");
+    const translate_call = try b.methodCall(cube_call, translate_str, empty_args, .none, false, 0, 0);
+
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Compile the chained AST
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    try comp.compile(translate_call);
+
+    // Execute
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // The top of the stack should hold the result of the `translate` invocation
+    try testing.expectEqual(@as(usize, 2), vm.stack_top);
+
+    const returned_mesh = vm.stack[0];
+    try testing.expect(returned_mesh.isMesh());
+
+    // Clean execution implicit nil check
+    try testing.expect(vm.stack[1].isNil());
+}

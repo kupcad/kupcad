@@ -183,14 +183,44 @@ pub const VM = struct {
                         const native_obj = callee.asNative();
                         const args_ptr = self.stack.ptr + self.stack_top - arg_count;
 
-                        // Execute the Zig/C function natively
                         const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
 
-                        // Pop arguments and callee off the stack, push the result
                         self.stack_top -= arg_count + 1;
                         self.push(result);
                     } else {
                         std.log.err("Runtime Error: Can only call functions and classes.\n", .{});
+                        return .runtime_error;
+                    }
+                },
+                .op_invoke => {
+                    const method_name_idx = frame.chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const arg_count = frame.chunk.code.items[frame.ip];
+                    frame.ip += 1;
+
+                    // Retrieve the method name from the constant pool
+                    const method_name_val = frame.chunk.constants.items[method_name_idx];
+                    const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
+
+                    // The receiver object sits just below the arguments on the stack
+                    const receiver = self.stack[self.stack_top - 1 - arg_count];
+
+                    if (receiver.isMesh()) {
+                        // Phase 1 Mock: Accept transform methods and return the mesh unmodified.
+                        // In Phase 3, we will apply math matrices to the vertices here.
+                        if (std.mem.eql(u8, method_name_str, "translate") or
+                            std.mem.eql(u8, method_name_str, "rotate") or
+                            std.mem.eql(u8, method_name_str, "chamfer"))
+                        {
+                            const result = receiver; // Mutated result would go here
+                            self.stack_top -= arg_count + 1;
+                            self.push(result);
+                        } else {
+                            std.log.err("Runtime Error: Unknown method '{s}' on Mesh object.\n", .{method_name_str});
+                            return .runtime_error;
+                        }
+                    } else {
+                        std.log.err("Runtime Error: Only Mesh objects support method calls.\n", .{});
                         return .runtime_error;
                     }
                 },

@@ -93,9 +93,10 @@ pub const Compiler = struct {
             },
             .method_call => {
                 const mc = self.tree.methodCall(node);
+                const func_name = self.tree.getString(mc.method_name);
 
                 if (mc.receiver == .none) {
-                    const func_name = self.tree.getString(mc.method_name);
+                    // Global function call (e.g., `cube()`)
                     const name_val = try self.vm.allocateString(func_name);
 
                     self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
@@ -105,22 +106,48 @@ pub const Compiler = struct {
 
                     try self.emitOp(.op_get_global, line);
                     try self.emitByte(name_idx, line);
+
+                    const args = self.tree.getNamedArgs(mc.args);
+                    for (args) |arg| {
+                        try self.compileNode(arg.value);
+                    }
+
+                    if (args.len > MAX_ARGS) return error.TooManyConstants;
+                    try self.emitOp(.op_call, line);
+                    try self.emitByte(@intCast(args.len), line);
+
+                    // Manual adjustment: call drops arguments and callee, pushes result
+                    self.simulatePop(args.len + 1);
+                    self.simulatePush(1);
                 } else {
-                    return error.UnsupportedScope;
+                    // Method call on an object (e.g., `box.translate()`)
+
+                    // Compile the receiver (leaves the object on the stack)
+                    try self.compileNode(mc.receiver);
+
+                    // Compile the arguments (leaves them on the stack)
+                    const args = self.tree.getNamedArgs(mc.args);
+                    for (args) |arg| {
+                        try self.compileNode(arg.value);
+                    }
+
+                    // Setup the method name constant
+                    const name_val = try self.vm.allocateString(func_name);
+                    self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                    self.vm.push(name_val);
+                    const name_idx = try self.makeConstant(name_val);
+                    _ = self.vm.pop();
+
+                    // 4. Emit the Invoke Instruction
+                    if (args.len > MAX_ARGS) return error.TooManyConstants;
+                    try self.emitOp(.op_invoke, line);
+                    try self.emitByte(name_idx, line);
+                    try self.emitByte(@intCast(args.len), line);
+
+                    // Simulator: drops arguments and receiver, pushes the mutated result
+                    self.simulatePop(args.len + 1);
+                    self.simulatePush(1);
                 }
-
-                const args = self.tree.getNamedArgs(mc.args);
-                for (args) |arg| {
-                    try self.compileNode(arg.value);
-                }
-
-                if (args.len > MAX_ARGS) return error.TooManyConstants;
-                try self.emitOp(.op_call, line);
-                try self.emitByte(@intCast(args.len), line);
-
-                // Manual adjustment: call drops arguments and callee, pushes result
-                self.simulatePop(args.len + 1);
-                self.simulatePush(1);
             },
             .assignment => {
                 const assign_payload = self.tree.assignment(node);
