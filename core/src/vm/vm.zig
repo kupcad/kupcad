@@ -1,5 +1,6 @@
 const std = @import("std");
 const chunk = @import("chunk.zig");
+const memory = @import("memory.zig");
 const value = @import("../core/value.zig");
 
 pub const InterpretResult = enum {
@@ -25,6 +26,8 @@ pub const VM = struct {
 
     // Call Stack
     frames: std.ArrayListUnmanaged(CallFrame),
+    // memory GC
+    gc: memory.GC,
 
     const INITIAL_STACK_CAPACITY: usize = 1024;
 
@@ -35,10 +38,12 @@ pub const VM = struct {
             .stack = initial_stack,
             .stack_top = 0,
             .frames = .empty,
+            .gc = memory.GC.init(allocator),
         };
     }
 
     pub fn deinit(self: *VM) void {
+        self.gc.collectGarbage(self, true);
         self.allocator.free(self.stack);
         self.frames.deinit(self.allocator);
     }
@@ -165,5 +170,16 @@ pub const VM = struct {
                 },
             }
         }
+    }
+
+    /// Safely allocates a string and pushes it to the stack.
+    /// Triggers GC automatically if memory pressure is high.
+    pub fn allocateString(self: *VM, chars: []const u8) !value.Value {
+        if (self.gc.bytes_allocated > self.gc.next_gc_threshold) {
+            self.gc.collectGarbage(self, false);
+        }
+
+        const str_obj = try self.gc.allocateString(chars);
+        return value.Value.initObj(&str_obj.obj);
     }
 };

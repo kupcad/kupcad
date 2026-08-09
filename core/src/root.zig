@@ -52,5 +52,6 @@ test {
 
     // VM
     _ = @import("vm/chunk_test.zig");
+    _ = @import("vm/memory_test.zig");
     _ = @import("vm/vm_test.zig");
 }
