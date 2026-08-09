@@ -11,36 +11,47 @@ pub const ScopeKind = enum(u8) {
     instance_var,
 };
 
-// Packed to exactly 4 bytes for maximum cache density.
-// In a 100k node AST, this entire array is only 400KB!
 pub const ResolvedSymbol = packed struct {
     kind: ScopeKind,
-    index: u24, // Local slot, upvalue index, or global ID
+    index: u24,
+};
+
+// Represents a single VM capture instruction
+pub const UpvalueCapture = packed struct {
+    index: u24, // The slot or upvalue index in the enclosing scope
+    is_local: bool, // True if capturing a local, False if capturing an upvalue
 };
 
 const Scope = struct {
-    // Maps a StringId to a local slot index
+    node: ast.NodeIndex, // The AST node defining this closure (e.g. lambda_expr). .none if it's just a block.
     locals: std.AutoHashMapUnmanaged(ast.StringId, u24) = .empty,
+
+    // Tracks the exact captures this closure requires
+    upvalues: std.ArrayListUnmanaged(UpvalueCapture) = .empty,
+
     next_slot: u24 = 0,
-    is_closure: bool, // Distinguishes between true closures and simple blocks
-    saved_loop_depth: usize = 0, // Preserves the parent's loop depth across closures
+    is_closure: bool,
+    saved_loop_depth: usize = 0,
 
     pub fn deinit(self: *Scope, allocator: std.mem.Allocator) void {
         self.locals.deinit(allocator);
+        self.upvalues.deinit(allocator);
     }
 };
 
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     tree: *const ast.Tree,
-    symbols: []ResolvedSymbol,
-    scopes: std.ArrayListUnmanaged(Scope) = .empty,
-    diagnostics: *errors.Diagnostics,
-
     token_starts: []const u32,
     token_lengths: []const u32,
 
-    // Tracks the current nesting of while/for loops
+    symbols: []ResolvedSymbol,
+
+    // The side-table storing the finalized capture array for every closure node
+    closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const UpvalueCapture) = .empty,
+
+    scopes: std.ArrayListUnmanaged(Scope) = .empty,
+    diagnostics: *errors.Diagnostics,
     loop_depth: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, tree: *const ast.Tree, token_starts: []const u32, token_lengths: []const u32, diagnostics: *errors.Diagnostics) !Resolver {
@@ -64,37 +75,39 @@ pub const Resolver = struct {
         }
         self.scopes.deinit(self.allocator);
         self.allocator.free(self.symbols);
+
+        // Clean up the closure_captures side-table and its slices
+        var it = self.closure_captures.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.closure_captures.deinit(self.allocator);
     }
 
     pub fn resolve(self: *Resolver, root: ast.NodeIndex) !void {
         if (root == .none) return;
-
-        // Push the global scope boundary (treat as a closure boundary)
-        try self.pushScope(true);
+        try self.pushScope(true, .none);
 
         var ctx = ResolverContext{ .resolver = self };
         try visitor.walk(ResolverContext, &ctx, self.tree, root);
 
-        // Pop the global scope
         try self.popScope();
     }
 
-    pub fn pushScope(self: *Resolver, is_closure: bool) !void {
+    pub fn pushScope(self: *Resolver, is_closure: bool, node: ast.NodeIndex) !void {
         var start_slot: u24 = 0;
         const current_loop_depth = self.loop_depth;
 
-        // If this is a standard block, inherit the local stack slot counter from the parent scope
         if (!is_closure and self.scopes.items.len > 0) {
             start_slot = self.scopes.items[self.scopes.items.len - 1].next_slot;
         }
 
-        // If we are crossing a closure boundary (like a function def), you cannot break
-        // out of a loop that is outside the function. We reset the loop depth safely.
         if (is_closure) {
             self.loop_depth = 0;
         }
 
         try self.scopes.append(self.allocator, .{
+            .node = node,
             .is_closure = is_closure,
             .next_slot = start_slot,
             .saved_loop_depth = current_loop_depth,
@@ -104,77 +117,116 @@ pub const Resolver = struct {
     pub fn popScope(self: *Resolver) !void {
         var scope = self.scopes.pop() orelse return;
 
-        // If it wasn't a closure, propagate the highest stack slot count back up to the parent
         if (!scope.is_closure and self.scopes.items.len > 0) {
             self.scopes.items[self.scopes.items.len - 1].next_slot = scope.next_slot;
         }
 
-        // Restore the outer loop depth when escaping the closure boundary
         if (scope.is_closure) {
             self.loop_depth = scope.saved_loop_depth;
+
+            // Finalize the closure's captures and save them in the side-table
+            if (scope.node != .none) {
+                const captures = try scope.upvalues.toOwnedSlice(self.allocator);
+                try self.closure_captures.put(self.allocator, scope.node, captures);
+            }
         }
 
         scope.deinit(self.allocator);
     }
 
-    /// Declares a variable in the current lexical scope and returns its slot index.
     pub fn declareLocal(self: *Resolver, name: ast.StringId) !u24 {
         if (self.scopes.items.len == 0) return 0;
         const scope = &self.scopes.items[self.scopes.items.len - 1];
 
-        // If it already exists in the CURRENT scope, return its slot (reassignment)
         if (scope.locals.get(name)) |slot| {
             return slot;
         }
 
-        // Otherwise, allocate a new slot
         const slot = scope.next_slot;
         scope.next_slot += 1;
         try scope.locals.put(self.allocator, name, slot);
         return slot;
     }
 
-    /// Resolves an identifier usage against the scope stack.
-    pub fn resolveUsage(self: *Resolver, name: ast.StringId, node: ast.NodeIndex) void {
+    // Search for a local variable in the current closure (which may span multiple blocks)
+    fn findLocalInClosure(self: *Resolver, start_scope_idx: usize, name: ast.StringId) ?u24 {
+        var i = start_scope_idx;
+        while (true) {
+            const scope = &self.scopes.items[i];
+            if (scope.locals.get(name)) |slot| return slot;
+            if (scope.is_closure or i == 0) break;
+            i -= 1;
+        }
+        return null;
+    }
+
+    // The Recursive Upvalue Algorithm!
+    fn resolveInClosure(self: *Resolver, closure_end_idx: usize, name: ast.StringId) !?ResolvedSymbol {
+        // 1. Is it a local in THIS closure?
+        if (self.findLocalInClosure(closure_end_idx, name)) |slot| {
+            return .{ .kind = .local, .index = slot };
+        }
+
+        // Find the closure boundary that defines this scope block
+        var i = closure_end_idx;
+        while (i > 0 and !self.scopes.items[i].is_closure) {
+            i -= 1;
+        }
+        if (i == 0) return null; // We hit the global scope, no parent exists
+
+        // 2. Not a local here, ask the parent closure to resolve it
+        const parent_closure_end_idx = i - 1;
+        const parent_sym = try self.resolveInClosure(parent_closure_end_idx, name);
+
+        if (parent_sym) |psym| {
+            // 3. The parent found it! Add an upvalue capture instruction to OUR closure boundary.
+            const is_local = (psym.kind == .local);
+            const index = psym.index;
+
+            const upvalue_idx = try self.addUpvalue(i, index, is_local);
+            return .{ .kind = .upvalue, .index = upvalue_idx };
+        }
+
+        return null;
+    }
+
+    fn addUpvalue(self: *Resolver, closure_scope_idx: usize, index: u24, is_local: bool) !u24 {
+        const scope = &self.scopes.items[closure_scope_idx];
+        std.debug.assert(scope.is_closure);
+
+        // Deduplicate captures so we don't capture the same variable twice
+        for (scope.upvalues.items, 0..) |uv, idx| {
+            if (uv.index == index and uv.is_local == is_local) {
+                return @intCast(idx);
+            }
+        }
+
+        const new_idx: u24 = @intCast(scope.upvalues.items.len);
+        try scope.upvalues.append(self.allocator, .{ .index = index, .is_local = is_local });
+        return new_idx;
+    }
+
+    pub fn resolveUsage(self: *Resolver, name: ast.StringId, node: ast.NodeIndex) !void {
         const name_str = self.tree.getString(name);
 
-        // Check for instance variables (@var)
         if (name_str.len > 0 and name_str[0] == '@') {
             self.symbols[@intFromEnum(node)] = .{ .kind = .instance_var, .index = 0 };
             return;
         }
-
-        // Check for global variables ($var)
         if (name_str.len > 0 and name_str[0] == '$') {
             self.symbols[@intFromEnum(node)] = .{ .kind = .global, .index = 0 };
             return;
         }
 
-        // Walk scopes backwards to find locals/upvalues
-        var i: usize = self.scopes.items.len;
-        var is_local = true;
-
-        while (i > 0) {
-            i -= 1;
-            const scope = &self.scopes.items[i];
-
-            if (scope.locals.get(name)) |slot| {
-                if (is_local) {
-                    self.symbols[@intFromEnum(node)] = .{ .kind = .local, .index = slot };
-                } else {
-                    // Found in an outer scope! It's an upvalue closure capture.
-                    self.symbols[@intFromEnum(node)] = .{ .kind = .upvalue, .index = slot };
-                }
+        // Trigger the recursive resolution from the current depth
+        if (self.scopes.items.len > 0) {
+            const top_idx = self.scopes.items.len - 1;
+            if (try self.resolveInClosure(top_idx, name)) |sym| {
+                self.symbols[@intFromEnum(node)] = sym;
                 return;
-            }
-
-            // Crossing a function/closure boundary makes outer variables upvalues.
-            if (scope.is_closure) {
-                is_local = false;
             }
         }
 
-        // If we didn't find it in any scope, it must be a global module/function or undefined.
         self.symbols[@intFromEnum(node)] = .{ .kind = .global, .index = 0 };
     }
 };
@@ -186,63 +238,54 @@ const ResolverContext = struct {
         const node = tree.getNode(node_idx).?;
 
         switch (node.tag) {
-            // --- Loop Control Constraints ---
             .while_stmt => {
                 self.resolver.loop_depth += 1;
             },
             .break_stmt, .next_stmt => {
                 if (self.resolver.loop_depth == 0) {
                     const stmt_name = if (node.tag == .break_stmt) "break" else "next";
-
-                    // Extract exact source code coordinates for the error!
                     const offset = self.resolver.token_starts[node.main_token];
                     const length = self.resolver.token_lengths[node.main_token];
-
                     self.resolver.diagnostics.add(.{ .line = 0, .col = 0, .offset = offset, .length = length, .file_id = 0 }, "Cannot use '{s}' outside of a loop", .{stmt_name});
                 }
             },
-
-            // --- Scope Creating Nodes ---
             .block => {
-                try self.resolver.pushScope(false); // Standard block (inherits locals)
+                try self.resolver.pushScope(false, .none);
                 const b = tree.block(node);
-                // Pre-declare block parameters as locals
                 for (tree.getNodes(b.params)) |param_idx| {
                     const param_node = tree.getNode(param_idx).?;
                     if (param_node.tag == .identifier) {
                         const name_id = @as(ast.StringId, @enumFromInt(param_node.data));
                         _ = try self.resolver.declareLocal(name_id);
-                        self.resolver.resolveUsage(name_id, param_idx);
+                        try self.resolver.resolveUsage(name_id, param_idx);
                     }
                 }
             },
             .def_stmt => {
-                try self.resolver.pushScope(true); // Closure boundary
+                try self.resolver.pushScope(true, node_idx);
                 const ds = tree.defStmt(node);
                 for (tree.getParams(ds.params)) |param| {
                     _ = try self.resolver.declareLocal(param.name);
                 }
             },
             .lambda_expr => {
-                try self.resolver.pushScope(true); // Closure boundary
+                try self.resolver.pushScope(true, node_idx);
                 const le = tree.lambdaExpr(node);
                 for (tree.getParams(le.params)) |param| {
                     _ = try self.resolver.declareLocal(param.name);
                 }
             },
             .for_stmt => {
-                try self.resolver.pushScope(false);
-                self.resolver.loop_depth += 1; // It is a loop!
+                try self.resolver.pushScope(false, .none);
+                self.resolver.loop_depth += 1;
                 const fs = tree.forStmt(node);
                 for (tree.getForBindings(fs.bindings)) |binding| {
                     _ = try self.resolver.declareLocal(binding.name);
                 }
             },
             .class_stmt, .module_stmt => {
-                try self.resolver.pushScope(true); // Closure boundary
+                try self.resolver.pushScope(true, node_idx);
             },
-
-            // --- Variable Definitions ---
             .assignment => {
                 const assign = tree.assignment(node);
                 _ = try self.resolver.declareLocal(assign.name);
@@ -253,13 +296,10 @@ const ResolverContext = struct {
                     _ = try self.resolver.declareLocal(lhs.name);
                 }
             },
-
-            // --- Variable Usages ---
             .identifier => {
                 const name_id = @as(ast.StringId, @enumFromInt(node.data));
-                self.resolver.resolveUsage(name_id, node_idx);
+                try self.resolver.resolveUsage(name_id, node_idx);
             },
-
             else => {},
         }
     }

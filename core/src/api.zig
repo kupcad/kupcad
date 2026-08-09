@@ -29,6 +29,7 @@ pub const Document = struct {
     line_index: LineIndex,
     symbols: []resolver.ResolvedSymbol,
     parents: []ast.NodeIndex,
+    closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const resolver.UpvalueCapture),
 
     pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Document {
         var arena = std.heap.ArenaAllocator.init(allocator);
@@ -63,6 +64,7 @@ pub const Document = struct {
             .diagnostics = parser.diagnostics.list.items,
             .line_index = line_index,
             .symbols = res.symbols,
+            .closure_captures = res.closure_captures,
             .parents = pmap.parents,
         };
     }

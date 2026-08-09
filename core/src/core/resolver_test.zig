@@ -207,3 +207,96 @@ test "Resolver: prevents break from escaping closure boundaries" {
     try testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try testing.expectEqualStrings("Cannot use 'break' outside of a loop", diags.list.items[0].message);
 }
+
+test "Resolver: single-level upvalue capture" {
+    const source =
+        \\def outer(x)
+        \\  ->() { x }
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const root_idx = try pt.parser.parseProgram();
+
+    var diags = errors.Diagnostics.init(testing.allocator);
+    defer diags.deinit();
+
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
+    defer res.deinit();
+
+    try res.resolve(root_idx);
+    try testing.expectEqual(@as(usize, 0), diags.list.items.len);
+
+    // Find the lambda node in the AST
+    var lambda_node_idx: ast.NodeIndex = .none;
+    for (pt.parser.b.tree.nodes.items, 0..) |node, i| {
+        if (node.tag == .lambda_expr) {
+            lambda_node_idx = @enumFromInt(i);
+            break;
+        }
+    }
+    try testing.expect(lambda_node_idx != .none);
+
+    // Verify the closure captures side-table
+    const captures = res.closure_captures.get(lambda_node_idx).?;
+    try testing.expectEqual(@as(usize, 1), captures.len);
+
+    // It should capture 'x' directly from outer's local slots (is_local = true)
+    try testing.expectEqual(true, captures[0].is_local);
+    try testing.expectEqual(@as(u24, 0), captures[0].index); // outer's slot 0 (the 'x' param)
+}
+
+test "Resolver: deep recursive upvalue capture" {
+    const source =
+        \\def outer(x)
+        \\  ->() {
+        \\    ->() { x }
+        \\  }
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const root_idx = try pt.parser.parseProgram();
+
+    var diags = errors.Diagnostics.init(testing.allocator);
+    defer diags.deinit();
+
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
+    defer res.deinit();
+
+    try res.resolve(root_idx);
+    try testing.expectEqual(@as(usize, 0), diags.list.items.len);
+
+    // Because the AST is built bottom-up, the inner lambda is created first in the nodes array.
+    var inner_lambda: ast.NodeIndex = .none;
+    var outer_lambda: ast.NodeIndex = .none;
+
+    for (pt.parser.b.tree.nodes.items, 0..) |node, i| {
+        if (node.tag == .lambda_expr) {
+            if (inner_lambda == .none) {
+                inner_lambda = @enumFromInt(i);
+            } else {
+                outer_lambda = @enumFromInt(i);
+            }
+        }
+    }
+
+    try testing.expect(inner_lambda != .none);
+    try testing.expect(outer_lambda != .none);
+
+    // 1. Verify Outer Lambda captures 'x' directly from the 'outer' function locals
+    const outer_captures = res.closure_captures.get(outer_lambda).?;
+    try testing.expectEqual(@as(usize, 1), outer_captures.len);
+    try testing.expectEqual(true, outer_captures[0].is_local);
+    try testing.expectEqual(@as(u24, 0), outer_captures[0].index); // outer function's slot 0
+
+    // 2. Verify Inner Lambda captures 'x' as an UPVALUE from the Outer Lambda
+    const inner_captures = res.closure_captures.get(inner_lambda).?;
+    try testing.expectEqual(@as(usize, 1), inner_captures.len);
+    // It is NOT local to the outer lambda, so is_local must be false!
+    try testing.expectEqual(false, inner_captures[0].is_local);
+    // It targets the 0th upvalue index of the outer lambda's upvalue array
+    try testing.expectEqual(@as(u24, 0), inner_captures[0].index);
+}
