@@ -12,6 +12,7 @@ test {
     _ = @import("api_test.zig");
     _ = @import("gen_grammar_test.zig");
     _ = @import("core/ast_test.zig");
+    _ = @import("core/ast_dumper_test.zig");
     _ = @import("core/constant_folder_test.zig");
     _ = @import("core/document_test.zig");
     _ = @import("core/line_index_test.zig");
