@@ -1,6 +1,7 @@
 const std = @import("std");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
+const manifold = @import("../core/manifold.zig");
 const value = @import("../core/value.zig");
 const stl = @import("../core/stl.zig");
 
@@ -49,7 +50,9 @@ fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerr
         .{ 3, 0, 4 }, .{ 3, 4, 7 },
     };
 
-    return self.allocateMesh(null, &vertices, &faces);
+    const handle = manifold.cube(1.0, 1.0, 1.0, true);
+
+    return self.allocateMesh(handle, &vertices, &faces);
 }
 
 pub const VM = struct {
@@ -173,14 +176,46 @@ pub const VM = struct {
                     self.setLocal(frame, slot, self.stack[self.stack_top - 1]);
                 },
                 .op_add => {
-                    const b = self.pop().asNumber();
-                    const a = self.pop().asNumber();
-                    self.push(value.Value.initNumber(a + b));
+                    const b_val = self.pop();
+                    const a_val = self.pop();
+
+                    if (a_val.isNumber() and b_val.isNumber()) {
+                        self.push(value.Value.initNumber(a_val.asNumber() + b_val.asNumber()));
+                    } else if (a_val.isMesh() and b_val.isMesh()) {
+                        const m1: *manifold.ManifoldObj = @ptrCast(a_val.asMesh().kernel_handle.?);
+                        const m2: *manifold.ManifoldObj = @ptrCast(b_val.asMesh().kernel_handle.?);
+
+                        // Execute C++ CSG Union
+                        const result_m = manifold.boolean(m1, m2, .add);
+
+                        // Note: In the future, we extract the resulting vertices using `manifold_get_meshGL` here.
+                        // For now, we leave the physical arrays empty to save memory during intermediate operations.
+                        const result = self.allocateMesh(result_m, &[_]value.Vec3{}, &[_][3]u32{}) catch return .runtime_error;
+                        self.push(result);
+                    } else {
+                        std.log.err("Runtime Error: Invalid operands for '+'\n", .{});
+                        return .runtime_error;
+                    }
                 },
                 .op_subtract => {
-                    const b = self.pop().asNumber();
-                    const a = self.pop().asNumber();
-                    self.push(value.Value.initNumber(a - b));
+                    const b_val = self.pop();
+                    const a_val = self.pop();
+
+                    if (a_val.isNumber() and b_val.isNumber()) {
+                        self.push(value.Value.initNumber(a_val.asNumber() - b_val.asNumber()));
+                    } else if (a_val.isMesh() and b_val.isMesh()) {
+                        const m1: *manifold.ManifoldObj = @ptrCast(a_val.asMesh().kernel_handle.?);
+                        const m2: *manifold.ManifoldObj = @ptrCast(b_val.asMesh().kernel_handle.?);
+
+                        // Execute C++ CSG Difference
+                        const result_m = manifold.boolean(m1, m2, .subtract);
+
+                        const result = self.allocateMesh(result_m, &[_]value.Vec3{}, &[_][3]u32{}) catch return .runtime_error;
+                        self.push(result);
+                    } else {
+                        std.log.err("Runtime Error: Invalid operands for '-'\n", .{});
+                        return .runtime_error;
+                    }
                 },
                 .op_multiply => {
                     const b = self.pop().asNumber();

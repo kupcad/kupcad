@@ -1,5 +1,6 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
+const manifold = @import("../core/manifold.zig");
 const VM = @import("vm.zig").VM;
 
 pub const GC = struct {
@@ -192,10 +193,9 @@ pub const GC = struct {
                 self.bytes_allocated -= (mesh_obj.vertices.len * @sizeOf(value.Vec3)) +
                     (mesh_obj.faces.len * @sizeOf([3]u32));
 
-                // TODO: FFI Call to free the C/C++ kernel data goes here.
-                // if (mesh_obj.kernel_handle) |handle| {
-                //     native_csg_free(handle);
-                // }
+                if (mesh_obj.kernel_handle) |handle| {
+                    manifold.destruct(@ptrCast(handle));
+                }
 
                 self.allocator.destroy(mesh_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjMesh);

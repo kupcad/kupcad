@@ -226,3 +226,40 @@ test "VM: Generates a real physical .stl file from a compiled script" {
     // 80 bytes (header) + 4 bytes (count) + 12 faces * 50 bytes = 684 bytes
     try testing.expectEqual(@as(u64, 684), stat.size);
 }
+
+test "VM: Executes CSG Operator Overloading (cube() + cube())" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const cube_str = try b.intern("cube");
+    const empty_args = try b.addNamedArgs(&.{});
+
+    // mesh1 = cube()
+    const cube1 = try b.methodCall(.none, cube_str, empty_args, .none, false, 0, 0);
+    // mesh2 = cube()
+    const cube2 = try b.methodCall(.none, cube_str, empty_args, .none, false, 0, 0);
+
+    // result = cube() + cube()
+    const add_node = try b.binary(.add, cube1, cube2, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    try comp.compile(add_node);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Final result should be a single merged mesh left on the stack
+    try testing.expectEqual(@as(usize, 2), vm.stack_top);
+    try testing.expect(vm.stack[0].isMesh());
+
+    // The merged mesh should have the C++ handle CAFEFOOD assigned by our boolean mock
+    try testing.expectEqual(@as(?*anyopaque, @ptrFromInt(0xCAFEF00D)), vm.stack[0].asMesh().kernel_handle);
+}
