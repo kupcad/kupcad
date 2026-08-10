@@ -2,6 +2,8 @@ const std = @import("std");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
 const value = @import("../core/value.zig");
+const kernel_mod = @import("../kernel/kernel.zig");
+const Brep = @import("../brep/topology.zig").Brep;
 
 pub const InterpretResult = enum {
     ok,
@@ -27,6 +29,7 @@ pub const VM = struct {
     binary_handler: ?*const fn (vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value = null,
     invoke_handler: ?*const fn (vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value = null,
     mesh_destructor: ?*const fn (handle: ?*anyopaque) void = null,
+    active_kernel: ?*const kernel_mod.GeometryKernel = null,
 
     const INITIAL_STACK_CAPACITY: usize = 1024;
 
@@ -252,7 +255,7 @@ pub const VM = struct {
         return value.Value.initObj(&mesh_obj.obj);
     }
 
-    pub fn allocateBrep(self: *VM, data: *@import("../brep/topology.zig").Brep) !value.Value {
+    pub fn allocateBrep(self: *VM, data: *Brep) !value.Value {
         if (self.gc.bytes_allocated > self.gc.next_gc_threshold) {
             self.gc.collectGarbage(self, false);
         }

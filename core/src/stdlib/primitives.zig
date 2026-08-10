@@ -1,6 +1,5 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
-const manifold = @import("../bindings/manifold/manifold.zig");
 const VM = @import("../vm/vm.zig").VM;
 
 pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -8,6 +7,11 @@ pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
     _ = args;
     const self: *VM = @ptrCast(@alignCast(vm_opaque));
 
+    // Safety check: ensure a kernel is loaded
+    const kernel = self.active_kernel orelse {
+        std.log.err("Runtime Error: No geometry kernel active\n", .{});
+        return error.RuntimeError;
+    };
     // A standard 1x1x1 cube centered at the origin
     const vertices = [_]value.Vec3{
         .{ .x = -0.5, .y = -0.5, .z = -0.5 }, // 0: left, front, bottom
@@ -36,7 +40,6 @@ pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
         .{ 3, 0, 4 }, .{ 3, 4, 7 },
     };
 
-    const handle = manifold.cube(1.0, 1.0, 1.0, true);
-
+    const handle = kernel.cube(1.0, 1.0, 1.0, true);
     return self.allocateMesh(handle, &vertices, &faces);
 }
