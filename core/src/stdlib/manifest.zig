@@ -2,7 +2,7 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const primitives = @import("primitives.zig");
 const step = @import("step.zig");
-const export_ops = @import("export.zig");
+const stl = @import("stl.zig");
 
 pub const Category = enum {
     primitive_3d,
@@ -11,7 +11,7 @@ pub const Category = enum {
     csg_operator,
     workplane_method,
     inspection_method,
-    export_op,
+    file_io,
     brep_op,
 };
 
@@ -24,9 +24,14 @@ pub const GlobalFunction = struct {
 // Single Source of Truth for Global Functions
 pub const global_functions = [_]GlobalFunction{
     .{ .name = "cube", .func = primitives.nativeCube, .category = .primitive_3d },
-    .{ .name = "export_stl", .func = export_ops.nativeExportStl, .category = .export_op },
-    .{ .name = "import_step", .func = step.nativeImportStep, .category = .brep_op },
-    .{ .name = "export_step", .func = step.nativeExportStep, .category = .brep_op },
+
+    // STL I/O
+    .{ .name = "import_stl", .func = stl.nativeImportStl, .category = .file_io },
+    .{ .name = "export_stl", .func = stl.nativeExportStl, .category = .file_io },
+
+    // STEP I/O
+    .{ .name = "import_step", .func = step.nativeImportStep, .category = .file_io },
+    .{ .name = "export_step", .func = step.nativeExportStep, .category = .file_io },
 };
 
 pub const MeshMethod = struct {
