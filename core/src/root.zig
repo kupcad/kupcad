@@ -17,7 +17,6 @@ test {
 
     // Core
     _ = @import("core/ast_test.zig");
-    _ = @import("core/ast_dumper_test.zig");
     _ = @import("core/constant_folder_test.zig");
     _ = @import("core/document_test.zig");
     _ = @import("core/line_index_test.zig");
@@ -37,6 +36,9 @@ test {
     _ = @import("cli/config_test.zig");
     _ = @import("cli/options_test.zig");
     _ = @import("cli/walker_test.zig");
+
+    // Dev tools
+    _ = @import("tools/dev/ast_dumper_test.zig");
 
     // Formatter Tests
     _ = @import("tools/fmt/formatter_test.zig");

@@ -1,6 +1,6 @@
 const std = @import("std");
 const api = @import("../api.zig");
-const ast_dumper = @import("../core/ast_dumper.zig");
+const ast_dumper = @import("../tools/dev/ast_dumper.zig");
 const fs = @import("fs.zig");
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 

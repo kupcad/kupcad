@@ -1,6 +1,6 @@
 const std = @import("std");
-const api = @import("../api.zig");
-const ast = @import("ast.zig");
+const api = @import("../../api.zig");
+const ast = @import("../../core/ast.zig");
 
 pub fn dump(allocator: std.mem.Allocator, doc: *const api.Document, out: *std.Io.Writer.Allocating) !void {
     try dumpNode(allocator, doc, doc.tree.root, out, "", true);

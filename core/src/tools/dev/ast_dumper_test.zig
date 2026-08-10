@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const api = @import("../api.zig");
+const api = @import("../../api.zig");
 const ast_dumper = @import("ast_dumper.zig");
 
 test "AST Dumper: produces correct tree format and semantic metadata" {
