@@ -1,30 +1,28 @@
 const std = @import("std");
 const kernel = @import("../../kernel.zig");
-const topology = @import("../../../brep/topology.zig");
+const geom = @import("../../geometry_handle.zig");
+const topology = @import("topology.zig");
 
-fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?*anyopaque {
+fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     _ = x;
     _ = y;
     _ = z;
     _ = center;
     std.log.info("Native B-Rep Driver: Constructing exact topological Cube...", .{});
-
-    // TODO: Create a topology.Brep using your custom math and return its pointer
     return null;
 }
 
-fn booleanImpl(a: ?*anyopaque, b: ?*anyopaque, op: kernel.BooleanOp) ?*anyopaque {
+fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
     _ = a;
     _ = b;
     _ = op;
+    std.debug.assert(a.engine == .brep_native and b.engine == .brep_native);
     std.log.info("Native B-Rep Driver: Executing topological Boolean...", .{});
-
-    // TODO: Implement custom edge-intersection and face-stitching algorithms
     return null;
 }
 
-fn destructImpl(handle: ?*anyopaque) void {
-    // Cast the opaque pointer back to your topology.Brep and free it
+fn destructImpl(handle: geom.GeometryHandle) void {
+    std.debug.assert(handle.engine == .brep_native);
     _ = handle;
 }
 

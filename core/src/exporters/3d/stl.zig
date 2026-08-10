@@ -1,7 +1,7 @@
 const std = @import("std");
-const value = @import("../core/value.zig");
-const VM = @import("../vm/vm.zig").VM;
-const stl_format = @import("../formats/stl.zig");
+const value = @import("../../core/value.zig");
+const VM = @import("../../vm/vm.zig").VM;
+const stl_format = @import("../../formats/stl.zig");
 
 pub fn nativeImportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));

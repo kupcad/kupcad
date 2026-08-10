@@ -24,6 +24,6 @@ pub fn csgBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Valu
     };
 
     // DISPATCH: Perform the CSG boolean dynamically through the VTable
-    const result_h = kernel.boolean(a.asMesh().kernel_handle, b.asMesh().kernel_handle, bool_op);
+    const result_h = kernel.boolean(a.asMesh().kernel_handle.?, b.asMesh().kernel_handle.?, bool_op);
     return try vm.allocateMesh(result_h, &[_]value.Vec3{}, &[_][3]u32{});
 }

@@ -1,8 +1,8 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
 const primitives = @import("primitives.zig");
-const step = @import("step.zig");
-const stl = @import("stl.zig");
+const step = @import("../exporters/3d/step.zig");
+const stl = @import("../exporters/3d/stl.zig");
 
 pub const Category = enum {
     primitive_3d,

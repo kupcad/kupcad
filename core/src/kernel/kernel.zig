@@ -1,4 +1,5 @@
 const std = @import("std");
+const geom = @import("geometry_handle.zig");
 
 pub const BooleanOp = enum {
     union_op,
@@ -6,23 +7,20 @@ pub const BooleanOp = enum {
     intersection_op,
 };
 
-/// The GeometryKernel interface uses a Data-Oriented VTable approach.
-/// It passes opaque handles (`?*anyopaque`) so it works flawlessly with
-/// C-pointers from Manifold (C++) and B-REp
 pub const GeometryKernel = struct {
-    cubeFn: *const fn (x: f64, y: f64, z: f64, center: bool) ?*anyopaque,
-    booleanFn: *const fn (a: ?*anyopaque, b: ?*anyopaque, op: BooleanOp) ?*anyopaque,
-    destructFn: *const fn (handle: ?*anyopaque) void,
+    cubeFn: *const fn (x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle,
+    booleanFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle,
+    destructFn: *const fn (handle: geom.GeometryHandle) void,
 
-    pub inline fn cube(self: *const GeometryKernel, x: f64, y: f64, z: f64, center: bool) ?*anyopaque {
+    pub inline fn cube(self: *const GeometryKernel, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
         return self.cubeFn(x, y, z, center);
     }
 
-    pub inline fn boolean(self: *const GeometryKernel, a: ?*anyopaque, b: ?*anyopaque, op: BooleanOp) ?*anyopaque {
+    pub inline fn boolean(self: *const GeometryKernel, a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle {
         return self.booleanFn(a, b, op);
     }
 
-    pub inline fn destruct(self: *const GeometryKernel, handle: ?*anyopaque) void {
+    pub inline fn destruct(self: *const GeometryKernel, handle: geom.GeometryHandle) void {
         self.destructFn(handle);
     }
 };

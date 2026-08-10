@@ -1,6 +1,7 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("vm.zig").VM;
+const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
 
 pub const GC = struct {
     allocator: std.mem.Allocator,
@@ -47,7 +48,7 @@ pub const GC = struct {
     }
 
     /// Allocates an ObjMesh, registering it with the VM's Garbage Collector.
-    pub fn allocateMesh(self: *GC, handle: ?*anyopaque, vertices: []const value.Vec3, faces: []const [3]u32) !*value.ObjMesh {
+    pub fn allocateMesh(self: *GC, handle: ?GeometryHandle, vertices: []const value.Vec3, faces: []const [3]u32) !*value.ObjMesh {
         const ptr = try self.allocator.create(value.ObjMesh);
 
         // Deep copy the geometry so the VM safely owns the memory

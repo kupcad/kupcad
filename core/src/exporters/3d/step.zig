@@ -1,7 +1,7 @@
 const std = @import("std");
-const value = @import("../core/value.zig");
-const VM = @import("../vm/vm.zig").VM;
-const Brep = @import("../brep/topology.zig").Brep;
+const value = @import("../../core/value.zig");
+const VM = @import("../../vm/vm.zig").VM;
+const topology = @import("../../kernel/engines/brep/topology.zig");
 
 pub fn nativeImportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
@@ -17,8 +17,8 @@ pub fn nativeImportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     // TODO: Actually parse the STEP file here and build a Brep
 
     // For now, allocate an empty stub B-Rep in the VM Garbage Collector
-    const empty_brep = try vm.allocator.create(Brep);
-    empty_brep.* = Brep.initEmpty(vm.allocator);
+    const empty_brep = try vm.allocator.create(topology.Brep);
+    empty_brep.* = topology.Brep.initEmpty(vm.allocator);
 
     return try vm.allocateBrep(empty_brep);
 }

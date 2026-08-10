@@ -1,5 +1,6 @@
 const std = @import("std");
-const topology = @import("../brep/topology.zig");
+const topology = @import("../kernel/engines/brep/topology.zig");
+const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
 
 /// Identifies the primitive type of a Value.
 pub const ValueTag = enum(u8) {
@@ -43,9 +44,7 @@ pub const Vec3 = struct {
 /// Represents a 3D Geometry Object in the VM
 pub const ObjMesh = struct {
     obj: Obj,
-    /// Pointer to the underlying C/C++ CAD kernel structure (e.g., CSG Node or BRep)
-    kernel_handle: ?*anyopaque,
-    /// Cached metadata for quick access in the VM without crossing the FFI boundary
+    kernel_handle: ?GeometryHandle,
     vertices: []Vec3,
     faces: [][3]u32,
 };

@@ -3,7 +3,8 @@ const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
 const value = @import("../core/value.zig");
 const kernel_mod = @import("../kernel/kernel.zig");
-const Brep = @import("../brep/topology.zig").Brep;
+const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
+const Brep = @import("../kernel/engines/brep/topology.zig").Brep;
 
 pub const InterpretResult = enum {
     ok,
@@ -28,7 +29,7 @@ pub const VM = struct {
     globals: std.StringHashMapUnmanaged(value.Value),
     binary_handler: ?*const fn (vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value = null,
     invoke_handler: ?*const fn (vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value = null,
-    mesh_destructor: ?*const fn (handle: ?*anyopaque) void = null,
+    mesh_destructor: ?*const fn (handle: GeometryHandle) void = null,
     active_kernel: ?*const kernel_mod.GeometryKernel = null,
 
     const INITIAL_STACK_CAPACITY: usize = 1024;
@@ -247,7 +248,7 @@ pub const VM = struct {
         return value.Value.initObj(&str_obj.obj);
     }
 
-    pub fn allocateMesh(self: *VM, handle: ?*anyopaque, vertices: []const value.Vec3, faces: []const [3]u32) !value.Value {
+    pub fn allocateMesh(self: *VM, handle: ?GeometryHandle, vertices: []const value.Vec3, faces: []const [3]u32) !value.Value {
         if (self.gc.bytes_allocated > self.gc.next_gc_threshold) {
             self.gc.collectGarbage(self, false);
         }

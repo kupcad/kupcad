@@ -4,6 +4,7 @@ const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const VM = @import("vm.zig").VM;
 const GC = @import("memory.zig").GC;
+const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
 
 fn countObjects(gc: *GC) usize {
     var count: usize = 0;
@@ -37,7 +38,7 @@ test "GC: ObjMesh allocation and lifecycle tracking" {
 
     try registry.registerStandardLibrary(&vm);
 
-    const dummy_handle: ?*anyopaque = null;
+    const dummy_handle: ?GeometryHandle = null;
     const mock_vertices = [_]value.Vec3{};
     const mock_faces = [_][3]u32{};
     const mesh_val = try vm.allocateMesh(dummy_handle, &mock_vertices, &mock_faces);
