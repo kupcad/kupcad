@@ -1,5 +1,5 @@
 pub const api = @import("api.zig");
-pub const registry = @import("core/registry.zig");
+pub const manifest = @import("stdlib/manifest.zig");
 
 pub const formatCode = api.formatCode;
 pub const checkCode = api.checkCode;

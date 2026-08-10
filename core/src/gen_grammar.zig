@@ -1,8 +1,9 @@
 const std = @import("std");
-const registry = @import("core/registry.zig");
+const kupcad_lexer = @import("frontend/kupcad/lexer.zig");
+const manifest = @import("stdlib/manifest.zig");
 
 /// Core generation logic separated for testing
-pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const registry.TokenMeta) ![]const u8 {
+pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     var keywords: std.ArrayListUnmanaged([]const u8) = .empty;
     var prim_3d: std.ArrayListUnmanaged([]const u8) = .empty;
     var prim_2d: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -10,7 +11,6 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
     var csg_ops: std.ArrayListUnmanaged([]const u8) = .empty;
     var workplanes: std.ArrayListUnmanaged([]const u8) = .empty;
     var inspections: std.ArrayListUnmanaged([]const u8) = .empty;
-
     defer {
         keywords.deinit(allocator);
         prim_3d.deinit(allocator);
@@ -21,18 +21,37 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
         inspections.deinit(allocator);
     }
 
-    // Group tokens by category
-    for (tokens) |token| {
-        switch (token.category) {
-            .keyword => try keywords.append(allocator, token.name),
-            .primitive_3d => try prim_3d.append(allocator, token.name),
-            .primitive_2d => try prim_2d.append(allocator, token.name),
-            .transform => try transforms.append(allocator, token.name),
-            .csg_operator => try csg_ops.append(allocator, token.name),
-            .workplane_method => try workplanes.append(allocator, token.name),
-            .inspection_method => try inspections.append(allocator, token.name),
+    // 1. Extract Keywords directly from the actual frontend Lexer!
+    for (kupcad_lexer.keywords.keys()) |key| {
+        try keywords.append(allocator, key);
+    }
+
+    // 2. Extract Native Functions from the actual Stdlib Manifest!
+    for (manifest.global_functions) |gf| {
+        switch (gf.category) {
+            .primitive_3d => try prim_3d.append(allocator, gf.name),
+            .primitive_2d => try prim_2d.append(allocator, gf.name),
+            else => {},
         }
     }
+
+    // 3. Extract Methods from the actual Stdlib Manifest!
+    for (manifest.mesh_methods) |mm| {
+        switch (mm.category) {
+            .transform => try transforms.append(allocator, mm.name),
+            .csg_operator => try csg_ops.append(allocator, mm.name),
+            .workplane_method => try workplanes.append(allocator, mm.name),
+            .inspection_method => try inspections.append(allocator, mm.name),
+            else => {},
+        }
+    }
+
+    // Supply dummy fallbacks if a list is empty to avoid crashing the TextMate Regex engine
+    if (prim_3d.items.len == 0) try prim_3d.append(allocator, "dummy_prim_3d");
+    if (prim_2d.items.len == 0) try prim_2d.append(allocator, "dummy_prim_2d");
+    if (csg_ops.items.len == 0) try csg_ops.append(allocator, "dummy_csg_op");
+    if (workplanes.items.len == 0) try workplanes.append(allocator, "dummy_wp");
+    if (inspections.items.len == 0) try inspections.append(allocator, "dummy_insp");
 
     // Join into OR groups (e.g., "box|cylinder|sphere")
     const joined_kw = try std.mem.join(allocator, "|", keywords.items);
@@ -42,7 +61,6 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
     const joined_csg = try std.mem.join(allocator, "|", csg_ops.items);
     const joined_wp = try std.mem.join(allocator, "|", workplanes.items);
     const joined_insp = try std.mem.join(allocator, "|", inspections.items);
-
     defer allocator.free(joined_kw);
     defer allocator.free(joined_p3d);
     defer allocator.free(joined_p2d);
@@ -66,15 +84,12 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
     }.apply;
 
     const kw_match = try makeKeywordMatch(allocator, joined_kw);
-
-    // Primitives and methods use the method matcher
     const p3d_match = try makeMethodMatch(allocator, joined_p3d);
     const p2d_match = try makeMethodMatch(allocator, joined_p2d);
     const tf_match = try makeMethodMatch(allocator, joined_tf);
     const csg_match = try makeMethodMatch(allocator, joined_csg);
     const wp_match = try makeMethodMatch(allocator, joined_wp);
     const insp_match = try makeMethodMatch(allocator, joined_insp);
-
     defer allocator.free(kw_match);
     defer allocator.free(p3d_match);
     defer allocator.free(p2d_match);
@@ -141,27 +156,22 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
                 .match = "(?<!:):[a-zA-Z_]\\w*[!?]?",
                 .name = "constant.language.symbol.kupcad",
             },
-            // Handles hex (0x), binary (0b), octal (0o), floats (1.5e3), and underscores (100_000)
             .numbers = .{
                 .match = "\\b(0[xX][a-fA-F0-9_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*(\\.[0-9_]+)?([eE][-+]?[0-9_]+)?)\\b",
                 .name = "constant.numeric.kupcad",
             },
-            // Instance Variables (@var)
             .instance_vars = .{
                 .match = "(@)[a-zA-Z_]\\w*",
                 .name = "variable.other.readwrite.instance.kupcad",
             },
-            // Global Variables ($var)
             .global_vars = .{
                 .match = "(\\$)[a-zA-Z_]\\w*",
                 .name = "variable.other.readwrite.global.kupcad",
             },
-            // Constants and Classes (Starts with Capital Letter)
             .constants = .{
                 .match = "\\b[A-Z]\\w*\\b",
                 .name = "entity.name.type.class.kupcad",
             },
-            // Operators and Safe Navigation
             .operators = .{
                 .patterns = .{
                     .{ .match = "(&\\.)", .name = "keyword.operator.safe-navigation.kupcad" },
@@ -172,7 +182,6 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
                     .{ .match = "=", .name = "keyword.operator.assignment.kupcad" },
                 },
             },
-            // Generic Method Calls (e.g. `my_method(x)`)
             .method_calls = .{
                 .match = "([a-zA-Z_]\\w*[!?]?)(\\()",
                 .captures = .{
@@ -207,7 +216,6 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
                 .match = insp_match,
                 .name = "support.function.inspection.kupcad",
             },
-            // Hash Keys and Named Arguments (e.g., `x: 10`)
             .hash_keys = .{
                 .match = "\\b([a-zA-Z_]\\w*[!?]?)(:)(?!:)",
                 .captures = .{
@@ -215,7 +223,6 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
                     .@"2" = .{ .name = "punctuation.separator.key-value.kupcad" },
                 },
             },
-            // Method Declarations (e.g., `def build`)
             .method_declarations = .{
                 .match = "(?:^|\\s)(def)\\s+([a-zA-Z_]\\w*[!?]?)",
                 .captures = .{
@@ -223,7 +230,6 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
                     .@"2" = .{ .name = "entity.name.function.kupcad" },
                 },
             },
-            // Block Parameters (e.g., `|x, y|`)
             .block_parameters = .{
                 .begin = "(?<=\\bdo\\b|\\{)\\s*(\\|)",
                 .beginCaptures = .{
@@ -242,13 +248,9 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator, tokens: []const regist
         },
     };
 
-    // Serialize to JSON with pretty formatting
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-
     try out.writer.print("{f}", .{std.json.fmt(grammar, .{ .whitespace = .indent_2 })});
-
-    // Duplicate the written slice so the caller owns the memory
     return try allocator.dupe(u8, out.written());
 }
 
@@ -265,11 +267,11 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
-    const json_content = try generateTextMateJson(allocator, &registry.LANGUAGE_TOKENS);
+    // Automatically parse our live system
+    const json_content = try generateTextMateJson(allocator);
     defer allocator.free(json_content);
 
     const cwd = std.Io.Dir.cwd();
-
     try cwd.writeFile(io, .{
         .sub_path = output_path,
         .data = json_content,

@@ -107,7 +107,7 @@ pub const Tag = enum {
 
 pub const Token = common_token.Token(Tag);
 
-const keywords = std.StaticStringMap(Tag).initComptime(.{
+pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "do", .keyword_do },
     .{ "end", .keyword_end },
     .{ "if", .keyword_if },
