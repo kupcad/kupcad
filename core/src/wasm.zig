@@ -54,7 +54,7 @@ fn inner_check(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
             .message = d.message,
         };
 
-        try out.writer.print("{}", .{std.json.fmt(flat_diag, .{})});
+        try out.writer.print("{f}", .{std.json.fmt(flat_diag, .{})});
     }
     try out.writer.writeAll("]");
     try out.writer.writeAll("\x00");

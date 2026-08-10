@@ -69,14 +69,46 @@ end
   <script>
     let wasmInstance = null;
 
+    // Minimal WASI import stub required for wasm32-wasi targets
+    const wasiImports = {
+      wasi_snapshot_preview1: {
+        args_get: (argv, argv_buf) => 0,
+        args_sizes_get: (pargc, pargv_buf_size) => 0,
+        environ_get: (environ, environ_buf) => 0,
+        environ_sizes_get: (penvironc, penviron_buf_size) => 0,
+        clock_time_get: (clock_id, precision, ptime) => 0,
+        fd_close: (fd) => 0,
+        fd_fdstat_get: (fd, pbuf) => 0,
+        fd_seek: (fd, offset, whence, newoffset) => 0,
+        fd_write: (fd, iovs, iovs_len, pnwritten) => 0,
+        proc_exit: (rval) => console.log('WASI exit:', rval),
+        random_get: (buf, buf_len) => 0,
+        sched_yield: () => 0,
+      }
+    };
+
+    // Helper to read null-terminated C-strings from WASM memory
+    function readCStr(ptr) {
+      if (!ptr) return "";
+      const memory = new Uint8Array(wasmInstance.exports.memory.buffer);
+      let endPtr = ptr;
+      while (endPtr < memory.length && memory[endPtr] !== 0) {
+        endPtr++;
+      }
+      return new TextDecoder().decode(memory.subarray(ptr, endPtr));
+    }
+
     // 1. Load and Instantiate the WebAssembly Module
-    WebAssembly.instantiateStreaming(fetch("kupcad.wasm"), {})
+    WebAssembly.instantiateStreaming(fetch("kupcad.wasm"), wasiImports)
       .then(result => {
         wasmInstance = result.instance;
         document.getElementById("output").innerText = "WASM Loaded Successfully! Ready to test.";
         console.log("WASM Exports:", wasmInstance.exports);
       })
-      .catch(console.error);
+      .catch(err => {
+        document.getElementById("output").innerText = "Failed to load WASM: " + err;
+        console.error(err);
+      });
 
     function runLinter() {
       if (!wasmInstance) return alert("WASM not loaded yet!");
@@ -85,26 +117,25 @@ end
       const encoder = new TextEncoder();
       const encodedArgs = encoder.encode(code);
 
-      const ptr = wasmInstance.exports.alloc(encodedArgs.length);
+      // Allocate input buffer via wasm_alloc
+      const ptr = wasmInstance.exports.wasm_alloc(encodedArgs.length);
       const memoryBefore = new Uint8Array(wasmInstance.exports.memory.buffer);
       memoryBefore.set(encodedArgs, ptr);
 
-      // Run WASM (this may trigger memory.grow, which detaches memoryBefore)
+      // Run Linter
       const resultPtr = wasmInstance.exports.check_code_wasm(ptr, encodedArgs.length);
 
-      // MUST REFRESH MEMORY VIEW AFTER WASM EXECUTION
-      const memoryAfter = new Uint8Array(wasmInstance.exports.memory.buffer);
+      // Read JSON output
+      const jsonString = readCStr(resultPtr);
 
-      // MUST INCLUDE BOUNDS CHECK
-      let endPtr = resultPtr;
-      while (endPtr < memoryAfter.length && memoryAfter[endPtr] !== 0) {
-        endPtr++;
+      // Free input buffer via wasm_free
+      wasmInstance.exports.wasm_free(ptr, encodedArgs.length);
+
+      if (!resultPtr) {
+        const lastErr = readCStr(wasmInstance.exports.get_last_error());
+        document.getElementById("output").innerText = "Linter Error: " + lastErr;
+        return;
       }
-
-      const decoder = new TextDecoder();
-      const jsonString = decoder.decode(memoryAfter.subarray(resultPtr, endPtr));
-
-      wasmInstance.exports.free(ptr, encodedArgs.length);
 
       try {
         const diagnostics = JSON.parse(jsonString);
@@ -121,26 +152,25 @@ end
       const encoder = new TextEncoder();
       const encodedArgs = encoder.encode(code);
 
-      const ptr = wasmInstance.exports.alloc(encodedArgs.length);
+      // Allocate input buffer via wasm_alloc
+      const ptr = wasmInstance.exports.wasm_alloc(encodedArgs.length);
       const memoryBefore = new Uint8Array(wasmInstance.exports.memory.buffer);
       memoryBefore.set(encodedArgs, ptr);
 
-      // Run WASM
+      // Run Formatter
       const resultPtr = wasmInstance.exports.format_code_wasm(ptr, encodedArgs.length);
 
-      // MUST REFRESH MEMORY VIEW
-      const memoryAfter = new Uint8Array(wasmInstance.exports.memory.buffer);
+      // Read Formatted String
+      const formattedCode = readCStr(resultPtr);
 
-      // MUST INCLUDE BOUNDS CHECK
-      let endPtr = resultPtr;
-      while (endPtr < memoryAfter.length && memoryAfter[endPtr] !== 0) {
-        endPtr++;
+      // Free input buffer via wasm_free
+      wasmInstance.exports.wasm_free(ptr, encodedArgs.length);
+
+      if (!resultPtr) {
+        const lastErr = readCStr(wasmInstance.exports.get_last_error());
+        document.getElementById("output").innerText = "Formatter Failed: " + lastErr;
+        return;
       }
-
-      const decoder = new TextDecoder();
-      const formattedCode = decoder.decode(memoryAfter.subarray(resultPtr, endPtr));
-
-      wasmInstance.exports.free(ptr, encodedArgs.length);
 
       document.getElementById("output").innerText = formattedCode;
     }
