@@ -1,0 +1,9 @@
+[submodule "core/vendor/manifold"]
+	path = core/vendor/manifold
+	url = https://github.com/elalish/manifold
+[submodule "core/vendor/Clipper2"]
+	path = core/vendor/Clipper2
+	url = https://github.com/AngusJohnson/Clipper2
+[submodule "core/vendor/oneTBB"]
+	path = core/vendor/oneTBB
+	url = https://github.com/oneapi-src/oneTBB
