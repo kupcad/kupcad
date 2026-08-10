@@ -4,11 +4,18 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Detect target environment
-    const is_wasm = target.result.os.tag == .freestanding;
+    // Detect if target is WASM
+    const is_wasm = target.result.cpu.arch == .wasm32;
     const is_macos = target.result.os.tag == .macos;
 
-    // Build option to toggle parallel processing (defaults to false on WASM, true on native)
+    // Use WASI for WASM builds so Zig provides wasi-libc
+    const wasm_target = b.resolveTargetQuery(.{
+        .cpu_arch = .wasm32,
+        .os_tag = .wasi,
+    });
+
+    const active_target = if (is_wasm) wasm_target else target;
+
     const enable_parallel = b.option(
         bool,
         "manifold_parallel",
@@ -16,13 +23,13 @@ pub fn build(b: *std.Build) void {
     ) orelse !is_wasm;
 
     // ====================================================================
-    // 1. Build Clipper2 (Manifold Dependency)
+    // 1. Build Clipper2
     // ====================================================================
     const clipper_lib = b.addLibrary(.{
         .name = "clipper",
         .linkage = .static,
         .root_module = b.createModule(.{
-            .target = target,
+            .target = active_target,
             .optimize = optimize,
             .link_libc = true,
             .link_libcpp = true,
@@ -41,11 +48,26 @@ pub fn build(b: *std.Build) void {
     // ====================================================================
     // 2. Build Manifold C++ Engine
     // ====================================================================
+    const manifold_flags: []const []const u8 = if (is_wasm)
+        &.{
+            "-std=c++17",
+            "-fno-exceptions",
+            "-DMANIFOLD_NO_IOSTREAM",
+            "-DMANIFOLD_NO_FILESYSTEM",
+            "-DMANIFOLD_PAR=-1",
+            "-include",
+            "src/wasm_stubs.h",
+        }
+    else if (enable_parallel)
+        &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=1" }
+    else
+        &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=-1" };
+
     const manifold_lib = b.addLibrary(.{
         .name = "manifold",
         .linkage = .static,
         .root_module = b.createModule(.{
-            .target = target,
+            .target = active_target,
             .optimize = optimize,
             .link_libc = true,
             .link_libcpp = true,
@@ -56,21 +78,13 @@ pub fn build(b: *std.Build) void {
     manifold_lib.root_module.addIncludePath(b.path("vendor/manifold/bindings/c"));
     manifold_lib.root_module.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
 
-    const manifold_flags: []const []const u8 = if (enable_parallel)
-        &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=1" }
-    else
-        &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=-1" };
-
     manifold_lib.root_module.addCSourceFiles(.{
         .files = &.{
-            // C-API Bindings
             "vendor/manifold/bindings/c/box.cpp",
             "vendor/manifold/bindings/c/conv.cpp",
             "vendor/manifold/bindings/c/cross.cpp",
             "vendor/manifold/bindings/c/manifoldc.cpp",
             "vendor/manifold/bindings/c/rect.cpp",
-
-            // Core Engine Sources
             "vendor/manifold/src/boolean_result.cpp",
             "vendor/manifold/src/boolean2.cpp",
             "vendor/manifold/src/boolean2_diagnostics.cpp",
@@ -100,10 +114,8 @@ pub fn build(b: *std.Build) void {
     });
     manifold_lib.root_module.linkLibrary(clipper_lib);
 
-    // If parallel mode is enabled, compile Intel oneTBB
     if (enable_parallel) {
         manifold_lib.root_module.addIncludePath(b.path("vendor/oneTBB/include"));
-
         const tbb_flags: []const []const u8 = if (is_macos)
             &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE" }
         else
@@ -153,17 +165,16 @@ pub fn build(b: *std.Build) void {
     // ====================================================================
     const mod = b.addModule("kupcad", .{
         .root_source_file = b.path("src/root.zig"),
-        .target = target,
+        .target = active_target,
     });
     mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
 
     if (is_wasm) {
-        // --- WebAssembly Target ---
         const wasm = b.addExecutable(.{
             .name = "kupcad",
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/wasm.zig"),
-                .target = target,
+                .target = wasm_target,
                 .optimize = optimize,
             }),
         });
@@ -179,7 +190,6 @@ pub fn build(b: *std.Build) void {
 
         b.installArtifact(wasm);
     } else {
-        // --- Native Targets ---
         const lsp_kit = b.dependency("lsp_kit", .{
             .target = target,
             .optimize = optimize,
@@ -214,7 +224,6 @@ pub fn build(b: *std.Build) void {
         lib.root_module.linkLibrary(manifold_lib);
         b.installArtifact(lib);
 
-        // --- Commands ---
         const run_step = b.step("run", "Run the app");
         const run_cmd = b.addRunArtifact(exe);
         run_step.dependOn(&run_cmd.step);
@@ -223,7 +232,6 @@ pub fn build(b: *std.Build) void {
             run_cmd.addArgs(args);
         }
 
-        // --- Tests ---
         const mod_tests = b.addTest(.{
             .root_module = mod,
         });
@@ -240,7 +248,6 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&run_mod_tests.step);
         test_step.dependOn(&run_exe_tests.step);
 
-        // --- Grammar Generator ---
         const gen_grammar_exe = b.addExecutable(.{ .name = "gen_grammar", .root_module = b.createModule(.{
             .root_source_file = b.path("src/gen_grammar.zig"),
             .target = target,
