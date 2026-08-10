@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) void {
     ) orelse !is_wasm;
 
     // ====================================================================
-    // 1. Build Clipper2
+    // Build Clipper2
     // ====================================================================
     const clipper_lib = b.addLibrary(.{
         .name = "clipper",
@@ -161,7 +161,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // ====================================================================
-    // 3. KupCAD Core Module
+    // KupCAD Core Module
     // ====================================================================
     const mod = b.addModule("kupcad", .{
         .root_source_file = b.path("src/root.zig"),
@@ -169,6 +169,7 @@ pub fn build(b: *std.Build) void {
     });
     mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
 
+    // wasm build
     if (is_wasm) {
         const wasm = b.addExecutable(.{
             .name = "kupcad",
@@ -184,11 +185,13 @@ pub fn build(b: *std.Build) void {
 
         wasm.entry = .disabled;
         wasm.rdynamic = true;
+        // all mem must be aligned in 65536 bytes (64Kb)
         wasm.initial_memory = 134217728;
         wasm.max_memory = 4294967296;
         wasm.stack_size = 67108864;
 
         b.installArtifact(wasm);
+        // exec and lib build
     } else {
         const lsp_kit = b.dependency("lsp_kit", .{
             .target = target,
