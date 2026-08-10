@@ -252,6 +252,25 @@ pub const VM = struct {
         return value.Value.initObj(&mesh_obj.obj);
     }
 
+    pub fn allocateBrep(self: *VM, data: *@import("../brep/topology.zig").Brep) !value.Value {
+        if (self.gc.bytes_allocated > self.gc.next_gc_threshold) {
+            self.gc.collectGarbage(self, false);
+        }
+
+        const ptr = try self.allocator.create(value.ObjBrep);
+        self.gc.bytes_allocated += @sizeOf(value.ObjBrep);
+
+        ptr.obj = .{
+            .obj_type = .brep,
+            .is_marked = false,
+            .next = self.gc.first_object,
+        };
+        self.gc.first_object = &ptr.obj;
+
+        ptr.data = data;
+        return value.Value.initObj(&ptr.obj);
+    }
+
     pub fn defineNative(self: *VM, name: []const u8, function: value.NativeFn) !void {
         const native_obj = try self.gc.allocateNative(function);
         const native_val = value.Value.initObj(&native_obj.obj);

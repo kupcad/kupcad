@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) void {
     });
 
     // ====================================================================
-    // 2. Build Manifold C++ Engine
+    // Build Manifold C++ Engine
     // ====================================================================
     const manifold_flags: []const []const u8 = if (is_wasm)
         &.{

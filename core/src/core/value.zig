@@ -1,4 +1,5 @@
 const std = @import("std");
+const topology = @import("../brep/topology.zig");
 
 /// Identifies the primitive type of a Value.
 pub const ValueTag = enum(u8) {
@@ -14,6 +15,7 @@ pub const ObjType = enum(u8) {
     string,
     array,
     mesh,
+    brep,
     native,
     // Future additions: part, mesh, transform, etc.
 };
@@ -55,6 +57,11 @@ pub const NativeFn = *const fn (vm: *anyopaque, arg_count: u8, args: [*]Value) a
 pub const ObjNative = struct {
     obj: Obj,
     function: NativeFn,
+};
+
+pub const ObjBrep = struct {
+    obj: Obj,
+    data: *topology.Brep, // Pointer to the pure Zig B-Rep data
 };
 
 /// The Universal 16-Byte Dynamic Value.
@@ -126,6 +133,10 @@ pub const Value = extern struct {
 
     pub inline fn isNative(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .native;
+    }
+
+    pub inline fn isBrep(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .brep;
     }
 
     // --- Safe Accessors (with safety assertions) ---

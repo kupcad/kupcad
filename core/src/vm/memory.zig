@@ -199,6 +199,13 @@ pub const GC = struct {
                 self.allocator.destroy(mesh_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjMesh);
             },
+            .brep => {
+                const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));
+                // TODO: Call brep_obj.data.deinit() when Brep memory management is fleshed out
+                self.allocator.destroy(brep_obj.data); // Free the inner struct
+                self.allocator.destroy(brep_obj); // Free the wrapper
+                self.bytes_allocated -= @sizeOf(value.ObjBrep);
+            },
             .array => {
                 // Future Implementation
             },
