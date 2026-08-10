@@ -8,12 +8,12 @@ pub export fn get_last_error() [*]const u8 {
     return last_error_msg;
 }
 
-pub export fn alloc(len: usize) ?[*]u8 {
+pub export fn wasm_alloc(len: usize) ?[*]u8 {
     const slice = std.heap.wasm_allocator.alloc(u8, len) catch return null;
     return slice.ptr;
 }
 
-pub export fn free(ptr: [*]u8, len: usize) void {
+pub export fn wasm_free(ptr: [*]u8, len: usize) void {
     std.heap.wasm_allocator.free(ptr[0..len]);
 }
 
