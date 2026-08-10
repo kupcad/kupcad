@@ -192,7 +192,7 @@ pub const GC = struct {
                     (mesh_obj.faces.len * @sizeOf([3]u32));
 
                 if (mesh_obj.kernel_handle) |handle| {
-                    if (vm.mesh_destructor) |destructor| {
+                    if (vm.host.mesh_destructor) |destructor| {
                         destructor(handle);
                     }
                 }

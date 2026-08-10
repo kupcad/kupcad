@@ -3,8 +3,11 @@ const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
 const value = @import("../core/value.zig");
 const kernel_mod = @import("../kernel/kernel.zig");
+const host_mod = @import("host.zig");
 const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
 const Brep = @import("../kernel/engines/brep/topology.zig").Brep;
+
+pub const Host = host_mod.Host;
 
 pub const InterpretResult = enum {
     ok,
@@ -27,9 +30,7 @@ pub const VM = struct {
     frames: std.ArrayListUnmanaged(CallFrame),
     gc: memory.GC,
     globals: std.StringHashMapUnmanaged(value.Value),
-    binary_handler: ?*const fn (vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value = null,
-    invoke_handler: ?*const fn (vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value = null,
-    mesh_destructor: ?*const fn (handle: GeometryHandle) void = null,
+    host: Host = .{},
     active_kernel: ?*const kernel_mod.GeometryKernel = null,
 
     const INITIAL_STACK_CAPACITY: usize = 1024;
@@ -143,7 +144,7 @@ pub const VM = struct {
                     const a_val = self.pop();
                     if (a_val.isNumber() and b_val.isNumber()) {
                         self.push(value.Value.initNumber(a_val.asNumber() + b_val.asNumber()));
-                    } else if (self.binary_handler) |handler| {
+                    } else if (self.host.binary_handler) |handler| {
                         // Delegate to the Standard Library!
                         const result = handler(self, .op_add, a_val, b_val) catch return .runtime_error;
                         self.push(result);
@@ -157,7 +158,7 @@ pub const VM = struct {
                     const a_val = self.pop();
                     if (a_val.isNumber() and b_val.isNumber()) {
                         self.push(value.Value.initNumber(a_val.asNumber() - b_val.asNumber()));
-                    } else if (self.binary_handler) |handler| {
+                    } else if (self.host.binary_handler) |handler| {
                         // Delegate to the Standard Library!
                         const result = handler(self, .op_subtract, a_val, b_val) catch return .runtime_error;
                         self.push(result);
@@ -223,7 +224,7 @@ pub const VM = struct {
                     const receiver = self.stack[self.stack_top - 1 - arg_count];
                     const args_ptr = self.stack.ptr + self.stack_top - arg_count;
 
-                    if (self.invoke_handler) |handler| {
+                    if (self.host.invoke_handler) |handler| {
                         const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch return .runtime_error;
                         self.stack_top -= arg_count + 1;
                         self.push(result);

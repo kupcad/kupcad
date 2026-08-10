@@ -8,19 +8,18 @@ const manifest = @import("manifest.zig");
 const manifold_driver = @import("../kernel/engines/manifold/driver.zig").driver;
 
 pub fn registerStandardLibrary(vm: *VM) !void {
-    // 1. Bind Native Global Functions automatically from the manifest
+    // Bind Native Global Functions automatically from the manifest
     for (manifest.global_functions) |def| {
         try vm.defineNative(def.name, def.func);
     }
 
-    // 2. Assign the Active Kernel Driver
+    // Assign the Active Kernel Driver
     vm.active_kernel = &manifold_driver;
 
-    // 3. Bind VM Hooks (Decoupling VM from CAD domain)
-    vm.binary_handler = boolean.csgBinaryHandler;
-    vm.invoke_handler = methods.cadInvokeHandler;
-
-    // 4. The GC will directly call the active kernel's destruction routine.
-    // Because GeometryHandle is passed by value, no ?*anyopaque wrappers are needed!
-    vm.mesh_destructor = manifold_driver.destructFn;
+    // Bind Host Platform Interface Hooks
+    vm.host = .{
+        .binary_handler = boolean.csgBinaryHandler,
+        .invoke_handler = methods.cadInvokeHandler,
+        .mesh_destructor = manifold_driver.destructFn,
+    };
 }
