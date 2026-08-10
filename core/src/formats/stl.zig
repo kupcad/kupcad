@@ -1,5 +1,5 @@
 const std = @import("std");
-const value = @import("value.zig");
+const value = @import("../core/value.zig");
 
 // Helper to write a 32-bit float safely across endianness
 fn writeF32(writer: anytype, f: f32) !void {

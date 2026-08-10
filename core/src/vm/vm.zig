@@ -3,7 +3,6 @@ const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
 const manifold = @import("../core/manifold.zig");
 const value = @import("../core/value.zig");
-const stl = @import("../core/stl.zig");
 
 pub const InterpretResult = enum {
     ok,

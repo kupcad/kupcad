@@ -1,6 +1,6 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
-const stl = @import("../core/stl.zig");
+const stl = @import("../formats/stl.zig");
 const VM = @import("../vm/vm.zig").VM;
 
 pub fn nativeExportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
