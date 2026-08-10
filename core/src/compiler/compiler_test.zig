@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
+const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("compiler.zig").Compiler;
 const VM = @import("../vm/vm.zig").VM;
@@ -23,6 +24,8 @@ test "Compiler: compiles basic binary addition" {
     // Initialize the VM so the Compiler can use it for managed allocations
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+
+    try registry.registerStandardLibrary(&vm);
 
     // Pass &vm as the 5th argument
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);

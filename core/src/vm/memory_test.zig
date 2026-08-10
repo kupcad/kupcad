@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const VM = @import("vm.zig").VM;
 const GC = @import("memory.zig").GC;
@@ -18,6 +19,8 @@ test "GC: Mark and Sweep reclaims unreferenced objects" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
+    try registry.registerStandardLibrary(&vm);
+
     _ = try vm.allocateString("I am dead");
 
     const alive_val = try vm.allocateString("I am alive");
@@ -31,6 +34,8 @@ test "GC: Mark and Sweep reclaims unreferenced objects" {
 test "GC: ObjMesh allocation and lifecycle tracking" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+
+    try registry.registerStandardLibrary(&vm);
 
     const dummy_handle: ?*anyopaque = null;
     const mock_vertices = [_]value.Vec3{};

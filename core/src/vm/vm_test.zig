@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
 const chunk = @import("chunk.zig");
+const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const VM = @import("vm.zig").VM;
@@ -24,6 +25,8 @@ test "VM: End-to-end compilation and execution of math expression" {
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+
+    try registry.registerStandardLibrary(&vm);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -48,6 +51,8 @@ test "VM: Dynamic stack growth handles thousands of pushes without overflow" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
+    try registry.registerStandardLibrary(&vm);
+
     const push_count: usize = 5000;
     try vm.ensureStackCapacity(push_count);
 
@@ -71,6 +76,8 @@ test "VM: Dynamic stack growth handles thousands of pushes without overflow" {
 test "VM: Execute native CAD function (cube)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+
+    try registry.registerStandardLibrary(&vm);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -115,6 +122,8 @@ test "VM: End-to-end compilation and execution of native CAD function (cube)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
+    try registry.registerStandardLibrary(&vm);
+
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
@@ -151,6 +160,8 @@ test "VM: End-to-end compilation of fluent API method chaining (cube().translate
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+
+    try registry.registerStandardLibrary(&vm);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -204,6 +215,8 @@ test "VM: Generates a real physical .stl file from a compiled script" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
+    try registry.registerStandardLibrary(&vm);
+
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     vm.cwd = tmp.dir;
@@ -246,6 +259,8 @@ test "VM: Executes CSG Operator Overloading (cube() + cube())" {
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+
+    try registry.registerStandardLibrary(&vm);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
