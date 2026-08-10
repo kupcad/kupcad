@@ -25,6 +25,8 @@ pub const VM = struct {
     gc: memory.GC,
     globals: std.StringHashMapUnmanaged(value.Value),
     binary_handler: ?*const fn (vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value = null,
+    invoke_handler: ?*const fn (vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value = null,
+    mesh_destructor: ?*const fn (handle: ?*anyopaque) void = null,
 
     const INITIAL_STACK_CAPACITY: usize = 1024;
 
@@ -211,29 +213,18 @@ pub const VM = struct {
                     const arg_count = frame.chunk.code.items[frame.ip];
                     frame.ip += 1;
 
-                    // Retrieve the method name from the constant pool
                     const method_name_val = frame.chunk.constants.items[method_name_idx];
                     const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
 
-                    // The receiver object sits just below the arguments on the stack
                     const receiver = self.stack[self.stack_top - 1 - arg_count];
+                    const args_ptr = self.stack.ptr + self.stack_top - arg_count;
 
-                    if (receiver.isMesh()) {
-                        // Phase 1 Mock: Accept transform methods and return the mesh unmodified.
-                        // In Phase 3, we will apply math matrices to the vertices here.
-                        if (std.mem.eql(u8, method_name_str, "translate") or
-                            std.mem.eql(u8, method_name_str, "rotate") or
-                            std.mem.eql(u8, method_name_str, "chamfer"))
-                        {
-                            const result = receiver; // Mutated result would go here
-                            self.stack_top -= arg_count + 1;
-                            self.push(result);
-                        } else {
-                            std.log.err("Runtime Error: Unknown method '{s}' on Mesh object.\n", .{method_name_str});
-                            return .runtime_error;
-                        }
+                    if (self.invoke_handler) |handler| {
+                        const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch return .runtime_error;
+                        self.stack_top -= arg_count + 1;
+                        self.push(result);
                     } else {
-                        std.log.err("Runtime Error: Only Mesh objects support method calls.\n", .{});
+                        std.log.err("Runtime Error: No invoke handler registered for method '{s}'.\n", .{method_name_str});
                         return .runtime_error;
                     }
                 },

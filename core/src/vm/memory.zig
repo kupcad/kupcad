@@ -1,6 +1,5 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
-const manifold = @import("../bindings/manifold/manifold.zig");
 const VM = @import("vm.zig").VM;
 
 pub const GC = struct {
@@ -97,7 +96,7 @@ pub const GC = struct {
         if (!force_full) {
             self.markRoots(vm);
         }
-        self.sweep();
+        self.sweep(vm);
 
         self.next_gc_threshold = self.bytes_allocated * HEAP_GROW_FACTOR;
         _ = before;
@@ -144,7 +143,7 @@ pub const GC = struct {
 
     // --- Phase 2: Sweep ---
 
-    fn sweep(self: *GC) void {
+    fn sweep(self: *GC, vm: *VM) void {
         var previous: ?*value.Obj = null;
         var current: ?*value.Obj = self.first_object;
 
@@ -165,12 +164,12 @@ pub const GC = struct {
                     self.first_object = current;
                 }
 
-                self.freeObject(unreached);
+                self.freeObject(vm, unreached);
             }
         }
     }
 
-    fn freeObject(self: *GC, obj: *value.Obj) void {
+    fn freeObject(self: *GC, vm: *VM, obj: *value.Obj) void {
         switch (obj.obj_type) {
             .string => {
                 const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", obj));
@@ -186,15 +185,15 @@ pub const GC = struct {
             },
             .mesh => {
                 const mesh_obj: *value.ObjMesh = @alignCast(@fieldParentPtr("obj", obj));
-
-                // Free the dynamically allocated geometry arrays!
                 self.allocator.free(mesh_obj.vertices);
                 self.allocator.free(mesh_obj.faces);
                 self.bytes_allocated -= (mesh_obj.vertices.len * @sizeOf(value.Vec3)) +
                     (mesh_obj.faces.len * @sizeOf([3]u32));
 
                 if (mesh_obj.kernel_handle) |handle| {
-                    manifold.destruct(@ptrCast(handle));
+                    if (vm.mesh_destructor) |destructor| {
+                        destructor(handle);
+                    }
                 }
 
                 self.allocator.destroy(mesh_obj);
