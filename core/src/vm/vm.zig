@@ -1,7 +1,6 @@
 const std = @import("std");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
-const manifold = @import("../core/manifold.zig");
 const value = @import("../core/value.zig");
 
 pub const InterpretResult = enum {
@@ -25,6 +24,7 @@ pub const VM = struct {
     frames: std.ArrayListUnmanaged(CallFrame),
     gc: memory.GC,
     globals: std.StringHashMapUnmanaged(value.Value),
+    binary_handler: ?*const fn (vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value = null,
 
     const INITIAL_STACK_CAPACITY: usize = 1024;
 
@@ -135,19 +135,11 @@ pub const VM = struct {
                 .op_add => {
                     const b_val = self.pop();
                     const a_val = self.pop();
-
                     if (a_val.isNumber() and b_val.isNumber()) {
                         self.push(value.Value.initNumber(a_val.asNumber() + b_val.asNumber()));
-                    } else if (a_val.isMesh() and b_val.isMesh()) {
-                        const m1: *manifold.ManifoldObj = @ptrCast(a_val.asMesh().kernel_handle.?);
-                        const m2: *manifold.ManifoldObj = @ptrCast(b_val.asMesh().kernel_handle.?);
-
-                        // Execute C++ CSG Union
-                        const result_m = manifold.boolean(m1, m2, .add);
-
-                        // Note: In the future, we extract the resulting vertices using `manifold_get_meshGL` here.
-                        // For now, we leave the physical arrays empty to save memory during intermediate operations.
-                        const result = self.allocateMesh(result_m, &[_]value.Vec3{}, &[_][3]u32{}) catch return .runtime_error;
+                    } else if (self.binary_handler) |handler| {
+                        // Delegate to the Standard Library!
+                        const result = handler(self, .op_add, a_val, b_val) catch return .runtime_error;
                         self.push(result);
                     } else {
                         std.log.err("Runtime Error: Invalid operands for '+'\n", .{});
@@ -157,17 +149,11 @@ pub const VM = struct {
                 .op_subtract => {
                     const b_val = self.pop();
                     const a_val = self.pop();
-
                     if (a_val.isNumber() and b_val.isNumber()) {
                         self.push(value.Value.initNumber(a_val.asNumber() - b_val.asNumber()));
-                    } else if (a_val.isMesh() and b_val.isMesh()) {
-                        const m1: *manifold.ManifoldObj = @ptrCast(a_val.asMesh().kernel_handle.?);
-                        const m2: *manifold.ManifoldObj = @ptrCast(b_val.asMesh().kernel_handle.?);
-
-                        // Execute C++ CSG Difference
-                        const result_m = manifold.boolean(m1, m2, .subtract);
-
-                        const result = self.allocateMesh(result_m, &[_]value.Vec3{}, &[_][3]u32{}) catch return .runtime_error;
+                    } else if (self.binary_handler) |handler| {
+                        // Delegate to the Standard Library!
+                        const result = handler(self, .op_subtract, a_val, b_val) catch return .runtime_error;
                         self.push(result);
                     } else {
                         std.log.err("Runtime Error: Invalid operands for '-'\n", .{});

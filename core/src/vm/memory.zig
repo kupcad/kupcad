@@ -1,6 +1,6 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
-const manifold = @import("../core/manifold.zig");
+const manifold = @import("../bindings/manifold/manifold.zig");
 const VM = @import("vm.zig").VM;
 
 pub const GC = struct {

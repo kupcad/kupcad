@@ -1,6 +1,6 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
-const manifold = @import("../core/manifold.zig");
+const manifold = @import("../bindings/manifold/manifold.zig");
 const VM = @import("../vm/vm.zig").VM;
 
 pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
