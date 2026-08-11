@@ -24,7 +24,7 @@ fn mockBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) 
     return try vm.allocateString("mock_csg_result");
 }
 
-test "Host Interface: GC correctly passes GeometryHandle value to host.mesh_destructor" {
+test "Host Interface: ARC correctly passes GeometryHandle value to host.mesh_destructor" {
     mock_destructor_called = false;
     mock_last_destroyed_handle = null;
 
@@ -35,20 +35,11 @@ test "Host Interface: GC correctly passes GeometryHandle value to host.mesh_dest
     const test_ptr = @as(*anyopaque, @ptrFromInt(0xDEADBEEF));
     const handle = GeometryHandle{ .engine = .manifold, .ptr = test_ptr };
 
-    // Allocate mesh on VM heap (ref_count = 1)
+    // Allocate mesh on VM heap via ARC (ref_count = 1)
     const mesh_val = try vm.allocateGeometry(.{ .concrete = handle });
 
-    // Push (ref_count = 2)
-    vm.push(mesh_val);
-
-    // Pop transfers ownership. We must release it! (ref_count drops back to 1)
-    const popped_val = vm.pop();
-    vm.releaseValue(popped_val);
-
-    // Trigger sweep (no longer touches ARC objects, but retained for test parity)
-    vm.gc.collectGarbage(&vm, false);
-
     // Explicitly release the initial reference to trigger instant ARC destruct (ref_count = 0)
+    // This perfectly isolates and proves the C++ destructor boundary without GC interference.
     vm.releaseValue(mesh_val);
 
     try testing.expect(mock_destructor_called);
