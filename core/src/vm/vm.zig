@@ -347,6 +347,35 @@ pub const VM = struct {
                     self.closeUpvalues(&self.stack[self.stack_top - 1]);
                     self.releaseValue(self.pop());
                 },
+                .op_closure => {
+                    const func_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+
+                    const func_val = exec_chunk.constants.items[func_idx];
+                    const func_obj = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", func_val.asObj())));
+
+                    const closure = self.gc.allocateClosure(self, func_obj) catch return .runtime_error;
+                    const closure_val = value.Value.initObj(&closure.obj);
+
+                    // Push the closure to the stack BEFORE capturing upvalues to ensure GC safety
+                    self.push(closure_val);
+
+                    // Iterate over the operands to wire up the captured variables
+                    for (0..func_obj.upvalue_count) |i| {
+                        const is_local = exec_chunk.code.items[frame.ip];
+                        frame.ip += 1;
+                        const index = exec_chunk.code.items[frame.ip];
+                        frame.ip += 1;
+
+                        if (is_local == 1) {
+                            // Capture directly from the parent's stack slot
+                            closure.upvalues[i] = self.captureUpvalue(&self.stack[frame.base_slot + index]) catch return .runtime_error;
+                        } else {
+                            // Pass down an upvalue that the parent already captured
+                            closure.upvalues[i] = frame.closure.upvalues[index];
+                        }
+                    }
+                },
                 .op_return => {
                     const result = self.pop();
 
