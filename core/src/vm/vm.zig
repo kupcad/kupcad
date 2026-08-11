@@ -36,6 +36,7 @@ pub const VM = struct {
     dag_builder: dag.DAGBuilder,
 
     const INITIAL_STACK_CAPACITY: usize = 1024;
+    const STACK_GROW_FACTOR: usize = 2;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
         const initial_stack = try allocator.alloc(value.Value, INITIAL_STACK_CAPACITY);
@@ -94,7 +95,7 @@ pub const VM = struct {
         if (required_capacity <= self.stack.len) return;
         var new_capacity = self.stack.len;
         while (new_capacity < required_capacity) {
-            new_capacity *= 2;
+            new_capacity *= STACK_GROW_FACTOR;
         }
         self.stack = try self.allocator.realloc(self.stack, new_capacity);
     }
