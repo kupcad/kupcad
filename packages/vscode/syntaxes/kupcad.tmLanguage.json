@@ -177,11 +177,11 @@
       "name": "support.function.csg.kupcad"
     },
     "workplanes": {
-      "match": "(?<![\\\\w])(dummy_wp)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(on_face)(?![\\\\w?!])",
       "name": "support.function.workplane.kupcad"
     },
     "inspections": {
-      "match": "(?<![\\\\w])(dummy_insp)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(bbox|volume)(?![\\\\w?!])",
       "name": "support.function.inspection.kupcad"
     },
     "hash_keys": {
