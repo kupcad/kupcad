@@ -504,6 +504,58 @@ pub const Compiler = struct {
                     self.patchJump(jmp);
                 }
             },
+            .multiple_assignment => {
+                const ma = self.tree.multipleAssignment(node);
+                const lhs = self.tree.getLhsExprs(ma.lhs);
+
+                // 1. Evaluate the right side (pushes an Array or Value)
+                try self.compileNode(ma.value);
+
+                if (lhs.len > 255) return error.TooManyConstants;
+
+                // 2. Unpack the array into N stack slots
+                try self.emitOp(.op_unpack, line);
+                try self.emitByte(@intCast(lhs.len), line);
+                self.simulatePush(lhs.len); // Tell the simulator we pushed N items
+
+                // 3. Assign them in reverse order (top of stack is the last variable)
+                var i: usize = lhs.len;
+                while (i > 0) {
+                    i -= 1;
+                    const name_id = lhs[i].name;
+
+                    if (self.resolveLocal(name_id)) |local_slot| {
+                        try self.emitOp(.op_set_local, line);
+                        try self.emitByte(local_slot, line);
+                        try self.emitOp(.op_pop, line);
+                    } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
+                        try self.emitOp(.op_set_upvalue, line);
+                        try self.emitByte(upvalue_slot, line);
+                        try self.emitOp(.op_pop, line);
+                    } else {
+                        const name_str = self.tree.getString(name_id);
+                        const name_val = try self.vm.allocateString(name_str);
+                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                        self.vm.push(name_val);
+                        const name_idx = try self.makeConstant(name_val);
+                        _ = self.vm.pop();
+
+                        if (self.enclosing == null) {
+                            try self.emitOp(.op_define_global, line);
+                            try self.emitByte(name_idx, line);
+                        } else {
+                            // Automatically hoist to a new local variable
+                            self.addLocal(name_id, @intCast(self.local_count));
+                            try self.emitOp(.op_set_local, line);
+                            try self.emitByte(@intCast(self.local_count - 1), line);
+                            try self.emitOp(.op_pop, line);
+                        }
+                    }
+                }
+
+                // Multiple assignments yield nil to maintain block equilibrium
+                try self.emitOp(.op_nil, line);
+            },
             .class_stmt => {
                 const cs = self.tree.classStmt(node);
                 const name_node = self.tree.getNode(cs.name).?;
@@ -688,6 +740,9 @@ pub const Compiler = struct {
             .op_set_property => {
                 self.simulatePop(2); // Pops value and object
                 self.simulatePush(1); // Assignment yields value
+            },
+            .op_unpack => {
+                self.simulatePop(1);
             },
             else => {},
         }

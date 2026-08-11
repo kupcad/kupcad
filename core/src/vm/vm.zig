@@ -556,6 +556,31 @@ pub const VM = struct {
                         return .ok;
                     }
                 },
+                .op_unpack => {
+                    const count = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+
+                    const val = self.pop();
+                    defer self.releaseValue(val);
+
+                    if (val.isObject() and val.asObj().obj_type == .array) {
+                        const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", val.asObj())));
+                        for (0..count) |i| {
+                            // If the array doesn't have enough items, pad with nil
+                            if (i < arr.items.items.len) {
+                                self.push(arr.items.items[i]);
+                            } else {
+                                self.push(value.Value.initNil());
+                            }
+                        }
+                    } else {
+                        // If it's not an array, assign the value to the first slot, then nil for the rest
+                        self.push(val);
+                        for (1..count) |_| {
+                            self.push(value.Value.initNil());
+                        }
+                    }
+                },
                 .op_class => {
                     const name_idx = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
