@@ -203,6 +203,40 @@ pub const GC = struct {
         return ptr;
     }
 
+    pub fn allocateUpvalue(self: *GC, local_ptr: *value.Value, next_upval: ?*value.ObjUpvalue) !*value.ObjUpvalue {
+        const ptr = try self.allocator.create(value.ObjUpvalue);
+        self.bytes_allocated += @sizeOf(value.ObjUpvalue);
+        ptr.* = .{
+            .obj = .{ .obj_type = .upvalue, .is_marked = false, .next = self.first_object },
+            .location = local_ptr,
+            .closed = value.Value.initNil(),
+            .next = next_upval,
+        };
+        self.first_object = &ptr.obj;
+        return ptr;
+    }
+
+    // --- ARC Deallocators ---
+
+    pub fn freeWorkplane(self: *GC, vm: *VM, wp_obj: *value.ObjWorkplane) void {
+        // Automatically release the reference to the parent 3D geometry
+        const parent_val = value.Value.initGeometry(wp_obj.parent);
+        vm.releaseValue(parent_val);
+        self.allocator.destroy(wp_obj);
+    }
+
+    pub fn freeGeometry(self: *GC, vm: *VM, geom_obj: *value.ObjGeometry) void {
+        if (geom_obj.cached_topology) |cache| {
+            self.allocator.destroy(cache);
+        }
+        if (geom_obj.cached_handle) |handle| {
+            if (vm.host.mesh_destructor) |destructor| {
+                destructor(handle);
+            }
+        }
+        self.allocator.destroy(geom_obj);
+    }
+
     // --- Phase 1: Mark ---
 
     fn markRoots(self: *GC, vm: *VM) void {

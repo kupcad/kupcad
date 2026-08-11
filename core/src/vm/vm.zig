@@ -685,35 +685,16 @@ pub const VM = struct {
             std.debug.assert(geom_obj.ref_count > 0);
             geom_obj.ref_count -= 1;
             if (geom_obj.ref_count == 0) {
-                self.freeGeometry(geom_obj);
+                self.gc.freeGeometry(self, geom_obj);
             }
         } else if (val.isWorkplane()) {
             const wp_obj = val.asWorkplane();
             std.debug.assert(wp_obj.ref_count > 0);
             wp_obj.ref_count -= 1;
             if (wp_obj.ref_count == 0) {
-                self.freeWorkplane(wp_obj);
+                self.gc.freeWorkplane(self, wp_obj);
             }
         }
-    }
-
-    fn freeWorkplane(self: *VM, wp_obj: *value.ObjWorkplane) void {
-        // Automatically release the reference to the parent 3D geometry
-        const parent_val = value.Value.initGeometry(wp_obj.parent);
-        self.releaseValue(parent_val);
-        self.allocator.destroy(wp_obj);
-    }
-
-    fn freeGeometry(self: *VM, geom_obj: *value.ObjGeometry) void {
-        if (geom_obj.cached_topology) |cache| {
-            self.allocator.destroy(cache);
-        }
-        if (geom_obj.cached_handle) |handle| {
-            if (self.host.mesh_destructor) |destructor| {
-                destructor(handle);
-            }
-        }
-        self.allocator.destroy(geom_obj);
     }
 
     pub fn resetStack(self: *VM) void {
@@ -781,17 +762,8 @@ pub const VM = struct {
             return upvalue.?;
         }
 
-        // Otherwise, allocate a new Upvalue
-        const created_upvalue = try self.allocator.create(value.ObjUpvalue);
-        self.gc.bytes_allocated += @sizeOf(value.ObjUpvalue);
-
-        created_upvalue.* = .{
-            .obj = .{ .obj_type = .upvalue, .is_marked = false, .next = self.gc.first_object },
-            .location = local_ptr,
-            .closed = value.Value.initNil(),
-            .next = upvalue,
-        };
-        self.gc.first_object = &created_upvalue.obj;
+        // Delegate allocation and memory tracking entirely to the GC
+        const created_upvalue = try self.gc.allocateUpvalue(local_ptr, upvalue);
 
         if (prev_upvalue == null) {
             self.open_upvalues = created_upvalue;
