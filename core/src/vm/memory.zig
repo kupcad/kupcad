@@ -23,26 +23,26 @@ pub const GC = struct {
     }
 
     /// Allocates an ObjString, registers it with the GC, and duplicates the string payload.
-    pub fn allocateString(self: *GC, chars: []const u8) !*value.ObjString {
-        // Allocate the memory for the wrapper
-        const ptr = try self.allocator.create(value.ObjString);
+    pub fn allocateString(self: *GC, vm: *VM, chars: []const u8) !*value.ObjString {
+        if (vm.strings.get(chars)) |existing| {
+            return existing;
+        }
 
-        // The GC MUST own the string memory, so we duplicate the bytes into a new allocation.
+        const ptr = try self.allocator.create(value.ObjString);
         const owned_chars = try self.allocator.dupe(u8, chars);
 
-        // Track the total memory allocated (Wrapper Struct + String Slice)
         self.bytes_allocated += @sizeOf(value.ObjString) + owned_chars.len;
 
-        // Initialize the Obj header and link it to the GC list
         ptr.obj = .{
             .obj_type = .string,
             .is_marked = false,
             .next = self.first_object,
         };
         self.first_object = &ptr.obj;
-
-        // Set the payload to the GC-owned memory
         ptr.chars = owned_chars;
+
+        // --- NEW: Register in String Table ---
+        try vm.strings.put(self.allocator, ptr.chars, ptr);
 
         return ptr;
     }
@@ -145,10 +145,11 @@ pub const GC = struct {
     }
 
     fn freeObject(self: *GC, vm: *VM, obj: *value.Obj) void {
-        _ = vm;
         switch (obj.obj_type) {
             .string => {
                 const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", obj));
+                _ = vm.strings.remove(str_obj.chars);
+
                 self.allocator.free(str_obj.chars);
                 self.bytes_allocated -= str_obj.chars.len;
                 self.allocator.destroy(str_obj);

@@ -31,6 +31,7 @@ pub const VM = struct {
     frames: std.ArrayListUnmanaged(CallFrame),
     gc: memory.GC,
     globals: std.StringHashMapUnmanaged(value.Value),
+    strings: std.StringHashMapUnmanaged(*value.ObjString),
     host: Host = .{},
     active_kernel: ?*const kernel_mod.GeometryKernel = null,
     dag_builder: dag.DAGBuilder,
@@ -49,6 +50,7 @@ pub const VM = struct {
             .frames = .empty,
             .gc = memory.GC.init(allocator),
             .globals = .empty,
+            .strings = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
         };
     }
@@ -59,6 +61,7 @@ pub const VM = struct {
         self.dag_builder.deinit();
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
+        self.strings.deinit(self.allocator);
         self.frames.deinit(self.allocator);
     }
 
@@ -271,7 +274,7 @@ pub const VM = struct {
         if (self.gc.bytes_allocated > self.gc.next_gc_threshold) {
             self.gc.collectGarbage(self, false);
         }
-        const str_obj = try self.gc.allocateString(chars);
+        const str_obj = try self.gc.allocateString(self, chars);
         return value.Value.initObj(&str_obj.obj);
     }
 
