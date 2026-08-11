@@ -68,26 +68,26 @@ pub const VM = struct {
 
     // --- Dynamic Stack Operations ---
 
-    pub inline fn push(self: *VM, val: value.Value) void {
+    pub fn push(self: *VM, val: value.Value) void {
         std.debug.assert(self.stack_top < self.stack.len);
         self.retainValue(val);
         self.stack.ptr[self.stack_top] = val;
         self.stack_top += 1;
     }
 
-    pub inline fn pop(self: *VM) value.Value {
+    pub fn pop(self: *VM) value.Value {
         std.debug.assert(self.stack_top > 0);
         self.stack_top -= 1;
         return self.stack[self.stack_top];
     }
 
-    pub inline fn getLocal(self: *VM, frame: *const CallFrame, slot_index: usize) value.Value {
+    pub fn getLocal(self: *VM, frame: *const CallFrame, slot_index: usize) value.Value {
         const absolute_slot = frame.base_slot + slot_index;
         std.debug.assert(absolute_slot < self.stack_top);
         return self.stack[absolute_slot];
     }
 
-    pub inline fn setLocal(self: *VM, frame: *const CallFrame, slot_index: usize, val: value.Value) void {
+    pub fn setLocal(self: *VM, frame: *const CallFrame, slot_index: usize, val: value.Value) void {
         const absolute_slot = frame.base_slot + slot_index;
         std.debug.assert(absolute_slot < self.stack_top);
         self.retainValue(val);
@@ -226,6 +226,98 @@ pub const VM = struct {
                         self.push(val);
                     } else {
                         std.log.err("Runtime Error: Undefined variable '{s}'\n", .{str_obj.chars});
+                        return .runtime_error;
+                    }
+                },
+                .op_get_index => {
+                    const index = self.pop();
+                    defer self.releaseValue(index);
+                    const target = self.pop();
+                    defer self.releaseValue(target);
+
+                    if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
+                        const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
+                        const idx = @as(usize, @intFromFloat(index.asNumber()));
+                        if (idx >= arr.items.items.len) {
+                            std.log.err("Runtime Error: Array index out of bounds.\n", .{});
+                            return .runtime_error;
+                        }
+                        self.push(arr.items.items[idx]);
+                    } else if (target.isObject() and target.asObj().obj_type == .map) {
+                        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
+                        var found = false;
+                        for (map.keys.items, 0..) |k, i| {
+                            if (k.isNumber() and index.isNumber() and k.asNumber() == index.asNumber()) {
+                                self.push(map.values.items[i]);
+                                found = true;
+                                break;
+                            } else if (k.isObject() and k.asObj().obj_type == .string and index.isObject() and index.asObj().obj_type == .string) {
+                                const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj())));
+                                const idx_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", index.asObj())));
+                                if (std.mem.eql(u8, k_str.chars, idx_str.chars)) {
+                                    self.push(map.values.items[i]);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!found) self.push(value.Value.initNil());
+                    } else {
+                        std.log.err("Runtime Error: Cannot index target.\n", .{});
+                        return .runtime_error;
+                    }
+                },
+                .op_set_index => {
+                    const val = self.pop();
+                    const index = self.pop();
+                    defer self.releaseValue(index);
+                    const target = self.pop();
+                    defer self.releaseValue(target);
+
+                    if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
+                        const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
+                        const idx = @as(usize, @intFromFloat(index.asNumber()));
+                        if (idx >= arr.items.items.len) {
+                            std.log.err("Runtime Error: Array index out of bounds.\n", .{});
+                            return .runtime_error;
+                        }
+                        // ARC: Safely release the old value before overwriting it
+                        self.releaseValue(arr.items.items[idx]);
+                        self.retainValue(val);
+
+                        arr.items.items[idx] = val;
+                        self.push(val);
+                    } else if (target.isObject() and target.asObj().obj_type == .map) {
+                        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
+                        var found = false;
+                        for (map.keys.items, 0..) |k, i| {
+                            const is_num_match = k.isNumber() and index.isNumber() and k.asNumber() == index.asNumber();
+                            var is_str_match = false;
+
+                            if (k.isObject() and k.asObj().obj_type == .string and index.isObject() and index.asObj().obj_type == .string) {
+                                const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj())));
+                                const idx_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", index.asObj())));
+                                is_str_match = std.mem.eql(u8, k_str.chars, idx_str.chars);
+                            }
+
+                            if (is_num_match or is_str_match) {
+                                self.releaseValue(map.values.items[i]);
+                                self.retainValue(val);
+                                map.values.items[i] = val;
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            // If key doesn't exist, append it
+                            self.retainValue(index);
+                            self.retainValue(val);
+                            map.keys.append(self.allocator, index) catch return .runtime_error;
+                            map.values.append(self.allocator, val) catch return .runtime_error;
+                        }
+                        self.push(val);
+                    } else {
+                        std.log.err("Runtime Error: Cannot assign to index on target.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -493,7 +585,7 @@ pub const VM = struct {
 
     // --- ARC Helpers ---
 
-    pub inline fn retainValue(self: *VM, val: value.Value) void {
+    pub fn retainValue(self: *VM, val: value.Value) void {
         _ = self;
         if (val.isGeometry()) {
             val.asGeometry().ref_count += 1;
@@ -502,7 +594,7 @@ pub const VM = struct {
         }
     }
 
-    pub inline fn releaseValue(self: *VM, val: value.Value) void {
+    pub fn releaseValue(self: *VM, val: value.Value) void {
         if (val.isGeometry()) {
             const geom_obj = val.asGeometry();
             std.debug.assert(geom_obj.ref_count > 0);

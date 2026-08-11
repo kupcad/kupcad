@@ -277,6 +277,24 @@ pub const Compiler = struct {
                     self.simulatePush(1);
                 }
             },
+            .index_access => {
+                const ia = self.tree.indexAccess(node);
+                try self.compileNode(ia.target);
+                try self.compileNode(ia.index);
+                try self.emitOp(.op_get_index, line);
+            },
+            .index_assignment => {
+                const ia = self.tree.indexAssignment(node);
+
+                // Note: Compound assignments (arr[0] += 5) will be fully wired up in Phase 4.
+                // For now, we only compile simple assignments (arr[0] = 5).
+                if (ia.op != null) return error.UnknownNode;
+
+                try self.compileNode(ia.target);
+                try self.compileNode(ia.index);
+                try self.compileNode(ia.value);
+                try self.emitOp(.op_set_index, line);
+            },
             .method_call => {
                 const mc = self.tree.methodCall(node);
                 const func_name = self.tree.getString(mc.method_name);
@@ -457,6 +475,14 @@ pub const Compiler = struct {
             .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater => {
                 self.simulatePop(2);
                 self.simulatePush(1);
+            },
+            .op_get_index => {
+                self.simulatePop(2);
+                self.simulatePush(1);
+            },
+            .op_set_index => {
+                self.simulatePop(3);
+                self.simulatePush(1); // Assignment yields the assigned value
             },
             .op_negate, .op_not => {
                 self.simulatePop(1);
