@@ -292,8 +292,28 @@ pub const VM = struct {
                 .concrete => |h| h,
             },
             .cached_bbox = null,
+            .cached_topology = null,
         };
         return value.Value.initGeometry(ptr);
+    }
+
+    pub fn allocateWorkplane(self: *VM, parent: *value.ObjGeometry, origin: [3]f64, normal: [3]f64) !value.Value {
+        const ptr = try self.allocator.create(value.ObjWorkplane);
+        ptr.* = .{
+            .obj = .{
+                .obj_type = .workplane,
+                .is_marked = false,
+                .next = null,
+            },
+            .ref_count = 1,
+            .parent = parent,
+            .origin = origin,
+            .normal = normal,
+        };
+        // Retain the parent! If the user drops the 'box' variable but keeps the
+        // workplane active, the 3D geometry stays alive!
+        parent.ref_count += 1;
+        return value.Value.initWorkplane(ptr);
     }
 
     pub fn defineNative(self: *VM, name: []const u8, function: value.NativeFn) !void {
@@ -312,6 +332,8 @@ pub const VM = struct {
         _ = self;
         if (val.isGeometry()) {
             val.asGeometry().ref_count += 1;
+        } else if (val.isWorkplane()) {
+            val.asWorkplane().ref_count += 1;
         }
     }
 
@@ -323,10 +345,27 @@ pub const VM = struct {
             if (geom_obj.ref_count == 0) {
                 self.freeGeometry(geom_obj);
             }
+        } else if (val.isWorkplane()) {
+            const wp_obj = val.asWorkplane();
+            std.debug.assert(wp_obj.ref_count > 0);
+            wp_obj.ref_count -= 1;
+            if (wp_obj.ref_count == 0) {
+                self.freeWorkplane(wp_obj);
+            }
         }
     }
 
+    fn freeWorkplane(self: *VM, wp_obj: *value.ObjWorkplane) void {
+        // Automatically release the reference to the parent 3D geometry
+        const parent_val = value.Value.initGeometry(wp_obj.parent);
+        self.releaseValue(parent_val);
+        self.allocator.destroy(wp_obj);
+    }
+
     fn freeGeometry(self: *VM, geom_obj: *value.ObjGeometry) void {
+        if (geom_obj.cached_topology) |cache| {
+            self.allocator.destroy(cache);
+        }
         if (geom_obj.cached_handle) |handle| {
             if (self.host.mesh_destructor) |destructor| {
                 destructor(handle);

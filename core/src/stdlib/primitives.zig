@@ -22,6 +22,7 @@ pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
         .dag_idx = dag_idx,
         .cached_handle = null,
         .cached_bbox = null,
+        .cached_topology = null,
     };
 
     return value.Value.initGeometry(ptr);

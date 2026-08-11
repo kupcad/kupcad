@@ -2,7 +2,6 @@ const std = @import("std");
 
 pub const EngineType = enum {
     manifold,
-    occt,
     brep_native,
 };
 
@@ -10,4 +9,30 @@ pub const EngineType = enum {
 pub const GeometryHandle = struct {
     engine: EngineType,
     ptr: *anyopaque,
+};
+
+pub const BoundingBox = struct {
+    min: [3]f64,
+    max: [3]f64,
+};
+
+pub const FaceFilter = enum {
+    top,
+    bottom,
+    front,
+    back,
+    left,
+    right,
+    custom,
+};
+
+pub const FaceHandle = struct {
+    index: u32,
+    normal: [3]f64,
+    centroid: [3]f64,
+};
+
+pub const FaceArray = struct {
+    ptr: [*]FaceHandle,
+    len: usize,
 };

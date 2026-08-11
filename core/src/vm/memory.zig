@@ -166,7 +166,7 @@ pub const GC = struct {
                 self.allocator.destroy(brep_obj); // Free the wrapper
                 self.bytes_allocated -= @sizeOf(value.ObjBrep);
             },
-            .array, .geometry => {
+            .array, .geometry, .workplane => {
                 // Ignored by tracing GC. Managed via ARC or not implemented yet.
             },
         }

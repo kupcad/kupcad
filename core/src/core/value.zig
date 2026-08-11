@@ -18,6 +18,7 @@ pub const ObjType = enum {
     native,
     brep,
     geometry,
+    workplane,
     array, // Added to satisfy memory.zig sweep
 };
 
@@ -57,6 +58,19 @@ pub const BBox = struct {
     max_z: f64,
 };
 
+pub const TopologyCache = struct {
+    is_populated: bool,
+    // Future: HashMap mapping FaceFilters to cached FaceHandles
+};
+
+pub const ObjWorkplane = struct {
+    obj: Obj,
+    ref_count: u32,
+    parent: *ObjGeometry,
+    origin: [3]f64,
+    normal: [3]f64,
+};
+
 /// The Hybrid ARC-managed Geometry Object.
 pub const ObjGeometry = struct {
     obj: Obj, // Must be first field for safe casting
@@ -69,6 +83,7 @@ pub const ObjGeometry = struct {
     // Optional memoized properties populated via JIT evaluation
     cached_handle: ?geom.GeometryHandle = null,
     cached_bbox: ?BBox = null,
+    cached_topology: ?*TopologyCache,
 
     pub fn isConcrete(self: *const ObjGeometry) bool {
         return self.cached_handle != null;
@@ -130,6 +145,10 @@ pub const Value = extern struct {
         return .{ .tag = .object, .payload = .{ .obj = &ptr.obj } };
     }
 
+    pub inline fn initWorkplane(ptr: *ObjWorkplane) Value {
+        return initObj(&ptr.obj);
+    }
+
     // --- Type Checkers ---
 
     pub inline fn isNumber(self: Value) bool {
@@ -168,6 +187,10 @@ pub const Value = extern struct {
         return self.isObject() and self.asObj().obj_type == .geometry;
     }
 
+    pub inline fn isWorkplane(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .workplane;
+    }
+
     // --- Safe Accessors (with safety assertions) ---
 
     pub inline fn asNumber(self: Value) f64 {
@@ -203,6 +226,10 @@ pub const Value = extern struct {
 
     pub inline fn asGeometry(self: Value) *ObjGeometry {
         std.debug.assert(self.isGeometry());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asWorkplane(self: Value) *ObjWorkplane {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 

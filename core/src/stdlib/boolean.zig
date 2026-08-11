@@ -35,6 +35,7 @@ pub fn csgBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Valu
         .dag_idx = result_idx,
         .cached_handle = null,
         .cached_bbox = null,
+        .cached_topology = null,
     };
 
     return value.Value.initGeometry(ptr);

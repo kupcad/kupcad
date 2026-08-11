@@ -28,6 +28,17 @@ fn transformImpl(a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle {
     return null;
 }
 
+fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
+    _ = handle;
+    return null;
+}
+
+fn queryFacesImpl(handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
+    _ = handle;
+    _ = filter;
+    return null;
+}
+
 fn destructImpl(handle: geom.GeometryHandle) void {
     std.debug.assert(handle.engine == .manifold);
     manifold.destruct(@ptrCast(@alignCast(handle.ptr)));
@@ -37,5 +48,7 @@ pub const driver = kernel.GeometryKernel{
     .cubeFn = cubeImpl,
     .booleanFn = booleanImpl,
     .transformFn = transformImpl,
+    .boundingBoxFn = boundingBoxImpl,
+    .queryFacesFn = queryFacesImpl,
     .destructFn = destructImpl,
 };
