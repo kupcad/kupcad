@@ -21,6 +21,12 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
     return null;
 }
 
+fn transformImpl(a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle {
+    _ = a;
+    _ = matrix;
+    return null;
+}
+
 fn destructImpl(handle: geom.GeometryHandle) void {
     std.debug.assert(handle.engine == .brep_native);
     _ = handle;
@@ -29,5 +35,6 @@ fn destructImpl(handle: geom.GeometryHandle) void {
 pub const driver = kernel.GeometryKernel{
     .cubeFn = cubeImpl,
     .booleanFn = booleanImpl,
+    .transformFn = transformImpl,
     .destructFn = destructImpl,
 };

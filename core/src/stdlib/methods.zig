@@ -4,22 +4,34 @@ const VM = @import("../vm/vm.zig").VM;
 const manifest = @import("manifest.zig");
 
 pub fn cadInvokeHandler(vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm;
-    _ = arg_count;
-    _ = args;
-
-    if (!receiver.isMesh()) {
-        std.log.err("Runtime Error: Methods can only be called on Mesh objects.\n", .{});
+    if (!receiver.isGeometry()) {
+        std.log.err("Runtime Error: Methods can only be called on Geometry objects.\n", .{});
         return error.RuntimeError;
     }
 
-    // Phase 1 Mock: Accept transform methods dynamically mapped in our manifest
+    // JIT Materialization Triggers (Introspection)
+    if (std.mem.eql(u8, method_name, "bbox") or std.mem.eql(u8, method_name, "volume") or std.mem.eql(u8, method_name, "on_face")) {
+        _ = try vm.ensureConcrete(receiver);
+        return value.Value.initNil();
+    }
+
+    // Lazy Transforms (Appends to DAG, returns new symbolic node)
+    if (std.mem.eql(u8, method_name, "translate")) {
+        const x = if (arg_count > 0) args[0].asNumber() else 0.0;
+        const y = if (arg_count > 1) args[1].asNumber() else 0.0;
+        const z = if (arg_count > 2) args[2].asNumber() else 0.0;
+        const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, x, y, z);
+        return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    }
+
+    // Mock: Accept transform methods dynamically mapped in our manifest
     inline for (manifest.mesh_methods) |method| {
         if (std.mem.eql(u8, method_name, method.name)) {
-            return receiver; // Return the mutated mesh
+            vm.retainValue(receiver);
+            return receiver;
         }
     }
 
-    std.log.err("Runtime Error: Unknown method '{s}' on Mesh object.\n", .{method_name});
+    std.log.err("Runtime Error: Unknown method '{s}' on Geometry object.\n", .{method_name});
     return error.RuntimeError;
 }

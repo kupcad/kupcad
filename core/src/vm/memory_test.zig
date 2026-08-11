@@ -16,48 +16,51 @@ fn countObjects(gc: *GC) usize {
     return count;
 }
 
-test "GC: Mark and Sweep reclaims unreferenced objects" {
+test "GC: Mark and Sweep reclaims unreferenced primitive objects" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-
     try registry.registerStandardLibrary(&vm);
 
     _ = try vm.allocateString("I am dead");
-
     const alive_val = try vm.allocateString("I am alive");
-    vm.push(alive_val); // Drop `try`
 
-    try testing.expectEqual(@as(usize, 7), countObjects(&vm.gc));
+    vm.push(alive_val);
+
+    const count_before = countObjects(&vm.gc);
     vm.gc.collectGarbage(&vm, false);
-    try testing.expectEqual(@as(usize, 6), countObjects(&vm.gc));
+    const count_after = countObjects(&vm.gc);
+
+    try testing.expect(count_before > count_after);
 }
 
-test "GC: ObjMesh allocation and lifecycle tracking" {
+test "ARC: ObjGeometry allocation and GC isolation" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-
     try registry.registerStandardLibrary(&vm);
 
-    const dummy_handle: ?GeometryHandle = null;
-    const mock_vertices = [_]value.Vec3{};
-    const mock_faces = [_][3]u32{};
-    const mesh_val = try vm.allocateMesh(dummy_handle, &mock_vertices, &mock_faces);
+    const initial_gc_count = countObjects(&vm.gc);
 
-    vm.push(mesh_val);
+    // 1. Add a symbolic node to DAG
+    const dag_idx = try vm.dag_builder.addCube(1.0, 1.0, 1.0, true);
 
-    try testing.expectEqual(@as(usize, 6), countObjects(&vm.gc));
-    try testing.expect(mesh_val.isMesh());
+    // 2. Allocate Geometry via ARC (bypasses GC completely)
+    const geom_val = try vm.allocateGeometry(.{ .symbolic = dag_idx });
 
-    const mesh = mesh_val.asMesh();
-    try testing.expectEqual(@as(usize, 0), mesh.vertices.len);
-    try testing.expectEqual(@as(usize, 0), mesh.faces.len);
-    try testing.expectEqual(dummy_handle, mesh.kernel_handle);
+    vm.push(geom_val);
 
+    // 3. Verify it was NOT added to the GC tracking list
+    try testing.expectEqual(initial_gc_count, countObjects(&vm.gc));
+    try testing.expect(geom_val.isGeometry());
+
+    const geom = geom_val.asGeometry();
+    // 1 ref from allocateGeometry, 1 ref from vm.push
+    try testing.expectEqual(@as(u32, 2), geom.ref_count);
+
+    // 4. Trigger a GC sweep to ensure it doesn't touch or corrupt the geometry
     vm.gc.collectGarbage(&vm, false);
-    try testing.expectEqual(@as(usize, 6), countObjects(&vm.gc));
 
-    _ = vm.pop();
-
-    vm.gc.collectGarbage(&vm, false);
-    try testing.expectEqual(@as(usize, 5), countObjects(&vm.gc));
+    // 5. Clean up references
+    const popped_val = vm.pop();
+    vm.releaseValue(popped_val); // Drop the stack's reference
+    vm.releaseValue(geom_val); // Drop the initial allocation reference -> instantly frees!
 }

@@ -12,15 +12,20 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
     std.debug.assert(a.engine == .manifold and b.engine == .manifold);
     const m1: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
     const m2: *manifold.ManifoldObj = @ptrCast(@alignCast(b.ptr));
-
     const m_op = switch (op) {
         .union_op => manifold.OpType.add,
         .difference_op => manifold.OpType.subtract,
         .intersection_op => manifold.OpType.intersect,
     };
-
     const ptr = manifold.boolean(m1, m2, m_op) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn transformImpl(a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle {
+    _ = a;
+    _ = matrix;
+    // TODO: Manifold transform implementation
+    return null;
 }
 
 fn destructImpl(handle: geom.GeometryHandle) void {
@@ -31,5 +36,6 @@ fn destructImpl(handle: geom.GeometryHandle) void {
 pub const driver = kernel.GeometryKernel{
     .cubeFn = cubeImpl,
     .booleanFn = booleanImpl,
+    .transformFn = transformImpl,
     .destructFn = destructImpl,
 };

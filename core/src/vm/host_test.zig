@@ -30,23 +30,27 @@ test "Host Interface: GC correctly passes GeometryHandle value to host.mesh_dest
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-
     vm.host.mesh_destructor = mockMeshDestructor;
 
     const test_ptr = @as(*anyopaque, @ptrFromInt(0xDEADBEEF));
     const handle = GeometryHandle{ .engine = .manifold, .ptr = test_ptr };
 
-    // Allocate mesh on VM heap
-    const mesh_val = try vm.allocateMesh(handle, &[_]value.Vec3{}, &[_][3]u32{});
+    // Allocate mesh on VM heap (ref_count = 1)
+    const mesh_val = try vm.allocateGeometry(.{ .concrete = handle });
 
-    // Push and pop to make it unreachable by GC
+    // Push (ref_count = 2)
     vm.push(mesh_val);
-    _ = vm.pop();
 
-    // Trigger sweep
+    // Pop transfers ownership. We must release it! (ref_count drops back to 1)
+    const popped_val = vm.pop();
+    vm.releaseValue(popped_val);
+
+    // Trigger sweep (no longer touches ARC objects, but retained for test parity)
     vm.gc.collectGarbage(&vm, false);
 
-    // Verify callback received the exact value-copied GeometryHandle
+    // Explicitly release the initial reference to trigger instant ARC destruct (ref_count = 0)
+    vm.releaseValue(mesh_val);
+
     try testing.expect(mock_destructor_called);
     try testing.expectEqual(.manifold, mock_last_destroyed_handle.?.engine);
     try testing.expectEqual(test_ptr, mock_last_destroyed_handle.?.ptr);
@@ -57,15 +61,17 @@ test "Host Interface: binary_handler intercepts custom operator overloading" {
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-
     vm.host.binary_handler = mockBinaryHandler;
 
     // Create execution chunk: push two meshes, perform '+'
     var test_chunk = chunk.Chunk.init();
     defer test_chunk.free(testing.allocator);
 
-    const dummy_mesh1 = try vm.allocateMesh(null, &[_]value.Vec3{}, &[_][3]u32{});
-    const dummy_mesh2 = try vm.allocateMesh(null, &[_]value.Vec3{}, &[_][3]u32{});
+    const dag1 = try vm.dag_builder.addCube(1.0, 1.0, 1.0, true);
+    const dag2 = try vm.dag_builder.addCube(1.0, 1.0, 1.0, true);
+
+    const dummy_mesh1 = try vm.allocateGeometry(.{ .symbolic = dag1 });
+    const dummy_mesh2 = try vm.allocateGeometry(.{ .symbolic = dag2 });
 
     const idx1 = try test_chunk.addConstant(testing.allocator, dummy_mesh1);
     const idx2 = try test_chunk.addConstant(testing.allocator, dummy_mesh2);
@@ -76,11 +82,15 @@ test "Host Interface: binary_handler intercepts custom operator overloading" {
     try test_chunk.write(testing.allocator, idx2, 1);
     try test_chunk.writeOp(testing.allocator, .op_add, 1);
     try test_chunk.writeOp(testing.allocator, .op_return, 1);
+
     test_chunk.max_stack_slots = 4;
 
     const result = vm.interpret(&test_chunk);
-
     try testing.expectEqual(.ok, result);
     try testing.expect(mock_binary_called);
     try testing.expect(vm.stack[0].isString());
+
+    // Clean up the mock constants explicitly because chunk.free() does not release ARC values
+    vm.releaseValue(dummy_mesh1);
+    vm.releaseValue(dummy_mesh2);
 }

@@ -1,11 +1,9 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const topology = @import("../../kernel/engines/brep/topology.zig");
 
 pub fn nativeImportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
     if (arg_count != 1 or !args[0].isString()) {
         std.log.err("import_step expects 1 argument (filename string)\n", .{});
         return error.RuntimeError;
@@ -14,28 +12,30 @@ pub fn nativeImportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     const filename = args[0].asString();
     std.log.info("Mocking STEP import for file: {s}...", .{filename});
 
-    // TODO: Actually parse the STEP file here and build a Brep
+    // Allocate an empty stub B-Rep GeometryHandle in the VM ARC manager
+    const mock_handle = @as(*anyopaque, @ptrFromInt(0xDEADBEEF));
 
-    // For now, allocate an empty stub B-Rep in the VM Garbage Collector
-    const empty_brep = try vm.allocator.create(topology.Brep);
-    empty_brep.* = topology.Brep.initEmpty(vm.allocator);
-
-    return try vm.allocateBrep(empty_brep);
+    // We return the Geometry Value directly. No more topology.Brep needed!
+    return try vm.allocateGeometry(.{ .concrete = .{ .engine = .brep_native, .ptr = mock_handle } });
 }
 
 pub fn nativeExportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    _ = vm; // Ignore unused variable
 
-    if (arg_count != 2 or !args[0].isString() or !args[1].isBrep()) {
-        std.log.err("export_step expects 2 arguments (filename string, Brep object)\n", .{});
+    // Updated isBrep() to isGeometry()
+    if (arg_count != 2 or !args[0].isString() or !args[1].isGeometry()) {
+        std.log.err("export_step expects 2 arguments (filename string, geometry object)\n", .{});
         return error.RuntimeError;
     }
 
     const filename = args[0].asString();
     std.log.info("Mocking STEP export to file: {s}...", .{filename});
 
-    // TODO: Write the B-Rep data to a STEP ASCII file format
+    // Force JIT materialization to guarantee physical C++ geometry exists
+    _ = try vm.ensureConcrete(args[1]);
 
-    return args[1]; // Return the Brep object for method chaining
+    // Return the unmodified geometry value to allow fluent method chaining
+    // Retain it to grant +1 ownership to the VM loop
+    vm.retainValue(args[1]);
+    return args[1];
 }

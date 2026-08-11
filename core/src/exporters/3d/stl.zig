@@ -27,35 +27,53 @@ pub fn nativeImportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
     };
     defer stl_data.deinit(vm.allocator);
 
-    // Allocate the Mesh on the VM heap with a null kernel handle but populated geometry.
-    return try vm.allocateMesh(null, stl_data.vertices, stl_data.faces);
+    // TODO: Pass stl_data.vertices and stl_data.faces to the active Geometry Kernel
+    // to construct a native C++ Manifold/OCCT mesh handle.
+    // For now, we mock the handle creation.
+    const mock_handle = @as(*anyopaque, @ptrFromInt(0xDEADBEEF));
+
+    // Allocate the Geometry on the VM using ARC (bypassing the Mark-and-Sweep GC).
+    // Since this is an imported physical file, it bypasses the Symbolic DAG and
+    // initializes directly in the `.concrete` state
+    return try vm.allocateGeometry(.{ .concrete = .{ .engine = .manifold, .ptr = mock_handle } });
 }
 
 pub fn nativeExportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const self: *VM = @ptrCast(@alignCast(vm_opaque));
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
 
     if (arg_count != 2) {
-        std.log.err("export_stl expects exactly 2 arguments (filename, mesh)\n", .{});
+        std.log.err("export_stl expects exactly 2 arguments (filename, geometry)\n", .{});
         return error.RuntimeError;
     }
 
-    if (!args[0].isString() or !args[1].isMesh()) {
-        std.log.err("export_stl arguments must be (String, Mesh)\n", .{});
+    // Updated to use the new isGeometry() type checker instead of isMesh()
+    if (!args[0].isString() or !args[1].isGeometry()) {
+        std.log.err("export_stl arguments must be (String, Geometry)\n", .{});
         return error.RuntimeError;
     }
 
     const filename = args[0].asString();
-    const mesh = args[1].asMesh();
 
-    var out: std.Io.Writer.Allocating = .init(self.allocator);
+    // JIT MATERIALIZATION TRIGGER:
+    // Force the VM to traverse the DAG subgraph and evaluate it into a physical
+    // C++ Mesh Handle before we attempt to write it to disk
+    _ = try vm.ensureConcrete(args[1]);
+
+    std.log.info("Exporting evaluated geometry to '{s}'...\n", .{filename});
+
+    var out: std.Io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
 
-    stl_format.write(mesh, &out.writer) catch |err| {
-        std.log.err("Error writing to STL buffer: {}\n", .{err});
-        return error.RuntimeError;
-    };
+    // TODO: Extract the raw vertices and faces from the concrete `kernel_handle`
+    // using the active C++ Kernel driver (e.g., manifold_get_meshgl), then pass
+    // that physical geometry data to stl_format.write().
+    //
+    // stl_format.write(extracted_mesh_data, &out.writer) catch |err| {
+    //     std.log.err("Error writing to STL buffer: {}\n", .{err});
+    //     return error.RuntimeError;
+    // };
 
-    self.cwd.writeFile(self.io, .{
+    vm.cwd.writeFile(vm.io, .{
         .sub_path = filename,
         .data = out.written(),
     }) catch |err| {
@@ -63,5 +81,8 @@ pub fn nativeExportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
         return error.RuntimeError;
     };
 
-    return args[1]; // Return the mesh to allow method chaining
+    // Return the unmodified geometry value to allow fluent method chaining
+    // Retain it to grant +1 ownership to the VM loop
+    vm.retainValue(args[1]);
+    return args[1];
 }

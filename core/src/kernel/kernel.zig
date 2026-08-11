@@ -10,6 +10,7 @@ pub const BooleanOp = enum {
 pub const GeometryKernel = struct {
     cubeFn: *const fn (x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle,
     booleanFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle,
+    transformFn: *const fn (a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle,
     destructFn: *const fn (handle: geom.GeometryHandle) void,
 
     pub inline fn cube(self: *const GeometryKernel, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {

@@ -5,41 +5,24 @@ const VM = @import("../vm/vm.zig").VM;
 pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     _ = args;
-    const self: *VM = @ptrCast(@alignCast(vm_opaque));
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
 
-    // Safety check: ensure a kernel is loaded
-    const kernel = self.active_kernel orelse {
-        std.log.err("Runtime Error: No geometry kernel active\n", .{});
-        return error.RuntimeError;
-    };
-    // A standard 1x1x1 cube centered at the origin
-    const vertices = [_]value.Vec3{
-        .{ .x = -0.5, .y = -0.5, .z = -0.5 }, // 0: left, front, bottom
-        .{ .x = 0.5, .y = -0.5, .z = -0.5 }, // 1: right, front, bottom
-        .{ .x = 0.5, .y = 0.5, .z = -0.5 }, // 2: right, back, bottom
-        .{ .x = -0.5, .y = 0.5, .z = -0.5 }, // 3: left, back, bottom
-        .{ .x = -0.5, .y = -0.5, .z = 0.5 }, // 4: left, front, top
-        .{ .x = 0.5, .y = -0.5, .z = 0.5 }, // 5: right, front, top
-        .{ .x = 0.5, .y = 0.5, .z = 0.5 }, // 6: right, back, top
-        .{ .x = -0.5, .y = 0.5, .z = 0.5 }, // 7: left, back, top
-    };
+    // Fast $O(1)$ Arena append. No C++ kernel invoked
+    const dag_idx = try vm.dag_builder.addCube(1.0, 1.0, 1.0, true);
 
-    // Note: Triangles must be wound counter-clockwise (CCW) to face outwards
-    const faces = [_][3]u32{
-        // Bottom
-        .{ 0, 2, 1 }, .{ 0, 3, 2 },
-        // Top
-        .{ 4, 5, 6 }, .{ 4, 6, 7 },
-        // Front
-        .{ 0, 1, 5 }, .{ 0, 5, 4 },
-        // Right
-        .{ 1, 2, 6 }, .{ 1, 6, 5 },
-        // Back
-        .{ 2, 3, 7 }, .{ 2, 7, 6 },
-        // Left
-        .{ 3, 0, 4 }, .{ 3, 4, 7 },
+    // Create the geometry wrapper
+    const ptr = try vm.allocator.create(value.ObjGeometry);
+    ptr.* = .{
+        .obj = .{
+            .obj_type = .geometry,
+            .is_marked = false,
+            .next = null, // Leaves this out of the GC tracking loop
+        },
+        .ref_count = 1,
+        .dag_idx = dag_idx,
+        .cached_handle = null,
+        .cached_bbox = null,
     };
 
-    const handle = kernel.cube(1.0, 1.0, 1.0, true);
-    return self.allocateMesh(handle, &vertices, &faces);
+    return value.Value.initGeometry(ptr);
 }
