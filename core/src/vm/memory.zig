@@ -23,47 +23,6 @@ pub const GC = struct {
         };
     }
 
-    /// Allocates an ObjString, registers it with the GC, and duplicates the string payload.
-    pub fn allocateString(self: *GC, vm: *VM, chars: []const u8) !*value.ObjString {
-        if (vm.strings.get(chars)) |existing| {
-            return existing;
-        }
-
-        const ptr = try self.allocator.create(value.ObjString);
-        const owned_chars = try self.allocator.dupe(u8, chars);
-
-        self.bytes_allocated += @sizeOf(value.ObjString) + owned_chars.len;
-
-        ptr.obj = .{
-            .obj_type = .string,
-            .is_marked = false,
-            .next = self.first_object,
-        };
-        self.first_object = &ptr.obj;
-        ptr.chars = owned_chars;
-
-        // --- NEW: Register in String Table ---
-        try vm.strings.put(self.allocator, ptr.chars, ptr);
-
-        return ptr;
-    }
-
-    /// Allocates an ObjNative, registering it with the GC.
-    pub fn allocateNative(self: *GC, function: value.NativeFn) !*value.ObjNative {
-        const ptr = try self.allocator.create(value.ObjNative);
-        self.bytes_allocated += @sizeOf(value.ObjNative);
-
-        ptr.obj = .{
-            .obj_type = .native,
-            .is_marked = false,
-            .next = self.first_object,
-        };
-        self.first_object = &ptr.obj;
-        ptr.function = function;
-
-        return ptr;
-    }
-
     /// The main entry point for the Garbage Collector
     pub fn collectGarbage(self: *GC, vm: *VM, force_full: bool) void {
         // std.debug.print("-- GC Begin --\n", .{});
@@ -178,6 +137,69 @@ pub const GC = struct {
         self.first_object = &ptr.obj;
         ptr.receiver = receiver;
         ptr.method = method;
+        return ptr;
+    }
+
+    /// Allocates an ObjString, registers it with the GC, and duplicates the string payload.
+    pub fn allocateString(self: *GC, vm: *VM, chars: []const u8) !*value.ObjString {
+        if (vm.strings.get(chars)) |existing| return existing;
+
+        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false); // Moved from VM
+
+        const ptr = try self.allocator.create(value.ObjString);
+        const owned_chars = try self.allocator.dupe(u8, chars);
+        self.bytes_allocated += @sizeOf(value.ObjString) + owned_chars.len;
+        ptr.obj = .{ .obj_type = .string, .is_marked = false, .next = self.first_object };
+        self.first_object = &ptr.obj;
+        ptr.chars = owned_chars;
+
+        try vm.strings.put(self.allocator, ptr.chars, ptr);
+        return ptr;
+    }
+
+    /// Allocates an ObjNative, registering it with the GC.
+    pub fn allocateNative(self: *GC, vm: *VM, function: value.NativeFn) !*value.ObjNative {
+        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false); // Added GC check
+
+        const ptr = try self.allocator.create(value.ObjNative);
+        self.bytes_allocated += @sizeOf(value.ObjNative);
+        ptr.obj = .{ .obj_type = .native, .is_marked = false, .next = self.first_object };
+        self.first_object = &ptr.obj;
+        ptr.function = function;
+        return ptr;
+    }
+
+    // --- ARC Allocators (Bypasses GC Tracking) ---
+
+    pub fn allocateGeometry(self: *GC, state: value.GeometryState) !*value.ObjGeometry {
+        const ptr = try self.allocator.create(value.ObjGeometry);
+        ptr.* = .{
+            .obj = .{ .obj_type = .geometry, .is_marked = false, .next = null }, // Not in GC list
+            .ref_count = 1,
+            .dag_idx = switch (state) {
+                .symbolic => |idx| idx,
+                .concrete => 0,
+            },
+            .cached_handle = switch (state) {
+                .symbolic => null,
+                .concrete => |h| h,
+            },
+            .cached_bbox = null,
+            .cached_topology = null,
+        };
+        return ptr;
+    }
+
+    pub fn allocateWorkplane(self: *GC, parent: *value.ObjGeometry, origin: [3]f64, normal: [3]f64) !*value.ObjWorkplane {
+        const ptr = try self.allocator.create(value.ObjWorkplane);
+        ptr.* = .{
+            .obj = .{ .obj_type = .workplane, .is_marked = false, .next = null },
+            .ref_count = 1,
+            .parent = parent,
+            .origin = origin,
+            .normal = normal,
+        };
+        parent.ref_count += 1;
         return ptr;
     }
 

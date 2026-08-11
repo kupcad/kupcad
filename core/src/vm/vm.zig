@@ -642,61 +642,28 @@ pub const VM = struct {
     // --- Allocators ---
 
     pub fn allocateString(self: *VM, chars: []const u8) !value.Value {
-        if (self.gc.bytes_allocated > self.gc.next_gc_threshold) {
-            self.gc.collectGarbage(self, false);
-        }
         const str_obj = try self.gc.allocateString(self, chars);
         return value.Value.initObj(&str_obj.obj);
     }
 
     pub fn allocateGeometry(self: *VM, state: value.GeometryState) !value.Value {
-        const ptr = try self.allocator.create(value.ObjGeometry);
-        ptr.* = .{
-            .obj = .{
-                .obj_type = .geometry,
-                .is_marked = false,
-                .next = null,
-            },
-            .ref_count = 1, // Creates a +1 owned reference
-            .dag_idx = switch (state) {
-                .symbolic => |idx| idx,
-                .concrete => 0,
-            },
-            .cached_handle = switch (state) {
-                .symbolic => null,
-                .concrete => |h| h,
-            },
-            .cached_bbox = null,
-            .cached_topology = null,
-        };
-        return value.Value.initGeometry(ptr);
+        const geom_obj = try self.gc.allocateGeometry(state);
+        return value.Value.initGeometry(geom_obj);
     }
 
     pub fn allocateWorkplane(self: *VM, parent: *value.ObjGeometry, origin: [3]f64, normal: [3]f64) !value.Value {
-        const ptr = try self.allocator.create(value.ObjWorkplane);
-        ptr.* = .{
-            .obj = .{
-                .obj_type = .workplane,
-                .is_marked = false,
-                .next = null,
-            },
-            .ref_count = 1,
-            .parent = parent,
-            .origin = origin,
-            .normal = normal,
-        };
-        // Retain the parent! If the user drops the 'box' variable but keeps the
-        // workplane active, the 3D geometry stays alive!
-        parent.ref_count += 1;
-        return value.Value.initWorkplane(ptr);
+        const wp_obj = try self.gc.allocateWorkplane(parent, origin, normal);
+        return value.Value.initWorkplane(wp_obj);
     }
 
     pub fn defineNative(self: *VM, name: []const u8, function: value.NativeFn) !void {
-        const native_obj = try self.gc.allocateNative(function);
+        const native_obj = try self.gc.allocateNative(self, function);
         const native_val = value.Value.initObj(&native_obj.obj);
+
         try self.ensureStackCapacity(self.stack_top + 1);
         self.push(native_val);
         try self.globals.put(self.allocator, name, native_val);
+
         const dropped = self.pop();
         self.releaseValue(dropped);
     }
