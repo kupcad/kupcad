@@ -260,6 +260,46 @@ pub const VM = struct {
                         return .runtime_error;
                     }
                 },
+                .op_build_array => {
+                    const item_count = frame.chunk.code.items[frame.ip];
+                    frame.ip += 1;
+
+                    const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                    const arr_val = value.Value.initObj(&arr_obj.obj);
+
+                    arr_obj.items.ensureTotalCapacity(self.allocator, item_count) catch return .runtime_error;
+
+                    // The elements were pushed in order, slice them off the top of the stack
+                    const start_idx = self.stack_top - item_count;
+                    for (self.stack[start_idx..self.stack_top]) |item| {
+                        arr_obj.items.appendAssumeCapacity(item);
+                    }
+
+                    // Clear the consumed stack space and push the resulting Array
+                    self.stack_top -= item_count;
+                    self.push(arr_val);
+                },
+                .op_build_map => {
+                    const pair_count = frame.chunk.code.items[frame.ip];
+                    frame.ip += 1;
+
+                    const map_obj = self.gc.allocateMap(self) catch return .runtime_error;
+                    const map_val = value.Value.initObj(&map_obj.obj);
+
+                    map_obj.keys.ensureTotalCapacity(self.allocator, pair_count) catch return .runtime_error;
+                    map_obj.values.ensureTotalCapacity(self.allocator, pair_count) catch return .runtime_error;
+
+                    const start_idx = self.stack_top - (pair_count * 2);
+                    var i: usize = 0;
+                    while (i < pair_count * 2) : (i += 2) {
+                        map_obj.keys.appendAssumeCapacity(self.stack[start_idx + i]);
+                        map_obj.values.appendAssumeCapacity(self.stack[start_idx + i + 1]);
+                    }
+
+                    // Clear consumed keys & values, push the resulting Map
+                    self.stack_top -= (pair_count * 2);
+                    self.push(map_val);
+                },
                 else => {
                     std.log.err("Runtime Error: Unhandled OpCode {}\n", .{op});
                     return .runtime_error;

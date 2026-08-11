@@ -78,6 +78,39 @@ pub const GC = struct {
         // std.debug.print("-- GC End (Freed {} bytes) --\n", .{before - self.bytes_allocated});
     }
 
+    pub fn allocateArray(self: *GC, vm: *VM) !*value.ObjArray {
+        if (self.bytes_allocated > self.next_gc_threshold) {
+            self.collectGarbage(vm, false);
+        }
+        const ptr = try self.allocator.create(value.ObjArray);
+        self.bytes_allocated += @sizeOf(value.ObjArray);
+        ptr.obj = .{
+            .obj_type = .array,
+            .is_marked = false,
+            .next = self.first_object,
+        };
+        self.first_object = &ptr.obj;
+        ptr.items = .empty;
+        return ptr;
+    }
+
+    pub fn allocateMap(self: *GC, vm: *VM) !*value.ObjMap {
+        if (self.bytes_allocated > self.next_gc_threshold) {
+            self.collectGarbage(vm, false);
+        }
+        const ptr = try self.allocator.create(value.ObjMap);
+        self.bytes_allocated += @sizeOf(value.ObjMap);
+        ptr.obj = .{
+            .obj_type = .map,
+            .is_marked = false,
+            .next = self.first_object,
+        };
+        self.first_object = &ptr.obj;
+        ptr.keys = .empty;
+        ptr.values = .empty;
+        return ptr;
+    }
+
     // --- Phase 1: Mark ---
 
     fn markRoots(self: *GC, vm: *VM) void {
@@ -106,14 +139,23 @@ pub const GC = struct {
     }
 
     fn markObject(self: *GC, obj: *value.Obj) void {
-        _ = self;
-
-        if (obj.is_marked) return; // Prevent infinite loops on circular references
-
+        if (obj.is_marked) return;
         obj.is_marked = true;
 
-        // If this object contained references to other objects (like an Array or Map),
-        // we would recursively call markValue on its children here.
+        switch (obj.obj_type) {
+            .array => {
+                const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", obj)));
+                for (arr.items.items) |val| {
+                    self.markValue(val);
+                }
+            },
+            .map => {
+                const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", obj)));
+                for (map.keys.items) |k| self.markValue(k);
+                for (map.values.items) |v| self.markValue(v);
+            },
+            else => {},
+        }
     }
 
     // --- Phase 2: Sweep ---
@@ -160,6 +202,19 @@ pub const GC = struct {
                 self.allocator.destroy(native_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjNative);
             },
+            .array => {
+                const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", obj));
+                arr_obj.items.deinit(self.allocator);
+                self.allocator.destroy(arr_obj);
+                self.bytes_allocated -= @sizeOf(value.ObjArray);
+            },
+            .map => {
+                const map_obj: *value.ObjMap = @alignCast(@fieldParentPtr("obj", obj));
+                map_obj.keys.deinit(self.allocator);
+                map_obj.values.deinit(self.allocator);
+                self.allocator.destroy(map_obj);
+                self.bytes_allocated -= @sizeOf(value.ObjMap);
+            },
             .brep => {
                 const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));
                 // TODO: Call brep_obj.data.deinit() when Brep memory management is fleshed out
@@ -167,7 +222,7 @@ pub const GC = struct {
                 self.allocator.destroy(brep_obj); // Free the wrapper
                 self.bytes_allocated -= @sizeOf(value.ObjBrep);
             },
-            .array, .geometry, .workplane => {
+            .geometry, .workplane => {
                 // Ignored by tracing GC. Managed via ARC or not implemented yet.
             },
         }

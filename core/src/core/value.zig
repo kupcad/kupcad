@@ -13,13 +13,14 @@ pub const ValueTag = enum(u8) {
 };
 
 /// Identifies the specific type of a heap-allocated Object.
-pub const ObjType = enum {
+pub const ObjType = enum(u8) {
     string,
     native,
     brep,
+    array,
+    map,
     geometry,
     workplane,
-    array, // Added to satisfy memory.zig sweep
 };
 
 /// The Base Header for ALL heap-allocated objects.
@@ -36,6 +37,17 @@ pub const Obj = struct {
 pub const ObjString = struct {
     obj: Obj,
     chars: []const u8,
+};
+
+pub const ObjArray = struct {
+    obj: Obj,
+    items: std.ArrayListUnmanaged(Value),
+};
+
+pub const ObjMap = struct {
+    obj: Obj,
+    keys: std.ArrayListUnmanaged(Value),
+    values: std.ArrayListUnmanaged(Value),
 };
 
 pub const Vec3 = struct {
@@ -171,6 +183,14 @@ pub const Value = extern struct {
         return self.isObject() and self.asObj().obj_type == .string;
     }
 
+    pub inline fn isArray(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .array;
+    }
+
+    pub inline fn isMap(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .map;
+    }
+
     pub inline fn isObjType(self: Value, obj_type: ObjType) bool {
         return self.isObject() and self.asObj().obj_type == obj_type;
     }
@@ -217,6 +237,14 @@ pub const Value = extern struct {
         std.debug.assert(self.isString());
         const str_obj: *ObjString = @alignCast(@fieldParentPtr("obj", self.asObj()));
         return str_obj.chars;
+    }
+
+    pub inline fn asArray(self: Value) *ObjArray {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asMap(self: Value) *ObjMap {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
     pub inline fn asNative(self: Value) *ObjNative {

@@ -9,6 +9,10 @@ pub const OpCode = enum(u8) {
     op_true,
     op_false,
 
+    // Data Structures
+    op_build_array,
+    op_build_map,
+
     // Stack Operations
     op_pop,
 

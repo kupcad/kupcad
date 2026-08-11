@@ -206,6 +206,44 @@ pub const Compiler = struct {
                     else => return error.UnknownNode,
                 }
             },
+            .array_literal => {
+                const elements = self.tree.getNodes(self.tree.nodeSpan(node));
+                for (elements) |elem| {
+                    try self.compileNode(elem);
+                }
+                if (elements.len > MAX_ARGS) return error.TooManyConstants;
+                try self.emitOp(.op_build_array, line);
+                try self.emitByte(@intCast(elements.len), line);
+                // Simulator: pop all N elements, push 1 Array object
+                self.simulatePop(elements.len);
+                self.simulatePush(1);
+            },
+            .hash_literal => {
+                const entries = self.tree.getHashEntries(self.tree.nodeSpan(node));
+                for (entries) |entry| {
+                    const key_node = self.tree.getNode(entry.key).?;
+                    // Automatically compile literal symbol keys into strings
+                    if (key_node.tag == .identifier) {
+                        const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data)));
+                        const str_val = try self.vm.allocateString(str_content);
+                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                        self.vm.push(str_val);
+                        const str_idx = try self.makeConstant(str_val);
+                        _ = self.vm.pop();
+                        try self.emitOp(.op_constant, line);
+                        try self.emitByte(str_idx, line);
+                    } else {
+                        try self.compileNode(entry.key);
+                    }
+                    try self.compileNode(entry.value);
+                }
+                if (entries.len > 127) return error.TooManyConstants; // 127 pairs = 254 stack slots
+                try self.emitOp(.op_build_map, line);
+                try self.emitByte(@intCast(entries.len), line);
+                // Simulator: pop N*2 elements, push 1 Map object
+                self.simulatePop(entries.len * 2);
+                self.simulatePush(1);
+            },
             .block => {
                 const block_payload = self.tree.block(node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
