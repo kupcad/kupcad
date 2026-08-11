@@ -48,10 +48,13 @@ pub const Compiler = struct {
     }
 
     pub fn compile(self: *Compiler, root: ast.NodeIndex) CompileError!void {
-        try self.compileNode(root);
+        if (root == .none) {
+            try self.emitOp(.op_nil, 0);
+        } else {
+            try self.compileNode(root);
+        }
 
-        // Every chunk cleanly returns
-        try self.emitOp(.op_nil, 0);
+        // Every chunk cleanly returns the result of the final expression
         try self.emitOp(.op_return, 0);
 
         // Commit the maximum required stack size to the chunk!
@@ -297,9 +300,17 @@ pub const Compiler = struct {
             .block => {
                 const block_payload = self.tree.block(node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
-                for (stmts) |stmt_idx| {
-                    try self.compileNode(stmt_idx);
-                    try self.emitOp(.op_pop, line);
+
+                if (stmts.len == 0) {
+                    try self.emitOp(.op_nil, line);
+                } else {
+                    for (stmts, 0..) |stmt_idx, i| {
+                        try self.compileNode(stmt_idx);
+                        // Pop all statements EXCEPT the last one, so the block yields a value
+                        if (i < stmts.len - 1) {
+                            try self.emitOp(.op_pop, line);
+                        }
+                    }
                 }
             },
             else => {},

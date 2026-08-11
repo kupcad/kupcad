@@ -13,6 +13,12 @@ pub const OpCode = enum(u8) {
     op_build_array,
     op_build_map,
 
+    // Closures & Upvalues
+    op_closure,
+    op_get_upvalue,
+    op_set_upvalue,
+    op_close_upvalue,
+
     // Stack Operations
     op_pop,
 

@@ -19,6 +19,9 @@ pub const ObjType = enum(u8) {
     brep,
     array,
     map,
+    function,
+    upvalue,
+    closure,
     geometry,
     workplane,
 };
@@ -48,6 +51,27 @@ pub const ObjMap = struct {
     obj: Obj,
     keys: std.ArrayListUnmanaged(Value),
     values: std.ArrayListUnmanaged(Value),
+};
+
+pub const ObjFunction = struct {
+    obj: Obj,
+    arity: u8,
+    upvalue_count: u16,
+    chunk: *anyopaque, // Pointer to chunk.Chunk (avoids circular dependency)
+    name: ?*ObjString,
+};
+
+pub const ObjUpvalue = struct {
+    obj: Obj,
+    location: *Value, // Points to the stack initially
+    closed: Value, // Holds the value once it escapes the stack
+    next: ?*ObjUpvalue,
+};
+
+pub const ObjClosure = struct {
+    obj: Obj,
+    function: *ObjFunction,
+    upvalues: [*]?*ObjUpvalue,
 };
 
 pub const Vec3 = struct {
@@ -191,6 +215,10 @@ pub const Value = extern struct {
         return self.isObject() and self.asObj().obj_type == .map;
     }
 
+    pub inline fn isClosure(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .closure;
+    }
+
     pub inline fn isObjType(self: Value, obj_type: ObjType) bool {
         return self.isObject() and self.asObj().obj_type == obj_type;
     }
@@ -244,6 +272,10 @@ pub const Value = extern struct {
     }
 
     pub inline fn asMap(self: Value) *ObjMap {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asClosure(self: Value) *ObjClosure {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 

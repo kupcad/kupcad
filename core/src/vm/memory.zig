@@ -1,5 +1,6 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
+const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
 const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
 
@@ -111,6 +112,42 @@ pub const GC = struct {
         return ptr;
     }
 
+    pub fn allocateFunction(self: *GC, vm: *VM) !*value.ObjFunction {
+        if (self.bytes_allocated > self.next_gc_threshold) {
+            self.collectGarbage(vm, false);
+        }
+        const ptr = try self.allocator.create(value.ObjFunction);
+        self.bytes_allocated += @sizeOf(value.ObjFunction);
+        ptr.obj = .{
+            .obj_type = .function,
+            .is_marked = false,
+            .next = self.first_object,
+        };
+        self.first_object = &ptr.obj;
+        ptr.name = null;
+        return ptr;
+    }
+
+    pub fn allocateClosure(self: *GC, vm: *VM, function: *value.ObjFunction) !*value.ObjClosure {
+        if (self.bytes_allocated > self.next_gc_threshold) {
+            self.collectGarbage(vm, false);
+        }
+        const ptr = try self.allocator.create(value.ObjClosure);
+        const upvalues = try self.allocator.alloc(?*value.ObjUpvalue, function.upvalue_count);
+        @memset(upvalues, null);
+
+        self.bytes_allocated += @sizeOf(value.ObjClosure) + (@sizeOf(?*value.ObjUpvalue) * upvalues.len);
+        ptr.obj = .{
+            .obj_type = .closure,
+            .is_marked = false,
+            .next = self.first_object,
+        };
+        self.first_object = &ptr.obj;
+        ptr.function = function;
+        ptr.upvalues = upvalues.ptr;
+        return ptr;
+    }
+
     // --- Phase 1: Mark ---
 
     fn markRoots(self: *GC, vm: *VM) void {
@@ -119,9 +156,10 @@ pub const GC = struct {
             self.markValue(val);
         }
 
-        // Mark constants in active call frames
+        // Extract chunk through the closure
         for (vm.frames.items) |frame| {
-            for (frame.chunk.constants.items) |val| {
+            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk)));
+            for (exec_chunk.constants.items) |val| {
                 self.markValue(val);
             }
         }
@@ -153,6 +191,25 @@ pub const GC = struct {
                 const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", obj)));
                 for (map.keys.items) |k| self.markValue(k);
                 for (map.values.items) |v| self.markValue(v);
+            },
+            .closure => {
+                const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
+                self.markObject(&closure.function.obj);
+                // Trace captured upvalues to prevent them from being swept
+                for (0..closure.function.upvalue_count) |i| {
+                    if (closure.upvalues[i]) |upvalue| {
+                        self.markObject(&upvalue.obj);
+                    }
+                }
+            },
+            .upvalue => {
+                const upval = @as(*value.ObjUpvalue, @alignCast(@fieldParentPtr("obj", obj)));
+                self.markValue(upval.closed);
+            },
+            .function => {
+                const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
+                if (func.name) |name| self.markObject(&name.obj);
+                // Note: The function's Chunk constants are traced via CallFrames
             },
             else => {},
         }
@@ -214,6 +271,22 @@ pub const GC = struct {
                 map_obj.values.deinit(self.allocator);
                 self.allocator.destroy(map_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjMap);
+            },
+            .closure => {
+                const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
+                self.allocator.free(closure.upvalues[0..closure.function.upvalue_count]);
+                self.allocator.destroy(closure);
+                self.bytes_allocated -= @sizeOf(value.ObjClosure);
+            },
+            .function => {
+                const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
+                self.allocator.destroy(func);
+                self.bytes_allocated -= @sizeOf(value.ObjFunction);
+            },
+            .upvalue => {
+                const upvalue = @as(*value.ObjUpvalue, @alignCast(@fieldParentPtr("obj", obj)));
+                self.allocator.destroy(upvalue);
+                self.bytes_allocated -= @sizeOf(value.ObjUpvalue);
             },
             .brep => {
                 const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));

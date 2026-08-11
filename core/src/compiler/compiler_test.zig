@@ -31,7 +31,7 @@ test "Compiler: compiles basic binary addition" {
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
     try comp.compile(bin_node);
 
-    try testing.expectEqual(@as(usize, 7), out_chunk.code.items.len);
+    try testing.expectEqual(@as(usize, 6), out_chunk.code.items.len);
 
     // Left Node
     try testing.expectEqual(@as(u8, @intFromEnum(chunk.OpCode.op_constant)), out_chunk.code.items[0]);

@@ -17,7 +17,7 @@ pub const InterpretResult = enum {
 };
 
 pub const CallFrame = struct {
-    chunk: *chunk.Chunk,
+    closure: *value.ObjClosure,
     ip: usize,
     base_slot: usize,
 };
@@ -32,6 +32,7 @@ pub const VM = struct {
     gc: memory.GC,
     globals: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
+    open_upvalues: ?*value.ObjUpvalue = null,
     host: Host = .{},
     active_kernel: ?*const kernel_mod.GeometryKernel = null,
     dag_builder: dag.DAGBuilder,
@@ -109,26 +110,38 @@ pub const VM = struct {
         self.frames.clearRetainingCapacity();
         self.stack_top = 0;
         self.ensureStackCapacity(execution_chunk.max_stack_slots) catch return .runtime_error;
+
+        const func = self.gc.allocateFunction(self) catch return .runtime_error;
+        func.chunk = execution_chunk;
+        func.upvalue_count = 0;
+
+        const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
+
+        // Push the closure to the stack so the GC doesn't sweep it during execution!
+        self.push(value.Value.initObj(&closure.obj));
+
         self.frames.append(self.allocator, .{
-            .chunk = execution_chunk,
+            .closure = closure,
             .ip = 0,
-            .base_slot = 0,
+            .base_slot = 0, // base_slot 0 is where our closure sits on the stack
         }) catch return .runtime_error;
+
         return self.run();
     }
 
     fn run(self: *VM) InterpretResult {
         while (true) {
             var frame = &self.frames.items[self.frames.items.len - 1];
-            const instruction = frame.chunk.code.items[frame.ip];
+            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk)));
+            const instruction = exec_chunk.code.items[frame.ip];
             frame.ip += 1;
             const op: chunk.OpCode = @enumFromInt(instruction);
 
             switch (op) {
                 .op_constant => {
-                    const const_idx = frame.chunk.code.items[frame.ip];
+                    const const_idx = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
-                    self.push(frame.chunk.constants.items[const_idx]);
+                    self.push(exec_chunk.constants.items[const_idx]);
                 },
                 .op_nil => self.push(value.Value.initNil()),
                 .op_true => self.push(value.Value.initBool(true)),
@@ -138,12 +151,12 @@ pub const VM = struct {
                     self.releaseValue(dropped);
                 },
                 .op_get_local => {
-                    const slot = frame.chunk.code.items[frame.ip];
+                    const slot = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
                     self.push(self.getLocal(frame, slot));
                 },
                 .op_set_local => {
-                    const slot = frame.chunk.code.items[frame.ip];
+                    const slot = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
                     self.setLocal(frame, slot, self.stack[self.stack_top - 1]);
                 },
@@ -200,11 +213,10 @@ pub const VM = struct {
                     defer self.releaseValue(a);
                     self.push(value.Value.initNumber(-a.asNumber()));
                 },
-                .op_return => return .ok,
                 .op_get_global => {
-                    const name_idx = frame.chunk.code.items[frame.ip];
+                    const name_idx = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
-                    const name_val = frame.chunk.constants.items[name_idx];
+                    const name_val = exec_chunk.constants.items[name_idx];
                     const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", name_val.asObj()));
                     if (self.globals.get(str_obj.chars)) |val| {
                         self.push(val);
@@ -214,7 +226,7 @@ pub const VM = struct {
                     }
                 },
                 .op_call => {
-                    const arg_count = frame.chunk.code.items[frame.ip];
+                    const arg_count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
                     const callee = self.stack[self.stack_top - 1 - arg_count];
                     if (callee.isNative()) {
@@ -236,11 +248,11 @@ pub const VM = struct {
                     }
                 },
                 .op_invoke => {
-                    const method_name_idx = frame.chunk.code.items[frame.ip];
+                    const method_name_idx = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
-                    const arg_count = frame.chunk.code.items[frame.ip];
+                    const arg_count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
-                    const method_name_val = frame.chunk.constants.items[method_name_idx];
+                    const method_name_val = exec_chunk.constants.items[method_name_idx];
                     const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
                     const receiver = self.stack[self.stack_top - 1 - arg_count];
                     const args_ptr = self.stack.ptr + self.stack_top - arg_count;
@@ -261,7 +273,7 @@ pub const VM = struct {
                     }
                 },
                 .op_build_array => {
-                    const item_count = frame.chunk.code.items[frame.ip];
+                    const item_count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
 
                     const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
@@ -280,7 +292,7 @@ pub const VM = struct {
                     self.push(arr_val);
                 },
                 .op_build_map => {
-                    const pair_count = frame.chunk.code.items[frame.ip];
+                    const pair_count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
 
                     const map_obj = self.gc.allocateMap(self) catch return .runtime_error;
@@ -301,11 +313,11 @@ pub const VM = struct {
                     self.push(map_val);
                 },
                 .op_jump => {
-                    const offset = (@as(u16, frame.chunk.code.items[frame.ip]) << 8) | frame.chunk.code.items[frame.ip + 1];
+                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
                     frame.ip += 2 + offset;
                 },
                 .op_jump_if_false => {
-                    const offset = (@as(u16, frame.chunk.code.items[frame.ip]) << 8) | frame.chunk.code.items[frame.ip + 1];
+                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
                     frame.ip += 2;
 
                     // Falsey values in KupCAD are only `nil` and `false`
@@ -317,9 +329,47 @@ pub const VM = struct {
                     }
                 },
                 .op_loop => {
-                    const offset = (@as(u16, frame.chunk.code.items[frame.ip]) << 8) | frame.chunk.code.items[frame.ip + 1];
+                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
                     frame.ip += 2;
-                    frame.ip -= offset; // Jump backwards!
+                    frame.ip -= offset; // Jump backwards
+                },
+                .op_get_upvalue => {
+                    const slot = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    self.push(frame.closure.upvalues[slot].?.location.*);
+                },
+                .op_set_upvalue => {
+                    const slot = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    frame.closure.upvalues[slot].?.location.* = self.stack[self.stack_top - 1];
+                },
+                .op_close_upvalue => {
+                    self.closeUpvalues(&self.stack[self.stack_top - 1]);
+                    self.releaseValue(self.pop());
+                },
+                .op_return => {
+                    const result = self.pop();
+
+                    // Close all remaining upvalues for this function before it dies
+                    self.closeUpvalues(&self.stack[frame.base_slot]);
+
+                    // Properly release all local variables AND the closure frame
+                    // from the stack so their ARC ref_counts deterministically drop to 0!
+                    while (self.stack_top > frame.base_slot) {
+                        self.stack_top -= 1;
+                        self.releaseValue(self.stack[self.stack_top]);
+                    }
+
+                    _ = self.frames.pop();
+
+                    // Put the result back on the stack WITHOUT incrementing its ARC
+                    // (It already holds a +1 reference from when it was initially popped)
+                    self.stack.ptr[self.stack_top] = result;
+                    self.stack_top += 1;
+
+                    if (self.frames.items.len == 0) {
+                        return .ok;
+                    }
                 },
                 else => {
                     std.log.err("Runtime Error: Unhandled OpCode {}\n", .{op});
@@ -486,6 +536,50 @@ pub const VM = struct {
                 return error.NotImplementedYet;
             },
             else => return error.RuntimeError,
+        }
+    }
+
+    fn captureUpvalue(self: *VM, local_ptr: *value.Value) !*value.ObjUpvalue {
+        var prev_upvalue: ?*value.ObjUpvalue = null;
+        var upvalue = self.open_upvalues;
+
+        // Search the linked list for an existing upvalue pointing to this exact stack slot
+        while (upvalue != null and @intFromPtr(upvalue.?.location) > @intFromPtr(local_ptr)) {
+            prev_upvalue = upvalue;
+            upvalue = upvalue.?.next;
+        }
+
+        // If we found it, reuse it!
+        if (upvalue != null and upvalue.?.location == local_ptr) {
+            return upvalue.?;
+        }
+
+        // Otherwise, allocate a new Upvalue
+        const created_upvalue = try self.allocator.create(value.ObjUpvalue);
+        created_upvalue.* = .{
+            .obj = .{ .obj_type = .upvalue, .is_marked = false, .next = self.gc.first_object },
+            .location = local_ptr,
+            .closed = value.Value.initNil(),
+            .next = upvalue,
+        };
+        self.gc.first_object = &created_upvalue.obj;
+
+        if (prev_upvalue == null) {
+            self.open_upvalues = created_upvalue;
+        } else {
+            prev_upvalue.?.next = created_upvalue;
+        }
+
+        return created_upvalue;
+    }
+
+    // Add the Scope Closing algorithm
+    fn closeUpvalues(self: *VM, last_stack_slot: *value.Value) void {
+        while (self.open_upvalues != null and @intFromPtr(self.open_upvalues.?.location) >= @intFromPtr(last_stack_slot)) {
+            var upvalue = self.open_upvalues.?;
+            upvalue.closed = upvalue.location.*; // Move from Stack -> Heap
+            upvalue.location = &upvalue.closed; // Repoint to internal field
+            self.open_upvalues = upvalue.next; // Unlink from active list
         }
     }
 };
