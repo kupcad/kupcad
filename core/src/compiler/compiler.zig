@@ -23,6 +23,12 @@ pub const Local = struct {
     slot: u8,
 };
 
+pub const LoopState = struct {
+    start: usize,
+    exit_jumps: [16]usize = undefined,
+    exit_count: usize = 0,
+};
+
 pub const Compiler = struct {
     allocator: std.mem.Allocator,
     tree: *const ast.Tree,
@@ -39,6 +45,9 @@ pub const Compiler = struct {
 
     locals: [255]Local = undefined,
     local_count: usize = 0,
+
+    loops: [8]LoopState = undefined,
+    loop_count: usize = 0,
 
     current_stack_depth: usize,
     max_stack_depth: usize,
@@ -66,6 +75,7 @@ pub const Compiler = struct {
             .local_count = 0,
             .current_stack_depth = 0,
             .max_stack_depth = 0,
+            .loop_count = 0,
         };
     }
 
@@ -179,6 +189,46 @@ pub const Compiler = struct {
                         try self.emitByte(@intCast(sym.index), line);
                     }
                 }
+            },
+            .return_stmt => {
+                const ret_idx = self.tree.nodeIndex(node);
+                if (ret_idx != .none) {
+                    try self.compileNode(ret_idx);
+                } else {
+                    try self.emitOp(.op_nil, line);
+                }
+                try self.emitOp(.op_return, line);
+            },
+            .break_stmt => {
+                const break_idx = self.tree.nodeIndex(node);
+                if (break_idx != .none) {
+                    try self.compileNode(break_idx);
+                } else {
+                    try self.emitOp(.op_nil, line);
+                }
+
+                if (self.loop_count == 0) return error.UnknownNode; // Break outside loop
+
+                const jump = try self.emitJump(.op_jump, line);
+                var cur_loop = &self.loops[self.loop_count - 1];
+                if (cur_loop.exit_count >= 16) return error.UnknownNode;
+                cur_loop.exit_jumps[cur_loop.exit_count] = jump;
+                cur_loop.exit_count += 1;
+            },
+            .next_stmt => {
+                const next_idx = self.tree.nodeIndex(node);
+                if (next_idx != .none) {
+                    try self.compileNode(next_idx);
+                } else {
+                    try self.emitOp(.op_nil, line);
+                }
+
+                // Pop the evaluated value to maintain stack equilibrium before jumping back
+                try self.emitOp(.op_pop, line);
+
+                if (self.loop_count == 0) return error.UnknownNode; // Next outside loop
+                const cur_loop = &self.loops[self.loop_count - 1];
+                try self.emitLoop(cur_loop.start, line);
             },
             .assignment => {
                 const assign_payload = self.tree.assignment(node);
@@ -418,19 +468,32 @@ pub const Compiler = struct {
                 const while_payload = self.tree.whileStmt(node);
                 const loop_start = self.current_chunk.code.items.len;
 
+                // Push loop state
+                if (self.loop_count >= 8) return error.UnknownNode;
+                self.loops[self.loop_count] = .{ .start = loop_start, .exit_count = 0 };
+                self.loop_count += 1;
+
                 try self.compileNode(while_payload.condition);
                 if (while_payload.is_until) try self.emitOp(.op_not, line);
 
                 const exit_jump = try self.emitJump(.op_jump_if_false, line);
-                try self.emitOp(.op_pop, line);
+                try self.emitOp(.op_pop, line); // Clean up condition
 
                 try self.compileNode(while_payload.body);
-                try self.emitOp(.op_pop, line);
+                try self.emitOp(.op_pop, line); // Pop the body's yielded result
 
                 try self.emitLoop(loop_start, line);
+
                 self.patchJump(exit_jump);
                 try self.emitOp(.op_pop, line);
-                try self.emitOp(.op_nil, line);
+                try self.emitOp(.op_nil, line); // Natural exit yields nil
+
+                // Pop loop state and safely patch all 'break' jump addresses
+                self.loop_count -= 1;
+                const cur_loop = self.loops[self.loop_count];
+                for (cur_loop.exit_jumps[0..cur_loop.exit_count]) |jmp| {
+                    self.patchJump(jmp);
+                }
             },
             .block => {
                 const block_payload = self.tree.block(node);
