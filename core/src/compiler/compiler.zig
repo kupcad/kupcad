@@ -244,6 +244,56 @@ pub const Compiler = struct {
                 self.simulatePop(entries.len * 2);
                 self.simulatePush(1);
             },
+            .if_stmt => {
+                const if_payload = self.tree.ifStmt(node);
+                try self.compileNode(if_payload.condition);
+
+                // `unless` reverses the logic jump
+                if (if_payload.is_unless) {
+                    try self.emitOp(.op_not, line);
+                }
+
+                const then_jump = try self.emitJump(.op_jump_if_false, line);
+                try self.emitOp(.op_pop, line); // Clean up the condition
+
+                try self.compileNode(if_payload.then_branch);
+
+                const else_jump = try self.emitJump(.op_jump, line);
+
+                self.patchJump(then_jump);
+                try self.emitOp(.op_pop, line); // Clean up condition for skipped branch
+
+                if (if_payload.else_branch != .none) {
+                    try self.compileNode(if_payload.else_branch);
+                } else {
+                    try self.emitOp(.op_nil, line); // If-expressions yield nil implicitly
+                }
+
+                self.patchJump(else_jump);
+            },
+            .while_stmt => {
+                const while_payload = self.tree.whileStmt(node);
+                const loop_start = self.current_chunk.code.items.len;
+
+                try self.compileNode(while_payload.condition);
+
+                // `until` loops run while the condition is false
+                if (while_payload.is_until) {
+                    try self.emitOp(.op_not, line);
+                }
+
+                const exit_jump = try self.emitJump(.op_jump_if_false, line);
+                try self.emitOp(.op_pop, line); // Clean up condition
+
+                try self.compileNode(while_payload.body);
+                try self.emitOp(.op_pop, line); // Pop the body's yielded result
+
+                try self.emitLoop(loop_start, line);
+
+                self.patchJump(exit_jump);
+                try self.emitOp(.op_pop, line);
+                try self.emitOp(.op_nil, line); // While-expressions yield nil
+            },
             .block => {
                 const block_payload = self.tree.block(node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
@@ -304,5 +354,32 @@ pub const Compiler = struct {
         const index = try self.makeConstant(val);
         try self.emitOp(.op_constant, line);
         try self.emitByte(index, line);
+    }
+
+    fn emitJump(self: *Compiler, op: chunk.OpCode, line: u32) CompileError!usize {
+        try self.emitOp(op, line);
+        // We use 0xFF as a 16-bit dummy placeholder
+        try self.emitByte(0xff, line);
+        try self.emitByte(0xff, line);
+        return self.current_chunk.code.items.len - 2;
+    }
+
+    fn patchJump(self: *Compiler, offset: usize) void {
+        // Calculate jump distance (minus 2 bytes for the jump operand itself)
+        const jump = self.current_chunk.code.items.len - offset - 2;
+        std.debug.assert(jump <= std.math.maxInt(u16)); // Max jump limit
+
+        self.current_chunk.code.items[offset] = @intCast((jump >> 8) & 0xff);
+        self.current_chunk.code.items[offset + 1] = @intCast(jump & 0xff);
+    }
+
+    fn emitLoop(self: *Compiler, loop_start: usize, line: u32) CompileError!void {
+        try self.emitOp(.op_loop, line);
+        // Calculate backward jump distance (+2 to account for the operand)
+        const jump = self.current_chunk.code.items.len - loop_start + 2;
+        std.debug.assert(jump <= std.math.maxInt(u16));
+
+        try self.emitByte(@intCast((jump >> 8) & 0xff), line);
+        try self.emitByte(@intCast(jump & 0xff), line);
     }
 };

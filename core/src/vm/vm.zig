@@ -300,6 +300,27 @@ pub const VM = struct {
                     self.stack_top -= (pair_count * 2);
                     self.push(map_val);
                 },
+                .op_jump => {
+                    const offset = (@as(u16, frame.chunk.code.items[frame.ip]) << 8) | frame.chunk.code.items[frame.ip + 1];
+                    frame.ip += 2 + offset;
+                },
+                .op_jump_if_false => {
+                    const offset = (@as(u16, frame.chunk.code.items[frame.ip]) << 8) | frame.chunk.code.items[frame.ip + 1];
+                    frame.ip += 2;
+
+                    // Falsey values in KupCAD are only `nil` and `false`
+                    const val = self.stack[self.stack_top - 1];
+                    const is_falsey = val.isNil() or (val.isBool() and !val.asBool());
+
+                    if (is_falsey) {
+                        frame.ip += offset;
+                    }
+                },
+                .op_loop => {
+                    const offset = (@as(u16, frame.chunk.code.items[frame.ip]) << 8) | frame.chunk.code.items[frame.ip + 1];
+                    frame.ip += 2;
+                    frame.ip -= offset; // Jump backwards!
+                },
                 else => {
                     std.log.err("Runtime Error: Unhandled OpCode {}\n", .{op});
                     return .runtime_error;
