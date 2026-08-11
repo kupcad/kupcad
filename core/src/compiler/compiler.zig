@@ -222,6 +222,10 @@ pub const Compiler = struct {
                 const func = try self.vm.gc.allocateFunction(self.vm);
                 func.arity = @intCast(params.len);
 
+                // Protect the function from GC while compiling the child block!
+                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                self.vm.push(value.Value.initObj(&func.obj));
+
                 const child_chunk = try self.allocator.create(chunk.Chunk);
                 child_chunk.* = chunk.Chunk.init();
                 func.chunk = child_chunk;
@@ -248,6 +252,9 @@ pub const Compiler = struct {
 
                 // Compile the inner body recursively
                 try child_compiler.compile(body_node);
+
+                // Unprotect the function now that compilation is done
+                _ = self.vm.pop();
 
                 // 3. Emit the Closure and its exact Upvalue captures into the PARENT chunk
                 const func_val = value.Value.initObj(&func.obj);

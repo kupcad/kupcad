@@ -115,9 +115,13 @@ pub const VM = struct {
         func.chunk = execution_chunk;
         func.upvalue_count = 0;
 
+        // Protect func from GC during allocateClosure
+        self.push(value.Value.initObj(&func.obj));
+
         const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
 
-        // Push the closure to the stack so the GC doesn't sweep it during execution!
+        // Swap func for closure on stack
+        _ = self.pop();
         self.push(value.Value.initObj(&closure.obj));
 
         self.frames.append(self.allocator, .{
@@ -229,6 +233,7 @@ pub const VM = struct {
                     const arg_count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
                     const callee = self.stack[self.stack_top - 1 - arg_count];
+
                     if (callee.isNative()) {
                         const native_obj = callee.asNative();
                         const args_ptr = self.stack.ptr + self.stack_top - arg_count;
@@ -242,6 +247,22 @@ pub const VM = struct {
 
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
+                    } else if (callee.isClosure()) {
+                        const closure = callee.asClosure();
+
+                        // Enforce Arity Checking
+                        if (arg_count != closure.function.arity) {
+                            std.log.err("Runtime Error: Expected {d} arguments but got {d}.\n", .{ closure.function.arity, arg_count });
+                            return .runtime_error;
+                        }
+
+                        // Push a new CallFrame onto the Execution Stack!
+                        // The `base_slot` is set to point right at the start of the arguments
+                        self.frames.append(self.allocator, .{
+                            .closure = closure,
+                            .ip = 0,
+                            .base_slot = self.stack_top - arg_count - 1,
+                        }) catch return .runtime_error;
                     } else {
                         std.log.err("Runtime Error: Can only call functions and classes.\n", .{});
                         return .runtime_error;
@@ -585,6 +606,8 @@ pub const VM = struct {
 
         // Otherwise, allocate a new Upvalue
         const created_upvalue = try self.allocator.create(value.ObjUpvalue);
+        self.gc.bytes_allocated += @sizeOf(value.ObjUpvalue);
+
         created_upvalue.* = .{
             .obj = .{ .obj_type = .upvalue, .is_marked = false, .next = self.gc.first_object },
             .location = local_ptr,

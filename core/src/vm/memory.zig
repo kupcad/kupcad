@@ -274,9 +274,12 @@ pub const GC = struct {
             },
             .closure => {
                 const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
+                // Calculate the size of the slice to subtract accurately
+                const upvals_size = @sizeOf(?*value.ObjUpvalue) * closure.function.upvalue_count;
+
                 self.allocator.free(closure.upvalues[0..closure.function.upvalue_count]);
                 self.allocator.destroy(closure);
-                self.bytes_allocated -= @sizeOf(value.ObjClosure);
+                self.bytes_allocated -= (@sizeOf(value.ObjClosure) + upvals_size);
             },
             .function => {
                 const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));

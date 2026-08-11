@@ -209,3 +209,65 @@ test "VM: Generates a real physical .stl file via JIT materialization" {
     // For now, ensuring the VM reaches this point without crashing validates the JIT pathway.
     try testing.expect(stat.size >= 0);
 }
+
+test "VM: Closures correctly capture and return upvalues" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // 1. Create the Closure's bytecode chunk
+    var closure_chunk = try testing.allocator.create(chunk.Chunk);
+    closure_chunk.* = chunk.Chunk.init();
+    defer {
+        closure_chunk.free(testing.allocator);
+        testing.allocator.destroy(closure_chunk);
+    }
+
+    // Closure code: Get upvalue 0, then return it
+    try closure_chunk.writeOp(testing.allocator, .op_get_upvalue, 1);
+    try closure_chunk.write(testing.allocator, 0, 1); // upvalue index 0
+    try closure_chunk.writeOp(testing.allocator, .op_return, 1);
+    closure_chunk.max_stack_slots = 2;
+
+    // 2. Wrap the chunk in an ObjFunction on the GC heap
+    const func = try vm.gc.allocateFunction(&vm);
+    func.chunk = closure_chunk;
+    func.upvalue_count = 1;
+    func.arity = 0;
+
+    // 3. Create the Main Script Chunk
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(testing.allocator);
+
+    // Push 42 (simulating `let x = 42`)
+    const const_42 = try main_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
+    try main_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try main_chunk.write(testing.allocator, const_42, 1);
+
+    // Instantiate the Closure
+    const const_func = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&func.obj));
+    try main_chunk.writeOp(testing.allocator, .op_closure, 1);
+    try main_chunk.write(testing.allocator, const_func, 1);
+
+    // Upvalue parameters: is_local = 1, index = 1 (captures stack slot 1, where 42 is sitting)
+    try main_chunk.write(testing.allocator, 1, 1);
+    try main_chunk.write(testing.allocator, 1, 1);
+
+    // Call the closure we just created
+    try main_chunk.writeOp(testing.allocator, .op_call, 1);
+    try main_chunk.write(testing.allocator, 0, 1); // 0 arguments
+
+    try main_chunk.writeOp(testing.allocator, .op_return, 1);
+    main_chunk.max_stack_slots = 4;
+
+    // Run!
+    const result = vm.interpret(&main_chunk);
+
+    try testing.expectEqual(.ok, result);
+    // Proves that all nested scopes and variables were destroyed perfectly
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const final_val = vm.stack[0];
+    try testing.expect(final_val.isNumber());
+    // Proves that the closure successfully reached into the parent scope!
+    try testing.expectEqual(@as(f64, 42.0), final_val.asNumber());
+}
