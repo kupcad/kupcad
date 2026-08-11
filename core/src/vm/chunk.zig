@@ -21,6 +21,12 @@ pub const OpCode = enum(u8) {
     op_set_upvalue,
     op_close_upvalue,
 
+    // Object Orientation
+    op_class,
+    op_get_property,
+    op_set_property,
+    op_method,
+
     // Stack Operations
     op_pop,
 

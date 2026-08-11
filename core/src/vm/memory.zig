@@ -148,6 +148,39 @@ pub const GC = struct {
         return ptr;
     }
 
+    pub fn allocateClass(self: *GC, vm: *VM, name: *value.ObjString) !*value.ObjClass {
+        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
+        const ptr = try self.allocator.create(value.ObjClass);
+        self.bytes_allocated += @sizeOf(value.ObjClass);
+        ptr.obj = .{ .obj_type = .class, .is_marked = false, .next = self.first_object };
+        self.first_object = &ptr.obj;
+        ptr.name = name;
+        ptr.methods = .empty;
+        return ptr;
+    }
+
+    pub fn allocateInstance(self: *GC, vm: *VM, class: *value.ObjClass) !*value.ObjInstance {
+        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
+        const ptr = try self.allocator.create(value.ObjInstance);
+        self.bytes_allocated += @sizeOf(value.ObjInstance);
+        ptr.obj = .{ .obj_type = .instance, .is_marked = false, .next = self.first_object };
+        self.first_object = &ptr.obj;
+        ptr.class = class;
+        ptr.fields = .empty;
+        return ptr;
+    }
+
+    pub fn allocateBoundMethod(self: *GC, vm: *VM, receiver: value.Value, method: *value.ObjClosure) !*value.ObjBoundMethod {
+        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
+        const ptr = try self.allocator.create(value.ObjBoundMethod);
+        self.bytes_allocated += @sizeOf(value.ObjBoundMethod);
+        ptr.obj = .{ .obj_type = .bound_method, .is_marked = false, .next = self.first_object };
+        self.first_object = &ptr.obj;
+        ptr.receiver = receiver;
+        ptr.method = method;
+        return ptr;
+    }
+
     // --- Phase 1: Mark ---
 
     fn markRoots(self: *GC, vm: *VM) void {
@@ -210,6 +243,23 @@ pub const GC = struct {
                 const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
                 if (func.name) |name| self.markObject(&name.obj);
                 // Note: The function's Chunk constants are traced via CallFrames
+            },
+            .class => {
+                const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
+                self.markObject(&class_obj.name.obj);
+                var it = class_obj.methods.valueIterator();
+                while (it.next()) |val| self.markValue(val.*);
+            },
+            .instance => {
+                const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
+                self.markObject(&instance_obj.class.obj);
+                var it = instance_obj.fields.valueIterator();
+                while (it.next()) |val| self.markValue(val.*);
+            },
+            .bound_method => {
+                const bound_obj = @as(*value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj)));
+                self.markValue(bound_obj.receiver);
+                self.markObject(&bound_obj.method.obj);
             },
             else => {},
         }
@@ -290,6 +340,23 @@ pub const GC = struct {
                 const upvalue = @as(*value.ObjUpvalue, @alignCast(@fieldParentPtr("obj", obj)));
                 self.allocator.destroy(upvalue);
                 self.bytes_allocated -= @sizeOf(value.ObjUpvalue);
+            },
+            .class => {
+                const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
+                class_obj.methods.deinit(self.allocator);
+                self.allocator.destroy(class_obj);
+                self.bytes_allocated -= @sizeOf(value.ObjClass);
+            },
+            .instance => {
+                const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
+                instance_obj.fields.deinit(self.allocator);
+                self.allocator.destroy(instance_obj);
+                self.bytes_allocated -= @sizeOf(value.ObjInstance);
+            },
+            .bound_method => {
+                const bound_obj = @as(*value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj)));
+                self.allocator.destroy(bound_obj);
+                self.bytes_allocated -= @sizeOf(value.ObjBoundMethod);
             },
             .brep => {
                 const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));

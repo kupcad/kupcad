@@ -295,9 +295,13 @@ pub const Compiler = struct {
                     .max_stack_depth = 0,
                 };
 
-                // Assign the parameters their starting stack slots
+                // Reserve slot 0 for the closure itself
+                child_compiler.local_count = 1;
+                child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
+
+                // Assign the parameters their starting stack slots (starting at 1)
                 for (params, 0..) |param, i| {
-                    child_compiler.addLocal(param.name, @intCast(i));
+                    child_compiler.addLocal(param.name, @intCast(i + 1));
                 }
 
                 // Compile the inner body recursively
@@ -464,6 +468,11 @@ pub const Compiler = struct {
                 }
                 self.patchJump(else_jump);
             },
+            .self_expr => {
+                // 'self' is intrinsically bound to local slot 0
+                try self.emitOp(.op_get_local, line);
+                try self.emitByte(0, line);
+            },
             .while_stmt => {
                 const while_payload = self.tree.whileStmt(node);
                 const loop_start = self.current_chunk.code.items.len;
@@ -494,6 +503,129 @@ pub const Compiler = struct {
                 for (cur_loop.exit_jumps[0..cur_loop.exit_count]) |jmp| {
                     self.patchJump(jmp);
                 }
+            },
+            .class_stmt => {
+                const cs = self.tree.classStmt(node);
+                const name_node = self.tree.getNode(cs.name).?;
+                const name_id = @as(ast.StringId, @enumFromInt(name_node.data));
+                const class_name = self.tree.getString(name_id);
+
+                const name_val = try self.vm.allocateString(class_name);
+                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                self.vm.push(name_val);
+                const name_idx = try self.makeConstant(name_val);
+                _ = self.vm.pop();
+
+                try self.emitOp(.op_class, line);
+                try self.emitByte(name_idx, line);
+
+                // Define the Class variable
+                const sym = self.symbols[@intFromEnum(node_idx)];
+                if (sym.kind == .local) {
+                    self.addLocal(name_id, @intCast(sym.index));
+                    try self.emitOp(.op_set_local, line);
+                    try self.emitByte(@intCast(sym.index), line);
+                } else {
+                    try self.emitOp(.op_define_global, line);
+                    try self.emitByte(name_idx, line);
+                }
+
+                // Load class back onto stack to act as the receiver for the methods
+                if (sym.kind == .local) {
+                    try self.emitOp(.op_get_local, line);
+                    try self.emitByte(@intCast(sym.index), line);
+                } else {
+                    try self.emitOp(.op_get_global, line);
+                    try self.emitByte(name_idx, line);
+                }
+
+                // Compile all inner methods
+                const body_node = self.tree.getNode(cs.body).?;
+                const block_payload = self.tree.block(body_node);
+                const stmts = self.tree.getNodes(block_payload.stmts);
+
+                for (stmts) |stmt_idx| {
+                    const stmt_node = self.tree.getNode(stmt_idx).?;
+                    if (stmt_node.tag == .def_stmt) {
+                        const ds = self.tree.defStmt(stmt_node);
+                        const method_name = self.tree.getString(ds.name);
+
+                        const m_name_val = try self.vm.allocateString(method_name);
+                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                        self.vm.push(m_name_val);
+                        const m_name_idx = try self.makeConstant(m_name_val);
+                        _ = self.vm.pop();
+
+                        // Compile the closure isolated from the parent
+                        const func = try self.vm.gc.allocateFunction(self.vm);
+                        const params = self.tree.getParams(ds.params);
+                        func.arity = @intCast(params.len);
+
+                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                        self.vm.push(value.Value.initObj(&func.obj));
+
+                        const child_chunk = try self.allocator.create(chunk.Chunk);
+                        child_chunk.* = chunk.Chunk.init();
+                        func.chunk = child_chunk;
+
+                        var child_compiler = Compiler{
+                            .allocator = self.allocator,
+                            .tree = self.tree,
+                            .symbols = self.symbols,
+                            .current_chunk = child_chunk,
+                            .vm = self.vm,
+                            .enclosing = self,
+                            .function = func,
+                            .upvalue_count = 0,
+                            .local_count = 0,
+                            .current_stack_depth = 0,
+                            .max_stack_depth = 0,
+                        };
+
+                        // Map 'self' as local slot 0 (the implicit receiver)
+                        // Reserve slot 0 as the implicit 'self' receiver
+                        child_compiler.local_count = 1;
+                        child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
+
+                        for (params, 0..) |param, i| {
+                            child_compiler.addLocal(param.name, @intCast(i + 1));
+                        }
+                        try child_compiler.compile(ds.body);
+                        _ = self.vm.pop(); // unprotect
+
+                        const func_val = value.Value.initObj(&func.obj);
+                        const func_idx = try self.makeConstant(func_val);
+                        try self.emitOp(.op_closure, line);
+                        try self.emitByte(func_idx, line);
+
+                        for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
+                            try self.emitByte(if (upv.is_local) 1 else 0, line);
+                            try self.emitByte(upv.index, line);
+                        }
+
+                        try self.emitOp(.op_method, line);
+                        try self.emitByte(m_name_idx, line);
+                    }
+                }
+
+                try self.emitOp(.op_pop, line); // pop class
+            },
+            .property_assignment => {
+                const pa = self.tree.propertyAssignment(node);
+                if (pa.op != null) return error.UnknownNode; // Compound unsupported
+
+                try self.compileNode(pa.target);
+                try self.compileNode(pa.value);
+
+                const prop_name = self.tree.getString(pa.property);
+                const name_val = try self.vm.allocateString(prop_name);
+                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                self.vm.push(name_val);
+                const name_idx = try self.makeConstant(name_val);
+                _ = self.vm.pop();
+
+                try self.emitOp(.op_set_property, line);
+                try self.emitByte(name_idx, line);
             },
             .block => {
                 const block_payload = self.tree.block(node);
@@ -550,6 +682,12 @@ pub const Compiler = struct {
             .op_negate, .op_not => {
                 self.simulatePop(1);
                 self.simulatePush(1);
+            },
+            .op_class => self.simulatePush(1),
+            .op_method, .op_define_global => self.simulatePop(1),
+            .op_set_property => {
+                self.simulatePop(2); // Pops value and object
+                self.simulatePush(1); // Assignment yields value
             },
             else => {},
         }

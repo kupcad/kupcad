@@ -355,6 +355,16 @@ pub const VM = struct {
                             .ip = 0,
                             .base_slot = self.stack_top - arg_count - 1,
                         }) catch return .runtime_error;
+                    } else if (callee.isClass()) {
+                        const class_obj = callee.asClass();
+                        const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
+                        self.stack.ptr[self.stack_top - 1 - arg_count] = value.Value.initObj(&instance.obj);
+
+                        var i: usize = 0;
+                        while (i < arg_count) : (i += 1) {
+                            const dropped = self.pop();
+                            self.releaseValue(dropped);
+                        }
                     } else {
                         std.log.err("Runtime Error: Can only call functions and classes.\n", .{});
                         return .runtime_error;
@@ -367,17 +377,50 @@ pub const VM = struct {
                     frame.ip += 1;
                     const method_name_val = exec_chunk.constants.items[method_name_idx];
                     const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
+
                     const receiver = self.stack[self.stack_top - 1 - arg_count];
                     const args_ptr = self.stack.ptr + self.stack_top - arg_count;
+
+                    // 1. Is it a KupCAD Custom Object?
+                    if (receiver.isInstance()) {
+                        const instance = receiver.asInstance();
+
+                        // Property access behaves exactly like a 0-arg method call!
+                        if (arg_count == 0) {
+                            if (instance.fields.get(method_name_str)) |field_val| {
+                                self.stack_top -= 1; // Pop receiver
+                                self.push(field_val);
+                                continue;
+                            }
+                        }
+
+                        // Check class methods
+                        if (instance.class.methods.get(method_name_str)) |method_val| {
+                            const closure = method_val.asClosure();
+                            if (arg_count != closure.function.arity - 1) { // -1 for implicit 'self'
+                                std.log.err("Runtime Error: Expected {d} arguments but got {d}.\n", .{ closure.function.arity - 1, arg_count });
+                                return .runtime_error;
+                            }
+                            self.frames.append(self.allocator, .{
+                                .closure = closure,
+                                .ip = 0,
+                                .base_slot = self.stack_top - arg_count - 1,
+                            }) catch return .runtime_error;
+                            continue;
+                        }
+
+                        std.log.err("Runtime Error: Undefined property or method '{s}'.\n", .{method_name_str});
+                        return .runtime_error;
+                    }
+
+                    // 2. Fallback to Native C++ Kernel Methods (for Geometry)
                     if (self.host.invoke_handler) |handler| {
                         const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch return .runtime_error;
-
                         var i: usize = 0;
                         while (i <= arg_count) : (i += 1) {
                             const dropped = self.pop();
                             self.releaseValue(dropped);
                         }
-
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
                     } else {
@@ -511,6 +554,56 @@ pub const VM = struct {
 
                     if (self.frames.items.len == 0) {
                         return .ok;
+                    }
+                },
+                .op_class => {
+                    const name_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
+
+                    const class_obj = self.gc.allocateClass(self, name_str) catch return .runtime_error;
+                    self.push(value.Value.initObj(&class_obj.obj));
+                },
+                .op_method => {
+                    const name_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+
+                    const method = self.pop(); // The closure
+                    const class_val = self.stack[self.stack_top - 1]; // Peek at class
+                    const class_obj = class_val.asClass();
+
+                    class_obj.methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                },
+                .op_define_global => {
+                    const name_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+
+                    const val = self.pop();
+                    self.globals.put(self.allocator, name_str, val) catch return .runtime_error;
+                },
+                .op_set_property => {
+                    const val = self.pop();
+                    const name_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+
+                    const receiver = self.pop();
+                    if (receiver.isInstance()) {
+                        const instance = receiver.asInstance();
+                        self.retainValue(val);
+                        // Release old value if overriding
+                        if (instance.fields.get(name_str)) |old_val| self.releaseValue(old_val);
+                        instance.fields.put(self.allocator, name_str, val) catch return .runtime_error;
+                        self.push(val);
+                    } else {
+                        std.log.err("Runtime Error: Only instances have properties.\n", .{});
+                        return .runtime_error;
                     }
                 },
                 else => {

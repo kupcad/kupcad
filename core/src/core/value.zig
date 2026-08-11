@@ -22,6 +22,9 @@ pub const ObjType = enum(u8) {
     function,
     upvalue,
     closure,
+    class,
+    instance,
+    bound_method,
     geometry,
     workplane,
 };
@@ -72,6 +75,24 @@ pub const ObjClosure = struct {
     obj: Obj,
     function: *ObjFunction,
     upvalues: [*]?*ObjUpvalue,
+};
+
+pub const ObjClass = struct {
+    obj: Obj,
+    name: *ObjString,
+    methods: std.StringHashMapUnmanaged(Value),
+};
+
+pub const ObjInstance = struct {
+    obj: Obj,
+    class: *ObjClass,
+    fields: std.StringHashMapUnmanaged(Value),
+};
+
+pub const ObjBoundMethod = struct {
+    obj: Obj,
+    receiver: Value,
+    method: *ObjClosure,
 };
 
 pub const Vec3 = struct {
@@ -219,6 +240,18 @@ pub const Value = extern struct {
         return self.isObject() and self.asObj().obj_type == .closure;
     }
 
+    pub inline fn isClass(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .class;
+    }
+
+    pub inline fn isInstance(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .instance;
+    }
+
+    pub inline fn isBoundMethod(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .bound_method;
+    }
+
     pub inline fn isObjType(self: Value, obj_type: ObjType) bool {
         return self.isObject() and self.asObj().obj_type == obj_type;
     }
@@ -276,6 +309,18 @@ pub const Value = extern struct {
     }
 
     pub inline fn asClosure(self: Value) *ObjClosure {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asClass(self: Value) *ObjClass {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asInstance(self: Value) *ObjInstance {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asBoundMethod(self: Value) *ObjBoundMethod {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
