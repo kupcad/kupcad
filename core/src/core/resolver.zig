@@ -246,7 +246,7 @@ const ResolverContext = struct {
                     const stmt_name = if (node.tag == .break_stmt) "break" else "next";
                     const offset = self.resolver.token_starts[node.main_token];
                     const length = self.resolver.token_lengths[node.main_token];
-                    self.resolver.diagnostics.add(.{ .line = 0, .col = 0, .offset = offset, .length = length, .file_id = 0 }, "Cannot use '{s}' outside of a loop", .{stmt_name});
+                    self.resolver.diagnostics.add(.{ .offset = offset, .length = length, .file_id = 0 }, "Cannot use '{s}' outside of a loop", .{stmt_name});
                 }
             },
             .block => {

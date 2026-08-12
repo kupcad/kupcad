@@ -1,8 +1,6 @@
 const std = @import("std");
 
 pub const Location = struct {
-    line: u32,
-    col: u32,
     offset: u32,
     length: u32 = 0,
     file_id: u32, // Maps to a file path in your centralized Symbol/String Pool

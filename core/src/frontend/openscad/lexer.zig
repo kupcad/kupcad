@@ -145,7 +145,7 @@ pub const Lexer = struct {
     }
 
     inline fn getLoc(self: *const Lexer) common_token.Location {
-        return .{ .line = self.line, .col = self.col, .offset = @intCast(self.index), .length = 0, .file_id = self.file_id };
+        return .{ .offset = @intCast(self.index), .length = 0, .file_id = self.file_id };
     }
 
     fn skipWhitespace(self: *Lexer) void {
@@ -204,7 +204,6 @@ pub const Lexer = struct {
         const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, &self.line, &self.col, '"');
         var content_loc = start_loc;
         content_loc.offset += 1;
-        content_loc.col += 1;
         return .{ .tag = .string, .loc = content_loc, .lexeme = lexeme };
     }
 

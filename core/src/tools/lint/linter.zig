@@ -128,10 +128,8 @@ pub const Linter = struct {
     }
 
     pub fn getLoc(self: *const Linter, main_token: u24) token.Location {
-        if (main_token >= self.token_starts.len) return .{ .line = 0, .col = 0, .offset = 0, .length = 0, .file_id = self.file_id };
+        if (main_token >= self.token_starts.len) return .{ .offset = 0, .length = 0, .file_id = self.file_id };
         return .{
-            .line = 0,
-            .col = 0,
             .offset = self.token_starts[main_token],
             .length = self.token_lengths[main_token],
             .file_id = self.file_id,

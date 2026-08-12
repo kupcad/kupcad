@@ -118,10 +118,8 @@ pub const Parser = struct {
     }
 
     fn getLoc(self: *const Parser, idx: u24) ast.Location {
-        if (idx >= self.tokens.starts.len) return .{ .line = 0, .col = 0, .offset = 0, .length = 0, .file_id = 0 };
+        if (idx >= self.tokens.starts.len) return .{ .offset = 0, .length = 0, .file_id = 0 };
         return .{
-            .line = 0,
-            .col = 0,
             .offset = self.tokens.starts[idx],
             .length = self.tokens.lengths[idx],
             .file_id = 0,

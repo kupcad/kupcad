@@ -132,36 +132,6 @@ test "KupCAD Lexer: Arrays and Hashes" {
     });
 }
 
-test "KupCAD Lexer: Line and column tracking" {
-    const source = "a = 1\n  b = 2";
-    var lexer = Lexer.init(source, 0);
-
-    var tok = lexer.next(); // 'a'
-    try testing.expectEqual(.ident, tok.tag);
-    try testing.expectEqual(@as(u32, 1), tok.loc.line);
-    try testing.expectEqual(@as(u32, 1), tok.loc.col);
-
-    tok = lexer.next(); // '='
-    try testing.expectEqual(.equal, tok.tag);
-    try testing.expectEqual(@as(u32, 1), tok.loc.line);
-    try testing.expectEqual(@as(u32, 3), tok.loc.col);
-
-    tok = lexer.next(); // '1'
-    try testing.expectEqual(.number, tok.tag);
-    try testing.expectEqual(@as(u32, 1), tok.loc.line);
-    try testing.expectEqual(@as(u32, 5), tok.loc.col);
-
-    tok = lexer.next(); // '\n'
-    try testing.expectEqual(.newline, tok.tag);
-    try testing.expectEqual(@as(u32, 1), tok.loc.line);
-    try testing.expectEqual(@as(u32, 6), tok.loc.col);
-
-    tok = lexer.next(); // 'b'
-    try testing.expectEqual(.ident, tok.tag);
-    try testing.expectEqual(@as(u32, 2), tok.loc.line);
-    try testing.expectEqual(@as(u32, 3), tok.loc.col); // skipped 2 spaces
-}
-
 test "KupCAD Lexer: Stabby Lambda" {
     try expectTokens("my_lambda = ->(x, y) { x + y }", &.{
         t(.ident, "my_lambda"), t(.equal, "="),   t(.minus_greater, "->"),
@@ -294,8 +264,6 @@ test "KupCAD Lexer: Exhaustive Location tracking (line, col, offset, length, fil
     var tok = lexer.next();
     try testing.expectEqual(.ident, tok.tag);
     try testing.expectEqualStrings("a", tok.lexeme);
-    try testing.expectEqual(@as(u32, 1), tok.loc.line);
-    try testing.expectEqual(@as(u32, 1), tok.loc.col);
     try testing.expectEqual(@as(u32, 0), tok.loc.offset);
     try testing.expectEqual(@as(u32, 0), tok.loc.length); // Unpopulated by Lexer (expected)
     try testing.expectEqual(@as(u32, 42), tok.loc.file_id); // File ID propagates perfectly
@@ -305,8 +273,6 @@ test "KupCAD Lexer: Exhaustive Location tracking (line, col, offset, length, fil
     tok = lexer.next();
     try testing.expectEqual(.equal, tok.tag);
     try testing.expectEqualStrings("=", tok.lexeme);
-    try testing.expectEqual(@as(u32, 1), tok.loc.line);
-    try testing.expectEqual(@as(u32, 3), tok.loc.col);
     try testing.expectEqual(@as(u32, 2), tok.loc.offset);
     try testing.expectEqual(@as(u32, 3), tok.endOffset());
 
@@ -314,8 +280,6 @@ test "KupCAD Lexer: Exhaustive Location tracking (line, col, offset, length, fil
     tok = lexer.next();
     try testing.expectEqual(.number, tok.tag);
     try testing.expectEqualStrings("1", tok.lexeme);
-    try testing.expectEqual(@as(u32, 1), tok.loc.line);
-    try testing.expectEqual(@as(u32, 5), tok.loc.col);
     try testing.expectEqual(@as(u32, 4), tok.loc.offset);
     try testing.expectEqual(@as(u32, 5), tok.endOffset());
 
@@ -323,8 +287,6 @@ test "KupCAD Lexer: Exhaustive Location tracking (line, col, offset, length, fil
     tok = lexer.next();
     try testing.expectEqual(.newline, tok.tag);
     try testing.expectEqualStrings("\n", tok.lexeme);
-    try testing.expectEqual(@as(u32, 1), tok.loc.line); // Belongs to the end of line 1
-    try testing.expectEqual(@as(u32, 6), tok.loc.col);
     try testing.expectEqual(@as(u32, 5), tok.loc.offset);
     try testing.expectEqual(@as(u32, 6), tok.endOffset());
 
@@ -332,8 +294,6 @@ test "KupCAD Lexer: Exhaustive Location tracking (line, col, offset, length, fil
     tok = lexer.next();
     try testing.expectEqual(.ident, tok.tag);
     try testing.expectEqualStrings("b", tok.lexeme);
-    try testing.expectEqual(@as(u32, 2), tok.loc.line); // Successfully jumped to Line 2
-    try testing.expectEqual(@as(u32, 3), tok.loc.col); // Col 3 (after 2 spaces)
     try testing.expectEqual(@as(u32, 8), tok.loc.offset); // Byte 8 overall
     try testing.expectEqual(@as(u32, 9), tok.endOffset());
 
@@ -341,8 +301,6 @@ test "KupCAD Lexer: Exhaustive Location tracking (line, col, offset, length, fil
     tok = lexer.next();
     try testing.expectEqual(.equal, tok.tag);
     try testing.expectEqualStrings("=", tok.lexeme);
-    try testing.expectEqual(@as(u32, 2), tok.loc.line);
-    try testing.expectEqual(@as(u32, 5), tok.loc.col);
     try testing.expectEqual(@as(u32, 10), tok.loc.offset);
     try testing.expectEqual(@as(u32, 11), tok.endOffset());
 
@@ -350,16 +308,12 @@ test "KupCAD Lexer: Exhaustive Location tracking (line, col, offset, length, fil
     tok = lexer.next();
     try testing.expectEqual(.number, tok.tag);
     try testing.expectEqualStrings("2", tok.lexeme);
-    try testing.expectEqual(@as(u32, 2), tok.loc.line);
-    try testing.expectEqual(@as(u32, 7), tok.loc.col);
     try testing.expectEqual(@as(u32, 12), tok.loc.offset);
     try testing.expectEqual(@as(u32, 13), tok.endOffset());
 
     // 8. EOF
     tok = lexer.next();
     try testing.expectEqual(.eof, tok.tag);
-    try testing.expectEqual(@as(u32, 2), tok.loc.line);
-    try testing.expectEqual(@as(u32, 8), tok.loc.col);
     try testing.expectEqual(@as(u32, 13), tok.loc.offset);
 }
 
@@ -445,7 +399,7 @@ test "KupCAD Lexer: UTF-8 Identifiers (Math Variables)" {
     });
 }
 
-test "KupCAD Lexer: UTF-8 Identifier Column Tracking" {
+test "KupCAD Lexer: UTF-8 Identifier Offset Tracking" {
     // String indices:
     // 01 2 34 5 67 8 9
     // Δx = 10 \n π = 5
@@ -455,13 +409,12 @@ test "KupCAD Lexer: UTF-8 Identifier Column Tracking" {
     // 'Δx' (length: 2 characters, 3 bytes)
     var tok = lexer.next();
     try testing.expectEqualStrings("Δx", tok.lexeme);
-    try testing.expectEqual(@as(u32, 1), tok.loc.col);
     try testing.expectEqual(@as(u32, 0), tok.loc.offset);
 
     // '='
     tok = lexer.next();
     try testing.expectEqualStrings("=", tok.lexeme);
-    try testing.expectEqual(@as(u32, 4), tok.loc.col); // Should be 4, as Δ (col 1) + x (col 2) + space (col 3)
+    try testing.expectEqual(@as(u32, 4), tok.loc.offset); // Should be 4, as Δ (col 1) + x (col 2) + space (col 3)
 
     // '10'
     _ = lexer.next();
@@ -471,6 +424,5 @@ test "KupCAD Lexer: UTF-8 Identifier Column Tracking" {
     // 'π'
     tok = lexer.next();
     try testing.expectEqualStrings("π", tok.lexeme);
-    try testing.expectEqual(@as(u32, 2), tok.loc.line);
-    try testing.expectEqual(@as(u32, 1), tok.loc.col);
+    try testing.expectEqual(@as(u32, 9), tok.loc.offset);
 }

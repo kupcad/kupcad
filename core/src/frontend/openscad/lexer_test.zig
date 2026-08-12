@@ -91,30 +91,6 @@ test "OpenSCAD Lexer: Let, Comprehensions, Intersection For" {
     });
 }
 
-test "OpenSCAD Lexer: Line and column tracking" {
-    const source = "x = 1;\n/* \nblock \n*/\ny = 2;";
-    var lexer = Lexer.init(source, 0);
-
-    var tok = lexer.next(); // 'x'
-    try testing.expectEqual(.ident, tok.tag);
-    try testing.expectEqual(@as(u32, 1), tok.loc.line);
-    try testing.expectEqual(@as(u32, 1), tok.loc.col);
-
-    _ = lexer.next(); // '='
-    _ = lexer.next(); // '1'
-    _ = lexer.next(); // ';'
-
-    tok = lexer.next(); // '/* \nblock \n*/'
-    try testing.expectEqual(.block_comment, tok.tag);
-    try testing.expectEqual(@as(u32, 2), tok.loc.line);
-    try testing.expectEqual(@as(u32, 1), tok.loc.col);
-
-    tok = lexer.next(); // 'y'
-    try testing.expectEqual(.ident, tok.tag);
-    try testing.expectEqual(@as(u32, 5), tok.loc.line);
-    try testing.expectEqual(@as(u32, 1), tok.loc.col);
-}
-
 test "OpenSCAD Lexer: Special variables, ranges, and escaped strings" {
     try expectTokens("$fn = 50;\nfor(i = [0 : 2 : 10]) {\n  echo(\"Test: \\\"escaped\\\" str\");\n}", &.{
         t(.ident, "$fn"),
