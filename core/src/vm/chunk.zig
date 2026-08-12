@@ -78,11 +78,6 @@ pub const OpCode = enum(u8) {
     op_return,
 };
 
-pub const LineStart = struct {
-    line: u32,
-    count: u32,
-};
-
 pub const Chunk = struct {
     code: std.ArrayListUnmanaged(u8),
     constants: value.ValueArray,
