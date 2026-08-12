@@ -230,12 +230,36 @@ pub const Compiler = struct {
             },
             .assignment => {
                 const assign_payload = self.tree.assignment(node);
-                try self.compileNode(assign_payload.value);
-
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = assign_payload.name;
 
                 if (sym.kind == .global) return error.UnsupportedScope;
+
+                // If compound (+=), evaluate getter first
+                if (assign_payload.op) |op| {
+                    if (self.resolveLocal(name_id)) |local_slot| {
+                        try self.emitOp(.op_get_local, line);
+                        try self.emitByte(local_slot, line);
+                    } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
+                        try self.emitOp(.op_get_upvalue, line);
+                        try self.emitByte(upvalue_slot, line);
+                    } else {
+                        try self.emitOp(.op_get_local, line);
+                        try self.emitByte(@intCast(sym.index), line);
+                    }
+
+                    try self.compileNode(assign_payload.value);
+
+                    switch (op) {
+                        .add => try self.emitOp(.op_add, line),
+                        .subtract => try self.emitOp(.op_subtract, line),
+                        .multiply => try self.emitOp(.op_multiply, line),
+                        .divide => try self.emitOp(.op_divide, line),
+                        else => return error.UnknownNode, // Only map implemented basic ops for MVP
+                    }
+                } else {
+                    try self.compileNode(assign_payload.value);
+                }
 
                 if (self.resolveLocal(name_id)) |local_slot| {
                     try self.emitOp(.op_set_local, line);
@@ -353,13 +377,28 @@ pub const Compiler = struct {
             .index_assignment => {
                 const ia = self.tree.indexAssignment(node);
 
-                // Note: Compound assignments (arr[0] += 5) will be fully wired up in Phase 4.
-                // For now, we only compile simple assignments (arr[0] = 5).
-                if (ia.op != null) return error.UnknownNode;
-
                 try self.compileNode(ia.target);
                 try self.compileNode(ia.index);
-                try self.compileNode(ia.value);
+
+                if (ia.op) |op| {
+                    // Double-evaluate target and index to fetch current value.
+                    try self.compileNode(ia.target);
+                    try self.compileNode(ia.index);
+                    try self.emitOp(.op_get_index, line);
+
+                    try self.compileNode(ia.value);
+
+                    switch (op) {
+                        .add => try self.emitOp(.op_add, line),
+                        .subtract => try self.emitOp(.op_subtract, line),
+                        .multiply => try self.emitOp(.op_multiply, line),
+                        .divide => try self.emitOp(.op_divide, line),
+                        else => return error.UnknownNode,
+                    }
+                } else {
+                    try self.compileNode(ia.value);
+                }
+
                 try self.emitOp(.op_set_index, line);
             },
             .method_call => {
@@ -386,6 +425,12 @@ pub const Compiler = struct {
                 } else {
                     try self.compileNode(mc.receiver);
 
+                    // If it is a safe call (&.), we inject a conditional jump over the arguments and invocation
+                    var safe_jump: usize = 0;
+                    if (mc.is_safe) {
+                        safe_jump = try self.emitJump(.op_jump_if_nil, line);
+                    }
+
                     const args = self.tree.getNamedArgs(mc.args);
                     for (args) |arg| try self.compileNode(arg.value);
 
@@ -401,6 +446,11 @@ pub const Compiler = struct {
                     try self.emitByte(@intCast(args.len), line);
                     self.simulatePop(args.len + 1);
                     self.simulatePush(1);
+
+                    // Cap off the safe navigation jump here. The stack naturally maintains equilibrium!
+                    if (mc.is_safe) {
+                        self.patchJump(safe_jump);
+                    }
                 }
             },
             .binary_op => {
@@ -721,10 +771,6 @@ pub const Compiler = struct {
             },
             .property_assignment => {
                 const pa = self.tree.propertyAssignment(node);
-                if (pa.op != null) return error.UnknownNode; // Compound unsupported
-
-                try self.compileNode(pa.target);
-                try self.compileNode(pa.value);
 
                 const prop_name = self.tree.getString(pa.property);
                 const name_val = try self.vm.allocateString(prop_name);
@@ -732,6 +778,27 @@ pub const Compiler = struct {
                 self.vm.push(name_val);
                 const name_idx = try self.makeConstant(name_val);
                 _ = self.vm.pop();
+
+                try self.compileNode(pa.target);
+
+                if (pa.op) |op| {
+                    try self.compileNode(pa.target);
+                    try self.emitOp(.op_invoke, line);
+                    try self.emitByte(name_idx, line);
+                    try self.emitByte(0, line); // 0 args
+
+                    try self.compileNode(pa.value);
+
+                    switch (op) {
+                        .add => try self.emitOp(.op_add, line),
+                        .subtract => try self.emitOp(.op_subtract, line),
+                        .multiply => try self.emitOp(.op_multiply, line),
+                        .divide => try self.emitOp(.op_divide, line),
+                        else => return error.UnknownNode,
+                    }
+                } else {
+                    try self.compileNode(pa.value);
+                }
 
                 try self.emitOp(.op_set_property, line);
                 try self.emitByte(name_idx, line);

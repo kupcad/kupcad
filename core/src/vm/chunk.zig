@@ -56,6 +56,7 @@ pub const OpCode = enum(u8) {
     // Control Flow
     op_jump,
     op_jump_if_false,
+    op_jump_if_nil,
     op_loop,
 
     // Functions & Builtins

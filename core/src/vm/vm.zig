@@ -485,6 +485,16 @@ pub const VM = struct {
                         frame.ip += offset;
                     }
                 },
+                .op_jump_if_nil => {
+                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
+                    frame.ip += 2;
+
+                    // Peek at the receiver. If it is nil, take the jump
+                    const val = self.stack[self.stack_top - 1];
+                    if (val.isNil()) {
+                        frame.ip += offset;
+                    }
+                },
                 .op_loop => {
                     const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
                     frame.ip += 2;
