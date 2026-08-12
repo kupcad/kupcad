@@ -20,6 +20,10 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         try executeAstDump(init, allocator, args_iter);
     } else if (std.mem.eql(u8, subcmd, "disasm")) {
         try executeDisasm(init, allocator, args_iter);
+    } else if (std.mem.eql(u8, subcmd, "lex-dump")) {
+        try executeLexDump(init, allocator, args_iter);
+    } else if (std.mem.eql(u8, subcmd, "bench")) {
+        try executeBench(init, allocator, args_iter);
     } else {
         std.log.err("Unknown dev subcommand '{s}'", .{subcmd});
         printUsage();
@@ -120,6 +124,117 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
     std.log.info("Successfully dumped Bytecode to {s}", .{out_path});
 }
 
+fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
+    const file_path = args_iter.next() orelse {
+        std.log.err("Missing file path for 'lex-dump'. Usage: kupcad dev lex-dump <file.kup>", .{});
+        return error.MissingFilePath;
+    };
+
+    const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
+    defer allocator.free(source);
+
+    // Note: Defaulting to KupCAD lexer here. You could branch on file extension later for OpenSCAD!
+    const Lexer = @import("../frontend/kupcad/lexer.zig").Lexer;
+    var lexer = Lexer.init(source, 0);
+    const tokens = try lexer.lexAll(allocator);
+    defer {
+        allocator.free(tokens.tags);
+        allocator.free(tokens.starts);
+        allocator.free(tokens.lengths);
+    }
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try out.writer.writeAll("== Lexer Token Dump ==\n");
+    for (tokens.tags, 0..) |tag, i| {
+        const start = tokens.starts[i];
+        const len = tokens.lengths[i];
+        const lexeme = source[start .. start + len];
+
+        // Example output: [0014] ident          'cube'
+        try out.writer.print("[{d:0>4}] {s: <20} '{s}'\n", .{ start, @tagName(tag), lexeme });
+    }
+
+    const out_path = try std.fmt.allocPrint(allocator, "{s}.lex", .{file_path});
+    defer allocator.free(out_path);
+    const cwd = std.Io.Dir.cwd();
+    try cwd.writeFile(init.io, .{
+        .sub_path = out_path,
+        .data = out.written(),
+    });
+
+    std.log.info("Successfully dumped Tokens to {s}", .{out_path});
+}
+
+fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
+    const file_path = args_iter.next() orelse {
+        std.log.err("Missing file path for 'bench'. Usage: kupcad dev bench <file.kup>", .{});
+        return error.MissingFilePath;
+    };
+
+    const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
+    defer allocator.free(source);
+
+    // 1. Benchmark Parsing
+    const start_parse = std.Io.Clock.now(.awake, init.io);
+
+    var doc = api.Document.parse(allocator, source) catch |err| {
+        std.log.err("Parse failed: {}", .{err});
+        return err;
+    };
+    defer doc.deinit();
+
+    const end_parse = std.Io.Clock.now(.awake, init.io);
+    const parse_time = start_parse.durationTo(end_parse).toNanoseconds();
+
+    // 2. Benchmark Compilation
+    const VM = @import("../vm/vm.zig").VM;
+    const chunk = @import("../vm/chunk.zig");
+    const Compiler = @import("../compiler/compiler.zig").Compiler;
+    const registry = @import("../stdlib/registry.zig");
+
+    var vm = try VM.init(allocator, init.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(allocator);
+
+    const start_compile = std.Io.Clock.now(.awake, init.io);
+
+    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, &main_chunk, &vm);
+    compiler.compile(doc.tree.root) catch |err| {
+        std.log.err("Compilation failed: {}", .{err});
+        return err;
+    };
+
+    const end_compile = std.Io.Clock.now(.awake, init.io);
+    const compile_time = start_compile.durationTo(end_compile).toNanoseconds();
+
+    // 3. Benchmark Execution
+    const start_exec = std.Io.Clock.now(.awake, init.io);
+
+    const result = vm.interpret(&main_chunk);
+
+    const end_exec = std.Io.Clock.now(.awake, init.io);
+    const execute_time = start_exec.durationTo(end_exec).toNanoseconds();
+
+    // Format output
+    std.debug.print("\n=== KupCAD Benchmark: {s} ===\n", .{file_path});
+    if (result != .ok) {
+        std.debug.print("Execution Result: FAILED\n\n", .{});
+    }
+
+    const ns_per_ms: f64 = 1_000_000.0;
+
+    std.debug.print("Parse Time:   {d:>6.2} ms\n", .{@as(f64, @floatFromInt(parse_time)) / ns_per_ms});
+    std.debug.print("Compile Time: {d:>6.2} ms\n", .{@as(f64, @floatFromInt(compile_time)) / ns_per_ms});
+    std.debug.print("VM Exec Time: {d:>6.2} ms\n", .{@as(f64, @floatFromInt(execute_time)) / ns_per_ms});
+    std.debug.print("---------------------------------\n", .{});
+    std.debug.print("Total Time:   {d:>6.2} ms\n\n", .{@as(f64, @floatFromInt(parse_time + compile_time + execute_time)) / ns_per_ms});
+}
+
 fn printUsage() void {
     std.log.info(
         \\Usage: kupcad dev <subcommand> [options]
@@ -127,6 +242,8 @@ fn printUsage() void {
         \\Subcommands:
         \\  ast-dump <file>  Generate an AST tree dump (.dump) for compiler debugging
         \\  disasm <file>    Disassemble KupCAD script into raw VM bytecode (.disasm)
+        \\  lex-dump <file>  Dump the raw Lexer token stream (.lex)
+        \\  bench <file>     Profile Parse, Compile, and VM Execution times
         \\
     , .{});
 }
