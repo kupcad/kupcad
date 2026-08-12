@@ -377,6 +377,26 @@ pub const VM = struct {
                     self.push(err_val);
                     self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
                 },
+                .op_is_instance => {
+                    const class_val = self.pop();
+                    defer self.releaseValue(class_val);
+                    const instance_val = self.pop();
+                    defer self.releaseValue(instance_val);
+
+                    if (!class_val.isClass()) {
+                        std.log.err("Runtime Error: Rescue type must be a Class.\n", .{});
+                        return .runtime_error;
+                    }
+
+                    if (instance_val.isInstance()) {
+                        const inst = instance_val.asInstance();
+                        // For MVP, exact class match. (Later, we can walk superclasses).
+                        self.push(value.Value.initBool(inst.class == class_val.asClass()));
+                    } else {
+                        // If user threw a primitive string instead of an Error object, it fails the class check
+                        self.push(value.Value.initBool(false));
+                    }
+                },
                 .op_call => {
                     const arg_count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;

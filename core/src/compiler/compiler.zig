@@ -332,31 +332,100 @@ pub const Compiler = struct {
             },
             .begin_stmt => {
                 const bs = self.tree.beginStmt(node);
+                const rescues = self.tree.getRescueClauses(bs.rescues);
 
-                const rescue_jump = try self.emitJump(.op_setup_rescue, line);
+                var rescue_jump: usize = 0;
+                if (rescues.len > 0) {
+                    rescue_jump = try self.emitJump(.op_setup_rescue, line);
+                }
 
                 try self.compileNode(bs.body);
-                try self.emitOp(.op_pop_rescue, line);
+
+                if (rescues.len > 0) {
+                    try self.emitOp(.op_pop_rescue, line);
+                }
 
                 const end_jump = try self.emitJump(.op_jump, line);
 
-                self.patchJump(rescue_jump);
-                self.simulatePush(1); // Simulator: op_throw pushed the error value
-
-                const rescues = self.tree.getRescueClauses(bs.rescues);
                 if (rescues.len > 0) {
-                    const rescue = rescues[0];
-                    const var_str = self.tree.getString(rescue.variable);
-                    if (var_str.len > 0) {
-                        self.addLocal(rescue.variable, @intCast(self.local_count));
-                        try self.emitOp(.op_set_local, line);
-                        try self.emitByte(@intCast(self.local_count - 1), line);
+                    self.patchJump(rescue_jump);
+                    self.simulatePush(1); // Simulator: op_throw pushed the error value on the stack
+
+                    var rescue_end_jumps: [64]usize = undefined;
+                    var rescue_end_jump_count: usize = 0;
+                    var next_rescue_jump: ?usize = null;
+
+                    for (rescues) |rescue| {
+                        if (next_rescue_jump) |jmp| {
+                            self.patchJump(jmp);
+                        }
+                        next_rescue_jump = null;
+
+                        const errors = self.tree.getStringLists(rescue.errors);
+                        var match_jumps: [16]usize = undefined;
+                        var match_jump_count: usize = 0;
+
+                        if (errors.len > 0) {
+                            for (errors) |err_id| {
+                                const err_str = self.tree.getString(err_id);
+                                const name_val = try self.vm.allocateString(err_str);
+                                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                                self.vm.push(name_val);
+                                const name_idx = try self.makeConstant(name_val);
+                                _ = self.vm.pop();
+
+                                try self.emitOp(.op_dup, line); // Copy error payload
+                                try self.emitOp(.op_get_global, line);
+                                try self.emitByte(name_idx, line);
+                                try self.emitOp(.op_is_instance, line);
+
+                                const skip_jump = try self.emitJump(.op_jump_if_false, line);
+                                try self.emitOp(.op_pop, line); // Discard True
+
+                                if (match_jump_count < 16) {
+                                    match_jumps[match_jump_count] = try self.emitJump(.op_jump, line);
+                                    match_jump_count += 1;
+                                }
+
+                                self.patchJump(skip_jump);
+                                try self.emitOp(.op_pop, line); // Discard False
+                            }
+                            // If no error type matched, jump to the next rescue block
+                            next_rescue_jump = try self.emitJump(.op_jump, line);
+                        }
+
+                        // --- MATCHED ROUTE ---
+                        for (match_jumps[0..match_jump_count]) |jmp| {
+                            self.patchJump(jmp);
+                        }
+
+                        const var_str = self.tree.getString(rescue.variable);
+                        if (var_str.len > 0) {
+                            self.addLocal(rescue.variable, @intCast(self.local_count));
+                            try self.emitOp(.op_set_local, line);
+                            try self.emitByte(@intCast(self.local_count - 1), line);
+                        }
+                        try self.emitOp(.op_pop, line); // Pop the error value off stack
+
+                        try self.compileNode(rescue.body);
+
+                        if (rescue_end_jump_count < 64) {
+                            rescue_end_jumps[rescue_end_jump_count] = try self.emitJump(.op_jump, line);
+                            rescue_end_jump_count += 1;
+                        }
                     }
-                    try self.emitOp(.op_pop, line); // Pop error value
-                    try self.compileNode(rescue.body);
-                } else {
-                    try self.emitOp(.op_pop, line); // Pop error value
-                    try self.emitOp(.op_nil, line);
+
+                    // If it fell through ALL rescue blocks without matching, re-throw it
+                    if (next_rescue_jump) |jmp| {
+                        self.patchJump(jmp);
+                        try self.emitOp(.op_throw, line);
+                        self.simulatePop(1); // Simulator: op_throw consumes the error value
+                    }
+
+                    // Patch all successful rescue block ends to arrive here
+                    for (rescue_end_jumps[0..rescue_end_jump_count]) |jmp| {
+                        self.patchJump(jmp);
+                    }
                 }
 
                 self.patchJump(end_jump);
@@ -1046,7 +1115,7 @@ pub const Compiler = struct {
         switch (op) {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import => self.simulatePush(1),
             .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw => self.simulatePop(1),
-            .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater => {
+            .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater => {
                 self.simulatePop(2);
                 self.simulatePush(1);
             },

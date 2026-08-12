@@ -55,6 +55,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         .op_dup,
         .op_pop_rescue,
         .op_throw,
+        .op_is_instance,
         .op_add,
         .op_subtract,
         .op_multiply,

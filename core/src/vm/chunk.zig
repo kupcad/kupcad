@@ -29,6 +29,7 @@ pub const OpCode = enum(u8) {
     op_set_property,
     op_method,
     op_unpack,
+    op_is_instance,
 
     // Stack Operations
     op_pop,
