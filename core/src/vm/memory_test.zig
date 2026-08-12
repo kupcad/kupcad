@@ -64,3 +64,28 @@ test "ARC: ObjGeometry allocation and GC isolation" {
     vm.releaseValue(popped_val); // Drop the stack's reference
     vm.releaseValue(geom_val); // Drop the initial allocation reference -> instantly frees!
 }
+
+test "GC: allocateRange correctly registers and sweeps" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const count_before = countObjects(&vm.gc);
+
+    // Allocate a new range primitive
+    const range = try vm.gc.allocateRange(&vm, 1.0, 10.0, 1.0, false);
+
+    // Verify it was added to the GC linked list
+    try testing.expectEqual(count_before + 1, countObjects(&vm.gc));
+    try testing.expectEqual(@as(f64, 1.0), range.start);
+    try testing.expectEqual(@as(f64, 10.0), range.end);
+    try testing.expectEqual(false, range.is_exclusive);
+
+    // Trigger a garbage collection cycle.
+    // Because we NEVER pushed the range to the VM Stack (vm.push),
+    // the GC's markRoots phase will see it as unreachable/dead memory.
+    vm.gc.collectGarbage(&vm, false);
+
+    // Verify it was cleanly swept from the heap
+    try testing.expectEqual(count_before, countObjects(&vm.gc));
+}
