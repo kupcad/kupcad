@@ -272,3 +272,113 @@ test "VM: Closures correctly capture and return upvalues" {
     // Proves that the closure successfully reached into the parent scope!
     try testing.expectEqual(@as(f64, 42.0), final_val.asNumber());
 }
+
+test "VM: executes dynamic array building and spreading" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // 1. Target Array: op_build_array 0 (Empty Array)
+    try out_chunk.writeOp(testing.allocator, .op_build_array, 1);
+    try out_chunk.write(testing.allocator, 0, 1);
+
+    // 2. Element 1: Push 42 and op_array_push
+    const c42 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, c42, 1);
+    try out_chunk.writeOp(testing.allocator, .op_array_push, 1);
+
+    // 3. Source Array: Build [1, 2]
+    const c1 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(1.0));
+    const c2 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(2.0));
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, c1, 1);
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, c2, 1);
+    try out_chunk.writeOp(testing.allocator, .op_build_array, 1);
+    try out_chunk.write(testing.allocator, 2, 1);
+
+    // 4. Spread source into target
+    try out_chunk.writeOp(testing.allocator, .op_array_spread, 1);
+    try out_chunk.writeOp(testing.allocator, .op_return, 1);
+
+    out_chunk.max_stack_slots = 5;
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    // Verify the Array is successfully merged [42.0, 1.0, 2.0]
+    const final_arr_val = vm.stack[0];
+    try testing.expect(final_arr_val.isObject());
+    const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", final_arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 3), arr.items.items.len);
+    try testing.expectEqual(@as(f64, 42.0), arr.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 1.0), arr.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 2.0), arr.items.items[2].asNumber());
+}
+
+test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // 1. op_setup_rescue (reserves jump offset)
+    try out_chunk.writeOp(testing.allocator, .op_setup_rescue, 1);
+    const jump_idx = out_chunk.code.items.len;
+    try out_chunk.write(testing.allocator, 0xFF, 1);
+    try out_chunk.write(testing.allocator, 0xFF, 1);
+
+    // 2. Push a dummy variable to prove stack unwinding drops dead variables cleanly
+    const dummy = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(99.0));
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, dummy, 1);
+
+    // 3. Throw an Error!
+    const err_str_val = try vm.allocateString("Crash!");
+    vm.ensureStackCapacity(1) catch unreachable;
+    vm.push(err_str_val);
+    const err_str = try out_chunk.addConstant(testing.allocator, err_str_val);
+    _ = vm.pop();
+
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, err_str, 1);
+    try out_chunk.writeOp(testing.allocator, .op_throw, 1);
+
+    // 4. Success path (Should be completely skipped by the VM unwinder!)
+    try out_chunk.writeOp(testing.allocator, .op_pop_rescue, 1);
+    try out_chunk.writeOp(testing.allocator, .op_jump, 1);
+    try out_chunk.write(testing.allocator, 0, 1);
+    try out_chunk.write(testing.allocator, 3, 1); // skip over rescue block
+
+    // --- RESCUE HANDLER ---
+    // Patch the setup_rescue offset so it lands exactly here
+    const handler_ip = out_chunk.code.items.len;
+    const offset = handler_ip - (jump_idx + 2);
+    out_chunk.code.items[jump_idx] = @intCast((offset >> 8) & 0xFF);
+    out_chunk.code.items[jump_idx + 1] = @intCast(offset & 0xFF);
+
+    // Pop the "Crash!" error off the stack
+    try out_chunk.writeOp(testing.allocator, .op_pop, 1);
+
+    // Return a fallback value of 42
+    const c42 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, c42, 1);
+    try out_chunk.writeOp(testing.allocator, .op_return, 1);
+
+    out_chunk.max_stack_slots = 5;
+
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    // The stack should contain exactly 42.0, the dummy 99.0 should be stripped entirely!
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+}

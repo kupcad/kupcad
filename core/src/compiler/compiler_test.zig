@@ -5,6 +5,7 @@ const chunk = @import("../vm/chunk.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("compiler.zig").Compiler;
+const resolver = @import("../core/resolver.zig");
 const VM = @import("../vm/vm.zig").VM;
 
 test "Compiler: compiles basic binary addition" {
@@ -45,4 +46,233 @@ test "Compiler: compiles basic binary addition" {
 
     // Operator
     try testing.expectEqual(@as(u8, @intFromEnum(chunk.OpCode.op_add)), out_chunk.code.items[4]);
+}
+
+test "Compiler: compiles range expression (1..10)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const start = try b.number("1", 0);
+    const end = try b.number("10", 0);
+    const range_node = try b.range(start, end, .none, false, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    try comp.compile(range_node);
+
+    // Bytecode expected:
+    // 0: op_constant (start) -> 1
+    // 2: op_constant (end) -> 10
+    // 4: op_constant (default step) -> 1
+    // 6: op_build_range
+    // 7: 0 (inclusive boolean flag)
+    // 8: op_return
+    try testing.expectEqual(@as(usize, 9), out_chunk.code.items.len);
+    try testing.expectEqual(chunk.OpCode.op_build_range, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+    try testing.expectEqual(@as(u8, 0), out_chunk.code.items[7]);
+}
+
+test "Compiler: compiles compound assignment (x += 5)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const name_id = try b.intern("x");
+    const val = try b.number("5", 0);
+    const assign_node = try b.assignment(name_id, .add, val, 0);
+
+    // Unmanaged ArrayList and the top-level resolver import
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(assign_node) + 1);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &out_chunk, &vm);
+    try comp.compile(assign_node);
+
+    // Bytecode expected for `x += 5`:
+    // op_get_local (x)
+    // op_constant (5)
+    // op_add
+    // op_set_local (x)
+    // op_return
+    try testing.expectEqual(chunk.OpCode.op_get_local, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+    try testing.expectEqual(chunk.OpCode.op_set_local, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
+}
+
+test "Compiler: compiles safe navigation method call (obj&.cut())" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const receiver = try b.identifierNode("obj", 0);
+    const method_name = try b.intern("cut");
+    const empty_args = try b.addNamedArgs(&.{});
+    // Set is_safe to true
+    const safe_call = try b.methodCall(receiver, method_name, empty_args, .none, true, 0, 0);
+
+    // Unmanaged ArrayList and the top-level resolver import
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(safe_call) + 1);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &out_chunk, &vm);
+    try comp.compile(safe_call);
+
+    // Bytecode expected:
+    // op_get_local (obj)
+    // op_jump_if_nil (Safely skip the invoke if true!)
+    // op_invoke ('cut')
+    // op_return
+    try testing.expectEqual(chunk.OpCode.op_get_local, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_jump_if_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_invoke, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
+}
+
+test "Compiler: compiles string interpolation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const str1 = try b.stringNode("Value: ", 0);
+    const num = try b.number("42", 0);
+    const span = try b.addNodes(&.{ str1, num });
+    const interp_node = try b.interpolatedString(span, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    try comp.compile(interp_node);
+
+    // Bytecode Expected:
+    // op_constant ("Value: ")
+    // op_constant (42)
+    // op_interpolate (Takes operand 2 for count)
+    // op_return
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_interpolate, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+    try testing.expectEqual(@as(u8, 2), out_chunk.code.items[5]); // 2 parts merged
+}
+
+test "Compiler: compiles import statement" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const path_str = try b.intern("math.kup");
+    const empty_symbols = try b.addStringLists(&.{});
+    // import "math.kup"
+    const import_node = try b.importStmt(empty_symbols, path_str, .none, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    try comp.compile(import_node);
+
+    // Expected Bytecode:
+    // 0: op_import (path constant)
+    // 2: op_pop (discard standard import result)
+    // 3: op_nil (yield nil)
+    // 4: op_return
+    try testing.expectEqual(chunk.OpCode.op_import, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[3])));
+}
+
+test "Compiler: compiles namespace access (Hardware::Screw)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const p1 = try b.intern("Hardware");
+    const p2 = try b.intern("Screw");
+    const path_span = try b.addStringLists(&.{ p1, p2 });
+    const namespace_node = try b.namespaceAccess(path_span, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    try comp.compile(namespace_node);
+
+    // Expected Bytecode:
+    // 0: op_get_global ("Hardware")
+    // 2: op_get_property ("Screw")
+    // 4: op_return
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_get_property, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+}
+
+test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const dangerous_expr = try b.identifierNode("x", 0);
+    const fallback_val = try b.number("0", 0);
+    const rescue_node = try b.rescueModifier(dangerous_expr, fallback_val, 0);
+
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(rescue_node) + 1);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &out_chunk, &vm);
+    try comp.compile(rescue_node);
+
+    // Expected Bytecode:
+    // 0: op_setup_rescue (jump to rescue block on error)
+    // 3: op_get_local (x)
+    // 5: op_pop_rescue (success path, remove frame)
+    // 6: op_jump (skip rescue block)
+    // 9: op_pop (rescue block start: pop the thrown error payload)
+    // 10: op_constant (0)
+    // 12: op_return
+    try testing.expectEqual(chunk.OpCode.op_setup_rescue, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_pop_rescue, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
+    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[9])));
 }
