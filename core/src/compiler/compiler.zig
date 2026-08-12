@@ -295,59 +295,139 @@ pub const Compiler = struct {
             },
             .case_stmt => {
                 const cs = self.tree.caseStmt(node);
-
                 const saved_depth = self.current_stack_depth;
-                try self.compileNode(cs.condition); // Pushes 'case' value
-
-                var end_jumps: [64]usize = undefined;
-                var end_jump_count: usize = 0;
-
                 const branches = self.tree.getWhenBranches(cs.when_branches);
+
+                // --- Heuristic: Can we use a Fast Jump Table? ---
+                var can_use_jump_table = true;
+                var total_conditions: u8 = 0;
                 for (branches) |branch| {
                     const conds = self.tree.getNodes(branch.conditions);
-
                     for (conds) |cond_idx| {
-                        try self.emitOp(.op_dup, line);
-                        try self.compileNode(cond_idx);
-                        try self.emitOp(.op_equal, line);
+                        const c_node = self.tree.getNode(cond_idx).?;
+                        if (c_node.tag != .number and c_node.tag != .string) {
+                            can_use_jump_table = false;
+                            break;
+                        }
+                        total_conditions += 1;
+                    }
+                    if (!can_use_jump_table) break;
+                }
 
-                        const skip_jump = try self.emitJump(.op_jump_if_false, line);
+                if (can_use_jump_table and total_conditions > 0) {
+                    // ====== FAST PATH: OP_SWITCH ======
+                    try self.compileNode(cs.condition);
 
-                        // Simulator trick: we are exploring the TRUE branch now.
-                        try self.emitOp(.op_pop, line); // pop `true` result
-                        try self.emitOp(.op_pop, line); // pop `case` value
+                    try self.emitOp(.op_switch, line);
+                    try self.emitByte(total_conditions, line);
 
+                    // Pre-allocate the jump table in bytecode so we can backpatch it later
+                    const table_start_offset = self.current_chunk.code.items.len;
+                    for (0..total_conditions) |_| {
+                        try self.emitByte(0, line); // const_idx
+                        try self.emitByte(0xFF, line); // jump high
+                        try self.emitByte(0xFF, line); // jump low
+                    }
+                    const default_jump_offset = self.current_chunk.code.items.len;
+                    try self.emitByte(0xFF, line); // default high
+                    try self.emitByte(0xFF, line); // default low
+
+                    var condition_idx: usize = 0;
+                    var end_jumps: [64]usize = undefined;
+                    var end_jump_count: usize = 0;
+
+                    for (branches) |branch| {
+                        const body_jump_target = self.current_chunk.code.items.len;
+                        const conds = self.tree.getNodes(branch.conditions);
+
+                        // Backpatch the table entries for this branch
+                        for (conds) |cond_node_idx| {
+                            const c_node = self.tree.getNode(cond_node_idx).?;
+                            const table_idx = table_start_offset + (condition_idx * 3);
+
+                            // Extract constant index directly
+                            if (c_node.tag == .number) {
+                                self.current_chunk.code.items[table_idx] = try self.makeConstant(value.Value.initNumber(self.tree.number(c_node)));
+                            } else if (c_node.tag == .string) {
+                                const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(c_node.data)));
+                                self.current_chunk.code.items[table_idx] = try self.makeStringConstant(str_content);
+                            }
+
+                            // Calculate offset from the END of the entire switch instruction block
+                            const offset = body_jump_target - (default_jump_offset + 2);
+                            self.current_chunk.code.items[table_idx + 1] = @intCast((offset >> 8) & 0xFF);
+                            self.current_chunk.code.items[table_idx + 2] = @intCast(offset & 0xFF);
+                            condition_idx += 1;
+                        }
+
+                        // Compile the actual body
                         try self.compileNode(branch.body);
 
                         if (end_jump_count < 64) {
                             end_jumps[end_jump_count] = try self.emitJump(.op_jump, line);
                             end_jump_count += 1;
                         }
-
-                        // Now we simulate the FALSE branch path.
-                        // In the false path, op_equal left `false` on the stack.
-                        // So we force the simulator back to depth 2 (case_val, false).
-                        self.current_stack_depth = saved_depth + 2;
-
-                        self.patchJump(skip_jump);
-                        try self.emitOp(.op_pop, line); // pop `false` result
                     }
-                }
 
-                try self.emitOp(.op_pop, line); // pop case value (no match found)
+                    // Backpatch Default Branch
+                    const default_target = self.current_chunk.code.items.len;
+                    const d_offset = default_target - (default_jump_offset + 2);
+                    self.current_chunk.code.items[default_jump_offset] = @intCast((d_offset >> 8) & 0xFF);
+                    self.current_chunk.code.items[default_jump_offset + 1] = @intCast(d_offset & 0xFF);
 
-                if (cs.else_branch != .none) {
-                    try self.compileNode(cs.else_branch);
+                    if (cs.else_branch != .none) {
+                        try self.compileNode(cs.else_branch);
+                    } else {
+                        try self.emitOp(.op_nil, line);
+                    }
+
+                    // Cap off all successful branch executions
+                    for (end_jumps[0..end_jump_count]) |jmp| {
+                        self.patchJump(jmp);
+                    }
+                    self.current_stack_depth = saved_depth + 1;
                 } else {
-                    try self.emitOp(.op_nil, line);
-                }
+                    // ====== LINEAR FALLBACK PATH ======
+                    try self.compileNode(cs.condition);
 
-                for (end_jumps[0..end_jump_count]) |jmp| {
-                    self.patchJump(jmp);
-                }
+                    var end_jumps: [64]usize = undefined;
+                    var end_jump_count: usize = 0;
 
-                // Final equilibrium reset
-                self.current_stack_depth = saved_depth + 1;
+                    for (branches) |branch| {
+                        const conds = self.tree.getNodes(branch.conditions);
+                        for (conds) |cond_idx| {
+                            try self.emitOp(.op_dup, line);
+                            try self.compileNode(cond_idx);
+                            try self.emitOp(.op_equal, line);
+                            const skip_jump = try self.emitJump(.op_jump_if_false, line);
+
+                            try self.emitOp(.op_pop, line);
+                            try self.emitOp(.op_pop, line);
+                            try self.compileNode(branch.body);
+
+                            if (end_jump_count < 64) {
+                                end_jumps[end_jump_count] = try self.emitJump(.op_jump, line);
+                                end_jump_count += 1;
+                            }
+
+                            self.current_stack_depth = saved_depth + 2;
+                            self.patchJump(skip_jump);
+                            try self.emitOp(.op_pop, line);
+                        }
+                    }
+
+                    try self.emitOp(.op_pop, line);
+                    if (cs.else_branch != .none) {
+                        try self.compileNode(cs.else_branch);
+                    } else {
+                        try self.emitOp(.op_nil, line);
+                    }
+
+                    for (end_jumps[0..end_jump_count]) |jmp| {
+                        self.patchJump(jmp);
+                    }
+                    self.current_stack_depth = saved_depth + 1;
+                }
             },
             .begin_stmt => {
                 const bs = self.tree.beginStmt(node);
@@ -967,52 +1047,18 @@ pub const Compiler = struct {
                     }
                 }
 
-                // 1. Evaluate the right side (pushes an Array or Value)
                 try self.compileNode(ma.value);
-
                 if (lhs.len > 255) return error.TooManyConstants;
 
-                // 2. Unpack the array into N stack slots
                 try self.emitOp(.op_unpack, line);
                 try self.emitByte(@intCast(lhs.len), line);
-                self.simulatePush(lhs.len); // Tell the simulator we pushed N items
+                self.simulatePush(lhs.len);
 
-                // 3. Assign them in reverse order (top of stack is the last variable)
                 var i: usize = lhs.len;
                 while (i > 0) {
                     i -= 1;
-                    const name_id = lhs[i].name;
-
-                    if (self.resolveLocal(name_id)) |local_slot| {
-                        try self.emitOp(.op_set_local, line);
-                        try self.emitByte(local_slot, line);
-                        try self.emitOp(.op_pop, line);
-                    } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-                        try self.emitOp(.op_set_upvalue, line);
-                        try self.emitByte(upvalue_slot, line);
-                        try self.emitOp(.op_pop, line);
-                    } else {
-                        const name_str = self.tree.getString(name_id);
-                        const name_val = try self.vm.allocateString(name_str);
-                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                        self.vm.push(name_val);
-                        const name_idx = try self.makeConstant(name_val);
-                        _ = self.vm.pop();
-
-                        if (self.enclosing == null) {
-                            try self.emitOp(.op_define_global, line);
-                            try self.emitByte(name_idx, line);
-                        } else {
-                            // Automatically hoist to a new local variable
-                            self.addLocal(name_id, @intCast(self.local_count));
-                            try self.emitOp(.op_set_local, line);
-                            try self.emitByte(@intCast(self.local_count - 1), line);
-                            try self.emitOp(.op_pop, line);
-                        }
-                    }
+                    try self.compileDestructure(lhs[i], line);
                 }
-
-                // Multiple assignments yield nil to maintain block equilibrium
                 try self.emitOp(.op_nil, line);
             },
             .class_stmt => {
@@ -1192,7 +1238,7 @@ pub const Compiler = struct {
         try self.emitByte(@intFromEnum(op), line);
         switch (op) {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import => self.simulatePush(1),
-            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread => self.simulatePop(1),
+            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch => self.simulatePop(1),
             .op_map_insert => self.simulatePop(2),
             .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater => {
                 self.simulatePop(2);
@@ -1264,5 +1310,35 @@ pub const Compiler = struct {
         const idx = try self.makeConstant(str_val);
         _ = self.vm.pop();
         return idx;
+    }
+
+    fn compileDestructure(self: *Compiler, target: anytype, line: u32) CompileError!void {
+        // Assign the unpacked value currently on top of the stack to the target identifier
+        if (target.name != .none) {
+            const name_id = target.name;
+            if (self.resolveLocal(name_id)) |local_slot| {
+                try self.emitOp(.op_set_local, line);
+                try self.emitByte(local_slot, line);
+                try self.emitOp(.op_pop, line);
+            } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
+                try self.emitOp(.op_set_upvalue, line);
+                try self.emitByte(upvalue_slot, line);
+                try self.emitOp(.op_pop, line);
+            } else {
+                const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
+                if (self.enclosing == null) {
+                    try self.emitOp(.op_define_global, line);
+                    try self.emitByte(name_idx, line);
+                } else {
+                    self.addLocal(name_id, @intCast(self.local_count));
+                    try self.emitOp(.op_set_local, line);
+                    try self.emitByte(@intCast(self.local_count - 1), line);
+                    try self.emitOp(.op_pop, line);
+                }
+            }
+        } else {
+            // Unhandled pattern or skipped element (e.g., `_`): pop to maintain stack equilibrium
+            try self.emitOp(.op_pop, line);
+        }
     }
 };

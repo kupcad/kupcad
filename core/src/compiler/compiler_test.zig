@@ -341,3 +341,34 @@ test "Compiler Edge Case: Compiles empty Hashes and Arrays safely" {
     try testing.expectEqual(chunk.OpCode.op_build_array, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
     try testing.expectEqual(@as(u8, 0), out_chunk.code.items[1]); // 0 items
 }
+
+test "Compiler: case statements with literals optimize to op_switch" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: case x \n when 1 \n 10 \n end
+    const cond = try b.number("1", 0);
+    const branch1_cond = try b.addNodes(&.{try b.number("1", 0)});
+    const branch1_body = try b.number("10", 0);
+    const branch1 = ast.WhenBranch{ .conditions = branch1_cond, .body = branch1_body };
+    const branches = try b.addWhenBranches(&.{branch1});
+    const case_node = try b.caseStmt(cond, branches, .none, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    try comp.compile(case_node);
+
+    // Verify the fast-path OP_SWITCH was emitted
+    // 0: op_constant (push condition 1)
+    // 2: op_switch
+    // 3: 1 (case_count)
+    try testing.expectEqual(chunk.OpCode.op_switch, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(@as(u8, 1), out_chunk.code.items[3]);
+}

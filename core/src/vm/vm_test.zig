@@ -464,3 +464,104 @@ test "VM Edge Case: Gracefully handles method calls on raw primitives" {
     // You can't call methods on a raw float, so it should abort cleanly.
     try testing.expectEqual(.runtime_error, result);
 }
+
+test "VM: natively executes op_switch jump table" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // The test value: 42
+    const test_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
+
+    // The match cases: 10 and 42
+    const case1_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(10.0));
+    const case2_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
+
+    // Push test value
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, test_val, 1);
+
+    // op_switch with 2 cases
+    try out_chunk.writeOp(testing.allocator, .op_switch, 1);
+    try out_chunk.write(testing.allocator, 2, 1); // case count
+
+    // Table Entry 1: case 10
+    try out_chunk.write(testing.allocator, case1_val, 1);
+    try out_chunk.write(testing.allocator, 0, 1); // jump high
+    try out_chunk.write(testing.allocator, 0, 1); // relative offset 0
+
+    // Table Entry 2: case 42
+    try out_chunk.write(testing.allocator, case2_val, 1);
+    try out_chunk.write(testing.allocator, 0, 1); // jump high
+    try out_chunk.write(testing.allocator, 3, 1); // relative offset 3
+
+    // Default Entry:
+    try out_chunk.write(testing.allocator, 0, 1); // jump high
+    try out_chunk.write(testing.allocator, 6, 1); // relative offset 6
+
+    // Branch 1 (Target: offset + 7) -> Pushes 100
+    const b1_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(100.0));
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, b1_val, 1);
+    try out_chunk.writeOp(testing.allocator, .op_return, 1);
+
+    // Branch 2 (Target: offset + 11) -> Pushes 200 [THIS SHOULD EXECUTE]
+    const b2_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(200.0));
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, b2_val, 1);
+    try out_chunk.writeOp(testing.allocator, .op_return, 1);
+
+    // Default Branch (Target: offset + 15) -> Pushes 300
+    const bdef_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(300.0));
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, bdef_val, 1);
+    try out_chunk.writeOp(testing.allocator, .op_return, 1);
+
+    out_chunk.max_stack_slots = 5;
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 200.0), vm.stack[0].asNumber()); // Must match Branch 2!
+}
+
+test "VM: op_unpack correctly destructs array into stack slots" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Push 10, 20
+    const val1 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(10.0));
+    const val2 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(20.0));
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, val1, 1);
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, val2, 1);
+
+    // Build Array [10, 20]
+    try out_chunk.writeOp(testing.allocator, .op_build_array, 1);
+    try out_chunk.write(testing.allocator, 2, 1);
+
+    // Unpack 3 variables (should pad with nil). Stack becomes: [10.0, 20.0, nil]
+    try out_chunk.writeOp(testing.allocator, .op_unpack, 1);
+    try out_chunk.write(testing.allocator, 3, 1);
+
+    // Pop the padded `nil` off the top of the stack
+    try out_chunk.writeOp(testing.allocator, .op_pop, 1);
+
+    // Return the next value down (which should be 20.0!)
+    try out_chunk.writeOp(testing.allocator, .op_return, 1);
+
+    out_chunk.max_stack_slots = 5;
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // The result of the script is the 2nd unpacked variable (20.0)
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 20.0), vm.stack[0].asNumber());
+}

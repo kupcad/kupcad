@@ -711,6 +711,48 @@ pub const VM = struct {
                     self.closeUpvalues(&self.stack[self.stack_top - 1]);
                     self.releaseValue(self.pop());
                 },
+                .op_switch => {
+                    const test_val = self.pop();
+                    defer self.releaseValue(test_val);
+
+                    const case_count = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+
+                    var matched = false;
+                    var jump_offset: u16 = 0;
+
+                    // Native Zig loop: drastically faster than VM opcode dispatch
+                    for (0..case_count) |_| {
+                        const const_idx = exec_chunk.code.items[frame.ip];
+                        const offset = (@as(u16, exec_chunk.code.items[frame.ip + 1]) << 8) | exec_chunk.code.items[frame.ip + 2];
+                        frame.ip += 3;
+
+                        if (!matched) {
+                            const case_val = exec_chunk.constants.items[const_idx];
+                            if (test_val.isNumber() and case_val.isNumber() and test_val.asNumber() == case_val.asNumber()) {
+                                matched = true;
+                                jump_offset = offset;
+                            } else if (test_val.isObject() and case_val.isObject() and test_val.asObj().obj_type == .string and case_val.asObj().obj_type == .string) {
+                                const t_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", test_val.asObj())));
+                                const c_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", case_val.asObj())));
+                                if (std.mem.eql(u8, t_str.chars, c_str.chars)) {
+                                    matched = true;
+                                    jump_offset = offset;
+                                }
+                            }
+                        }
+                    }
+
+                    const default_offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
+                    frame.ip += 2;
+
+                    // Execute the matched offset, or fall through to the default else branch
+                    if (matched) {
+                        frame.ip += jump_offset;
+                    } else {
+                        frame.ip += default_offset;
+                    }
+                },
                 .op_closure => {
                     const func_idx = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;

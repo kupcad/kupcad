@@ -87,6 +87,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         .op_invoke => {
             return invokeInstruction(@tagName(op), c, offset, writer);
         },
+        .op_switch => return switchInstruction(@tagName(op), c, offset, writer),
         .op_closure => {
             var new_offset = offset + 1;
             const constant = c.code.items[new_offset];
@@ -149,4 +150,24 @@ fn invokeInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, wri
     try c.constants.items[constant].stringify(true, writer);
     try writer.writeAll("'\n");
     return offset + 3;
+}
+
+fn switchInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
+    const case_count = c.code.items[offset + 1];
+    try writer.print("{s:<16} {d} cases\n", .{ name, case_count });
+
+    var current_offset = offset + 2;
+    for (0..case_count) |i| {
+        const const_idx = c.code.items[current_offset];
+        const jump_offset = (@as(u16, c.code.items[current_offset + 1]) << 8) | c.code.items[current_offset + 2];
+
+        // Print the case details
+        try writer.print("{s:<20} case {d}: const[{d}] jump +{d} -> {d}\n", .{ "", i, const_idx, jump_offset, current_offset + 3 + jump_offset });
+        current_offset += 3;
+    }
+
+    const default_jump = (@as(u16, c.code.items[current_offset]) << 8) | c.code.items[current_offset + 1];
+    try writer.print("{s:<20} default: jump +{d} -> {d}\n", .{ "", default_jump, current_offset + 2 + default_jump });
+
+    return current_offset + 2;
 }

@@ -63,6 +63,7 @@ pub const OpCode = enum(u8) {
     op_jump,
     op_jump_if_false,
     op_jump_if_nil,
+    op_switch,
     op_loop,
 
     // Exception Handling

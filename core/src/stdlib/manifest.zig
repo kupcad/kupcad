@@ -72,7 +72,7 @@ pub const method_map = std.StaticStringMap(MeshMethodFn).initComptime(blk: {
 // The O(1) Dynamic Dispatcher
 pub fn cadInvokeHandler(vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     if (!receiver.isGeometry()) {
-        std.log.err("Runtime Error: Methods can only be called on Geometry objects.\n", .{});
+        vm.reportError("Runtime Error: Methods can only be called on Geometry objects.\n", .{});
         return error.RuntimeError;
     }
 
@@ -80,13 +80,13 @@ pub fn cadInvokeHandler(vm: *VM, receiver: value.Value, method_name: []const u8,
         return method_func(vm, receiver, arg_count, args);
     }
 
-    std.log.err("Runtime Error: Unknown method '{s}' on Geometry object.\n", .{method_name});
+    vm.reportError("Runtime Error: Unknown method '{s}' on Geometry object.\n", .{method_name});
     return error.RuntimeError;
 }
 
 pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value {
     if (!a.isGeometry() or !b.isGeometry()) {
-        std.log.err("Runtime Error: Invalid operands for CSG operation\n", .{});
+        vm.reportError("Runtime Error: Invalid operands for CSG operation\n", .{});
         return error.RuntimeError;
     }
 
