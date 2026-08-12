@@ -85,32 +85,25 @@ pub const LineStart = struct {
 
 pub const Chunk = struct {
     code: std.ArrayListUnmanaged(u8),
-    lines: std.ArrayListUnmanaged(LineStart),
     constants: value.ValueArray,
     max_stack_slots: usize,
 
     pub fn init() Chunk {
         return .{
             .code = .empty,
-            .lines = .empty,
             .constants = .empty,
             .max_stack_slots = 0,
         };
     }
 
     /// Writes a single byte (either an OpCode or an Operand)
-    pub fn write(self: *Chunk, allocator: std.mem.Allocator, byte: u8, line: u32) !void {
+    pub fn write(self: *Chunk, allocator: std.mem.Allocator, byte: u8) !void {
         try self.code.append(allocator, byte);
-        if (self.lines.items.len > 0 and self.lines.items[self.lines.items.len - 1].line == line) {
-            self.lines.items[self.lines.items.len - 1].count += 1;
-        } else {
-            try self.lines.append(allocator, .{ .line = line, .count = 1 });
-        }
     }
 
     /// Convenience wrapper to write an OpCode enum
-    pub fn writeOp(self: *Chunk, allocator: std.mem.Allocator, op: OpCode, line: u32) !void {
-        try self.write(allocator, @intFromEnum(op), line);
+    pub fn writeOp(self: *Chunk, allocator: std.mem.Allocator, op: OpCode) !void {
+        try self.write(allocator, @intFromEnum(op));
     }
 
     /// Adds a Value to the constant pool and returns its 0-based index
@@ -121,7 +114,6 @@ pub const Chunk = struct {
 
     pub fn free(self: *Chunk, allocator: std.mem.Allocator) void {
         self.code.deinit(allocator);
-        self.lines.deinit(allocator);
         self.constants.deinit(allocator);
         self.* = init();
     }

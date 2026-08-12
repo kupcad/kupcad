@@ -143,23 +143,22 @@ pub const Compiler = struct {
 
     pub fn compile(self: *Compiler, root: ast.NodeIndex) CompileError!void {
         if (root == .none) {
-            try self.emitOp(.op_nil, 0);
+            try self.emitOp(.op_nil);
         } else {
             try self.compileNode(root);
         }
-        try self.emitOp(.op_return, 0);
+        try self.emitOp(.op_return);
         self.current_chunk.max_stack_slots = self.max_stack_depth;
     }
 
     fn compileNode(self: *Compiler, node_idx: ast.NodeIndex) CompileError!void {
         if (node_idx == .none) return;
         const node = self.tree.getNode(node_idx) orelse return error.UnknownNode;
-        const line: u32 = 1;
 
         switch (node.tag) {
             .number => {
                 const val = self.tree.number(node);
-                try self.emitConstant(value.Value.initNumber(val), line);
+                try self.emitConstant(value.Value.initNumber(val));
             },
             .string => {
                 const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
@@ -168,8 +167,8 @@ pub const Compiler = struct {
                 self.vm.push(str_val);
                 const str_idx = try self.makeConstant(str_val);
                 _ = self.vm.pop();
-                try self.emitOp(.op_constant, line);
-                try self.emitByte(str_idx, line);
+                try self.emitOp(.op_constant);
+                try self.emitByte(str_idx);
             },
             .identifier => {
                 const sym = self.symbols[@intFromEnum(node_idx)];
@@ -179,20 +178,20 @@ pub const Compiler = struct {
                     const name = self.tree.getString(name_id);
                     const name_idx = try self.makeStringConstant(name);
                     _ = self.vm.pop();
-                    try self.emitOp(.op_get_global, line);
-                    try self.emitByte(name_idx, line);
+                    try self.emitOp(.op_get_global);
+                    try self.emitByte(name_idx);
                 } else {
                     // Try to resolve in the current compiler, then recurse upwards!
                     if (self.resolveLocal(name_id)) |local_slot| {
-                        try self.emitOp(.op_get_local, line);
-                        try self.emitByte(local_slot, line);
+                        try self.emitOp(.op_get_local);
+                        try self.emitByte(local_slot);
                     } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-                        try self.emitOp(.op_get_upvalue, line);
-                        try self.emitByte(upvalue_slot, line);
+                        try self.emitOp(.op_get_upvalue);
+                        try self.emitByte(upvalue_slot);
                     } else {
                         // Top-level scripts fallback
-                        try self.emitOp(.op_get_local, line);
-                        try self.emitByte(@intCast(sym.index), line);
+                        try self.emitOp(.op_get_local);
+                        try self.emitByte(@intCast(sym.index));
                     }
                 }
             },
@@ -201,9 +200,9 @@ pub const Compiler = struct {
                 if (ret_idx != .none) {
                     try self.compileNode(ret_idx);
                 } else {
-                    try self.emitOp(.op_nil, line);
+                    try self.emitOp(.op_nil);
                 }
-                try self.emitOp(.op_return, line);
+                try self.emitOp(.op_return);
                 self.simulatePush(1); // Equilibrium for dead code
             },
             .break_stmt => {
@@ -211,10 +210,10 @@ pub const Compiler = struct {
                 if (break_idx != .none) {
                     try self.compileNode(break_idx);
                 } else {
-                    try self.emitOp(.op_nil, line);
+                    try self.emitOp(.op_nil);
                 }
                 if (self.loop_count == 0) return error.UnknownNode;
-                const jump = try self.emitJump(.op_jump, line);
+                const jump = try self.emitJump(.op_jump);
                 var cur_loop = &self.loops[self.loop_count - 1];
                 if (cur_loop.exit_count >= 16) return error.UnknownNode;
                 cur_loop.exit_jumps[cur_loop.exit_count] = jump;
@@ -226,12 +225,12 @@ pub const Compiler = struct {
                 if (next_idx != .none) {
                     try self.compileNode(next_idx);
                 } else {
-                    try self.emitOp(.op_nil, line);
+                    try self.emitOp(.op_nil);
                 }
-                try self.emitOp(.op_pop, line);
+                try self.emitOp(.op_pop);
                 if (self.loop_count == 0) return error.UnknownNode;
                 const cur_loop = &self.loops[self.loop_count - 1];
-                try self.emitLoop(cur_loop.start, line);
+                try self.emitLoop(cur_loop.start);
                 self.simulatePush(1); // Equilibrium for dead code
             },
             .assignment => {
@@ -243,26 +242,26 @@ pub const Compiler = struct {
                 if (assign_payload.op) |op| {
                     if (sym.kind == .global) {
                         const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
-                        try self.emitOp(.op_get_global, line);
-                        try self.emitByte(name_idx, line);
+                        try self.emitOp(.op_get_global);
+                        try self.emitByte(name_idx);
                     } else if (self.resolveLocal(name_id)) |local_slot| {
-                        try self.emitOp(.op_get_local, line);
-                        try self.emitByte(local_slot, line);
+                        try self.emitOp(.op_get_local);
+                        try self.emitByte(local_slot);
                     } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-                        try self.emitOp(.op_get_upvalue, line);
-                        try self.emitByte(upvalue_slot, line);
+                        try self.emitOp(.op_get_upvalue);
+                        try self.emitByte(upvalue_slot);
                     } else {
-                        try self.emitOp(.op_get_local, line);
-                        try self.emitByte(@intCast(sym.index), line);
+                        try self.emitOp(.op_get_local);
+                        try self.emitByte(@intCast(sym.index));
                     }
 
                     try self.compileNode(assign_payload.value);
 
                     switch (op) {
-                        .add => try self.emitOp(.op_add, line),
-                        .subtract => try self.emitOp(.op_subtract, line),
-                        .multiply => try self.emitOp(.op_multiply, line),
-                        .divide => try self.emitOp(.op_divide, line),
+                        .add => try self.emitOp(.op_add),
+                        .subtract => try self.emitOp(.op_subtract),
+                        .multiply => try self.emitOp(.op_multiply),
+                        .divide => try self.emitOp(.op_divide),
                         else => return error.UnknownNode,
                     }
                 } else {
@@ -278,19 +277,19 @@ pub const Compiler = struct {
                     const name_idx = try self.makeConstant(name_val);
                     _ = self.vm.pop();
 
-                    try self.emitOp(.op_define_global, line);
-                    try self.emitByte(name_idx, line);
-                    try self.emitOp(.op_nil, line); // Equilibrium: Assignment blocks yield nil
+                    try self.emitOp(.op_define_global);
+                    try self.emitByte(name_idx);
+                    try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
                 } else if (self.resolveLocal(name_id)) |local_slot| {
-                    try self.emitOp(.op_set_local, line);
-                    try self.emitByte(local_slot, line);
+                    try self.emitOp(.op_set_local);
+                    try self.emitByte(local_slot);
                 } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-                    try self.emitOp(.op_set_upvalue, line);
-                    try self.emitByte(upvalue_slot, line);
+                    try self.emitOp(.op_set_upvalue);
+                    try self.emitByte(upvalue_slot);
                 } else {
                     self.addLocal(name_id, @intCast(sym.index));
-                    try self.emitOp(.op_set_local, line);
-                    try self.emitByte(@intCast(sym.index), line);
+                    try self.emitOp(.op_set_local);
+                    try self.emitByte(@intCast(sym.index));
                 }
             },
             .case_stmt => {
@@ -318,19 +317,19 @@ pub const Compiler = struct {
                     // ====== FAST PATH: OP_SWITCH ======
                     try self.compileNode(cs.condition);
 
-                    try self.emitOp(.op_switch, line);
-                    try self.emitByte(total_conditions, line);
+                    try self.emitOp(.op_switch);
+                    try self.emitByte(total_conditions);
 
                     // Pre-allocate the jump table in bytecode so we can backpatch it later
                     const table_start_offset = self.current_chunk.code.items.len;
                     for (0..total_conditions) |_| {
-                        try self.emitByte(0, line); // const_idx
-                        try self.emitByte(0xFF, line); // jump high
-                        try self.emitByte(0xFF, line); // jump low
+                        try self.emitByte(0); // const_idx
+                        try self.emitByte(0xFF); // jump high
+                        try self.emitByte(0xFF); // jump low
                     }
                     const default_jump_offset = self.current_chunk.code.items.len;
-                    try self.emitByte(0xFF, line); // default high
-                    try self.emitByte(0xFF, line); // default low
+                    try self.emitByte(0xFF); // default high
+                    try self.emitByte(0xFF); // default low
 
                     var condition_idx: usize = 0;
                     var end_jumps: [64]usize = undefined;
@@ -364,7 +363,7 @@ pub const Compiler = struct {
                         try self.compileNode(branch.body);
 
                         if (end_jump_count < 64) {
-                            end_jumps[end_jump_count] = try self.emitJump(.op_jump, line);
+                            end_jumps[end_jump_count] = try self.emitJump(.op_jump);
                             end_jump_count += 1;
                         }
                     }
@@ -378,7 +377,7 @@ pub const Compiler = struct {
                     if (cs.else_branch != .none) {
                         try self.compileNode(cs.else_branch);
                     } else {
-                        try self.emitOp(.op_nil, line);
+                        try self.emitOp(.op_nil);
                     }
 
                     // Cap off all successful branch executions
@@ -396,31 +395,31 @@ pub const Compiler = struct {
                     for (branches) |branch| {
                         const conds = self.tree.getNodes(branch.conditions);
                         for (conds) |cond_idx| {
-                            try self.emitOp(.op_dup, line);
+                            try self.emitOp(.op_dup);
                             try self.compileNode(cond_idx);
-                            try self.emitOp(.op_equal, line);
-                            const skip_jump = try self.emitJump(.op_jump_if_false, line);
+                            try self.emitOp(.op_equal);
+                            const skip_jump = try self.emitJump(.op_jump_if_false);
 
-                            try self.emitOp(.op_pop, line);
-                            try self.emitOp(.op_pop, line);
+                            try self.emitOp(.op_pop);
+                            try self.emitOp(.op_pop);
                             try self.compileNode(branch.body);
 
                             if (end_jump_count < 64) {
-                                end_jumps[end_jump_count] = try self.emitJump(.op_jump, line);
+                                end_jumps[end_jump_count] = try self.emitJump(.op_jump);
                                 end_jump_count += 1;
                             }
 
                             self.current_stack_depth = saved_depth + 2;
                             self.patchJump(skip_jump);
-                            try self.emitOp(.op_pop, line);
+                            try self.emitOp(.op_pop);
                         }
                     }
 
-                    try self.emitOp(.op_pop, line);
+                    try self.emitOp(.op_pop);
                     if (cs.else_branch != .none) {
                         try self.compileNode(cs.else_branch);
                     } else {
-                        try self.emitOp(.op_nil, line);
+                        try self.emitOp(.op_nil);
                     }
 
                     for (end_jumps[0..end_jump_count]) |jmp| {
@@ -435,16 +434,16 @@ pub const Compiler = struct {
 
                 var rescue_jump: usize = 0;
                 if (rescues.len > 0) {
-                    rescue_jump = try self.emitJump(.op_setup_rescue, line);
+                    rescue_jump = try self.emitJump(.op_setup_rescue);
                 }
 
                 try self.compileNode(bs.body);
 
                 if (rescues.len > 0) {
-                    try self.emitOp(.op_pop_rescue, line);
+                    try self.emitOp(.op_pop_rescue);
                 }
 
-                const end_jump = try self.emitJump(.op_jump, line);
+                const end_jump = try self.emitJump(.op_jump);
 
                 if (rescues.len > 0) {
                     self.patchJump(rescue_jump);
@@ -473,25 +472,25 @@ pub const Compiler = struct {
 
                                 const name_idx = try self.makeStringConstant(self.tree.getString(err_id));
 
-                                try self.emitOp(.op_dup, line); // Copy error payload
-                                try self.emitOp(.op_get_global, line);
-                                try self.emitByte(name_idx, line);
-                                try self.emitOp(.op_is_instance, line);
+                                try self.emitOp(.op_dup); // Copy error payload
+                                try self.emitOp(.op_get_global);
+                                try self.emitByte(name_idx);
+                                try self.emitOp(.op_is_instance);
 
-                                const skip_jump = try self.emitJump(.op_jump_if_false, line);
-                                try self.emitOp(.op_pop, line); // Discard True
+                                const skip_jump = try self.emitJump(.op_jump_if_false);
+                                try self.emitOp(.op_pop); // Discard True
 
                                 if (match_jump_count < 16) {
-                                    match_jumps[match_jump_count] = try self.emitJump(.op_jump, line);
+                                    match_jumps[match_jump_count] = try self.emitJump(.op_jump);
                                     match_jump_count += 1;
                                 }
 
                                 self.current_stack_depth = error_depth + 1; // False branch has error + false
                                 self.patchJump(skip_jump);
-                                try self.emitOp(.op_pop, line); // Discard False
+                                try self.emitOp(.op_pop); // Discard False
                             }
                             // If no error type matched, jump to the next rescue block
-                            next_rescue_jump = try self.emitJump(.op_jump, line);
+                            next_rescue_jump = try self.emitJump(.op_jump);
                         }
 
                         // --- MATCHED ROUTE ---
@@ -503,15 +502,15 @@ pub const Compiler = struct {
                         const var_str = self.tree.getString(rescue.variable);
                         if (var_str.len > 0) {
                             self.addLocal(rescue.variable, @intCast(self.local_count));
-                            try self.emitOp(.op_set_local, line);
-                            try self.emitByte(@intCast(self.local_count - 1), line);
+                            try self.emitOp(.op_set_local);
+                            try self.emitByte(@intCast(self.local_count - 1));
                         }
-                        try self.emitOp(.op_pop, line); // Pop the error value off stack
+                        try self.emitOp(.op_pop); // Pop the error value off stack
 
                         try self.compileNode(rescue.body);
 
                         if (rescue_end_jump_count < 64) {
-                            rescue_end_jumps[rescue_end_jump_count] = try self.emitJump(.op_jump, line);
+                            rescue_end_jumps[rescue_end_jump_count] = try self.emitJump(.op_jump);
                             rescue_end_jump_count += 1;
                         }
                     }
@@ -520,7 +519,7 @@ pub const Compiler = struct {
                     if (next_rescue_jump) |jmp| {
                         self.current_stack_depth = error_depth;
                         self.patchJump(jmp);
-                        try self.emitOp(.op_throw, line); // op_throw inherently calls simulatePop(1)
+                        try self.emitOp(.op_throw); // op_throw inherently calls simulatePop(1)
                         self.simulatePush(1); // Dead code equilibrium instead of double-popping!
                     }
 
@@ -535,21 +534,21 @@ pub const Compiler = struct {
 
                 if (bs.ensure_body != .none) {
                     try self.compileNode(bs.ensure_body);
-                    try self.emitOp(.op_pop, line); // discard ensure block output
+                    try self.emitOp(.op_pop); // discard ensure block output
                 }
             },
             .rescue_modifier => {
                 const rm = self.tree.rescueModifier(node);
-                const rescue_jump = try self.emitJump(.op_setup_rescue, line);
+                const rescue_jump = try self.emitJump(.op_setup_rescue);
 
                 try self.compileNode(rm.expr);
-                try self.emitOp(.op_pop_rescue, line);
+                try self.emitOp(.op_pop_rescue);
 
-                const end_jump = try self.emitJump(.op_jump, line);
+                const end_jump = try self.emitJump(.op_jump);
 
                 self.patchJump(rescue_jump);
                 self.simulatePush(1); // Error value
-                try self.emitOp(.op_pop, line); // Discard error value
+                try self.emitOp(.op_pop); // Discard error value
                 try self.compileNode(rm.rescue_expr);
 
                 self.patchJump(end_jump);
@@ -557,20 +556,20 @@ pub const Compiler = struct {
             .namespace_access => {
                 const path = self.tree.getStringLists(self.tree.nodeSpan(node));
                 if (path.len == 0) {
-                    try self.emitOp(.op_nil, line);
+                    try self.emitOp(.op_nil);
                     return;
                 }
 
                 // Get the root of the namespace
                 const root_idx = try self.makeStringConstant(self.tree.getString(path[0]));
-                try self.emitOp(.op_get_global, line);
-                try self.emitByte(root_idx, line);
+                try self.emitOp(.op_get_global);
+                try self.emitByte(root_idx);
 
                 // Chain property accesses for the rest of the namespace path
                 for (path[1..]) |segment_id| {
                     const seg_idx = try self.makeStringConstant(self.tree.getString(segment_id));
-                    try self.emitOp(.op_get_property, line);
-                    try self.emitByte(seg_idx, line);
+                    try self.emitOp(.op_get_property);
+                    try self.emitByte(seg_idx);
                 }
             },
             .module_stmt => {
@@ -584,15 +583,15 @@ pub const Compiler = struct {
                 const name_idx = try self.makeConstant(name_val);
                 _ = self.vm.pop();
 
-                try self.emitOp(.op_class, line);
-                try self.emitByte(name_idx, line);
+                try self.emitOp(.op_class);
+                try self.emitByte(name_idx);
 
-                try self.emitOp(.op_define_global, line);
-                try self.emitByte(name_idx, line);
+                try self.emitOp(.op_define_global);
+                try self.emitByte(name_idx);
 
                 try self.compileNode(ms.body); // Compile module contents
-                try self.emitOp(.op_pop, line); // Pop body result
-                try self.emitOp(.op_nil, line); // module stmt yields nil
+                try self.emitOp(.op_pop); // Pop body result
+                try self.emitOp(.op_nil); // module stmt yields nil
             },
             .import_stmt => {
                 const is_stmt = self.tree.importStmt(node);
@@ -604,23 +603,23 @@ pub const Compiler = struct {
                 const path_idx = try self.makeConstant(path_val);
                 _ = self.vm.pop();
 
-                try self.emitOp(.op_import, line);
-                try self.emitByte(path_idx, line);
+                try self.emitOp(.op_import);
+                try self.emitByte(path_idx);
 
                 const symbols = self.tree.getStringLists(is_stmt.symbols);
                 if (symbols.len == 0) {
                     // Standard import for side-effects. Ignore returned module.
-                    try self.emitOp(.op_pop, line);
-                    try self.emitOp(.op_nil, line);
+                    try self.emitOp(.op_pop);
+                    try self.emitOp(.op_nil);
                 } else {
                     // Extract specific symbols via destructuring
-                    try self.emitOp(.op_pop, line);
-                    try self.emitOp(.op_nil, line); // Yield nil for MVP
+                    try self.emitOp(.op_pop);
+                    try self.emitOp(.op_nil); // Yield nil for MVP
                 }
             },
             .export_stmt => {
                 // MVP: Yields nil. Real exporting requires writing to the VM's active export Map.
-                try self.emitOp(.op_nil, line);
+                try self.emitOp(.op_nil);
             },
             .def_stmt, .lambda_expr => {
                 var params: []const ast.Param = &.{};
@@ -687,12 +686,12 @@ pub const Compiler = struct {
                 const func_val = value.Value.initObj(&func.obj);
                 const func_idx = try self.makeConstant(func_val);
 
-                try self.emitOp(.op_closure, line);
-                try self.emitByte(func_idx, line);
+                try self.emitOp(.op_closure);
+                try self.emitByte(func_idx);
 
                 for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
-                    try self.emitByte(if (upv.is_local) 1 else 0, line);
-                    try self.emitByte(upv.index, line);
+                    try self.emitByte(if (upv.is_local) 1 else 0);
+                    try self.emitByte(upv.index);
                 }
 
                 // 4. Bind the closure to its name (if it's a def statement)
@@ -706,13 +705,13 @@ pub const Compiler = struct {
                         const name_idx = try self.makeConstant(name_val);
                         _ = self.vm.pop();
 
-                        try self.emitOp(.op_define_global, line);
-                        try self.emitByte(name_idx, line);
-                        try self.emitOp(.op_nil, line); // Equilibrium: yield nil to the block
+                        try self.emitOp(.op_define_global);
+                        try self.emitByte(name_idx);
+                        try self.emitOp(.op_nil); // Equilibrium: yield nil to the block
                     } else {
                         self.addLocal(def_name_id, @intCast(sym.index));
-                        try self.emitOp(.op_set_local, line);
-                        try self.emitByte(@intCast(sym.index), line);
+                        try self.emitOp(.op_set_local);
+                        try self.emitByte(@intCast(sym.index));
                     }
                 }
             },
@@ -720,7 +719,7 @@ pub const Compiler = struct {
                 const ia = self.tree.indexAccess(node);
                 try self.compileNode(ia.target);
                 try self.compileNode(ia.index);
-                try self.emitOp(.op_get_index, line);
+                try self.emitOp(.op_get_index);
             },
             .index_assignment => {
                 const ia = self.tree.indexAssignment(node);
@@ -732,22 +731,22 @@ pub const Compiler = struct {
                     // Double-evaluate target and index to fetch current value.
                     try self.compileNode(ia.target);
                     try self.compileNode(ia.index);
-                    try self.emitOp(.op_get_index, line);
+                    try self.emitOp(.op_get_index);
 
                     try self.compileNode(ia.value);
 
                     switch (op) {
-                        .add => try self.emitOp(.op_add, line),
-                        .subtract => try self.emitOp(.op_subtract, line),
-                        .multiply => try self.emitOp(.op_multiply, line),
-                        .divide => try self.emitOp(.op_divide, line),
+                        .add => try self.emitOp(.op_add),
+                        .subtract => try self.emitOp(.op_subtract),
+                        .multiply => try self.emitOp(.op_multiply),
+                        .divide => try self.emitOp(.op_divide),
                         else => return error.UnknownNode,
                     }
                 } else {
                     try self.compileNode(ia.value);
                 }
 
-                try self.emitOp(.op_set_index, line);
+                try self.emitOp(.op_set_index);
             },
             .method_call => {
                 const mc = self.tree.methodCall(node);
@@ -761,9 +760,9 @@ pub const Compiler = struct {
                             if (args.len > 0) {
                                 try self.compileNode(args[0].value);
                             } else {
-                                try self.emitOp(.op_nil, line);
+                                try self.emitOp(.op_nil);
                             }
-                            try self.emitOp(.op_throw, line);
+                            try self.emitOp(.op_throw);
                             self.simulatePush(1); // Dead code equilibrium
                             return;
                         },
@@ -772,15 +771,15 @@ pub const Compiler = struct {
 
                 if (mc.receiver == .none) {
                     const name_idx = try self.makeStringConstant(func_name);
-                    try self.emitOp(.op_get_global, line);
-                    try self.emitByte(name_idx, line);
+                    try self.emitOp(.op_get_global);
+                    try self.emitByte(name_idx);
 
                     const args = self.tree.getNamedArgs(mc.args);
                     for (args) |arg| try self.compileNode(arg.value);
 
                     if (args.len > MAX_ARGS) return error.TooManyConstants;
-                    try self.emitOp(.op_call, line);
-                    try self.emitByte(@intCast(args.len), line);
+                    try self.emitOp(.op_call);
+                    try self.emitByte(@intCast(args.len));
                     self.simulatePop(args.len + 1);
                     self.simulatePush(1);
                 } else {
@@ -789,7 +788,7 @@ pub const Compiler = struct {
                     // If it is a safe call (&.), we inject a conditional jump over the arguments and invocation
                     var safe_jump: usize = 0;
                     if (mc.is_safe) {
-                        safe_jump = try self.emitJump(.op_jump_if_nil, line);
+                        safe_jump = try self.emitJump(.op_jump_if_nil);
                     }
 
                     const args = self.tree.getNamedArgs(mc.args);
@@ -802,9 +801,9 @@ pub const Compiler = struct {
                     _ = self.vm.pop();
 
                     if (args.len > MAX_ARGS) return error.TooManyConstants;
-                    try self.emitOp(.op_invoke, line);
-                    try self.emitByte(name_idx, line);
-                    try self.emitByte(@intCast(args.len), line);
+                    try self.emitOp(.op_invoke);
+                    try self.emitByte(name_idx);
+                    try self.emitByte(@intCast(args.len));
                     self.simulatePop(args.len + 1);
                     self.simulatePush(1);
 
@@ -819,13 +818,13 @@ pub const Compiler = struct {
                 try self.compileNode(bin_expr.left);
                 try self.compileNode(bin_expr.right);
                 switch (bin_expr.op) {
-                    .add => try self.emitOp(.op_add, line),
-                    .subtract => try self.emitOp(.op_subtract, line),
-                    .multiply => try self.emitOp(.op_multiply, line),
-                    .divide => try self.emitOp(.op_divide, line),
-                    .equal => try self.emitOp(.op_equal, line),
-                    .less => try self.emitOp(.op_less, line),
-                    .greater => try self.emitOp(.op_greater, line),
+                    .add => try self.emitOp(.op_add),
+                    .subtract => try self.emitOp(.op_subtract),
+                    .multiply => try self.emitOp(.op_multiply),
+                    .divide => try self.emitOp(.op_divide),
+                    .equal => try self.emitOp(.op_equal),
+                    .less => try self.emitOp(.op_less),
+                    .greater => try self.emitOp(.op_greater),
                     else => return error.UnknownNode,
                 }
             },
@@ -833,8 +832,8 @@ pub const Compiler = struct {
                 const un_expr = self.tree.unaryExpr(node);
                 try self.compileNode(un_expr.operand);
                 switch (un_expr.op) {
-                    .negate => try self.emitOp(.op_negate, line),
-                    .not => try self.emitOp(.op_not, line),
+                    .negate => try self.emitOp(.op_negate),
+                    .not => try self.emitOp(.op_not),
                     else => return error.UnknownNode,
                 }
             },
@@ -849,24 +848,24 @@ pub const Compiler = struct {
                 if (!has_splat) {
                     for (elements) |elem| try self.compileNode(elem);
                     if (elements.len > MAX_ARGS) return error.TooManyConstants;
-                    try self.emitOp(.op_build_array, line);
-                    try self.emitByte(@intCast(elements.len), line);
+                    try self.emitOp(.op_build_array);
+                    try self.emitByte(@intCast(elements.len));
                     self.simulatePop(elements.len);
                     self.simulatePush(1);
                 } else {
                     // Dynamic Build Mode
-                    try self.emitOp(.op_build_array, line);
-                    try self.emitByte(0, line); // Create empty array
+                    try self.emitOp(.op_build_array);
+                    try self.emitByte(0); // Create empty array
                     self.simulatePush(1);
 
                     for (elements) |elem| {
                         const el_node = self.tree.getNode(elem).?;
                         if (el_node.tag == .splat_expr) {
                             try self.compileNode(self.tree.nodeIndex(el_node));
-                            try self.emitOp(.op_array_spread, line);
+                            try self.emitOp(.op_array_spread);
                         } else {
                             try self.compileNode(elem);
-                            try self.emitOp(.op_array_push, line);
+                            try self.emitOp(.op_array_push);
                         }
                     }
                 }
@@ -889,29 +888,29 @@ pub const Compiler = struct {
                             self.vm.push(str_val);
                             const str_idx = try self.makeConstant(str_val);
                             _ = self.vm.pop();
-                            try self.emitOp(.op_constant, line);
-                            try self.emitByte(str_idx, line);
+                            try self.emitOp(.op_constant);
+                            try self.emitByte(str_idx);
                         } else {
                             try self.compileNode(entry.key);
                         }
                         try self.compileNode(entry.value);
                     }
                     if (entries.len > 127) return error.TooManyConstants;
-                    try self.emitOp(.op_build_map, line);
-                    try self.emitByte(@intCast(entries.len), line);
+                    try self.emitOp(.op_build_map);
+                    try self.emitByte(@intCast(entries.len));
                     self.simulatePop(entries.len * 2);
                     self.simulatePush(1);
                 } else {
                     // Dynamic Build Mode
-                    try self.emitOp(.op_build_map, line);
-                    try self.emitByte(0, line);
+                    try self.emitOp(.op_build_map);
+                    try self.emitByte(0);
                     self.simulatePush(1);
 
                     for (entries) |entry| {
                         const key_node = self.tree.getNode(entry.key).?;
                         if (key_node.tag == .double_splat_expr) {
                             try self.compileNode(self.tree.nodeIndex(key_node));
-                            try self.emitOp(.op_map_spread, line);
+                            try self.emitOp(.op_map_spread);
                         } else {
                             if (key_node.tag == .identifier) {
                                 const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data)));
@@ -920,13 +919,13 @@ pub const Compiler = struct {
                                 self.vm.push(str_val);
                                 const str_idx = try self.makeConstant(str_val);
                                 _ = self.vm.pop();
-                                try self.emitOp(.op_constant, line);
-                                try self.emitByte(str_idx, line);
+                                try self.emitOp(.op_constant);
+                                try self.emitByte(str_idx);
                             } else {
                                 try self.compileNode(entry.key);
                             }
                             try self.compileNode(entry.value);
-                            try self.emitOp(.op_map_insert, line);
+                            try self.emitOp(.op_map_insert);
                         }
                     }
                 }
@@ -934,28 +933,28 @@ pub const Compiler = struct {
             .if_stmt => {
                 const if_payload = self.tree.ifStmt(node);
                 try self.compileNode(if_payload.condition);
-                if (if_payload.is_unless) try self.emitOp(.op_not, line);
+                if (if_payload.is_unless) try self.emitOp(.op_not);
 
-                const then_jump = try self.emitJump(.op_jump_if_false, line);
-                try self.emitOp(.op_pop, line);
+                const then_jump = try self.emitJump(.op_jump_if_false);
+                try self.emitOp(.op_pop);
 
                 try self.compileNode(if_payload.then_branch);
-                const else_jump = try self.emitJump(.op_jump, line);
+                const else_jump = try self.emitJump(.op_jump);
 
                 self.patchJump(then_jump);
-                try self.emitOp(.op_pop, line);
+                try self.emitOp(.op_pop);
 
                 if (if_payload.else_branch != .none) {
                     try self.compileNode(if_payload.else_branch);
                 } else {
-                    try self.emitOp(.op_nil, line);
+                    try self.emitOp(.op_nil);
                 }
                 self.patchJump(else_jump);
             },
             .self_expr => {
                 // 'self' is intrinsically bound to local slot 0
-                try self.emitOp(.op_get_local, line);
-                try self.emitByte(0, line);
+                try self.emitOp(.op_get_local);
+                try self.emitByte(0);
             },
             .while_stmt => {
                 const while_payload = self.tree.whileStmt(node);
@@ -967,20 +966,20 @@ pub const Compiler = struct {
                 self.loop_count += 1;
 
                 try self.compileNode(while_payload.condition);
-                if (while_payload.is_until) try self.emitOp(.op_not, line);
+                if (while_payload.is_until) try self.emitOp(.op_not);
 
-                const exit_jump = try self.emitJump(.op_jump_if_false, line);
-                try self.emitOp(.op_pop, line); // Clean up condition
+                const exit_jump = try self.emitJump(.op_jump_if_false);
+                try self.emitOp(.op_pop); // Clean up condition
 
                 try self.compileNode(while_payload.body);
-                try self.emitOp(.op_pop, line); // Pop the body's yielded result
+                try self.emitOp(.op_pop); // Pop the body's yielded result
 
-                try self.emitLoop(loop_start, line);
+                try self.emitLoop(loop_start);
 
                 self.patchJump(exit_jump);
                 self.simulatePush(1); // The condition that was bypassed
-                try self.emitOp(.op_pop, line);
-                try self.emitOp(.op_nil, line); // Natural exit yields nil
+                try self.emitOp(.op_pop);
+                try self.emitOp(.op_nil); // Natural exit yields nil
 
                 // Pop loop state and safely patch all 'break' jump addresses
                 self.loop_count -= 1;
@@ -993,14 +992,14 @@ pub const Compiler = struct {
                 const ternary = self.tree.ternaryExpr(node);
                 try self.compileNode(ternary.condition);
 
-                const then_jump = try self.emitJump(.op_jump_if_false, line);
-                try self.emitOp(.op_pop, line); // pop condition if true
+                const then_jump = try self.emitJump(.op_jump_if_false);
+                try self.emitOp(.op_pop); // pop condition if true
 
                 try self.compileNode(ternary.then_branch);
-                const else_jump = try self.emitJump(.op_jump, line);
+                const else_jump = try self.emitJump(.op_jump);
 
                 self.patchJump(then_jump);
-                try self.emitOp(.op_pop, line); // pop condition if false
+                try self.emitOp(.op_pop); // pop condition if false
 
                 try self.compileNode(ternary.else_branch);
                 self.patchJump(else_jump);
@@ -1013,11 +1012,11 @@ pub const Compiler = struct {
                 if (r.step != .none) {
                     try self.compileNode(r.step);
                 } else {
-                    try self.emitConstant(value.Value.initNumber(1.0), line); // Default step
+                    try self.emitConstant(value.Value.initNumber(1.0)); // Default step
                 }
 
-                try self.emitOp(.op_build_range, line);
-                try self.emitByte(if (r.is_exclusive) 1 else 0, line);
+                try self.emitOp(.op_build_range);
+                try self.emitByte(if (r.is_exclusive) 1 else 0);
 
                 self.simulatePop(3); // Pops start, end, step
                 self.simulatePush(1); // Pushes ObjRange
@@ -1030,8 +1029,8 @@ pub const Compiler = struct {
 
                 if (parts.len > 255) return error.TooManyConstants;
 
-                try self.emitOp(.op_interpolate, line);
-                try self.emitByte(@intCast(parts.len), line);
+                try self.emitOp(.op_interpolate);
+                try self.emitByte(@intCast(parts.len));
 
                 self.simulatePop(parts.len);
                 self.simulatePush(1); // Pushes the final merged String
@@ -1050,16 +1049,16 @@ pub const Compiler = struct {
                 try self.compileNode(ma.value);
                 if (lhs.len > 255) return error.TooManyConstants;
 
-                try self.emitOp(.op_unpack, line);
-                try self.emitByte(@intCast(lhs.len), line);
+                try self.emitOp(.op_unpack);
+                try self.emitByte(@intCast(lhs.len));
                 self.simulatePush(lhs.len);
 
                 var i: usize = lhs.len;
                 while (i > 0) {
                     i -= 1;
-                    try self.compileDestructure(lhs[i], line);
+                    try self.compileDestructure(lhs[i]);
                 }
-                try self.emitOp(.op_nil, line);
+                try self.emitOp(.op_nil);
             },
             .class_stmt => {
                 const cs = self.tree.classStmt(node);
@@ -1074,8 +1073,8 @@ pub const Compiler = struct {
                 _ = self.vm.pop();
 
                 // 1. Push the un-initialized class onto the stack (+1)
-                try self.emitOp(.op_class, line);
-                try self.emitByte(name_idx, line);
+                try self.emitOp(.op_class);
+                try self.emitByte(name_idx);
 
                 // 2. Compile all inner methods while the Class sits on top of the stack
                 const body_node = self.tree.getNode(cs.body).?;
@@ -1136,16 +1135,16 @@ pub const Compiler = struct {
                         const func_val = value.Value.initObj(&func.obj);
                         const func_idx = try self.makeConstant(func_val);
 
-                        try self.emitOp(.op_closure, line); // (+1)
-                        try self.emitByte(func_idx, line);
+                        try self.emitOp(.op_closure); // (+1)
+                        try self.emitByte(func_idx);
 
                         for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
-                            try self.emitByte(if (upv.is_local) 1 else 0, line);
-                            try self.emitByte(upv.index, line);
+                            try self.emitByte(if (upv.is_local) 1 else 0);
+                            try self.emitByte(upv.index);
                         }
 
-                        try self.emitOp(.op_method, line); // (-1)
-                        try self.emitByte(m_name_idx, line);
+                        try self.emitOp(.op_method); // (-1)
+                        try self.emitByte(m_name_idx);
                     }
                 }
 
@@ -1153,13 +1152,13 @@ pub const Compiler = struct {
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 if (sym.kind == .local) {
                     self.addLocal(name_id, @intCast(sym.index));
-                    try self.emitOp(.op_set_local, line);
-                    try self.emitByte(@intCast(sym.index), line);
+                    try self.emitOp(.op_set_local);
+                    try self.emitByte(@intCast(sym.index));
                     // Equilibrium: Class remains on stack (+1)
                 } else {
-                    try self.emitOp(.op_define_global, line);
-                    try self.emitByte(name_idx, line);
-                    try self.emitOp(.op_nil, line);
+                    try self.emitOp(.op_define_global);
+                    try self.emitByte(name_idx);
+                    try self.emitOp(.op_nil);
                     // Equilibrium: Class popped, dummy nil pushed (+1)
                 }
             },
@@ -1177,43 +1176,43 @@ pub const Compiler = struct {
 
                 if (pa.op) |op| {
                     try self.compileNode(pa.target);
-                    try self.emitOp(.op_invoke, line);
-                    try self.emitByte(name_idx, line);
-                    try self.emitByte(0, line); // 0 args
+                    try self.emitOp(.op_invoke);
+                    try self.emitByte(name_idx);
+                    try self.emitByte(0); // 0 args
 
                     try self.compileNode(pa.value);
 
                     switch (op) {
-                        .add => try self.emitOp(.op_add, line),
-                        .subtract => try self.emitOp(.op_subtract, line),
-                        .multiply => try self.emitOp(.op_multiply, line),
-                        .divide => try self.emitOp(.op_divide, line),
+                        .add => try self.emitOp(.op_add),
+                        .subtract => try self.emitOp(.op_subtract),
+                        .multiply => try self.emitOp(.op_multiply),
+                        .divide => try self.emitOp(.op_divide),
                         else => return error.UnknownNode,
                     }
                 } else {
                     try self.compileNode(pa.value);
                 }
 
-                try self.emitOp(.op_set_property, line);
-                try self.emitByte(name_idx, line);
+                try self.emitOp(.op_set_property);
+                try self.emitByte(name_idx);
             },
             .block => {
                 const block_payload = self.tree.block(node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
 
                 if (stmts.len == 0) {
-                    try self.emitOp(.op_nil, line);
+                    try self.emitOp(.op_nil);
                 } else {
                     for (stmts, 0..) |stmt_idx, i| {
                         try self.compileNode(stmt_idx);
                         if (i < stmts.len - 1) {
-                            try self.emitOp(.op_pop, line);
+                            try self.emitOp(.op_pop);
                         }
                     }
                 }
             },
             else => {
-                try self.emitOp(.op_nil, line); // Push dummy value for unknown AST nodes
+                try self.emitOp(.op_nil); // Push dummy value for unknown AST nodes
             },
         }
     }
@@ -1230,12 +1229,12 @@ pub const Compiler = struct {
         self.current_stack_depth -= count;
     }
 
-    fn emitByte(self: *Compiler, byte: u8, line: u32) CompileError!void {
-        self.current_chunk.write(self.allocator, byte, line) catch return error.OutOfMemory;
+    fn emitByte(self: *Compiler, byte: u8) CompileError!void {
+        self.current_chunk.write(self.allocator, byte) catch return error.OutOfMemory;
     }
 
-    fn emitOp(self: *Compiler, op: chunk.OpCode, line: u32) CompileError!void {
-        try self.emitByte(@intFromEnum(op), line);
+    fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
+        try self.emitByte(@intFromEnum(op));
         switch (op) {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import => self.simulatePush(1),
             .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch => self.simulatePop(1),
@@ -1275,16 +1274,16 @@ pub const Compiler = struct {
         return @intCast(index);
     }
 
-    fn emitConstant(self: *Compiler, val: value.Value, line: u32) CompileError!void {
+    fn emitConstant(self: *Compiler, val: value.Value) CompileError!void {
         const index = try self.makeConstant(val);
-        try self.emitOp(.op_constant, line);
-        try self.emitByte(index, line);
+        try self.emitOp(.op_constant);
+        try self.emitByte(index);
     }
 
-    fn emitJump(self: *Compiler, op: chunk.OpCode, line: u32) CompileError!usize {
-        try self.emitOp(op, line);
-        try self.emitByte(0xff, line);
-        try self.emitByte(0xff, line);
+    fn emitJump(self: *Compiler, op: chunk.OpCode) CompileError!usize {
+        try self.emitOp(op);
+        try self.emitByte(0xff);
+        try self.emitByte(0xff);
         return self.current_chunk.code.items.len - 2;
     }
 
@@ -1295,12 +1294,12 @@ pub const Compiler = struct {
         self.current_chunk.code.items[offset + 1] = @intCast(jump & 0xff);
     }
 
-    fn emitLoop(self: *Compiler, loop_start: usize, line: u32) CompileError!void {
-        try self.emitOp(.op_loop, line);
+    fn emitLoop(self: *Compiler, loop_start: usize) CompileError!void {
+        try self.emitOp(.op_loop);
         const jump = self.current_chunk.code.items.len - loop_start + 2;
         std.debug.assert(jump <= std.math.maxInt(u16));
-        try self.emitByte(@intCast((jump >> 8) & 0xff), line);
-        try self.emitByte(@intCast(jump & 0xff), line);
+        try self.emitByte(@intCast((jump >> 8) & 0xff));
+        try self.emitByte(@intCast(jump & 0xff));
     }
 
     fn makeStringConstant(self: *Compiler, text: []const u8) CompileError!u8 {
@@ -1312,33 +1311,33 @@ pub const Compiler = struct {
         return idx;
     }
 
-    fn compileDestructure(self: *Compiler, target: anytype, line: u32) CompileError!void {
+    fn compileDestructure(self: *Compiler, target: anytype) CompileError!void {
         // Assign the unpacked value currently on top of the stack to the target identifier
         if (target.name != .none) {
             const name_id = target.name;
             if (self.resolveLocal(name_id)) |local_slot| {
-                try self.emitOp(.op_set_local, line);
-                try self.emitByte(local_slot, line);
-                try self.emitOp(.op_pop, line);
+                try self.emitOp(.op_set_local);
+                try self.emitByte(local_slot);
+                try self.emitOp(.op_pop);
             } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-                try self.emitOp(.op_set_upvalue, line);
-                try self.emitByte(upvalue_slot, line);
-                try self.emitOp(.op_pop, line);
+                try self.emitOp(.op_set_upvalue);
+                try self.emitByte(upvalue_slot);
+                try self.emitOp(.op_pop);
             } else {
                 const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
                 if (self.enclosing == null) {
-                    try self.emitOp(.op_define_global, line);
-                    try self.emitByte(name_idx, line);
+                    try self.emitOp(.op_define_global);
+                    try self.emitByte(name_idx);
                 } else {
                     self.addLocal(name_id, @intCast(self.local_count));
-                    try self.emitOp(.op_set_local, line);
-                    try self.emitByte(@intCast(self.local_count - 1), line);
-                    try self.emitOp(.op_pop, line);
+                    try self.emitOp(.op_set_local);
+                    try self.emitByte(@intCast(self.local_count - 1));
+                    try self.emitOp(.op_pop);
                 }
             }
         } else {
             // Unhandled pattern or skipped element (e.g., `_`): pop to maintain stack equilibrium
-            try self.emitOp(.op_pop, line);
+            try self.emitOp(.op_pop);
         }
     }
 };

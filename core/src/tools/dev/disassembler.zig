@@ -7,38 +7,11 @@ pub fn disassembleChunk(allocator: std.mem.Allocator, c: *const chunk.Chunk, nam
     try writer.print("== {s} ==\n", .{name});
 
     var offset: usize = 0;
-    var line_idx: usize = 0;
-    var inst_count: u32 = 0;
-    var previous_line: u32 = 0;
 
     while (offset < c.code.items.len) {
         // Zero-padded, right-aligned, width 4
         try writer.print("{d:0>4} ", .{offset});
-
-        // Unpack Run-Length Encoded (RLE) Line Numbers
-        var current_line: u32 = 0;
-        if (line_idx < c.lines.items.len) {
-            current_line = c.lines.items[line_idx].line;
-        }
-
-        if (offset > 0 and current_line == previous_line) {
-            try writer.writeAll("   | ");
-        } else {
-            // Space-padded, right-aligned, width 4
-            try writer.print("{d: >4} ", .{current_line});
-            previous_line = current_line;
-        }
-
         offset = try disassembleInstruction(c, offset, writer);
-
-        // Advance RLE Tracker
-        if (line_idx < c.lines.items.len) {
-            inst_count += 1;
-            if (inst_count >= c.lines.items[line_idx].count) {
-                inst_count = 0;
-                line_idx += 1;
-            }
-        }
     }
 }
 
@@ -160,8 +133,6 @@ fn switchInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, wri
     for (0..case_count) |i| {
         const const_idx = c.code.items[current_offset];
         const jump_offset = (@as(u16, c.code.items[current_offset + 1]) << 8) | c.code.items[current_offset + 2];
-
-        // Print the case details
         try writer.print("{s:<20} case {d}: const[{d}] jump +{d} -> {d}\n", .{ "", i, const_idx, jump_offset, current_offset + 3 + jump_offset });
         current_offset += 3;
     }
