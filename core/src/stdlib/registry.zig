@@ -5,6 +5,10 @@ const manifest = @import("manifest.zig");
 // Import the Manifold driver (In the future, a build flag will dynamically select OCCT)
 const manifold_driver = @import("../kernel/engines/manifold/driver.zig").driver;
 
+fn defaultPrintHandler(vm: *VM, message: []const u8) void {
+    std.Io.File.stdout().writeStreamingAll(vm.io, message) catch {};
+}
+
 pub fn registerStandardLibrary(vm: *VM) !void {
     // Bind Native Global Functions automatically from the manifest
     for (manifest.global_functions) |def| {
@@ -18,6 +22,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.host = .{
         .binary_handler = manifest.cadBinaryHandler,
         .invoke_handler = manifest.cadInvokeHandler,
+        .print_handler = defaultPrintHandler,
         .mesh_destructor = manifold_driver.destructFn,
     };
 }

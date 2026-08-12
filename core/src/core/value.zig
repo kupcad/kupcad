@@ -351,6 +351,63 @@ pub const Value = extern struct {
             .object => a.asObj() == b.asObj(),
         };
     }
+
+    /// Safely stringifies values recursively using the new Zig 0.16 Io.Writer interface.
+    pub fn stringify(self: Value, is_inspect: bool, writer: *std.Io.Writer) !void {
+        if (self.isNumber()) {
+            try writer.print("{d}", .{self.asNumber()});
+        } else if (self.isBool()) {
+            try writer.writeAll(if (self.asBool()) "true" else "false");
+        } else if (self.isNil()) {
+            try writer.writeAll("nil");
+        } else if (self.isObject()) {
+            const obj = self.asObj();
+            switch (obj.obj_type) {
+                .string => {
+                    const str_obj = @as(*ObjString, @alignCast(@fieldParentPtr("obj", obj)));
+                    if (is_inspect) {
+                        try writer.print("\"{s}\"", .{str_obj.chars});
+                    } else {
+                        try writer.writeAll(str_obj.chars);
+                    }
+                },
+                .array => {
+                    const arr = @as(*ObjArray, @alignCast(@fieldParentPtr("obj", obj)));
+                    try writer.writeAll("[");
+                    for (arr.items.items, 0..) |item, i| {
+                        if (i > 0) try writer.writeAll(", ");
+                        try item.stringify(true, writer); // Force inspect mode for nested items
+                    }
+                    try writer.writeAll("]");
+                },
+                .map => {
+                    const map = @as(*ObjMap, @alignCast(@fieldParentPtr("obj", obj)));
+                    try writer.writeAll("{");
+                    for (map.keys.items, 0..) |key, i| {
+                        if (i > 0) try writer.writeAll(", ");
+                        try key.stringify(true, writer);
+                        try writer.writeAll(": ");
+                        try map.values.items[i].stringify(true, writer);
+                    }
+                    try writer.writeAll("}");
+                },
+                .class => {
+                    const cls = @as(*ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
+                    try writer.print("<Class {s}>", .{cls.name.chars});
+                },
+                .instance => {
+                    const inst = @as(*ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
+                    try writer.print("<Instance of {s}>", .{inst.class.name.chars});
+                },
+                .closure, .function => try writer.writeAll("<Function>"),
+                .native => try writer.writeAll("<Native Function>"),
+                .bound_method => try writer.writeAll("<Bound Method>"),
+                .geometry => try writer.print("<Geometry DAG:{d}>", .{@as(*ObjGeometry, @alignCast(@fieldParentPtr("obj", obj))).dag_idx}),
+                .workplane => try writer.writeAll("<Workplane>"),
+                else => try writer.writeAll("<Object>"),
+            }
+        }
+    }
 };
 
 /// A dynamic array of Values (used for the VM Stack and constants arrays).

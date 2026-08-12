@@ -5,6 +5,7 @@ const primitives = @import("primitives.zig");
 const step = @import("../exporters/3d/step.zig");
 const stl = @import("../exporters/3d/stl.zig");
 const dag = @import("../vm/dag.zig");
+const io_mod = @import("io.zig");
 const chunk = @import("../vm/chunk.zig");
 const methods = @import("methods.zig");
 
@@ -16,6 +17,7 @@ pub const Category = enum {
     workplane_method,
     inspection_method,
     file_io,
+    io,
     brep_op,
 };
 
@@ -26,6 +28,9 @@ pub const GlobalFunction = struct {
 };
 
 pub const global_functions = [_]GlobalFunction{
+    .{ .name = "puts", .func = io_mod.nativePuts, .category = .io },
+    .{ .name = "print", .func = io_mod.nativePrint, .category = .io },
+    .{ .name = "p", .func = io_mod.nativeP, .category = .io },
     .{ .name = "cube", .func = primitives.nativeCube, .category = .primitive_3d },
     .{ .name = "import_stl", .func = stl.nativeImportStl, .category = .file_io },
     .{ .name = "export_stl", .func = stl.nativeExportStl, .category = .file_io },
