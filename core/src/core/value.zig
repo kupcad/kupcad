@@ -60,8 +60,9 @@ pub const ObjFunction = struct {
     obj: Obj,
     arity: u8,
     upvalue_count: u16,
-    chunk: *anyopaque, // Pointer to chunk.Chunk (avoids circular dependency)
+    chunk: ?*anyopaque, // Pointer to chunk.Chunk (avoids circular dependency)
     name: ?*ObjString,
+    owns_chunk: bool,
 };
 
 pub const ObjUpvalue = struct {

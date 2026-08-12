@@ -113,6 +113,7 @@ pub const VM = struct {
 
         const func = self.gc.allocateFunction(self) catch return .runtime_error;
         func.chunk = execution_chunk;
+        func.owns_chunk = false;
         func.upvalue_count = 0;
 
         // Protect func from GC during allocateClosure
@@ -136,7 +137,7 @@ pub const VM = struct {
     fn run(self: *VM) InterpretResult {
         while (true) {
             var frame = &self.frames.items[self.frames.items.len - 1];
-            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk)));
+            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
             const instruction = exec_chunk.code.items[frame.ip];
             frame.ip += 1;
             const op: chunk.OpCode = @enumFromInt(instruction);

@@ -84,6 +84,11 @@ pub const GC = struct {
         };
         self.first_object = &ptr.obj;
         ptr.name = null;
+        ptr.arity = 0;
+        ptr.upvalue_count = 0;
+        ptr.chunk = null;
+        ptr.owns_chunk = true;
+
         return ptr;
     }
 
@@ -247,7 +252,7 @@ pub const GC = struct {
 
         // Extract chunk through the closure
         for (vm.frames.items) |frame| {
-            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk)));
+            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
             for (exec_chunk.constants.items) |val| {
                 self.markValue(val);
             }
@@ -389,6 +394,16 @@ pub const GC = struct {
             },
             .function => {
                 const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
+
+                // Ensure the child chunk memory is freed when the function dies
+                if (func.owns_chunk) {
+                    if (func.chunk) |c| {
+                        const chnk = @as(*chunk.Chunk, @ptrCast(@alignCast(c)));
+                        chnk.free(self.allocator);
+                        self.allocator.destroy(chnk);
+                    }
+                }
+
                 self.allocator.destroy(func);
                 self.bytes_allocated -= @sizeOf(value.ObjFunction);
             },

@@ -231,6 +231,7 @@ test "VM: Closures correctly capture and return upvalues" {
     // 2. Wrap the chunk in an ObjFunction on the GC heap
     const func = try vm.gc.allocateFunction(&vm);
     func.chunk = closure_chunk;
+    func.owns_chunk = false;
     func.upvalue_count = 1;
     func.arity = 0;
 

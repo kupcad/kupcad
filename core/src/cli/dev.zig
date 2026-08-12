@@ -18,6 +18,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     if (std.mem.eql(u8, subcmd, "ast-dump")) {
         try executeAstDump(init, allocator, args_iter);
+    } else if (std.mem.eql(u8, subcmd, "disasm")) {
+        try executeDisasm(init, allocator, args_iter);
     } else {
         std.log.err("Unknown dev subcommand '{s}'", .{subcmd});
         printUsage();
@@ -63,12 +65,68 @@ fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
     std.log.info("Successfully dumped AST to {s}", .{out_path});
 }
 
+fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
+    const file_path = args_iter.next() orelse {
+        std.log.err("Missing file path for 'disasm'. Usage: kupcad dev disasm <file.kup>", .{});
+        return error.MissingFilePath;
+    };
+
+    const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+        std.log.err("Error reading file '{s}': {}", .{ file_path, err });
+        return err;
+    };
+    defer allocator.free(source);
+
+    var doc = api.Document.parse(allocator, source) catch |err| {
+        std.log.err("Error parsing file '{s}': {}", .{ file_path, err });
+        return err;
+    };
+    defer doc.deinit();
+
+    // Setup compilation environment
+    const VM = @import("../vm/vm.zig").VM;
+    const chunk = @import("../vm/chunk.zig");
+    const Compiler = @import("../compiler/compiler.zig").Compiler;
+    const registry = @import("../stdlib/registry.zig");
+
+    var vm = try VM.init(allocator, init.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(allocator);
+
+    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, &main_chunk, &vm);
+    compiler.compile(doc.tree.root) catch |err| {
+        std.log.err("Compilation failed: {}", .{err});
+        return err;
+    };
+
+    // Disassemble
+    const disassembler = @import("../tools/dev/disassembler.zig");
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+
+    try disassembler.disassembleChunk(allocator, &main_chunk, "main", &out.writer);
+
+    const out_path = try std.fmt.allocPrint(allocator, "{s}.disasm", .{file_path});
+    defer allocator.free(out_path);
+    const cwd = std.Io.Dir.cwd();
+    try cwd.writeFile(init.io, .{
+        .sub_path = out_path,
+        .data = out.written(),
+    });
+
+    std.log.info("Successfully dumped Bytecode to {s}", .{out_path});
+}
+
 fn printUsage() void {
     std.log.info(
         \\Usage: kupcad dev <subcommand> [options]
         \\
         \\Subcommands:
         \\  ast-dump <file>  Generate an AST tree dump (.dump) for compiler debugging
+        \\  disasm <file>    Disassemble KupCAD script into raw VM bytecode (.disasm)
         \\
     , .{});
 }

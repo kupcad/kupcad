@@ -198,6 +198,7 @@ pub const Compiler = struct {
                     try self.emitOp(.op_nil, line);
                 }
                 try self.emitOp(.op_return, line);
+                self.simulatePush(1); // Equilibrium for dead code
             },
             .break_stmt => {
                 const break_idx = self.tree.nodeIndex(node);
@@ -206,14 +207,13 @@ pub const Compiler = struct {
                 } else {
                     try self.emitOp(.op_nil, line);
                 }
-
-                if (self.loop_count == 0) return error.UnknownNode; // Break outside loop
-
+                if (self.loop_count == 0) return error.UnknownNode;
                 const jump = try self.emitJump(.op_jump, line);
                 var cur_loop = &self.loops[self.loop_count - 1];
                 if (cur_loop.exit_count >= 16) return error.UnknownNode;
                 cur_loop.exit_jumps[cur_loop.exit_count] = jump;
                 cur_loop.exit_count += 1;
+                self.simulatePush(1); // Equilibrium for dead code
             },
             .next_stmt => {
                 const next_idx = self.tree.nodeIndex(node);
@@ -222,13 +222,11 @@ pub const Compiler = struct {
                 } else {
                     try self.emitOp(.op_nil, line);
                 }
-
-                // Pop the evaluated value to maintain stack equilibrium before jumping back
                 try self.emitOp(.op_pop, line);
-
-                if (self.loop_count == 0) return error.UnknownNode; // Next outside loop
+                if (self.loop_count == 0) return error.UnknownNode;
                 const cur_loop = &self.loops[self.loop_count - 1];
                 try self.emitLoop(cur_loop.start, line);
+                self.simulatePush(1); // Equilibrium for dead code
             },
             .assignment => {
                 const assign_payload = self.tree.assignment(node);
@@ -276,6 +274,9 @@ pub const Compiler = struct {
                 self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
                 self.vm.push(value.Value.initObj(&func.obj));
 
+                // Guarantee the function is popped off the stack if compilation fails
+                errdefer _ = self.vm.pop();
+
                 const child_chunk = try self.allocator.create(chunk.Chunk);
                 child_chunk.* = chunk.Chunk.init();
                 func.chunk = child_chunk;
@@ -322,13 +323,25 @@ pub const Compiler = struct {
                     try self.emitByte(upv.index, line);
                 }
 
+                // 4. Bind the closure to its name (if it's a def statement)
                 if (node.tag == .def_stmt) {
                     const sym = self.symbols[@intFromEnum(node_idx)];
-                    self.addLocal(def_name_id, @intCast(sym.index));
-                    try self.emitOp(.op_set_local, line);
-                    try self.emitByte(@intCast(sym.index), line);
-                } else {
-                    self.simulatePush(1);
+                    if (sym.kind == .global) {
+                        const name_str = self.tree.getString(def_name_id);
+                        const name_val = try self.vm.allocateString(name_str);
+                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                        self.vm.push(name_val);
+                        const name_idx = try self.makeConstant(name_val);
+                        _ = self.vm.pop();
+
+                        try self.emitOp(.op_define_global, line);
+                        try self.emitByte(name_idx, line);
+                        try self.emitOp(.op_nil, line); // Equilibrium: yield nil to the block
+                    } else {
+                        self.addLocal(def_name_id, @intCast(sym.index));
+                        try self.emitOp(.op_set_local, line);
+                        try self.emitByte(@intCast(sym.index), line);
+                    }
                 }
             },
             .index_access => {
@@ -494,6 +507,7 @@ pub const Compiler = struct {
                 try self.emitLoop(loop_start, line);
 
                 self.patchJump(exit_jump);
+                self.simulatePush(1); // The condition that was bypassed
                 try self.emitOp(.op_pop, line);
                 try self.emitOp(.op_nil, line); // Natural exit yields nil
 
@@ -568,30 +582,11 @@ pub const Compiler = struct {
                 const name_idx = try self.makeConstant(name_val);
                 _ = self.vm.pop();
 
+                // 1. Push the un-initialized class onto the stack (+1)
                 try self.emitOp(.op_class, line);
                 try self.emitByte(name_idx, line);
 
-                // Define the Class variable
-                const sym = self.symbols[@intFromEnum(node_idx)];
-                if (sym.kind == .local) {
-                    self.addLocal(name_id, @intCast(sym.index));
-                    try self.emitOp(.op_set_local, line);
-                    try self.emitByte(@intCast(sym.index), line);
-                } else {
-                    try self.emitOp(.op_define_global, line);
-                    try self.emitByte(name_idx, line);
-                }
-
-                // Load class back onto stack to act as the receiver for the methods
-                if (sym.kind == .local) {
-                    try self.emitOp(.op_get_local, line);
-                    try self.emitByte(@intCast(sym.index), line);
-                } else {
-                    try self.emitOp(.op_get_global, line);
-                    try self.emitByte(name_idx, line);
-                }
-
-                // Compile all inner methods
+                // 2. Compile all inner methods while the Class sits on top of the stack
                 const body_node = self.tree.getNode(cs.body).?;
                 const block_payload = self.tree.block(body_node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
@@ -616,6 +611,9 @@ pub const Compiler = struct {
                         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
                         self.vm.push(value.Value.initObj(&func.obj));
 
+                        // Guarantee the function is popped off the stack if compilation fails!
+                        errdefer _ = self.vm.pop();
+
                         const child_chunk = try self.allocator.create(chunk.Chunk);
                         child_chunk.* = chunk.Chunk.init();
                         func.chunk = child_chunk;
@@ -634,7 +632,6 @@ pub const Compiler = struct {
                             .max_stack_depth = 0,
                         };
 
-                        // Map 'self' as local slot 0 (the implicit receiver)
                         // Reserve slot 0 as the implicit 'self' receiver
                         child_compiler.local_count = 1;
                         child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
@@ -647,7 +644,8 @@ pub const Compiler = struct {
 
                         const func_val = value.Value.initObj(&func.obj);
                         const func_idx = try self.makeConstant(func_val);
-                        try self.emitOp(.op_closure, line);
+
+                        try self.emitOp(.op_closure, line); // (+1)
                         try self.emitByte(func_idx, line);
 
                         for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
@@ -655,12 +653,24 @@ pub const Compiler = struct {
                             try self.emitByte(upv.index, line);
                         }
 
-                        try self.emitOp(.op_method, line);
+                        try self.emitOp(.op_method, line); // (-1)
                         try self.emitByte(m_name_idx, line);
                     }
                 }
 
-                try self.emitOp(.op_pop, line); // pop class
+                // 3. Define the Class variable
+                const sym = self.symbols[@intFromEnum(node_idx)];
+                if (sym.kind == .local) {
+                    self.addLocal(name_id, @intCast(sym.index));
+                    try self.emitOp(.op_set_local, line);
+                    try self.emitByte(@intCast(sym.index), line);
+                    // Equilibrium: Class remains on stack (+1)
+                } else {
+                    try self.emitOp(.op_define_global, line);
+                    try self.emitByte(name_idx, line);
+                    try self.emitOp(.op_nil, line);
+                    // Equilibrium: Class popped, dummy nil pushed (+1)
+                }
             },
             .property_assignment => {
                 const pa = self.tree.propertyAssignment(node);
@@ -694,7 +704,9 @@ pub const Compiler = struct {
                     }
                 }
             },
-            else => {},
+            else => {
+                try self.emitOp(.op_nil, line); // Push dummy value for unknown AST nodes
+            },
         }
     }
 
