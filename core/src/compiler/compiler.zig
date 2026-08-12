@@ -168,10 +168,7 @@ pub const Compiler = struct {
 
                 if (sym.kind == .global) {
                     const name = self.tree.getString(name_id);
-                    const name_val = try self.vm.allocateString(name);
-                    self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                    self.vm.push(name_val);
-                    const name_idx = try self.makeConstant(name_val);
+                    const name_idx = try self.makeStringConstant(name);
                     _ = self.vm.pop();
                     try self.emitOp(.op_get_global, line);
                     try self.emitByte(name_idx, line);
@@ -236,13 +233,7 @@ pub const Compiler = struct {
                 // 1. Evaluate RHS (with Compound Operator getters if necessary)
                 if (assign_payload.op) |op| {
                     if (sym.kind == .global) {
-                        const name_str = self.tree.getString(name_id);
-                        const name_val = try self.vm.allocateString(name_str);
-                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                        self.vm.push(name_val);
-                        const name_idx = try self.makeConstant(name_val);
-                        _ = self.vm.pop();
-
+                        const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
                         try self.emitOp(.op_get_global, line);
                         try self.emitByte(name_idx, line);
                     } else if (self.resolveLocal(name_id)) |local_slot| {
@@ -478,25 +469,13 @@ pub const Compiler = struct {
                 }
 
                 // Get the root of the namespace
-                const root_str = self.tree.getString(path[0]);
-                const root_val = try self.vm.allocateString(root_str);
-                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                self.vm.push(root_val);
-                const root_idx = try self.makeConstant(root_val);
-                _ = self.vm.pop();
-
+                const root_idx = try self.makeStringConstant(self.tree.getString(path[0]));
                 try self.emitOp(.op_get_global, line);
                 try self.emitByte(root_idx, line);
 
                 // Chain property accesses for the rest of the namespace path
                 for (path[1..]) |segment_id| {
-                    const segment_str = self.tree.getString(segment_id);
-                    const seg_val = try self.vm.allocateString(segment_str);
-                    self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                    self.vm.push(seg_val);
-                    const seg_idx = try self.makeConstant(seg_val);
-                    _ = self.vm.pop();
-
+                    const seg_idx = try self.makeStringConstant(self.tree.getString(segment_id));
                     try self.emitOp(.op_get_property, line);
                     try self.emitByte(seg_idx, line);
                 }
@@ -695,11 +674,7 @@ pub const Compiler = struct {
                 }
 
                 if (mc.receiver == .none) {
-                    const name_val = try self.vm.allocateString(func_name);
-                    self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                    self.vm.push(name_val);
-                    const name_idx = try self.makeConstant(name_val);
-                    _ = self.vm.pop();
+                    const name_idx = try self.makeStringConstant(func_name);
                     try self.emitOp(.op_get_global, line);
                     try self.emitByte(name_idx, line);
 
@@ -1200,8 +1175,8 @@ pub const Compiler = struct {
         try self.emitByte(@intFromEnum(op), line);
         switch (op) {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import => self.simulatePush(1),
-            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread => self.simulatePop(1),
-            .op_map_insert, .op_map_spread => self.simulatePop(2),
+            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread => self.simulatePop(1),
+            .op_map_insert => self.simulatePop(2),
             .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater => {
                 self.simulatePop(2);
                 self.simulatePush(1);
@@ -1263,5 +1238,14 @@ pub const Compiler = struct {
         std.debug.assert(jump <= std.math.maxInt(u16));
         try self.emitByte(@intCast((jump >> 8) & 0xff), line);
         try self.emitByte(@intCast(jump & 0xff), line);
+    }
+
+    fn makeStringConstant(self: *Compiler, text: []const u8) CompileError!u8 {
+        const str_val = try self.vm.allocateString(text);
+        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+        self.vm.push(str_val);
+        const idx = try self.makeConstant(str_val);
+        _ = self.vm.pop();
+        return idx;
     }
 };
