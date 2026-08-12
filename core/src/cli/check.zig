@@ -70,26 +70,32 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
     defer api.freeDiagnostics(allocator, diags);
 
     if (diags.len > 0) {
+        // Initialize the LineIndex to compute exact coordinates
+        var line_index = try api.LineIndex.init(allocator, source);
+
         for (diags) |d| {
             const sev_color = d.severity.toColor();
             const sev_char = d.severity.toChar();
-
             switch (d.severity) {
                 .@"error" => totals.errors += 1,
                 .warning => totals.warnings += 1,
                 .info => totals.infos += 1,
             }
 
-            std.debug.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}\n", .{ Color.cyan, file_path, d.loc.line, d.loc.col, Color.reset, sev_color, sev_char, Color.reset, d.message });
+            // Compute the exact line and column
+            const line = line_index.getLine(d.loc.offset) + 1;
+            const col = line_index.getUtf8Column(d.loc.offset) + 1;
 
-            // Use the centralized utility from the LineIndex API
-            const source_line = api.LineIndex.getSourceLine(source, d.loc.line);
+            // Use the computed coordinates
+            std.debug.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}\n", .{ Color.cyan, file_path, line, col, Color.reset, sev_color, sev_char, Color.reset, d.message });
+
+            // Use the local getSourceLine function to fix the unused warning
+            const source_line = getSourceLine(source, line);
             std.debug.print("{s}\n", .{source_line});
 
-            const col_idx = if (d.loc.col > 0) d.loc.col - 1 else 0;
+            const col_idx = if (col > 0) col - 1 else 0;
             for (0..col_idx) |_| std.debug.print(" ", .{});
             std.debug.print("{s}", .{sev_color});
-
             const squiggles = if (d.loc.length > 0) d.loc.length else 1;
             for (0..squiggles) |_| std.debug.print("^", .{});
             std.debug.print("{s}\n\n", .{Color.reset});

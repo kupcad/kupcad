@@ -38,22 +38,24 @@ fn inner_check(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
     const diags = try api.checkCode(allocator, source, .{});
     defer api.freeDiagnostics(allocator, diags);
 
+    // Initialize the LineIndex
+    var line_index = try api.LineIndex.init(allocator, source);
+
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
 
     try out.writer.writeAll("[");
     for (diags, 0..) |d, i| {
         if (i > 0) try out.writer.writeAll(",");
-
         const flat_diag = .{
-            .line = d.loc.line,
-            .col = d.loc.col,
+            // Calculate dynamic line and column
+            .line = line_index.getLine(d.loc.offset) + 1,
+            .col = line_index.getUtf8Column(d.loc.offset) + 1,
             .offset = d.loc.offset,
             .length = d.loc.length,
             .severity = d.severity.toString(),
             .message = d.message,
         };
-
         try out.writer.print("{f}", .{std.json.fmt(flat_diag, .{})});
     }
     try out.writer.writeAll("]");
