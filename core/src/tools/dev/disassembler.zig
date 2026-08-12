@@ -47,7 +47,25 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
     const op: chunk.OpCode = @enumFromInt(instruction);
 
     switch (op) {
-        .op_return, .op_nil, .op_true, .op_false, .op_pop, .op_add, .op_subtract, .op_multiply, .op_divide, .op_negate, .op_not, .op_equal, .op_greater, .op_less, .op_close_upvalue, .op_get_index, .op_set_index => {
+        .op_return,
+        .op_nil,
+        .op_true,
+        .op_false,
+        .op_pop,
+        .op_dup,
+        .op_add,
+        .op_subtract,
+        .op_multiply,
+        .op_divide,
+        .op_negate,
+        .op_not,
+        .op_equal,
+        .op_greater,
+        .op_less,
+        .op_close_upvalue,
+        .op_get_index,
+        .op_set_index,
+        => {
             return simpleInstruction(@tagName(op), offset, writer);
         },
         .op_constant, .op_get_global, .op_define_global, .op_set_global, .op_class, .op_method, .op_get_property, .op_set_property => {

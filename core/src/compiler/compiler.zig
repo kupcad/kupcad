@@ -274,6 +274,90 @@ pub const Compiler = struct {
                     try self.emitByte(@intCast(sym.index), line);
                 }
             },
+            .case_stmt => {
+                const cs = self.tree.caseStmt(node);
+
+                const saved_depth = self.current_stack_depth;
+                try self.compileNode(cs.condition); // Pushes 'case' value
+
+                var end_jumps: [64]usize = undefined;
+                var end_jump_count: usize = 0;
+
+                const branches = self.tree.getWhenBranches(cs.when_branches);
+                for (branches) |branch| {
+                    const conds = self.tree.getNodes(branch.conditions);
+
+                    for (conds) |cond_idx| {
+                        try self.emitOp(.op_dup, line);
+                        try self.compileNode(cond_idx);
+                        try self.emitOp(.op_equal, line);
+
+                        const skip_jump = try self.emitJump(.op_jump_if_false, line);
+
+                        // Simulator trick: we are exploring the TRUE branch now.
+                        try self.emitOp(.op_pop, line); // pop `true` result
+                        try self.emitOp(.op_pop, line); // pop `case` value
+
+                        try self.compileNode(branch.body);
+
+                        if (end_jump_count < 64) {
+                            end_jumps[end_jump_count] = try self.emitJump(.op_jump, line);
+                            end_jump_count += 1;
+                        }
+
+                        // Now we simulate the FALSE branch path.
+                        // In the false path, op_equal left `false` on the stack.
+                        // So we force the simulator back to depth 2 (case_val, false).
+                        self.current_stack_depth = saved_depth + 2;
+
+                        self.patchJump(skip_jump);
+                        try self.emitOp(.op_pop, line); // pop `false` result
+                    }
+                }
+
+                try self.emitOp(.op_pop, line); // pop case value (no match found)
+
+                if (cs.else_branch != .none) {
+                    try self.compileNode(cs.else_branch);
+                } else {
+                    try self.emitOp(.op_nil, line);
+                }
+
+                for (end_jumps[0..end_jump_count]) |jmp| {
+                    self.patchJump(jmp);
+                }
+
+                // Final equilibrium reset
+                self.current_stack_depth = saved_depth + 1;
+            },
+            .begin_stmt => {
+                const bs = self.tree.beginStmt(node);
+
+                // MVP Exception Handling: Compile body sequentially.
+                // Full stack unwinding requires a dedicated op_setup_rescue VM framework.
+                try self.compileNode(bs.body);
+
+                // Compile rescue clauses for AST syntax validity, but pop their results
+                // to maintain block stack equilibrium.
+                const rescues = self.tree.getRescueClauses(bs.rescues);
+                for (rescues) |rescue| {
+                    try self.compileNode(rescue.body);
+                    try self.emitOp(.op_pop, line);
+                }
+
+                if (bs.ensure_body != .none) {
+                    try self.compileNode(bs.ensure_body);
+                    try self.emitOp(.op_pop, line);
+                }
+            },
+            .rescue_modifier => {
+                const rm = self.tree.rescueModifier(node);
+                try self.compileNode(rm.expr);
+
+                // Compile rescue fallback for AST syntax validity, but pop its result
+                try self.compileNode(rm.rescue_expr);
+                try self.emitOp(.op_pop, line);
+            },
             .def_stmt, .lambda_expr => {
                 var params: []const ast.Param = &.{};
                 var body_node: ast.NodeIndex = .none;
@@ -843,7 +927,7 @@ pub const Compiler = struct {
     fn emitOp(self: *Compiler, op: chunk.OpCode, line: u32) CompileError!void {
         try self.emitByte(@intFromEnum(op), line);
         switch (op) {
-            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue => self.simulatePush(1),
+            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup => self.simulatePush(1),
             .op_pop, .op_return, .op_close_upvalue => self.simulatePop(1),
             .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater => {
                 self.simulatePop(2);

@@ -495,6 +495,10 @@ pub const VM = struct {
                         frame.ip += offset;
                     }
                 },
+                .op_dup => {
+                    const val = self.stack[self.stack_top - 1];
+                    self.push(val);
+                },
                 .op_loop => {
                     const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
                     frame.ip += 2;
