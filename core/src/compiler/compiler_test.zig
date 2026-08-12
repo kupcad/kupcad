@@ -276,3 +276,68 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
     try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[9])));
 }
+
+test "Compiler Edge Case: Compiles complex Begin/Rescue with specific Type Checking" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // rescue IOError => e
+    const rescue_body = try b.block(&.{}, &.{try b.number("1", 0)}, 0, 0);
+    const err_name = try b.intern("IOError");
+    const err_list = try b.addStringLists(&.{err_name});
+    const var_name = try b.intern("e");
+    const rescue_clause = ast.RescueClause{ .errors = err_list, .variable = var_name, .body = rescue_body };
+    const rescues = try b.addRescueClauses(&.{rescue_clause});
+
+    // begin body
+    const begin_body = try b.block(&.{}, &.{try b.number("2", 0)}, 0, 0);
+    const begin_stmt = try b.beginStmt(begin_body, rescues, .none, 0);
+
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(begin_stmt) + 1);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &out_chunk, &vm);
+
+    // We are ensuring the complex `op_is_instance` dynamic routing compiles without crashing
+    try comp.compile(begin_stmt);
+
+    // The setup, type check duping, and routing generates a significant amount of bytecode
+    try testing.expect(out_chunk.code.items.len > 10);
+}
+
+test "Compiler Edge Case: Compiles empty Hashes and Arrays safely" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // []
+    const empty_arr_span = try b.addNodes(&.{});
+    const arr_node = try b.arrayLiteral(empty_arr_span, 0, 0);
+
+    // {}
+    const empty_hash_span = try b.addHashEntries(&.{});
+    const hash_node = try b.hashLiteral(empty_hash_span, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+
+    // Ensure bounds-checking doesn't panic on length == 0
+    try comp.compile(arr_node);
+    try comp.compile(hash_node);
+
+    try testing.expectEqual(chunk.OpCode.op_build_array, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(@as(u8, 0), out_chunk.code.items[1]); // 0 items
+}

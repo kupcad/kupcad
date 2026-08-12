@@ -44,6 +44,7 @@ pub const VM = struct {
     host: Host = .{},
     active_kernel: ?*const kernel_mod.GeometryKernel = null,
     dag_builder: dag.DAGBuilder,
+    mute_errors: bool = false,
 
     const INITIAL_STACK_CAPACITY: usize = 1024;
     const STACK_GROW_FACTOR: usize = 2;
@@ -61,6 +62,7 @@ pub const VM = struct {
             .globals = .empty,
             .strings = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
+            .mute_errors = false,
         };
     }
 
@@ -187,7 +189,7 @@ pub const VM = struct {
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
                     } else {
-                        std.log.err("Runtime Error: Invalid operands for '+'\n", .{});
+                        self.reportError("Runtime Error: Invalid operands for '+'\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -204,7 +206,7 @@ pub const VM = struct {
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
                     } else {
-                        std.log.err("Runtime Error: Invalid operands for '-'\n", .{});
+                        self.reportError("Runtime Error: Invalid operands for '-'\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -235,7 +237,7 @@ pub const VM = struct {
                     if (self.globals.get(str_obj.chars)) |val| {
                         self.push(val);
                     } else {
-                        std.log.err("Runtime Error: Undefined variable '{s}'\n", .{str_obj.chars});
+                        self.reportError("Runtime Error: Undefined variable '{s}'\n", .{str_obj.chars});
                         return .runtime_error;
                     }
                 },
@@ -249,7 +251,7 @@ pub const VM = struct {
                         const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
                         const idx = @as(usize, @intFromFloat(index.asNumber()));
                         if (idx >= arr.items.items.len) {
-                            std.log.err("Runtime Error: Array index out of bounds.\n", .{});
+                            self.reportError("Runtime Error: Array index out of bounds.\n", .{});
                             return .runtime_error;
                         }
                         self.push(arr.items.items[idx]);
@@ -273,7 +275,7 @@ pub const VM = struct {
                         }
                         if (!found) self.push(value.Value.initNil());
                     } else {
-                        std.log.err("Runtime Error: Cannot index target.\n", .{});
+                        self.reportError("Runtime Error: Cannot index target.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -288,7 +290,7 @@ pub const VM = struct {
                         const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
                         const idx = @as(usize, @intFromFloat(index.asNumber()));
                         if (idx >= arr.items.items.len) {
-                            std.log.err("Runtime Error: Array index out of bounds.\n", .{});
+                            self.reportError("Runtime Error: Array index out of bounds.\n", .{});
                             return .runtime_error;
                         }
                         // ARC: Safely release the old value before overwriting it
@@ -327,7 +329,7 @@ pub const VM = struct {
                         }
                         self.push(val);
                     } else {
-                        std.log.err("Runtime Error: Cannot assign to index on target.\n", .{});
+                        self.reportError("Runtime Error: Cannot assign to index on target.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -349,10 +351,10 @@ pub const VM = struct {
                     const err_val = self.pop();
 
                     if (self.rescue_frames.items.len == 0) {
-                        std.log.err("\n[Uncaught Exception]", .{});
+                        self.reportError("\n[Uncaught Exception]", .{});
                         if (err_val.isObject() and err_val.asObj().obj_type == .string) {
                             const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", err_val.asObj()))).chars;
-                            std.log.err("{s}\n", .{str});
+                            self.reportError("{s}\n", .{str});
                         }
                         return .runtime_error;
                     }
@@ -384,7 +386,7 @@ pub const VM = struct {
                     defer self.releaseValue(instance_val);
 
                     if (!class_val.isClass()) {
-                        std.log.err("Runtime Error: Rescue type must be a Class.\n", .{});
+                        self.reportError("Runtime Error: Rescue type must be a Class.\n", .{});
                         return .runtime_error;
                     }
 
@@ -420,7 +422,7 @@ pub const VM = struct {
 
                         // Enforce Arity Checking
                         if (arg_count != closure.function.arity) {
-                            std.log.err("Runtime Error: Expected {d} arguments but got {d}.\n", .{ closure.function.arity, arg_count });
+                            self.reportError("Runtime Error: Expected {d} arguments but got {d}.\n", .{ closure.function.arity, arg_count });
                             return .runtime_error;
                         }
 
@@ -442,7 +444,7 @@ pub const VM = struct {
                             self.releaseValue(dropped);
                         }
                     } else {
-                        std.log.err("Runtime Error: Can only call functions and classes.\n", .{});
+                        self.reportError("Runtime Error: Can only call functions and classes.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -474,7 +476,7 @@ pub const VM = struct {
                         if (instance.class.methods.get(method_name_str)) |method_val| {
                             const closure = method_val.asClosure();
                             if (arg_count != closure.function.arity - 1) { // -1 for implicit 'self'
-                                std.log.err("Runtime Error: Expected {d} arguments but got {d}.\n", .{ closure.function.arity - 1, arg_count });
+                                self.reportError("Runtime Error: Expected {d} arguments but got {d}.\n", .{ closure.function.arity - 1, arg_count });
                                 return .runtime_error;
                             }
                             self.frames.append(self.allocator, .{
@@ -485,7 +487,7 @@ pub const VM = struct {
                             continue;
                         }
 
-                        std.log.err("Runtime Error: Undefined property or method '{s}'.\n", .{method_name_str});
+                        self.reportError("Runtime Error: Undefined property or method '{s}'.\n", .{method_name_str});
                         return .runtime_error;
                     }
 
@@ -500,7 +502,7 @@ pub const VM = struct {
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
                     } else {
-                        std.log.err("Runtime Error: No invoke handler registered for method '{s}'.\n", .{method_name_str});
+                        self.reportError("Runtime Error: No invoke handler registered for method '{s}'.\n", .{method_name_str});
                         return .runtime_error;
                     }
                 },
@@ -556,7 +558,7 @@ pub const VM = struct {
                     defer self.releaseValue(start_val);
 
                     if (!start_val.isNumber() or !end_val.isNumber() or !step_val.isNumber()) {
-                        std.log.err("Runtime Error: Range bounds must be numbers.\n", .{});
+                        self.reportError("Runtime Error: Range bounds must be numbers.\n", .{});
                         return .runtime_error;
                     }
 
@@ -608,7 +610,7 @@ pub const VM = struct {
                             target_arr.items.append(self.allocator, item) catch return .runtime_error;
                         }
                     } else {
-                        std.log.err("Runtime Error: Can only spread arrays into arrays.\n", .{});
+                        self.reportError("Runtime Error: Can only spread arrays into arrays.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -642,7 +644,7 @@ pub const VM = struct {
                             target_map.values.append(self.allocator, val) catch return .runtime_error;
                         }
                     } else {
-                        std.log.err("Runtime Error: Can only spread maps into maps.\n", .{});
+                        self.reportError("Runtime Error: Can only spread maps into maps.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -833,12 +835,12 @@ pub const VM = struct {
                         instance.fields.put(self.allocator, name_str, val) catch return .runtime_error;
                         self.push(val);
                     } else {
-                        std.log.err("Runtime Error: Only instances have properties.\n", .{});
+                        self.reportError("Runtime Error: Only instances have properties.\n", .{});
                         return .runtime_error;
                     }
                 },
                 else => {
-                    std.log.err("Runtime Error: Unhandled OpCode {}\n", .{op});
+                    self.reportError("Runtime Error: Unhandled OpCode {}\n", .{op});
                     return .runtime_error;
                 },
             }
@@ -926,7 +928,7 @@ pub const VM = struct {
     fn evaluateDAG(self: *VM, node_idx: dag.DAGNodeIndex) !geom.GeometryHandle {
         const node = self.dag_builder.nodes.items[node_idx];
         const kernel = self.active_kernel orelse {
-            std.log.err("Runtime Error: No geometry kernel active\n", .{});
+            self.reportError("Runtime Error: No geometry kernel active\n", .{});
             return error.RuntimeError;
         };
         switch (node.tag) {
@@ -987,6 +989,12 @@ pub const VM = struct {
             upvalue.closed = upvalue.location.*; // Move from Stack -> Heap
             upvalue.location = &upvalue.closed; // Repoint to internal field
             self.open_upvalues = upvalue.next; // Unlink from active list
+        }
+    }
+
+    pub fn reportError(self: *VM, comptime fmt: []const u8, args: anytype) void {
+        if (!self.mute_errors) {
+            std.log.err(fmt, args);
         }
     }
 };

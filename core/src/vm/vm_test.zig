@@ -382,3 +382,85 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
 }
+
+test "VM Edge Case: Uncaught exceptions halt gracefully without panicking" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    const err_val = try vm.allocateString("Fatal System Error!");
+    vm.push(err_val); // Protect from GC
+    const err_idx = try out_chunk.addConstant(testing.allocator, err_val);
+    _ = vm.pop();
+
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, err_idx, 1);
+
+    // Throw the error with NO rescue block set up!
+    try out_chunk.writeOp(testing.allocator, .op_throw, 1);
+    out_chunk.max_stack_slots = 2;
+
+    const result = vm.interpret(&out_chunk);
+
+    // The VM should catch the lack of rescue frames and return a runtime_error cleanly
+    try testing.expectEqual(.runtime_error, result);
+}
+
+test "VM Edge Case: Gracefully handles type mismatches in arithmetic" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Try to add a String and a Number ("Hello" + 5)
+    const str_val = try vm.allocateString("Hello");
+    vm.push(str_val);
+    const str_idx = try out_chunk.addConstant(testing.allocator, str_val);
+    _ = vm.pop();
+
+    const num_idx = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(5.0));
+
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, str_idx, 1);
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, num_idx, 1);
+    try out_chunk.writeOp(testing.allocator, .op_add, 1);
+
+    out_chunk.max_stack_slots = 3;
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
+}
+
+test "VM Edge Case: Gracefully handles method calls on raw primitives" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    const num_idx = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(5.0));
+
+    const m_val = try vm.allocateString("fake_method");
+    vm.push(m_val);
+    const m_idx = try out_chunk.addConstant(testing.allocator, m_val);
+    _ = vm.pop();
+
+    try out_chunk.writeOp(testing.allocator, .op_constant, 1);
+    try out_chunk.write(testing.allocator, num_idx, 1);
+    try out_chunk.writeOp(testing.allocator, .op_invoke, 1);
+    try out_chunk.write(testing.allocator, m_idx, 1);
+    try out_chunk.write(testing.allocator, 0, 1); // 0 args
+
+    out_chunk.max_stack_slots = 3;
+
+    const result = vm.interpret(&out_chunk);
+    // You can't call methods on a raw float, so it should abort cleanly.
+    try testing.expectEqual(.runtime_error, result);
+}

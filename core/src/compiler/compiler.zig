@@ -369,12 +369,15 @@ pub const Compiler = struct {
                 if (rescues.len > 0) {
                     self.patchJump(rescue_jump);
                     self.simulatePush(1); // Simulator: op_throw pushed the error value on the stack
+                    const error_depth = self.current_stack_depth; // Save the stack depth!
 
                     var rescue_end_jumps: [64]usize = undefined;
                     var rescue_end_jump_count: usize = 0;
                     var next_rescue_jump: ?usize = null;
 
                     for (rescues) |rescue| {
+                        self.current_stack_depth = error_depth; // Reset for each rescue block
+
                         if (next_rescue_jump) |jmp| {
                             self.patchJump(jmp);
                         }
@@ -386,12 +389,9 @@ pub const Compiler = struct {
 
                         if (errors.len > 0) {
                             for (errors) |err_id| {
-                                const err_str = self.tree.getString(err_id);
-                                const name_val = try self.vm.allocateString(err_str);
-                                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                                self.vm.push(name_val);
-                                const name_idx = try self.makeConstant(name_val);
-                                _ = self.vm.pop();
+                                self.current_stack_depth = error_depth; // Reset for each type check
+
+                                const name_idx = try self.makeStringConstant(self.tree.getString(err_id));
 
                                 try self.emitOp(.op_dup, line); // Copy error payload
                                 try self.emitOp(.op_get_global, line);
@@ -406,6 +406,7 @@ pub const Compiler = struct {
                                     match_jump_count += 1;
                                 }
 
+                                self.current_stack_depth = error_depth + 1; // False branch has error + false
                                 self.patchJump(skip_jump);
                                 try self.emitOp(.op_pop, line); // Discard False
                             }
@@ -414,6 +415,7 @@ pub const Compiler = struct {
                         }
 
                         // --- MATCHED ROUTE ---
+                        self.current_stack_depth = error_depth; // Jump lands here with error on top
                         for (match_jumps[0..match_jump_count]) |jmp| {
                             self.patchJump(jmp);
                         }
@@ -434,17 +436,19 @@ pub const Compiler = struct {
                         }
                     }
 
-                    // If it fell through ALL rescue blocks without matching, re-throw it
+                    // If it fell through ALL rescue blocks without matching, re-throw it!
                     if (next_rescue_jump) |jmp| {
+                        self.current_stack_depth = error_depth;
                         self.patchJump(jmp);
-                        try self.emitOp(.op_throw, line);
-                        self.simulatePop(1); // Simulator: op_throw consumes the error value
+                        try self.emitOp(.op_throw, line); // op_throw inherently calls simulatePop(1)
+                        self.simulatePush(1); // Dead code equilibrium instead of double-popping!
                     }
 
                     // Patch all successful rescue block ends to arrive here
                     for (rescue_end_jumps[0..rescue_end_jump_count]) |jmp| {
                         self.patchJump(jmp);
                     }
+                    self.current_stack_depth = error_depth; // The block successfully yields 1 value (error_depth is depth + 1)
                 }
 
                 self.patchJump(end_jump);
