@@ -29,6 +29,15 @@ pub const LoopState = struct {
     exit_count: usize = 0,
 };
 
+const Intrinsic = enum {
+    raise_err,
+    // Future compiler intrinsics (e.g., typeof, sizeof) will go here
+};
+
+const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
+    .{ "raise", .raise_err },
+});
+
 pub const Compiler = struct {
     allocator: std.mem.Allocator,
     tree: *const ast.Tree,
@@ -660,17 +669,21 @@ pub const Compiler = struct {
                 const mc = self.tree.methodCall(node);
                 const func_name = self.tree.getString(mc.method_name);
 
-                // Intercept raise as a true language throw
-                if (std.mem.eql(u8, func_name, "raise")) {
-                    const args = self.tree.getNamedArgs(mc.args);
-                    if (args.len > 0) {
-                        try self.compileNode(args[0].value);
-                    } else {
-                        try self.emitOp(.op_nil, line);
+                // Intercept Compiler Intrinsics via O(1) lookup
+                if (compiler_intrinsics.get(func_name)) |intrinsic| {
+                    switch (intrinsic) {
+                        .raise_err => {
+                            const args = self.tree.getNamedArgs(mc.args);
+                            if (args.len > 0) {
+                                try self.compileNode(args[0].value);
+                            } else {
+                                try self.emitOp(.op_nil, line);
+                            }
+                            try self.emitOp(.op_throw, line);
+                            self.simulatePush(1); // Dead code equilibrium
+                            return;
+                        },
                     }
-                    try self.emitOp(.op_throw, line);
-                    self.simulatePush(1); // Dead code equilibrium
-                    return;
                 }
 
                 if (mc.receiver == .none) {
