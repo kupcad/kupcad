@@ -86,16 +86,12 @@ inline fn isIdentChar(c: u8) bool {
 pub const Lexer = struct {
     buffer: []const u8,
     index: usize,
-    line: u32,
-    col: u32,
     file_id: u32,
 
     pub fn init(buffer: []const u8, file_id: u32) Lexer {
         return .{
             .buffer = buffer,
             .index = 0,
-            .line = 1,
-            .col = 1,
             .file_id = file_id,
         };
     }
@@ -149,7 +145,7 @@ pub const Lexer = struct {
     }
 
     fn skipWhitespace(self: *Lexer) void {
-        utils.LexerUtils.skipWhitespace(self.buffer, &self.index, &self.line, &self.col, true);
+        utils.LexerUtils.skipWhitespace(self.buffer, &self.index, true);
     }
 
     fn consumeOperator(self: *Lexer, start_loc: common_token.Location) Token {
@@ -182,7 +178,7 @@ pub const Lexer = struct {
     }
 
     fn consumeSlashOrComment(self: *Lexer, start_loc: common_token.Location) Token {
-        const res = utils.LexerUtils.consumeSlashOrComment(self.buffer, &self.index, &self.line, &self.col);
+        const res = utils.LexerUtils.consumeSlashOrComment(self.buffer, &self.index);
         const tag: Tag = switch (res.kind) {
             .slash => .slash,
             .comment => .comment,
@@ -192,7 +188,7 @@ pub const Lexer = struct {
     }
 
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
-        const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index, &self.col, true);
+        const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index, true);
         var tag = Tag.ident;
         if (keywords.get(lexeme)) |kw_tag| {
             tag = kw_tag;
@@ -201,14 +197,14 @@ pub const Lexer = struct {
     }
 
     fn consumeString(self: *Lexer, start_loc: common_token.Location) Token {
-        const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, &self.line, &self.col, '"');
+        const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, '"');
         var content_loc = start_loc;
         content_loc.offset += 1;
         return .{ .tag = .string, .loc = content_loc, .lexeme = lexeme };
     }
 
     fn consumeNumber(self: *Lexer, start_loc: common_token.Location) Token {
-        const lexeme = utils.LexerUtils.consumeNumber(self.buffer, &self.index, &self.col);
+        const lexeme = utils.LexerUtils.consumeNumber(self.buffer, &self.index);
         return .{ .tag = .number, .loc = start_loc, .lexeme = lexeme };
     }
 
@@ -254,6 +250,5 @@ pub const Lexer = struct {
 
     inline fn advance(self: *Lexer) void {
         self.index += 1;
-        self.col += 1;
     }
 };

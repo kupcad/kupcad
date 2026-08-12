@@ -154,8 +154,6 @@ inline fn isIdentChar(c: u8) bool {
 pub const Lexer = struct {
     buffer: []const u8,
     index: usize,
-    line: u32,
-    col: u32,
     file_id: u32,
     brace_depth: u32 = 0,
     interp_stack: [8]u32 = undefined,
@@ -165,8 +163,6 @@ pub const Lexer = struct {
         return .{
             .buffer = buffer,
             .index = 0,
-            .line = 1,
-            .col = 1,
             .file_id = file_id,
         };
     }
@@ -232,7 +228,7 @@ pub const Lexer = struct {
     }
 
     fn skipWhitespace(self: *Lexer) void {
-        utils.LexerUtils.skipWhitespace(self.buffer, &self.index, &self.line, &self.col, false);
+        utils.LexerUtils.skipWhitespace(self.buffer, &self.index, false);
     }
 
     fn consumePercentOrModulo(self: *Lexer, start_loc: common_token.Location) Token {
@@ -261,10 +257,6 @@ pub const Lexer = struct {
         };
 
         while (self.index < self.buffer.len and self.peek() != close_delim) {
-            if (self.peek() == '\n') {
-                self.line += 1;
-                self.col = 1;
-            }
             self.advance();
         }
         if (self.index < self.buffer.len) self.advance(); // consume close delim
@@ -314,8 +306,7 @@ pub const Lexer = struct {
                     // Must have strictly MORE spaces after '#' than the tag line AND must NOT start a new '@' tag
                     if (spaces_after_hash > base_indent and lookahead < self.buffer.len and self.buffer[lookahead] != '@') {
                         self.advance(); // consume '\n'
-                        self.line += 1;
-                        self.col = 1;
+
                         while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
                         continue;
                     }
@@ -367,7 +358,7 @@ pub const Lexer = struct {
 
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
         const is_constant = std.ascii.isUpper(self.peek());
-        const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index, &self.col, false);
+        const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index, false);
         var tag = if (is_constant) Tag.constant else Tag.ident;
         if (keywords.get(lexeme)) |kw_tag| tag = kw_tag;
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
@@ -375,7 +366,7 @@ pub const Lexer = struct {
 
     fn consumeString(self: *Lexer, start_loc: common_token.Location, quote: u8) Token {
         if (quote == '\'') {
-            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, &self.line, &self.col, '\'');
+            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, '\'');
             var content_loc = start_loc;
             content_loc.offset += 1;
             return .{ .tag = .string, .loc = content_loc, .lexeme = lexeme };
@@ -433,7 +424,7 @@ pub const Lexer = struct {
     }
 
     fn consumeNumber(self: *Lexer, start_loc: common_token.Location) Token {
-        const lexeme = utils.LexerUtils.consumeNumber(self.buffer, &self.index, &self.col);
+        const lexeme = utils.LexerUtils.consumeNumber(self.buffer, &self.index);
         return .{ .tag = .number, .loc = start_loc, .lexeme = lexeme };
     }
 
@@ -441,10 +432,7 @@ pub const Lexer = struct {
         const start = self.index;
         while (self.index < self.buffer.len) {
             const c = self.peek();
-            if (c == '\n') {
-                self.line += 1;
-                self.col = 0;
-            }
+
             if (c == '\\') {
                 self.advance();
                 if (self.index < self.buffer.len) self.advance();
@@ -476,8 +464,7 @@ pub const Lexer = struct {
     fn consumeNewline(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
         self.advance();
-        self.line += 1;
-        self.col = 1;
+
         return .{ .tag = .newline, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
@@ -523,7 +510,6 @@ pub const Lexer = struct {
 
     inline fn advance(self: *Lexer) void {
         self.index += 1;
-        self.col += 1;
     }
 
     fn makeToken(self: *const Lexer, tag: Tag) Token {
