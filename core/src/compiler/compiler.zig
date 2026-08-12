@@ -333,30 +333,54 @@ pub const Compiler = struct {
             .begin_stmt => {
                 const bs = self.tree.beginStmt(node);
 
-                // MVP Exception Handling: Compile body sequentially.
-                // Full stack unwinding requires a dedicated op_setup_rescue VM framework.
-                try self.compileNode(bs.body);
+                const rescue_jump = try self.emitJump(.op_setup_rescue, line);
 
-                // Compile rescue clauses for AST syntax validity, but pop their results
-                // to maintain block stack equilibrium.
+                try self.compileNode(bs.body);
+                try self.emitOp(.op_pop_rescue, line);
+
+                const end_jump = try self.emitJump(.op_jump, line);
+
+                self.patchJump(rescue_jump);
+                self.simulatePush(1); // Simulator: op_throw pushed the error value
+
                 const rescues = self.tree.getRescueClauses(bs.rescues);
-                for (rescues) |rescue| {
+                if (rescues.len > 0) {
+                    const rescue = rescues[0];
+                    const var_str = self.tree.getString(rescue.variable);
+                    if (var_str.len > 0) {
+                        self.addLocal(rescue.variable, @intCast(self.local_count));
+                        try self.emitOp(.op_set_local, line);
+                        try self.emitByte(@intCast(self.local_count - 1), line);
+                    }
+                    try self.emitOp(.op_pop, line); // Pop error value
                     try self.compileNode(rescue.body);
-                    try self.emitOp(.op_pop, line);
+                } else {
+                    try self.emitOp(.op_pop, line); // Pop error value
+                    try self.emitOp(.op_nil, line);
                 }
+
+                self.patchJump(end_jump);
 
                 if (bs.ensure_body != .none) {
                     try self.compileNode(bs.ensure_body);
-                    try self.emitOp(.op_pop, line);
+                    try self.emitOp(.op_pop, line); // discard ensure block output
                 }
             },
             .rescue_modifier => {
                 const rm = self.tree.rescueModifier(node);
-                try self.compileNode(rm.expr);
+                const rescue_jump = try self.emitJump(.op_setup_rescue, line);
 
-                // Compile rescue fallback for AST syntax validity, but pop its result
+                try self.compileNode(rm.expr);
+                try self.emitOp(.op_pop_rescue, line);
+
+                const end_jump = try self.emitJump(.op_jump, line);
+
+                self.patchJump(rescue_jump);
+                self.simulatePush(1); // Error value
+                try self.emitOp(.op_pop, line); // Discard error value
                 try self.compileNode(rm.rescue_expr);
-                try self.emitOp(.op_pop, line);
+
+                self.patchJump(end_jump);
             },
             .namespace_access => {
                 const path = self.tree.getStringLists(self.tree.nodeSpan(node));
@@ -568,6 +592,19 @@ pub const Compiler = struct {
             .method_call => {
                 const mc = self.tree.methodCall(node);
                 const func_name = self.tree.getString(mc.method_name);
+
+                // Intercept raise as a true language throw
+                if (std.mem.eql(u8, func_name, "raise")) {
+                    const args = self.tree.getNamedArgs(mc.args);
+                    if (args.len > 0) {
+                        try self.compileNode(args[0].value);
+                    } else {
+                        try self.emitOp(.op_nil, line);
+                    }
+                    try self.emitOp(.op_throw, line);
+                    self.simulatePush(1); // Dead code equilibrium
+                    return;
+                }
 
                 if (mc.receiver == .none) {
                     const name_val = try self.vm.allocateString(func_name);
@@ -1008,7 +1045,7 @@ pub const Compiler = struct {
         try self.emitByte(@intFromEnum(op), line);
         switch (op) {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import => self.simulatePush(1),
-            .op_pop, .op_return, .op_close_upvalue => self.simulatePop(1),
+            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw => self.simulatePop(1),
             .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater => {
                 self.simulatePop(2);
                 self.simulatePush(1);

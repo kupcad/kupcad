@@ -53,6 +53,8 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         .op_false,
         .op_pop,
         .op_dup,
+        .op_pop_rescue,
+        .op_throw,
         .op_add,
         .op_subtract,
         .op_multiply,
@@ -74,7 +76,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         .op_get_local, .op_set_local, .op_call, .op_build_array, .op_build_map, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate => {
             return byteInstruction(@tagName(op), c, offset, writer);
         },
-        .op_jump, .op_jump_if_false, .op_jump_if_nil, .op_loop => {
+        .op_jump, .op_jump_if_false, .op_jump_if_nil, .op_setup_rescue, .op_loop => {
             return jumpInstruction(@tagName(op), if (op == .op_loop) -1 else 1, c, offset, writer);
         },
         .op_invoke => {

@@ -22,6 +22,13 @@ pub const CallFrame = struct {
     base_slot: usize,
 };
 
+pub const RescueFrame = struct {
+    handler_ip: usize,
+    stack_top: usize,
+    frame_count: usize,
+    upvalue_ptr: ?*value.ObjUpvalue,
+};
+
 pub const VM = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -33,6 +40,7 @@ pub const VM = struct {
     globals: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
     open_upvalues: ?*value.ObjUpvalue = null,
+    rescue_frames: std.ArrayListUnmanaged(RescueFrame) = .empty,
     host: Host = .{},
     active_kernel: ?*const kernel_mod.GeometryKernel = null,
     dag_builder: dag.DAGBuilder,
@@ -64,6 +72,7 @@ pub const VM = struct {
         self.globals.deinit(self.allocator);
         self.strings.deinit(self.allocator);
         self.frames.deinit(self.allocator);
+        self.rescue_frames.deinit(self.allocator);
     }
 
     // --- Dynamic Stack Operations ---
@@ -321,6 +330,52 @@ pub const VM = struct {
                         std.log.err("Runtime Error: Cannot assign to index on target.\n", .{});
                         return .runtime_error;
                     }
+                },
+                .op_setup_rescue => {
+                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
+                    frame.ip += 2;
+
+                    self.rescue_frames.append(self.allocator, .{
+                        .handler_ip = frame.ip + offset,
+                        .stack_top = self.stack_top,
+                        .frame_count = self.frames.items.len,
+                        .upvalue_ptr = self.open_upvalues,
+                    }) catch return .runtime_error;
+                },
+                .op_pop_rescue => {
+                    _ = self.rescue_frames.pop();
+                },
+                .op_throw => {
+                    const err_val = self.pop();
+
+                    if (self.rescue_frames.items.len == 0) {
+                        std.log.err("\n[Uncaught Exception]", .{});
+                        if (err_val.isObject() and err_val.asObj().obj_type == .string) {
+                            const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", err_val.asObj()))).chars;
+                            std.log.err("{s}\n", .{str});
+                        }
+                        return .runtime_error;
+                    }
+
+                    const r_frame = self.rescue_frames.pop().?;
+
+                    // Unwind and cleanly close any closures captured inside the failed block
+                    self.closeUpvalues(&self.stack[r_frame.stack_top]);
+
+                    // Unwind Call Frames
+                    while (self.frames.items.len > r_frame.frame_count) {
+                        _ = self.frames.pop();
+                    }
+
+                    // Unwind the Stack variables safely using ARC
+                    while (self.stack_top > r_frame.stack_top) {
+                        self.stack_top -= 1;
+                        self.releaseValue(self.stack[self.stack_top]);
+                    }
+
+                    // Push the exception payload and jump into the rescue block!
+                    self.push(err_val);
+                    self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
                 },
                 .op_call => {
                     const arg_count = exec_chunk.code.items[frame.ip];

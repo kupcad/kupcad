@@ -60,6 +60,11 @@ pub const OpCode = enum(u8) {
     op_jump_if_nil,
     op_loop,
 
+    // Exception Handling
+    op_setup_rescue,
+    op_pop_rescue,
+    op_throw,
+
     // Functions & Builtins
     op_call,
     op_invoke,
