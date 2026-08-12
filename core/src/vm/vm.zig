@@ -544,6 +544,108 @@ pub const VM = struct {
                     self.stack_top -= (pair_count * 2);
                     self.push(map_val);
                 },
+                .op_build_range => {
+                    const is_exclusive = exec_chunk.code.items[frame.ip] == 1;
+                    frame.ip += 1;
+
+                    const step_val = self.pop();
+                    defer self.releaseValue(step_val);
+                    const end_val = self.pop();
+                    defer self.releaseValue(end_val);
+                    const start_val = self.pop();
+                    defer self.releaseValue(start_val);
+
+                    if (!start_val.isNumber() or !end_val.isNumber() or !step_val.isNumber()) {
+                        std.log.err("Runtime Error: Range bounds must be numbers.\n", .{});
+                        return .runtime_error;
+                    }
+
+                    const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
+                    self.push(value.Value.initObj(&range_obj.obj));
+                },
+                .op_interpolate => {
+                    const count = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+
+                    var out: std.Io.Writer.Allocating = .init(self.allocator);
+                    defer out.deinit();
+
+                    // The string fragments were pushed in order; slice them off the top
+                    const start_idx = self.stack_top - count;
+                    for (self.stack[start_idx..self.stack_top]) |val| {
+                        val.stringify(false, &out.writer) catch return .runtime_error;
+                    }
+
+                    const merged_str = self.allocateString(out.written()) catch return .runtime_error;
+
+                    // Pop and release all original stack fragments
+                    for (0..count) |_| {
+                        const dropped = self.pop();
+                        self.releaseValue(dropped);
+                    }
+
+                    self.push(merged_str);
+                },
+                .op_array_push => {
+                    const val = self.pop();
+                    defer self.releaseValue(val);
+                    const arr_val = self.stack[self.stack_top - 1];
+                    const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+
+                    self.retainValue(val);
+                    arr.items.append(self.allocator, val) catch return .runtime_error;
+                },
+                .op_array_spread => {
+                    const source_val = self.pop();
+                    defer self.releaseValue(source_val);
+                    const target_val = self.stack[self.stack_top - 1];
+                    const target_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target_val.asObj())));
+
+                    if (source_val.isObject() and source_val.asObj().obj_type == .array) {
+                        const source_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", source_val.asObj())));
+                        for (source_arr.items.items) |item| {
+                            self.retainValue(item);
+                            target_arr.items.append(self.allocator, item) catch return .runtime_error;
+                        }
+                    } else {
+                        std.log.err("Runtime Error: Can only spread arrays into arrays.\n", .{});
+                        return .runtime_error;
+                    }
+                },
+                .op_map_insert => {
+                    const val = self.pop();
+                    defer self.releaseValue(val);
+                    const key = self.pop();
+                    defer self.releaseValue(key);
+
+                    const map_val = self.stack[self.stack_top - 1];
+                    const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", map_val.asObj())));
+
+                    self.retainValue(key);
+                    self.retainValue(val);
+                    map.keys.append(self.allocator, key) catch return .runtime_error;
+                    map.values.append(self.allocator, val) catch return .runtime_error;
+                },
+                .op_map_spread => {
+                    const source_val = self.pop();
+                    defer self.releaseValue(source_val);
+                    const target_val = self.stack[self.stack_top - 1];
+                    const target_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target_val.asObj())));
+
+                    if (source_val.isObject() and source_val.asObj().obj_type == .map) {
+                        const source_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", source_val.asObj())));
+                        for (source_map.keys.items, 0..) |key, i| {
+                            const val = source_map.values.items[i];
+                            self.retainValue(key);
+                            self.retainValue(val);
+                            target_map.keys.append(self.allocator, key) catch return .runtime_error;
+                            target_map.values.append(self.allocator, val) catch return .runtime_error;
+                        }
+                    } else {
+                        std.log.err("Runtime Error: Can only spread maps into maps.\n", .{});
+                        return .runtime_error;
+                    }
+                },
                 .op_jump => {
                     const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
                     frame.ip += 2 + offset;

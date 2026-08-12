@@ -233,11 +233,19 @@ pub const Compiler = struct {
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = assign_payload.name;
 
-                if (sym.kind == .global) return error.UnsupportedScope;
-
-                // If compound (+=), evaluate getter first
+                // 1. Evaluate RHS (with Compound Operator getters if necessary)
                 if (assign_payload.op) |op| {
-                    if (self.resolveLocal(name_id)) |local_slot| {
+                    if (sym.kind == .global) {
+                        const name_str = self.tree.getString(name_id);
+                        const name_val = try self.vm.allocateString(name_str);
+                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                        self.vm.push(name_val);
+                        const name_idx = try self.makeConstant(name_val);
+                        _ = self.vm.pop();
+
+                        try self.emitOp(.op_get_global, line);
+                        try self.emitByte(name_idx, line);
+                    } else if (self.resolveLocal(name_id)) |local_slot| {
                         try self.emitOp(.op_get_local, line);
                         try self.emitByte(local_slot, line);
                     } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
@@ -255,20 +263,31 @@ pub const Compiler = struct {
                         .subtract => try self.emitOp(.op_subtract, line),
                         .multiply => try self.emitOp(.op_multiply, line),
                         .divide => try self.emitOp(.op_divide, line),
-                        else => return error.UnknownNode, // Only map implemented basic ops for MVP
+                        else => return error.UnknownNode,
                     }
                 } else {
                     try self.compileNode(assign_payload.value);
                 }
 
-                if (self.resolveLocal(name_id)) |local_slot| {
+                // 2. Set the Target Variable
+                if (sym.kind == .global) {
+                    const name_str = self.tree.getString(name_id);
+                    const name_val = try self.vm.allocateString(name_str);
+                    self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                    self.vm.push(name_val);
+                    const name_idx = try self.makeConstant(name_val);
+                    _ = self.vm.pop();
+
+                    try self.emitOp(.op_define_global, line);
+                    try self.emitByte(name_idx, line);
+                    try self.emitOp(.op_nil, line); // Equilibrium: Assignment blocks yield nil
+                } else if (self.resolveLocal(name_id)) |local_slot| {
                     try self.emitOp(.op_set_local, line);
                     try self.emitByte(local_slot, line);
                 } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
                     try self.emitOp(.op_set_upvalue, line);
                     try self.emitByte(upvalue_slot, line);
                 } else {
-                    // The current scope asserts ownership of this variable!
                     self.addLocal(name_id, @intCast(sym.index));
                     try self.emitOp(.op_set_local, line);
                     try self.emitByte(@intCast(sym.index), line);
@@ -749,36 +768,96 @@ pub const Compiler = struct {
             },
             .array_literal => {
                 const elements = self.tree.getNodes(self.tree.nodeSpan(node));
-                for (elements) |elem| try self.compileNode(elem);
-                if (elements.len > MAX_ARGS) return error.TooManyConstants;
-                try self.emitOp(.op_build_array, line);
-                try self.emitByte(@intCast(elements.len), line);
-                self.simulatePop(elements.len);
-                self.simulatePush(1);
+
+                var has_splat = false;
+                for (elements) |elem| {
+                    if (self.tree.getNode(elem).?.tag == .splat_expr) has_splat = true;
+                }
+
+                if (!has_splat) {
+                    for (elements) |elem| try self.compileNode(elem);
+                    if (elements.len > MAX_ARGS) return error.TooManyConstants;
+                    try self.emitOp(.op_build_array, line);
+                    try self.emitByte(@intCast(elements.len), line);
+                    self.simulatePop(elements.len);
+                    self.simulatePush(1);
+                } else {
+                    // Dynamic Build Mode
+                    try self.emitOp(.op_build_array, line);
+                    try self.emitByte(0, line); // Create empty array
+                    self.simulatePush(1);
+
+                    for (elements) |elem| {
+                        const el_node = self.tree.getNode(elem).?;
+                        if (el_node.tag == .splat_expr) {
+                            try self.compileNode(self.tree.nodeIndex(el_node));
+                            try self.emitOp(.op_array_spread, line);
+                        } else {
+                            try self.compileNode(elem);
+                            try self.emitOp(.op_array_push, line);
+                        }
+                    }
+                }
             },
             .hash_literal => {
                 const entries = self.tree.getHashEntries(self.tree.nodeSpan(node));
+
+                var has_splat = false;
                 for (entries) |entry| {
-                    const key_node = self.tree.getNode(entry.key).?;
-                    if (key_node.tag == .identifier) {
-                        const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data)));
-                        const str_val = try self.vm.allocateString(str_content);
-                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                        self.vm.push(str_val);
-                        const str_idx = try self.makeConstant(str_val);
-                        _ = self.vm.pop();
-                        try self.emitOp(.op_constant, line);
-                        try self.emitByte(str_idx, line);
-                    } else {
-                        try self.compileNode(entry.key);
-                    }
-                    try self.compileNode(entry.value);
+                    if (self.tree.getNode(entry.key).?.tag == .double_splat_expr) has_splat = true;
                 }
-                if (entries.len > 127) return error.TooManyConstants;
-                try self.emitOp(.op_build_map, line);
-                try self.emitByte(@intCast(entries.len), line);
-                self.simulatePop(entries.len * 2);
-                self.simulatePush(1);
+
+                if (!has_splat) {
+                    for (entries) |entry| {
+                        const key_node = self.tree.getNode(entry.key).?;
+                        if (key_node.tag == .identifier) {
+                            const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data)));
+                            const str_val = try self.vm.allocateString(str_content);
+                            self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                            self.vm.push(str_val);
+                            const str_idx = try self.makeConstant(str_val);
+                            _ = self.vm.pop();
+                            try self.emitOp(.op_constant, line);
+                            try self.emitByte(str_idx, line);
+                        } else {
+                            try self.compileNode(entry.key);
+                        }
+                        try self.compileNode(entry.value);
+                    }
+                    if (entries.len > 127) return error.TooManyConstants;
+                    try self.emitOp(.op_build_map, line);
+                    try self.emitByte(@intCast(entries.len), line);
+                    self.simulatePop(entries.len * 2);
+                    self.simulatePush(1);
+                } else {
+                    // Dynamic Build Mode
+                    try self.emitOp(.op_build_map, line);
+                    try self.emitByte(0, line);
+                    self.simulatePush(1);
+
+                    for (entries) |entry| {
+                        const key_node = self.tree.getNode(entry.key).?;
+                        if (key_node.tag == .double_splat_expr) {
+                            try self.compileNode(self.tree.nodeIndex(key_node));
+                            try self.emitOp(.op_map_spread, line);
+                        } else {
+                            if (key_node.tag == .identifier) {
+                                const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data)));
+                                const str_val = try self.vm.allocateString(str_content);
+                                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                                self.vm.push(str_val);
+                                const str_idx = try self.makeConstant(str_val);
+                                _ = self.vm.pop();
+                                try self.emitOp(.op_constant, line);
+                                try self.emitByte(str_idx, line);
+                            } else {
+                                try self.compileNode(entry.key);
+                            }
+                            try self.compileNode(entry.value);
+                            try self.emitOp(.op_map_insert, line);
+                        }
+                    }
+                }
             },
             .if_stmt => {
                 const if_payload = self.tree.ifStmt(node);
@@ -888,6 +967,13 @@ pub const Compiler = struct {
             .multiple_assignment => {
                 const ma = self.tree.multipleAssignment(node);
                 const lhs = self.tree.getLhsExprs(ma.lhs);
+
+                for (lhs) |l| {
+                    if (l.modifier != null and l.modifier.? == .splat) {
+                        std.log.err("Compile Error: Destructuring splats (LHS) like `a, *b = arr` are not yet supported.", .{});
+                        return error.UnsupportedScope;
+                    }
+                }
 
                 // 1. Evaluate the right side (pushes an Array or Value)
                 try self.compileNode(ma.value);
@@ -1114,7 +1200,8 @@ pub const Compiler = struct {
         try self.emitByte(@intFromEnum(op), line);
         switch (op) {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import => self.simulatePush(1),
-            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw => self.simulatePop(1),
+            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread => self.simulatePop(1),
+            .op_map_insert, .op_map_spread => self.simulatePop(2),
             .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater => {
                 self.simulatePop(2);
                 self.simulatePush(1);
