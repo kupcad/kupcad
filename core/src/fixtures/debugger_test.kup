@@ -1,0 +1,7 @@
+x = 100
+y = "Hello CAD"
+puts("Before debugger...")
+
+debugger()
+
+puts("After debugger!")
