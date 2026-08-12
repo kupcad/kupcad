@@ -221,6 +221,23 @@ pub const GC = struct {
         return ptr;
     }
 
+    pub fn allocateRange(self: *GC, vm: *VM, start: f64, end: f64, step: f64, is_exclusive: bool) !*value.ObjRange {
+        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
+        const ptr = try self.allocator.create(value.ObjRange);
+        self.bytes_allocated += @sizeOf(value.ObjRange);
+        ptr.obj = .{
+            .obj_type = .range,
+            .is_marked = false,
+            .next = self.first_object,
+        };
+        self.first_object = &ptr.obj;
+        ptr.start = start;
+        ptr.end = end;
+        ptr.step = step;
+        ptr.is_exclusive = is_exclusive;
+        return ptr;
+    }
+
     // --- ARC Deallocators ---
 
     pub fn freeWorkplane(self: *GC, vm: *VM, wp_obj: *value.ObjWorkplane) void {
@@ -322,6 +339,7 @@ pub const GC = struct {
                 self.markValue(bound_obj.receiver);
                 self.markObject(&bound_obj.method.obj);
             },
+            .range => {}, // Ranges only hold raw f64 numbers, nothing to trace
             else => {},
         }
     }
@@ -428,6 +446,11 @@ pub const GC = struct {
                 const bound_obj = @as(*value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj)));
                 self.allocator.destroy(bound_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjBoundMethod);
+            },
+            .range => {
+                const range_obj = @as(*value.ObjRange, @alignCast(@fieldParentPtr("obj", obj)));
+                self.allocator.destroy(range_obj);
+                self.bytes_allocated -= @sizeOf(value.ObjRange);
             },
             .brep => {
                 const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));

@@ -25,6 +25,7 @@ pub const ObjType = enum(u8) {
     class,
     instance,
     bound_method,
+    range,
     geometry,
     workplane,
 };
@@ -94,6 +95,14 @@ pub const ObjBoundMethod = struct {
     obj: Obj,
     receiver: Value,
     method: *ObjClosure,
+};
+
+pub const ObjRange = struct {
+    obj: Obj,
+    start: f64,
+    end: f64,
+    step: f64,
+    is_exclusive: bool,
 };
 
 pub const Vec3 = struct {
@@ -253,6 +262,10 @@ pub const Value = extern struct {
         return self.isObject() and self.asObj().obj_type == .bound_method;
     }
 
+    pub inline fn isRange(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .range;
+    }
+
     pub inline fn isObjType(self: Value, obj_type: ObjType) bool {
         return self.isObject() and self.asObj().obj_type == obj_type;
     }
@@ -322,6 +335,10 @@ pub const Value = extern struct {
     }
 
     pub inline fn asBoundMethod(self: Value) *ObjBoundMethod {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asRange(self: Value) *ObjRange {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
@@ -403,6 +420,11 @@ pub const Value = extern struct {
                 .closure, .function => try writer.writeAll("<Function>"),
                 .native => try writer.writeAll("<Native Function>"),
                 .bound_method => try writer.writeAll("<Bound Method>"),
+                .range => {
+                    const r = @as(*ObjRange, @alignCast(@fieldParentPtr("obj", obj)));
+                    const op_str = if (r.is_exclusive) "..." else "..";
+                    try writer.print("{d}{s}{d}", .{ r.start, op_str, r.end });
+                },
                 .geometry => try writer.print("<Geometry DAG:{d}>", .{@as(*ObjGeometry, @alignCast(@fieldParentPtr("obj", obj))).dag_idx}),
                 .workplane => try writer.writeAll("<Workplane>"),
                 else => try writer.writeAll("<Object>"),

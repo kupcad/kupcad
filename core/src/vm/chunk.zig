@@ -12,6 +12,8 @@ pub const OpCode = enum(u8) {
     // Data Structures
     op_build_array,
     op_build_map,
+    op_build_range,
+    op_interpolate,
     op_get_index,
     op_set_index,
 

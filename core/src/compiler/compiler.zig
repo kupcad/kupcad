@@ -518,6 +518,53 @@ pub const Compiler = struct {
                     self.patchJump(jmp);
                 }
             },
+            .ternary_op => {
+                const ternary = self.tree.ternaryExpr(node);
+                try self.compileNode(ternary.condition);
+
+                const then_jump = try self.emitJump(.op_jump_if_false, line);
+                try self.emitOp(.op_pop, line); // pop condition if true
+
+                try self.compileNode(ternary.then_branch);
+                const else_jump = try self.emitJump(.op_jump, line);
+
+                self.patchJump(then_jump);
+                try self.emitOp(.op_pop, line); // pop condition if false
+
+                try self.compileNode(ternary.else_branch);
+                self.patchJump(else_jump);
+            },
+            .range => {
+                const r = self.tree.range(node);
+                try self.compileNode(r.start);
+                try self.compileNode(r.end);
+
+                if (r.step != .none) {
+                    try self.compileNode(r.step);
+                } else {
+                    try self.emitConstant(value.Value.initNumber(1.0), line); // Default step
+                }
+
+                try self.emitOp(.op_build_range, line);
+                try self.emitByte(if (r.is_exclusive) 1 else 0, line);
+
+                self.simulatePop(3); // Pops start, end, step
+                self.simulatePush(1); // Pushes ObjRange
+            },
+            .interpolated_string => {
+                const parts = self.tree.getNodes(self.tree.nodeSpan(node));
+                for (parts) |part| {
+                    try self.compileNode(part);
+                }
+
+                if (parts.len > 255) return error.TooManyConstants;
+
+                try self.emitOp(.op_interpolate, line);
+                try self.emitByte(@intCast(parts.len), line);
+
+                self.simulatePop(parts.len);
+                self.simulatePush(1); // Pushes the final merged String
+            },
             .multiple_assignment => {
                 const ma = self.tree.multipleAssignment(node);
                 const lhs = self.tree.getLhsExprs(ma.lhs);
