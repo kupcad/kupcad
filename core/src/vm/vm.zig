@@ -504,6 +504,20 @@ pub const VM = struct {
                     frame.ip += 2;
                     frame.ip -= offset; // Jump backwards
                 },
+                .op_import => {
+                    const path_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const path_val = exec_chunk.constants.items[path_idx];
+
+                    if (self.host.import_handler) |handler| {
+                        const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", path_val.asObj())));
+                        const module_obj = handler(self, str_obj.chars) catch return .runtime_error;
+                        self.push(module_obj);
+                    } else {
+                        // Fallback if no Host import handler is bound
+                        self.push(value.Value.initNil());
+                    }
+                },
                 .op_get_upvalue => {
                     const slot = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;

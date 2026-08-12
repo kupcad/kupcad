@@ -358,6 +358,86 @@ pub const Compiler = struct {
                 try self.compileNode(rm.rescue_expr);
                 try self.emitOp(.op_pop, line);
             },
+            .namespace_access => {
+                const path = self.tree.getStringLists(self.tree.nodeSpan(node));
+                if (path.len == 0) {
+                    try self.emitOp(.op_nil, line);
+                    return;
+                }
+
+                // Get the root of the namespace
+                const root_str = self.tree.getString(path[0]);
+                const root_val = try self.vm.allocateString(root_str);
+                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                self.vm.push(root_val);
+                const root_idx = try self.makeConstant(root_val);
+                _ = self.vm.pop();
+
+                try self.emitOp(.op_get_global, line);
+                try self.emitByte(root_idx, line);
+
+                // Chain property accesses for the rest of the namespace path
+                for (path[1..]) |segment_id| {
+                    const segment_str = self.tree.getString(segment_id);
+                    const seg_val = try self.vm.allocateString(segment_str);
+                    self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                    self.vm.push(seg_val);
+                    const seg_idx = try self.makeConstant(seg_val);
+                    _ = self.vm.pop();
+
+                    try self.emitOp(.op_get_property, line);
+                    try self.emitByte(seg_idx, line);
+                }
+            },
+            .module_stmt => {
+                const ms = self.tree.moduleStmt(node);
+                const name_str = self.tree.getString(ms.name);
+
+                // For MVP, compile a Module just like a Class to act as a singleton namespace container
+                const name_val = try self.vm.allocateString(name_str);
+                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                self.vm.push(name_val);
+                const name_idx = try self.makeConstant(name_val);
+                _ = self.vm.pop();
+
+                try self.emitOp(.op_class, line);
+                try self.emitByte(name_idx, line);
+
+                try self.emitOp(.op_define_global, line);
+                try self.emitByte(name_idx, line);
+
+                try self.compileNode(ms.body); // Compile module contents
+                try self.emitOp(.op_pop, line); // Pop body result
+                try self.emitOp(.op_nil, line); // module stmt yields nil
+            },
+            .import_stmt => {
+                const is_stmt = self.tree.importStmt(node);
+                const path_str = self.tree.getString(is_stmt.path);
+
+                const path_val = try self.vm.allocateString(path_str);
+                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                self.vm.push(path_val);
+                const path_idx = try self.makeConstant(path_val);
+                _ = self.vm.pop();
+
+                try self.emitOp(.op_import, line);
+                try self.emitByte(path_idx, line);
+
+                const symbols = self.tree.getStringLists(is_stmt.symbols);
+                if (symbols.len == 0) {
+                    // Standard import for side-effects. Ignore returned module.
+                    try self.emitOp(.op_pop, line);
+                    try self.emitOp(.op_nil, line);
+                } else {
+                    // Extract specific symbols via destructuring
+                    try self.emitOp(.op_pop, line);
+                    try self.emitOp(.op_nil, line); // Yield nil for MVP
+                }
+            },
+            .export_stmt => {
+                // MVP: Yields nil. Real exporting requires writing to the VM's active export Map.
+                try self.emitOp(.op_nil, line);
+            },
             .def_stmt, .lambda_expr => {
                 var params: []const ast.Param = &.{};
                 var body_node: ast.NodeIndex = .none;
@@ -927,7 +1007,7 @@ pub const Compiler = struct {
     fn emitOp(self: *Compiler, op: chunk.OpCode, line: u32) CompileError!void {
         try self.emitByte(@intFromEnum(op), line);
         switch (op) {
-            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup => self.simulatePush(1),
+            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import => self.simulatePush(1),
             .op_pop, .op_return, .op_close_upvalue => self.simulatePop(1),
             .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater => {
                 self.simulatePop(2);

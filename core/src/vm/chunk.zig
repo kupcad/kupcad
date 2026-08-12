@@ -63,6 +63,7 @@ pub const OpCode = enum(u8) {
     // Functions & Builtins
     op_call,
     op_invoke,
+    op_import,
     op_return,
 };
 
