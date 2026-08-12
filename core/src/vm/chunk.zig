@@ -78,27 +78,38 @@ pub const OpCode = enum(u8) {
     op_return,
 };
 
+pub const DebugSpan = struct {
+    ip: u32,
+    source_offset: u32,
+};
+
 pub const Chunk = struct {
     code: std.ArrayListUnmanaged(u8),
+    debug_spans: std.ArrayListUnmanaged(DebugSpan),
     constants: value.ValueArray,
     max_stack_slots: usize,
 
     pub fn init() Chunk {
         return .{
             .code = .empty,
+            .debug_spans = .empty,
             .constants = .empty,
             .max_stack_slots = 0,
         };
     }
 
     /// Writes a single byte (either an OpCode or an Operand)
-    pub fn write(self: *Chunk, allocator: std.mem.Allocator, byte: u8) !void {
+    pub fn write(self: *Chunk, allocator: std.mem.Allocator, byte: u8, source_offset: u32) !void {
         try self.code.append(allocator, byte);
+        // Highly compressed RLE: Only append if the offset changed!
+        if (self.debug_spans.items.len == 0 or self.debug_spans.items[self.debug_spans.items.len - 1].source_offset != source_offset) {
+            try self.debug_spans.append(allocator, .{ .ip = @intCast(self.code.items.len - 1), .source_offset = source_offset });
+        }
     }
 
     /// Convenience wrapper to write an OpCode enum
-    pub fn writeOp(self: *Chunk, allocator: std.mem.Allocator, op: OpCode) !void {
-        try self.write(allocator, @intFromEnum(op));
+    pub fn writeOp(self: *Chunk, allocator: std.mem.Allocator, op: OpCode, source_offset: u32) !void {
+        try self.write(allocator, @intFromEnum(op), source_offset);
     }
 
     /// Adds a Value to the constant pool and returns its 0-based index
@@ -107,8 +118,19 @@ pub const Chunk = struct {
         return @intCast(self.constants.items.len - 1);
     }
 
+    /// O(log N) binary search could be used here, but linear is fine for error traces
+    pub fn getOffset(self: *const Chunk, target_ip: usize) u32 {
+        var last_offset: u32 = 0;
+        for (self.debug_spans.items) |span| {
+            if (span.ip > target_ip) break;
+            last_offset = span.source_offset;
+        }
+        return last_offset;
+    }
+
     pub fn free(self: *Chunk, allocator: std.mem.Allocator) void {
         self.code.deinit(allocator);
+        self.debug_spans.deinit(allocator);
         self.constants.deinit(allocator);
         self.* = init();
     }

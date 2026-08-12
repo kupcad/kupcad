@@ -100,7 +100,7 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(allocator);
 
-    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, &main_chunk, &vm);
+    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
     compiler.compile(doc.tree.root) catch |err| {
         std.log.err("Compilation failed: {}", .{err});
         return err;
@@ -203,7 +203,7 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
 
     const start_compile = std.Io.Clock.now(.awake, init.io);
 
-    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, &main_chunk, &vm);
+    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
     compiler.compile(doc.tree.root) catch |err| {
         std.log.err("Compilation failed: {}", .{err});
         return err;

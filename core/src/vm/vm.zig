@@ -6,6 +6,7 @@ const value = @import("../core/value.zig");
 const kernel_mod = @import("../kernel/kernel.zig");
 const host_mod = @import("host.zig");
 const geom = @import("../kernel/geometry_handle.zig");
+const LineIndex = @import("../core/line_index.zig").LineIndex;
 const Brep = @import("../kernel/engines/brep/topology.zig").Brep;
 
 pub const Host = host_mod.Host;
@@ -37,6 +38,7 @@ pub const VM = struct {
     stack_top: usize,
     frames: std.ArrayListUnmanaged(CallFrame),
     gc: memory.GC,
+    line_index: ?*const LineIndex = null, // Injected by CLI for debugging
     globals: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
     open_upvalues: ?*value.ObjUpvalue = null,
@@ -351,11 +353,14 @@ pub const VM = struct {
                     const err_val = self.pop();
 
                     if (self.rescue_frames.items.len == 0) {
-                        self.reportError("\n[Uncaught Exception]", .{});
+                        self.reportError("\n[Uncaught Exception] ", .{});
                         if (err_val.isObject() and err_val.asObj().obj_type == .string) {
                             const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", err_val.asObj()))).chars;
                             self.reportError("{s}\n", .{str});
+                        } else {
+                            self.reportError("Unknown error.\n", .{});
                         }
+                        self.printStacktrace(); // Natively formats the exact line and column
                         return .runtime_error;
                     }
 
@@ -1037,6 +1042,31 @@ pub const VM = struct {
     pub fn reportError(self: *VM, comptime fmt: []const u8, args: anytype) void {
         if (!self.mute_errors) {
             std.log.err(fmt, args);
+        }
+    }
+
+    // --- Error Formatting Engine ---
+    fn printStacktrace(self: *VM) void {
+        var i: usize = self.frames.items.len;
+        while (i > 0) {
+            i -= 1;
+            const frame = &self.frames.items[i];
+            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
+
+            // The actual instruction that failed is immediately prior to the IP
+            const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
+            const source_offset = exec_chunk.getOffset(instruction_ip);
+            const func_name = if (frame.closure.function.name) |n| n.chars else "script";
+
+            // Format flawlessly using the injected LineIndex
+            if (self.line_index) |li| {
+                const line = li.getLine(source_offset) + 1;
+                const col = li.getUtf8Column(source_offset) + 1;
+                self.reportError("  at {s} (line {d}, col {d})\n", .{ func_name, line, col });
+            } else {
+                // Safe fallback if LineIndex was stripped/omitted
+                self.reportError("  at {s} (offset {d})\n", .{ func_name, source_offset });
+            }
         }
     }
 };

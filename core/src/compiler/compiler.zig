@@ -42,6 +42,8 @@ pub const Compiler = struct {
     allocator: std.mem.Allocator,
     tree: *const ast.Tree,
     symbols: []const resolver.ResolvedSymbol,
+    token_starts: []const u32, // Map AST nodes back to Lexer byte offsets
+    current_source_offset: u32, // Implictly passed to Chunk
     current_chunk: *chunk.Chunk,
     vm: *VM,
 
@@ -69,6 +71,7 @@ pub const Compiler = struct {
         allocator: std.mem.Allocator,
         tree: *const ast.Tree,
         symbols: []const resolver.ResolvedSymbol,
+        token_starts: []const u32,
         output_chunk: *chunk.Chunk,
         vm: *VM,
     ) Compiler {
@@ -76,6 +79,7 @@ pub const Compiler = struct {
             .allocator = allocator,
             .tree = tree,
             .symbols = symbols,
+            .token_starts = token_starts,
             .current_chunk = output_chunk,
             .vm = vm,
             .enclosing = null,
@@ -85,6 +89,7 @@ pub const Compiler = struct {
             .current_stack_depth = 0,
             .max_stack_depth = 0,
             .loop_count = 0,
+            .current_source_offset = 0,
         };
     }
 
@@ -154,6 +159,10 @@ pub const Compiler = struct {
     fn compileNode(self: *Compiler, node_idx: ast.NodeIndex) CompileError!void {
         if (node_idx == .none) return;
         const node = self.tree.getNode(node_idx) orelse return error.UnknownNode;
+
+        if (node.main_token < self.token_starts.len) {
+            self.current_source_offset = self.token_starts[node.main_token];
+        }
 
         switch (node.tag) {
             .number => {
@@ -657,6 +666,7 @@ pub const Compiler = struct {
                     .allocator = self.allocator,
                     .tree = self.tree,
                     .symbols = self.symbols,
+                    .token_starts = self.token_starts,
                     .current_chunk = child_chunk,
                     .vm = self.vm,
                     .enclosing = self,
@@ -665,6 +675,7 @@ pub const Compiler = struct {
                     .local_count = 0,
                     .current_stack_depth = 0,
                     .max_stack_depth = 0,
+                    .current_source_offset = self.current_source_offset,
                 };
 
                 // Reserve slot 0 for the closure itself
@@ -1112,6 +1123,7 @@ pub const Compiler = struct {
                             .allocator = self.allocator,
                             .tree = self.tree,
                             .symbols = self.symbols,
+                            .token_starts = self.token_starts,
                             .current_chunk = child_chunk,
                             .vm = self.vm,
                             .enclosing = self,
@@ -1120,6 +1132,7 @@ pub const Compiler = struct {
                             .local_count = 0,
                             .current_stack_depth = 0,
                             .max_stack_depth = 0,
+                            .current_source_offset = self.current_source_offset,
                         };
 
                         // Reserve slot 0 as the implicit 'self' receiver
@@ -1230,7 +1243,7 @@ pub const Compiler = struct {
     }
 
     fn emitByte(self: *Compiler, byte: u8) CompileError!void {
-        self.current_chunk.write(self.allocator, byte) catch return error.OutOfMemory;
+        self.current_chunk.write(self.allocator, byte, self.current_source_offset) catch return error.OutOfMemory;
     }
 
     fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {

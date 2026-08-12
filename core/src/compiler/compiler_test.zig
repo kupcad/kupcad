@@ -29,7 +29,7 @@ test "Compiler: compiles basic binary addition" {
     try registry.registerStandardLibrary(&vm);
 
     // Pass &vm as the 5th argument
-    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
     try comp.compile(bin_node);
 
     try testing.expectEqual(@as(usize, 6), out_chunk.code.items.len);
@@ -64,7 +64,7 @@ test "Compiler: compiles range expression (1..10)" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
     try comp.compile(range_node);
 
     // Bytecode expected:
@@ -100,7 +100,7 @@ test "Compiler: compiles compound assignment (x += 5)" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     try comp.compile(assign_node);
 
     // Bytecode expected for `x += 5`:
@@ -138,7 +138,7 @@ test "Compiler: compiles safe navigation method call (obj&.cut())" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     try comp.compile(safe_call);
 
     // Bytecode expected:
@@ -168,7 +168,7 @@ test "Compiler: compiles string interpolation" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
     try comp.compile(interp_node);
 
     // Bytecode Expected:
@@ -199,7 +199,7 @@ test "Compiler: compiles import statement" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
     try comp.compile(import_node);
 
     // Expected Bytecode:
@@ -229,7 +229,7 @@ test "Compiler: compiles namespace access (Hardware::Screw)" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
     try comp.compile(namespace_node);
 
     // Expected Bytecode:
@@ -260,7 +260,7 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     try comp.compile(rescue_node);
 
     // Expected Bytecode:
@@ -304,7 +304,7 @@ test "Compiler Edge Case: Compiles complex Begin/Rescue with specific Type Check
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
 
     // We are ensuring the complex `op_is_instance` dynamic routing compiles without crashing
     try comp.compile(begin_stmt);
@@ -332,7 +332,7 @@ test "Compiler Edge Case: Compiles empty Hashes and Arrays safely" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
 
     // Ensure bounds-checking doesn't panic on length == 0
     try comp.compile(arr_node);
@@ -362,7 +362,7 @@ test "Compiler: case statements with literals optimize to op_switch" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
     try comp.compile(case_node);
 
     // Verify the fast-path OP_SWITCH was emitted
@@ -371,4 +371,36 @@ test "Compiler: case statements with literals optimize to op_switch" {
     // 3: 1 (case_count)
     try testing.expectEqual(chunk.OpCode.op_switch, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
     try testing.expectEqual(@as(u8, 1), out_chunk.code.items[3]);
+}
+
+test "Compiler: correctly maps AST token offsets into DebugSpans" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Mock an AST: `10 + 5`
+    // Let's pretend "10" is at byte offset 0, "+" is at offset 3, "5" is at offset 5
+    const left = try b.number("10", 0); // Token index 0
+    const right = try b.number("5", 2); // Token index 2
+    const bin_node = try b.binary(.add, left, right, 1); // Token index 1
+
+    // Mock the Lexer's token start offsets
+    const token_starts = [_]u32{ 0, 3, 5 };
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &token_starts, &out_chunk, &vm);
+    try comp.compile(bin_node);
+
+    // Verify the DebugSpans caught the offsets from the token_starts array
+    try testing.expect(out_chunk.debug_spans.items.len > 0);
+
+    // The very first instruction should be mapped to offset 0 (the "10" literal)
+    try testing.expectEqual(@as(u32, 0), out_chunk.getOffset(0));
 }

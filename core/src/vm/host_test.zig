@@ -67,12 +67,12 @@ test "Host Interface: binary_handler intercepts custom operator overloading" {
     const idx1 = try test_chunk.addConstant(testing.allocator, dummy_mesh1);
     const idx2 = try test_chunk.addConstant(testing.allocator, dummy_mesh2);
 
-    try test_chunk.writeOp(testing.allocator, .op_constant);
-    try test_chunk.write(testing.allocator, idx1);
-    try test_chunk.writeOp(testing.allocator, .op_constant);
-    try test_chunk.write(testing.allocator, idx2);
-    try test_chunk.writeOp(testing.allocator, .op_add);
-    try test_chunk.writeOp(testing.allocator, .op_return);
+    try test_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try test_chunk.write(testing.allocator, idx1, 0);
+    try test_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try test_chunk.write(testing.allocator, idx2, 0);
+    try test_chunk.writeOp(testing.allocator, .op_add, 0);
+    try test_chunk.writeOp(testing.allocator, .op_return, 0);
 
     test_chunk.max_stack_slots = 4;
 
