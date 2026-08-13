@@ -560,6 +560,32 @@ pub const VM = struct {
                                 self.push(res);
                                 continue;
                             }
+                        } else if (std.mem.eql(u8, method_name_str, "reduce")) {
+                            const closure_val = self.stack[self.stack_top - 1];
+                            if (closure_val.isClosure()) {
+                                const closure = closure_val.asClosure();
+                                var acc_val: value.Value = undefined;
+                                var start_idx: usize = 0;
+
+                                if (arg_count == 2) {
+                                    acc_val = self.stack[self.stack_top - 2]; // Initial value provided
+                                } else if (arg_count == 1) {
+                                    if (arr.items.items.len == 0) {
+                                        self.stack_top -= 2; // pop closure and receiver
+                                        self.push(value.Value.initNil());
+                                        continue;
+                                    }
+                                    acc_val = arr.items.items[0]; // Default to first element
+                                    start_idx = 1;
+                                } else return .runtime_error;
+
+                                for (arr.items.items[start_idx..]) |item| {
+                                    acc_val = self.callClosureSync(closure, &.{ acc_val, item }) catch return .runtime_error;
+                                }
+                                self.stack_top -= (arg_count + 1); // pop args & receiver
+                                self.push(acc_val);
+                                continue;
+                            }
                         } else if (std.mem.eql(u8, method_name_str, "push") and arg_count == 1) {
                             const item = self.stack[self.stack_top - 1];
                             self.retainValue(item);
