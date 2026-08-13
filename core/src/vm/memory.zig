@@ -112,13 +112,14 @@ pub const GC = struct {
         return ptr;
     }
 
-    pub fn allocateClass(self: *GC, vm: *VM, name: *value.ObjString) !*value.ObjClass {
+    pub fn allocateClass(self: *GC, vm: *VM, name: *value.ObjString, superclass: ?*value.ObjClass) !*value.ObjClass {
         if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
         const ptr = try self.allocator.create(value.ObjClass);
         self.bytes_allocated += @sizeOf(value.ObjClass);
         ptr.obj = .{ .obj_type = .class, .is_marked = false, .next = self.first_object };
         self.first_object = &ptr.obj;
         ptr.name = name;
+        ptr.superclass = superclass;
         ptr.methods = .empty;
         return ptr;
     }
@@ -325,6 +326,7 @@ pub const GC = struct {
             .class => {
                 const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
                 self.markObject(&class_obj.name.obj);
+                if (class_obj.superclass) |sup| self.markObject(&sup.obj);
                 var it = class_obj.methods.valueIterator();
                 while (it.next()) |val| self.markValue(val.*);
             },

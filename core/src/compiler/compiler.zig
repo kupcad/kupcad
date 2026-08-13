@@ -785,11 +785,7 @@ pub const Compiler = struct {
                     switch (intrinsic) {
                         .raise_err => {
                             const args = self.tree.getNamedArgs(mc.args);
-                            if (args.len > 0) {
-                                try self.compileNode(args[0].value);
-                            } else {
-                                try self.emitOp(.op_nil);
-                            }
+                            if (args.len > 0) try self.compileNode(args[0].value) else try self.emitOp(.op_nil);
                             try self.emitOp(.op_throw);
                             self.simulatePush(1); // Dead code equilibrium
                             return;
@@ -797,49 +793,95 @@ pub const Compiler = struct {
                     }
                 }
 
+                var safe_jump: usize = 0;
+
+                // Push Receiver/Target
                 if (mc.receiver == .none) {
                     const name_idx = try self.makeStringConstant(func_name);
                     try self.emitOp(.op_get_global);
                     try self.emitByte(name_idx);
-
-                    const args = self.tree.getNamedArgs(mc.args);
-                    for (args) |arg| try self.compileNode(arg.value);
-
-                    if (args.len > MAX_ARGS) return error.TooManyConstants;
-                    try self.emitOp(.op_call);
-                    try self.emitByte(@intCast(args.len));
-                    self.simulatePop(args.len + 1);
-                    self.simulatePush(1);
                 } else {
                     try self.compileNode(mc.receiver);
+                    if (mc.is_safe) safe_jump = try self.emitJump(.op_jump_if_nil);
+                }
 
-                    // If it is a safe call (&.), we inject a conditional jump over the arguments and invocation
-                    var safe_jump: usize = 0;
-                    if (mc.is_safe) {
-                        safe_jump = try self.emitJump(.op_jump_if_nil);
+                // Push Standard Arguments
+                const args = self.tree.getNamedArgs(mc.args);
+                for (args) |arg| try self.compileNode(arg.value);
+                var actual_arg_count = args.len;
+
+                // Push the Block as a Closure Argument!
+                if (mc.block != .none) {
+                    const block_node = self.tree.getNode(mc.block).?;
+                    const block_payload = self.tree.block(block_node);
+                    const block_params = self.tree.getNodes(block_payload.params);
+
+                    const func = try self.vm.gc.allocateFunction(self.vm);
+                    func.arity = @intCast(block_params.len);
+
+                    self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                    self.vm.push(value.Value.initObj(&func.obj));
+                    errdefer _ = self.vm.pop();
+
+                    const child_chunk = try self.allocator.create(chunk.Chunk);
+                    child_chunk.* = chunk.Chunk.init();
+                    func.chunk = child_chunk;
+
+                    var child_compiler = Compiler{
+                        .allocator = self.allocator,
+                        .tree = self.tree,
+                        .symbols = self.symbols,
+                        .token_starts = self.token_starts,
+                        .current_chunk = child_chunk,
+                        .vm = self.vm,
+                        .enclosing = self,
+                        .function = func,
+                        .upvalue_count = 0,
+                        .local_count = 0,
+                        .current_stack_depth = 0,
+                        .max_stack_depth = 0,
+                        .current_source_offset = self.current_source_offset,
+                    };
+
+                    child_compiler.local_count = 1;
+                    child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
+                    for (block_params, 0..) |p_idx, i| {
+                        const p_node = self.tree.getNode(p_idx).?;
+                        const name_id = @as(ast.StringId, @enumFromInt(p_node.data));
+                        child_compiler.addLocal(name_id, @intCast(i + 1));
                     }
 
-                    const args = self.tree.getNamedArgs(mc.args);
-                    for (args) |arg| try self.compileNode(arg.value);
+                    // Compiling a block automatically leaves the last statement on the stack as an implicit return!
+                    try child_compiler.compile(mc.block);
 
-                    const name_val = try self.vm.allocateString(func_name);
-                    self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                    self.vm.push(name_val);
-                    const name_idx = try self.makeConstant(name_val);
                     _ = self.vm.pop();
+                    const func_val = value.Value.initObj(&func.obj);
+                    const func_idx = try self.makeConstant(func_val);
+                    try self.emitOp(.op_closure);
+                    try self.emitByte(func_idx);
+                    for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
+                        try self.emitByte(if (upv.is_local) 1 else 0);
+                        try self.emitByte(upv.index);
+                    }
+                    actual_arg_count += 1;
+                }
 
-                    if (args.len > MAX_ARGS) return error.TooManyConstants;
+                if (actual_arg_count > MAX_ARGS) return error.TooManyConstants;
+
+                // 4. Execute Invocation
+                if (mc.receiver == .none) {
+                    try self.emitOp(.op_call);
+                    try self.emitByte(@intCast(actual_arg_count));
+                } else {
+                    const name_idx = try self.makeStringConstant(func_name);
                     try self.emitOp(.op_invoke);
                     try self.emitByte(name_idx);
-                    try self.emitByte(@intCast(args.len));
-                    self.simulatePop(args.len + 1);
-                    self.simulatePush(1);
-
-                    // Cap off the safe navigation jump here. The stack naturally maintains equilibrium!
-                    if (mc.is_safe) {
-                        self.patchJump(safe_jump);
-                    }
+                    try self.emitByte(@intCast(actual_arg_count));
+                    if (mc.is_safe) self.patchJump(safe_jump);
                 }
+
+                self.simulatePop(actual_arg_count + 1);
+                self.simulatePush(1);
             },
             .binary_op => {
                 const bin_expr = self.tree.binaryExpr(node);
@@ -1142,6 +1184,11 @@ pub const Compiler = struct {
                 try self.emitOp(.op_class);
                 try self.emitByte(name_idx);
 
+                if (cs.super_class != .none) {
+                    try self.compileNode(cs.super_class); // Evaluates base class and leaves it on stack
+                    try self.emitOp(.op_inherit); // Wires base to child
+                }
+
                 // 2. Compile all inner methods while the Class sits on top of the stack
                 const body_node = self.tree.getNode(cs.body).?;
                 const block_payload = self.tree.block(body_node);
@@ -1230,6 +1277,20 @@ pub const Compiler = struct {
                     // Equilibrium: Class popped, dummy nil pushed (+1)
                 }
             },
+            .super_call => {
+                const sc = self.tree.superCall(node);
+                try self.emitOp(.op_get_local);
+                try self.emitByte(0); // push `self`
+
+                const args = self.tree.getNamedArgs(sc.args);
+                for (args) |arg| try self.compileNode(arg.value);
+
+                try self.emitOp(.op_super_invoke);
+                try self.emitByte(@intCast(args.len));
+
+                self.simulatePop(args.len + 1);
+                self.simulatePush(1);
+            },
             .property_assignment => {
                 const pa = self.tree.propertyAssignment(node);
 
@@ -1305,7 +1366,7 @@ pub const Compiler = struct {
         try self.emitByte(@intFromEnum(op));
         switch (op) {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import => self.simulatePush(1),
-            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch => self.simulatePop(1),
+            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke => self.simulatePop(1),
             .op_map_insert => self.simulatePop(2),
             .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent => {
                 self.simulatePop(2);

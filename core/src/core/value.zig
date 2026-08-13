@@ -82,6 +82,7 @@ pub const ObjClosure = struct {
 pub const ObjClass = struct {
     obj: Obj,
     name: *ObjString,
+    superclass: ?*ObjClass = null,
     methods: std.StringHashMapUnmanaged(Value),
 };
 

@@ -3,6 +3,7 @@ const testing = std.testing;
 const ast = @import("../core/ast.zig");
 const chunk = @import("chunk.zig");
 const registry = @import("../stdlib/registry.zig");
+const resolver = @import("../core/resolver.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const VM = @import("vm.zig").VM;
@@ -617,4 +618,57 @@ test "VM: executes logical short-circuiting and comparisons correctly" {
     // The top of the stack should be `false`, and no errors should have occurred
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(false, vm.stack[0].asBool());
+}
+
+test "VM: executes Array.map with functional closure block" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // 1. Build array [1, 2, 3]
+    const one = try b.number("1", 0);
+    const two = try b.number("2", 0);
+    const three = try b.number("3", 0);
+    const arr_span = try b.addNodes(&.{ one, two, three });
+    const arr_node = try b.arrayLiteral(arr_span, 0, 0);
+
+    // 2. Build block: { |x| x * 2 }
+    const param_x = try b.identifierNode("x", 0);
+    const get_x = try b.identifierNode("x", 0);
+    const two_mul = try b.number("2", 0);
+    const mult_node = try b.binary(.multiply, get_x, two_mul, 0);
+    const block_node = try b.block(&.{param_x}, &.{mult_node}, 0, 0);
+
+    // 3. Build map method call: arr.map { |x| x * 2 }
+    const map_str = try b.intern("map");
+    const empty_args = try b.addNamedArgs(&.{});
+    const map_call = try b.methodCall(arr_node, map_str, empty_args, block_node, false, 0, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(map_call) + 1);
+
+    // Update the Compiler.init call to pass `symbols.items` instead of `&.{}`
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    try comp.compile(map_call);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Result should be a new array [2, 4, 6]!
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const final_arr = vm.stack[0];
+    try testing.expect(final_arr.isObject());
+
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", final_arr.asObj())));
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 4.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 6.0), arr_obj.items.items[2].asNumber());
 }

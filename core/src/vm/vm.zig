@@ -148,7 +148,11 @@ pub const VM = struct {
     }
 
     fn run(self: *VM) InterpretResult {
-        while (true) {
+        return self.runUntil(0);
+    }
+
+    fn runUntil(self: *VM, target_depth: usize) InterpretResult {
+        while (self.frames.items.len > target_depth) {
             var frame = &self.frames.items[self.frames.items.len - 1];
             const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
             const instruction = exec_chunk.code.items[frame.ip];
@@ -493,10 +497,18 @@ pub const VM = struct {
                         const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
                         self.stack.ptr[self.stack_top - 1 - arg_count] = value.Value.initObj(&instance.obj);
 
-                        var i: usize = 0;
-                        while (i < arg_count) : (i += 1) {
-                            const dropped = self.pop();
-                            self.releaseValue(dropped);
+                        // Auto-invoke the constructor
+                        if (self.findMethod(class_obj, "initialize")) |init_method| {
+                            const closure = init_method.asClosure();
+                            self.frames.append(self.allocator, .{
+                                .closure = closure,
+                                .ip = 0,
+                                .base_slot = self.stack_top - arg_count - 1, // `self` is the new instance
+                            }) catch return .runtime_error;
+                            continue;
+                        } else if (arg_count > 0) {
+                            self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
+                            return .runtime_error;
                         }
                     } else {
                         self.reportError("Runtime Error: Can only call functions and classes.\n", .{});
@@ -514,6 +526,54 @@ pub const VM = struct {
                     const receiver = self.stack[self.stack_top - 1 - arg_count];
                     const args_ptr = self.stack.ptr + self.stack_top - arg_count;
 
+                    // NATIVE ROUTING: Primitives
+                    if (receiver.isObject() and receiver.asObj().obj_type == .array) {
+                        const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
+
+                        if (std.mem.eql(u8, method_name_str, "each") and arg_count == 1) {
+                            const closure_val = self.stack[self.stack_top - 1];
+                            if (closure_val.isClosure()) {
+                                const closure = closure_val.asClosure();
+                                for (arr.items.items) |item| {
+                                    _ = self.callClosureSync(closure, &.{item}) catch return .runtime_error;
+                                }
+                                self.stack_top -= (arg_count + 1); // pop args & receiver
+                                self.push(receiver); // each returns self
+                                continue;
+                            }
+                        } else if (std.mem.eql(u8, method_name_str, "map") and arg_count == 1) {
+                            const closure_val = self.stack[self.stack_top - 1];
+                            if (closure_val.isClosure()) {
+                                const closure = closure_val.asClosure();
+                                const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
+
+                                self.push(value.Value.initObj(&new_arr.obj)); // Protect from GC during mapping
+                                new_arr.items.ensureTotalCapacity(self.allocator, arr.items.items.len) catch return .runtime_error;
+
+                                for (arr.items.items) |item| {
+                                    const mapped_val = self.callClosureSync(closure, &.{item}) catch return .runtime_error;
+                                    self.retainValue(mapped_val);
+                                    new_arr.items.appendAssumeCapacity(mapped_val);
+                                }
+                                const res = self.pop(); // Pop protected array
+                                self.stack_top -= (arg_count + 1);
+                                self.push(res);
+                                continue;
+                            }
+                        } else if (std.mem.eql(u8, method_name_str, "push") and arg_count == 1) {
+                            const item = self.stack[self.stack_top - 1];
+                            self.retainValue(item);
+                            arr.items.append(self.allocator, item) catch return .runtime_error;
+                            self.stack_top -= (arg_count + 1);
+                            self.push(receiver);
+                            continue;
+                        } else if (std.mem.eql(u8, method_name_str, "length") and arg_count == 0) {
+                            self.stack_top -= 1;
+                            self.push(value.Value.initNumber(@floatFromInt(arr.items.items.len)));
+                            continue;
+                        }
+                    }
+
                     // 1. Is it a KupCAD Custom Object?
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
@@ -528,7 +588,7 @@ pub const VM = struct {
                         }
 
                         // Check class methods
-                        if (instance.class.methods.get(method_name_str)) |method_val| {
+                        if (self.findMethod(instance.class, method_name_str)) |method_val| {
                             const closure = method_val.asClosure();
                             if (arg_count != closure.function.arity - 1) { // -1 for implicit 'self'
                                 self.reportError("Runtime Error: Expected {d} arguments but got {d}.\n", .{ closure.function.arity - 1, arg_count });
@@ -857,7 +917,7 @@ pub const VM = struct {
                     self.stack.ptr[self.stack_top] = result;
                     self.stack_top += 1;
 
-                    if (self.frames.items.len == 0) {
+                    if (self.frames.items.len == target_depth) {
                         return .ok;
                     }
                 },
@@ -892,7 +952,7 @@ pub const VM = struct {
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
 
-                    const class_obj = self.gc.allocateClass(self, name_str) catch return .runtime_error;
+                    const class_obj = self.gc.allocateClass(self, name_str, null) catch return .runtime_error;
                     self.push(value.Value.initObj(&class_obj.obj));
                 },
                 .op_method => {
@@ -936,12 +996,41 @@ pub const VM = struct {
                         return .runtime_error;
                     }
                 },
+                .op_inherit => {
+                    const super_val = self.pop();
+                    if (!super_val.isClass()) return .runtime_error;
+                    const sub_val = self.stack[self.stack_top - 1];
+                    sub_val.asClass().superclass = super_val.asClass();
+                },
+                .op_super_invoke => {
+                    const arg_count = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const method_name_str = frame.closure.function.name.?.chars;
+                    const receiver = self.stack[self.stack_top - 1 - arg_count];
+                    if (receiver.isInstance()) {
+                        const instance = receiver.asInstance();
+                        const superclass = instance.class.superclass orelse return .runtime_error;
+                        if (self.findMethod(superclass, method_name_str)) |method_val| {
+                            const closure = method_val.asClosure();
+                            self.frames.append(self.allocator, .{
+                                .closure = closure,
+                                .ip = 0,
+                                .base_slot = self.stack_top - arg_count - 1,
+                            }) catch return .runtime_error;
+                            continue;
+                        }
+                        return .runtime_error;
+                    }
+                    return .runtime_error;
+                },
                 else => {
                     self.reportError("Runtime Error: Unhandled OpCode {}\n", .{op});
                     return .runtime_error;
                 },
             }
         }
+
+        return .ok;
     }
 
     // --- Allocators ---
@@ -1087,6 +1176,34 @@ pub const VM = struct {
             upvalue.location = &upvalue.closed; // Repoint to internal field
             self.open_upvalues = upvalue.next; // Unlink from active list
         }
+    }
+
+    fn findMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {
+        _ = self;
+        var current: ?*value.ObjClass = class;
+        while (current) |c| {
+            if (c.methods.get(name)) |method| return method;
+            current = c.superclass;
+        }
+        return null;
+    }
+
+    pub fn callClosureSync(self: *VM, closure: *value.ObjClosure, args: []const value.Value) !value.Value {
+        const target_depth = self.frames.items.len;
+
+        try self.ensureStackCapacity(self.stack_top + args.len + 1);
+        self.push(value.Value.initObj(&closure.obj)); // closure itself
+        for (args) |arg| self.push(arg);
+
+        try self.frames.append(self.allocator, .{
+            .closure = closure,
+            .ip = 0,
+            .base_slot = self.stack_top - args.len - 1,
+        });
+
+        const res = self.runUntil(target_depth);
+        if (res != .ok) return error.RuntimeError;
+        return self.pop(); // Returns whatever the block yielded!
     }
 
     pub fn reportError(self: *VM, comptime fmt: []const u8, args: anytype) void {
