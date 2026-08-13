@@ -239,6 +239,22 @@ pub const GC = struct {
         return ptr;
     }
 
+    pub fn allocateSymbol(self: *GC, vm: *VM, chars: []const u8) !*value.ObjSymbol {
+        if (vm.symbols.get(chars)) |existing| return existing;
+        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
+
+        const ptr = try self.allocator.create(value.ObjSymbol);
+        const owned_chars = try self.allocator.dupe(u8, chars);
+        self.bytes_allocated += @sizeOf(value.ObjSymbol) + owned_chars.len;
+
+        ptr.obj = .{ .obj_type = .symbol, .is_marked = false, .next = self.first_object };
+        self.first_object = &ptr.obj;
+        ptr.chars = owned_chars;
+
+        try vm.symbols.put(self.allocator, ptr.chars, ptr);
+        return ptr;
+    }
+
     // --- ARC Deallocators ---
 
     pub fn freeWorkplane(self: *GC, vm: *VM, wp_obj: *value.ObjWorkplane) void {
@@ -280,6 +296,11 @@ pub const GC = struct {
         var globals_it = vm.globals.valueIterator();
         while (globals_it.next()) |val| {
             self.markValue(val.*);
+        }
+
+        var symbols_it = vm.symbols.valueIterator();
+        while (symbols_it.next()) |val| {
+            self.markObject(&val.*.obj);
         }
     }
 
@@ -384,6 +405,14 @@ pub const GC = struct {
                 self.bytes_allocated -= str_obj.chars.len;
                 self.allocator.destroy(str_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjString);
+            },
+            .symbol => {
+                const sym_obj: *value.ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
+                _ = vm.symbols.remove(sym_obj.chars);
+                self.allocator.free(sym_obj.chars);
+                self.bytes_allocated -= sym_obj.chars.len;
+                self.allocator.destroy(sym_obj);
+                self.bytes_allocated -= @sizeOf(value.ObjSymbol);
             },
             .native => {
                 const native_obj: *value.ObjNative = @alignCast(@fieldParentPtr("obj", obj));

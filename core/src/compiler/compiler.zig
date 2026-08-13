@@ -188,7 +188,7 @@ pub const Compiler = struct {
             },
             .symbol => {
                 const sym_str = self.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
-                const sym_val = try self.vm.allocateString(sym_str);
+                const sym_val = try self.vm.allocateSymbol(sym_str);
                 self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
                 self.vm.push(sym_val);
                 const sym_idx = try self.makeConstant(sym_val);

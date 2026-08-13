@@ -41,6 +41,7 @@ pub const VM = struct {
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
     globals: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
+    symbols: std.StringHashMapUnmanaged(*value.ObjSymbol),
     open_upvalues: ?*value.ObjUpvalue = null,
     rescue_frames: std.ArrayListUnmanaged(RescueFrame) = .empty,
     host: Host = .{},
@@ -63,6 +64,7 @@ pub const VM = struct {
             .gc = memory.GC.init(allocator),
             .globals = .empty,
             .strings = .empty,
+            .symbols = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
             .mute_errors = false,
         };
@@ -75,6 +77,7 @@ pub const VM = struct {
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
         self.strings.deinit(self.allocator);
+        self.symbols.deinit(self.allocator);
         self.frames.deinit(self.allocator);
         self.rescue_frames.deinit(self.allocator);
     }
@@ -1081,6 +1084,11 @@ pub const VM = struct {
     pub fn allocateString(self: *VM, chars: []const u8) !value.Value {
         const str_obj = try self.gc.allocateString(self, chars);
         return value.Value.initObj(&str_obj.obj);
+    }
+
+    pub fn allocateSymbol(self: *VM, chars: []const u8) !value.Value {
+        const sym_obj = try self.gc.allocateSymbol(self, chars);
+        return value.Value.initObj(&sym_obj.obj);
     }
 
     pub fn allocateGeometry(self: *VM, state: value.GeometryState) !value.Value {

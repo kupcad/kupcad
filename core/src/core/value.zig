@@ -15,6 +15,7 @@ pub const ValueTag = enum(u8) {
 /// Identifies the specific type of a heap-allocated Object.
 pub const ObjType = enum(u8) {
     string,
+    symbol,
     native,
     brep,
     array,
@@ -42,6 +43,11 @@ pub const Obj = struct {
 
 /// A heap-allocated String Object.
 pub const ObjString = struct {
+    obj: Obj,
+    chars: []const u8,
+};
+
+pub const ObjSymbol = struct {
     obj: Obj,
     chars: []const u8,
 };
@@ -389,6 +395,10 @@ pub const Value = extern struct {
                     } else {
                         try writer.writeAll(str_obj.chars);
                     }
+                },
+                .symbol => {
+                    const sym = @as(*ObjSymbol, @alignCast(@fieldParentPtr("obj", obj)));
+                    try writer.print(":{s}", .{sym.chars});
                 },
                 .array => {
                     const arr = @as(*ObjArray, @alignCast(@fieldParentPtr("obj", obj)));

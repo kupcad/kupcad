@@ -672,3 +672,20 @@ test "VM: executes Array.map with functional closure block" {
     try testing.expectEqual(@as(f64, 4.0), arr_obj.items.items[1].asNumber());
     try testing.expectEqual(@as(f64, 6.0), arr_obj.items.items[2].asNumber());
 }
+
+test "VM: Symbols map exactly to memory pointers for O(1) identity checks" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Allocate two separate :top symbols
+    const sym1 = try vm.allocateSymbol("top");
+    const sym2 = try vm.allocateSymbol("top");
+    const sym3 = try vm.allocateSymbol("bottom");
+
+    // They should evaluate to true
+    try testing.expect(sym1.isEqual(sym2));
+    try testing.expect(!sym1.isEqual(sym3));
+
+    // Because they are interned, they must point to the exact same struct in memory!
+    try testing.expectEqual(sym1.asObj(), sym2.asObj());
+}
