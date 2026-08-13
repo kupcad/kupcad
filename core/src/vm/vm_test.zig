@@ -565,3 +565,56 @@ test "VM: op_unpack correctly destructs array into stack slots" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 20.0), vm.stack[0].asNumber());
 }
+
+test "VM: executes logical short-circuiting and comparisons correctly" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // ==========================================
+    // Test 1: 5 >= 3 (Should be true)
+    // ==========================================
+    const five = try b.number("5", 0);
+    const three = try b.number("3", 0);
+    const gte_node = try b.binary(.greater_equal, five, three, 0);
+
+    var chunk1 = chunk.Chunk.init();
+    defer chunk1.free(testing.allocator);
+
+    var comp1 = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &chunk1, &vm);
+    try comp1.compile(gte_node);
+
+    var result = vm.interpret(&chunk1);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(true, vm.stack[0].asBool());
+
+    // ==========================================
+    // Test 2: false && 100
+    // ==========================================
+    // Reset the VM stack to clear out the previous result
+    vm.stack_top = 0;
+
+    // Because it is false, 100 should NEVER be evaluated!
+    const f_node = try b.booleanNode(false, 0);
+    const num_node = try b.number("100", 0);
+    const and_node = try b.binary(.logical_and, f_node, num_node, 0);
+
+    var chunk2 = chunk.Chunk.init();
+    defer chunk2.free(testing.allocator);
+
+    var comp2 = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &chunk2, &vm);
+    try comp2.compile(and_node);
+
+    result = vm.interpret(&chunk2);
+    try testing.expectEqual(.ok, result);
+
+    // The top of the stack should be `false`, and no errors should have occurred
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(false, vm.stack[0].asBool());
+}

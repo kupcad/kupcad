@@ -37,6 +37,8 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         .op_subtract,
         .op_multiply,
         .op_divide,
+        .op_modulo,
+        .op_exponent,
         .op_negate,
         .op_not,
         .op_equal,

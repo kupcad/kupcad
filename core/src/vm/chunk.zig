@@ -51,6 +51,8 @@ pub const OpCode = enum(u8) {
     op_subtract,
     op_multiply,
     op_divide,
+    op_modulo,
+    op_exponent,
     op_negate,
 
     // Logical

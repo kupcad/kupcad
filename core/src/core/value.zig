@@ -431,6 +431,42 @@ pub const Value = extern struct {
             }
         }
     }
+
+    pub fn isFalsey(self: Value) bool {
+        return self.isNil() or (self.isBool() and !self.asBool());
+    }
+
+    pub fn isEqual(self: Value, other: Value) bool {
+        // First check if they are the exact same type
+        if (self.isNil() and other.isNil()) return true;
+
+        if (self.isBool() and other.isBool()) {
+            return self.asBool() == other.asBool();
+        }
+
+        if (self.isNumber() and other.isNumber()) {
+            return self.asNumber() == other.asNumber();
+        }
+
+        if (self.isObject() and other.isObject()) {
+            const a_obj = self.asObj();
+            const b_obj = other.asObj();
+
+            // For Strings, we must compare the deep character arrays!
+            if (a_obj.obj_type == .string and b_obj.obj_type == .string) {
+                const a_str = @as(*ObjString, @alignCast(@fieldParentPtr("obj", a_obj)));
+                const b_str = @as(*ObjString, @alignCast(@fieldParentPtr("obj", b_obj)));
+                return std.mem.eql(u8, a_str.chars, b_str.chars);
+            }
+
+            // For all other heap objects (Arrays, Maps, Geometry, Instances),
+            // equality means they point to the exact same memory address.
+            return a_obj == b_obj;
+        }
+
+        // Mismatched types (e.g., Number vs String) are never equal
+        return false;
+    }
 };
 
 /// A dynamic array of Values (used for the VM Stack and constants arrays).

@@ -179,6 +179,23 @@ pub const Compiler = struct {
                 try self.emitOp(.op_constant);
                 try self.emitByte(str_idx);
             },
+            .boolean => {
+                const val = self.tree.boolean(node);
+                if (val) try self.emitOp(.op_true) else try self.emitOp(.op_false);
+            },
+            .undef => {
+                try self.emitOp(.op_nil);
+            },
+            .symbol => {
+                const sym_str = self.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
+                const sym_val = try self.vm.allocateString(sym_str);
+                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                self.vm.push(sym_val);
+                const sym_idx = try self.makeConstant(sym_val);
+                _ = self.vm.pop();
+                try self.emitOp(.op_constant);
+                try self.emitByte(sym_idx);
+            },
             .identifier => {
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = @as(ast.StringId, @enumFromInt(node.data));
@@ -826,16 +843,54 @@ pub const Compiler = struct {
             },
             .binary_op => {
                 const bin_expr = self.tree.binaryExpr(node);
+
+                // 1. Handle Short-Circuiting Logical Operators BEFORE compiling the right side!
+                if (bin_expr.op == .logical_and) {
+                    try self.compileNode(bin_expr.left);
+                    const end_jump = try self.emitJump(.op_jump_if_false);
+                    try self.emitOp(.op_pop); // pop the true left value
+                    try self.compileNode(bin_expr.right);
+                    self.patchJump(end_jump);
+                    return;
+                } else if (bin_expr.op == .logical_or) {
+                    try self.compileNode(bin_expr.left);
+                    const else_jump = try self.emitJump(.op_jump_if_false);
+                    const end_jump = try self.emitJump(.op_jump); // If true, skip right side
+
+                    self.patchJump(else_jump); // If false, land here
+                    try self.emitOp(.op_pop); // pop the false left value
+                    try self.compileNode(bin_expr.right);
+
+                    self.patchJump(end_jump); // True branch lands here
+                    return;
+                }
+
+                // 2. Standard Binary Operators
                 try self.compileNode(bin_expr.left);
                 try self.compileNode(bin_expr.right);
+
                 switch (bin_expr.op) {
                     .add => try self.emitOp(.op_add),
                     .subtract => try self.emitOp(.op_subtract),
                     .multiply => try self.emitOp(.op_multiply),
                     .divide => try self.emitOp(.op_divide),
+                    .modulo => try self.emitOp(.op_modulo),
+                    .exponent => try self.emitOp(.op_exponent),
                     .equal => try self.emitOp(.op_equal),
+                    .not_equal => {
+                        try self.emitOp(.op_equal);
+                        try self.emitOp(.op_not);
+                    },
                     .less => try self.emitOp(.op_less),
                     .greater => try self.emitOp(.op_greater),
+                    .less_equal => {
+                        try self.emitOp(.op_greater);
+                        try self.emitOp(.op_not);
+                    },
+                    .greater_equal => {
+                        try self.emitOp(.op_less);
+                        try self.emitOp(.op_not);
+                    },
                     else => return error.UnknownNode,
                 }
             },
@@ -1252,7 +1307,7 @@ pub const Compiler = struct {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import => self.simulatePush(1),
             .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch => self.simulatePop(1),
             .op_map_insert => self.simulatePop(2),
-            .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater => {
+            .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent => {
                 self.simulatePop(2);
                 self.simulatePush(1);
             },

@@ -231,6 +231,56 @@ pub const VM = struct {
                     defer self.releaseValue(a);
                     self.push(value.Value.initNumber(-a.asNumber()));
                 },
+                // ... [existing math ops] ...
+                .op_modulo => {
+                    const b = self.pop();
+                    defer self.releaseValue(b);
+                    const a = self.pop();
+                    defer self.releaseValue(a);
+                    if (a.isNumber() and b.isNumber()) {
+                        self.push(value.Value.initNumber(@mod(a.asNumber(), b.asNumber())));
+                    } else return .runtime_error;
+                },
+                .op_exponent => {
+                    const b = self.pop();
+                    defer self.releaseValue(b);
+                    const a = self.pop();
+                    defer self.releaseValue(a);
+                    if (a.isNumber() and b.isNumber()) {
+                        self.push(value.Value.initNumber(std.math.pow(f64, a.asNumber(), b.asNumber())));
+                    } else return .runtime_error;
+                },
+                .op_not => {
+                    const val = self.pop();
+                    defer self.releaseValue(val);
+                    const is_falsey = val.isNil() or (val.isBool() and !val.asBool());
+                    self.push(value.Value.initBool(is_falsey));
+                },
+                .op_equal => {
+                    const b = self.pop();
+                    defer self.releaseValue(b);
+                    const a = self.pop();
+                    defer self.releaseValue(a);
+                    self.push(value.Value.initBool(a.isEqual(b)));
+                },
+                .op_less => {
+                    const b = self.pop();
+                    defer self.releaseValue(b);
+                    const a = self.pop();
+                    defer self.releaseValue(a);
+                    if (a.isNumber() and b.isNumber()) {
+                        self.push(value.Value.initBool(a.asNumber() < b.asNumber()));
+                    } else return .runtime_error;
+                },
+                .op_greater => {
+                    const b = self.pop();
+                    defer self.releaseValue(b);
+                    const a = self.pop();
+                    defer self.releaseValue(a);
+                    if (a.isNumber() and b.isNumber()) {
+                        self.push(value.Value.initBool(a.asNumber() > b.asNumber()));
+                    } else return .runtime_error;
+                },
                 .op_get_global => {
                     const name_idx = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
