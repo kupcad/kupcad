@@ -805,10 +805,33 @@ pub const Compiler = struct {
                     if (mc.is_safe) safe_jump = try self.emitJump(.op_jump_if_nil);
                 }
 
-                // Push Standard Arguments
+                // Push Arguments (Positional first, then Keyword Args packed as a Map)
                 const args = self.tree.getNamedArgs(mc.args);
-                for (args) |arg| try self.compileNode(arg.value);
-                var actual_arg_count = args.len;
+                var pos_count: usize = 0;
+                var kw_count: usize = 0;
+
+                for (args) |arg| {
+                    if (arg.name == .none) {
+                        try self.compileNode(arg.value);
+                        pos_count += 1;
+                    }
+                }
+                for (args) |arg| {
+                    if (arg.name != .none) {
+                        const name_idx = try self.makeStringConstant(self.tree.getString(arg.name));
+                        try self.emitOp(.op_constant);
+                        try self.emitByte(name_idx);
+                        try self.compileNode(arg.value);
+                        kw_count += 1;
+                    }
+                }
+
+                if (kw_count > 0) {
+                    try self.emitOp(.op_build_map);
+                    try self.emitByte(@intCast(kw_count));
+                    pos_count += 1; // The Hash Map becomes the final trailing positional argument!
+                }
+                var actual_arg_count = pos_count;
 
                 // Push the Block as a Closure Argument!
                 if (mc.block != .none) {
@@ -1283,12 +1306,35 @@ pub const Compiler = struct {
                 try self.emitByte(0); // push `self`
 
                 const args = self.tree.getNamedArgs(sc.args);
-                for (args) |arg| try self.compileNode(arg.value);
+                var pos_count: usize = 0;
+                var kw_count: usize = 0;
+
+                for (args) |arg| {
+                    if (arg.name == .none) {
+                        try self.compileNode(arg.value);
+                        pos_count += 1;
+                    }
+                }
+                for (args) |arg| {
+                    if (arg.name != .none) {
+                        const name_idx = try self.makeStringConstant(self.tree.getString(arg.name));
+                        try self.emitOp(.op_constant);
+                        try self.emitByte(name_idx);
+                        try self.compileNode(arg.value);
+                        kw_count += 1;
+                    }
+                }
+
+                if (kw_count > 0) {
+                    try self.emitOp(.op_build_map);
+                    try self.emitByte(@intCast(kw_count));
+                    pos_count += 1;
+                }
 
                 try self.emitOp(.op_super_invoke);
-                try self.emitByte(@intCast(args.len));
+                try self.emitByte(@intCast(pos_count));
 
-                self.simulatePop(args.len + 1);
+                self.simulatePop(pos_count + 1);
                 self.simulatePush(1);
             },
             .property_assignment => {

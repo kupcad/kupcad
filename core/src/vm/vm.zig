@@ -598,6 +598,23 @@ pub const VM = struct {
                             self.push(value.Value.initNumber(@floatFromInt(arr.items.items.len)));
                             continue;
                         }
+                    } else if (receiver.isObject() and receiver.asObj().obj_type == .map) {
+                        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
+
+                        if (std.mem.eql(u8, method_name_str, "each") and arg_count == 1) {
+                            const closure_val = self.stack[self.stack_top - 1];
+                            if (closure_val.isClosure()) {
+                                const closure = closure_val.asClosure();
+                                // Pass BOTH the Key and the Value to the block!
+                                for (map.keys.items, 0..) |k, i| {
+                                    const v = map.values.items[i];
+                                    _ = self.callClosureSync(closure, &.{ k, v }) catch return .runtime_error;
+                                }
+                                self.stack_top -= (arg_count + 1); // pop args & receiver
+                                self.push(receiver); // each returns self
+                                continue;
+                            }
+                        }
                     }
 
                     // 1. Is it a KupCAD Custom Object?
