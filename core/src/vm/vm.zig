@@ -481,32 +481,47 @@ pub const VM = struct {
                         self.stack_top += 1;
                     } else if (callee.isClosure()) {
                         const closure = callee.asClosure();
+                        var provided_args = arg_count;
 
-                        // Enforce Arity Checking
-                        if (arg_count != closure.function.arity) {
-                            self.reportError("Runtime Error: Expected {d} arguments but got {d}.\n", .{ closure.function.arity, arg_count });
+                        if (provided_args < closure.function.arity) {
+                            const missing = closure.function.arity - provided_args;
+                            self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
+                            for (0..missing) |_| self.push(value.Value.initNil());
+                            provided_args = closure.function.arity;
+                        } else if (provided_args > closure.function.arity) {
+                            self.reportError("Runtime Error: Expected at most {d} args.\n", .{closure.function.arity});
                             return .runtime_error;
                         }
 
-                        // Push a new CallFrame onto the Execution Stack!
-                        // The `base_slot` is set to point right at the start of the arguments
                         self.frames.append(self.allocator, .{
                             .closure = closure,
                             .ip = 0,
-                            .base_slot = self.stack_top - arg_count - 1,
+                            .base_slot = self.stack_top - provided_args - 1,
                         }) catch return .runtime_error;
                     } else if (callee.isClass()) {
                         const class_obj = callee.asClass();
                         const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
                         self.stack.ptr[self.stack_top - 1 - arg_count] = value.Value.initObj(&instance.obj);
 
-                        // Auto-invoke the constructor
                         if (self.findMethod(class_obj, "initialize")) |init_method| {
                             const closure = init_method.asClosure();
+                            var provided_args = arg_count;
+                            const expected_args = closure.function.arity - 1; // -1 for implicit 'self'
+
+                            if (provided_args < expected_args) {
+                                const missing = expected_args - provided_args;
+                                self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
+                                for (0..missing) |_| self.push(value.Value.initNil());
+                                provided_args = expected_args;
+                            } else if (provided_args > expected_args) {
+                                self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
+                                return .runtime_error;
+                            }
+
                             self.frames.append(self.allocator, .{
                                 .closure = closure,
                                 .ip = 0,
-                                .base_slot = self.stack_top - arg_count - 1, // `self` is the new instance
+                                .base_slot = self.stack_top - provided_args - 1,
                             }) catch return .runtime_error;
                             continue;
                         } else if (arg_count > 0) {
@@ -636,14 +651,23 @@ pub const VM = struct {
                         // Check class methods
                         if (self.findMethod(instance.class, method_name_str)) |method_val| {
                             const closure = method_val.asClosure();
-                            if (arg_count != closure.function.arity - 1) { // -1 for implicit 'self'
-                                self.reportError("Runtime Error: Expected {d} arguments but got {d}.\n", .{ closure.function.arity - 1, arg_count });
+                            var provided_args = arg_count;
+                            const expected_args = closure.function.arity - 1;
+
+                            if (provided_args < expected_args) {
+                                const missing = expected_args - provided_args;
+                                self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
+                                for (0..missing) |_| self.push(value.Value.initNil());
+                                provided_args = expected_args;
+                            } else if (provided_args > expected_args) {
+                                self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                 return .runtime_error;
                             }
+
                             self.frames.append(self.allocator, .{
                                 .closure = closure,
                                 .ip = 0,
-                                .base_slot = self.stack_top - arg_count - 1,
+                                .base_slot = self.stack_top - provided_args - 1,
                             }) catch return .runtime_error;
                             continue;
                         }
@@ -718,13 +742,35 @@ pub const VM = struct {
                     const start_val = self.pop();
                     defer self.releaseValue(start_val);
 
-                    if (!start_val.isNumber() or !end_val.isNumber() or !step_val.isNumber()) {
-                        self.reportError("Runtime Error: Range bounds must be numbers.\n", .{});
+                    if (start_val.isNumber() and end_val.isNumber() and step_val.isNumber()) {
+                        const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
+                        self.push(value.Value.initObj(&range_obj.obj));
+                    } else if (start_val.isObject() and start_val.asObj().obj_type == .string and end_val.isObject() and end_val.asObj().obj_type == .string) {
+                        const s_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", start_val.asObj()))).chars;
+                        const e_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", end_val.asObj()))).chars;
+
+                        if (s_str.len == 1 and e_str.len == 1) {
+                            const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                            const arr_val = value.Value.initObj(&arr_obj.obj);
+                            self.push(arr_val); // Protect from GC while building
+
+                            var curr = s_str[0];
+                            const limit = if (is_exclusive) e_str[0] else e_str[0] + 1;
+
+                            while (curr < limit) : (curr += 1) {
+                                const char_slice = &[_]u8{curr};
+                                const char_str = self.allocateString(char_slice) catch return .runtime_error;
+                                self.retainValue(char_str);
+                                arr_obj.items.append(self.allocator, char_str) catch return .runtime_error;
+                            }
+                        } else {
+                            self.reportError("Runtime Error: String ranges must be single characters.\n", .{});
+                            return .runtime_error;
+                        }
+                    } else {
+                        self.reportError("Runtime Error: Range bounds must be numbers or characters.\n", .{});
                         return .runtime_error;
                     }
-
-                    const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
-                    self.push(value.Value.initObj(&range_obj.obj));
                 },
                 .op_interpolate => {
                     const count = exec_chunk.code.items[frame.ip];
@@ -1056,15 +1102,30 @@ pub const VM = struct {
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
                         const superclass = instance.class.superclass orelse return .runtime_error;
+
                         if (self.findMethod(superclass, method_name_str)) |method_val| {
                             const closure = method_val.asClosure();
+                            var provided_args = arg_count;
+                            const expected_args = closure.function.arity - 1;
+
+                            if (provided_args < expected_args) {
+                                const missing = expected_args - provided_args;
+                                self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
+                                for (0..missing) |_| self.push(value.Value.initNil());
+                                provided_args = expected_args;
+                            } else if (provided_args > expected_args) {
+                                self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
+                                return .runtime_error;
+                            }
+
                             self.frames.append(self.allocator, .{
                                 .closure = closure,
                                 .ip = 0,
-                                .base_slot = self.stack_top - arg_count - 1,
+                                .base_slot = self.stack_top - provided_args - 1,
                             }) catch return .runtime_error;
                             continue;
                         }
+
                         return .runtime_error;
                     }
                     return .runtime_error;
