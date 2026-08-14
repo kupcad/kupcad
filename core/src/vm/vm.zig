@@ -421,10 +421,7 @@ pub const VM = struct {
                     }
 
                     // Unwind the Stack variables safely using ARC
-                    while (self.stack_top > r_frame.stack_top) {
-                        self.stack_top -= 1;
-                        self.releaseValue(self.stack[self.stack_top]);
-                    }
+                    self.shrinkStack(r_frame.stack_top);
 
                     // Push the exception payload and jump into the rescue block!
                     self.push(err_val);
@@ -725,12 +722,7 @@ pub const VM = struct {
                     // Close all remaining upvalues for this function before it dies
                     self.closeUpvalues(&self.stack[frame.base_slot]);
 
-                    // Properly release all local variables AND the closure frame
-                    // from the stack so their ARC ref_counts deterministically drop to 0!
-                    while (self.stack_top > frame.base_slot) {
-                        self.stack_top -= 1;
-                        self.releaseValue(self.stack[self.stack_top]);
-                    }
+                    self.shrinkStack(frame.base_slot);
 
                     _ = self.frames.pop();
 
@@ -738,7 +730,6 @@ pub const VM = struct {
                     // (It already holds a +1 reference from when it was initially popped)
                     self.stack.ptr[self.stack_top] = result;
                     self.stack_top += 1;
-
                     if (self.frames.items.len == target_depth) {
                         return .ok;
                     }
@@ -1352,11 +1343,21 @@ pub const VM = struct {
         }
     }
 
-    pub fn resetStack(self: *VM) void {
-        while (self.stack_top > 0) {
+    pub inline fn shrinkStack(self: *VM, target_slot: usize) void {
+        std.debug.assert(self.stack_top >= target_slot);
+        while (self.stack_top > target_slot) {
             self.stack_top -= 1;
             self.releaseValue(self.stack[self.stack_top]);
         }
+    }
+
+    inline fn popAndRelease(self: *VM, count: usize) void {
+        std.debug.assert(self.stack_top >= count);
+        self.shrinkStack(self.stack_top - count);
+    }
+
+    pub fn resetStack(self: *VM) void {
+        self.shrinkStack(0);
     }
 
     // --- JIT Materialization ---
@@ -1535,13 +1536,6 @@ pub const VM = struct {
     }
 
     // --- Shared Execution Helpers ---
-    inline fn popAndRelease(self: *VM, count: usize) void {
-        var i: usize = 0;
-        while (i < count) : (i += 1) {
-            const dropped = self.pop();
-            self.releaseValue(dropped);
-        }
-    }
 
     pub fn valuesEqual(self: *VM, a: value.Value, b: value.Value) bool {
         _ = self;
