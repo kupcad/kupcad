@@ -841,3 +841,79 @@ test "VM: Array and Map Native Methods (slice, keys)" {
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
 }
+
+test "VM: Native yield instruction seamlessly calls implicitly passed block" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // 1. Build the child Block Closure: { |x| x * 2 }
+    var block_chunk = try testing.allocator.create(chunk.Chunk);
+    block_chunk.* = chunk.Chunk.init();
+    defer {
+        block_chunk.free(testing.allocator);
+        testing.allocator.destroy(block_chunk);
+    }
+
+    // Push local 1 (x), push 2, multiply, return
+    try block_chunk.writeOp(testing.allocator, .op_get_local, 0);
+    try block_chunk.write(testing.allocator, 1, 0);
+    const const_2 = try block_chunk.addConstant(testing.allocator, value.Value.initNumber(2.0));
+    try block_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try block_chunk.write(testing.allocator, const_2, 0);
+    try block_chunk.writeOp(testing.allocator, .op_multiply, 0);
+    try block_chunk.writeOp(testing.allocator, .op_return, 0);
+    block_chunk.max_stack_slots = 5;
+
+    const block_func = try vm.gc.allocateFunction(&vm);
+    block_func.chunk = block_chunk;
+    block_func.owns_chunk = false;
+    block_func.arity = 1;
+
+    // 2. Build the Parent Function: def do_yield() yield(21) end
+    var parent_chunk = try testing.allocator.create(chunk.Chunk);
+    parent_chunk.* = chunk.Chunk.init();
+    defer {
+        parent_chunk.free(testing.allocator);
+        testing.allocator.destroy(parent_chunk);
+    }
+
+    // Push 21, then Yield with 1 argument!
+    const const_21 = try parent_chunk.addConstant(testing.allocator, value.Value.initNumber(21.0));
+    try parent_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try parent_chunk.write(testing.allocator, const_21, 0);
+    try parent_chunk.writeOp(testing.allocator, .op_yield, 0);
+    try parent_chunk.write(testing.allocator, 1, 0); // 1 arg
+    try parent_chunk.writeOp(testing.allocator, .op_return, 0);
+    parent_chunk.max_stack_slots = 5;
+
+    const parent_func = try vm.gc.allocateFunction(&vm);
+    parent_func.chunk = parent_chunk;
+    parent_func.owns_chunk = false;
+    parent_func.arity = 0; // Expects 0 positional args
+
+    // 3. Main script: do_yield() { |x| x * 2 }
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(testing.allocator);
+
+    const p_const = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&parent_func.obj));
+    const b_const = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&block_func.obj));
+
+    try main_chunk.writeOp(testing.allocator, .op_closure, 0);
+    try main_chunk.write(testing.allocator, p_const, 0);
+
+    try main_chunk.writeOp(testing.allocator, .op_closure, 0);
+    try main_chunk.write(testing.allocator, b_const, 0);
+
+    // Call Parent with 1 argument (the block counts as +1 in the raw arg_count before padding!)
+    try main_chunk.writeOp(testing.allocator, .op_call, 0);
+    try main_chunk.write(testing.allocator, 1, 0);
+    try main_chunk.writeOp(testing.allocator, .op_return, 0);
+    main_chunk.max_stack_slots = 5;
+
+    const result = vm.interpret(&main_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // 21 * 2 = 42
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+}

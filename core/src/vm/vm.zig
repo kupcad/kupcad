@@ -517,21 +517,38 @@ pub const VM = struct {
                     } else if (callee.isClosure()) {
                         const closure = callee.asClosure();
                         var provided_args = arg_count;
+                        var has_block = false;
 
-                        if (provided_args < closure.function.arity) {
-                            const missing = closure.function.arity - provided_args;
+                        if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
+                            has_block = true;
+                            provided_args -= 1;
+                        }
+
+                        const expected_args = closure.function.arity;
+
+                        if (provided_args < expected_args) {
+                            const missing = expected_args - provided_args;
                             self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
+
+                            const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
+                            if (has_block) self.stack_top -= 1;
+
                             for (0..missing) |_| self.push(value.Value.initNil());
-                            provided_args = closure.function.arity;
-                        } else if (provided_args > closure.function.arity) {
-                            self.reportError("Runtime Error: Expected at most {d} args.\n", .{closure.function.arity});
+                            if (has_block) self.push(block_copy.?);
+                        } else if (provided_args > expected_args) {
+                            self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                             return .runtime_error;
+                        }
+
+                        if (!has_block) {
+                            self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
+                            self.push(value.Value.initNil());
                         }
 
                         self.frames.append(self.allocator, .{
                             .closure = closure,
                             .ip = 0,
-                            .base_slot = self.stack_top - provided_args - 1,
+                            .base_slot = self.stack_top - expected_args - 2,
                         }) catch return .runtime_error;
                     } else if (callee.isClass()) {
                         const class_obj = callee.asClass();
@@ -541,22 +558,38 @@ pub const VM = struct {
                         if (self.findMethod(class_obj, "initialize")) |init_method| {
                             const closure = init_method.asClosure();
                             var provided_args = arg_count;
+                            var has_block = false;
+
+                            if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
+                                has_block = true;
+                                provided_args -= 1;
+                            }
+
                             const expected_args = closure.function.arity - 1; // -1 for implicit 'self'
 
                             if (provided_args < expected_args) {
                                 const missing = expected_args - provided_args;
                                 self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
+
+                                const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
+                                if (has_block) self.stack_top -= 1;
+
                                 for (0..missing) |_| self.push(value.Value.initNil());
-                                provided_args = expected_args;
+                                if (has_block) self.push(block_copy.?);
                             } else if (provided_args > expected_args) {
                                 self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                 return .runtime_error;
                             }
 
+                            if (!has_block) {
+                                self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
+                                self.push(value.Value.initNil());
+                            }
+
                             self.frames.append(self.allocator, .{
                                 .closure = closure,
                                 .ip = 0,
-                                .base_slot = self.stack_top - provided_args - 1,
+                                .base_slot = self.stack_top - expected_args - 2,
                             }) catch return .runtime_error;
                             continue;
                         } else if (arg_count > 0) {
@@ -911,22 +944,38 @@ pub const VM = struct {
                         if (self.findMethod(instance.class, method_name_str)) |method_val| {
                             const closure = method_val.asClosure();
                             var provided_args = arg_count;
+                            var has_block = false;
+
+                            if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
+                                has_block = true;
+                                provided_args -= 1;
+                            }
+
                             const expected_args = closure.function.arity - 1; // -1 for implicit 'self'
 
                             if (provided_args < expected_args) {
                                 const missing = expected_args - provided_args;
                                 self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
+
+                                const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
+                                if (has_block) self.stack_top -= 1;
+
                                 for (0..missing) |_| self.push(value.Value.initNil());
-                                provided_args = expected_args;
+                                if (has_block) self.push(block_copy.?);
                             } else if (provided_args > expected_args) {
                                 self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                 return .runtime_error;
                             }
 
+                            if (!has_block) {
+                                self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
+                                self.push(value.Value.initNil());
+                            }
+
                             self.frames.append(self.allocator, .{
                                 .closure = closure,
                                 .ip = 0,
-                                .base_slot = self.stack_top - provided_args - 1,
+                                .base_slot = self.stack_top - expected_args - 2,
                             }) catch return .runtime_error;
                             continue;
                         }
@@ -1360,36 +1409,84 @@ pub const VM = struct {
                     frame.ip += 1;
                     const method_name_str = frame.closure.function.name.?.chars;
                     const receiver = self.stack[self.stack_top - 1 - arg_count];
+
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
-                        const superclass = instance.class.superclass orelse return .runtime_error;
+                        const superclass = instance.class.superclass orelse {
+                            self.reportError("Runtime Error: No superclass exists for receiver.\n", .{});
+                            return .runtime_error;
+                        };
 
                         if (self.findMethod(superclass, method_name_str)) |method_val| {
                             const closure = method_val.asClosure();
                             var provided_args = arg_count;
-                            const expected_args = closure.function.arity - 1;
+                            var has_block = false;
 
+                            // Check if the final argument is an implicit block
+                            if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
+                                has_block = true;
+                                provided_args -= 1;
+                            }
+
+                            const expected_args = closure.function.arity - 1; // -1 for implicit 'self'
+
+                            // Pad missing positional arguments with 'nil'
                             if (provided_args < expected_args) {
                                 const missing = expected_args - provided_args;
                                 self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
+
+                                const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
+                                if (has_block) self.stack_top -= 1;
+
                                 for (0..missing) |_| self.push(value.Value.initNil());
-                                provided_args = expected_args;
+                                if (has_block) self.push(block_copy.?);
                             } else if (provided_args > expected_args) {
                                 self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                 return .runtime_error;
                             }
 
+                            // If no block was passed, pad the block slot with 'nil'
+                            if (!has_block) {
+                                self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
+                                self.push(value.Value.initNil());
+                            }
+
+                            // Dispatch the CallFrame! (-2 accounts for the Block and the Receiver)
                             self.frames.append(self.allocator, .{
                                 .closure = closure,
                                 .ip = 0,
-                                .base_slot = self.stack_top - provided_args - 1,
+                                .base_slot = self.stack_top - expected_args - 2,
                             }) catch return .runtime_error;
                             continue;
                         }
 
+                        self.reportError("Runtime Error: Superclass method '{s}' not found.\n", .{method_name_str});
                         return .runtime_error;
                     }
+                    self.reportError("Runtime Error: super can only be called on instances.\n", .{});
                     return .runtime_error;
+                },
+                .op_yield => {
+                    const yield_arg_count = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+
+                    const expected_args = frame.closure.function.arity;
+                    const block_val = self.stack[frame.base_slot + expected_args + 1];
+
+                    if (!block_val.isClosure()) {
+                        self.reportError("Runtime Error: No block given to yield.\n", .{});
+                        return .runtime_error;
+                    }
+
+                    const block_closure = block_val.asClosure();
+                    const args_ptr = self.stack.ptr + self.stack_top - yield_arg_count;
+                    const yield_args = args_ptr[0..yield_arg_count];
+
+                    const result = self.callClosureSync(block_closure, yield_args) catch return .runtime_error;
+
+                    // Pop yielded args off stack
+                    self.stack_top -= yield_arg_count;
+                    self.push(result);
                 },
                 else => {
                     self.reportError("Runtime Error: Unhandled OpCode {}\n", .{op});
@@ -1564,19 +1661,35 @@ pub const VM = struct {
     pub fn callClosureSync(self: *VM, closure: *value.ObjClosure, args: []const value.Value) !value.Value {
         const target_depth = self.frames.items.len;
 
-        try self.ensureStackCapacity(self.stack_top + args.len + 1);
+        const provided_args = args.len;
+        const expected_args = closure.function.arity;
+
+        // Ensure stack capacity for closure, args, padded nils, and the implicit null block
+        const total_pushes = 1 + @max(provided_args, expected_args) + 1;
+        try self.ensureStackCapacity(self.stack_top + total_pushes);
+
         self.push(value.Value.initObj(&closure.obj)); // closure itself
+
         for (args) |arg| self.push(arg);
+
+        if (provided_args < expected_args) {
+            const missing = expected_args - provided_args;
+            for (0..missing) |_| self.push(value.Value.initNil());
+        }
+
+        // Pad the implicit empty block
+        self.push(value.Value.initNil());
 
         try self.frames.append(self.allocator, .{
             .closure = closure,
             .ip = 0,
-            .base_slot = self.stack_top - args.len - 1,
+            .base_slot = self.stack_top - expected_args - 2, // -2 accounts for block and receiver
         });
 
         const res = self.runUntil(target_depth);
         if (res != .ok) return error.RuntimeError;
-        return self.pop(); // Returns whatever the block yielded!
+
+        return self.pop();
     }
 
     pub fn reportError(self: *VM, comptime fmt: []const u8, args: anytype) void {

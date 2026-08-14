@@ -54,7 +54,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         .op_constant, .op_get_global, .op_define_global, .op_set_global, .op_class, .op_method, .op_get_property, .op_set_property, .op_import => {
             return constantInstruction(@tagName(op), c, offset, writer);
         },
-        .op_get_local, .op_set_local, .op_call, .op_build_array, .op_build_map, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke => {
+        .op_get_local, .op_set_local, .op_call, .op_build_array, .op_build_map, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield => {
             return byteInstruction(@tagName(op), c, offset, writer);
         },
         .op_jump, .op_jump_if_false, .op_jump_if_nil, .op_setup_rescue, .op_loop => {

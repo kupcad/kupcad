@@ -68,7 +68,6 @@ pub const OpCode = enum(u8) {
     op_switch,
     op_loop,
 
-
     // Exception Handling
     op_setup_rescue,
     op_pop_rescue,
@@ -80,6 +79,7 @@ pub const OpCode = enum(u8) {
     op_super_invoke,
     op_import,
     op_inherit,
+    op_yield,
     op_return,
 };
 
