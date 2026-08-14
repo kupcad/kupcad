@@ -86,6 +86,7 @@ pub const GC = struct {
         ptr.name = null;
         ptr.arity = 0;
         ptr.upvalue_count = 0;
+        ptr.has_splat = false;
         ptr.chunk = null;
         ptr.owns_chunk = true;
 

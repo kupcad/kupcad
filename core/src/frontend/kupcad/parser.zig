@@ -865,23 +865,34 @@ pub const Parser = struct {
     }
 
     fn parseParam(self: *Parser) ParseError!ast.Param {
-        const mod = self.parseArgModifier();
-        if (self.tag(0) != .ident) return ParseError.UnexpectedToken;
-        const param_name = try self.b.intern(self.lexeme(0));
-        self.advance();
-        var is_keyword = false;
+        const mod = self.parseArgModifier(); // Automatically handles *, **, and &
+
+        const name_tok = try self.expect(.ident);
+        const name_id = try self.b.intern(self.tokens.lexeme(self.source, name_tok));
+
         var default_val: ast.NodeIndex = .none;
+        var is_keyword = false;
+
         if (self.tag(0) == .colon) {
+            if (mod != null) return ParseError.InvalidExpression;
             is_keyword = true;
             self.advance();
+            // In KupCAD, `x: 10` assigns 10 as the default.
             if (self.tag(0) != .comma and self.tag(0) != .r_paren) {
                 default_val = try self.parseExpression(.none);
             }
         } else if (self.tag(0) == .equal) {
+            if (mod != null) return ParseError.InvalidExpression;
             self.advance();
             default_val = try self.parseExpression(.none);
         }
-        return .{ .name = param_name, .default_value = default_val, .modifier = mod, .is_keyword = is_keyword };
+
+        return .{
+            .name = name_id,
+            .default_value = default_val,
+            .modifier = mod,
+            .is_keyword = is_keyword,
+        };
     }
 
     fn parseParenParams(self: *Parser) ParseError!ast.Span {

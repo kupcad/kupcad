@@ -206,11 +206,10 @@ pub const Compiler = struct {
                 if (sym.kind == .global) {
                     const name = self.tree.getString(name_id);
                     const name_idx = try self.makeStringConstant(name);
-                    _ = self.vm.pop();
                     try self.emitOp(.op_get_global);
                     try self.emitByte(name_idx);
                 } else {
-                    // Try to resolve in the current compiler, then recurse upwards!
+                    // Try to resolve in the current compiler, then recurse upwards
                     if (self.resolveLocal(name_id)) |local_slot| {
                         try self.emitOp(.op_get_local);
                         try self.emitByte(local_slot);
@@ -670,6 +669,15 @@ pub const Compiler = struct {
                 const func = try self.vm.gc.allocateFunction(self.vm);
                 func.arity = @intCast(params.len);
 
+                var splat_idx: ?usize = null;
+                for (params, 0..) |p, i| {
+                    if (p.modifier != null and p.modifier.? == .splat) {
+                        func.has_splat = true;
+                        splat_idx = i;
+                        break;
+                    }
+                }
+
                 // Protect the function from GC while compiling the child block!
                 self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
                 self.vm.push(value.Value.initObj(&func.obj));
@@ -705,6 +713,13 @@ pub const Compiler = struct {
                 // Assign the parameters their starting stack slots (starting at 1)
                 for (params, 0..) |param, i| {
                     child_compiler.addLocal(param.name, @intCast(i + 1));
+                }
+
+                // If it has a splat, sweep the stack overflow immediately
+                if (splat_idx) |s_idx| {
+                    try child_compiler.emitOp(.op_pack_splat);
+                    try child_compiler.emitByte(@intCast(s_idx)); // Expected fixed positional args
+                    try child_compiler.emitByte(@intCast(params.len - 1 - s_idx)); // Trailing args
                 }
 
                 // Compile the inner body recursively
@@ -992,6 +1007,13 @@ pub const Compiler = struct {
             .array_literal => {
                 const elements = self.tree.getNodes(self.tree.nodeSpan(node));
 
+                if (elements.len == 0) {
+                    try self.emitOp(.op_build_array);
+                    try self.emitByte(0);
+                    self.simulatePush(1);
+                    return;
+                }
+
                 var has_splat = false;
                 for (elements) |elem| {
                     if (self.tree.getNode(elem).?.tag == .splat_expr) has_splat = true;
@@ -1024,6 +1046,12 @@ pub const Compiler = struct {
             },
             .hash_literal => {
                 const entries = self.tree.getHashEntries(self.tree.nodeSpan(node));
+                if (entries.len == 0) {
+                    try self.emitOp(.op_build_map);
+                    try self.emitByte(0);
+                    self.simulatePush(1);
+                    return;
+                }
 
                 var has_splat = false;
                 for (entries) |entry| {
@@ -1255,6 +1283,15 @@ pub const Compiler = struct {
                         const params = self.tree.getParams(ds.params);
                         func.arity = @intCast(params.len);
 
+                        var splat_idx: ?usize = null;
+                        for (params, 0..) |p, idx| {
+                            if (p.modifier != null and p.modifier.? == .splat) {
+                                func.has_splat = true;
+                                splat_idx = idx;
+                                break;
+                            }
+                        }
+
                         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
                         self.vm.push(value.Value.initObj(&func.obj));
 
@@ -1288,6 +1325,13 @@ pub const Compiler = struct {
                         for (params, 0..) |param, i| {
                             child_compiler.addLocal(param.name, @intCast(i + 1));
                         }
+
+                        if (splat_idx) |s_idx| {
+                            try child_compiler.emitOp(.op_pack_splat);
+                            try child_compiler.emitByte(@intCast(s_idx)); // Expected fixed positional args
+                            try child_compiler.emitByte(@intCast(params.len - 1 - s_idx)); // Trailing args
+                        }
+
                         try child_compiler.compile(ds.body);
                         _ = self.vm.pop(); // unprotect
 

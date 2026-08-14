@@ -105,9 +105,9 @@ pub const Node = packed struct {
 // --- Node Payloads (Reconstructed from extra_data) ---
 pub const Param = struct {
     name: StringId,
-    default_value: NodeIndex = .none,
-    modifier: ?ArgModifier = null,
-    is_keyword: bool = false,
+    default_value: NodeIndex, // .none if no default
+    modifier: ?ArgModifier, // For *args, **kwargs, &block
+    is_keyword: bool,
 };
 
 pub const NamedArg = struct {
