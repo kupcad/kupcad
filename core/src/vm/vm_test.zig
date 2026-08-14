@@ -1024,88 +1024,6 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     try testing.expectEqual(@as(f64, 4.0), arr_obj.items.items[2].asNumber());
 }
 
-test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
-
-    // 1. AST: def test_splat(a, *args, **kwargs) [args, kwargs] end
-    const func_name = try b.intern("test_splat");
-    const a_id = try b.intern("a");
-    const args_id = try b.intern("args");
-    const kwargs_id = try b.intern("kwargs");
-
-    const p1 = ast.Param{ .name = a_id, .default_value = .none, .modifier = null, .is_keyword = false };
-    const p2 = ast.Param{ .name = args_id, .default_value = .none, .modifier = .splat, .is_keyword = false };
-    const p3 = ast.Param{ .name = kwargs_id, .default_value = .none, .modifier = .double_splat, .is_keyword = false };
-    const params_span = try b.addParams(&.{ p1, p2, p3 });
-
-    // Use the exact StringIds so local slots 2 and 3 resolve perfectly
-    const arg_node = try b.createNode(.identifier, 0, @intFromEnum(args_id));
-    const kwarg_node = try b.createNode(.identifier, 0, @intFromEnum(kwargs_id));
-    const ret_arr_span = try b.addNodes(&.{ arg_node, kwarg_node });
-    const body = try b.arrayLiteral(ret_arr_span, 0, 0);
-    const def_node = try b.defStmt(func_name, params_span, body, false, 0, 0);
-
-    // 2. AST: test_splat(10, 20, 30, x: 100)
-    const call_name = try b.intern("test_splat");
-    const a1 = try b.number("10", 0);
-    const a2 = try b.number("20", 0);
-    const a3 = try b.number("30", 0);
-    const kw_val = try b.number("100", 0);
-
-    const args_span = try b.addNamedArgs(&.{
-        .{ .name = .none, .value = a1, .modifier = null },
-        .{ .name = .none, .value = a2, .modifier = null },
-        .{ .name = .none, .value = a3, .modifier = null },
-        .{ .name = try b.intern("x"), .value = kw_val, .modifier = null },
-    });
-
-    const call_node = try b.methodCall(.none, call_name, args_span, .none, false, 0, 0);
-
-    // 3. Compile and Run
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
-    defer symbols.deinit(testing.allocator);
-    // Default all nodes to local (so parameters inside the function resolve correctly)
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
-    // Force the function definition to be global so the methodCall explicitly finds it
-    symbols.items[@intFromEnum(def_node)] = .{ .kind = .global, .index = 0 };
-
-    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-
-    // Group into a block to execute as a single script sequence
-    const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
-    try comp.compile(block_node);
-
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    // The result should be an array: [ [20, 30], { "x" => 100 } ]
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const result_arr = vm.stack[0];
-    try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
-    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
-
-    // args == [20, 30]
-    const packed_args = arr_obj.items.items[0];
-    const packed_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", packed_args.asObj())));
-    try testing.expectEqual(@as(usize, 2), packed_obj.items.items.len);
-    try testing.expectEqual(@as(f64, 20.0), packed_obj.items.items[0].asNumber());
-    try testing.expectEqual(@as(f64, 30.0), packed_obj.items.items[1].asNumber());
-
-    // kwargs == {"x" => 100}
-    const packed_kwargs = arr_obj.items.items[1];
-    const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", packed_kwargs.asObj())));
-    try testing.expectEqual(@as(usize, 1), map_obj.keys.items.len);
-}
-
 test "VM: Compiles and executes class variables (@@var)" {
     const Document = @import("../core/document.zig").Document;
     var vm = try VM.init(testing.allocator, testing.io);
@@ -1204,4 +1122,160 @@ test "VM: Standard exceptions are caught in rescue blocks natively" {
 
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+}
+
+test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // 1. AST: def test_splat(a, *args, **kwargs) [args, kwargs] end
+    const func_name = try b.intern("test_splat");
+    const a_id = try b.intern("a");
+    const args_id = try b.intern("args");
+    const kwargs_id = try b.intern("kwargs");
+
+    const p1 = ast.Param{ .name = a_id, .default_value = .none, .modifier = null, .is_keyword = false };
+    const p2 = ast.Param{ .name = args_id, .default_value = .none, .modifier = .splat, .is_keyword = false };
+    const p3 = ast.Param{ .name = kwargs_id, .default_value = .none, .modifier = .double_splat, .is_keyword = false };
+    const params_span = try b.addParams(&.{ p1, p2, p3 });
+
+    // Use the exact StringIds so local slots 2 and 3 resolve perfectly
+    const arg_node = try b.createNode(.identifier, 0, @intFromEnum(args_id));
+    const kwarg_node = try b.createNode(.identifier, 0, @intFromEnum(kwargs_id));
+    const ret_arr_span = try b.addNodes(&.{ arg_node, kwarg_node });
+    const body = try b.arrayLiteral(ret_arr_span, 0, 0);
+    const def_node = try b.defStmt(func_name, params_span, body, false, 0, 0);
+
+    // 2. AST: test_splat(10, 20, 30, x: 100)
+    const call_name = try b.intern("test_splat");
+    const a1 = try b.number("10", 0);
+    const a2 = try b.number("20", 0);
+    const a3 = try b.number("30", 0);
+    const kw_val = try b.number("100", 0);
+
+    const args_span = try b.addNamedArgs(&.{
+        .{ .name = .none, .value = a1, .modifier = null },
+        .{ .name = .none, .value = a2, .modifier = null },
+        .{ .name = .none, .value = a3, .modifier = null },
+        .{ .name = try b.intern("x"), .value = kw_val, .modifier = null },
+    });
+
+    const call_node = try b.methodCall(.none, call_name, args_span, .none, false, 0, 0);
+
+    // 3. Compile and Run
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    // Default all nodes to local (so parameters inside the function resolve correctly)
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
+    // Force the function definition to be global so the methodCall explicitly finds it
+    symbols.items[@intFromEnum(def_node)] = .{ .kind = .global, .index = 0 };
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+
+    // Group into a block to execute as a single script sequence
+    const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
+    try comp.compile(block_node);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // The result should be an array: [ [20, 30], { "x" => 100 } ]
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const result_arr = vm.stack[0];
+    try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+
+    // args == [20, 30]
+    const packed_args = arr_obj.items.items[0];
+    const packed_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", packed_args.asObj())));
+    try testing.expectEqual(@as(usize, 2), packed_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 20.0), packed_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), packed_obj.items.items[1].asNumber());
+
+    // kwargs == {"x" => 100}
+    const packed_kwargs = arr_obj.items.items[1];
+    const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", packed_kwargs.asObj())));
+    try testing.expectEqual(@as(usize, 1), map_obj.keys.items.len);
+}
+
+test "VM: Explicit block capturing (&block) and first-class invocation" {
+    const Document = @import("../core/document.zig").Document;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\def run_block(&b)
+        \\  b(42)
+        \\end
+        \\run_block { |x| x * 2 }
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // We intentionally DO NOT override doc.symbols here, so `x` stays a clean local!
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 84.0), vm.stack[0].asNumber());
+}
+
+test "VM: LHS Splat Destructuring (a, *b, c = arr)" {
+    const Document = @import("../core/document.zig").Document;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\arr = [10, 20, 30, 40, 50]
+        \\a, *b, c = arr
+        \\[a, b, c]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    // Outer array
+    const out_arr = vm.stack[0];
+    const out_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", out_arr.asObj())));
+    try testing.expectEqual(@as(usize, 3), out_obj.items.items.len);
+
+    // a = 10
+    try testing.expectEqual(@as(f64, 10.0), out_obj.items.items[0].asNumber());
+
+    // b = [20, 30, 40]
+    const b_arr = out_obj.items.items[1];
+    const b_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", b_arr.asObj())));
+    try testing.expectEqual(@as(usize, 3), b_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 20.0), b_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 40.0), b_obj.items.items[2].asNumber());
+
+    // c = 50
+    try testing.expectEqual(@as(f64, 50.0), out_obj.items.items[2].asNumber());
 }

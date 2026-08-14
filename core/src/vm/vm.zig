@@ -823,6 +823,73 @@ pub const VM = struct {
                         }
                     }
                 },
+                .op_unpack_splat => {
+                    const pre_count = exec_chunk.code.items[frame.ip];
+                    const post_count = exec_chunk.code.items[frame.ip + 1];
+                    frame.ip += 2;
+
+                    const val = self.pop();
+                    defer self.releaseValue(val);
+
+                    if (val.isObject() and val.asObj().obj_type == .array) {
+                        const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", val.asObj())));
+                        const total = arr.items.items.len;
+
+                        for (0..pre_count) |i| {
+                            if (i < total) self.push(arr.items.items[i]) else self.push(value.Value.initNil());
+                        }
+
+                        const splat_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                        const splat_val = value.Value.initObj(&splat_arr.obj);
+                        self.push(splat_val);
+
+                        if (total > pre_count + post_count) {
+                            const splat_size = total - pre_count - post_count;
+                            splat_arr.items.ensureTotalCapacity(self.allocator, splat_size) catch return .runtime_error;
+                            for (0..splat_size) |i| {
+                                const item = arr.items.items[pre_count + i];
+                                self.retainValue(item);
+                                splat_arr.items.appendAssumeCapacity(item);
+                            }
+                        }
+
+                        _ = self.pop();
+                        self.push(splat_val);
+
+                        for (0..post_count) |i| {
+                            const rev_idx = post_count - i;
+                            if (total >= pre_count + rev_idx) {
+                                self.push(arr.items.items[total - rev_idx]);
+                            } else {
+                                self.push(value.Value.initNil());
+                            }
+                        }
+                    } else {
+                        // Fallback: If not array, splat gets empty array, first var gets the value
+                        if (pre_count > 0) {
+                            self.push(val);
+                            for (1..pre_count) |_| self.push(value.Value.initNil());
+
+                            const empty_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                            self.push(value.Value.initObj(&empty_arr.obj));
+
+                            for (0..post_count) |_| self.push(value.Value.initNil());
+                        } else if (post_count > 0) {
+                            const empty_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                            self.push(value.Value.initObj(&empty_arr.obj));
+
+                            for (0..post_count - 1) |_| self.push(value.Value.initNil());
+                            self.push(val);
+                        } else {
+                            const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                            self.push(value.Value.initObj(&arr_obj.obj));
+                            self.retainValue(val);
+                            arr_obj.items.append(self.allocator, val) catch return .runtime_error;
+                            _ = self.pop();
+                            self.push(value.Value.initObj(&arr_obj.obj));
+                        }
+                    }
+                },
                 .op_class => {
                     const name_idx = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
@@ -962,7 +1029,7 @@ pub const VM = struct {
 
                                 for (0..missing) |_| self.push(value.Value.initNil());
                                 if (has_block) self.push(block_copy.?);
-                            } else if (provided_args > expected_args) {
+                            } else if (provided_args > expected_args and !closure.function.has_splat) {
                                 self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                 return .runtime_error;
                             }
@@ -1328,7 +1395,7 @@ pub const VM = struct {
                                 if (has_block) self.stack_top -= 1;
                                 for (0..missing) |_| self.push(value.Value.initNil());
                                 if (has_block) self.push(block_copy.?);
-                            } else if (provided_args > expected_args) {
+                            } else if (provided_args > expected_args and !closure.function.has_splat) {
                                 self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                 return .runtime_error;
                             }
@@ -1366,7 +1433,7 @@ pub const VM = struct {
                                 if (has_block) self.stack_top -= 1;
                                 for (0..missing) |_| self.push(value.Value.initNil());
                                 if (has_block) self.push(block_copy.?);
-                            } else if (provided_args > expected_args) {
+                            } else if (provided_args > expected_args and !closure.function.has_splat) {
                                 self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                 return .runtime_error;
                             }
@@ -1403,7 +1470,7 @@ pub const VM = struct {
                                     if (has_block) self.stack_top -= 1;
                                     for (0..missing) |_| self.push(value.Value.initNil());
                                     if (has_block) self.push(block_copy.?);
-                                } else if (provided_args > expected_args) {
+                                } else if (provided_args > expected_args and !closure.function.has_splat) {
                                     self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                     return .runtime_error;
                                 }
@@ -1478,7 +1545,7 @@ pub const VM = struct {
                                 if (has_block) self.stack_top -= 1;
                                 for (0..missing) |_| self.push(value.Value.initNil());
                                 if (has_block) self.push(block_copy.?);
-                            } else if (provided_args > expected_args) {
+                            } else if (provided_args > expected_args and !closure.function.has_splat) {
                                 self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                 return .runtime_error;
                             }

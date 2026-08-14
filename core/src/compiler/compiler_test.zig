@@ -103,16 +103,19 @@ test "Compiler: compiles compound assignment (x += 5)" {
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     try comp.compile(assign_node);
 
-    // Bytecode expected for `x += 5`:
-    // op_get_local (x)
+    // Bytecode expected for `x += 5` at top level:
+    // op_get_global (x)
     // op_constant (5)
     // op_add
-    // op_set_local (x)
+    // op_define_global (x)
+    // op_nil
     // op_return
-    try testing.expectEqual(chunk.OpCode.op_get_local, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(@as(usize, 9), out_chunk.code.items.len);
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
     try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
     try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
-    try testing.expectEqual(chunk.OpCode.op_set_local, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
+    try testing.expectEqual(chunk.OpCode.op_define_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
+    try testing.expectEqual(chunk.OpCode.op_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
 }
 
 test "Compiler: compiles safe navigation method call (obj&.cut())" {
@@ -142,11 +145,11 @@ test "Compiler: compiles safe navigation method call (obj&.cut())" {
     try comp.compile(safe_call);
 
     // Bytecode expected:
-    // op_get_local (obj)
+    // op_get_global (obj)
     // op_jump_if_nil (Safely skip the invoke if true!)
     // op_invoke ('cut')
     // op_return
-    try testing.expectEqual(chunk.OpCode.op_get_local, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
     try testing.expectEqual(chunk.OpCode.op_jump_if_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
     try testing.expectEqual(chunk.OpCode.op_invoke, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
 }

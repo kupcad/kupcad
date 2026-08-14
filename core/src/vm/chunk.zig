@@ -36,6 +36,7 @@ pub const OpCode = enum(u8) {
     op_set_class_var,
     op_method,
     op_unpack,
+    op_unpack_splat,
     op_pack_splat,
     op_is_instance,
 

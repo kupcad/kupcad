@@ -209,23 +209,20 @@ pub const Compiler = struct {
                     const name_idx = try self.makeStringConstant(name_str);
                     try self.emitOp(.op_get_class_var);
                     try self.emitByte(name_idx);
-                } else if (sym.kind == .global) {
+                } else if (self.resolveLocal(name_id)) |local_slot| {
+                    try self.emitOp(.op_get_local);
+                    try self.emitByte(local_slot);
+                } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
+                    try self.emitOp(.op_get_upvalue);
+                    try self.emitByte(upvalue_slot);
+                } else if (self.enclosing == null or sym.kind == .global) {
                     const name_idx = try self.makeStringConstant(name_str);
                     try self.emitOp(.op_get_global);
                     try self.emitByte(name_idx);
                 } else {
-                    // Try to resolve in the current compiler, then recurse upwards!
-                    if (self.resolveLocal(name_id)) |local_slot| {
-                        try self.emitOp(.op_get_local);
-                        try self.emitByte(local_slot);
-                    } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-                        try self.emitOp(.op_get_upvalue);
-                        try self.emitByte(upvalue_slot);
-                    } else {
-                        // Top-level scripts fallback
-                        try self.emitOp(.op_get_local);
-                        try self.emitByte(@intCast(sym.index));
-                    }
+                    // Fallback
+                    try self.emitOp(.op_get_local);
+                    try self.emitByte(@intCast(sym.index));
                 }
             },
             .return_stmt => {
@@ -270,18 +267,13 @@ pub const Compiler = struct {
                 const assign_payload = self.tree.assignment(node);
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = assign_payload.name;
+                const name_str = self.tree.getString(name_id); // Evaluated early
 
                 // 1. Evaluate RHS (with Compound Operator getters if necessary)
                 if (assign_payload.op) |op| {
-                    if (sym.kind == .global) {
-                        const name_str = self.tree.getString(name_id);
+                    if (std.mem.startsWith(u8, name_str, "@@")) {
                         const name_idx = try self.makeStringConstant(name_str);
-
-                        if (std.mem.startsWith(u8, name_str, "@@")) {
-                            try self.emitOp(.op_get_class_var);
-                        } else {
-                            try self.emitOp(.op_get_global);
-                        }
+                        try self.emitOp(.op_get_class_var);
                         try self.emitByte(name_idx);
                     } else if (self.resolveLocal(name_id)) |local_slot| {
                         try self.emitOp(.op_get_local);
@@ -289,6 +281,10 @@ pub const Compiler = struct {
                     } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
                         try self.emitOp(.op_get_upvalue);
                         try self.emitByte(upvalue_slot);
+                    } else if (self.enclosing == null or sym.kind == .global) {
+                        const name_idx = try self.makeStringConstant(name_str);
+                        try self.emitOp(.op_get_global);
+                        try self.emitByte(name_idx);
                     } else {
                         try self.emitOp(.op_get_local);
                         try self.emitByte(@intCast(sym.index));
@@ -308,24 +304,21 @@ pub const Compiler = struct {
                 }
 
                 // 2. Set the Target Variable
-                const name_str = self.tree.getString(name_id);
-
-                // Intercept @@ variables unconditionally
                 if (std.mem.startsWith(u8, name_str, "@@")) {
                     const name_idx = try self.makeStringConstant(name_str);
                     try self.emitOp(.op_set_class_var);
                     try self.emitByte(name_idx);
-                } else if (sym.kind == .global) {
-                    const name_idx = try self.makeStringConstant(name_str);
-                    try self.emitOp(.op_define_global);
-                    try self.emitByte(name_idx);
-                    try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
                 } else if (self.resolveLocal(name_id)) |local_slot| {
                     try self.emitOp(.op_set_local);
                     try self.emitByte(local_slot);
                 } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
                     try self.emitOp(.op_set_upvalue);
                     try self.emitByte(upvalue_slot);
+                } else if (self.enclosing == null or sym.kind == .global) {
+                    const name_idx = try self.makeStringConstant(name_str);
+                    try self.emitOp(.op_define_global);
+                    try self.emitByte(name_idx);
+                    try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
                 } else {
                     self.addLocal(name_id, @intCast(sym.index));
                     try self.emitOp(.op_set_local);
@@ -679,16 +672,24 @@ pub const Compiler = struct {
 
                 // 1. Setup an isolated function on the VM heap
                 const func = try self.vm.gc.allocateFunction(self.vm);
-                func.arity = @intCast(params.len);
 
+                var positional_count: usize = 0;
                 var splat_idx: ?usize = null;
+                var block_param_idx: ?usize = null;
+
                 for (params, 0..) |p, i| {
-                    if (p.modifier != null and p.modifier.? == .splat) {
-                        func.has_splat = true;
-                        splat_idx = i;
-                        break;
+                    if (p.modifier != null) {
+                        if (p.modifier.? == .splat or p.modifier.? == .double_splat) {
+                            func.has_splat = true;
+                            if (p.modifier.? == .splat) splat_idx = i;
+                        }
+                        if (p.modifier.? == .block) block_param_idx = i;
+                    }
+                    if (p.modifier == null or p.modifier.? == .splat or p.modifier.? == .double_splat) {
+                        positional_count += 1;
                     }
                 }
+                func.arity = @intCast(positional_count);
 
                 // Protect the function from GC while compiling the child block!
                 self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
@@ -722,9 +723,16 @@ pub const Compiler = struct {
                 child_compiler.local_count = 1;
                 child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
 
-                // Assign the parameters their starting stack slots (starting at 1)
-                for (params, 0..) |param, i| {
-                    child_compiler.addLocal(param.name, @intCast(i + 1));
+                // Assign the parameters their starting stack slots
+                var current_slot: u8 = 1;
+                for (params) |param| {
+                    if (param.modifier != null and param.modifier.? == .block) {
+                        // The block is ALWAYS pushed to the final padded slot
+                        child_compiler.addLocal(param.name, @intCast(positional_count + 1));
+                    } else {
+                        child_compiler.addLocal(param.name, current_slot);
+                        current_slot += 1;
+                    }
                 }
 
                 // If it has a splat, sweep the stack overflow immediately
@@ -845,9 +853,19 @@ pub const Compiler = struct {
 
                 // Push Receiver/Target
                 if (mc.receiver == .none) {
-                    const name_idx = try self.makeStringConstant(func_name);
-                    try self.emitOp(.op_get_global);
-                    try self.emitByte(name_idx);
+                    const name_id = mc.method_name;
+                    const name_str = self.tree.getString(name_id);
+                    if (self.resolveLocal(name_id)) |slot| {
+                        try self.emitOp(.op_get_local);
+                        try self.emitByte(slot);
+                    } else if (try self.resolveUpvalue(name_id)) |slot| {
+                        try self.emitOp(.op_get_upvalue);
+                        try self.emitByte(slot);
+                    } else {
+                        const name_idx = try self.makeStringConstant(name_str);
+                        try self.emitOp(.op_get_global);
+                        try self.emitByte(name_idx);
+                    }
                 } else {
                     try self.compileNode(mc.receiver);
                     if (mc.is_safe) safe_jump = try self.emitJump(.op_jump_if_nil);
@@ -916,6 +934,7 @@ pub const Compiler = struct {
 
                     child_compiler.local_count = 1;
                     child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
+
                     for (block_params, 0..) |p_idx, i| {
                         const p_node = self.tree.getNode(p_idx).?;
                         const name_id = @as(ast.StringId, @enumFromInt(p_node.data));
@@ -1229,20 +1248,30 @@ pub const Compiler = struct {
             .multiple_assignment => {
                 const ma = self.tree.multipleAssignment(node);
                 const lhs = self.tree.getLhsExprs(ma.lhs);
+                try self.compileNode(ma.value);
 
-                for (lhs) |l| {
+                var splat_idx: ?usize = null;
+                for (lhs, 0..) |l, i| {
                     if (l.modifier != null and l.modifier.? == .splat) {
-                        std.log.err("Compile Error: Destructuring splats (LHS) like `a, *b = arr` are not yet supported.", .{});
-                        return error.UnsupportedScope;
+                        splat_idx = i;
+                        break;
                     }
                 }
 
-                try self.compileNode(ma.value);
-                if (lhs.len > 255) return error.TooManyConstants;
-
-                try self.emitOp(.op_unpack);
-                try self.emitByte(@intCast(lhs.len));
-                self.simulatePush(lhs.len);
+                if (splat_idx) |s_idx| {
+                    const pre_count = s_idx;
+                    const post_count = lhs.len - 1 - s_idx;
+                    if (pre_count > 255 or post_count > 255) return error.TooManyConstants;
+                    try self.emitOp(.op_unpack_splat);
+                    try self.emitByte(@intCast(pre_count));
+                    try self.emitByte(@intCast(post_count));
+                    self.simulatePush(lhs.len); // pre + splat (1) + post
+                } else {
+                    if (lhs.len > 255) return error.TooManyConstants;
+                    try self.emitOp(.op_unpack);
+                    try self.emitByte(@intCast(lhs.len));
+                    self.simulatePush(lhs.len);
+                }
 
                 var i: usize = lhs.len;
                 while (i > 0) {
@@ -1298,16 +1327,24 @@ pub const Compiler = struct {
                         // Compile the closure isolated from the parent
                         const func = try self.vm.gc.allocateFunction(self.vm);
                         const params = self.tree.getParams(ds.params);
-                        func.arity = @intCast(params.len);
 
+                        var positional_count: usize = 0;
                         var splat_idx: ?usize = null;
+                        var block_param_idx: ?usize = null;
+
                         for (params, 0..) |p, idx| {
-                            if (p.modifier != null and p.modifier.? == .splat) {
-                                func.has_splat = true;
-                                splat_idx = idx;
-                                break;
+                            if (p.modifier != null) {
+                                if (p.modifier.? == .splat or p.modifier.? == .double_splat) {
+                                    func.has_splat = true;
+                                    if (p.modifier.? == .splat) splat_idx = idx;
+                                }
+                                if (p.modifier.? == .block) block_param_idx = idx;
+                            }
+                            if (p.modifier == null or p.modifier.? == .splat or p.modifier.? == .double_splat) {
+                                positional_count += 1;
                             }
                         }
+                        func.arity = @intCast(positional_count);
 
                         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
                         self.vm.push(value.Value.initObj(&func.obj));
@@ -1337,8 +1374,15 @@ pub const Compiler = struct {
                         // Reserve slot 0 as the implicit 'self' receiver
                         child_compiler.local_count = 1;
                         child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
-                        for (params, 0..) |param, i| {
-                            child_compiler.addLocal(param.name, @intCast(i + 1));
+
+                        var current_slot: u8 = 1;
+                        for (params) |param| {
+                            if (param.modifier != null and param.modifier.? == .block) {
+                                child_compiler.addLocal(param.name, @intCast(positional_count + 1));
+                            } else {
+                                child_compiler.addLocal(param.name, current_slot);
+                                current_slot += 1;
+                            }
                         }
 
                         if (splat_idx) |s_idx| {
@@ -1492,7 +1536,7 @@ pub const Compiler = struct {
         try self.emitByte(@intFromEnum(op));
         switch (op) {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import, .op_block_given, .op_get_class_var => self.simulatePush(1),
-            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method => self.simulatePop(1),
+            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method, .op_unpack, .op_unpack_splat => self.simulatePop(1),
             .op_map_insert => self.simulatePop(2),
             .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent => {
                 self.simulatePop(2);
@@ -1515,9 +1559,6 @@ pub const Compiler = struct {
             .op_set_property => {
                 self.simulatePop(2); // Pops value and object
                 self.simulatePush(1); // Assignment yields value
-            },
-            .op_unpack => {
-                self.simulatePop(1);
             },
             .op_set_class_var => {},
             else => {},
