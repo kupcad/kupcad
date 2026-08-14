@@ -1,11 +1,9 @@
 const std = @import("std");
+const testing = std.testing;
+const wasm = @import("wasm.zig");
+const VM = @import("vm/vm.zig").VM;
 const chunk = @import("vm/chunk.zig");
 const value = @import("core/value.zig");
-const VM = @import("vm/vm.zig").VM;
-const testing = std.testing;
-
-// Import the WASM module functions directly
-const wasm = @import("wasm.zig");
 
 test "WASM Interop: format_code_wasm handles invalid and empty inputs gracefully" {
     // Test Syntax Error Handling
