@@ -718,3 +718,78 @@ test "VM: Gas limit prevents infinite loops and throws specific error" {
     try testing.expectEqual(.execution_limit_exceeded, result);
     try testing.expectEqual(@as(usize, 51), vm.instruction_count);
 }
+
+test "VM: Math module namespace and functions" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Prove Math::PI via property access
+    const math_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("Math"));
+    const pi_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("PI"));
+    try out_chunk.writeOp(testing.allocator, .op_get_global, 0);
+    try out_chunk.write(testing.allocator, math_str, 0);
+    try out_chunk.writeOp(testing.allocator, .op_get_property, 0);
+    try out_chunk.write(testing.allocator, pi_str, 0);
+    try out_chunk.writeOp(testing.allocator, .op_return, 0);
+
+    out_chunk.max_stack_slots = 5;
+    var result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(f64, std.math.pi), vm.stack[0].asNumber());
+
+    // Clean up and prove Math.sin(0) = 0
+    vm.stack_top = 0;
+    out_chunk.code.clearRetainingCapacity();
+
+    const sin_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("sin"));
+    const arg_0 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(0));
+
+    try out_chunk.writeOp(testing.allocator, .op_get_global, 0);
+    try out_chunk.write(testing.allocator, math_str, 0); // Receiver (Math)
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, arg_0, 0); // Argument (0)
+
+    try out_chunk.writeOp(testing.allocator, .op_invoke, 0); // Invoke method on receiver
+    try out_chunk.write(testing.allocator, sin_str, 0);
+    try out_chunk.write(testing.allocator, 1, 0); // 1 arg
+    try out_chunk.writeOp(testing.allocator, .op_return, 0);
+
+    result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(f64, 0.0), vm.stack[0].asNumber());
+}
+
+test "VM: String Native Methods (split, replace)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Prove "hello world".split(" ")
+    const str_val = try out_chunk.addConstant(testing.allocator, try vm.allocateString("hello world"));
+    const split_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("split"));
+    const delim_val = try out_chunk.addConstant(testing.allocator, try vm.allocateString(" "));
+
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, str_val, 0);
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, delim_val, 0);
+    try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
+    try out_chunk.write(testing.allocator, split_str, 0);
+    try out_chunk.write(testing.allocator, 1, 0); // 1 arg
+    try out_chunk.writeOp(testing.allocator, .op_return, 0);
+
+    out_chunk.max_stack_slots = 5;
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    const arr = vm.stack[0];
+    try testing.expect(arr.isObject() and arr.asObj().obj_type == .array);
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+}

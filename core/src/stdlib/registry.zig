@@ -1,5 +1,6 @@
 const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
+const value = @import("../core/value.zig");
 const manifest = @import("manifest.zig");
 
 // Import the Manifold driver (In the future, a build flag will dynamically select OCCT)
@@ -14,6 +15,18 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     for (manifest.global_functions) |def| {
         try vm.defineNative(def.name, def.func);
     }
+
+    // Set up Math module (as an instance of a pseudo-class)
+    const math_str = try vm.gc.allocateString(vm, "Math");
+    const math_class = try vm.gc.allocateClass(vm, math_str, null);
+    const math_inst = try vm.gc.allocateInstance(vm, math_class);
+
+    // Add Math::PI
+    const pi_val = value.Value.initNumber(std.math.pi);
+    try math_inst.fields.put(vm.allocator, "PI", pi_val);
+
+    // Inject into globals
+    try vm.globals.put(vm.allocator, "Math", value.Value.initObj(&math_inst.obj));
 
     // Assign the Active Kernel Driver
     vm.active_kernel = &manifold_driver;

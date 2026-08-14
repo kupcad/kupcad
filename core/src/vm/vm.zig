@@ -302,6 +302,27 @@ pub const VM = struct {
                         self.push(value.Value.initBool(a.asNumber() > b.asNumber()));
                     } else return .runtime_error;
                 },
+                .op_get_property => {
+                    const name_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+                    const receiver = self.stack[self.stack_top - 1];
+
+                    if (receiver.isInstance()) {
+                        const instance = receiver.asInstance();
+                        if (instance.fields.get(name_str)) |val| {
+                            self.stack_top -= 1; // Pop receiver
+                            self.push(val);
+                        } else {
+                            self.reportError("Runtime Error: Undefined property '{s}'.\n", .{name_str});
+                            return .runtime_error;
+                        }
+                    } else {
+                        self.reportError("Runtime Error: Only instances have properties.\n", .{});
+                        return .runtime_error;
+                    }
+                },
                 .op_get_global => {
                     const name_idx = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
@@ -552,108 +573,190 @@ pub const VM = struct {
                     frame.ip += 1;
                     const arg_count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
+
                     const method_name_val = exec_chunk.constants.items[method_name_idx];
                     const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
 
                     const receiver = self.stack[self.stack_top - 1 - arg_count];
                     const args_ptr = self.stack.ptr + self.stack_top - arg_count;
 
-                    // NATIVE ROUTING: Primitives
-                    if (receiver.isObject() and receiver.asObj().obj_type == .array) {
-                        const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
+                    // ====================================================
+                    // 1. NATIVE ROUTING: PRIMITIVES (Array, Map, String)
+                    // ====================================================
+                    if (receiver.isObject()) {
+                        const obj_type = receiver.asObj().obj_type;
 
-                        if (std.mem.eql(u8, method_name_str, "each") and arg_count == 1) {
-                            const closure_val = self.stack[self.stack_top - 1];
-                            if (closure_val.isClosure()) {
-                                const closure = closure_val.asClosure();
-                                for (arr.items.items) |item| {
-                                    _ = self.callClosureSync(closure, &.{item}) catch return .runtime_error;
-                                }
-                                self.stack_top -= (arg_count + 1); // pop args & receiver
-                                self.push(receiver); // each returns self
-                                continue;
-                            }
-                        } else if (std.mem.eql(u8, method_name_str, "map") and arg_count == 1) {
-                            const closure_val = self.stack[self.stack_top - 1];
-                            if (closure_val.isClosure()) {
-                                const closure = closure_val.asClosure();
-                                const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                        // --- ARRAY METHODS ---
+                        if (obj_type == .array) {
+                            const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
 
-                                self.push(value.Value.initObj(&new_arr.obj)); // Protect from GC during mapping
-                                new_arr.items.ensureTotalCapacity(self.allocator, arr.items.items.len) catch return .runtime_error;
-
-                                for (arr.items.items) |item| {
-                                    const mapped_val = self.callClosureSync(closure, &.{item}) catch return .runtime_error;
-                                    self.retainValue(mapped_val);
-                                    new_arr.items.appendAssumeCapacity(mapped_val);
-                                }
-                                const res = self.pop(); // Pop protected array
-                                self.stack_top -= (arg_count + 1);
-                                self.push(res);
-                                continue;
-                            }
-                        } else if (std.mem.eql(u8, method_name_str, "reduce")) {
-                            const closure_val = self.stack[self.stack_top - 1];
-                            if (closure_val.isClosure()) {
-                                const closure = closure_val.asClosure();
-                                var acc_val: value.Value = undefined;
-                                var start_idx: usize = 0;
-
-                                if (arg_count == 2) {
-                                    acc_val = self.stack[self.stack_top - 2]; // Initial value provided
-                                } else if (arg_count == 1) {
-                                    if (arr.items.items.len == 0) {
-                                        self.stack_top -= 2; // pop closure and receiver
-                                        self.push(value.Value.initNil());
-                                        continue;
+                            if (std.mem.eql(u8, method_name_str, "each") and arg_count == 1) {
+                                const closure_val = self.stack[self.stack_top - 1];
+                                if (closure_val.isClosure()) {
+                                    const closure = closure_val.asClosure();
+                                    for (arr.items.items) |item| {
+                                        _ = self.callClosureSync(closure, &.{item}) catch return .runtime_error;
                                     }
-                                    acc_val = arr.items.items[0]; // Default to first element
-                                    start_idx = 1;
-                                } else return .runtime_error;
-
-                                for (arr.items.items[start_idx..]) |item| {
-                                    acc_val = self.callClosureSync(closure, &.{ acc_val, item }) catch return .runtime_error;
+                                    self.stack_top -= (arg_count + 1); // pop args & receiver
+                                    self.push(receiver); // each returns self
+                                    continue;
                                 }
-                                self.stack_top -= (arg_count + 1); // pop args & receiver
-                                self.push(acc_val);
+                            } else if (std.mem.eql(u8, method_name_str, "map") and arg_count == 1) {
+                                const closure_val = self.stack[self.stack_top - 1];
+                                if (closure_val.isClosure()) {
+                                    const closure = closure_val.asClosure();
+                                    const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                                    self.push(value.Value.initObj(&new_arr.obj)); // Protect from GC during mapping
+                                    new_arr.items.ensureTotalCapacity(self.allocator, arr.items.items.len) catch return .runtime_error;
+                                    for (arr.items.items) |item| {
+                                        const mapped_val = self.callClosureSync(closure, &.{item}) catch return .runtime_error;
+                                        self.retainValue(mapped_val);
+                                        new_arr.items.appendAssumeCapacity(mapped_val);
+                                    }
+                                    const res = self.pop(); // Pop protected array
+                                    self.stack_top -= (arg_count + 1);
+                                    self.push(res);
+                                    continue;
+                                }
+                            } else if (std.mem.eql(u8, method_name_str, "reduce")) {
+                                const closure_val = self.stack[self.stack_top - 1];
+                                if (closure_val.isClosure()) {
+                                    const closure = closure_val.asClosure();
+                                    var acc_val: value.Value = undefined;
+                                    var start_idx: usize = 0;
+
+                                    if (arg_count == 2) {
+                                        acc_val = self.stack[self.stack_top - 2]; // Initial value provided
+                                    } else if (arg_count == 1) {
+                                        if (arr.items.items.len == 0) {
+                                            self.stack_top -= 2; // pop closure and receiver
+                                            self.push(value.Value.initNil());
+                                            continue;
+                                        }
+                                        acc_val = arr.items.items[0]; // Default to first element
+                                        start_idx = 1;
+                                    } else return .runtime_error;
+
+                                    for (arr.items.items[start_idx..]) |item| {
+                                        acc_val = self.callClosureSync(closure, &.{ acc_val, item }) catch return .runtime_error;
+                                    }
+                                    self.stack_top -= (arg_count + 1); // pop args & receiver
+                                    self.push(acc_val);
+                                    continue;
+                                }
+                            } else if (std.mem.eql(u8, method_name_str, "push") and arg_count == 1) {
+                                const item = self.stack[self.stack_top - 1];
+                                self.retainValue(item);
+                                arr.items.append(self.allocator, item) catch return .runtime_error;
+                                self.stack_top -= (arg_count + 1);
+                                self.push(receiver);
+                                continue;
+                            } else if (std.mem.eql(u8, method_name_str, "length") and arg_count == 0) {
+                                self.stack_top -= 1;
+                                self.push(value.Value.initNumber(@floatFromInt(arr.items.items.len)));
                                 continue;
                             }
-                        } else if (std.mem.eql(u8, method_name_str, "push") and arg_count == 1) {
-                            const item = self.stack[self.stack_top - 1];
-                            self.retainValue(item);
-                            arr.items.append(self.allocator, item) catch return .runtime_error;
-                            self.stack_top -= (arg_count + 1);
-                            self.push(receiver);
-                            continue;
-                        } else if (std.mem.eql(u8, method_name_str, "length") and arg_count == 0) {
-                            self.stack_top -= 1;
-                            self.push(value.Value.initNumber(@floatFromInt(arr.items.items.len)));
-                            continue;
                         }
-                    } else if (receiver.isObject() and receiver.asObj().obj_type == .map) {
-                        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
+                        // --- MAP (HASH) METHODS ---
+                        else if (obj_type == .map) {
+                            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
 
-                        if (std.mem.eql(u8, method_name_str, "each") and arg_count == 1) {
-                            const closure_val = self.stack[self.stack_top - 1];
-                            if (closure_val.isClosure()) {
-                                const closure = closure_val.asClosure();
-                                // Pass BOTH the Key and the Value to the block!
-                                for (map.keys.items, 0..) |k, i| {
-                                    const v = map.values.items[i];
-                                    _ = self.callClosureSync(closure, &.{ k, v }) catch return .runtime_error;
+                            if (std.mem.eql(u8, method_name_str, "each") and arg_count == 1) {
+                                const closure_val = self.stack[self.stack_top - 1];
+                                if (closure_val.isClosure()) {
+                                    const closure = closure_val.asClosure();
+                                    // Pass BOTH the Key and the Value to the block!
+                                    for (map.keys.items, 0..) |k, i| {
+                                        const v = map.values.items[i];
+                                        _ = self.callClosureSync(closure, &.{ k, v }) catch return .runtime_error;
+                                    }
+                                    self.stack_top -= (arg_count + 1); // pop args & receiver
+                                    self.push(receiver); // each returns self
+                                    continue;
                                 }
-                                self.stack_top -= (arg_count + 1); // pop args & receiver
-                                self.push(receiver); // each returns self
+                            }
+                        }
+                        // --- STRING METHODS ---
+                        else if (obj_type == .string) {
+                            const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
+
+                            if (std.mem.eql(u8, method_name_str, "upcase") and arg_count == 0) {
+                                const new_str = self.allocator.alloc(u8, str_obj.chars.len) catch return .runtime_error;
+                                for (str_obj.chars, 0..) |c, i| new_str[i] = std.ascii.toUpper(c);
+                                const val = self.allocateString(new_str) catch return .runtime_error;
+                                self.allocator.free(new_str);
+                                self.stack_top -= 1; // pop receiver
+                                self.push(val);
                                 continue;
+                            } else if (std.mem.eql(u8, method_name_str, "downcase") and arg_count == 0) {
+                                const new_str = self.allocator.alloc(u8, str_obj.chars.len) catch return .runtime_error;
+                                for (str_obj.chars, 0..) |c, i| new_str[i] = std.ascii.toLower(c);
+                                const val = self.allocateString(new_str) catch return .runtime_error;
+                                self.allocator.free(new_str);
+                                self.stack_top -= 1;
+                                self.push(val);
+                                continue;
+                            } else if (std.mem.eql(u8, method_name_str, "split") and arg_count == 1) {
+                                const delim_val = self.stack[self.stack_top - 1];
+                                if (delim_val.isObject() and delim_val.asObj().obj_type == .string) {
+                                    const delim_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", delim_val.asObj()))).chars;
+                                    const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                                    const arr_val = value.Value.initObj(&arr_obj.obj);
+                                    self.push(arr_val); // Protect
+                                    var iter = std.mem.splitSequence(u8, str_obj.chars, delim_str);
+                                    while (iter.next()) |part| {
+                                        const part_val = self.allocateString(part) catch return .runtime_error;
+                                        self.retainValue(part_val);
+                                        arr_obj.items.append(self.allocator, part_val) catch return .runtime_error;
+                                    }
+                                    const res = self.pop();
+                                    self.stack_top -= 2; // Pop arg and receiver
+                                    self.push(res);
+                                    continue;
+                                } else return .runtime_error;
+                            } else if (std.mem.eql(u8, method_name_str, "replace") and arg_count == 2) {
+                                const replace_val = self.stack[self.stack_top - 1];
+                                const target_val = self.stack[self.stack_top - 2];
+                                if (target_val.isObject() and target_val.asObj().obj_type == .string and
+                                    replace_val.isObject() and replace_val.asObj().obj_type == .string)
+                                {
+                                    const t_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
+                                    const r_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", replace_val.asObj()))).chars;
+                                    const replaced = std.mem.replaceOwned(u8, self.allocator, str_obj.chars, t_str, r_str) catch return .runtime_error;
+                                    const val = self.allocateString(replaced) catch return .runtime_error;
+                                    self.allocator.free(replaced);
+                                    self.stack_top -= 3; // Pop args and receiver
+                                    self.push(val);
+                                    continue;
+                                } else return .runtime_error;
                             }
                         }
                     }
 
-                    // 1. Is it a KupCAD Custom Object?
+                    // ====================================================
+                    // 2. MATH MODULE NAMESPACE
+                    // ====================================================
+                    if (receiver.isInstance() and std.mem.eql(u8, receiver.asInstance().class.name.chars, "Math")) {
+                        if (arg_count == 1) {
+                            const arg = self.stack[self.stack_top - 1];
+                            if (arg.isNumber()) {
+                                var res: f64 = 0;
+                                if (std.mem.eql(u8, method_name_str, "sin")) res = std.math.sin(arg.asNumber()) else if (std.mem.eql(u8, method_name_str, "cos")) res = std.math.cos(arg.asNumber()) else if (std.mem.eql(u8, method_name_str, "tan")) res = std.math.tan(arg.asNumber()) else if (std.mem.eql(u8, method_name_str, "sqrt")) res = std.math.sqrt(arg.asNumber()) else if (std.mem.eql(u8, method_name_str, "abs")) res = @abs(arg.asNumber()) else return .runtime_error;
+
+                                self.stack_top -= 2; // Pop arg and receiver
+                                self.push(value.Value.initNumber(res));
+                                continue;
+                            } else return .runtime_error;
+                        }
+                    }
+
+                    // ====================================================
+                    // 3. CUSTOM KUPCAD OBJECTS (Instances)
+                    // ====================================================
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
 
-                        // Property access behaves exactly like a 0-arg method call!
+                        // Property access behaves exactly like a 0-arg method call
                         if (arg_count == 0) {
                             if (instance.fields.get(method_name_str)) |field_val| {
                                 self.stack_top -= 1; // Pop receiver
@@ -666,7 +769,7 @@ pub const VM = struct {
                         if (self.findMethod(instance.class, method_name_str)) |method_val| {
                             const closure = method_val.asClosure();
                             var provided_args = arg_count;
-                            const expected_args = closure.function.arity - 1;
+                            const expected_args = closure.function.arity - 1; // -1 for implicit 'self'
 
                             if (provided_args < expected_args) {
                                 const missing = expected_args - provided_args;
@@ -690,7 +793,9 @@ pub const VM = struct {
                         return .runtime_error;
                     }
 
-                    // 2. Fallback to Native C++ Kernel Methods (for Geometry)
+                    // ====================================================
+                    // 4. FALLBACK: NATIVE C++ KERNEL METHODS (Geometry)
+                    // ====================================================
                     if (self.host.invoke_handler) |handler| {
                         const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch return .runtime_error;
                         var i: usize = 0;
