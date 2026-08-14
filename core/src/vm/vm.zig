@@ -204,39 +204,8 @@ pub const VM = struct {
                     frame.ip += 1;
                     self.setLocal(frame, slot, self.stack[self.stack_top - 1]);
                 },
-                .op_add => {
-                    const b_val = self.pop();
-                    defer self.releaseValue(b_val);
-                    const a_val = self.pop();
-                    defer self.releaseValue(a_val);
-
-                    if (a_val.isNumber() and b_val.isNumber()) {
-                        self.push(value.Value.initNumber(a_val.asNumber() + b_val.asNumber()));
-                    } else if (self.host.binary_handler) |handler| {
-                        const result = handler(self, .op_add, a_val, b_val) catch return .runtime_error;
-                        self.stack.ptr[self.stack_top] = result;
-                        self.stack_top += 1;
-                    } else {
-                        self.reportError("Runtime Error: Invalid operands for '+'\n", .{});
-                        return .runtime_error;
-                    }
-                },
-                .op_subtract => {
-                    const b_val = self.pop();
-                    defer self.releaseValue(b_val);
-                    const a_val = self.pop();
-                    defer self.releaseValue(a_val);
-
-                    if (a_val.isNumber() and b_val.isNumber()) {
-                        self.push(value.Value.initNumber(a_val.asNumber() - b_val.asNumber()));
-                    } else if (self.host.binary_handler) |handler| {
-                        const result = handler(self, .op_subtract, a_val, b_val) catch return .runtime_error;
-                        self.stack.ptr[self.stack_top] = result;
-                        self.stack_top += 1;
-                    } else {
-                        self.reportError("Runtime Error: Invalid operands for '-'\n", .{});
-                        return .runtime_error;
-                    }
+                .op_add, .op_subtract => {
+                    if (self.executeBinaryArithmetic(op) != .ok) return .runtime_error;
                 },
                 .op_multiply => {
                     const nums = self.popBinaryNumbers() catch return .runtime_error;
@@ -1553,6 +1522,32 @@ pub const VM = struct {
             if (self.valuesEqual(k, key)) return i;
         }
         return null;
+    }
+
+    fn executeBinaryArithmetic(self: *VM, op: chunk.OpCode) InterpretResult {
+        const b_val = self.pop();
+        defer self.releaseValue(b_val);
+        const a_val = self.pop();
+        defer self.releaseValue(a_val);
+
+        if (a_val.isNumber() and b_val.isNumber()) {
+            const res = switch (op) {
+                .op_add => a_val.asNumber() + b_val.asNumber(),
+                .op_subtract => a_val.asNumber() - b_val.asNumber(),
+                else => unreachable,
+            };
+            self.push(value.Value.initNumber(res));
+            return .ok;
+        } else if (self.host.binary_handler) |handler| {
+            const result = handler(self, op, a_val, b_val) catch return .runtime_error;
+            self.stack.ptr[self.stack_top] = result;
+            self.stack_top += 1;
+            return .ok;
+        } else {
+            const op_symbol = if (op == .op_add) "+" else "-";
+            self.reportError("Runtime Error: Invalid operands for '{s}'\n", .{op_symbol});
+            return .runtime_error;
+        }
     }
 
     fn popBinaryNumbers(self: *VM) !struct { f64, f64 } {
