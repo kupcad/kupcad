@@ -1400,3 +1400,38 @@ test "VM: Modules and Mixins (include)" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
 }
+
+test "VM: Monkey-patching native Primitives dynamically (Array extension)" {
+    const Document = @import("../core/document.zig").Document;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm); // Initializes vm.array_class
+
+    // Define a new method natively inside KupCAD syntax on the base Array class
+    const source =
+        \\class Array
+        \\  def double_length()
+        \\    self.length() * 2
+        \\  end
+        \\end
+        \\
+        \\arr = [1, 2, 3]
+        \\arr.double_length()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // 3 items * 2 = 6!
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 6.0), vm.stack[0].asNumber());
+}

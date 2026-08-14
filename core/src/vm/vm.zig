@@ -73,6 +73,11 @@ pub const VM = struct {
     active_kernel: ?*const kernel_mod.GeometryKernel = null,
     dag_builder: dag.DAGBuilder,
     mute_errors: bool = false,
+    // std classes
+    string_class: ?*value.ObjClass = null,
+    array_class: ?*value.ObjClass = null,
+    map_class: ?*value.ObjClass = null,
+    number_class: ?*value.ObjClass = null,
     // safety for infinite loops
     instruction_count: usize,
     instruction_limit: usize,
@@ -885,6 +890,14 @@ pub const VM = struct {
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
 
+                    // Re-open the class if it already exists
+                    if (self.globals.get(name_str.chars)) |existing| {
+                        if (existing.isClass()) {
+                            self.push(existing);
+                            continue;
+                        }
+                    }
+
                     const class_obj = self.gc.allocateClass(self, name_str, null) catch return .runtime_error;
                     self.push(value.Value.initObj(&class_obj.obj));
                 },
@@ -951,12 +964,7 @@ pub const VM = struct {
                         const args_ptr = self.stack.ptr + base_slot + 1;
                         const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
 
-                        var i: usize = 0;
-                        while (i <= arg_count) : (i += 1) {
-                            const dropped = self.pop();
-                            self.releaseValue(dropped);
-                        }
-
+                        self.popAndRelease(arg_count + 1);
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
                     } else if (callee.isClosure()) {
@@ -986,14 +994,75 @@ pub const VM = struct {
                     const method_name_val = exec_chunk.constants.items[method_name_idx];
                     const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
 
-                    // Absolute base slot calculation
                     const base_slot = self.stack_top - 1 - arg_count;
                     const receiver = self.stack[base_slot];
                     const args_ptr = self.stack.ptr + base_slot + 1;
 
-                    // ====================================================
-                    // 1. NATIVE ROUTING: PRIMITIVES (Array, Map, String)
-                    // ====================================================
+                    // Resolve Class of Receiver for Native Methods & Monkey-Patching
+                    var class_obj: ?*value.ObjClass = null;
+                    if (receiver.isInstance()) {
+                        class_obj = receiver.asInstance().class;
+                    } else if (receiver.isObject()) {
+                        switch (receiver.asObj().obj_type) {
+                            .string => class_obj = self.string_class,
+                            .array => class_obj = self.array_class,
+                            .map => class_obj = self.map_class,
+                            else => {},
+                        }
+                    } else if (receiver.isNumber()) {
+                        class_obj = self.number_class;
+                    }
+
+                    // Handle Property Access (Instances only)
+                    if (receiver.isInstance() and arg_count == 0) {
+                        if (receiver.asInstance().fields.get(method_name_str)) |val| {
+                            self.popAndRelease(1); // Pop receiver
+                            self.push(val);
+                            continue;
+                        }
+                    }
+
+                    // Method Lookup
+                    var method_val: ?value.Value = null;
+                    if (receiver.isClass()) {
+                        method_val = self.findClassMethod(receiver.asClass(), method_name_str);
+                        if (method_val == null and std.mem.eql(u8, method_name_str, "new")) {
+                            const class_to_instantiate = receiver.asClass();
+                            const instance = self.gc.allocateInstance(self, class_to_instantiate) catch return .runtime_error;
+                            self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj);
+
+                            if (self.findMethod(class_to_instantiate, "initialize")) |init_method| {
+                                if (init_method.isClosure()) {
+                                    self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
+                                }
+                                continue;
+                            } else if (arg_count > 0) {
+                                self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
+                                return .runtime_error;
+                            }
+                            continue;
+                        }
+                    } else if (class_obj) |c| {
+                        method_val = self.findMethod(c, method_name_str);
+                    }
+
+                    // Dispatch Method if Found
+                    if (method_val) |m_val| {
+                        if (m_val.isNative()) {
+                            const native_obj = m_val.asNative();
+                            const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
+
+                            self.popAndRelease(arg_count + 1);
+                            self.stack.ptr[self.stack_top] = result;
+                            self.stack_top += 1;
+                            continue;
+                        } else if (m_val.isClosure()) {
+                            self.dispatchClosure(m_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
+                            continue;
+                        }
+                    }
+
+                    // NATIVE ROUTING FALLBACK: Primitives (Optimized Jump Tables)
                     if (receiver.isObject()) {
                         const obj_type = receiver.asObj().obj_type;
                         if (obj_type == .array) {
@@ -1008,7 +1077,7 @@ pub const VM = struct {
                                             for (arr.items.items) |item| {
                                                 _ = self.callClosureSync(closure, &.{item}) catch return .runtime_error;
                                             }
-                                            self.stack_top -= 2;
+                                            self.popAndRelease(2);
                                             self.push(receiver);
                                         } else return .runtime_error;
                                     },
@@ -1026,7 +1095,7 @@ pub const VM = struct {
                                                 new_arr.items.appendAssumeCapacity(mapped_val);
                                             }
                                             const res = self.pop();
-                                            self.stack_top -= 2;
+                                            self.popAndRelease(2);
                                             self.push(res);
                                         } else return .runtime_error;
                                     },
@@ -1040,7 +1109,7 @@ pub const VM = struct {
                                                 acc_val = self.stack[self.stack_top - 2];
                                             } else if (arg_count == 1) {
                                                 if (arr.items.items.len == 0) {
-                                                    self.stack_top -= 2;
+                                                    self.popAndRelease(2);
                                                     self.push(value.Value.initNil());
                                                     continue;
                                                 }
@@ -1050,7 +1119,7 @@ pub const VM = struct {
                                             for (arr.items.items[start_idx..]) |item| {
                                                 acc_val = self.callClosureSync(closure, &.{ acc_val, item }) catch return .runtime_error;
                                             }
-                                            self.stack_top -= (arg_count + 1);
+                                            self.popAndRelease(arg_count + 1);
                                             self.push(acc_val);
                                         } else return .runtime_error;
                                     },
@@ -1059,17 +1128,17 @@ pub const VM = struct {
                                         const item = self.stack[self.stack_top - 1];
                                         self.retainValue(item);
                                         arr.items.append(self.allocator, item) catch return .runtime_error;
-                                        self.stack_top -= 2;
+                                        self.popAndRelease(2);
                                         self.push(receiver);
                                     },
                                     .length => {
                                         if (arg_count != 0) return .runtime_error;
-                                        self.stack_top -= 1;
+                                        self.popAndRelease(1);
                                         self.push(value.Value.initNumber(@floatFromInt(arr.items.items.len)));
                                     },
                                     .pop => {
                                         if (arg_count != 0) return .runtime_error;
-                                        self.stack_top -= 1;
+                                        self.popAndRelease(1);
                                         if (arr.items.items.len > 0) {
                                             const val = arr.items.items[arr.items.items.len - 1];
                                             arr.items.shrinkRetainingCapacity(arr.items.items.len - 1);
@@ -1078,7 +1147,7 @@ pub const VM = struct {
                                     },
                                     .shift => {
                                         if (arg_count != 0) return .runtime_error;
-                                        self.stack_top -= 1;
+                                        self.popAndRelease(1);
                                         if (arr.items.items.len > 0) {
                                             const val = arr.items.orderedRemove(0);
                                             self.push(val);
@@ -1089,7 +1158,7 @@ pub const VM = struct {
                                         const item = self.stack[self.stack_top - 1];
                                         self.retainValue(item);
                                         arr.items.insert(self.allocator, 0, item) catch return .runtime_error;
-                                        self.stack_top -= 2;
+                                        self.popAndRelease(2);
                                         self.push(receiver);
                                     },
                                     .slice => {
@@ -1109,7 +1178,7 @@ pub const VM = struct {
                                                 new_arr.items.appendAssumeCapacity(item);
                                             }
                                             const res = self.pop();
-                                            self.stack_top -= 3;
+                                            self.popAndRelease(3);
                                             self.push(res);
                                         } else return .runtime_error;
                                     },
@@ -1125,7 +1194,7 @@ pub const VM = struct {
                                                 if (idx < arr.items.items.len - 1) out.writer.writeAll(delim) catch return .runtime_error;
                                             }
                                             const res_str = self.allocateString(out.written()) catch return .runtime_error;
-                                            self.stack_top -= 2;
+                                            self.popAndRelease(2);
                                             self.push(res_str);
                                         } else return .runtime_error;
                                     },
@@ -1145,7 +1214,7 @@ pub const VM = struct {
                                                 const v = map.values.items[i];
                                                 _ = self.callClosureSync(closure, &.{ k, v }) catch return .runtime_error;
                                             }
-                                            self.stack_top -= 2;
+                                            self.popAndRelease(2);
                                             self.push(receiver);
                                         } else return .runtime_error;
                                     },
@@ -1159,7 +1228,7 @@ pub const VM = struct {
                                             new_arr.items.appendAssumeCapacity(k);
                                         }
                                         const res = self.pop();
-                                        self.stack_top -= 1;
+                                        self.popAndRelease(1);
                                         self.push(res);
                                     },
                                     .values => {
@@ -1172,14 +1241,14 @@ pub const VM = struct {
                                             new_arr.items.appendAssumeCapacity(v);
                                         }
                                         const res = self.pop();
-                                        self.stack_top -= 1;
+                                        self.popAndRelease(1);
                                         self.push(res);
                                     },
                                     .has_key => {
                                         if (arg_count != 1) return .runtime_error;
                                         const search_key = self.stack[self.stack_top - 1];
                                         const found = self.findMapKey(map, search_key) != null;
-                                        self.stack_top -= 2;
+                                        self.popAndRelease(2);
                                         self.push(value.Value.initBool(found));
                                     },
                                     .delete => {
@@ -1191,7 +1260,7 @@ pub const VM = struct {
                                             self.releaseValue(removed_key);
                                             deleted_val = map.values.orderedRemove(idx);
                                         }
-                                        self.stack_top -= 2;
+                                        self.popAndRelease(2);
                                         self.push(deleted_val);
                                     },
                                 }
@@ -1207,7 +1276,7 @@ pub const VM = struct {
                                         for (str_obj.chars, 0..) |c, i| new_str[i] = std.ascii.toUpper(c);
                                         const val = self.allocateString(new_str) catch return .runtime_error;
                                         self.allocator.free(new_str);
-                                        self.stack_top -= 1;
+                                        self.popAndRelease(1);
                                         self.push(val);
                                     },
                                     .downcase => {
@@ -1216,7 +1285,7 @@ pub const VM = struct {
                                         for (str_obj.chars, 0..) |c, i| new_str[i] = std.ascii.toLower(c);
                                         const val = self.allocateString(new_str) catch return .runtime_error;
                                         self.allocator.free(new_str);
-                                        self.stack_top -= 1;
+                                        self.popAndRelease(1);
                                         self.push(val);
                                     },
                                     .split => {
@@ -1234,7 +1303,7 @@ pub const VM = struct {
                                                 arr_obj.items.append(self.allocator, part_val) catch return .runtime_error;
                                             }
                                             const res = self.pop();
-                                            self.stack_top -= 2;
+                                            self.popAndRelease(2);
                                             self.push(res);
                                         } else return .runtime_error;
                                     },
@@ -1250,7 +1319,7 @@ pub const VM = struct {
                                             const replaced = std.mem.replaceOwned(u8, self.allocator, str_obj.chars, t_str, r_str) catch return .runtime_error;
                                             const val = self.allocateString(replaced) catch return .runtime_error;
                                             self.allocator.free(replaced);
-                                            self.stack_top -= 3;
+                                            self.popAndRelease(3);
                                             self.push(val);
                                         } else return .runtime_error;
                                     },
@@ -1260,9 +1329,7 @@ pub const VM = struct {
                         }
                     }
 
-                    // ====================================================
-                    // 2. MATH MODULE NAMESPACE
-                    // ====================================================
+                    // NATIVE ROUTING FALLBACK: MATH MODULE
                     if (receiver.isInstance() and std.mem.eql(u8, receiver.asInstance().class.name.chars, "Math")) {
                         if (arg_count == 1) {
                             const arg = self.stack[self.stack_top - 1];
@@ -1276,73 +1343,19 @@ pub const VM = struct {
                                         .sqrt => std.math.sqrt(val),
                                         .abs => @abs(val),
                                     };
-                                    self.stack_top -= 2;
+                                    self.popAndRelease(2); // Fix: Safely release arg and receiver
                                     self.push(value.Value.initNumber(res));
                                     continue;
                                 }
                             } else return .runtime_error;
                         }
                     }
-                    // ====================================================
-                    // 3. CUSTOM KUPCAD OBJECTS (Instances and Classes)
-                    // ====================================================
-                    if (receiver.isInstance()) {
-                        const instance = receiver.asInstance();
-                        // Property access behaves exactly like a 0-arg method call
-                        if (arg_count == 0) {
-                            if (instance.fields.get(method_name_str)) |field_val| {
-                                self.stack_top -= 1; // Pop receiver
-                                self.push(field_val);
-                                continue;
-                            }
-                        }
 
-                        // Check instance methods
-                        if (self.findMethod(instance.class, method_name_str)) |method_val| {
-                            self.dispatchClosure(method_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
-                            continue;
-                        }
-                        self.reportError("Runtime Error: Undefined property or method '{s}'.\n", .{method_name_str});
-                        return .runtime_error;
-                    } else if (receiver.isClass()) {
-                        const class_obj = receiver.asClass();
-
-                        // 1. Check custom class methods (def self.method)
-                        if (self.findClassMethod(class_obj, method_name_str)) |method_val| {
-                            self.dispatchClosure(method_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
-                            continue;
-                        }
-                        // 2. Default Constructor Fallback: Class.new(...)
-                        else if (std.mem.eql(u8, method_name_str, "new")) {
-                            const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
-                            self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance
-
-                            if (self.findMethod(class_obj, "initialize")) |init_method| {
-                                self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
-                                continue;
-                            } else if (arg_count > 0) {
-                                self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
-                                return .runtime_error;
-                            } else {
-                                // 0-arg default constructor: Instance remains in base_slot on top of the stack
-                                continue;
-                            }
-                        }
-
-                        self.reportError("Runtime Error: Undefined class method '{s}'.\n", .{method_name_str});
-                        return .runtime_error;
-                    }
-
-                    // ====================================================
-                    // 4. FALLBACK: NATIVE C++ KERNEL METHODS (Geometry)
-                    // ====================================================
+                    // FALLBACK: NATIVE C++ KERNEL METHODS (Geometry)
                     if (self.host.invoke_handler) |handler| {
                         const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch return .runtime_error;
-                        var i: usize = 0;
-                        while (i <= arg_count) : (i += 1) {
-                            const dropped = self.pop();
-                            self.releaseValue(dropped);
-                        }
+
+                        self.popAndRelease(arg_count + 1);
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
                     } else {
@@ -1391,7 +1404,7 @@ pub const VM = struct {
                     const result = self.callClosureSync(block_closure, yield_args) catch return .runtime_error;
 
                     // Pop yielded args off stack
-                    self.stack_top -= yield_arg_count;
+                    self.popAndRelease(yield_arg_count);
                     self.push(result);
                 },
                 .op_block_given => {
@@ -1815,6 +1828,14 @@ pub const VM = struct {
     }
 
     // --- Shared Execution Helpers ---
+    inline fn popAndRelease(self: *VM, count: usize) void {
+        var i: usize = 0;
+        while (i < count) : (i += 1) {
+            const dropped = self.pop();
+            self.releaseValue(dropped);
+        }
+    }
+
     pub fn valuesEqual(self: *VM, a: value.Value, b: value.Value) bool {
         _ = self;
         if (a.isNumber() and b.isNumber()) return a.asNumber() == b.asNumber();
