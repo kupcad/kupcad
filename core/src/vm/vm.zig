@@ -1709,6 +1709,52 @@ pub const VM = struct {
                     }
                     self.push(value.Value.initBool(match));
                 },
+                .op_jump_if_not_nil => {
+                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
+                    frame.ip += 2;
+                    const val = self.stack[self.stack_top - 1];
+                    if (!val.isNil()) {
+                        frame.ip += offset;
+                    }
+                },
+                .op_defined => {
+                    const name_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+
+                    // Safely probe globals and natives without triggering a VM panic
+                    const is_def = self.globals.contains(name_str);
+                    self.push(if (is_def) value.Value.initBool(true) else value.Value.initNil());
+                },
+                .op_extract_kwarg => {
+                    const map_slot = exec_chunk.code.items[frame.ip];
+                    const name_idx = exec_chunk.code.items[frame.ip + 1];
+                    frame.ip += 2;
+
+                    var extracted = value.Value.initNil();
+
+                    // Safely check if the caller provided a map
+                    if (frame.base_slot + map_slot < self.stack_top) {
+                        const map_val = self.stack[frame.base_slot + map_slot];
+                        if (map_val.isObject() and map_val.asObj().obj_type == .map) {
+                            const name_val = exec_chunk.constants.items[name_idx];
+                            const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+                            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", map_val.asObj())));
+
+                            for (map.keys.items, 0..) |k, i| {
+                                if (k.isObject() and k.asObj().obj_type == .string) {
+                                    const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
+                                    if (std.mem.eql(u8, k_str, name_str)) {
+                                        extracted = map.values.items[i];
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.push(extracted);
+                },
                 else => {
                     self.reportError("Runtime Error: Unhandled OpCode {}\n", .{op});
                     return .runtime_error;

@@ -220,6 +220,14 @@ pub const Formatter = struct {
                 const es_stmt = tree.exportStmt(node);
                 try self.formatImportExport(tree, "export", tree.getStringLists(es_stmt.symbols), tree.getString(es_stmt.path), es_stmt.attributes);
             },
+            .defined_expr => {
+                try self.out.appendSlice(self.allocator, "defined?(");
+                if (node.data != @intFromEnum(ast.StringId.none)) {
+                    const name_id = @as(ast.StringId, @enumFromInt(node.data));
+                    try self.out.appendSlice(self.allocator, tree.getString(name_id));
+                }
+                try self.out.append(self.allocator, ')');
+            },
             .param_doc => try self.formatParamDoc(tree, tree.paramDoc(node)),
         }
     }

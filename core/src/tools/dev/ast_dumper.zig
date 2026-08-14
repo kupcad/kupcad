@@ -45,6 +45,13 @@ fn dumpNode(
         .unary_op => {
             out.writer.print(" '{s}'", .{@tagName(tree.unaryExpr(node).op)}) catch {};
         },
+        .defined_expr => {
+            if (node.data != @intFromEnum(ast.StringId.none)) {
+                out.writer.print("(defined? '{s}')\n", .{doc.tree.getString(@as(ast.StringId, @enumFromInt(node.data)))}) catch {};
+            } else {
+                out.writer.print("(defined?)\n", .{}) catch {};
+            }
+        },
         else => {},
     }
 

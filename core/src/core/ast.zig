@@ -90,6 +90,7 @@ pub const Tag = enum(u8) {
     index_access,
     splat_expr,
     double_splat_expr,
+    defined_expr,
     each_expr,
     rescue_modifier,
     interpolated_string,

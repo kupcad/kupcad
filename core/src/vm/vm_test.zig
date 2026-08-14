@@ -1279,3 +1279,88 @@ test "VM: LHS Splat Destructuring (a, *b, c = arr)" {
     // c = 50
     try testing.expectEqual(@as(f64, 50.0), out_obj.items.items[2].asNumber());
 }
+
+test "VM: Named Keyword Arguments with default values" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // 1. AST: def build_box(width:, height: 20) [width, height] end
+    const func_name = try b.intern("build_box");
+    const w_id = try b.intern("width");
+    const h_id = try b.intern("height");
+
+    const p1 = ast.Param{ .name = w_id, .default_value = .none, .modifier = null, .is_keyword = true };
+    const h_def = try b.number("20", 0);
+    const p2 = ast.Param{ .name = h_id, .default_value = h_def, .modifier = null, .is_keyword = true };
+    const params_span = try b.addParams(&.{ p1, p2 });
+
+    const w_node = try b.createNode(.identifier, 0, @intFromEnum(w_id));
+    const h_node = try b.createNode(.identifier, 0, @intFromEnum(h_id));
+    const ret_arr_span = try b.addNodes(&.{ w_node, h_node });
+    const body = try b.arrayLiteral(ret_arr_span, 0, 0);
+
+    const def_node = try b.defStmt(func_name, params_span, body, false, 0, 0);
+
+    // 2. AST: build_box(width: 50)
+    const call_name = try b.intern("build_box");
+    const w_val = try b.number("50", 0);
+    const args_span = try b.addNamedArgs(&.{
+        .{ .name = w_id, .value = w_val, .modifier = null },
+    });
+    const call_node = try b.methodCall(.none, call_name, args_span, .none, false, 0, 0);
+
+    // 3. Compile and Run
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Mock the symbols array so the compiler doesn't panic out-of-bounds
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
+    symbols.items[@intFromEnum(def_node)] = .{ .kind = .global, .index = 0 };
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
+    try comp.compile(block_node);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const result_arr = vm.stack[0];
+    try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber()); // Passed width
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber()); // Default height
+}
+
+test "VM: defined? operator evaluates safely without panicking" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // defined?(missing_var)
+    const missing_id = try b.intern("missing_var");
+    const ident_node = try b.createNode(.identifier, 0, @intFromEnum(missing_id));
+    const def_expr = try b.createNode(.defined_expr, 0, @intFromEnum(ident_node));
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    try comp.compile(def_expr);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expect(vm.stack[0].isNil()); // Returns nil if undefined
+}

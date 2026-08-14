@@ -38,6 +38,8 @@ pub const OpCode = enum(u8) {
     op_unpack,
     op_unpack_splat,
     op_pack_splat,
+    op_defined,
+    op_extract_kwarg,
     op_is_instance,
 
     // Stack Operations
@@ -70,6 +72,7 @@ pub const OpCode = enum(u8) {
     op_jump,
     op_jump_if_false,
     op_jump_if_nil,
+    op_jump_if_not_nil,
     op_switch,
     op_loop,
 

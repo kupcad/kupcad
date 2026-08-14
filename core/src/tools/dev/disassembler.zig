@@ -55,11 +55,17 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         .op_constant, .op_get_global, .op_define_global, .op_set_global, .op_class, .op_method, .op_get_property, .op_set_property, .op_import, .op_class_method, .op_get_class_var, .op_set_class_var => {
             return constantInstruction(@tagName(op), c, offset, writer);
         },
-        .op_get_local, .op_set_local, .op_call, .op_build_array, .op_build_map, .op_unpack, .op_unpack_splat, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield, .op_pack_splat => {
+        .op_get_local, .op_set_local, .op_call, .op_build_array, .op_build_map, .op_unpack, .op_unpack_splat, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield, .op_pack_splat, .op_defined => {
             return byteInstruction(@tagName(op), c, offset, writer);
         },
-        .op_jump, .op_jump_if_false, .op_jump_if_nil, .op_setup_rescue, .op_loop => {
+        .op_jump, .op_jump_if_false, .op_jump_if_nil, .op_jump_if_not_nil, .op_setup_rescue, .op_loop => {
             return jumpInstruction(@tagName(op), if (op == .op_loop) -1 else 1, c, offset, writer);
+        },
+        .op_extract_kwarg => {
+            const map_slot = c.code.items[offset + 1];
+            const name_idx = c.code.items[offset + 2];
+            try writer.print("{s: <16} slot:{d} const:{d}\n", .{ @tagName(op), map_slot, name_idx });
+            return offset + 3;
         },
         .op_invoke => {
             return invokeInstruction(@tagName(op), c, offset, writer);

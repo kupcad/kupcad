@@ -676,6 +676,7 @@ pub const Compiler = struct {
                 var positional_count: usize = 0;
                 var splat_idx: ?usize = null;
                 var block_param_idx: ?usize = null;
+                var has_kwargs = false;
 
                 for (params, 0..) |p, i| {
                     if (p.modifier != null) {
@@ -685,10 +686,15 @@ pub const Compiler = struct {
                         }
                         if (p.modifier.? == .block) block_param_idx = i;
                     }
-                    if (p.modifier == null or p.modifier.? == .splat or p.modifier.? == .double_splat) {
+                    if (p.is_keyword or (p.modifier != null and p.modifier.? == .double_splat)) {
+                        has_kwargs = true;
+                    } else if (p.modifier == null or p.modifier.? == .splat) {
                         positional_count += 1;
                     }
                 }
+
+                // Kwargs are passed as a single Dictionary map taking exactly 1 positional slot
+                if (has_kwargs) positional_count += 1;
                 func.arity = @intCast(positional_count);
 
                 // Protect the function from GC while compiling the child block!
@@ -725,13 +731,61 @@ pub const Compiler = struct {
 
                 // Assign the parameters their starting stack slots
                 var current_slot: u8 = 1;
+                const map_slot = if (has_kwargs) @as(u8, @intCast(positional_count)) else 0;
+
                 for (params) |param| {
                     if (param.modifier != null and param.modifier.? == .block) {
-                        // The block is ALWAYS pushed to the final padded slot
                         child_compiler.addLocal(param.name, @intCast(positional_count + 1));
+                    } else if (param.is_keyword) {
+                        // Handled dynamically via virtual slots below
+                    } else if (param.modifier != null and param.modifier.? == .double_splat) {
+                        child_compiler.addLocal(param.name, map_slot);
                     } else {
                         child_compiler.addLocal(param.name, current_slot);
                         current_slot += 1;
+                    }
+                }
+
+                // Give explicitly named kwargs "Virtual Slots" past the actual positionals!
+                var virtual_slot: u8 = @intCast(positional_count + 2);
+                var num_virtuals: usize = 0;
+                for (params) |param| {
+                    if (param.is_keyword) {
+                        child_compiler.addLocal(param.name, virtual_slot);
+                        virtual_slot += 1;
+                        num_virtuals += 1;
+                    }
+                }
+
+                // --- INJECT KWARGS PREAMBLE ---
+                if (has_kwargs) {
+                    // Permanently reserve stack memory for the extracted keyword variables!
+                    for (0..num_virtuals) |_| {
+                        try child_compiler.emitOp(.op_nil);
+                    }
+
+                    for (params) |param| {
+                        if (param.is_keyword) {
+                            const name_str = self.tree.getString(param.name);
+                            const kw_name_idx = try child_compiler.makeStringConstant(name_str);
+
+                            try child_compiler.emitOp(.op_extract_kwarg);
+                            try child_compiler.emitByte(map_slot);
+                            try child_compiler.emitByte(kw_name_idx);
+
+                            if (param.default_value != .none) {
+                                try child_compiler.emitOp(.op_dup);
+                                const skip_default_jump = try child_compiler.emitJump(.op_jump_if_not_nil);
+                                try child_compiler.emitOp(.op_pop); // Pop the missing nil
+                                try child_compiler.compileNode(param.default_value);
+                                child_compiler.patchJump(skip_default_jump);
+                            }
+
+                            const local_slot = child_compiler.resolveLocal(param.name).?;
+                            try child_compiler.emitOp(.op_set_local);
+                            try child_compiler.emitByte(local_slot);
+                            try child_compiler.emitOp(.op_pop);
+                        }
                     }
                 }
 
@@ -1331,19 +1385,25 @@ pub const Compiler = struct {
                         var positional_count: usize = 0;
                         var splat_idx: ?usize = null;
                         var block_param_idx: ?usize = null;
+                        var has_kwargs = false;
 
-                        for (params, 0..) |p, idx| {
+                        for (params, 0..) |p, i| {
                             if (p.modifier != null) {
                                 if (p.modifier.? == .splat or p.modifier.? == .double_splat) {
                                     func.has_splat = true;
-                                    if (p.modifier.? == .splat) splat_idx = idx;
+                                    if (p.modifier.? == .splat) splat_idx = i;
                                 }
-                                if (p.modifier.? == .block) block_param_idx = idx;
+                                if (p.modifier.? == .block) block_param_idx = i;
                             }
-                            if (p.modifier == null or p.modifier.? == .splat or p.modifier.? == .double_splat) {
+                            if (p.is_keyword or (p.modifier != null and p.modifier.? == .double_splat)) {
+                                has_kwargs = true;
+                            } else if (p.modifier == null or p.modifier.? == .splat) {
                                 positional_count += 1;
                             }
                         }
+
+                        // Kwargs are passed as a single Dictionary map taking exactly 1 positional slot
+                        if (has_kwargs) positional_count += 1;
                         func.arity = @intCast(positional_count);
 
                         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
@@ -1376,12 +1436,61 @@ pub const Compiler = struct {
                         child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
 
                         var current_slot: u8 = 1;
+                        const map_slot = if (has_kwargs) @as(u8, @intCast(positional_count)) else 0;
+
                         for (params) |param| {
                             if (param.modifier != null and param.modifier.? == .block) {
                                 child_compiler.addLocal(param.name, @intCast(positional_count + 1));
+                            } else if (param.is_keyword) {
+                                // Handled dynamically via virtual slots below
+                            } else if (param.modifier != null and param.modifier.? == .double_splat) {
+                                child_compiler.addLocal(param.name, map_slot);
                             } else {
                                 child_compiler.addLocal(param.name, current_slot);
                                 current_slot += 1;
+                            }
+                        }
+
+                        // Give explicitly named kwargs "Virtual Slots" past the actual positionals!
+                        var virtual_slot: u8 = @intCast(positional_count + 2);
+                        var num_virtuals: usize = 0;
+                        for (params) |param| {
+                            if (param.is_keyword) {
+                                child_compiler.addLocal(param.name, virtual_slot);
+                                virtual_slot += 1;
+                                num_virtuals += 1;
+                            }
+                        }
+
+                        // --- INJECT KWARGS PREAMBLE ---
+                        if (has_kwargs) {
+                            // Permanently reserve stack memory for the extracted keyword variables!
+                            for (0..num_virtuals) |_| {
+                                try child_compiler.emitOp(.op_nil);
+                            }
+
+                            for (params) |param| {
+                                if (param.is_keyword) {
+                                    const name_str = self.tree.getString(param.name);
+                                    const kw_name_idx = try child_compiler.makeStringConstant(name_str);
+
+                                    try child_compiler.emitOp(.op_extract_kwarg);
+                                    try child_compiler.emitByte(map_slot);
+                                    try child_compiler.emitByte(kw_name_idx);
+
+                                    if (param.default_value != .none) {
+                                        try child_compiler.emitOp(.op_dup);
+                                        const skip_default_jump = try child_compiler.emitJump(.op_jump_if_not_nil);
+                                        try child_compiler.emitOp(.op_pop); // Pop the missing nil
+                                        try child_compiler.compileNode(param.default_value);
+                                        child_compiler.patchJump(skip_default_jump);
+                                    }
+
+                                    const local_slot = child_compiler.resolveLocal(param.name).?;
+                                    try child_compiler.emitOp(.op_set_local);
+                                    try child_compiler.emitByte(local_slot);
+                                    try child_compiler.emitOp(.op_pop);
+                                }
                             }
                         }
 
@@ -1495,6 +1604,22 @@ pub const Compiler = struct {
                 try self.emitOp(.op_set_property);
                 try self.emitByte(name_idx);
             },
+            .defined_expr => {
+                const target_node = self.tree.getNode(node_idx).?;
+                if (target_node.data != @intFromEnum(ast.StringId.none)) {
+                    const name_id = @as(ast.StringId, @enumFromInt(target_node.data));
+                    if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
+                        try self.emitOp(.op_true); // Locals are statically known
+                    } else {
+                        const name_str = self.tree.getString(name_id);
+                        const name_idx = try self.makeStringConstant(name_str);
+                        try self.emitOp(.op_defined);
+                        try self.emitByte(name_idx);
+                    }
+                } else {
+                    try self.emitOp(.op_true);
+                }
+            },
             .block => {
                 const block_payload = self.tree.block(node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
@@ -1535,7 +1660,7 @@ pub const Compiler = struct {
     fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
         try self.emitByte(@intFromEnum(op));
         switch (op) {
-            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import, .op_block_given, .op_get_class_var => self.simulatePush(1),
+            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import, .op_block_given, .op_get_class_var, .op_defined, .op_extract_kwarg => self.simulatePush(1),
             .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method, .op_unpack, .op_unpack_splat => self.simulatePop(1),
             .op_map_insert => self.simulatePop(2),
             .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent => {
@@ -1560,7 +1685,7 @@ pub const Compiler = struct {
                 self.simulatePop(2); // Pops value and object
                 self.simulatePush(1); // Assignment yields value
             },
-            .op_set_class_var => {},
+            .op_set_class_var, .op_jump_if_not_nil => {},
             else => {},
         }
     }
