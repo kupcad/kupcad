@@ -11,30 +11,6 @@ const Brep = @import("../kernel/engines/brep/topology.zig").Brep;
 
 pub const Host = host_mod.Host;
 
-const ArrayMethod = enum { each, map, reduce, push, length, pop, shift, unshift, slice, join };
-const MapMethod = enum { each, keys, values, has_key, delete };
-const StringMethod = enum { upcase, downcase, split, replace };
-const MathMethod = enum { sin, cos, tan, sqrt, abs };
-
-const array_methods = std.StaticStringMap(ArrayMethod).initComptime(.{
-    .{ "each", .each },     .{ "map", .map },   .{ "reduce", .reduce }, .{ "push", .push },
-    .{ "length", .length }, .{ "pop", .pop },   .{ "shift", .shift },   .{ "unshift", .unshift },
-    .{ "slice", .slice },   .{ "join", .join },
-});
-
-const map_methods = std.StaticStringMap(MapMethod).initComptime(.{
-    .{ "each", .each },        .{ "keys", .keys },     .{ "values", .values },
-    .{ "has_key?", .has_key }, .{ "delete", .delete },
-});
-
-const string_methods = std.StaticStringMap(StringMethod).initComptime(.{
-    .{ "upcase", .upcase }, .{ "downcase", .downcase }, .{ "split", .split }, .{ "replace", .replace },
-});
-
-const math_methods = std.StaticStringMap(MathMethod).initComptime(.{
-    .{ "sin", .sin }, .{ "cos", .cos }, .{ "tan", .tan }, .{ "sqrt", .sqrt }, .{ "abs", .abs },
-});
-
 pub const InterpretResult = enum {
     ok,
     compile_error,
@@ -890,7 +866,7 @@ pub const VM = struct {
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
 
-                    // Re-open the class if it already exists
+                    // RE-OPEN the class if it exists in globals!
                     if (self.globals.get(name_str.chars)) |existing| {
                         if (existing.isClass()) {
                             self.push(existing);
@@ -963,8 +939,9 @@ pub const VM = struct {
                         const native_obj = callee.asNative();
                         const args_ptr = self.stack.ptr + base_slot + 1;
                         const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
+                        self.popAndRelease(arg_count + 1); // Clean up args and callee
 
-                        self.popAndRelease(arg_count + 1);
+                        // Absorb the native +1 reference directly
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
                     } else if (callee.isClosure()) {
@@ -1053,6 +1030,8 @@ pub const VM = struct {
                             const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
 
                             self.popAndRelease(arg_count + 1);
+
+                            // Absorb the native +1 reference directly
                             self.stack.ptr[self.stack_top] = result;
                             self.stack_top += 1;
                             continue;
@@ -1062,292 +1041,18 @@ pub const VM = struct {
                         }
                     }
 
-                    // NATIVE ROUTING FALLBACK: Primitives (Optimized Jump Tables)
-                    if (receiver.isObject()) {
-                        const obj_type = receiver.asObj().obj_type;
-                        if (obj_type == .array) {
-                            const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
-                            if (array_methods.get(method_name_str)) |m| {
-                                switch (m) {
-                                    .each => {
-                                        if (arg_count != 1) return .runtime_error;
-                                        const closure_val = self.stack[self.stack_top - 1];
-                                        if (closure_val.isClosure()) {
-                                            const closure = closure_val.asClosure();
-                                            for (arr.items.items) |item| {
-                                                _ = self.callClosureSync(closure, &.{item}) catch return .runtime_error;
-                                            }
-                                            self.popAndRelease(2);
-                                            self.push(receiver);
-                                        } else return .runtime_error;
-                                    },
-                                    .map => {
-                                        if (arg_count != 1) return .runtime_error;
-                                        const closure_val = self.stack[self.stack_top - 1];
-                                        if (closure_val.isClosure()) {
-                                            const closure = closure_val.asClosure();
-                                            const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
-                                            self.push(value.Value.initObj(&new_arr.obj));
-                                            new_arr.items.ensureTotalCapacity(self.allocator, arr.items.items.len) catch return .runtime_error;
-                                            for (arr.items.items) |item| {
-                                                const mapped_val = self.callClosureSync(closure, &.{item}) catch return .runtime_error;
-                                                self.retainValue(mapped_val);
-                                                new_arr.items.appendAssumeCapacity(mapped_val);
-                                            }
-                                            const res = self.pop();
-                                            self.popAndRelease(2);
-                                            self.push(res);
-                                        } else return .runtime_error;
-                                    },
-                                    .reduce => {
-                                        const closure_val = self.stack[self.stack_top - 1];
-                                        if (closure_val.isClosure()) {
-                                            const closure = closure_val.asClosure();
-                                            var acc_val: value.Value = undefined;
-                                            var start_idx: usize = 0;
-                                            if (arg_count == 2) {
-                                                acc_val = self.stack[self.stack_top - 2];
-                                            } else if (arg_count == 1) {
-                                                if (arr.items.items.len == 0) {
-                                                    self.popAndRelease(2);
-                                                    self.push(value.Value.initNil());
-                                                    continue;
-                                                }
-                                                acc_val = arr.items.items[0];
-                                                start_idx = 1;
-                                            } else return .runtime_error;
-                                            for (arr.items.items[start_idx..]) |item| {
-                                                acc_val = self.callClosureSync(closure, &.{ acc_val, item }) catch return .runtime_error;
-                                            }
-                                            self.popAndRelease(arg_count + 1);
-                                            self.push(acc_val);
-                                        } else return .runtime_error;
-                                    },
-                                    .push => {
-                                        if (arg_count != 1) return .runtime_error;
-                                        const item = self.stack[self.stack_top - 1];
-                                        self.retainValue(item);
-                                        arr.items.append(self.allocator, item) catch return .runtime_error;
-                                        self.popAndRelease(2);
-                                        self.push(receiver);
-                                    },
-                                    .length => {
-                                        if (arg_count != 0) return .runtime_error;
-                                        self.popAndRelease(1);
-                                        self.push(value.Value.initNumber(@floatFromInt(arr.items.items.len)));
-                                    },
-                                    .pop => {
-                                        if (arg_count != 0) return .runtime_error;
-                                        self.popAndRelease(1);
-                                        if (arr.items.items.len > 0) {
-                                            const val = arr.items.items[arr.items.items.len - 1];
-                                            arr.items.shrinkRetainingCapacity(arr.items.items.len - 1);
-                                            self.push(val);
-                                        } else self.push(value.Value.initNil());
-                                    },
-                                    .shift => {
-                                        if (arg_count != 0) return .runtime_error;
-                                        self.popAndRelease(1);
-                                        if (arr.items.items.len > 0) {
-                                            const val = arr.items.orderedRemove(0);
-                                            self.push(val);
-                                        } else self.push(value.Value.initNil());
-                                    },
-                                    .unshift => {
-                                        if (arg_count != 1) return .runtime_error;
-                                        const item = self.stack[self.stack_top - 1];
-                                        self.retainValue(item);
-                                        arr.items.insert(self.allocator, 0, item) catch return .runtime_error;
-                                        self.popAndRelease(2);
-                                        self.push(receiver);
-                                    },
-                                    .slice => {
-                                        if (arg_count != 2) return .runtime_error;
-                                        const len_val = self.stack[self.stack_top - 1];
-                                        const start_val = self.stack[self.stack_top - 2];
-                                        if (start_val.isNumber() and len_val.isNumber()) {
-                                            const start_idx = @as(usize, @intFromFloat(start_val.asNumber()));
-                                            const length = @as(usize, @intFromFloat(len_val.asNumber()));
-                                            const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
-                                            self.push(value.Value.initObj(&new_arr.obj));
-                                            new_arr.items.ensureTotalCapacity(self.allocator, length) catch return .runtime_error;
-                                            var idx: usize = 0;
-                                            while (idx < length and start_idx + idx < arr.items.items.len) : (idx += 1) {
-                                                const item = arr.items.items[start_idx + idx];
-                                                self.retainValue(item);
-                                                new_arr.items.appendAssumeCapacity(item);
-                                            }
-                                            const res = self.pop();
-                                            self.popAndRelease(3);
-                                            self.push(res);
-                                        } else return .runtime_error;
-                                    },
-                                    .join => {
-                                        if (arg_count != 1) return .runtime_error;
-                                        const delim_val = self.stack[self.stack_top - 1];
-                                        if (delim_val.isObject() and delim_val.asObj().obj_type == .string) {
-                                            const delim = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", delim_val.asObj()))).chars;
-                                            var out: std.Io.Writer.Allocating = .init(self.allocator);
-                                            defer out.deinit();
-                                            for (arr.items.items, 0..) |item, idx| {
-                                                item.stringify(false, &out.writer) catch return .runtime_error;
-                                                if (idx < arr.items.items.len - 1) out.writer.writeAll(delim) catch return .runtime_error;
-                                            }
-                                            const res_str = self.allocateString(out.written()) catch return .runtime_error;
-                                            self.popAndRelease(2);
-                                            self.push(res_str);
-                                        } else return .runtime_error;
-                                    },
-                                }
-                                continue;
-                            }
-                        } else if (obj_type == .map) {
-                            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
-                            if (map_methods.get(method_name_str)) |m| {
-                                switch (m) {
-                                    .each => {
-                                        if (arg_count != 1) return .runtime_error;
-                                        const closure_val = self.stack[self.stack_top - 1];
-                                        if (closure_val.isClosure()) {
-                                            const closure = closure_val.asClosure();
-                                            for (map.keys.items, 0..) |k, i| {
-                                                const v = map.values.items[i];
-                                                _ = self.callClosureSync(closure, &.{ k, v }) catch return .runtime_error;
-                                            }
-                                            self.popAndRelease(2);
-                                            self.push(receiver);
-                                        } else return .runtime_error;
-                                    },
-                                    .keys => {
-                                        if (arg_count != 0) return .runtime_error;
-                                        const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
-                                        self.push(value.Value.initObj(&new_arr.obj));
-                                        new_arr.items.ensureTotalCapacity(self.allocator, map.keys.items.len) catch return .runtime_error;
-                                        for (map.keys.items) |k| {
-                                            self.retainValue(k);
-                                            new_arr.items.appendAssumeCapacity(k);
-                                        }
-                                        const res = self.pop();
-                                        self.popAndRelease(1);
-                                        self.push(res);
-                                    },
-                                    .values => {
-                                        if (arg_count != 0) return .runtime_error;
-                                        const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
-                                        self.push(value.Value.initObj(&new_arr.obj));
-                                        new_arr.items.ensureTotalCapacity(self.allocator, map.values.items.len) catch return .runtime_error;
-                                        for (map.values.items) |v| {
-                                            self.retainValue(v);
-                                            new_arr.items.appendAssumeCapacity(v);
-                                        }
-                                        const res = self.pop();
-                                        self.popAndRelease(1);
-                                        self.push(res);
-                                    },
-                                    .has_key => {
-                                        if (arg_count != 1) return .runtime_error;
-                                        const search_key = self.stack[self.stack_top - 1];
-                                        const found = self.findMapKey(map, search_key) != null;
-                                        self.popAndRelease(2);
-                                        self.push(value.Value.initBool(found));
-                                    },
-                                    .delete => {
-                                        if (arg_count != 1) return .runtime_error;
-                                        const search_key = self.stack[self.stack_top - 1];
-                                        var deleted_val = value.Value.initNil();
-                                        if (self.findMapKey(map, search_key)) |idx| {
-                                            const removed_key = map.keys.orderedRemove(idx);
-                                            self.releaseValue(removed_key);
-                                            deleted_val = map.values.orderedRemove(idx);
-                                        }
-                                        self.popAndRelease(2);
-                                        self.push(deleted_val);
-                                    },
-                                }
-                                continue;
-                            }
-                        } else if (obj_type == .string) {
-                            const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
-                            if (string_methods.get(method_name_str)) |m| {
-                                switch (m) {
-                                    .upcase => {
-                                        if (arg_count != 0) return .runtime_error;
-                                        const new_str = self.allocator.alloc(u8, str_obj.chars.len) catch return .runtime_error;
-                                        for (str_obj.chars, 0..) |c, i| new_str[i] = std.ascii.toUpper(c);
-                                        const val = self.allocateString(new_str) catch return .runtime_error;
-                                        self.allocator.free(new_str);
-                                        self.popAndRelease(1);
-                                        self.push(val);
-                                    },
-                                    .downcase => {
-                                        if (arg_count != 0) return .runtime_error;
-                                        const new_str = self.allocator.alloc(u8, str_obj.chars.len) catch return .runtime_error;
-                                        for (str_obj.chars, 0..) |c, i| new_str[i] = std.ascii.toLower(c);
-                                        const val = self.allocateString(new_str) catch return .runtime_error;
-                                        self.allocator.free(new_str);
-                                        self.popAndRelease(1);
-                                        self.push(val);
-                                    },
-                                    .split => {
-                                        if (arg_count != 1) return .runtime_error;
-                                        const delim_val = self.stack[self.stack_top - 1];
-                                        if (delim_val.isObject() and delim_val.asObj().obj_type == .string) {
-                                            const delim_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", delim_val.asObj()))).chars;
-                                            const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
-                                            const arr_val = value.Value.initObj(&arr_obj.obj);
-                                            self.push(arr_val);
-                                            var iter = std.mem.splitSequence(u8, str_obj.chars, delim_str);
-                                            while (iter.next()) |part| {
-                                                const part_val = self.allocateString(part) catch return .runtime_error;
-                                                self.retainValue(part_val);
-                                                arr_obj.items.append(self.allocator, part_val) catch return .runtime_error;
-                                            }
-                                            const res = self.pop();
-                                            self.popAndRelease(2);
-                                            self.push(res);
-                                        } else return .runtime_error;
-                                    },
-                                    .replace => {
-                                        if (arg_count != 2) return .runtime_error;
-                                        const replace_val = self.stack[self.stack_top - 1];
-                                        const target_val = self.stack[self.stack_top - 2];
-                                        if (target_val.isObject() and target_val.asObj().obj_type == .string and
-                                            replace_val.isObject() and replace_val.asObj().obj_type == .string)
-                                        {
-                                            const t_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
-                                            const r_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", replace_val.asObj()))).chars;
-                                            const replaced = std.mem.replaceOwned(u8, self.allocator, str_obj.chars, t_str, r_str) catch return .runtime_error;
-                                            const val = self.allocateString(replaced) catch return .runtime_error;
-                                            self.allocator.free(replaced);
-                                            self.popAndRelease(3);
-                                            self.push(val);
-                                        } else return .runtime_error;
-                                    },
-                                }
-                                continue;
-                            }
-                        }
-                    }
+                    // Dispatch Method if Found
+                    if (method_val) |m_val| {
+                        if (m_val.isNative()) {
+                            const native_obj = m_val.asNative();
+                            const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
 
-                    // NATIVE ROUTING FALLBACK: MATH MODULE
-                    if (receiver.isInstance() and std.mem.eql(u8, receiver.asInstance().class.name.chars, "Math")) {
-                        if (arg_count == 1) {
-                            const arg = self.stack[self.stack_top - 1];
-                            if (arg.isNumber()) {
-                                if (math_methods.get(method_name_str)) |m| {
-                                    const val = arg.asNumber();
-                                    const res = switch (m) {
-                                        .sin => std.math.sin(val),
-                                        .cos => std.math.cos(val),
-                                        .tan => std.math.tan(val),
-                                        .sqrt => std.math.sqrt(val),
-                                        .abs => @abs(val),
-                                    };
-                                    self.popAndRelease(2); // Fix: Safely release arg and receiver
-                                    self.push(value.Value.initNumber(res));
-                                    continue;
-                                }
-                            } else return .runtime_error;
+                            self.popAndRelease(arg_count + 1);
+                            self.push(result); // Use push()
+                            continue;
+                        } else if (m_val.isClosure()) {
+                            self.dispatchClosure(m_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
+                            continue;
                         }
                     }
 
@@ -1356,6 +1061,8 @@ pub const VM = struct {
                         const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch return .runtime_error;
 
                         self.popAndRelease(arg_count + 1);
+
+                        // Absorb the native +1 reference directly
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
                     } else {

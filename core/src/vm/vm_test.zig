@@ -647,6 +647,8 @@ test "VM: executes Array.map with functional closure block" {
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
@@ -766,6 +768,7 @@ test "VM: Math module namespace and functions" {
 test "VM: String Native Methods (split, replace)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -797,6 +800,7 @@ test "VM: String Native Methods (split, replace)" {
 test "VM: Array and Map Native Methods (slice, keys)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
