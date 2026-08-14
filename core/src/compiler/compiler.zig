@@ -608,12 +608,7 @@ pub const Compiler = struct {
             .module_stmt => {
                 const ms = self.tree.moduleStmt(node);
                 const name_str = self.tree.getString(ms.name);
-
-                const name_val = try self.vm.allocateString(name_str);
-                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                self.vm.push(name_val);
-                const name_idx = try self.makeConstant(name_val);
-                _ = self.vm.pop();
+                const name_idx = try self.makeStringConstant(name_str);
 
                 try self.emitOp(.op_module);
                 try self.emitByte(name_idx);
@@ -622,62 +617,16 @@ pub const Compiler = struct {
                 const block_payload = self.tree.block(body_node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
 
-                // Modules compile methods exactly like classes
                 for (stmts) |stmt_idx| {
                     const stmt_node = self.tree.getNode(stmt_idx).?;
                     if (stmt_node.tag == .def_stmt) {
                         const ds = self.tree.defStmt(stmt_node);
                         const method_name = self.tree.getString(ds.name);
+                        const m_name_idx = try self.makeStringConstant(method_name);
 
-                        const m_name_val = try self.vm.allocateString(method_name);
-                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                        self.vm.push(m_name_val);
-                        const m_name_idx = try self.makeConstant(m_name_val);
-                        _ = self.vm.pop();
-
-                        const func = try self.vm.gc.allocateFunction(self.vm);
                         const params = self.tree.getParams(ds.params);
-                        func.arity = @intCast(params.len);
+                        try self.compileClosureBlock(params, ds.body);
 
-                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                        self.vm.push(value.Value.initObj(&func.obj));
-                        errdefer _ = self.vm.pop();
-
-                        const child_chunk = try self.allocator.create(chunk.Chunk);
-                        child_chunk.* = chunk.Chunk.init();
-                        func.chunk = child_chunk;
-
-                        var child_compiler = Compiler{
-                            .allocator = self.allocator,
-                            .tree = self.tree,
-                            .symbols = self.symbols,
-                            .token_starts = self.token_starts,
-                            .current_chunk = child_chunk,
-                            .vm = self.vm,
-                            .enclosing = self,
-                            .function = func,
-                            .upvalue_count = 0,
-                            .local_count = 0,
-                            .current_stack_depth = 0,
-                            .max_stack_depth = 0,
-                            .current_source_offset = self.current_source_offset,
-                        };
-
-                        child_compiler.local_count = 1;
-                        child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
-                        for (params, 0..) |param, i| child_compiler.addLocal(param.name, @intCast(i + 1));
-
-                        try child_compiler.compile(ds.body);
-                        _ = self.vm.pop();
-
-                        const func_val = value.Value.initObj(&func.obj);
-                        const func_idx = try self.makeConstant(func_val);
-                        try self.emitOp(.op_closure);
-                        try self.emitByte(func_idx);
-                        for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
-                            try self.emitByte(if (upv.is_local) 1 else 0);
-                            try self.emitByte(upv.index);
-                        }
                         try self.emitOp(.op_method);
                         try self.emitByte(m_name_idx);
                     }
@@ -731,164 +680,15 @@ pub const Compiler = struct {
                     body_node = ls.body;
                 }
 
-                // 1. Setup an isolated function on the VM heap
-                const func = try self.vm.gc.allocateFunction(self.vm);
+                try self.compileClosureBlock(params, body_node);
 
-                var positional_count: usize = 0;
-                var splat_idx: ?usize = null;
-                var block_param_idx: ?usize = null;
-                var has_kwargs = false;
-
-                for (params, 0..) |p, i| {
-                    if (p.modifier != null) {
-                        if (p.modifier.? == .splat or p.modifier.? == .double_splat) {
-                            func.has_splat = true;
-                            if (p.modifier.? == .splat) splat_idx = i;
-                        }
-                        if (p.modifier.? == .block) block_param_idx = i;
-                    }
-                    if (p.is_keyword or (p.modifier != null and p.modifier.? == .double_splat)) {
-                        has_kwargs = true;
-                    } else if (p.modifier == null or p.modifier.? == .splat) {
-                        positional_count += 1;
-                    }
-                }
-
-                // Kwargs are passed as a single Dictionary map taking exactly 1 positional slot
-                if (has_kwargs) positional_count += 1;
-                func.arity = @intCast(positional_count);
-
-                // Protect the function from GC while compiling the child block!
-                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                self.vm.push(value.Value.initObj(&func.obj));
-
-                // Guarantee the function is popped off the stack if compilation fails
-                errdefer _ = self.vm.pop();
-
-                const child_chunk = try self.allocator.create(chunk.Chunk);
-                child_chunk.* = chunk.Chunk.init();
-                func.chunk = child_chunk;
-
-                // 2. Link a Child Compiler to parse the inner block
-                var child_compiler = Compiler{
-                    .allocator = self.allocator,
-                    .tree = self.tree,
-                    .symbols = self.symbols,
-                    .token_starts = self.token_starts,
-                    .current_chunk = child_chunk,
-                    .vm = self.vm,
-                    .enclosing = self,
-                    .function = func,
-                    .upvalue_count = 0,
-                    .local_count = 0,
-                    .current_stack_depth = 0,
-                    .max_stack_depth = 0,
-                    .current_source_offset = self.current_source_offset,
-                };
-
-                // Reserve slot 0 for the closure itself
-                child_compiler.local_count = 1;
-                child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
-
-                // Assign the parameters their starting stack slots
-                var current_slot: u8 = 1;
-                const map_slot = if (has_kwargs) @as(u8, @intCast(positional_count)) else 0;
-
-                for (params) |param| {
-                    if (param.modifier != null and param.modifier.? == .block) {
-                        child_compiler.addLocal(param.name, @intCast(positional_count + 1));
-                    } else if (param.is_keyword) {
-                        // Handled dynamically via virtual slots below
-                    } else if (param.modifier != null and param.modifier.? == .double_splat) {
-                        child_compiler.addLocal(param.name, map_slot);
-                    } else {
-                        child_compiler.addLocal(param.name, current_slot);
-                        current_slot += 1;
-                    }
-                }
-
-                // Give explicitly named kwargs "Virtual Slots" past the actual positionals!
-                var virtual_slot: u8 = @intCast(positional_count + 2);
-                var num_virtuals: usize = 0;
-                for (params) |param| {
-                    if (param.is_keyword) {
-                        child_compiler.addLocal(param.name, virtual_slot);
-                        virtual_slot += 1;
-                        num_virtuals += 1;
-                    }
-                }
-
-                // --- INJECT KWARGS PREAMBLE ---
-                if (has_kwargs) {
-                    // Permanently reserve stack memory for the extracted keyword variables!
-                    for (0..num_virtuals) |_| {
-                        try child_compiler.emitOp(.op_nil);
-                    }
-
-                    for (params) |param| {
-                        if (param.is_keyword) {
-                            const name_str = self.tree.getString(param.name);
-                            const kw_name_idx = try child_compiler.makeStringConstant(name_str);
-
-                            try child_compiler.emitOp(.op_extract_kwarg);
-                            try child_compiler.emitByte(map_slot);
-                            try child_compiler.emitByte(kw_name_idx);
-
-                            if (param.default_value != .none) {
-                                try child_compiler.emitOp(.op_dup);
-                                const skip_default_jump = try child_compiler.emitJump(.op_jump_if_not_nil);
-                                try child_compiler.emitOp(.op_pop); // Pop the missing nil
-                                try child_compiler.compileNode(param.default_value);
-                                child_compiler.patchJump(skip_default_jump);
-                            }
-
-                            const local_slot = child_compiler.resolveLocal(param.name).?;
-                            try child_compiler.emitOp(.op_set_local);
-                            try child_compiler.emitByte(local_slot);
-                            try child_compiler.emitOp(.op_pop);
-                        }
-                    }
-                }
-
-                // If it has a splat, sweep the stack overflow immediately
-                if (splat_idx) |s_idx| {
-                    try child_compiler.emitOp(.op_pack_splat);
-                    try child_compiler.emitByte(@intCast(s_idx)); // Expected fixed positional args
-                    try child_compiler.emitByte(@intCast(params.len - 1 - s_idx)); // Trailing args
-                }
-
-                // Compile the inner body recursively
-                try child_compiler.compile(body_node);
-
-                // Unprotect the function now that compilation is done
-                _ = self.vm.pop();
-
-                // 3. Emit the Closure and its exact Upvalue captures into the PARENT chunk
-                const func_val = value.Value.initObj(&func.obj);
-                const func_idx = try self.makeConstant(func_val);
-
-                try self.emitOp(.op_closure);
-                try self.emitByte(func_idx);
-
-                for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
-                    try self.emitByte(if (upv.is_local) 1 else 0);
-                    try self.emitByte(upv.index);
-                }
-
-                // 4. Bind the closure to its name (if it's a def statement)
                 if (node.tag == .def_stmt) {
                     const sym = self.symbols[@intFromEnum(node_idx)];
                     if (sym.kind == .global) {
-                        const name_str = self.tree.getString(def_name_id);
-                        const name_val = try self.vm.allocateString(name_str);
-                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                        self.vm.push(name_val);
-                        const name_idx = try self.makeConstant(name_val);
-                        _ = self.vm.pop();
-
+                        const name_idx = try self.makeStringConstant(self.tree.getString(def_name_id));
                         try self.emitOp(.op_define_global);
                         try self.emitByte(name_idx);
-                        try self.emitOp(.op_nil); // Equilibrium: yield nil to the block
+                        try self.emitOp(.op_nil);
                     } else {
                         self.addLocal(def_name_id, @intCast(sym.index));
                         try self.emitOp(.op_set_local);
@@ -1399,23 +1199,15 @@ pub const Compiler = struct {
                 const cs = self.tree.classStmt(node);
                 const name_node = self.tree.getNode(cs.name).?;
                 const name_id = @as(ast.StringId, @enumFromInt(name_node.data));
-                const class_name = self.tree.getString(name_id);
+                const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
 
-                const name_val = try self.vm.allocateString(class_name);
-                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                self.vm.push(name_val);
-                const name_idx = try self.makeConstant(name_val);
-                _ = self.vm.pop();
-
-                // 1. Push the un-initialized class onto the stack (+1)
                 try self.emitOp(.op_class);
                 try self.emitByte(name_idx);
                 if (cs.super_class != .none) {
-                    try self.compileNode(cs.super_class); // Evaluates base class and leaves it on stack
-                    try self.emitOp(.op_inherit); // Wires base to child
+                    try self.compileNode(cs.super_class);
+                    try self.emitOp(.op_inherit);
                 }
 
-                // 2. Compile all inner methods while the Class sits on top of the stack
                 const body_node = self.tree.getNode(cs.body).?;
                 const block_payload = self.tree.block(body_node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
@@ -1426,154 +1218,15 @@ pub const Compiler = struct {
                         const ds = self.tree.defStmt(stmt_node);
                         const method_name = self.tree.getString(ds.name);
 
-                        // Parse class methods natively via AST tag or string prefix fallback
                         const is_class_method = ds.is_class_method or std.mem.startsWith(u8, method_name, "self.");
                         var final_name = method_name;
                         if (std.mem.startsWith(u8, method_name, "self.")) {
-                            final_name = method_name[5..]; // Strip "self." if present
+                            final_name = method_name[5..];
                         }
+                        const m_name_idx = try self.makeStringConstant(final_name);
 
-                        const m_name_val = try self.vm.allocateString(final_name);
-                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                        self.vm.push(m_name_val);
-                        const m_name_idx = try self.makeConstant(m_name_val);
-                        _ = self.vm.pop();
-
-                        // Compile the closure isolated from the parent
-                        const func = try self.vm.gc.allocateFunction(self.vm);
                         const params = self.tree.getParams(ds.params);
-
-                        var positional_count: usize = 0;
-                        var splat_idx: ?usize = null;
-                        var block_param_idx: ?usize = null;
-                        var has_kwargs = false;
-
-                        for (params, 0..) |p, i| {
-                            if (p.modifier != null) {
-                                if (p.modifier.? == .splat or p.modifier.? == .double_splat) {
-                                    func.has_splat = true;
-                                    if (p.modifier.? == .splat) splat_idx = i;
-                                }
-                                if (p.modifier.? == .block) block_param_idx = i;
-                            }
-                            if (p.is_keyword or (p.modifier != null and p.modifier.? == .double_splat)) {
-                                has_kwargs = true;
-                            } else if (p.modifier == null or p.modifier.? == .splat) {
-                                positional_count += 1;
-                            }
-                        }
-
-                        // Kwargs are passed as a single Dictionary map taking exactly 1 positional slot
-                        if (has_kwargs) positional_count += 1;
-                        func.arity = @intCast(positional_count);
-
-                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                        self.vm.push(value.Value.initObj(&func.obj));
-                        // Guarantee the function is popped off the stack if compilation fails!
-                        errdefer _ = self.vm.pop();
-
-                        const child_chunk = try self.allocator.create(chunk.Chunk);
-                        child_chunk.* = chunk.Chunk.init();
-                        func.chunk = child_chunk;
-
-                        var child_compiler = Compiler{
-                            .allocator = self.allocator,
-                            .tree = self.tree,
-                            .symbols = self.symbols,
-                            .token_starts = self.token_starts,
-                            .current_chunk = child_chunk,
-                            .vm = self.vm,
-                            .enclosing = self,
-                            .function = func,
-                            .upvalue_count = 0,
-                            .local_count = 0,
-                            .current_stack_depth = 0,
-                            .max_stack_depth = 0,
-                            .current_source_offset = self.current_source_offset,
-                        };
-
-                        // Reserve slot 0 as the implicit 'self' receiver
-                        child_compiler.local_count = 1;
-                        child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
-
-                        var current_slot: u8 = 1;
-                        const map_slot = if (has_kwargs) @as(u8, @intCast(positional_count)) else 0;
-
-                        for (params) |param| {
-                            if (param.modifier != null and param.modifier.? == .block) {
-                                child_compiler.addLocal(param.name, @intCast(positional_count + 1));
-                            } else if (param.is_keyword) {
-                                // Handled dynamically via virtual slots below
-                            } else if (param.modifier != null and param.modifier.? == .double_splat) {
-                                child_compiler.addLocal(param.name, map_slot);
-                            } else {
-                                child_compiler.addLocal(param.name, current_slot);
-                                current_slot += 1;
-                            }
-                        }
-
-                        // Give explicitly named kwargs "Virtual Slots" past the actual positionals!
-                        var virtual_slot: u8 = @intCast(positional_count + 2);
-                        var num_virtuals: usize = 0;
-                        for (params) |param| {
-                            if (param.is_keyword) {
-                                child_compiler.addLocal(param.name, virtual_slot);
-                                virtual_slot += 1;
-                                num_virtuals += 1;
-                            }
-                        }
-
-                        // --- INJECT KWARGS PREAMBLE ---
-                        if (has_kwargs) {
-                            // Permanently reserve stack memory for the extracted keyword variables!
-                            for (0..num_virtuals) |_| {
-                                try child_compiler.emitOp(.op_nil);
-                            }
-
-                            for (params) |param| {
-                                if (param.is_keyword) {
-                                    const name_str = self.tree.getString(param.name);
-                                    const kw_name_idx = try child_compiler.makeStringConstant(name_str);
-
-                                    try child_compiler.emitOp(.op_extract_kwarg);
-                                    try child_compiler.emitByte(map_slot);
-                                    try child_compiler.emitByte(kw_name_idx);
-
-                                    if (param.default_value != .none) {
-                                        try child_compiler.emitOp(.op_dup);
-                                        const skip_default_jump = try child_compiler.emitJump(.op_jump_if_not_nil);
-                                        try child_compiler.emitOp(.op_pop); // Pop the missing nil
-                                        try child_compiler.compileNode(param.default_value);
-                                        child_compiler.patchJump(skip_default_jump);
-                                    }
-
-                                    const local_slot = child_compiler.resolveLocal(param.name).?;
-                                    try child_compiler.emitOp(.op_set_local);
-                                    try child_compiler.emitByte(local_slot);
-                                    try child_compiler.emitOp(.op_pop);
-                                }
-                            }
-                        }
-
-                        if (splat_idx) |s_idx| {
-                            try child_compiler.emitOp(.op_pack_splat);
-                            try child_compiler.emitByte(@intCast(s_idx)); // Expected fixed positional args
-                            try child_compiler.emitByte(@intCast(params.len - 1 - s_idx)); // Trailing args
-                        }
-
-                        try child_compiler.compile(ds.body);
-                        _ = self.vm.pop(); // unprotect
-
-                        const func_val = value.Value.initObj(&func.obj);
-                        const func_idx = try self.makeConstant(func_val);
-
-                        try self.emitOp(.op_closure); // (+1)
-                        try self.emitByte(func_idx);
-
-                        for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
-                            try self.emitByte(if (upv.is_local) 1 else 0);
-                            try self.emitByte(upv.index);
-                        }
+                        try self.compileClosureBlock(params, ds.body);
 
                         try self.emitOp(if (is_class_method) .op_class_method else .op_method);
                         try self.emitByte(m_name_idx);
@@ -1591,18 +1244,15 @@ pub const Compiler = struct {
                     }
                 }
 
-                // 3. Define the Class variable
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 if (sym.kind == .local) {
                     self.addLocal(name_id, @intCast(sym.index));
                     try self.emitOp(.op_set_local);
                     try self.emitByte(@intCast(sym.index));
-                    // Equilibrium: Class remains on stack (+1)
                 } else {
                     try self.emitOp(.op_define_global);
                     try self.emitByte(name_idx);
                     try self.emitOp(.op_nil);
-                    // Equilibrium: Class popped, dummy nil pushed (+1)
                 }
             },
             .super_call => {
@@ -1803,6 +1453,135 @@ pub const Compiler = struct {
         const idx = try self.makeConstant(str_val);
         _ = self.vm.pop();
         return idx;
+    }
+
+    fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex) CompileError!void {
+        const func = try self.vm.gc.allocateFunction(self.vm);
+
+        var positional_count: usize = 0;
+        var splat_idx: ?usize = null;
+        var has_kwargs = false;
+
+        for (params, 0..) |p, i| {
+            if (p.modifier != null) {
+                if (p.modifier.? == .splat or p.modifier.? == .double_splat) {
+                    func.has_splat = true;
+                    if (p.modifier.? == .splat) splat_idx = i;
+                }
+            }
+            if (p.is_keyword or (p.modifier != null and p.modifier.? == .double_splat)) {
+                has_kwargs = true;
+            } else if (p.modifier == null or p.modifier.? == .splat) {
+                positional_count += 1;
+            }
+        }
+
+        // Kwargs are passed as a single Dictionary map taking exactly 1 positional slot
+        if (has_kwargs) positional_count += 1;
+        func.arity = @intCast(positional_count);
+
+        // Protect the function from GC while compiling the child block!
+        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+        self.vm.push(value.Value.initObj(&func.obj));
+        errdefer _ = self.vm.pop();
+
+        const child_chunk = try self.allocator.create(chunk.Chunk);
+        child_chunk.* = chunk.Chunk.init();
+        func.chunk = child_chunk;
+
+        var child_compiler = Compiler{
+            .allocator = self.allocator,
+            .tree = self.tree,
+            .symbols = self.symbols,
+            .token_starts = self.token_starts,
+            .current_chunk = child_chunk,
+            .vm = self.vm,
+            .enclosing = self,
+            .function = func,
+            .upvalue_count = 0,
+            .local_count = 0,
+            .current_stack_depth = 0,
+            .max_stack_depth = 0,
+            .current_source_offset = self.current_source_offset,
+        };
+
+        // Reserve slot 0 for the closure itself
+        child_compiler.local_count = 1;
+        child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
+
+        var current_slot: u8 = 1;
+        const map_slot = if (has_kwargs) @as(u8, @intCast(positional_count)) else 0;
+
+        for (params) |param| {
+            if (param.modifier != null and param.modifier.? == .block) {
+                child_compiler.addLocal(param.name, @intCast(positional_count + 1));
+            } else if (param.is_keyword) {
+                // Handled dynamically via virtual slots below
+            } else if (param.modifier != null and param.modifier.? == .double_splat) {
+                child_compiler.addLocal(param.name, map_slot);
+            } else {
+                child_compiler.addLocal(param.name, current_slot);
+                current_slot += 1;
+            }
+        }
+
+        var virtual_slot: u8 = @intCast(positional_count + 2);
+        var num_virtuals: usize = 0;
+        for (params) |param| {
+            if (param.is_keyword) {
+                child_compiler.addLocal(param.name, virtual_slot);
+                virtual_slot += 1;
+                num_virtuals += 1;
+            }
+        }
+
+        if (has_kwargs) {
+            for (0..num_virtuals) |_| try child_compiler.emitOp(.op_nil);
+
+            for (params) |param| {
+                if (param.is_keyword) {
+                    const name_str = self.tree.getString(param.name);
+                    const kw_name_idx = try child_compiler.makeStringConstant(name_str);
+
+                    try child_compiler.emitOp(.op_extract_kwarg);
+                    try child_compiler.emitByte(map_slot);
+                    try child_compiler.emitByte(kw_name_idx);
+
+                    if (param.default_value != .none) {
+                        try child_compiler.emitOp(.op_dup);
+                        const skip_default_jump = try child_compiler.emitJump(.op_jump_if_not_nil);
+                        try child_compiler.emitOp(.op_pop);
+                        try child_compiler.compileNode(param.default_value);
+                        child_compiler.patchJump(skip_default_jump);
+                    }
+
+                    const local_slot = child_compiler.resolveLocal(param.name).?;
+                    try child_compiler.emitOp(.op_set_local);
+                    try child_compiler.emitByte(local_slot);
+                    try child_compiler.emitOp(.op_pop);
+                }
+            }
+        }
+
+        if (splat_idx) |s_idx| {
+            try child_compiler.emitOp(.op_pack_splat);
+            try child_compiler.emitByte(@intCast(s_idx));
+            try child_compiler.emitByte(@intCast(params.len - 1 - s_idx));
+        }
+
+        try child_compiler.compile(body_node);
+        _ = self.vm.pop();
+
+        const func_val = value.Value.initObj(&func.obj);
+        const func_idx = try self.makeConstant(func_val);
+
+        try self.emitOp(.op_closure);
+        try self.emitByte(func_idx);
+
+        for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
+            try self.emitByte(if (upv.is_local) 1 else 0);
+            try self.emitByte(upv.index);
+        }
     }
 
     fn compileDestructure(self: *Compiler, target: anytype) CompileError!void {
