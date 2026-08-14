@@ -689,3 +689,32 @@ test "VM: Symbols map exactly to memory pointers for O(1) identity checks" {
     // Because they are interned, they must point to the exact same struct in memory!
     try testing.expectEqual(sym1.asObj(), sym2.asObj());
 }
+
+test "VM: Gas limit prevents infinite loops and throws specific error" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Set a tiny gas limit to trigger the timeout instantly
+    vm.instruction_limit = 50;
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Create an infinite loop natively in bytecode.
+    // op_loop takes a 2-byte offset to jump backwards.
+    // By jumping back exactly 3 bytes (the size of op_loop + its offset), it loops forever.
+    try out_chunk.writeOp(testing.allocator, .op_loop, 0);
+    try out_chunk.write(testing.allocator, 0, 0); // Jump High Byte
+    try out_chunk.write(testing.allocator, 3, 0); // Jump Low Byte
+
+    // The VM will never reach this return
+    try out_chunk.writeOp(testing.allocator, .op_return, 0);
+    out_chunk.max_stack_slots = 1;
+
+    const result = vm.interpret(&out_chunk);
+
+    // Prove that it was safely killed by the gas limit!
+    try testing.expectEqual(.execution_limit_exceeded, result);
+    try testing.expectEqual(@as(usize, 51), vm.instruction_count);
+}

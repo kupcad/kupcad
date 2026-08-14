@@ -15,6 +15,7 @@ pub const InterpretResult = enum {
     ok,
     compile_error,
     runtime_error,
+    execution_limit_exceeded,
 };
 
 pub const CallFrame = struct {
@@ -48,6 +49,9 @@ pub const VM = struct {
     active_kernel: ?*const kernel_mod.GeometryKernel = null,
     dag_builder: dag.DAGBuilder,
     mute_errors: bool = false,
+    // safety for infinite loops
+    instruction_count: usize,
+    instruction_limit: usize,
 
     const INITIAL_STACK_CAPACITY: usize = 1024;
     const STACK_GROW_FACTOR: usize = 2;
@@ -67,6 +71,8 @@ pub const VM = struct {
             .symbols = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
             .mute_errors = false,
+            .instruction_count = 0,
+            .instruction_limit = 1_000_000,
         };
     }
 
@@ -123,6 +129,7 @@ pub const VM = struct {
     // --- Execution Core ---
 
     pub fn interpret(self: *VM, execution_chunk: *chunk.Chunk) InterpretResult {
+        self.instruction_count = 0; // Reset gas on fresh run
         self.frames.clearRetainingCapacity();
         self.stack_top = 0;
         self.ensureStackCapacity(execution_chunk.max_stack_slots) catch return .runtime_error;
@@ -156,6 +163,13 @@ pub const VM = struct {
 
     fn runUntil(self: *VM, target_depth: usize) InterpretResult {
         while (self.frames.items.len > target_depth) {
+            // Gas Check
+            self.instruction_count += 1;
+            if (self.instruction_count > self.instruction_limit) {
+                self.reportError("Runtime Error: Execution limit exceeded (Infinite loop detected).\n", .{});
+                return .execution_limit_exceeded;
+            }
+
             var frame = &self.frames.items[self.frames.items.len - 1];
             const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
             const instruction = exec_chunk.code.items[frame.ip];
