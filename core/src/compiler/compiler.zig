@@ -202,28 +202,7 @@ pub const Compiler = struct {
             .identifier => {
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = @as(ast.StringId, @enumFromInt(node.data));
-                const name_str = self.tree.getString(name_id);
-
-                // Intercept @@ variables unconditionally to override resolver
-                if (std.mem.startsWith(u8, name_str, "@@")) {
-                    const name_idx = try self.makeStringConstant(name_str);
-                    try self.emitOp(.op_get_class_var);
-                    try self.emitByte(name_idx);
-                } else if (self.resolveLocal(name_id)) |local_slot| {
-                    try self.emitOp(.op_get_local);
-                    try self.emitByte(local_slot);
-                } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-                    try self.emitOp(.op_get_upvalue);
-                    try self.emitByte(upvalue_slot);
-                } else if (self.enclosing == null or sym.kind == .global) {
-                    const name_idx = try self.makeStringConstant(name_str);
-                    try self.emitOp(.op_get_global);
-                    try self.emitByte(name_idx);
-                } else {
-                    // Fallback
-                    try self.emitOp(.op_get_local);
-                    try self.emitByte(@intCast(sym.index));
-                }
+                try self.emitVariableLoad(name_id, sym);
             },
             .return_stmt => {
                 const ret_idx = self.tree.nodeIndex(node);
@@ -267,31 +246,11 @@ pub const Compiler = struct {
                 const assign_payload = self.tree.assignment(node);
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = assign_payload.name;
-                const name_str = self.tree.getString(name_id); // Evaluated early
 
-                // 1. Evaluate RHS (with Compound Operator getters if necessary)
+                // Evaluate RHS (with Compound Operator getters if necessary)
                 if (assign_payload.op) |op| {
-                    if (std.mem.startsWith(u8, name_str, "@@")) {
-                        const name_idx = try self.makeStringConstant(name_str);
-                        try self.emitOp(.op_get_class_var);
-                        try self.emitByte(name_idx);
-                    } else if (self.resolveLocal(name_id)) |local_slot| {
-                        try self.emitOp(.op_get_local);
-                        try self.emitByte(local_slot);
-                    } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-                        try self.emitOp(.op_get_upvalue);
-                        try self.emitByte(upvalue_slot);
-                    } else if (self.enclosing == null or sym.kind == .global) {
-                        const name_idx = try self.makeStringConstant(name_str);
-                        try self.emitOp(.op_get_global);
-                        try self.emitByte(name_idx);
-                    } else {
-                        try self.emitOp(.op_get_local);
-                        try self.emitByte(@intCast(sym.index));
-                    }
-
+                    try self.emitVariableLoad(name_id, sym);
                     try self.compileNode(assign_payload.value);
-
                     switch (op) {
                         .add => try self.emitOp(.op_add),
                         .subtract => try self.emitOp(.op_subtract),
@@ -303,27 +262,8 @@ pub const Compiler = struct {
                     try self.compileNode(assign_payload.value);
                 }
 
-                // 2. Set the Target Variable
-                if (std.mem.startsWith(u8, name_str, "@@")) {
-                    const name_idx = try self.makeStringConstant(name_str);
-                    try self.emitOp(.op_set_class_var);
-                    try self.emitByte(name_idx);
-                } else if (self.resolveLocal(name_id)) |local_slot| {
-                    try self.emitOp(.op_set_local);
-                    try self.emitByte(local_slot);
-                } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-                    try self.emitOp(.op_set_upvalue);
-                    try self.emitByte(upvalue_slot);
-                } else if (self.enclosing == null or sym.kind == .global) {
-                    const name_idx = try self.makeStringConstant(name_str);
-                    try self.emitOp(.op_define_global);
-                    try self.emitByte(name_idx);
-                    try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
-                } else {
-                    self.addLocal(name_id, @intCast(sym.index));
-                    try self.emitOp(.op_set_local);
-                    try self.emitByte(@intCast(sym.index));
-                }
+                // Set the Target Variable
+                try self.emitVariableStore(name_id, sym);
             },
             .case_stmt => {
                 const cs = self.tree.caseStmt(node);
@@ -768,19 +708,7 @@ pub const Compiler = struct {
 
                 // Push Receiver/Target
                 if (mc.receiver == .none) {
-                    const name_id = mc.method_name;
-                    const name_str = self.tree.getString(name_id);
-                    if (self.resolveLocal(name_id)) |slot| {
-                        try self.emitOp(.op_get_local);
-                        try self.emitByte(slot);
-                    } else if (try self.resolveUpvalue(name_id)) |slot| {
-                        try self.emitOp(.op_get_upvalue);
-                        try self.emitByte(slot);
-                    } else {
-                        const name_idx = try self.makeStringConstant(name_str);
-                        try self.emitOp(.op_get_global);
-                        try self.emitByte(name_idx);
-                    }
+                    try self.emitVariableLoad(mc.method_name, null);
                 } else {
                     try self.compileNode(mc.receiver);
                     if (mc.is_safe) safe_jump = try self.emitJump(.op_jump_if_nil);
@@ -1611,6 +1539,52 @@ pub const Compiler = struct {
         } else {
             // Unhandled pattern or skipped element (e.g., `_`): pop to maintain stack equilibrium
             try self.emitOp(.op_pop);
+        }
+    }
+
+    fn emitVariableLoad(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!void {
+        const name_str = self.tree.getString(name_id);
+        if (std.mem.startsWith(u8, name_str, "@@")) {
+            const name_idx = try self.makeStringConstant(name_str);
+            try self.emitOp(.op_get_class_var);
+            try self.emitByte(name_idx);
+        } else if (self.resolveLocal(name_id)) |local_slot| {
+            try self.emitOp(.op_get_local);
+            try self.emitByte(local_slot);
+        } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
+            try self.emitOp(.op_get_upvalue);
+            try self.emitByte(upvalue_slot);
+        } else if (self.enclosing == null or (sym != null and sym.?.kind == .global) or sym == null) {
+            const name_idx = try self.makeStringConstant(name_str);
+            try self.emitOp(.op_get_global);
+            try self.emitByte(name_idx);
+        } else {
+            try self.emitOp(.op_get_local);
+            try self.emitByte(@intCast(sym.?.index));
+        }
+    }
+
+    fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ResolvedSymbol) CompileError!void {
+        const name_str = self.tree.getString(name_id);
+        if (std.mem.startsWith(u8, name_str, "@@")) {
+            const name_idx = try self.makeStringConstant(name_str);
+            try self.emitOp(.op_set_class_var);
+            try self.emitByte(name_idx);
+        } else if (self.resolveLocal(name_id)) |local_slot| {
+            try self.emitOp(.op_set_local);
+            try self.emitByte(local_slot);
+        } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
+            try self.emitOp(.op_set_upvalue);
+            try self.emitByte(upvalue_slot);
+        } else if (self.enclosing == null or sym.kind == .global) {
+            const name_idx = try self.makeStringConstant(name_str);
+            try self.emitOp(.op_define_global);
+            try self.emitByte(name_idx);
+            try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
+        } else {
+            self.addLocal(name_id, @intCast(sym.index));
+            try self.emitOp(.op_set_local);
+            try self.emitByte(@intCast(sym.index));
         }
     }
 };
