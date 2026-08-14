@@ -1364,3 +1364,39 @@ test "VM: defined? operator evaluates safely without panicking" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expect(vm.stack[0].isNil()); // Returns nil if undefined
 }
+
+test "VM: Modules and Mixins (include)" {
+    const Document = @import("../core/document.zig").Document;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\module Greeter
+        \\  def greet()
+        \\    42
+        \\  end
+        \\end
+        \\
+        \\class Person
+        \\  include Greeter
+        \\end
+        \\
+        \\p = Person.new()
+        \\p.greet()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+}

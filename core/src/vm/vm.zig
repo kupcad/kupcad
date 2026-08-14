@@ -890,6 +890,31 @@ pub const VM = struct {
                         }
                     }
                 },
+                .op_module => {
+                    const name_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const name_val = exec_chunk.constants.items[name_idx];
+
+                    // Removed `.chars` to pass the *ObjString pointer!
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
+
+                    const mod_obj = self.gc.allocateModule(self, name_str) catch return .runtime_error;
+                    self.push(value.Value.initObj(&mod_obj.obj));
+                },
+                .op_mixin => {
+                    const module_val = self.pop();
+                    defer self.releaseValue(module_val);
+                    if (!module_val.isModule()) {
+                        self.reportError("Runtime Error: Can only include Modules.\n", .{});
+                        return .runtime_error;
+                    }
+
+                    const class_val = self.stack[self.stack_top - 1]; // Peek at class
+                    if (!class_val.isClass()) return .runtime_error;
+
+                    const class_obj = class_val.asClass();
+                    class_obj.included_modules.append(self.allocator, module_val.asModule()) catch return .runtime_error;
+                },
                 .op_class => {
                     const name_idx = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
@@ -906,10 +931,13 @@ pub const VM = struct {
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
                     const method = self.pop(); // The closure
-                    const class_val = self.stack[self.stack_top - 1]; // Peek at class
-                    const class_obj = class_val.asClass();
+                    const receiver_val = self.stack[self.stack_top - 1]; // Peek at class or module
 
-                    class_obj.methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                    if (receiver_val.isClass()) {
+                        receiver_val.asClass().methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                    } else if (receiver_val.isModule()) {
+                        receiver_val.asModule().methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                    } else return .runtime_error;
                 },
                 .op_define_global => {
                     const name_idx = exec_chunk.code.items[frame.ip];
@@ -1920,6 +1948,15 @@ pub const VM = struct {
         var current: ?*value.ObjClass = class;
         while (current) |c| {
             if (c.methods.get(name)) |method| return method;
+
+            // Check mixins (in reverse order, so latest included takes precedence)
+            var i: usize = c.included_modules.items.len;
+            while (i > 0) {
+                i -= 1;
+                const mod = c.included_modules.items[i];
+                if (mod.methods.get(name)) |method| return method;
+            }
+
             current = c.superclass;
         }
         return null;

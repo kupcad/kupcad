@@ -24,6 +24,7 @@ pub const ObjType = enum(u8) {
     upvalue,
     closure,
     class,
+    module,
     instance,
     bound_method,
     range,
@@ -93,6 +94,13 @@ pub const ObjClass = struct {
     methods: std.StringHashMapUnmanaged(Value),
     class_methods: std.StringHashMapUnmanaged(Value),
     class_fields: std.StringHashMapUnmanaged(Value),
+    included_modules: std.ArrayListUnmanaged(*ObjModule),
+};
+
+pub const ObjModule = struct {
+    obj: Obj,
+    name: *ObjString,
+    methods: std.StringHashMapUnmanaged(Value),
 };
 
 pub const ObjInstance = struct {
@@ -264,6 +272,10 @@ pub const Value = extern struct {
         return self.isObject() and self.asObj().obj_type == .class;
     }
 
+    pub inline fn isModule(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .module;
+    }
+
     pub inline fn isInstance(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .instance;
     }
@@ -338,6 +350,11 @@ pub const Value = extern struct {
 
     pub inline fn asClass(self: Value) *ObjClass {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asModule(self: Value) *ObjModule {
+        std.debug.assert(self.isModule());
+        return @as(*ObjModule, @alignCast(@fieldParentPtr("obj", self.asObj())));
     }
 
     pub inline fn asInstance(self: Value) *ObjInstance {

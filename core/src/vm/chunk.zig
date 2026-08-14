@@ -34,6 +34,8 @@ pub const OpCode = enum(u8) {
     op_class_method,
     op_get_class_var,
     op_set_class_var,
+    op_module,
+    op_mixin,
     op_method,
     op_unpack,
     op_unpack_splat,

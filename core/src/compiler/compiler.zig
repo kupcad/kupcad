@@ -609,22 +609,83 @@ pub const Compiler = struct {
                 const ms = self.tree.moduleStmt(node);
                 const name_str = self.tree.getString(ms.name);
 
-                // For MVP, compile a Module just like a Class to act as a singleton namespace container
                 const name_val = try self.vm.allocateString(name_str);
                 self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
                 self.vm.push(name_val);
                 const name_idx = try self.makeConstant(name_val);
                 _ = self.vm.pop();
 
-                try self.emitOp(.op_class);
+                try self.emitOp(.op_module);
                 try self.emitByte(name_idx);
+
+                const body_node = self.tree.getNode(ms.body).?;
+                const block_payload = self.tree.block(body_node);
+                const stmts = self.tree.getNodes(block_payload.stmts);
+
+                // Modules compile methods exactly like classes
+                for (stmts) |stmt_idx| {
+                    const stmt_node = self.tree.getNode(stmt_idx).?;
+                    if (stmt_node.tag == .def_stmt) {
+                        const ds = self.tree.defStmt(stmt_node);
+                        const method_name = self.tree.getString(ds.name);
+
+                        const m_name_val = try self.vm.allocateString(method_name);
+                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                        self.vm.push(m_name_val);
+                        const m_name_idx = try self.makeConstant(m_name_val);
+                        _ = self.vm.pop();
+
+                        const func = try self.vm.gc.allocateFunction(self.vm);
+                        const params = self.tree.getParams(ds.params);
+                        func.arity = @intCast(params.len);
+
+                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                        self.vm.push(value.Value.initObj(&func.obj));
+                        errdefer _ = self.vm.pop();
+
+                        const child_chunk = try self.allocator.create(chunk.Chunk);
+                        child_chunk.* = chunk.Chunk.init();
+                        func.chunk = child_chunk;
+
+                        var child_compiler = Compiler{
+                            .allocator = self.allocator,
+                            .tree = self.tree,
+                            .symbols = self.symbols,
+                            .token_starts = self.token_starts,
+                            .current_chunk = child_chunk,
+                            .vm = self.vm,
+                            .enclosing = self,
+                            .function = func,
+                            .upvalue_count = 0,
+                            .local_count = 0,
+                            .current_stack_depth = 0,
+                            .max_stack_depth = 0,
+                            .current_source_offset = self.current_source_offset,
+                        };
+
+                        child_compiler.local_count = 1;
+                        child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
+                        for (params, 0..) |param, i| child_compiler.addLocal(param.name, @intCast(i + 1));
+
+                        try child_compiler.compile(ds.body);
+                        _ = self.vm.pop();
+
+                        const func_val = value.Value.initObj(&func.obj);
+                        const func_idx = try self.makeConstant(func_val);
+                        try self.emitOp(.op_closure);
+                        try self.emitByte(func_idx);
+                        for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
+                            try self.emitByte(if (upv.is_local) 1 else 0);
+                            try self.emitByte(upv.index);
+                        }
+                        try self.emitOp(.op_method);
+                        try self.emitByte(m_name_idx);
+                    }
+                }
 
                 try self.emitOp(.op_define_global);
                 try self.emitByte(name_idx);
-
-                try self.compileNode(ms.body); // Compile module contents
-                try self.emitOp(.op_pop); // Pop body result
-                try self.emitOp(.op_nil); // module stmt yields nil
+                try self.emitOp(.op_nil);
             },
             .import_stmt => {
                 const is_stmt = self.tree.importStmt(node);
@@ -1516,6 +1577,17 @@ pub const Compiler = struct {
 
                         try self.emitOp(if (is_class_method) .op_class_method else .op_method);
                         try self.emitByte(m_name_idx);
+                    } else if (stmt_node.tag == .method_call) {
+                        const mc = self.tree.methodCall(stmt_node);
+                        const func_name = self.tree.getString(mc.method_name);
+                        if (std.mem.eql(u8, func_name, "include") and mc.receiver == .none) {
+                            const args = self.tree.getNamedArgs(mc.args);
+                            if (args.len == 1) {
+                                try self.compileNode(args[0].value);
+                                try self.emitOp(.op_mixin);
+                                continue;
+                            }
+                        }
                     }
                 }
 
@@ -1660,8 +1732,8 @@ pub const Compiler = struct {
     fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
         try self.emitByte(@intFromEnum(op));
         switch (op) {
-            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import, .op_block_given, .op_get_class_var, .op_defined, .op_extract_kwarg => self.simulatePush(1),
-            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method, .op_unpack, .op_unpack_splat => self.simulatePop(1),
+            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import, .op_block_given, .op_get_class_var, .op_defined, .op_extract_kwarg, .op_module => self.simulatePush(1),
+            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method, .op_unpack, .op_unpack_splat, .op_mixin => self.simulatePop(1),
             .op_map_insert => self.simulatePop(2),
             .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent => {
                 self.simulatePop(2);

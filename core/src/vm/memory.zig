@@ -124,6 +124,18 @@ pub const GC = struct {
         ptr.methods = .empty;
         ptr.class_methods = .empty;
         ptr.class_fields = .empty;
+        ptr.included_modules = .empty;
+        return ptr;
+    }
+
+    pub fn allocateModule(self: *GC, vm: *VM, name: *value.ObjString) !*value.ObjModule {
+        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
+        const ptr = try self.allocator.create(value.ObjModule);
+        self.bytes_allocated += @sizeOf(value.ObjModule);
+        ptr.obj = .{ .obj_type = .module, .is_marked = false, .next = self.first_object };
+        self.first_object = &ptr.obj;
+        ptr.name = name;
+        ptr.methods = .empty;
         return ptr;
     }
 
@@ -347,10 +359,17 @@ pub const GC = struct {
                 if (func.name) |name| self.markObject(&name.obj);
                 // Note: The function's Chunk constants are traced via CallFrames
             },
+            .module => {
+                const module_obj = @as(*value.ObjModule, @alignCast(@fieldParentPtr("obj", obj)));
+                self.markObject(&module_obj.name.obj);
+                var it = module_obj.methods.valueIterator();
+                while (it.next()) |val| self.markValue(val.*);
+            },
             .class => {
                 const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
                 self.markObject(&class_obj.name.obj);
                 if (class_obj.superclass) |sup| self.markObject(&sup.obj);
+                for (class_obj.included_modules.items) |mod| self.markObject(&mod.obj);
                 var it = class_obj.methods.valueIterator();
                 while (it.next()) |val| self.markValue(val.*);
                 var c_it = class_obj.class_methods.valueIterator();
@@ -468,9 +487,16 @@ pub const GC = struct {
                 self.allocator.destroy(upvalue);
                 self.bytes_allocated -= @sizeOf(value.ObjUpvalue);
             },
+            .module => {
+                const module_obj = @as(*value.ObjModule, @alignCast(@fieldParentPtr("obj", obj)));
+                module_obj.methods.deinit(self.allocator);
+                self.allocator.destroy(module_obj);
+                self.bytes_allocated -= @sizeOf(value.ObjModule);
+            },
             .class => {
                 const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
                 class_obj.methods.deinit(self.allocator);
+                class_obj.included_modules.deinit(self.allocator);
                 class_obj.class_methods.deinit(self.allocator);
                 class_obj.class_fields.deinit(self.allocator);
                 self.allocator.destroy(class_obj);
