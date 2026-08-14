@@ -1,4 +1,7 @@
 const std = @import("std");
+const chunk = @import("vm/chunk.zig");
+const value = @import("core/value.zig");
+const VM = @import("vm/vm.zig").VM;
 const testing = std.testing;
 
 // Import the WASM module functions directly
