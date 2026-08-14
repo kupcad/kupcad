@@ -16,6 +16,19 @@ pub fn registerStandardLibrary(vm: *VM) !void {
         try vm.defineNative(def.name, def.func);
     }
 
+    // --- Bootstrapped Exception Hierarchy ---
+    const std_err_str = try vm.gc.allocateString(vm, "StandardError");
+    const std_err_class = try vm.gc.allocateClass(vm, std_err_str, null);
+    try vm.globals.put(vm.allocator, "StandardError", value.Value.initObj(&std_err_class.obj));
+
+    const arg_err_str = try vm.gc.allocateString(vm, "ArgumentError");
+    const arg_err_class = try vm.gc.allocateClass(vm, arg_err_str, std_err_class);
+    try vm.globals.put(vm.allocator, "ArgumentError", value.Value.initObj(&arg_err_class.obj));
+
+    const type_err_str = try vm.gc.allocateString(vm, "TypeError");
+    const type_err_class = try vm.gc.allocateClass(vm, type_err_str, std_err_class);
+    try vm.globals.put(vm.allocator, "TypeError", value.Value.initObj(&type_err_class.obj));
+
     // Set up Math module (as an instance of a pseudo-class)
     const math_str = try vm.gc.allocateString(vm, "Math");
     const math_class = try vm.gc.allocateClass(vm, math_str, null);

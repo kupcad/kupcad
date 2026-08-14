@@ -91,6 +91,8 @@ pub const ObjClass = struct {
     name: *ObjString,
     superclass: ?*ObjClass = null,
     methods: std.StringHashMapUnmanaged(Value),
+    class_methods: std.StringHashMapUnmanaged(Value),
+    class_fields: std.StringHashMapUnmanaged(Value),
 };
 
 pub const ObjInstance = struct {

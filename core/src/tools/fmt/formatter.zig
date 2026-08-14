@@ -449,6 +449,7 @@ pub const Formatter = struct {
             for (params, 0..) |p, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
                 if (p.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
+
                 try self.out.appendSlice(self.allocator, tree.getString(p.name));
                 if (p.is_keyword) try self.out.append(self.allocator, ':');
                 if (p.default_value != .none) {

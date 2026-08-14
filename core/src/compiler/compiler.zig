@@ -202,14 +202,19 @@ pub const Compiler = struct {
             .identifier => {
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = @as(ast.StringId, @enumFromInt(node.data));
+                const name_str = self.tree.getString(name_id);
 
-                if (sym.kind == .global) {
-                    const name = self.tree.getString(name_id);
-                    const name_idx = try self.makeStringConstant(name);
+                // Intercept @@ variables unconditionally to override resolver
+                if (std.mem.startsWith(u8, name_str, "@@")) {
+                    const name_idx = try self.makeStringConstant(name_str);
+                    try self.emitOp(.op_get_class_var);
+                    try self.emitByte(name_idx);
+                } else if (sym.kind == .global) {
+                    const name_idx = try self.makeStringConstant(name_str);
                     try self.emitOp(.op_get_global);
                     try self.emitByte(name_idx);
                 } else {
-                    // Try to resolve in the current compiler, then recurse upwards
+                    // Try to resolve in the current compiler, then recurse upwards!
                     if (self.resolveLocal(name_id)) |local_slot| {
                         try self.emitOp(.op_get_local);
                         try self.emitByte(local_slot);
@@ -269,8 +274,14 @@ pub const Compiler = struct {
                 // 1. Evaluate RHS (with Compound Operator getters if necessary)
                 if (assign_payload.op) |op| {
                     if (sym.kind == .global) {
-                        const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
-                        try self.emitOp(.op_get_global);
+                        const name_str = self.tree.getString(name_id);
+                        const name_idx = try self.makeStringConstant(name_str);
+
+                        if (std.mem.startsWith(u8, name_str, "@@")) {
+                            try self.emitOp(.op_get_class_var);
+                        } else {
+                            try self.emitOp(.op_get_global);
+                        }
                         try self.emitByte(name_idx);
                     } else if (self.resolveLocal(name_id)) |local_slot| {
                         try self.emitOp(.op_get_local);
@@ -297,14 +308,15 @@ pub const Compiler = struct {
                 }
 
                 // 2. Set the Target Variable
-                if (sym.kind == .global) {
-                    const name_str = self.tree.getString(name_id);
-                    const name_val = try self.vm.allocateString(name_str);
-                    self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                    self.vm.push(name_val);
-                    const name_idx = try self.makeConstant(name_val);
-                    _ = self.vm.pop();
+                const name_str = self.tree.getString(name_id);
 
+                // Intercept @@ variables unconditionally
+                if (std.mem.startsWith(u8, name_str, "@@")) {
+                    const name_idx = try self.makeStringConstant(name_str);
+                    try self.emitOp(.op_set_class_var);
+                    try self.emitByte(name_idx);
+                } else if (sym.kind == .global) {
+                    const name_idx = try self.makeStringConstant(name_str);
                     try self.emitOp(.op_define_global);
                     try self.emitByte(name_idx);
                     try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
@@ -1006,7 +1018,6 @@ pub const Compiler = struct {
             },
             .array_literal => {
                 const elements = self.tree.getNodes(self.tree.nodeSpan(node));
-
                 if (elements.len == 0) {
                     try self.emitOp(.op_build_array);
                     try self.emitByte(0);
@@ -1255,7 +1266,6 @@ pub const Compiler = struct {
                 // 1. Push the un-initialized class onto the stack (+1)
                 try self.emitOp(.op_class);
                 try self.emitByte(name_idx);
-
                 if (cs.super_class != .none) {
                     try self.compileNode(cs.super_class); // Evaluates base class and leaves it on stack
                     try self.emitOp(.op_inherit); // Wires base to child
@@ -1272,7 +1282,14 @@ pub const Compiler = struct {
                         const ds = self.tree.defStmt(stmt_node);
                         const method_name = self.tree.getString(ds.name);
 
-                        const m_name_val = try self.vm.allocateString(method_name);
+                        // Parse class methods natively via AST tag or string prefix fallback
+                        const is_class_method = ds.is_class_method or std.mem.startsWith(u8, method_name, "self.");
+                        var final_name = method_name;
+                        if (std.mem.startsWith(u8, method_name, "self.")) {
+                            final_name = method_name[5..]; // Strip "self." if present
+                        }
+
+                        const m_name_val = try self.vm.allocateString(final_name);
                         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
                         self.vm.push(m_name_val);
                         const m_name_idx = try self.makeConstant(m_name_val);
@@ -1294,7 +1311,6 @@ pub const Compiler = struct {
 
                         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
                         self.vm.push(value.Value.initObj(&func.obj));
-
                         // Guarantee the function is popped off the stack if compilation fails!
                         errdefer _ = self.vm.pop();
 
@@ -1321,7 +1337,6 @@ pub const Compiler = struct {
                         // Reserve slot 0 as the implicit 'self' receiver
                         child_compiler.local_count = 1;
                         child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
-
                         for (params, 0..) |param, i| {
                             child_compiler.addLocal(param.name, @intCast(i + 1));
                         }
@@ -1346,7 +1361,7 @@ pub const Compiler = struct {
                             try self.emitByte(upv.index);
                         }
 
-                        try self.emitOp(.op_method); // (-1)
+                        try self.emitOp(if (is_class_method) .op_class_method else .op_method);
                         try self.emitByte(m_name_idx);
                     }
                 }
@@ -1476,8 +1491,8 @@ pub const Compiler = struct {
     fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
         try self.emitByte(@intFromEnum(op));
         switch (op) {
-            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import, .op_block_given => self.simulatePush(1),
-            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke => self.simulatePop(1),
+            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import, .op_block_given, .op_get_class_var => self.simulatePush(1),
+            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method => self.simulatePop(1),
             .op_map_insert => self.simulatePop(2),
             .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent => {
                 self.simulatePop(2);
@@ -1504,6 +1519,7 @@ pub const Compiler = struct {
             .op_unpack => {
                 self.simulatePop(1);
             },
+            .op_set_class_var => {},
             else => {},
         }
     }

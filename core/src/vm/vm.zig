@@ -476,26 +476,6 @@ pub const VM = struct {
                     self.push(err_val);
                     self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
                 },
-                .op_is_instance => {
-                    const class_val = self.pop();
-                    defer self.releaseValue(class_val);
-                    const instance_val = self.pop();
-                    defer self.releaseValue(instance_val);
-
-                    if (!class_val.isClass()) {
-                        self.reportError("Runtime Error: Rescue type must be a Class.\n", .{});
-                        return .runtime_error;
-                    }
-
-                    if (instance_val.isInstance()) {
-                        const inst = instance_val.asInstance();
-                        // For MVP, exact class match. (Later, we can walk superclasses).
-                        self.push(value.Value.initBool(inst.class == class_val.asClass()));
-                    } else {
-                        // If user threw a primitive string instead of an Error object, it fails the class check
-                        self.push(value.Value.initBool(false));
-                    }
-                },
                 .op_build_array => {
                     const item_count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
@@ -1012,7 +992,6 @@ pub const VM = struct {
                     frame.ip += 1;
                     const arg_count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
-
                     const method_name_val = exec_chunk.constants.items[method_name_idx];
                     const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
 
@@ -1026,11 +1005,9 @@ pub const VM = struct {
                     // ====================================================
                     if (receiver.isObject()) {
                         const obj_type = receiver.asObj().obj_type;
-
                         // --- ARRAY METHODS ---
                         if (obj_type == .array) {
                             const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
-
                             if (std.mem.eql(u8, method_name_str, "each") and arg_count == 1) {
                                 const closure_val = self.stack[self.stack_top - 1];
                                 if (closure_val.isClosure()) {
@@ -1065,7 +1042,6 @@ pub const VM = struct {
                                     const closure = closure_val.asClosure();
                                     var acc_val: value.Value = undefined;
                                     var start_idx: usize = 0;
-
                                     if (arg_count == 2) {
                                         acc_val = self.stack[self.stack_top - 2]; // Initial value provided
                                     } else if (arg_count == 1) {
@@ -1077,7 +1053,6 @@ pub const VM = struct {
                                         acc_val = arr.items.items[0]; // Default to first element
                                         start_idx = 1;
                                     } else return .runtime_error;
-
                                     for (arr.items.items[start_idx..]) |item| {
                                         acc_val = self.callClosureSync(closure, &.{ acc_val, item }) catch return .runtime_error;
                                     }
@@ -1100,7 +1075,6 @@ pub const VM = struct {
                                 if (arr.items.items.len > 0) {
                                     const val = arr.items.items[arr.items.items.len - 1];
                                     arr.items.shrinkRetainingCapacity(arr.items.items.len - 1);
-
                                     self.stack_top -= 1; // pop receiver
                                     self.push(val);
                                 } else {
@@ -1131,11 +1105,9 @@ pub const VM = struct {
                                 if (start_val.isNumber() and len_val.isNumber()) {
                                     const start_idx = @as(usize, @intFromFloat(start_val.asNumber()));
                                     const length = @as(usize, @intFromFloat(len_val.asNumber()));
-
                                     const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
                                     self.push(value.Value.initObj(&new_arr.obj)); // Protect
                                     new_arr.items.ensureTotalCapacity(self.allocator, length) catch return .runtime_error;
-
                                     var idx: usize = 0;
                                     while (idx < length and start_idx + idx < arr.items.items.len) : (idx += 1) {
                                         const item = arr.items.items[start_idx + idx];
@@ -1153,7 +1125,6 @@ pub const VM = struct {
                                     const delim = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", delim_val.asObj()))).chars;
                                     var out: std.Io.Writer.Allocating = .init(self.allocator);
                                     defer out.deinit();
-
                                     for (arr.items.items, 0..) |item, idx| {
                                         item.stringify(false, &out.writer) catch return .runtime_error;
                                         if (idx < arr.items.items.len - 1) {
@@ -1170,7 +1141,6 @@ pub const VM = struct {
                         // --- MAP (HASH) METHODS ---
                         else if (obj_type == .map) {
                             const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
-
                             if (std.mem.eql(u8, method_name_str, "each") and arg_count == 1) {
                                 const closure_val = self.stack[self.stack_top - 1];
                                 if (closure_val.isClosure()) {
@@ -1244,7 +1214,6 @@ pub const VM = struct {
                                     } else {
                                         match = k.isEqual(search_key);
                                     }
-
                                     if (match) {
                                         _ = map.keys.orderedRemove(idx);
                                         deleted_val = map.values.orderedRemove(idx);
@@ -1260,7 +1229,6 @@ pub const VM = struct {
                         // --- STRING METHODS ---
                         else if (obj_type == .string) {
                             const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
-
                             if (std.mem.eql(u8, method_name_str, "upcase") and arg_count == 0) {
                                 const new_str = self.allocator.alloc(u8, str_obj.chars.len) catch return .runtime_error;
                                 for (str_obj.chars, 0..) |c, i| new_str[i] = std.ascii.toUpper(c);
@@ -1303,11 +1271,9 @@ pub const VM = struct {
                                 {
                                     const t_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
                                     const r_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", replace_val.asObj()))).chars;
-
                                     const replaced = std.mem.replaceOwned(u8, self.allocator, str_obj.chars, t_str, r_str) catch return .runtime_error;
                                     const val = self.allocateString(replaced) catch return .runtime_error;
                                     self.allocator.free(replaced);
-
                                     self.stack_top -= 3; // Pop args and receiver
                                     self.push(val);
                                     continue;
@@ -1315,7 +1281,6 @@ pub const VM = struct {
                             }
                         }
                     }
-
                     // ====================================================
                     // 2. MATH MODULE NAMESPACE
                     // ====================================================
@@ -1325,20 +1290,17 @@ pub const VM = struct {
                             if (arg.isNumber()) {
                                 var res: f64 = 0;
                                 if (std.mem.eql(u8, method_name_str, "sin")) res = std.math.sin(arg.asNumber()) else if (std.mem.eql(u8, method_name_str, "cos")) res = std.math.cos(arg.asNumber()) else if (std.mem.eql(u8, method_name_str, "tan")) res = std.math.tan(arg.asNumber()) else if (std.mem.eql(u8, method_name_str, "sqrt")) res = std.math.sqrt(arg.asNumber()) else if (std.mem.eql(u8, method_name_str, "abs")) res = @abs(arg.asNumber()) else return .runtime_error;
-
                                 self.stack_top -= 2; // Pop arg and receiver
                                 self.push(value.Value.initNumber(res));
                                 continue;
                             } else return .runtime_error;
                         }
                     }
-
                     // ====================================================
-                    // 3. CUSTOM KUPCAD OBJECTS (Instances)
+                    // 3. CUSTOM KUPCAD OBJECTS (Instances and Classes)
                     // ====================================================
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
-
                         // Property access behaves exactly like a 0-arg method call
                         if (arg_count == 0) {
                             if (instance.fields.get(method_name_str)) |field_val| {
@@ -1348,38 +1310,32 @@ pub const VM = struct {
                             }
                         }
 
-                        // Check class methods
+                        // Check instance methods
                         if (self.findMethod(instance.class, method_name_str)) |method_val| {
                             const closure = method_val.asClosure();
                             var provided_args = arg_count;
                             var has_block = false;
-
                             if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
                                 has_block = true;
                                 provided_args -= 1;
                             }
-
-                            const expected_args = closure.function.arity - 1; // -1 for implicit 'self'
+                            const expected_args = closure.function.arity; // FIXED: Removed the invalid '- 1'
 
                             if (provided_args < expected_args) {
                                 const missing = expected_args - provided_args;
                                 self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
-
                                 const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
                                 if (has_block) self.stack_top -= 1;
-
                                 for (0..missing) |_| self.push(value.Value.initNil());
                                 if (has_block) self.push(block_copy.?);
                             } else if (provided_args > expected_args) {
                                 self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                 return .runtime_error;
                             }
-
                             if (!has_block) {
                                 self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
                                 self.push(value.Value.initNil());
                             }
-
                             self.frames.append(self.allocator, .{
                                 .closure = closure,
                                 .ip = 0,
@@ -1387,8 +1343,90 @@ pub const VM = struct {
                             }) catch return .runtime_error;
                             continue;
                         }
-
                         self.reportError("Runtime Error: Undefined property or method '{s}'.\n", .{method_name_str});
+                        return .runtime_error;
+                    } else if (receiver.isClass()) {
+                        const class_obj = receiver.asClass();
+
+                        // 1. Check custom class methods (def self.method)
+                        if (self.findClassMethod(class_obj, method_name_str)) |method_val| {
+                            const closure = method_val.asClosure();
+                            var provided_args = arg_count;
+                            var has_block = false;
+                            if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
+                                has_block = true;
+                                provided_args -= 1;
+                            }
+                            const expected_args = closure.function.arity; // FIXED: Removed the invalid '- 1'
+
+                            if (provided_args < expected_args) {
+                                const missing = expected_args - provided_args;
+                                self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
+                                const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
+                                if (has_block) self.stack_top -= 1;
+                                for (0..missing) |_| self.push(value.Value.initNil());
+                                if (has_block) self.push(block_copy.?);
+                            } else if (provided_args > expected_args) {
+                                self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
+                                return .runtime_error;
+                            }
+                            if (!has_block) {
+                                self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
+                                self.push(value.Value.initNil());
+                            }
+                            self.frames.append(self.allocator, .{
+                                .closure = closure,
+                                .ip = 0,
+                                .base_slot = base_slot, // MAGIC
+                            }) catch return .runtime_error;
+                            continue;
+                        }
+                        // 2. Default Constructor Fallback: Class.new(...)
+                        else if (std.mem.eql(u8, method_name_str, "new")) {
+                            const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
+                            self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance
+
+                            if (self.findMethod(class_obj, "initialize")) |init_method| {
+                                const closure = init_method.asClosure();
+                                var provided_args = arg_count;
+                                var has_block = false;
+                                if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
+                                    has_block = true;
+                                    provided_args -= 1;
+                                }
+                                const expected_args = closure.function.arity; // FIXED: Removed the invalid '- 1'
+
+                                if (provided_args < expected_args) {
+                                    const missing = expected_args - provided_args;
+                                    self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
+                                    const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
+                                    if (has_block) self.stack_top -= 1;
+                                    for (0..missing) |_| self.push(value.Value.initNil());
+                                    if (has_block) self.push(block_copy.?);
+                                } else if (provided_args > expected_args) {
+                                    self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
+                                    return .runtime_error;
+                                }
+                                if (!has_block) {
+                                    self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
+                                    self.push(value.Value.initNil());
+                                }
+                                self.frames.append(self.allocator, .{
+                                    .closure = closure,
+                                    .ip = 0,
+                                    .base_slot = base_slot,
+                                }) catch return .runtime_error;
+                                continue;
+                            } else if (arg_count > 0) {
+                                self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
+                                return .runtime_error;
+                            } else {
+                                // 0-arg default constructor: Instance remains in base_slot on top of the stack
+                                continue;
+                            }
+                        }
+
+                        self.reportError("Runtime Error: Undefined class method '{s}'.\n", .{method_name_str});
                         return .runtime_error;
                     }
 
@@ -1415,48 +1453,40 @@ pub const VM = struct {
                     const base_slot = self.stack_top - 1 - arg_count;
                     const method_name_str = frame.closure.function.name.?.chars;
                     const receiver = self.stack[base_slot];
-
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
                         const superclass = instance.class.superclass orelse {
                             self.reportError("Runtime Error: No superclass exists for receiver.\n", .{});
                             return .runtime_error;
                         };
-
                         if (self.findMethod(superclass, method_name_str)) |method_val| {
                             const closure = method_val.asClosure();
                             var provided_args = arg_count;
                             var has_block = false;
-
                             // Check if the final argument is an implicit block
                             if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
                                 has_block = true;
                                 provided_args -= 1;
                             }
-
-                            const expected_args = closure.function.arity - 1; // -1 for implicit 'self'
+                            const expected_args = closure.function.arity; // FIXED: Removed the invalid '- 1'
 
                             // Pad missing positional arguments with 'nil'
                             if (provided_args < expected_args) {
                                 const missing = expected_args - provided_args;
                                 self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
-
                                 const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
                                 if (has_block) self.stack_top -= 1;
-
                                 for (0..missing) |_| self.push(value.Value.initNil());
                                 if (has_block) self.push(block_copy.?);
                             } else if (provided_args > expected_args) {
                                 self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
                                 return .runtime_error;
                             }
-
                             // If no block was passed, pad the block slot with 'nil'
                             if (!has_block) {
                                 self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
                                 self.push(value.Value.initNil());
                             }
-
                             // Dispatch the CallFrame!
                             self.frames.append(self.allocator, .{
                                 .closure = closure,
@@ -1465,7 +1495,6 @@ pub const VM = struct {
                             }) catch return .runtime_error;
                             continue;
                         }
-
                         self.reportError("Runtime Error: Superclass method '{s}' not found.\n", .{method_name_str});
                         return .runtime_error;
                     }
@@ -1545,6 +1574,73 @@ pub const VM = struct {
 
                     // Push the block back on top to maintain the Uniform Padding invariant
                     self.push(block_val);
+                },
+                .op_class_method => {
+                    const name_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+                    const method = self.pop();
+                    const class_val = self.stack[self.stack_top - 1]; // Peek at class
+                    const class_obj = class_val.asClass();
+                    class_obj.class_methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                },
+                .op_get_class_var => {
+                    const name_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+
+                    const receiver = self.stack[frame.base_slot];
+                    const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
+
+                    if (class_obj) |c| {
+                        if (c.class_fields.get(name_str)) |val| {
+                            self.push(val);
+                        } else {
+                            self.reportError("Runtime Error: Undefined class variable '{s}'.\n", .{name_str});
+                            return .runtime_error;
+                        }
+                    } else return .runtime_error;
+                },
+                .op_set_class_var => {
+                    const name_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+
+                    const val = self.stack[self.stack_top - 1]; // Peek
+                    const receiver = self.stack[frame.base_slot];
+                    const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
+
+                    if (class_obj) |c| {
+                        self.retainValue(val);
+                        if (c.class_fields.get(name_str)) |old_val| self.releaseValue(old_val);
+                        c.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
+                    } else return .runtime_error;
+                },
+                .op_is_instance => {
+                    const class_val = self.pop();
+                    defer self.releaseValue(class_val);
+                    const thrown_val = self.pop();
+                    defer self.releaseValue(thrown_val);
+
+                    if (!class_val.isClass()) {
+                        self.reportError("Runtime Error: Rescue type must be a Class.\n", .{});
+                        return .runtime_error;
+                    }
+
+                    var match = false;
+                    if (thrown_val.isInstance()) {
+                        match = isSubclassOf(thrown_val.asInstance().class, class_val.asClass());
+                    } else if (thrown_val.isClass()) {
+                        // Allows naturally catching un-instantiated exception classes (e.g., `raise(ArgumentError)`)
+                        match = isSubclassOf(thrown_val.asClass(), class_val.asClass());
+                    } else {
+                        // If user threw a primitive string instead of an Error object
+                        match = false;
+                    }
+                    self.push(value.Value.initBool(match));
                 },
                 else => {
                     self.reportError("Runtime Error: Unhandled OpCode {}\n", .{op});
@@ -1750,6 +1846,25 @@ pub const VM = struct {
         if (res != .ok) return error.RuntimeError;
 
         return self.pop();
+    }
+
+    fn findClassMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {
+        _ = self;
+        var current: ?*value.ObjClass = class;
+        while (current) |c| {
+            if (c.class_methods.get(name)) |method| return method;
+            current = c.superclass;
+        }
+        return null;
+    }
+
+    fn isSubclassOf(class: *value.ObjClass, superclass: *value.ObjClass) bool {
+        var current: ?*value.ObjClass = class;
+        while (current) |c| {
+            if (c == superclass) return true;
+            current = c.superclass;
+        }
+        return false;
     }
 
     pub fn reportError(self: *VM, comptime fmt: []const u8, args: anytype) void {

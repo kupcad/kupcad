@@ -52,7 +52,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         => {
             return simpleInstruction(@tagName(op), offset, writer);
         },
-        .op_constant, .op_get_global, .op_define_global, .op_set_global, .op_class, .op_method, .op_get_property, .op_set_property, .op_import => {
+        .op_constant, .op_get_global, .op_define_global, .op_set_global, .op_class, .op_method, .op_get_property, .op_set_property, .op_import, .op_class_method, .op_get_class_var, .op_set_class_var => {
             return constantInstruction(@tagName(op), c, offset, writer);
         },
         .op_get_local, .op_set_local, .op_call, .op_build_array, .op_build_map, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield, .op_pack_splat => {

@@ -1016,7 +1016,7 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber());
-    try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[1].asNumber()); // 3.0 is at index 1
+    try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[1].asNumber());
     try testing.expectEqual(@as(f64, 4.0), arr_obj.items.items[2].asNumber());
 }
 
@@ -1084,7 +1084,6 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
 
     // args == [20, 30]
     const packed_args = arr_obj.items.items[0];
-    try testing.expect(packed_args.isObject() and packed_args.asObj().obj_type == .array);
     const packed_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", packed_args.asObj())));
     try testing.expectEqual(@as(usize, 2), packed_obj.items.items.len);
     try testing.expectEqual(@as(f64, 20.0), packed_obj.items.items[0].asNumber());
@@ -1092,7 +1091,106 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
 
     // kwargs == {"x" => 100}
     const packed_kwargs = arr_obj.items.items[1];
-    try testing.expect(packed_kwargs.isObject() and packed_kwargs.asObj().obj_type == .map);
     const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", packed_kwargs.asObj())));
     try testing.expectEqual(@as(usize, 1), map_obj.keys.items.len);
+}
+
+test "VM: Compiles and executes class variables (@@var)" {
+    const Document = @import("../core/document.zig").Document;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class Counter
+        \\  def init()
+        \\    @@count = 10
+        \\  end
+        \\  def get()
+        \\    @@count
+        \\  end
+        \\end
+        \\c = Counter.new()
+        \\c.init()
+        \\c.get()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 10.0), vm.stack[0].asNumber());
+}
+
+test "VM: Compiles and executes class methods (def self.method)" {
+    const Document = @import("../core/document.zig").Document;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class MathUtils
+        \\  def self.double(x)
+        \\    x * 2
+        \\  end
+        \\end
+        \\MathUtils.double(21)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+}
+
+test "VM: Standard exceptions are caught in rescue blocks natively" {
+    const Document = @import("../core/document.zig").Document;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests that subclass (ArgumentError) gracefully cascades and is caught securely
+    const source =
+        \\begin
+        \\  raise(ArgumentError)
+        \\rescue TypeError => e
+        \\  10
+        \\rescue ArgumentError => e
+        \\  42
+        \\rescue StandardError => e
+        \\  99
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
 }

@@ -122,6 +122,8 @@ pub const GC = struct {
         ptr.name = name;
         ptr.superclass = superclass;
         ptr.methods = .empty;
+        ptr.class_methods = .empty;
+        ptr.class_fields = .empty;
         return ptr;
     }
 
@@ -351,6 +353,10 @@ pub const GC = struct {
                 if (class_obj.superclass) |sup| self.markObject(&sup.obj);
                 var it = class_obj.methods.valueIterator();
                 while (it.next()) |val| self.markValue(val.*);
+                var c_it = class_obj.class_methods.valueIterator();
+                while (c_it.next()) |val| self.markValue(val.*);
+                var f_it = class_obj.class_fields.valueIterator();
+                while (f_it.next()) |val| self.markValue(val.*);
             },
             .instance => {
                 const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
@@ -465,6 +471,8 @@ pub const GC = struct {
             .class => {
                 const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
                 class_obj.methods.deinit(self.allocator);
+                class_obj.class_methods.deinit(self.allocator);
+                class_obj.class_fields.deinit(self.allocator);
                 self.allocator.destroy(class_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjClass);
             },
