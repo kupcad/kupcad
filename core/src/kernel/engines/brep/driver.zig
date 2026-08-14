@@ -32,9 +32,22 @@ fn destructImpl(handle: geom.GeometryHandle) void {
     _ = handle;
 }
 
+fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
+    std.debug.assert(handle.engine == .brep_native);
+    return null;
+}
+
+fn queryFacesImpl(handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
+    std.debug.assert(handle.engine == .brep_native);
+    _ = filter;
+    return null;
+}
+
 pub const driver = kernel.GeometryKernel{
     .cubeFn = cubeImpl,
     .booleanFn = booleanImpl,
     .transformFn = transformImpl,
+    .boundingBoxFn = boundingBoxImpl,
+    .queryFacesFn = queryFacesImpl,
     .destructFn = destructImpl,
 };

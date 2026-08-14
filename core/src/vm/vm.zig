@@ -1366,7 +1366,18 @@ pub const VM = struct {
                 return kernel.boolean(left_handle, right_handle, op) orelse return error.RuntimeError;
             },
             .translate => {
-                return error.NotImplementedYet;
+                const payload = self.dag_builder.getTranslatePayload(node);
+                const target_handle = try self.evaluateDAG(payload.target);
+
+                // Column-major 4x4 translation matrix
+                const matrix = [16]f64{
+                    1.0,       0.0,       0.0,       0.0,
+                    0.0,       1.0,       0.0,       0.0,
+                    0.0,       0.0,       1.0,       0.0,
+                    payload.x, payload.y, payload.z, 1.0,
+                };
+
+                return kernel.transform(target_handle, matrix) orelse return error.RuntimeError;
             },
             else => return error.RuntimeError,
         }
