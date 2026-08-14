@@ -234,42 +234,29 @@ pub const VM = struct {
                     }
                 },
                 .op_multiply => {
-                    const b = self.pop();
-                    defer self.releaseValue(b);
-                    const a = self.pop();
-                    defer self.releaseValue(a);
-                    self.push(value.Value.initNumber(a.asNumber() * b.asNumber()));
+                    const nums = self.popBinaryNumbers() catch return .runtime_error;
+                    self.push(value.Value.initNumber(nums[0] * nums[1]));
                 },
                 .op_divide => {
-                    const b = self.pop();
-                    defer self.releaseValue(b);
-                    const a = self.pop();
-                    defer self.releaseValue(a);
-                    self.push(value.Value.initNumber(a.asNumber() / b.asNumber()));
+                    const nums = self.popBinaryNumbers() catch return .runtime_error;
+                    self.push(value.Value.initNumber(nums[0] / nums[1]));
                 },
                 .op_negate => {
                     const a = self.pop();
                     defer self.releaseValue(a);
+                    if (!a.isNumber()) {
+                        self.reportError("Runtime Error: Invalid operand for '-'\n", .{});
+                        return .runtime_error;
+                    }
                     self.push(value.Value.initNumber(-a.asNumber()));
                 },
-                // ... [existing math ops] ...
                 .op_modulo => {
-                    const b = self.pop();
-                    defer self.releaseValue(b);
-                    const a = self.pop();
-                    defer self.releaseValue(a);
-                    if (a.isNumber() and b.isNumber()) {
-                        self.push(value.Value.initNumber(@mod(a.asNumber(), b.asNumber())));
-                    } else return .runtime_error;
+                    const nums = self.popBinaryNumbers() catch return .runtime_error;
+                    self.push(value.Value.initNumber(@mod(nums[0], nums[1])));
                 },
                 .op_exponent => {
-                    const b = self.pop();
-                    defer self.releaseValue(b);
-                    const a = self.pop();
-                    defer self.releaseValue(a);
-                    if (a.isNumber() and b.isNumber()) {
-                        self.push(value.Value.initNumber(std.math.pow(f64, a.asNumber(), b.asNumber())));
-                    } else return .runtime_error;
+                    const nums = self.popBinaryNumbers() catch return .runtime_error;
+                    self.push(value.Value.initNumber(std.math.pow(f64, nums[0], nums[1])));
                 },
                 .op_not => {
                     const val = self.pop();
@@ -282,25 +269,15 @@ pub const VM = struct {
                     defer self.releaseValue(b);
                     const a = self.pop();
                     defer self.releaseValue(a);
-                    self.push(value.Value.initBool(a.isEqual(b)));
+                    self.push(value.Value.initBool(self.valuesEqual(a, b)));
                 },
                 .op_less => {
-                    const b = self.pop();
-                    defer self.releaseValue(b);
-                    const a = self.pop();
-                    defer self.releaseValue(a);
-                    if (a.isNumber() and b.isNumber()) {
-                        self.push(value.Value.initBool(a.asNumber() < b.asNumber()));
-                    } else return .runtime_error;
+                    const nums = self.popBinaryNumbers() catch return .runtime_error;
+                    self.push(value.Value.initBool(nums[0] < nums[1]));
                 },
                 .op_greater => {
-                    const b = self.pop();
-                    defer self.releaseValue(b);
-                    const a = self.pop();
-                    defer self.releaseValue(a);
-                    if (a.isNumber() and b.isNumber()) {
-                        self.push(value.Value.initBool(a.asNumber() > b.asNumber()));
-                    } else return .runtime_error;
+                    const nums = self.popBinaryNumbers() catch return .runtime_error;
+                    self.push(value.Value.initBool(nums[0] > nums[1]));
                 },
                 .op_get_property => {
                     const name_idx = exec_chunk.code.items[frame.ip];
@@ -351,23 +328,11 @@ pub const VM = struct {
                         self.push(arr.items.items[idx]);
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
-                        var found = false;
-                        for (map.keys.items, 0..) |k, i| {
-                            if (k.isNumber() and index.isNumber() and k.asNumber() == index.asNumber()) {
-                                self.push(map.values.items[i]);
-                                found = true;
-                                break;
-                            } else if (k.isObject() and k.asObj().obj_type == .string and index.isObject() and index.asObj().obj_type == .string) {
-                                const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj())));
-                                const idx_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", index.asObj())));
-                                if (std.mem.eql(u8, k_str.chars, idx_str.chars)) {
-                                    self.push(map.values.items[i]);
-                                    found = true;
-                                    break;
-                                }
-                            }
+                        if (self.findMapKey(map, index)) |i| {
+                            self.push(map.values.items[i]);
+                        } else {
+                            self.push(value.Value.initNil());
                         }
-                        if (!found) self.push(value.Value.initNil());
                     } else {
                         self.reportError("Runtime Error: Cannot index target.\n", .{});
                         return .runtime_error;
@@ -395,27 +360,11 @@ pub const VM = struct {
                         self.push(val);
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
-                        var found = false;
-                        for (map.keys.items, 0..) |k, i| {
-                            const is_num_match = k.isNumber() and index.isNumber() and k.asNumber() == index.asNumber();
-                            var is_str_match = false;
-
-                            if (k.isObject() and k.asObj().obj_type == .string and index.isObject() and index.asObj().obj_type == .string) {
-                                const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj())));
-                                const idx_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", index.asObj())));
-                                is_str_match = std.mem.eql(u8, k_str.chars, idx_str.chars);
-                            }
-
-                            if (is_num_match or is_str_match) {
-                                self.releaseValue(map.values.items[i]);
-                                self.retainValue(val);
-                                map.values.items[i] = val;
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            // If key doesn't exist, append it
+                        if (self.findMapKey(map, index)) |i| {
+                            self.releaseValue(map.values.items[i]);
+                            self.retainValue(val);
+                            map.values.items[i] = val;
+                        } else {
                             self.retainValue(index);
                             self.retainValue(val);
                             map.keys.append(self.allocator, index) catch return .runtime_error;
@@ -713,7 +662,6 @@ pub const VM = struct {
                     var matched = false;
                     var jump_offset: u16 = 0;
 
-                    // Native Zig loop: drastically faster than VM opcode dispatch
                     for (0..case_count) |_| {
                         const const_idx = exec_chunk.code.items[frame.ip];
                         const offset = (@as(u16, exec_chunk.code.items[frame.ip + 1]) << 8) | exec_chunk.code.items[frame.ip + 2];
@@ -721,16 +669,9 @@ pub const VM = struct {
 
                         if (!matched) {
                             const case_val = exec_chunk.constants.items[const_idx];
-                            if (test_val.isNumber() and case_val.isNumber() and test_val.asNumber() == case_val.asNumber()) {
+                            if (self.valuesEqual(test_val, case_val)) {
                                 matched = true;
                                 jump_offset = offset;
-                            } else if (test_val.isObject() and case_val.isObject() and test_val.asObj().obj_type == .string and case_val.asObj().obj_type == .string) {
-                                const t_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", test_val.asObj())));
-                                const c_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", case_val.asObj())));
-                                if (std.mem.eql(u8, t_str.chars, c_str.chars)) {
-                                    matched = true;
-                                    jump_offset = offset;
-                                }
                             }
                         }
                     }
@@ -738,7 +679,6 @@ pub const VM = struct {
                     const default_offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
                     frame.ip += 2;
 
-                    // Execute the matched offset, or fall through to the default else branch
                     if (matched) {
                         frame.ip += jump_offset;
                     } else {
@@ -1207,46 +1147,17 @@ pub const VM = struct {
                                 continue;
                             } else if (std.mem.eql(u8, method_name_str, "has_key?") and arg_count == 1) {
                                 const search_key = self.stack[self.stack_top - 1];
-                                var found = false;
-                                for (map.keys.items) |k| {
-                                    if (k.isNumber() and search_key.isNumber() and k.asNumber() == search_key.asNumber()) {
-                                        found = true;
-                                        break;
-                                    } else if (k.isObject() and search_key.isObject() and k.asObj().obj_type == .string and search_key.asObj().obj_type == .string) {
-                                        const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
-                                        const s_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", search_key.asObj()))).chars;
-                                        if (std.mem.eql(u8, k_str, s_str)) {
-                                            found = true;
-                                            break;
-                                        }
-                                    } else if (k.isEqual(search_key)) {
-                                        found = true;
-                                        break;
-                                    }
-                                }
+                                const found = self.findMapKey(map, search_key) != null;
                                 self.stack_top -= 2; // pop arg and receiver
                                 self.push(value.Value.initBool(found));
                                 continue;
                             } else if (std.mem.eql(u8, method_name_str, "delete") and arg_count == 1) {
                                 const search_key = self.stack[self.stack_top - 1];
                                 var deleted_val = value.Value.initNil();
-                                for (map.keys.items, 0..) |k, idx| {
-                                    var match = false;
-                                    if (k.isNumber() and search_key.isNumber() and k.asNumber() == search_key.asNumber()) {
-                                        match = true;
-                                    } else if (k.isObject() and search_key.isObject() and k.asObj().obj_type == .string and search_key.asObj().obj_type == .string) {
-                                        const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
-                                        const s_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", search_key.asObj()))).chars;
-                                        match = std.mem.eql(u8, k_str, s_str);
-                                    } else {
-                                        match = k.isEqual(search_key);
-                                    }
-                                    if (match) {
-                                        _ = map.keys.orderedRemove(idx);
-                                        deleted_val = map.values.orderedRemove(idx);
-                                        self.releaseValue(k); // Remove key ref
-                                        break;
-                                    }
+                                if (self.findMapKey(map, search_key)) |idx| {
+                                    const removed_key = map.keys.orderedRemove(idx);
+                                    self.releaseValue(removed_key);
+                                    deleted_val = map.values.orderedRemove(idx);
                                 }
                                 self.stack_top -= 2; // pop arg and receiver
                                 self.push(deleted_val);
@@ -1852,6 +1763,38 @@ pub const VM = struct {
         if (res != .ok) return error.RuntimeError;
 
         return self.pop();
+    }
+
+    // --- Shared Execution Helpers ---
+    pub fn valuesEqual(self: *VM, a: value.Value, b: value.Value) bool {
+        _ = self;
+        if (a.isNumber() and b.isNumber()) return a.asNumber() == b.asNumber();
+        if (a.isObject() and b.isObject() and a.asObj().obj_type == .string and b.asObj().obj_type == .string) {
+            const a_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", a.asObj()))).chars;
+            const b_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", b.asObj()))).chars;
+            return std.mem.eql(u8, a_str, b_str);
+        }
+        return a.isEqual(b);
+    }
+
+    pub fn findMapKey(self: *VM, map: *value.ObjMap, key: value.Value) ?usize {
+        for (map.keys.items, 0..) |k, i| {
+            if (self.valuesEqual(k, key)) return i;
+        }
+        return null;
+    }
+
+    fn popBinaryNumbers(self: *VM) !struct { f64, f64 } {
+        const b = self.pop();
+        defer self.releaseValue(b);
+        const a = self.pop();
+        defer self.releaseValue(a);
+
+        if (a.isNumber() and b.isNumber()) {
+            return .{ a.asNumber(), b.asNumber() };
+        }
+        self.reportError("Runtime Error: Invalid operands for math operation.\n", .{});
+        return error.RuntimeError;
     }
 
     fn findClassMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {

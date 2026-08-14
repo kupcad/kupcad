@@ -38,7 +38,6 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         .op_multiply,
         .op_divide,
         .op_modulo,
-        .op_mixin,
         .op_exponent,
         .op_negate,
         .op_not,
@@ -50,6 +49,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         .op_set_index,
         .op_inherit,
         .op_block_given,
+        .op_mixin,
         => {
             return simpleInstruction(@tagName(op), offset, writer);
         },
