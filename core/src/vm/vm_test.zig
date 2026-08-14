@@ -963,11 +963,15 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     // 1. AST: def func(a, *args) args end
     const func_name = try b.intern("func");
     // Create the parameters: 'a' and '*args'
-    const p1 = ast.Param{ .name = try b.intern("a"), .default_value = .none, .modifier = null, .is_keyword = false };
-    const p2 = ast.Param{ .name = try b.intern("args"), .default_value = .none, .modifier = .splat, .is_keyword = false };
+    const a_id = try b.intern("a");
+    const args_id = try b.intern("args");
+
+    const p1 = ast.Param{ .name = a_id, .default_value = .none, .modifier = null, .is_keyword = false };
+    const p2 = ast.Param{ .name = args_id, .default_value = .none, .modifier = .splat, .is_keyword = false };
     const params_span = try b.addParams(&.{ p1, p2 });
 
-    const body = try b.identifierNode("args", 0);
+    // Use the exact StringId so the compiler resolves local slot 2 accurately
+    const body = try b.createNode(.identifier, 0, @intFromEnum(args_id));
     const def_node = try b.defStmt(func_name, params_span, body, false, 0, 0);
 
     // 2. AST: func(1, 2, 3, 4)
@@ -1028,12 +1032,19 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
 
     // 1. AST: def test_splat(a, *args, **kwargs) [args, kwargs] end
     const func_name = try b.intern("test_splat");
-    const p1 = ast.Param{ .name = try b.intern("a"), .default_value = .none, .modifier = null, .is_keyword = false };
-    const p2 = ast.Param{ .name = try b.intern("args"), .default_value = .none, .modifier = .splat, .is_keyword = false };
-    const p3 = ast.Param{ .name = try b.intern("kwargs"), .default_value = .none, .modifier = .double_splat, .is_keyword = false };
+    const a_id = try b.intern("a");
+    const args_id = try b.intern("args");
+    const kwargs_id = try b.intern("kwargs");
+
+    const p1 = ast.Param{ .name = a_id, .default_value = .none, .modifier = null, .is_keyword = false };
+    const p2 = ast.Param{ .name = args_id, .default_value = .none, .modifier = .splat, .is_keyword = false };
+    const p3 = ast.Param{ .name = kwargs_id, .default_value = .none, .modifier = .double_splat, .is_keyword = false };
     const params_span = try b.addParams(&.{ p1, p2, p3 });
 
-    const ret_arr_span = try b.addNodes(&.{ try b.identifierNode("args", 0), try b.identifierNode("kwargs", 0) });
+    // Use the exact StringIds so local slots 2 and 3 resolve perfectly
+    const arg_node = try b.createNode(.identifier, 0, @intFromEnum(args_id));
+    const kwarg_node = try b.createNode(.identifier, 0, @intFromEnum(kwargs_id));
+    const ret_arr_span = try b.addNodes(&.{ arg_node, kwarg_node });
     const body = try b.arrayLiteral(ret_arr_span, 0, 0);
     const def_node = try b.defStmt(func_name, params_span, body, false, 0, 0);
 
