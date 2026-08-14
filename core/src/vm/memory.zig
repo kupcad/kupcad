@@ -38,87 +38,47 @@ pub const GC = struct {
         // std.debug.print("-- GC End (Freed {} bytes) --\n", .{before - self.bytes_allocated});
     }
 
-    pub fn allocateArray(self: *GC, vm: *VM) !*value.ObjArray {
+    inline fn allocateObject(self: *GC, vm: *VM, comptime T: type, obj_type: value.ObjType) !*T {
         if (self.bytes_allocated > self.next_gc_threshold) {
             self.collectGarbage(vm, false);
         }
-        const ptr = try self.allocator.create(value.ObjArray);
-        self.bytes_allocated += @sizeOf(value.ObjArray);
+        const ptr = try self.allocator.create(T);
+        self.bytes_allocated += @sizeOf(T);
         ptr.obj = .{
-            .obj_type = .array,
+            .obj_type = obj_type,
             .is_marked = false,
             .next = self.first_object,
         };
         self.first_object = &ptr.obj;
+        return ptr;
+    }
+
+    pub fn allocateArray(self: *GC, vm: *VM) !*value.ObjArray {
+        const ptr = try self.allocateObject(vm, value.ObjArray, .array);
         ptr.items = .empty;
         return ptr;
     }
 
     pub fn allocateMap(self: *GC, vm: *VM) !*value.ObjMap {
-        if (self.bytes_allocated > self.next_gc_threshold) {
-            self.collectGarbage(vm, false);
-        }
-        const ptr = try self.allocator.create(value.ObjMap);
-        self.bytes_allocated += @sizeOf(value.ObjMap);
-        ptr.obj = .{
-            .obj_type = .map,
-            .is_marked = false,
-            .next = self.first_object,
-        };
-        self.first_object = &ptr.obj;
+        const ptr = try self.allocateObject(vm, value.ObjMap, .map);
         ptr.keys = .empty;
         ptr.values = .empty;
         return ptr;
     }
 
     pub fn allocateFunction(self: *GC, vm: *VM) !*value.ObjFunction {
-        if (self.bytes_allocated > self.next_gc_threshold) {
-            self.collectGarbage(vm, false);
-        }
-        const ptr = try self.allocator.create(value.ObjFunction);
-        self.bytes_allocated += @sizeOf(value.ObjFunction);
-        ptr.obj = .{
-            .obj_type = .function,
-            .is_marked = false,
-            .next = self.first_object,
-        };
-        self.first_object = &ptr.obj;
+        const ptr = try self.allocateObject(vm, value.ObjFunction, .function);
         ptr.name = null;
         ptr.arity = 0;
         ptr.upvalue_count = 0;
         ptr.has_splat = false;
         ptr.chunk = null;
         ptr.owns_chunk = true;
-
-        return ptr;
-    }
-
-    pub fn allocateClosure(self: *GC, vm: *VM, function: *value.ObjFunction) !*value.ObjClosure {
-        if (self.bytes_allocated > self.next_gc_threshold) {
-            self.collectGarbage(vm, false);
-        }
-        const ptr = try self.allocator.create(value.ObjClosure);
-        const upvalues = try self.allocator.alloc(?*value.ObjUpvalue, function.upvalue_count);
-        @memset(upvalues, null);
-
-        self.bytes_allocated += @sizeOf(value.ObjClosure) + (@sizeOf(?*value.ObjUpvalue) * upvalues.len);
-        ptr.obj = .{
-            .obj_type = .closure,
-            .is_marked = false,
-            .next = self.first_object,
-        };
-        self.first_object = &ptr.obj;
-        ptr.function = function;
-        ptr.upvalues = upvalues.ptr;
         return ptr;
     }
 
     pub fn allocateClass(self: *GC, vm: *VM, name: *value.ObjString, superclass: ?*value.ObjClass) !*value.ObjClass {
-        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
-        const ptr = try self.allocator.create(value.ObjClass);
-        self.bytes_allocated += @sizeOf(value.ObjClass);
-        ptr.obj = .{ .obj_type = .class, .is_marked = false, .next = self.first_object };
-        self.first_object = &ptr.obj;
+        const ptr = try self.allocateObject(vm, value.ObjClass, .class);
         ptr.name = name;
         ptr.superclass = superclass;
         ptr.methods = .empty;
@@ -129,64 +89,65 @@ pub const GC = struct {
     }
 
     pub fn allocateModule(self: *GC, vm: *VM, name: *value.ObjString) !*value.ObjModule {
-        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
-        const ptr = try self.allocator.create(value.ObjModule);
-        self.bytes_allocated += @sizeOf(value.ObjModule);
-        ptr.obj = .{ .obj_type = .module, .is_marked = false, .next = self.first_object };
-        self.first_object = &ptr.obj;
+        const ptr = try self.allocateObject(vm, value.ObjModule, .module);
         ptr.name = name;
         ptr.methods = .empty;
         return ptr;
     }
 
     pub fn allocateInstance(self: *GC, vm: *VM, class: *value.ObjClass) !*value.ObjInstance {
-        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
-        const ptr = try self.allocator.create(value.ObjInstance);
-        self.bytes_allocated += @sizeOf(value.ObjInstance);
-        ptr.obj = .{ .obj_type = .instance, .is_marked = false, .next = self.first_object };
-        self.first_object = &ptr.obj;
+        const ptr = try self.allocateObject(vm, value.ObjInstance, .instance);
         ptr.class = class;
         ptr.fields = .empty;
         return ptr;
     }
 
     pub fn allocateBoundMethod(self: *GC, vm: *VM, receiver: value.Value, method: *value.ObjClosure) !*value.ObjBoundMethod {
-        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
-        const ptr = try self.allocator.create(value.ObjBoundMethod);
-        self.bytes_allocated += @sizeOf(value.ObjBoundMethod);
-        ptr.obj = .{ .obj_type = .bound_method, .is_marked = false, .next = self.first_object };
-        self.first_object = &ptr.obj;
+        const ptr = try self.allocateObject(vm, value.ObjBoundMethod, .bound_method);
         ptr.receiver = receiver;
         ptr.method = method;
         return ptr;
     }
 
-    /// Allocates an ObjString, registers it with the GC, and duplicates the string payload.
-    pub fn allocateString(self: *GC, vm: *VM, chars: []const u8) !*value.ObjString {
-        if (vm.strings.get(chars)) |existing| return existing;
-
-        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false); // Moved from VM
-
-        const ptr = try self.allocator.create(value.ObjString);
-        const owned_chars = try self.allocator.dupe(u8, chars);
-        self.bytes_allocated += @sizeOf(value.ObjString) + owned_chars.len;
-        ptr.obj = .{ .obj_type = .string, .is_marked = false, .next = self.first_object };
-        self.first_object = &ptr.obj;
-        ptr.chars = owned_chars;
-
-        try vm.strings.put(self.allocator, ptr.chars, ptr);
+    pub fn allocateNative(self: *GC, vm: *VM, function: value.NativeFn) !*value.ObjNative {
+        const ptr = try self.allocateObject(vm, value.ObjNative, .native);
+        ptr.function = function;
         return ptr;
     }
 
-    /// Allocates an ObjNative, registering it with the GC.
-    pub fn allocateNative(self: *GC, vm: *VM, function: value.NativeFn) !*value.ObjNative {
-        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false); // Added GC check
+    pub fn allocateRange(self: *GC, vm: *VM, start: f64, end: f64, step: f64, is_exclusive: bool) !*value.ObjRange {
+        const ptr = try self.allocateObject(vm, value.ObjRange, .range);
+        ptr.start = start;
+        ptr.end = end;
+        ptr.step = step;
+        ptr.is_exclusive = is_exclusive;
+        return ptr;
+    }
 
-        const ptr = try self.allocator.create(value.ObjNative);
-        self.bytes_allocated += @sizeOf(value.ObjNative);
-        ptr.obj = .{ .obj_type = .native, .is_marked = false, .next = self.first_object };
-        self.first_object = &ptr.obj;
+    pub fn allocateClosure(self: *GC, vm: *VM, function: *value.ObjFunction) !*value.ObjClosure {
+        const ptr = try self.allocateObject(vm, value.ObjClosure, .closure);
+
+        // Handle secondary allocation manually
+        const upvalues = try self.allocator.alloc(?*value.ObjUpvalue, function.upvalue_count);
+        @memset(upvalues, null);
+        self.bytes_allocated += @sizeOf(?*value.ObjUpvalue) * upvalues.len;
+
         ptr.function = function;
+        ptr.upvalues = upvalues.ptr;
+        return ptr;
+    }
+
+    pub fn allocateString(self: *GC, vm: *VM, chars: []const u8) !*value.ObjString {
+        if (vm.strings.get(chars)) |existing| return existing;
+
+        const ptr = try self.allocateObject(vm, value.ObjString, .string);
+
+        // Handle secondary string allocation manually
+        const owned_chars = try self.allocator.dupe(u8, chars);
+        self.bytes_allocated += owned_chars.len;
+        ptr.chars = owned_chars;
+
+        try vm.strings.put(self.allocator, ptr.chars, ptr);
         return ptr;
     }
 
@@ -224,46 +185,22 @@ pub const GC = struct {
         return ptr;
     }
 
-    pub fn allocateUpvalue(self: *GC, local_ptr: *value.Value, next_upval: ?*value.ObjUpvalue) !*value.ObjUpvalue {
-        const ptr = try self.allocator.create(value.ObjUpvalue);
-        self.bytes_allocated += @sizeOf(value.ObjUpvalue);
-        ptr.* = .{
-            .obj = .{ .obj_type = .upvalue, .is_marked = false, .next = self.first_object },
-            .location = local_ptr,
-            .closed = value.Value.initNil(),
-            .next = next_upval,
-        };
-        self.first_object = &ptr.obj;
-        return ptr;
-    }
-
-    pub fn allocateRange(self: *GC, vm: *VM, start: f64, end: f64, step: f64, is_exclusive: bool) !*value.ObjRange {
-        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
-        const ptr = try self.allocator.create(value.ObjRange);
-        self.bytes_allocated += @sizeOf(value.ObjRange);
-        ptr.obj = .{
-            .obj_type = .range,
-            .is_marked = false,
-            .next = self.first_object,
-        };
-        self.first_object = &ptr.obj;
-        ptr.start = start;
-        ptr.end = end;
-        ptr.step = step;
-        ptr.is_exclusive = is_exclusive;
+    pub fn allocateUpvalue(self: *GC, vm: *VM, local_ptr: *value.Value, next_upval: ?*value.ObjUpvalue) !*value.ObjUpvalue {
+        const ptr = try self.allocateObject(vm, value.ObjUpvalue, .upvalue);
+        ptr.location = local_ptr;
+        ptr.closed = value.Value.initNil();
+        ptr.next = next_upval;
         return ptr;
     }
 
     pub fn allocateSymbol(self: *GC, vm: *VM, chars: []const u8) !*value.ObjSymbol {
         if (vm.symbols.get(chars)) |existing| return existing;
-        if (self.bytes_allocated > self.next_gc_threshold) self.collectGarbage(vm, false);
 
-        const ptr = try self.allocator.create(value.ObjSymbol);
+        const ptr = try self.allocateObject(vm, value.ObjSymbol, .symbol);
+
+        // Handle secondary string allocation manually
         const owned_chars = try self.allocator.dupe(u8, chars);
-        self.bytes_allocated += @sizeOf(value.ObjSymbol) + owned_chars.len;
-
-        ptr.obj = .{ .obj_type = .symbol, .is_marked = false, .next = self.first_object };
-        self.first_object = &ptr.obj;
+        self.bytes_allocated += owned_chars.len;
         ptr.chars = owned_chars;
 
         try vm.symbols.put(self.allocator, ptr.chars, ptr);

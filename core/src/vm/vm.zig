@@ -1418,7 +1418,7 @@ pub const VM = struct {
         }
 
         // Delegate allocation and memory tracking entirely to the GC
-        const created_upvalue = try self.gc.allocateUpvalue(local_ptr, upvalue);
+        const created_upvalue = try self.gc.allocateUpvalue(self, local_ptr, upvalue);
 
         if (prev_upvalue == null) {
             self.open_upvalues = created_upvalue;
