@@ -996,82 +996,14 @@ pub const VM = struct {
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
                     } else if (callee.isClosure()) {
-                        const closure = callee.asClosure();
-                        var provided_args = arg_count;
-                        var has_block = false;
-
-                        if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
-                            has_block = true;
-                            provided_args -= 1;
-                        }
-
-                        const expected_args = closure.function.arity;
-
-                        if (provided_args < expected_args) {
-                            const missing = expected_args - provided_args;
-                            self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
-
-                            const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
-                            if (has_block) self.stack_top -= 1;
-
-                            for (0..missing) |_| self.push(value.Value.initNil());
-                            if (has_block) self.push(block_copy.?);
-                        } else if (provided_args > expected_args and !closure.function.has_splat) {
-                            self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
-                            return .runtime_error;
-                        }
-
-                        if (!has_block) {
-                            self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
-                            self.push(value.Value.initNil());
-                        }
-
-                        self.frames.append(self.allocator, .{
-                            .closure = closure,
-                            .ip = 0,
-                            .base_slot = base_slot, // MAGIC: No more relative math!
-                        }) catch return .runtime_error;
+                        self.dispatchClosure(callee.asClosure(), arg_count, base_slot) catch return .runtime_error;
                     } else if (callee.isClass()) {
                         const class_obj = callee.asClass();
                         const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
                         self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
 
                         if (self.findMethod(class_obj, "initialize")) |init_method| {
-                            const closure = init_method.asClosure();
-                            var provided_args = arg_count;
-                            var has_block = false;
-
-                            if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
-                                has_block = true;
-                                provided_args -= 1;
-                            }
-
-                            const expected_args = closure.function.arity - 1; // -1 for implicit 'self'
-
-                            if (provided_args < expected_args) {
-                                const missing = expected_args - provided_args;
-                                self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
-
-                                const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
-                                if (has_block) self.stack_top -= 1;
-
-                                for (0..missing) |_| self.push(value.Value.initNil());
-                                if (has_block) self.push(block_copy.?);
-                            } else if (provided_args > expected_args and !closure.function.has_splat) {
-                                self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
-                                return .runtime_error;
-                            }
-
-                            if (!has_block) {
-                                self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
-                                self.push(value.Value.initNil());
-                            }
-
-                            self.frames.append(self.allocator, .{
-                                .closure = closure,
-                                .ip = 0,
-                                .base_slot = base_slot, // MAGIC
-                            }) catch return .runtime_error;
+                            self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
                             continue;
                         } else if (arg_count > 0) {
                             self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
@@ -1407,35 +1339,7 @@ pub const VM = struct {
 
                         // Check instance methods
                         if (self.findMethod(instance.class, method_name_str)) |method_val| {
-                            const closure = method_val.asClosure();
-                            var provided_args = arg_count;
-                            var has_block = false;
-                            if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
-                                has_block = true;
-                                provided_args -= 1;
-                            }
-                            const expected_args = closure.function.arity; // FIXED: Removed the invalid '- 1'
-
-                            if (provided_args < expected_args) {
-                                const missing = expected_args - provided_args;
-                                self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
-                                const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
-                                if (has_block) self.stack_top -= 1;
-                                for (0..missing) |_| self.push(value.Value.initNil());
-                                if (has_block) self.push(block_copy.?);
-                            } else if (provided_args > expected_args and !closure.function.has_splat) {
-                                self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
-                                return .runtime_error;
-                            }
-                            if (!has_block) {
-                                self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
-                                self.push(value.Value.initNil());
-                            }
-                            self.frames.append(self.allocator, .{
-                                .closure = closure,
-                                .ip = 0,
-                                .base_slot = base_slot, // MAGIC
-                            }) catch return .runtime_error;
+                            self.dispatchClosure(method_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
                             continue;
                         }
                         self.reportError("Runtime Error: Undefined property or method '{s}'.\n", .{method_name_str});
@@ -1445,35 +1349,7 @@ pub const VM = struct {
 
                         // 1. Check custom class methods (def self.method)
                         if (self.findClassMethod(class_obj, method_name_str)) |method_val| {
-                            const closure = method_val.asClosure();
-                            var provided_args = arg_count;
-                            var has_block = false;
-                            if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
-                                has_block = true;
-                                provided_args -= 1;
-                            }
-                            const expected_args = closure.function.arity; // FIXED: Removed the invalid '- 1'
-
-                            if (provided_args < expected_args) {
-                                const missing = expected_args - provided_args;
-                                self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
-                                const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
-                                if (has_block) self.stack_top -= 1;
-                                for (0..missing) |_| self.push(value.Value.initNil());
-                                if (has_block) self.push(block_copy.?);
-                            } else if (provided_args > expected_args and !closure.function.has_splat) {
-                                self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
-                                return .runtime_error;
-                            }
-                            if (!has_block) {
-                                self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
-                                self.push(value.Value.initNil());
-                            }
-                            self.frames.append(self.allocator, .{
-                                .closure = closure,
-                                .ip = 0,
-                                .base_slot = base_slot, // MAGIC
-                            }) catch return .runtime_error;
+                            self.dispatchClosure(method_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
                             continue;
                         }
                         // 2. Default Constructor Fallback: Class.new(...)
@@ -1482,35 +1358,7 @@ pub const VM = struct {
                             self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance
 
                             if (self.findMethod(class_obj, "initialize")) |init_method| {
-                                const closure = init_method.asClosure();
-                                var provided_args = arg_count;
-                                var has_block = false;
-                                if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
-                                    has_block = true;
-                                    provided_args -= 1;
-                                }
-                                const expected_args = closure.function.arity; // FIXED: Removed the invalid '- 1'
-
-                                if (provided_args < expected_args) {
-                                    const missing = expected_args - provided_args;
-                                    self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
-                                    const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
-                                    if (has_block) self.stack_top -= 1;
-                                    for (0..missing) |_| self.push(value.Value.initNil());
-                                    if (has_block) self.push(block_copy.?);
-                                } else if (provided_args > expected_args and !closure.function.has_splat) {
-                                    self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
-                                    return .runtime_error;
-                                }
-                                if (!has_block) {
-                                    self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
-                                    self.push(value.Value.initNil());
-                                }
-                                self.frames.append(self.allocator, .{
-                                    .closure = closure,
-                                    .ip = 0,
-                                    .base_slot = base_slot,
-                                }) catch return .runtime_error;
+                                self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
                                 continue;
                             } else if (arg_count > 0) {
                                 self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
@@ -1555,39 +1403,7 @@ pub const VM = struct {
                             return .runtime_error;
                         };
                         if (self.findMethod(superclass, method_name_str)) |method_val| {
-                            const closure = method_val.asClosure();
-                            var provided_args = arg_count;
-                            var has_block = false;
-                            // Check if the final argument is an implicit block
-                            if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
-                                has_block = true;
-                                provided_args -= 1;
-                            }
-                            const expected_args = closure.function.arity; // FIXED: Removed the invalid '- 1'
-
-                            // Pad missing positional arguments with 'nil'
-                            if (provided_args < expected_args) {
-                                const missing = expected_args - provided_args;
-                                self.ensureStackCapacity(self.stack_top + missing) catch return .runtime_error;
-                                const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
-                                if (has_block) self.stack_top -= 1;
-                                for (0..missing) |_| self.push(value.Value.initNil());
-                                if (has_block) self.push(block_copy.?);
-                            } else if (provided_args > expected_args and !closure.function.has_splat) {
-                                self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
-                                return .runtime_error;
-                            }
-                            // If no block was passed, pad the block slot with 'nil'
-                            if (!has_block) {
-                                self.ensureStackCapacity(self.stack_top + 1) catch return .runtime_error;
-                                self.push(value.Value.initNil());
-                            }
-                            // Dispatch the CallFrame!
-                            self.frames.append(self.allocator, .{
-                                .closure = closure,
-                                .ip = 0,
-                                .base_slot = base_slot, // MAGIC
-                            }) catch return .runtime_error;
+                            self.dispatchClosure(method_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
                             continue;
                         }
                         self.reportError("Runtime Error: Superclass method '{s}' not found.\n", .{method_name_str});
@@ -1960,6 +1776,46 @@ pub const VM = struct {
             current = c.superclass;
         }
         return null;
+    }
+
+    pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize) !void {
+        var provided_args = arg_count;
+        var has_block = false;
+
+        // Extract implicit blocks cleanly
+        if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
+            has_block = true;
+            provided_args -= 1;
+        }
+
+        const expected_args = closure.function.arity;
+
+        // Pad missing arguments with 'nil' natively
+        if (provided_args < expected_args) {
+            const missing = expected_args - provided_args;
+            try self.ensureStackCapacity(self.stack_top + missing);
+
+            const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
+            if (has_block) self.stack_top -= 1;
+
+            for (0..missing) |_| self.push(value.Value.initNil());
+            if (has_block) self.push(block_copy.?);
+        } else if (provided_args > expected_args and !closure.function.has_splat) {
+            self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
+            return error.RuntimeError;
+        }
+
+        // Pad the implicit block slot with 'nil' if none was provided
+        if (!has_block) {
+            try self.ensureStackCapacity(self.stack_top + 1);
+            self.push(value.Value.initNil());
+        }
+
+        try self.frames.append(self.allocator, .{
+            .closure = closure,
+            .ip = 0,
+            .base_slot = base_slot,
+        });
     }
 
     pub fn callClosureSync(self: *VM, closure: *value.ObjClosure, args: []const value.Value) !value.Value {
