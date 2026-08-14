@@ -655,6 +655,75 @@ pub const VM = struct {
                                 self.stack_top -= 1;
                                 self.push(value.Value.initNumber(@floatFromInt(arr.items.items.len)));
                                 continue;
+                            } else if (std.mem.eql(u8, method_name_str, "pop") and arg_count == 0) {
+                                if (arr.items.items.len > 0) {
+                                    const val = arr.items.items[arr.items.items.len - 1];
+                                    arr.items.shrinkRetainingCapacity(arr.items.items.len - 1);
+
+                                    self.stack_top -= 1; // pop receiver
+                                    self.push(val);
+                                } else {
+                                    self.stack_top -= 1;
+                                    self.push(value.Value.initNil());
+                                }
+                                continue;
+                            } else if (std.mem.eql(u8, method_name_str, "shift") and arg_count == 0) {
+                                if (arr.items.items.len > 0) {
+                                    const val = arr.items.orderedRemove(0);
+                                    self.stack_top -= 1; // pop receiver
+                                    self.push(val);
+                                } else {
+                                    self.stack_top -= 1;
+                                    self.push(value.Value.initNil());
+                                }
+                                continue;
+                            } else if (std.mem.eql(u8, method_name_str, "unshift") and arg_count == 1) {
+                                const item = self.stack[self.stack_top - 1];
+                                self.retainValue(item);
+                                arr.items.insert(self.allocator, 0, item) catch return .runtime_error;
+                                self.stack_top -= 2; // pop arg and receiver
+                                self.push(receiver); // unshift returns the array
+                                continue;
+                            } else if (std.mem.eql(u8, method_name_str, "slice") and arg_count == 2) {
+                                const len_val = self.stack[self.stack_top - 1];
+                                const start_val = self.stack[self.stack_top - 2];
+                                if (start_val.isNumber() and len_val.isNumber()) {
+                                    const start_idx = @as(usize, @intFromFloat(start_val.asNumber()));
+                                    const length = @as(usize, @intFromFloat(len_val.asNumber()));
+
+                                    const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                                    self.push(value.Value.initObj(&new_arr.obj)); // Protect
+                                    new_arr.items.ensureTotalCapacity(self.allocator, length) catch return .runtime_error;
+
+                                    var idx: usize = 0;
+                                    while (idx < length and start_idx + idx < arr.items.items.len) : (idx += 1) {
+                                        const item = arr.items.items[start_idx + idx];
+                                        self.retainValue(item);
+                                        new_arr.items.appendAssumeCapacity(item);
+                                    }
+                                    const res = self.pop();
+                                    self.stack_top -= 3; // pop args and receiver
+                                    self.push(res);
+                                    continue;
+                                } else return .runtime_error;
+                            } else if (std.mem.eql(u8, method_name_str, "join") and arg_count == 1) {
+                                const delim_val = self.stack[self.stack_top - 1];
+                                if (delim_val.isObject() and delim_val.asObj().obj_type == .string) {
+                                    const delim = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", delim_val.asObj()))).chars;
+                                    var out: std.Io.Writer.Allocating = .init(self.allocator);
+                                    defer out.deinit();
+
+                                    for (arr.items.items, 0..) |item, idx| {
+                                        item.stringify(false, &out.writer) catch return .runtime_error;
+                                        if (idx < arr.items.items.len - 1) {
+                                            out.writer.writeAll(delim) catch return .runtime_error;
+                                        }
+                                    }
+                                    const res_str = self.allocateString(out.written()) catch return .runtime_error;
+                                    self.stack_top -= 2; // pop arg and receiver
+                                    self.push(res_str);
+                                    continue;
+                                } else return .runtime_error;
                             }
                         }
                         // --- MAP (HASH) METHODS ---
@@ -674,6 +743,77 @@ pub const VM = struct {
                                     self.push(receiver); // each returns self
                                     continue;
                                 }
+                            } else if (std.mem.eql(u8, method_name_str, "keys") and arg_count == 0) {
+                                const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                                self.push(value.Value.initObj(&new_arr.obj)); // Protect
+                                new_arr.items.ensureTotalCapacity(self.allocator, map.keys.items.len) catch return .runtime_error;
+                                for (map.keys.items) |k| {
+                                    self.retainValue(k);
+                                    new_arr.items.appendAssumeCapacity(k);
+                                }
+                                const res = self.pop();
+                                self.stack_top -= 1; // pop receiver
+                                self.push(res);
+                                continue;
+                            } else if (std.mem.eql(u8, method_name_str, "values") and arg_count == 0) {
+                                const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                                self.push(value.Value.initObj(&new_arr.obj)); // Protect
+                                new_arr.items.ensureTotalCapacity(self.allocator, map.values.items.len) catch return .runtime_error;
+                                for (map.values.items) |v| {
+                                    self.retainValue(v);
+                                    new_arr.items.appendAssumeCapacity(v);
+                                }
+                                const res = self.pop();
+                                self.stack_top -= 1; // pop receiver
+                                self.push(res);
+                                continue;
+                            } else if (std.mem.eql(u8, method_name_str, "has_key?") and arg_count == 1) {
+                                const search_key = self.stack[self.stack_top - 1];
+                                var found = false;
+                                for (map.keys.items) |k| {
+                                    if (k.isNumber() and search_key.isNumber() and k.asNumber() == search_key.asNumber()) {
+                                        found = true;
+                                        break;
+                                    } else if (k.isObject() and search_key.isObject() and k.asObj().obj_type == .string and search_key.asObj().obj_type == .string) {
+                                        const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
+                                        const s_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", search_key.asObj()))).chars;
+                                        if (std.mem.eql(u8, k_str, s_str)) {
+                                            found = true;
+                                            break;
+                                        }
+                                    } else if (k.isEqual(search_key)) {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                self.stack_top -= 2; // pop arg and receiver
+                                self.push(value.Value.initBool(found));
+                                continue;
+                            } else if (std.mem.eql(u8, method_name_str, "delete") and arg_count == 1) {
+                                const search_key = self.stack[self.stack_top - 1];
+                                var deleted_val = value.Value.initNil();
+                                for (map.keys.items, 0..) |k, idx| {
+                                    var match = false;
+                                    if (k.isNumber() and search_key.isNumber() and k.asNumber() == search_key.asNumber()) {
+                                        match = true;
+                                    } else if (k.isObject() and search_key.isObject() and k.asObj().obj_type == .string and search_key.asObj().obj_type == .string) {
+                                        const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
+                                        const s_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", search_key.asObj()))).chars;
+                                        match = std.mem.eql(u8, k_str, s_str);
+                                    } else {
+                                        match = k.isEqual(search_key);
+                                    }
+
+                                    if (match) {
+                                        _ = map.keys.orderedRemove(idx);
+                                        deleted_val = map.values.orderedRemove(idx);
+                                        self.releaseValue(k); // Remove key ref
+                                        break;
+                                    }
+                                }
+                                self.stack_top -= 2; // pop arg and receiver
+                                self.push(deleted_val);
+                                continue;
                             }
                         }
                         // --- STRING METHODS ---
@@ -722,9 +862,11 @@ pub const VM = struct {
                                 {
                                     const t_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
                                     const r_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", replace_val.asObj()))).chars;
+
                                     const replaced = std.mem.replaceOwned(u8, self.allocator, str_obj.chars, t_str, r_str) catch return .runtime_error;
                                     const val = self.allocateString(replaced) catch return .runtime_error;
                                     self.allocator.free(replaced);
+
                                     self.stack_top -= 3; // Pop args and receiver
                                     self.push(val);
                                     continue;

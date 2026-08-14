@@ -793,3 +793,51 @@ test "VM: String Native Methods (split, replace)" {
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
 }
+
+test "VM: Array and Map Native Methods (slice, keys)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Create an Array [10, 20, 30]
+    const val_10 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(10));
+    const val_20 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(20));
+    const val_30 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(30));
+
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, val_10, 0);
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, val_20, 0);
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, val_30, 0);
+    try out_chunk.writeOp(testing.allocator, .op_build_array, 0);
+    try out_chunk.write(testing.allocator, 3, 0); // stack[0] = Array
+
+    // Call .slice(1, 2)
+    const slice_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("slice"));
+    const start_idx = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(1));
+    const len_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(2));
+
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, start_idx, 0);
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, len_val, 0);
+    try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
+    try out_chunk.write(testing.allocator, slice_str, 0);
+    try out_chunk.write(testing.allocator, 2, 0); // 2 args
+    try out_chunk.writeOp(testing.allocator, .op_return, 0);
+
+    out_chunk.max_stack_slots = 6;
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    const slice_arr = vm.stack[0];
+    try testing.expect(slice_arr.isObject() and slice_arr.asObj().obj_type == .array);
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", slice_arr.asObj())));
+
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
+}
