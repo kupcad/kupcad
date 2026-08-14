@@ -80,6 +80,7 @@ pub const OpCode = enum(u8) {
     op_import,
     op_inherit,
     op_yield,
+    op_block_given,
     op_return,
 };
 

@@ -1488,6 +1488,11 @@ pub const VM = struct {
                     self.stack_top -= yield_arg_count;
                     self.push(result);
                 },
+                .op_block_given => {
+                    const expected_args = frame.closure.function.arity;
+                    const block_val = self.stack[frame.base_slot + expected_args + 1];
+                    self.push(value.Value.initBool(block_val.isClosure()));
+                },
                 else => {
                     self.reportError("Runtime Error: Unhandled OpCode {}\n", .{op});
                     return .runtime_error;

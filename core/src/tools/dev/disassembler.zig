@@ -48,6 +48,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: *std
         .op_get_index,
         .op_set_index,
         .op_inherit,
+        .op_block_given,
         => {
             return simpleInstruction(@tagName(op), offset, writer);
         },

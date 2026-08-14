@@ -917,3 +917,39 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
 }
+
+test "Compiler: compiles block_given? and yield intrinsics natively" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // 1. block_given?()
+    const bg_str = try b.intern("block_given?");
+    const empty_args = try b.addNamedArgs(&.{});
+    const bg_call = try b.methodCall(.none, bg_str, empty_args, .none, false, 0, 0);
+
+    // 2. yield(42)
+    const yield_str = try b.intern("yield");
+    const arg_42 = try b.number("42", 0);
+    var args_buf = [_]ast.NamedArg{.{ .name = .none, .value = arg_42, .modifier = null }};
+    const yield_args = try b.addNamedArgs(&args_buf);
+    const yield_call = try b.methodCall(.none, yield_str, yield_args, .none, false, 0, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    try comp.compile(bg_call);
+    try comp.compile(yield_call);
+
+    // Verify block_given? compiled to exactly one byte!
+    try testing.expectEqual(chunk.OpCode.op_block_given, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+
+    // Skip op_return (1), then op_constant (2), index (3), op_yield (4)
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_yield, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+    try testing.expectEqual(@as(u8, 1), out_chunk.code.items[5]); // 1 arg
+}

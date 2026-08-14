@@ -31,11 +31,14 @@ pub const LoopState = struct {
 
 const Intrinsic = enum {
     raise_err,
-    // Future compiler intrinsics (e.g., typeof, sizeof) will go here
+    block_given_chk,
+    yield_call,
 };
 
 const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "raise", .raise_err },
+    .{ "block_given?", .block_given_chk },
+    .{ "yield", .yield_call },
 });
 
 pub const Compiler = struct {
@@ -790,6 +793,24 @@ pub const Compiler = struct {
                             self.simulatePush(1); // Dead code equilibrium
                             return;
                         },
+                        .block_given_chk => {
+                            try self.emitOp(.op_block_given);
+                            return;
+                        },
+                        .yield_call => {
+                            const args = self.tree.getNamedArgs(mc.args);
+                            for (args) |arg| {
+                                if (arg.name != .none) return error.UnsupportedScope; // Kwargs to yield not yet supported
+                                try self.compileNode(arg.value);
+                            }
+                            if (args.len > MAX_ARGS) return error.TooManyConstants;
+                            try self.emitOp(.op_yield);
+                            try self.emitByte(@intCast(args.len));
+
+                            self.simulatePop(args.len); // Yield consumes the args
+                            self.simulatePush(1); // Yield returns the block's result
+                            return;
+                        },
                     }
                 }
 
@@ -1411,7 +1432,7 @@ pub const Compiler = struct {
     fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
         try self.emitByte(@intFromEnum(op));
         switch (op) {
-            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import => self.simulatePush(1),
+            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import, .op_block_given => self.simulatePush(1),
             .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke => self.simulatePop(1),
             .op_map_insert => self.simulatePop(2),
             .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent => {
