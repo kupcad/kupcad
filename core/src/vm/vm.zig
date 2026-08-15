@@ -137,8 +137,8 @@ pub const VM = struct {
     pub fn interpret(self: *VM, execution_chunk: *chunk.Chunk) InterpretResult {
         self.instruction_count = 0; // Reset gas on fresh run
         self.frames.clearRetainingCapacity();
+        self.frames.ensureTotalCapacity(self.allocator, limits.MAX_CALL_FRAMES) catch return .runtime_error;
         self.stack_top = 0;
-        self.ensureStackCapacity(execution_chunk.max_stack_slots) catch return .runtime_error;
 
         const func = self.gc.allocateFunction(self) catch return .runtime_error;
         func.chunk = execution_chunk;
@@ -154,11 +154,11 @@ pub const VM = struct {
         _ = self.pop();
         self.push(value.Value.initObj(&closure.obj));
 
-        self.frames.append(self.allocator, .{
+        self.frames.appendAssumeCapacity(.{
             .closure = closure,
             .ip = 0,
             .base_slot = 0, // base_slot 0 is where our closure sits on the stack
-        }) catch return .runtime_error;
+        });
 
         return self.run();
     }
@@ -1191,6 +1191,11 @@ pub const VM = struct {
     }
 
     pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize) !void {
+        if (self.frames.items.len >= limits.MAX_CALL_FRAMES) {
+            self.reportError("Runtime Error: Call stack overflow (exceeded max call frames).\n", .{});
+            return error.RuntimeError;
+        }
+
         var provided_args = arg_count;
         var has_block = false;
 
@@ -1231,6 +1236,11 @@ pub const VM = struct {
     }
 
     pub fn callClosureSync(self: *VM, closure: *value.ObjClosure, args: []const value.Value) !value.Value {
+        if (self.frames.items.len >= limits.MAX_CALL_FRAMES) {
+            self.reportError("Runtime Error: Call stack overflow.\n", .{});
+            return error.RuntimeError;
+        }
+
         const target_depth = self.frames.items.len;
 
         const provided_args = args.len;
