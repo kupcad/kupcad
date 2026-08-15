@@ -2,6 +2,7 @@ const std = @import("std");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
 const dag = @import("dag.zig");
+const limits = @import("limits.zig");
 const value = @import("../core/value.zig");
 const kernel_mod = @import("../kernel/kernel.zig");
 const host_mod = @import("host.zig");
@@ -59,11 +60,10 @@ pub const VM = struct {
     instruction_count: usize,
     instruction_limit: usize,
 
-    const INITIAL_STACK_CAPACITY: usize = 1024;
     const STACK_GROW_FACTOR: usize = 2;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
-        const initial_stack = try allocator.alloc(value.Value, INITIAL_STACK_CAPACITY);
+        const initial_stack = try allocator.alloc(value.Value, limits.INITIAL_STACK_CAPACITY);
         return .{
             .allocator = allocator,
             .io = io,
@@ -78,7 +78,7 @@ pub const VM = struct {
             .dag_builder = dag.DAGBuilder.init(allocator),
             .mute_errors = false,
             .instruction_count = 0,
-            .instruction_limit = 1_000_000,
+            .instruction_limit = limits.DEFAULT_INSTRUCTION_LIMIT,
         };
     }
 

@@ -2,19 +2,9 @@ const std = @import("std");
 const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
+const limits = @import("../vm/limits.zig");
 const resolver = @import("../core/resolver.zig");
 const VM = @import("../vm/vm.zig").VM;
-
-pub const MAX_LOCALS: usize = std.math.maxInt(u8); // 255
-pub const MAX_UPVALUES: usize = std.math.maxInt(u8); // 255
-pub const MAX_CONSTANTS: usize = std.math.maxInt(u8); // 255
-pub const MAX_ARGS: usize = std.math.maxInt(u8); // 255
-pub const MAX_HASH_ENTRIES: usize = MAX_CONSTANTS / 2; // 127
-pub const MAX_LOOPS: usize = 16;
-pub const MAX_LOOP_EXITS: usize = 32;
-pub const MAX_CASE_BRANCHES: usize = 64;
-pub const MAX_RESCUE_CLAUSES: usize = 64;
-pub const MAX_RESCUE_ERRORS: usize = 16;
 
 pub const CompileError = error{
     OutOfMemory,
@@ -36,7 +26,7 @@ pub const Local = struct {
 
 pub const LoopState = struct {
     start: usize,
-    exit_jumps: [MAX_LOOP_EXITS]usize = undefined,
+    exit_jumps: [limits.MAX_LOOP_EXITS]usize = undefined,
     exit_count: usize = 0,
 };
 
@@ -65,13 +55,13 @@ pub const Compiler = struct {
     enclosing: ?*Compiler = null,
     function: ?*value.ObjFunction = null,
 
-    upvalues: [MAX_UPVALUES]Upvalue = undefined,
+    upvalues: [limits.MAX_UPVALUES]Upvalue = undefined,
     upvalue_count: usize = 0,
 
-    locals: [MAX_LOCALS]Local = undefined,
+    locals: [limits.MAX_LOCALS]Local = undefined,
     local_count: usize = 0,
 
-    loops: [MAX_LOOPS]LoopState = undefined,
+    loops: [limits.MAX_LOOPS]LoopState = undefined,
     loop_count: usize = 0,
 
     current_stack_depth: usize,
@@ -109,7 +99,7 @@ pub const Compiler = struct {
         for (self.locals[0..self.local_count]) |loc| {
             if (loc.name_id == name_id) return;
         }
-        if (self.local_count < MAX_LOCALS) {
+        if (self.local_count < limits.MAX_LOCALS) {
             self.locals[self.local_count] = .{ .name_id = name_id, .slot = slot };
             self.local_count += 1;
         }
@@ -147,7 +137,7 @@ pub const Compiler = struct {
                 return @intCast(i);
             }
         }
-        if (self.upvalue_count >= MAX_UPVALUES) return error.TooManyLocals;
+        if (self.upvalue_count >= limits.MAX_UPVALUES) return error.TooManyLocals;
         self.upvalues[self.upvalue_count] = .{ .index = index, .is_local = is_local };
         self.upvalue_count += 1;
         if (self.function) |f| f.upvalue_count = @intCast(self.upvalue_count);
@@ -231,7 +221,7 @@ pub const Compiler = struct {
                 if (self.loop_count == 0) return error.UnknownNode;
                 const jump = try self.emitJump(.op_jump);
                 var cur_loop = &self.loops[self.loop_count - 1];
-                if (cur_loop.exit_count >= MAX_LOOP_EXITS) return error.UnknownNode;
+                if (cur_loop.exit_count >= limits.MAX_LOOP_EXITS) return error.UnknownNode;
                 cur_loop.exit_jumps[cur_loop.exit_count] = jump;
                 cur_loop.exit_count += 1;
                 self.simulatePush(1); // Equilibrium for dead code
@@ -477,7 +467,7 @@ pub const Compiler = struct {
                 const loop_start = self.current_chunk.code.items.len;
 
                 // Push loop state
-                if (self.loop_count >= MAX_LOOPS) return error.UnknownNode;
+                if (self.loop_count >= limits.MAX_LOOPS) return error.UnknownNode;
                 self.loops[self.loop_count] = .{ .start = loop_start, .exit_count = 0 };
                 self.loop_count += 1;
 
@@ -543,7 +533,7 @@ pub const Compiler = struct {
                     try self.compileNode(part);
                 }
 
-                if (parts.len > MAX_CONSTANTS) return error.TooManyConstants;
+                if (parts.len > limits.MAX_CONSTANTS) return error.TooManyConstants;
 
                 try self.emitOp(.op_interpolate);
                 try self.emitByte(@intCast(parts.len));
@@ -567,13 +557,13 @@ pub const Compiler = struct {
                 if (splat_idx) |s_idx| {
                     const pre_count = s_idx;
                     const post_count = lhs.len - 1 - s_idx;
-                    if (pre_count > MAX_LOCALS or post_count > MAX_LOCALS) return error.TooManyConstants;
+                    if (pre_count > limits.MAX_LOCALS or post_count > limits.MAX_LOCALS) return error.TooManyConstants;
                     try self.emitOp(.op_unpack_splat);
                     try self.emitByte(@intCast(pre_count));
                     try self.emitByte(@intCast(post_count));
                     self.simulatePush(lhs.len); // pre + splat (1) + post
                 } else {
-                    if (lhs.len > MAX_LOCALS) return error.TooManyConstants;
+                    if (lhs.len > limits.MAX_LOCALS) return error.TooManyConstants;
                     try self.emitOp(.op_unpack);
                     try self.emitByte(@intCast(lhs.len));
                     self.simulatePush(lhs.len);
@@ -805,7 +795,7 @@ pub const Compiler = struct {
 
     fn makeConstant(self: *Compiler, val: value.Value) CompileError!u8 {
         const index = self.current_chunk.addConstant(self.allocator, val) catch return error.OutOfMemory;
-        if (index > MAX_CONSTANTS) return error.TooManyConstants;
+        if (index > limits.MAX_CONSTANTS) return error.TooManyConstants;
         return @intCast(index);
     }
 
@@ -1021,7 +1011,7 @@ pub const Compiler = struct {
 
         if (!has_splat) {
             for (elements) |elem| try self.compileNode(elem);
-            if (elements.len > MAX_ARGS) return error.TooManyConstants;
+            if (elements.len > limits.MAX_ARGS) return error.TooManyConstants;
             try self.emitOp(.op_build_array);
             try self.emitByte(@intCast(elements.len));
             self.simulatePop(elements.len);
@@ -1076,7 +1066,7 @@ pub const Compiler = struct {
                 }
                 try self.compileNode(entry.value);
             }
-            if (entries.len > MAX_HASH_ENTRIES) return error.TooManyConstants;
+            if (entries.len > limits.MAX_HASH_ENTRIES) return error.TooManyConstants;
             try self.emitOp(.op_build_map);
             try self.emitByte(@intCast(entries.len));
             self.simulatePop(entries.len * 2);
@@ -1151,7 +1141,7 @@ pub const Compiler = struct {
             try self.emitByte(0xFF); // default low
 
             var condition_idx: usize = 0;
-            var end_jumps: [MAX_CASE_BRANCHES]usize = undefined;
+            var end_jumps: [limits.MAX_CASE_BRANCHES]usize = undefined;
             var end_jump_count: usize = 0;
             for (branches) |branch| {
                 const body_jump_target = self.current_chunk.code.items.len;
@@ -1179,7 +1169,7 @@ pub const Compiler = struct {
 
                 // Compile the actual body
                 try self.compileNode(branch.body);
-                if (end_jump_count < MAX_CASE_BRANCHES) {
+                if (end_jump_count < limits.MAX_CASE_BRANCHES) {
                     end_jumps[end_jump_count] = try self.emitJump(.op_jump);
                     end_jump_count += 1;
                 }
@@ -1205,7 +1195,7 @@ pub const Compiler = struct {
         } else {
             // ====== LINEAR FALLBACK PATH ======
             try self.compileNode(cs.condition);
-            var end_jumps: [MAX_CASE_BRANCHES]usize = undefined;
+            var end_jumps: [limits.MAX_CASE_BRANCHES]usize = undefined;
             var end_jump_count: usize = 0;
 
             for (branches) |branch| {
@@ -1219,7 +1209,7 @@ pub const Compiler = struct {
                     try self.emitOp(.op_pop);
 
                     try self.compileNode(branch.body);
-                    if (end_jump_count < MAX_CASE_BRANCHES) {
+                    if (end_jump_count < limits.MAX_CASE_BRANCHES) {
                         end_jumps[end_jump_count] = try self.emitJump(.op_jump);
                         end_jump_count += 1;
                     }
@@ -1262,7 +1252,7 @@ pub const Compiler = struct {
             self.patchJump(rescue_jump);
             self.simulatePush(1); // Simulator: op_throw pushed the error value on the stack
             const error_depth = self.current_stack_depth; // Save the stack depth!
-            var rescue_end_jumps: [MAX_RESCUE_CLAUSES]usize = undefined;
+            var rescue_end_jumps: [limits.MAX_RESCUE_CLAUSES]usize = undefined;
             var rescue_end_jump_count: usize = 0;
             var next_rescue_jump: ?usize = null;
 
@@ -1274,7 +1264,7 @@ pub const Compiler = struct {
                 next_rescue_jump = null;
 
                 const errors = self.tree.getStringLists(rescue.errors);
-                var match_jumps: [MAX_RESCUE_ERRORS]usize = undefined;
+                var match_jumps: [limits.MAX_RESCUE_ERRORS]usize = undefined;
                 var match_jump_count: usize = 0;
 
                 if (errors.len > 0) {
@@ -1289,7 +1279,7 @@ pub const Compiler = struct {
                         const skip_jump = try self.emitJump(.op_jump_if_false);
                         try self.emitOp(.op_pop); // Discard True
 
-                        if (match_jump_count < MAX_RESCUE_ERRORS) {
+                        if (match_jump_count < limits.MAX_RESCUE_ERRORS) {
                             match_jumps[match_jump_count] = try self.emitJump(.op_jump);
                             match_jump_count += 1;
                         }
@@ -1317,7 +1307,7 @@ pub const Compiler = struct {
                 try self.emitOp(.op_pop); // Pop the error value off stack
                 try self.compileNode(rescue.body);
 
-                if (rescue_end_jump_count < MAX_RESCUE_CLAUSES) {
+                if (rescue_end_jump_count < limits.MAX_RESCUE_CLAUSES) {
                     rescue_end_jumps[rescue_end_jump_count] = try self.emitJump(.op_jump);
                     rescue_end_jump_count += 1;
                 }
@@ -1370,7 +1360,7 @@ pub const Compiler = struct {
                         if (arg.name != .none) return error.UnsupportedScope; // Kwargs to yield not yet supported
                         try self.compileNode(arg.value);
                     }
-                    if (args.len > MAX_ARGS) return error.TooManyConstants;
+                    if (args.len > limits.MAX_ARGS) return error.TooManyConstants;
                     try self.emitOp(.op_yield);
                     try self.emitByte(@intCast(args.len));
                     self.simulatePop(args.len); // Yield consumes the args
@@ -1481,7 +1471,7 @@ pub const Compiler = struct {
             actual_arg_count += 1;
         }
 
-        if (actual_arg_count > MAX_ARGS) return error.TooManyConstants;
+        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
 
         // 4. Execute Invocation
         if (mc.receiver == .none) {
