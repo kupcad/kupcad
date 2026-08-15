@@ -312,41 +312,62 @@ fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: val
     try class.methods.put(vm.allocator, name, native_val);
 }
 
+const MethodDef = struct {
+    name: []const u8,
+    func: value.NativeFn,
+};
+
+const array_methods = [_]MethodDef{
+    .{ .name = "length", .func = arrayLength },
+    .{ .name = "push", .func = arrayPush },
+    .{ .name = "pop", .func = arrayPop },
+    .{ .name = "shift", .func = arrayShift },
+    .{ .name = "unshift", .func = arrayUnshift },
+    .{ .name = "slice", .func = arraySlice },
+    .{ .name = "join", .func = arrayJoin },
+    .{ .name = "each", .func = arrayEach },
+    .{ .name = "map", .func = arrayMap },
+    .{ .name = "reduce", .func = arrayReduce },
+};
+
+const map_methods = [_]MethodDef{
+    .{ .name = "keys", .func = mapKeys },
+    .{ .name = "values", .func = mapValues },
+    .{ .name = "has_key?", .func = mapHasKey },
+    .{ .name = "delete", .func = mapDelete },
+    .{ .name = "each", .func = mapEach },
+};
+
+const string_methods = [_]MethodDef{
+    .{ .name = "upcase", .func = stringUpcase },
+    .{ .name = "downcase", .func = stringDowncase },
+    .{ .name = "split", .func = stringSplit },
+    .{ .name = "replace", .func = stringReplace },
+};
+
+const math_methods = [_]MethodDef{
+    .{ .name = "sin", .func = mathSin },
+    .{ .name = "cos", .func = mathCos },
+    .{ .name = "tan", .func = mathTan },
+    .{ .name = "sqrt", .func = mathSqrt },
+    .{ .name = "abs", .func = mathAbs },
+};
+
 pub fn registerCoreClasses(vm: *VM) !void {
     if (vm.array_class) |cls| {
-        try bindNativeMethod(vm, cls, "length", arrayLength);
-        try bindNativeMethod(vm, cls, "push", arrayPush);
-        try bindNativeMethod(vm, cls, "pop", arrayPop);
-        try bindNativeMethod(vm, cls, "shift", arrayShift);
-        try bindNativeMethod(vm, cls, "unshift", arrayUnshift);
-        try bindNativeMethod(vm, cls, "slice", arraySlice);
-        try bindNativeMethod(vm, cls, "join", arrayJoin);
-        try bindNativeMethod(vm, cls, "each", arrayEach);
-        try bindNativeMethod(vm, cls, "map", arrayMap);
-        try bindNativeMethod(vm, cls, "reduce", arrayReduce);
+        for (array_methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
     }
 
     if (vm.map_class) |cls| {
-        try bindNativeMethod(vm, cls, "keys", mapKeys);
-        try bindNativeMethod(vm, cls, "values", mapValues);
-        try bindNativeMethod(vm, cls, "has_key?", mapHasKey);
-        try bindNativeMethod(vm, cls, "delete", mapDelete);
-        try bindNativeMethod(vm, cls, "each", mapEach);
+        for (map_methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
     }
 
     if (vm.string_class) |cls| {
-        try bindNativeMethod(vm, cls, "upcase", stringUpcase);
-        try bindNativeMethod(vm, cls, "downcase", stringDowncase);
-        try bindNativeMethod(vm, cls, "split", stringSplit);
-        try bindNativeMethod(vm, cls, "replace", stringReplace);
+        for (string_methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
     }
 
     if (vm.globals.get("Math")) |v| {
         const math_cls = v.asInstance().class;
-        try bindNativeMethod(vm, math_cls, "sin", mathSin);
-        try bindNativeMethod(vm, math_cls, "cos", mathCos);
-        try bindNativeMethod(vm, math_cls, "tan", mathTan);
-        try bindNativeMethod(vm, math_cls, "sqrt", mathSqrt);
-        try bindNativeMethod(vm, math_cls, "abs", mathAbs);
+        for (math_methods) |def| try bindNativeMethod(vm, math_cls, def.name, def.func);
     }
 }
