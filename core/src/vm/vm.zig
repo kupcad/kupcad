@@ -196,14 +196,12 @@ pub const VM = struct {
                     const dropped = self.pop();
                     self.releaseValue(dropped);
                 },
-                .op_get_local => {
-                    const slot = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
+                .op_get_local, .op_get_local_wide => {
+                    const slot = self.readOperand(exec_chunk, frame, op == .op_get_local_wide);
                     self.push(self.getLocal(frame, slot));
                 },
-                .op_set_local => {
-                    const slot = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
+                .op_set_local, .op_set_local_wide => {
+                    const slot = self.readOperand(exec_chunk, frame, op == .op_set_local_wide);
                     self.setLocal(frame, slot, self.stack[self.stack_top - 1]);
                 },
                 .op_add, .op_subtract => {
@@ -582,12 +580,11 @@ pub const VM = struct {
                     self.closeUpvalues(&self.stack[self.stack_top - 1]);
                     self.releaseValue(self.pop());
                 },
-                .op_switch => {
+                .op_switch, .op_switch_wide => {
                     const test_val = self.pop();
                     defer self.releaseValue(test_val);
 
-                    const case_count = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
+                    const case_count = self.readOperand(exec_chunk, frame, op == .op_switch_wide);
 
                     var matched = false;
                     var jump_offset: usize = 0;
@@ -635,8 +632,10 @@ pub const VM = struct {
                     for (0..func_obj.upvalue_count) |i| {
                         const is_local = exec_chunk.code.items[frame.ip];
                         frame.ip += 1;
-                        const index = exec_chunk.code.items[frame.ip];
-                        frame.ip += 1;
+
+                        // Read 16-bit upvalue index
+                        const index = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
+                        frame.ip += 2;
 
                         if (is_local == 1) {
                             // Capture directly from the parent's stack slot

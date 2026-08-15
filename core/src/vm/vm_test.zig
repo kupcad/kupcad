@@ -208,8 +208,9 @@ test "VM: Closures correctly capture and return upvalues" {
     try main_chunk.write(testing.allocator, @intCast(const_func), 0);
 
     // Upvalue parameters: is_local = 1, index = 1 (captures stack slot 1, where 42 is sitting)
-    try main_chunk.write(testing.allocator, 1, 0);
-    try main_chunk.write(testing.allocator, 1, 0);
+    try main_chunk.write(testing.allocator, 1, 0); // is_local flag
+    try main_chunk.write(testing.allocator, 0, 0); // NEW: index high byte (0)
+    try main_chunk.write(testing.allocator, 1, 0); // index low byte (1)
 
     // Call the closure we just created
     try main_chunk.writeOp(testing.allocator, .op_call, 0);

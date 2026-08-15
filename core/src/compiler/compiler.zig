@@ -15,13 +15,13 @@ pub const CompileError = error{
 };
 
 pub const Upvalue = struct {
-    index: u8,
+    index: u16,
     is_local: bool,
 };
 
 pub const Local = struct {
     name_id: ast.StringId,
-    slot: u8,
+    slot: u16,
 };
 
 pub const LoopState = struct {
@@ -98,7 +98,7 @@ pub const Compiler = struct {
 
     // --- Lexical Scope Resolvers ---
 
-    fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u8) CompileError!void {
+    fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u16) CompileError!void {
         for (self.locals.items) |loc| {
             if (loc.name_id == name_id) return;
         }
@@ -106,7 +106,7 @@ pub const Compiler = struct {
         try self.locals.append(self.allocator, .{ .name_id = name_id, .slot = slot });
     }
 
-    fn resolveLocal(self: *Compiler, name_id: ast.StringId) ?u8 {
+    fn resolveLocal(self: *Compiler, name_id: ast.StringId) ?u16 {
         var i: usize = self.locals.items.len;
         while (i > 0) {
             i -= 1;
@@ -132,7 +132,7 @@ pub const Compiler = struct {
         return null;
     }
 
-    fn addUpvalue(self: *Compiler, index: u8, is_local: bool) CompileError!u8 {
+    fn addUpvalue(self: *Compiler, index: u16, is_local: bool) CompileError!u8 {
         for (self.upvalues.items, 0..) |upv, i| {
             if (upv.index == index and upv.is_local == is_local) {
                 return @intCast(i);
@@ -451,9 +451,7 @@ pub const Compiler = struct {
                 self.patchJump(else_jump);
             },
             .self_expr => {
-                // 'self' is intrinsically bound to local slot 0
-                try self.emitOp(.op_get_local);
-                try self.emitByte(0);
+                try self.emitLocalInstruction(.op_get_local, .op_get_local_wide, 0);
             },
             .while_stmt => {
                 const while_payload = self.tree.whileStmt(node);
@@ -834,6 +832,17 @@ pub const Compiler = struct {
         }
     }
 
+    fn emitLocalInstruction(self: *Compiler, short_op: chunk.OpCode, wide_op: chunk.OpCode, slot: usize) CompileError!void {
+        if (slot <= limits.MAX_SHORT_CONSTANTS) {
+            try self.emitOp(short_op);
+            try self.emitByte(@intCast(slot));
+        } else {
+            try self.emitOp(wide_op);
+            try self.emitByte(@intCast((slot >> 8) & 0xff)); // High byte
+            try self.emitByte(@intCast(slot & 0xff)); // Low byte
+        }
+    }
+
     fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex) CompileError!void {
         const func = try self.vm.gc.allocateFunction(self.vm);
 
@@ -943,8 +952,7 @@ pub const Compiler = struct {
                     }
 
                     const local_slot = child_compiler.resolveLocal(param.name).?;
-                    try child_compiler.emitOp(.op_set_local);
-                    try child_compiler.emitByte(local_slot);
+                    try child_compiler.emitLocalInstruction(.op_set_local, .op_set_local_wide, local_slot);
                     try child_compiler.emitOp(.op_pop);
                 }
             }
@@ -966,7 +974,8 @@ pub const Compiler = struct {
 
         for (child_compiler.upvalues.items) |upv| {
             try self.emitByte(if (upv.is_local) 1 else 0);
-            try self.emitByte(upv.index);
+            try self.emitByte(@intCast((upv.index >> 8) & 0xff));
+            try self.emitByte(@intCast(upv.index & 0xff));
         }
     }
 
@@ -975,8 +984,7 @@ pub const Compiler = struct {
         if (target.name != .none) {
             const name_id = target.name;
             if (self.resolveLocal(name_id)) |local_slot| {
-                try self.emitOp(.op_set_local);
-                try self.emitByte(local_slot);
+                try self.emitLocalInstruction(.op_set_local, .op_set_local_wide, local_slot);
                 try self.emitOp(.op_pop);
             } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
                 try self.emitOp(.op_set_upvalue);
@@ -988,8 +996,7 @@ pub const Compiler = struct {
                     try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
                 } else {
                     try self.addLocal(name_id, @intCast(self.locals.items.len));
-                    try self.emitOp(.op_set_local);
-                    try self.emitByte(@intCast(self.locals.items.len - 1));
+                    try self.emitLocalInstruction(.op_set_local, .op_set_local_wide, self.locals.items.len - 1);
                     try self.emitOp(.op_pop);
                 }
             }
@@ -1130,7 +1137,7 @@ pub const Compiler = struct {
 
         // --- Heuristic: Can we use a Fast Jump Table? ---
         var can_use_jump_table = true;
-        var total_conditions: u8 = 0;
+        var total_conditions: u16 = 0;
         for (branches) |branch| {
             const conds = self.tree.getNodes(branch.conditions);
             for (conds) |cond_idx| {
@@ -1147,8 +1154,7 @@ pub const Compiler = struct {
         if (can_use_jump_table and total_conditions > 0) {
             // ====== FAST PATH: OP_SWITCH ======
             try self.compileNode(cs.condition);
-            try self.emitOp(.op_switch);
-            try self.emitByte(total_conditions);
+            try self.emitLocalInstruction(.op_switch, .op_switch_wide, total_conditions);
 
             // Pre-allocate the jump table in bytecode so we can backpatch it later
             const table_start_offset = self.current_chunk.code.items.len;
@@ -1492,7 +1498,8 @@ pub const Compiler = struct {
 
             for (child_compiler.upvalues.items) |upv| {
                 try self.emitByte(if (upv.is_local) 1 else 0);
-                try self.emitByte(upv.index);
+                try self.emitByte(@intCast((upv.index >> 8) & 0xff));
+                try self.emitByte(@intCast(upv.index & 0xff));
             }
 
             actual_arg_count += 1;
@@ -1573,8 +1580,7 @@ pub const Compiler = struct {
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitConstantInstruction(.op_get_class_var, .op_get_class_var_wide, name_idx);
         } else if (self.resolveLocal(name_id)) |local_slot| {
-            try self.emitOp(.op_get_local);
-            try self.emitByte(local_slot);
+            try self.emitLocalInstruction(.op_get_local, .op_get_local_wide, local_slot);
         } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
             try self.emitOp(.op_get_upvalue);
             try self.emitByte(upvalue_slot);
@@ -1582,8 +1588,7 @@ pub const Compiler = struct {
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitConstantInstruction(.op_get_global, .op_get_global_wide, name_idx);
         } else {
-            try self.emitOp(.op_get_local);
-            try self.emitByte(@intCast(sym.?.index));
+            try self.emitLocalInstruction(.op_get_local, .op_get_local_wide, sym.?.index);
         }
     }
 
@@ -1593,8 +1598,7 @@ pub const Compiler = struct {
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitConstantInstruction(.op_set_class_var, .op_set_class_var_wide, name_idx);
         } else if (self.resolveLocal(name_id)) |local_slot| {
-            try self.emitOp(.op_set_local);
-            try self.emitByte(local_slot);
+            try self.emitLocalInstruction(.op_set_local, .op_set_local_wide, local_slot);
         } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
             try self.emitOp(.op_set_upvalue);
             try self.emitByte(upvalue_slot);
@@ -1604,8 +1608,7 @@ pub const Compiler = struct {
             try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
         } else {
             try self.addLocal(name_id, @intCast(sym.index));
-            try self.emitOp(.op_set_local);
-            try self.emitByte(@intCast(sym.index));
+            try self.emitLocalInstruction(.op_set_local, .op_set_local_wide, sym.index);
         }
     }
 };

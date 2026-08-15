@@ -60,13 +60,13 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         .op_constant_wide, .op_get_global_wide, .op_define_global_wide, .op_set_global_wide, .op_class_wide, .op_method_wide, .op_get_property_wide, .op_set_property_wide, .op_import_wide, .op_class_method_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_module_wide, .op_defined_wide => {
             return constantInstruction(@tagName(op), c, offset, true, writer);
         },
-        .op_get_local, .op_set_local, .op_call, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield => {
+        .op_call, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield => {
             return byteInstruction(@tagName(op), c, offset, writer);
         },
-        .op_build_array, .op_build_map => {
+        .op_build_array, .op_build_map, .op_get_local, .op_set_local => {
             return byteInstruction(@tagName(op), c, offset, writer);
         },
-        .op_build_array_wide, .op_build_map_wide => {
+        .op_build_array_wide, .op_build_map_wide, .op_get_local_wide, .op_set_local_wide => {
             return wideOperandInstruction(@tagName(op), c, offset, writer);
         },
         .op_unpack_splat, .op_pack_splat => {
@@ -93,7 +93,8 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         .op_invoke_wide => {
             return invokeInstruction(@tagName(op), c, offset, true, writer);
         },
-        .op_switch => return switchInstruction(@tagName(op), c, offset, writer),
+        .op_switch => return switchInstruction(@tagName(op), c, offset, false, writer),
+        .op_switch_wide => return switchInstruction(@tagName(op), c, offset, true, writer),
         .op_closure, .op_closure_wide => {
             var new_offset = offset + 1;
             var constant: u16 = 0;
@@ -112,15 +113,18 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
 
             const func_val = c.constants.items[constant];
             const func_obj = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", func_val.asObj())));
+
             for (0..func_obj.upvalue_count) |_| {
                 const is_local = c.code.items[new_offset];
                 new_offset += 1;
-                const index = c.code.items[new_offset];
-                new_offset += 1;
+                // Read 16-bit upvalue index
+                const index = (@as(u16, c.code.items[new_offset]) << 8) | c.code.items[new_offset + 1];
+                new_offset += 2;
 
                 const upval_type = if (is_local == 1) "local" else "upvalue";
-                try writer.print("{d:0>4}      |                     {s} {d}\n", .{ new_offset - 2, upval_type, index });
+                try writer.print("{d:0>4}      |                     {s} {d}\n", .{ new_offset - 3, upval_type, index });
             }
+
             return new_offset;
         },
     }
@@ -199,11 +203,20 @@ fn invokeInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, is_
     return new_offset;
 }
 
-fn switchInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
-    const case_count = c.code.items[offset + 1];
+fn switchInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, is_wide: bool, writer: anytype) !usize {
+    var case_count: u16 = 0;
+    var current_offset = offset + 1;
+
+    if (is_wide) {
+        case_count = (@as(u16, c.code.items[current_offset]) << 8) | c.code.items[current_offset + 1];
+        current_offset += 2;
+    } else {
+        case_count = c.code.items[current_offset];
+        current_offset += 1;
+    }
+
     try writer.print("{s:<16} {d} cases\n", .{ name, case_count });
 
-    var current_offset = offset + 2;
     for (0..case_count) |i| {
         // Read the full 5-byte jump layout [const_h, const_l, jump_h, jump_m, jump_l]
         const const_idx = (@as(u16, c.code.items[current_offset]) << 8) | c.code.items[current_offset + 1];

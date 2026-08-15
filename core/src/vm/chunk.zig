@@ -64,7 +64,9 @@ pub const OpCode = enum(u8) {
 
     // Variables
     op_get_local,
+    op_get_local_wide,
     op_set_local,
+    op_set_local_wide,
     op_get_global,
     op_get_global_wide,
     op_define_global,
@@ -94,6 +96,7 @@ pub const OpCode = enum(u8) {
     op_jump_if_nil,
     op_jump_if_not_nil,
     op_switch,
+    op_switch_wide,
     op_loop,
 
     // Exception Handling
