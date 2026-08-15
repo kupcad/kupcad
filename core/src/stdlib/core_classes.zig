@@ -319,6 +319,7 @@ const MethodDef = struct {
 
 const array_methods = [_]MethodDef{
     .{ .name = "length", .func = arrayLength },
+    .{ .name = "size", .func = arrayLength },
     .{ .name = "push", .func = arrayPush },
     .{ .name = "pop", .func = arrayPop },
     .{ .name = "shift", .func = arrayShift },

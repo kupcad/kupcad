@@ -6,6 +6,7 @@ const registry = @import("../stdlib/registry.zig");
 const resolver = @import("../core/resolver.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
+const Document = @import("../core/document.zig").Document;
 const VM = @import("vm.zig").VM;
 
 test "VM: End-to-end compilation and execution of math expression" {
@@ -1029,7 +1030,6 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
 }
 
 test "VM: Compiles and executes class variables (@@var)" {
-    const Document = @import("../core/document.zig").Document;
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -1064,7 +1064,6 @@ test "VM: Compiles and executes class variables (@@var)" {
 }
 
 test "VM: Compiles and executes class methods (def self.method)" {
-    const Document = @import("../core/document.zig").Document;
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -1094,7 +1093,6 @@ test "VM: Compiles and executes class methods (def self.method)" {
 }
 
 test "VM: Standard exceptions are caught in rescue blocks natively" {
-    const Document = @import("../core/document.zig").Document;
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -1211,7 +1209,6 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
 }
 
 test "VM: Explicit block capturing (&block) and first-class invocation" {
-    const Document = @import("../core/document.zig").Document;
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -1241,7 +1238,6 @@ test "VM: Explicit block capturing (&block) and first-class invocation" {
 }
 
 test "VM: LHS Splat Destructuring (a, *b, c = arr)" {
-    const Document = @import("../core/document.zig").Document;
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -1370,7 +1366,6 @@ test "VM: defined? operator evaluates safely without panicking" {
 }
 
 test "VM: Modules and Mixins (include)" {
-    const Document = @import("../core/document.zig").Document;
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -1406,7 +1401,6 @@ test "VM: Modules and Mixins (include)" {
 }
 
 test "VM: Monkey-patching native Primitives dynamically (Array extension)" {
-    const Document = @import("../core/document.zig").Document;
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm); // Initializes vm.array_class
@@ -1441,7 +1435,6 @@ test "VM: Monkey-patching native Primitives dynamically (Array extension)" {
 }
 
 test "VM: executes while loops with break and next" {
-    const Document = @import("../core/document.zig").Document;
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -1479,7 +1472,6 @@ test "VM: executes while loops with break and next" {
 }
 
 test "VM: executes ternary operator with short-circuiting" {
-    const Document = @import("../core/document.zig").Document;
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -1511,4 +1503,78 @@ test "VM: executes ternary operator with short-circuiting" {
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM Edge Case: Out of bounds array indexing returns runtime error" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true; // Prevent the error from cluttering test output
+
+    const source =
+        \\arr = [10, 20, 30]
+        \\arr[5]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    // Should safely abort rather than panic
+    try testing.expectEqual(.runtime_error, result);
+}
+
+test "VM: Module mixin method resolution order" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class Base
+        \\  def call() 1 end
+        \\end
+        \\module M1
+        \\  def call() 2 end
+        \\end
+        \\module M2
+        \\  def call() 3 end
+        \\end
+        \\
+        \\class Child < Base
+        \\  include M1
+        \\  include M2
+        \\end
+        \\
+        \\class ChildLocal < Base
+        \\  include M2
+        \\  def call() 4 end
+        \\end
+        \\
+        \\[Child.new().call(), ChildLocal.new().call()]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    // Result should be an array: [3, 4]
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+
+    // Child: M2 overrides M1 and Base
+    try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[0].asNumber());
+    // ChildLocal: Local class method overrides M2
+    try testing.expectEqual(@as(f64, 4.0), arr_obj.items.items[1].asNumber());
 }
