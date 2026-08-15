@@ -222,6 +222,13 @@ pub fn mapEach(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyer
 
 // --- String Methods ---
 
+pub fn stringLength(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapString(vm_opaque, arg_count, 0, args);
+    // Safely count actual Unicode characters, fallback to raw byte length if invalid UTF-8
+    const len = std.unicode.utf8CountCodepoints(ctx.str.chars) catch ctx.str.chars.len;
+    return value.Value.initNumber(@floatFromInt(len));
+}
+
 pub fn stringUpcase(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try unwrapString(vm_opaque, arg_count, 0, args);
     const new_str = try ctx.vm.allocator.alloc(u8, ctx.str.chars.len);
@@ -340,6 +347,8 @@ const map_methods = [_]MethodDef{
 };
 
 const string_methods = [_]MethodDef{
+    .{ .name = "length", .func = stringLength },
+    .{ .name = "size", .func = stringLength },
     .{ .name = "upcase", .func = stringUpcase },
     .{ .name = "downcase", .func = stringDowncase },
     .{ .name = "split", .func = stringSplit },
