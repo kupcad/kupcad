@@ -3110,3 +3110,23 @@ test "AST Builder: Number Deduplication merges identical floats" {
     try testing.expectEqual(@as(f64, 10.0), b.tree.numbers.items[0]);
     try testing.expectEqual(@as(f64, 99.0), b.tree.numbers.items[1]);
 }
+
+test "Parser: parses shorthand hash keys" {
+    const source = "{ width: 50, height: 20 }";
+    var t = try KTest.init(source);
+    defer t.deinit();
+
+    const node_idx = try t.parser.parseExpression(.none);
+    const node = t.getNode(node_idx);
+
+    try testing.expectEqual(ast.Tag.hash_literal, node.tag);
+    const entries = t.parser.b.tree.getHashEntries(t.parser.b.tree.nodeSpan(node));
+    try testing.expectEqual(@as(usize, 2), entries.len);
+
+    const key1 = t.parser.b.tree.getNode(entries[0].key).?;
+    try testing.expectEqual(ast.Tag.symbol, key1.tag);
+    try testing.expectEqualStrings("width", t.parser.b.tree.getString(@as(ast.StringId, @enumFromInt(key1.data))));
+
+    const val1 = t.parser.b.tree.getNode(entries[0].value).?;
+    try testing.expectEqual(@as(f64, 50.0), t.parser.b.tree.number(val1));
+}

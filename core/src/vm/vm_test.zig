@@ -1690,3 +1690,76 @@ test "VM: Type coercion and Number methods" {
     try testing.expectEqual(@as(f64, 42.5), arr_obj.items.items[4].asNumber()); // "42.5".to_f()
     try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[5].asNumber()); // "42".to_i()
 }
+
+test "VM: Negative array indexing" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\arr = [10, 20, 30]
+        \\[arr[-1], arr[-2], arr[-3]]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+
+    // -1 = last, -2 = middle, -3 = first
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[2].asNumber());
+}
+
+test "VM: case statement subsumption (===) with ranges and classes" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Replaced 'then' with newlines for valid KupCAD syntax
+    const source =
+        \\def check_val(x)
+        \\  case x
+        \\  when String
+        \\    100
+        \\  when 1..10
+        \\    200
+        \\  else
+        \\    300
+        \\  end
+        \\end
+        \\[check_val("hello"), check_val(5), check_val(42)]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[0].asNumber()); // Matches Class
+    try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[1].asNumber()); // Matches Range
+    try testing.expectEqual(@as(f64, 300.0), arr_obj.items.items[2].asNumber()); // Fallback
+}

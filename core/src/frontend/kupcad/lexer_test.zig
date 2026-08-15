@@ -426,3 +426,16 @@ test "KupCAD Lexer: UTF-8 Identifier Offset Tracking" {
     try testing.expectEqualStrings("π", tok.lexeme);
     try testing.expectEqual(@as(u32, 9), tok.loc.offset);
 }
+
+test "Lexer: parses quoted symbols" {
+    // Tests symbols with spaces and dashes via quote wrapper
+    const source =
+        \\:"string-key" :"spaced key"
+    ;
+
+    try test_utils.expectTokens(Lexer, source, .{
+        test_utils.t(.symbol, "string-key"),
+        test_utils.t(.symbol, "spaced key"),
+        test_utils.t(.eof, ""),
+    });
+}

@@ -1584,6 +1584,17 @@ pub const VM = struct {
         if (case_val.isClass()) {
             if (test_val.isInstance()) {
                 return isSubclassOf(test_val.asInstance().class, case_val.asClass());
+            } else if (test_val.isObject()) {
+                const c = case_val.asClass();
+                switch (test_val.asObj().obj_type) {
+                    .string => return c == self.string_class,
+                    .array => return c == self.array_class,
+                    .map => return c == self.map_class,
+                    .symbol => return c == self.symbol_class,
+                    else => return false,
+                }
+            } else if (test_val.isNumber()) {
+                return case_val.asClass() == self.number_class;
             }
             return false;
         } else if (case_val.isObject() and case_val.asObj().obj_type == .range) {
