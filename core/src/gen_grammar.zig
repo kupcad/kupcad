@@ -69,28 +69,30 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     defer allocator.free(joined_wp);
     defer allocator.free(joined_insp);
 
-    // Helper function to create the \b(word|word)\b regex
-    const makeKeywordMatch = struct {
-        fn apply(alloc: std.mem.Allocator, joined: []const u8) ![]const u8 {
-            return std.fmt.allocPrint(alloc, "(?<![\\\\w.])({s})(?![\\\\w?!])", .{joined});
-        }
-    }.apply;
-
-    // For methods/primitives: DO match after a dot, but not after a word char
-    const makeMethodMatch = struct {
-        fn apply(alloc: std.mem.Allocator, joined: []const u8) ![]const u8 {
+    // Helper to safely fallback, join, and wrap categories into TextMate Regex format
+    const buildMethodRegex = struct {
+        fn apply(alloc: std.mem.Allocator, list: *std.ArrayListUnmanaged([]const u8), dummy: []const u8) ![]const u8 {
+            if (list.items.len == 0) try list.append(alloc, dummy);
+            const joined = try std.mem.join(alloc, "|", list.items);
+            defer alloc.free(joined);
             return std.fmt.allocPrint(alloc, "(?<![\\\\w])({s})(?![\\\\w?!])", .{joined});
         }
     }.apply;
 
-    const kw_match = try makeKeywordMatch(allocator, joined_kw);
-    const p3d_match = try makeMethodMatch(allocator, joined_p3d);
-    const p2d_match = try makeMethodMatch(allocator, joined_p2d);
-    const tf_match = try makeMethodMatch(allocator, joined_tf);
-    const csg_match = try makeMethodMatch(allocator, joined_csg);
-    const wp_match = try makeMethodMatch(allocator, joined_wp);
-    const insp_match = try makeMethodMatch(allocator, joined_insp);
+    // Build Keyword Matcher (Keywords use a slightly different regex constraint)
+    const kw_joined = try std.mem.join(allocator, "|", keywords.items);
+    defer allocator.free(kw_joined);
+    const kw_match = try std.fmt.allocPrint(allocator, "(?<![\\\\w.])({s})(?![\\\\w?!])", .{kw_joined});
     defer allocator.free(kw_match);
+
+    // Build Method Matchers using the consolidated helper
+    const p3d_match = try buildMethodRegex(allocator, &prim_3d, "dummy_prim_3d");
+    const p2d_match = try buildMethodRegex(allocator, &prim_2d, "dummy_prim_2d");
+    const tf_match = try buildMethodRegex(allocator, &transforms, "dummy_tf");
+    const csg_match = try buildMethodRegex(allocator, &csg_ops, "dummy_csg");
+    const wp_match = try buildMethodRegex(allocator, &workplanes, "dummy_wp");
+    const insp_match = try buildMethodRegex(allocator, &inspections, "dummy_insp");
+
     defer allocator.free(p3d_match);
     defer allocator.free(p2d_match);
     defer allocator.free(tf_match);
