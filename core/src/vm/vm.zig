@@ -49,12 +49,14 @@ pub const VM = struct {
     active_kernel: ?*const kernel_mod.GeometryKernel = null,
     dag_builder: dag.DAGBuilder,
     mute_errors: bool = false,
+
     // std classes
     string_class: ?*value.ObjClass = null,
     array_class: ?*value.ObjClass = null,
     map_class: ?*value.ObjClass = null,
     number_class: ?*value.ObjClass = null,
     symbol_class: ?*value.ObjClass = null,
+
     // safety for infinite loops
     instruction_count: usize,
     instruction_limit: usize,
@@ -123,10 +125,12 @@ pub const VM = struct {
 
     pub fn ensureStackCapacity(self: *VM, required_capacity: usize) !void {
         if (required_capacity <= self.stack.len) return;
+
         var new_capacity = self.stack.len;
         while (new_capacity < required_capacity) {
             new_capacity *= STACK_GROW_FACTOR;
         }
+
         self.stack = try self.allocator.realloc(self.stack, new_capacity);
     }
 
@@ -145,7 +149,6 @@ pub const VM = struct {
 
         // Protect func from GC during allocateClosure
         self.push(value.Value.initObj(&func.obj));
-
         const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
 
         // Swap func for closure on stack
@@ -176,6 +179,7 @@ pub const VM = struct {
 
             var frame = &self.frames.items[self.frames.items.len - 1];
             const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
+
             const instruction = exec_chunk.code.items[frame.ip];
             frame.ip += 1;
             const op: chunk.OpCode = @enumFromInt(instruction);
@@ -262,8 +266,8 @@ pub const VM = struct {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_property_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-                    const receiver = self.stack[self.stack_top - 1];
 
+                    const receiver = self.stack[self.stack_top - 1];
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
                         if (instance.fields.get(name_str)) |val| {
@@ -282,6 +286,7 @@ pub const VM = struct {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_global_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", name_val.asObj()));
+
                     if (self.globals.get(str_obj.chars)) |val| {
                         self.push(val);
                     } else {
@@ -347,9 +352,8 @@ pub const VM = struct {
                     }
                 },
                 .op_setup_rescue => {
-                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
-
+                    // Properly read the 3-byte offset
+                    const offset = self.readJumpOffset(exec_chunk, frame);
                     self.rescue_frames.append(self.allocator, .{
                         .handler_ip = frame.ip + offset,
                         .stack_top = self.stack_top,
@@ -441,7 +445,6 @@ pub const VM = struct {
                     for (self.stack[start_idx..self.stack_top]) |val| {
                         val.stringify(false, &out.writer) catch return .runtime_error;
                     }
-
                     const merged_str = self.allocateString(out.written()) catch return .runtime_error;
 
                     // Pop and release all original stack fragments
@@ -449,7 +452,6 @@ pub const VM = struct {
                         const dropped = self.pop();
                         self.releaseValue(dropped);
                     }
-
                     self.push(merged_str);
                 },
                 .op_array_push => {
@@ -457,7 +459,6 @@ pub const VM = struct {
                     defer self.releaseValue(val);
                     const arr_val = self.stack[self.stack_top - 1];
                     const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
-
                     self.retainValue(val);
                     arr.items.append(self.allocator, val) catch return .runtime_error;
                 },
@@ -483,10 +484,8 @@ pub const VM = struct {
                     defer self.releaseValue(val);
                     const key = self.pop();
                     defer self.releaseValue(key);
-
                     const map_val = self.stack[self.stack_top - 1];
                     const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", map_val.asObj())));
-
                     self.retainValue(key);
                     self.retainValue(val);
                     map.keys.append(self.allocator, key) catch return .runtime_error;
@@ -513,12 +512,13 @@ pub const VM = struct {
                     }
                 },
                 .op_jump => {
-                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2 + offset;
+                    // Properly read 3-byte offset
+                    const offset = self.readJumpOffset(exec_chunk, frame);
+                    frame.ip += offset;
                 },
                 .op_jump_if_false => {
-                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
+                    // Properly read 3-byte offset
+                    const offset = self.readJumpOffset(exec_chunk, frame);
 
                     // Falsey values in KupCAD are only `nil` and `false`
                     const val = self.stack[self.stack_top - 1];
@@ -529,12 +529,20 @@ pub const VM = struct {
                     }
                 },
                 .op_jump_if_nil => {
-                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
+                    // Properly read 3-byte offset
+                    const offset = self.readJumpOffset(exec_chunk, frame);
 
                     // Peek at the receiver. If it is nil, take the jump
                     const val = self.stack[self.stack_top - 1];
                     if (val.isNil()) {
+                        frame.ip += offset;
+                    }
+                },
+                .op_jump_if_not_nil => {
+                    // Properly read 3-byte offset
+                    const offset = self.readJumpOffset(exec_chunk, frame);
+                    const val = self.stack[self.stack_top - 1];
+                    if (!val.isNil()) {
                         frame.ip += offset;
                     }
                 },
@@ -543,8 +551,8 @@ pub const VM = struct {
                     self.push(val);
                 },
                 .op_loop => {
-                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
+                    // Properly read 3-byte offset
+                    const offset = self.readJumpOffset(exec_chunk, frame);
                     frame.ip -= offset; // Jump backwards
                 },
                 .op_import, .op_import_wide => {
@@ -582,27 +590,29 @@ pub const VM = struct {
                     frame.ip += 1;
 
                     var matched = false;
-                    var jump_offset: u16 = 0;
+                    var jump_offset: usize = 0;
 
                     for (0..case_count) |_| {
-                        // Read 4 bytes per case: [const_high] [const_low] [jump_high] [jump_low]
+                        // Read 5 bytes per case: [const_high] [const_low] [jump_high] [jump_mid] [jump_low]
                         const const_high = @as(u16, exec_chunk.code.items[frame.ip]);
                         const const_low = @as(u16, exec_chunk.code.items[frame.ip + 1]);
-                        const offset = (@as(u16, exec_chunk.code.items[frame.ip + 2]) << 8) | exec_chunk.code.items[frame.ip + 3];
-                        frame.ip += 4;
+                        const j_high = @as(usize, exec_chunk.code.items[frame.ip + 2]);
+                        const j_mid = @as(usize, exec_chunk.code.items[frame.ip + 3]);
+                        const j_low = @as(usize, exec_chunk.code.items[frame.ip + 4]);
+                        frame.ip += 5;
 
                         if (!matched) {
                             const const_idx = (const_high << 8) | const_low;
                             const case_val = exec_chunk.constants.items[const_idx];
                             if (self.valuesCaseEqual(case_val, test_val)) {
                                 matched = true;
-                                jump_offset = offset;
+                                jump_offset = (j_high << 16) | (j_mid << 8) | j_low;
                             }
                         }
                     }
 
-                    const default_offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
+                    // Properly read 3-byte offset for default fallback
+                    const default_offset = self.readJumpOffset(exec_chunk, frame);
 
                     if (matched) {
                         frame.ip += jump_offset;
@@ -644,13 +654,13 @@ pub const VM = struct {
                     self.closeUpvalues(&self.stack[frame.base_slot]);
 
                     self.shrinkStack(frame.base_slot);
-
                     _ = self.frames.pop();
 
                     // Put the result back on the stack WITHOUT incrementing its ARC
                     // (It already holds a +1 reference from when it was initially popped)
                     self.stack.ptr[self.stack_top] = result;
                     self.stack_top += 1;
+
                     if (self.frames.items.len == target_depth) {
                         return .ok;
                     }
@@ -658,7 +668,6 @@ pub const VM = struct {
                 .op_unpack => {
                     const count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
-
                     const val = self.pop();
                     defer self.releaseValue(val);
 
@@ -683,10 +692,8 @@ pub const VM = struct {
                 .op_module, .op_module_wide => {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_module_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
-
                     // Removed `.chars` to pass the *ObjString pointer!
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
-
                     const mod_obj = self.gc.allocateModule(self, name_str) catch return .runtime_error;
                     self.push(value.Value.initObj(&mod_obj.obj));
                 },
@@ -697,7 +704,6 @@ pub const VM = struct {
                         self.reportError("Runtime Error: Can only include Modules.\n", .{});
                         return .runtime_error;
                     }
-
                     const class_val = self.stack[self.stack_top - 1]; // Peek at class
                     if (!class_val.isClass()) return .runtime_error;
 
@@ -749,6 +755,7 @@ pub const VM = struct {
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
                     const receiver = self.pop();
+
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
                         self.retainValue(val);
@@ -764,6 +771,7 @@ pub const VM = struct {
                 .op_inherit => {
                     const super_val = self.pop();
                     if (!super_val.isClass()) return .runtime_error;
+
                     const sub_val = self.stack[self.stack_top - 1];
                     sub_val.asClass().superclass = super_val.asClass();
                 },
@@ -779,8 +787,8 @@ pub const VM = struct {
                         const native_obj = callee.asNative();
                         const args_ptr = self.stack.ptr + base_slot + 1;
                         const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
-                        self.popAndRelease(arg_count + 1); // Clean up args and callee
 
+                        self.popAndRelease(arg_count + 1); // Clean up args and callee
                         // Absorb the native +1 reference directly
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
@@ -815,15 +823,18 @@ pub const VM = struct {
                 .op_super_invoke => {
                     const arg_count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
+
                     const base_slot = self.stack_top - 1 - arg_count;
                     const method_name_str = frame.closure.function.name.?.chars;
                     const receiver = self.stack[base_slot];
+
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
                         const superclass = instance.class.superclass orelse {
                             self.reportError("Runtime Error: No superclass exists for receiver.\n", .{});
                             return .runtime_error;
                         };
+
                         if (self.findMethod(superclass, method_name_str)) |method_val| {
                             self.dispatchClosure(method_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
                             continue;
@@ -865,9 +876,11 @@ pub const VM = struct {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_class_method_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+
                     const method = self.pop();
                     const class_val = self.stack[self.stack_top - 1]; // Peek at class
                     const class_obj = class_val.asClass();
+
                     class_obj.class_methods.put(self.allocator, name_str, method) catch return .runtime_error;
                 },
                 .op_get_class_var, .op_get_class_var_wide => {
@@ -923,15 +936,8 @@ pub const VM = struct {
                         // If user threw a primitive string instead of an Error object
                         match = false;
                     }
+
                     self.push(value.Value.initBool(match));
-                },
-                .op_jump_if_not_nil => {
-                    const offset = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
-                    const val = self.stack[self.stack_top - 1];
-                    if (!val.isNil()) {
-                        frame.ip += offset;
-                    }
                 },
                 .op_defined, .op_defined_wide => {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_defined_wide);
@@ -976,7 +982,6 @@ pub const VM = struct {
                 },
             }
         }
-
         return .ok;
     }
 
@@ -1065,7 +1070,6 @@ pub const VM = struct {
     pub fn ensureConcrete(self: *VM, val: value.Value) !geom.GeometryHandle {
         if (!val.isGeometry()) return error.RuntimeError;
         var geometry = val.asGeometry();
-
         if (geometry.cached_handle) |handle| return handle;
 
         const handle = try self.evaluateDAG(geometry.dag_idx);
@@ -1075,10 +1079,12 @@ pub const VM = struct {
 
     fn evaluateDAG(self: *VM, node_idx: dag.DAGNodeIndex) !geom.GeometryHandle {
         const node = self.dag_builder.nodes.items[node_idx];
+
         const kernel = self.active_kernel orelse {
             self.reportError("Runtime Error: No geometry kernel active\n", .{});
             return error.RuntimeError;
         };
+
         switch (node.tag) {
             .cube => {
                 const dims = self.dag_builder.getCubeDimensions(node);
@@ -1088,6 +1094,7 @@ pub const VM = struct {
                 const payload = self.dag_builder.getBinaryPayload(node);
                 const left_handle = try self.evaluateDAG(payload.left);
                 const right_handle = try self.evaluateDAG(payload.right);
+
                 const op: kernel_mod.BooleanOp = switch (node.tag) {
                     .union_op => .union_op,
                     .difference_op => .difference_op,
@@ -1191,11 +1198,11 @@ pub const VM = struct {
         if (provided_args < expected_args) {
             const missing = expected_args - provided_args;
             try self.ensureStackCapacity(self.stack_top + missing);
-
             const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
             if (has_block) self.stack_top -= 1;
 
             for (0..missing) |_| self.push(value.Value.initNil());
+
             if (has_block) self.push(block_copy.?);
         } else if (provided_args > expected_args and !closure.function.has_splat) {
             self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
@@ -1231,16 +1238,13 @@ pub const VM = struct {
         try self.ensureStackCapacity(self.stack_top + total_pushes);
 
         const base_slot = self.stack_top; // Record where the closure lands exactly
-
         self.push(value.Value.initObj(&closure.obj)); // closure itself
-
         for (args) |arg| self.push(arg);
 
         if (provided_args < expected_args) {
             const missing = expected_args - provided_args;
             for (0..missing) |_| self.push(value.Value.initNil());
         }
-
         // Pad the implicit empty block
         self.push(value.Value.initNil());
 
@@ -1316,6 +1320,7 @@ pub const VM = struct {
 
         // Resolve Class of Receiver for Native Methods & Monkey-Patching
         var class_obj: ?*value.ObjClass = null;
+
         if (receiver.isInstance()) {
             class_obj = receiver.asInstance().class;
         } else if (receiver.isObject()) {
@@ -1341,12 +1346,15 @@ pub const VM = struct {
 
         // Method Lookup
         var method_val: ?value.Value = null;
+
         if (receiver.isClass()) {
             method_val = self.findClassMethod(receiver.asClass(), method_name_str);
+
             if (method_val == null and std.mem.eql(u8, method_name_str, "new")) {
                 const class_to_instantiate = receiver.asClass();
                 const instance = self.gc.allocateInstance(self, class_to_instantiate) catch return .runtime_error;
-                self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj);
+                self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
+
                 if (self.findMethod(class_to_instantiate, "initialize")) |init_method| {
                     if (init_method.isClosure()) {
                         self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
@@ -1367,6 +1375,7 @@ pub const VM = struct {
             if (m_val.isNative()) {
                 const native_obj = m_val.asNative();
                 const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
+
                 self.popAndRelease(arg_count + 1);
                 // Absorb the native +1 reference directly
                 self.stack.ptr[self.stack_top] = result;
@@ -1421,7 +1430,6 @@ pub const VM = struct {
                     splat_arr.items.appendAssumeCapacity(item);
                 }
             }
-
             _ = self.pop();
             self.push(splat_val);
 
@@ -1506,6 +1514,7 @@ pub const VM = struct {
 
         // Push the block back on top to maintain the Uniform Padding invariant
         self.push(block_val);
+
         return .ok;
     }
 
@@ -1531,6 +1540,7 @@ pub const VM = struct {
                 const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
                 const arr_val = value.Value.initObj(&arr_obj.obj);
                 self.push(arr_val); // Protect from GC while building
+
                 var curr = s_str[0];
                 const limit = if (is_exclusive) e_str[0] else e_str[0] + 1;
                 while (curr < limit) : (curr += 1) {
@@ -1547,6 +1557,7 @@ pub const VM = struct {
             self.reportError("Runtime Error: Range bounds must be numbers or characters.\n", .{});
             return .runtime_error;
         }
+
         return .ok;
     }
 
@@ -1581,6 +1592,15 @@ pub const VM = struct {
             frame.ip += 1;
             return idx;
         }
+    }
+
+    inline fn readJumpOffset(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) usize {
+        _ = self;
+        const high = @as(usize, exec_chunk.code.items[frame.ip]);
+        const mid = @as(usize, exec_chunk.code.items[frame.ip + 1]);
+        const low = @as(usize, exec_chunk.code.items[frame.ip + 2]);
+        frame.ip += 3;
+        return (high << 16) | (mid << 8) | low;
     }
 
     pub fn valuesCaseEqual(self: *VM, case_val: value.Value, test_val: value.Value) bool {

@@ -292,6 +292,7 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
     const jump_idx = out_chunk.code.items.len;
     try out_chunk.write(testing.allocator, 0xFF, 0);
     try out_chunk.write(testing.allocator, 0xFF, 0);
+    try out_chunk.write(testing.allocator, 0xFF, 0); // 3-byte offset
 
     // 2. Push a dummy variable to prove stack unwinding drops dead variables cleanly
     const dummy = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(99.0));
@@ -313,14 +314,16 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
     try out_chunk.writeOp(testing.allocator, .op_pop_rescue, 0);
     try out_chunk.writeOp(testing.allocator, .op_jump, 0);
     try out_chunk.write(testing.allocator, 0, 0);
-    try out_chunk.write(testing.allocator, 3, 0); // skip over rescue block
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 4, 0); // skip over rescue block
 
     // --- RESCUE HANDLER ---
     // Patch the setup_rescue offset so it lands exactly here
     const handler_ip = out_chunk.code.items.len;
-    const offset = handler_ip - (jump_idx + 2);
-    out_chunk.code.items[jump_idx] = @intCast((offset >> 8) & 0xFF);
-    out_chunk.code.items[jump_idx + 1] = @intCast(offset & 0xFF);
+    const offset = handler_ip - (jump_idx + 3);
+    out_chunk.code.items[jump_idx] = @intCast((offset >> 16) & 0xFF);
+    out_chunk.code.items[jump_idx + 1] = @intCast((offset >> 8) & 0xFF);
+    out_chunk.code.items[jump_idx + 2] = @intCast(offset & 0xFF);
 
     // Pop the "Crash!" error off the stack
     try out_chunk.writeOp(testing.allocator, .op_pop, 0);
@@ -449,31 +452,34 @@ test "VM: natively executes op_switch jump table" {
     try out_chunk.write(testing.allocator, @intCast((case1_val >> 8) & 0xFF), 0); // const high
     try out_chunk.write(testing.allocator, @intCast(case1_val & 0xFF), 0); // const low
     try out_chunk.write(testing.allocator, 0, 0); // jump high
+    try out_chunk.write(testing.allocator, 0, 0); // jump mid
     try out_chunk.write(testing.allocator, 0, 0); // relative offset 0
 
     // Table Entry 2: case 42
     try out_chunk.write(testing.allocator, @intCast((case2_val >> 8) & 0xFF), 0); // const high
     try out_chunk.write(testing.allocator, @intCast(case2_val & 0xFF), 0); // const low
     try out_chunk.write(testing.allocator, 0, 0); // jump high
-    try out_chunk.write(testing.allocator, 3, 0); // relative offset 3
+    try out_chunk.write(testing.allocator, 0, 0); // jump mid
+    try out_chunk.write(testing.allocator, 3, 0); // relative offset 3 (Size of Branch 1 block)
 
     // Default Entry:
     try out_chunk.write(testing.allocator, 0, 0); // jump high
-    try out_chunk.write(testing.allocator, 6, 0); // relative offset 6
+    try out_chunk.write(testing.allocator, 0, 0); // jump mid
+    try out_chunk.write(testing.allocator, 6, 0); // relative offset 6 (Size of B1 + B2 blocks)
 
-    // Branch 1 (Target: offset + 7) -> Pushes 100
+    // Branch 1 (Target: offset + 3) -> Pushes 100
     const b1_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(100.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
     try out_chunk.write(testing.allocator, @intCast(b1_val), 0);
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
-    // Branch 2 (Target: offset + 11) -> Pushes 200 [THIS SHOULD EXECUTE]
+    // Branch 2 (Target: offset + 6) -> Pushes 200 [THIS SHOULD EXECUTE]
     const b2_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(200.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
     try out_chunk.write(testing.allocator, @intCast(b2_val), 0);
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
-    // Default Branch (Target: offset + 15) -> Pushes 300
+    // Default Branch (Target: offset + 6) -> Pushes 300
     const bdef_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(300.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
     try out_chunk.write(testing.allocator, @intCast(bdef_val), 0);
@@ -666,11 +672,12 @@ test "VM: Gas limit prevents infinite loops and throws specific error" {
     defer out_chunk.free(testing.allocator);
 
     // Create an infinite loop natively in bytecode.
-    // op_loop takes a 2-byte offset to jump backwards.
-    // By jumping back exactly 3 bytes (the size of op_loop + its offset), it loops forever.
+    // op_loop takes a 3-byte offset to jump backwards.
+    // By jumping back exactly 4 bytes (the size of op_loop + its offset), it loops forever.
     try out_chunk.writeOp(testing.allocator, .op_loop, 0);
     try out_chunk.write(testing.allocator, 0, 0); // Jump High Byte
-    try out_chunk.write(testing.allocator, 3, 0); // Jump Low Byte
+    try out_chunk.write(testing.allocator, 0, 0); // Jump Mid Byte
+    try out_chunk.write(testing.allocator, 4, 0); // Jump Low Byte
 
     // The VM will never reach this return
     try out_chunk.writeOp(testing.allocator, .op_return, 0);

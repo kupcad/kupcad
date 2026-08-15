@@ -216,7 +216,9 @@ pub const Compiler = struct {
                 } else {
                     try self.emitOp(.op_nil);
                 }
+
                 if (self.loops.items.len == 0) return error.UnknownNode;
+
                 const jump = try self.emitJump(.op_jump);
                 var cur_loop = &self.loops.items[self.loops.items.len - 1];
                 try cur_loop.exit_jumps.append(self.allocator, jump);
@@ -230,7 +232,9 @@ pub const Compiler = struct {
                     try self.emitOp(.op_nil);
                 }
                 try self.emitOp(.op_pop);
+
                 if (self.loops.items.len == 0) return error.UnknownNode;
+
                 const cur_loop = &self.loops.items[self.loops.items.len - 1];
                 try self.emitLoop(cur_loop.start);
                 self.simulatePush(1); // Equilibrium for dead code
@@ -474,8 +478,8 @@ pub const Compiler = struct {
                 try self.emitOp(.op_pop);
                 try self.emitOp(.op_nil); // Natural exit yields nil
 
+                // Pop loop state and safely patch all 'break' jump addresses
                 var cur_loop = self.loops.pop().?;
-
                 defer cur_loop.exit_jumps.deinit(self.allocator);
                 for (cur_loop.exit_jumps.items) |jmp| {
                     self.patchJump(jmp);
@@ -775,9 +779,7 @@ pub const Compiler = struct {
 
     fn makeConstant(self: *Compiler, val: value.Value) CompileError!usize {
         const index = self.current_chunk.addConstant(self.allocator, val) catch return error.OutOfMemory;
-
         if (index > limits.MAX_CONSTANTS) return error.TooManyConstants;
-
         return index;
     }
 
@@ -788,22 +790,26 @@ pub const Compiler = struct {
 
     fn emitJump(self: *Compiler, op: chunk.OpCode) CompileError!usize {
         try self.emitOp(op);
+        // Write 3 bytes for a 24-bit jump offset
         try self.emitByte(0xff);
         try self.emitByte(0xff);
-        return self.current_chunk.code.items.len - 2;
+        try self.emitByte(0xff);
+        return self.current_chunk.code.items.len - 3;
     }
 
     fn patchJump(self: *Compiler, offset: usize) void {
-        const jump = self.current_chunk.code.items.len - offset - 2;
-        std.debug.assert(jump <= std.math.maxInt(u16));
-        self.current_chunk.code.items[offset] = @intCast((jump >> 8) & 0xff);
-        self.current_chunk.code.items[offset + 1] = @intCast(jump & 0xff);
+        const jump = self.current_chunk.code.items.len - offset - 3;
+        std.debug.assert(jump <= 0xFFFFFF); // Assert it fits in 24 bits
+        self.current_chunk.code.items[offset] = @intCast((jump >> 16) & 0xff);
+        self.current_chunk.code.items[offset + 1] = @intCast((jump >> 8) & 0xff);
+        self.current_chunk.code.items[offset + 2] = @intCast(jump & 0xff);
     }
 
     fn emitLoop(self: *Compiler, loop_start: usize) CompileError!void {
         try self.emitOp(.op_loop);
-        const jump = self.current_chunk.code.items.len - loop_start + 2;
-        std.debug.assert(jump <= std.math.maxInt(u16));
+        const jump = self.current_chunk.code.items.len - loop_start + 3;
+        std.debug.assert(jump <= 0xFFFFFF);
+        try self.emitByte(@intCast((jump >> 16) & 0xff));
         try self.emitByte(@intCast((jump >> 8) & 0xff));
         try self.emitByte(@intCast(jump & 0xff));
     }
@@ -1150,10 +1156,12 @@ pub const Compiler = struct {
                 try self.emitByte(0); // const_high
                 try self.emitByte(0); // const_low
                 try self.emitByte(0xFF); // jump high
+                try self.emitByte(0xFF); // jump mid
                 try self.emitByte(0xFF); // jump low
             }
             const default_jump_offset = self.current_chunk.code.items.len;
             try self.emitByte(0xFF); // default high
+            try self.emitByte(0xFF); // default mid
             try self.emitByte(0xFF); // default low
 
             var condition_idx: usize = 0;
@@ -1167,7 +1175,7 @@ pub const Compiler = struct {
                 // Backpatch the table entries for this branch
                 for (conds) |cond_node_idx| {
                     const c_node = self.tree.getNode(cond_node_idx).?;
-                    const table_idx = table_start_offset + (condition_idx * 4); // Step by 4!
+                    const table_idx = table_start_offset + (condition_idx * 5); // Step by 5!
 
                     // Extract constant index directly
                     var raw_idx: usize = 0;
@@ -1183,9 +1191,10 @@ pub const Compiler = struct {
                     self.current_chunk.code.items[table_idx + 1] = @intCast(raw_idx & 0xFF);
 
                     // Calculate offset from the END of the entire switch instruction block
-                    const offset = body_jump_target - (default_jump_offset + 2);
-                    self.current_chunk.code.items[table_idx + 2] = @intCast((offset >> 8) & 0xFF);
-                    self.current_chunk.code.items[table_idx + 3] = @intCast(offset & 0xFF);
+                    const offset = body_jump_target - (default_jump_offset + 3);
+                    self.current_chunk.code.items[table_idx + 2] = @intCast((offset >> 16) & 0xFF);
+                    self.current_chunk.code.items[table_idx + 3] = @intCast((offset >> 8) & 0xFF);
+                    self.current_chunk.code.items[table_idx + 4] = @intCast(offset & 0xFF);
                     condition_idx += 1;
                 }
 
@@ -1196,9 +1205,10 @@ pub const Compiler = struct {
 
             // Backpatch Default Branch
             const default_target = self.current_chunk.code.items.len;
-            const d_offset = default_target - (default_jump_offset + 2);
-            self.current_chunk.code.items[default_jump_offset] = @intCast((d_offset >> 8) & 0xFF);
-            self.current_chunk.code.items[default_jump_offset + 1] = @intCast(d_offset & 0xFF);
+            const d_offset = default_target - (default_jump_offset + 3);
+            self.current_chunk.code.items[default_jump_offset] = @intCast((d_offset >> 16) & 0xFF);
+            self.current_chunk.code.items[default_jump_offset + 1] = @intCast((d_offset >> 8) & 0xFF);
+            self.current_chunk.code.items[default_jump_offset + 2] = @intCast(d_offset & 0xFF);
 
             if (cs.else_branch != .none) {
                 try self.compileNode(cs.else_branch);
@@ -1413,8 +1423,14 @@ pub const Compiler = struct {
         }
 
         if (kw_count > 0) {
-            try self.emitOp(.op_build_map);
-            try self.emitByte(@intCast(kw_count));
+            if (kw_count <= limits.MAX_SHORT_CONSTANTS) {
+                try self.emitOp(.op_build_map);
+                try self.emitByte(@intCast(kw_count));
+            } else {
+                try self.emitOp(.op_build_map_wide);
+                try self.emitByte(@intCast((kw_count >> 8) & 0xff));
+                try self.emitByte(@intCast(kw_count & 0xff));
+            }
             pos_count += 1; // The Hash Map becomes the final trailing positional argument!
         }
 

@@ -60,7 +60,10 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         .op_constant_wide, .op_get_global_wide, .op_define_global_wide, .op_set_global_wide, .op_class_wide, .op_method_wide, .op_get_property_wide, .op_set_property_wide, .op_import_wide, .op_class_method_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_module_wide, .op_defined_wide => {
             return constantInstruction(@tagName(op), c, offset, true, writer);
         },
-        .op_get_local, .op_set_local, .op_call, .op_build_array, .op_build_map, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield => {
+        .op_get_local, .op_set_local, .op_call, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield => {
+            return byteInstruction(@tagName(op), c, offset, writer);
+        },
+        .op_build_array, .op_build_map => {
             return byteInstruction(@tagName(op), c, offset, writer);
         },
         .op_build_array_wide, .op_build_map_wide => {
@@ -134,6 +137,12 @@ fn byteInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, write
     return offset + 2;
 }
 
+fn wideOperandInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
+    const operand = (@as(u16, c.code.items[offset + 1]) << 8) | c.code.items[offset + 2];
+    try writer.print("{s: <16} {d: >4}\n", .{ name, operand });
+    return offset + 3;
+}
+
 fn twoByteInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
     const slot1 = c.code.items[offset + 1];
     const slot2 = c.code.items[offset + 2];
@@ -142,13 +151,14 @@ fn twoByteInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, wr
 }
 
 fn jumpInstruction(name: []const u8, sign: i32, c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
-    var jump: u16 = @as(u16, c.code.items[offset + 1]) << 8;
-    jump |= c.code.items[offset + 2];
-    const jump_usize = @as(usize, jump);
-    const target = if (sign == 1) offset + 3 + jump_usize else offset + 3 - jump_usize;
+    var jump: usize = @as(usize, c.code.items[offset + 1]) << 16;
+    jump |= @as(usize, c.code.items[offset + 2]) << 8;
+    jump |= c.code.items[offset + 3];
+
+    const target = if (sign == 1) offset + 4 + jump else offset + 4 - jump;
 
     try writer.print("{s: <16} {d: >4} -> {d}\n", .{ name, offset, target });
-    return offset + 3;
+    return offset + 4;
 }
 
 fn constantInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, is_wide: bool, writer: anytype) !usize {
@@ -195,21 +205,15 @@ fn switchInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, wri
 
     var current_offset = offset + 2;
     for (0..case_count) |i| {
-        // Read the full 4-byte jump layout
+        // Read the full 5-byte jump layout [const_h, const_l, jump_h, jump_m, jump_l]
         const const_idx = (@as(u16, c.code.items[current_offset]) << 8) | c.code.items[current_offset + 1];
-        const jump_offset = (@as(u16, c.code.items[current_offset + 2]) << 8) | c.code.items[current_offset + 3];
-        try writer.print("{s:<20} case {d}: const[{d}] jump +{d} -> {d}\n", .{ "", i, const_idx, jump_offset, current_offset + 4 + jump_offset });
-        current_offset += 4;
+        const jump_offset = (@as(usize, c.code.items[current_offset + 2]) << 16) | (@as(usize, c.code.items[current_offset + 3]) << 8) | c.code.items[current_offset + 4];
+        try writer.print("{s:<20} case {d}: const[{d}] jump +{d} -> {d}\n", .{ "", i, const_idx, jump_offset, current_offset + 5 + jump_offset });
+        current_offset += 5;
     }
 
-    const default_jump = (@as(u16, c.code.items[current_offset]) << 8) | c.code.items[current_offset + 1];
-    try writer.print("{s:<20} default: jump +{d} -> {d}\n", .{ "", default_jump, current_offset + 2 + default_jump });
+    const default_jump = (@as(usize, c.code.items[current_offset]) << 16) | (@as(usize, c.code.items[current_offset + 1]) << 8) | c.code.items[current_offset + 2];
+    try writer.print("{s:<20} default: jump +{d} -> {d}\n", .{ "", default_jump, current_offset + 3 + default_jump });
 
-    return current_offset + 2;
-}
-
-fn wideOperandInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
-    const operand = (@as(u16, c.code.items[offset + 1]) << 8) | c.code.items[offset + 2];
-    try writer.print("{s: <16} {d: >4}\n", .{ name, operand });
-    return offset + 3;
+    return current_offset + 3;
 }

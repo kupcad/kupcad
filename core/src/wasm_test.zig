@@ -80,11 +80,11 @@ test "VM: Character ranges evaluate to an Array of Strings" {
     _ = vm.pop();
 
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, a_idx, 0);
+    try out_chunk.write(testing.allocator, @intCast(a_idx), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, d_idx, 0);
+    try out_chunk.write(testing.allocator, @intCast(d_idx), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, step_idx, 0);
+    try out_chunk.write(testing.allocator, @intCast(step_idx), 0);
 
     // Inclusive range 'a'..'d'
     try out_chunk.writeOp(testing.allocator, .op_build_range, 0);
@@ -137,12 +137,12 @@ test "VM: Closure invocation pads missing arguments with nil natively" {
 
     const const_func = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&func.obj));
     try main_chunk.writeOp(testing.allocator, .op_closure, 0);
-    try main_chunk.write(testing.allocator, const_func, 0);
+    try main_chunk.write(testing.allocator, @intCast(const_func), 0);
 
     // Push exactly 1 argument (the number 42)
     const const_42 = try main_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
     try main_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try main_chunk.write(testing.allocator, const_42, 0);
+    try main_chunk.write(testing.allocator, @intCast(const_42), 0);
 
     // Execute with arg_count = 1
     try main_chunk.writeOp(testing.allocator, .op_call, 0);
