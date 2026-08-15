@@ -1009,9 +1009,19 @@ pub const Compiler = struct {
 
         if (!has_splat) {
             for (elements) |elem| try self.compileNode(elem);
-            if (elements.len > limits.MAX_ARGS) return error.TooManyConstants;
-            try self.emitOp(.op_build_array);
-            try self.emitByte(@intCast(elements.len));
+
+            // Allow up to 65_535 elements in an array
+            if (elements.len > limits.MAX_CONSTANTS) return error.TooManyConstants;
+
+            if (elements.len <= limits.MAX_SHORT_CONSTANTS) {
+                try self.emitOp(.op_build_array);
+                try self.emitByte(@intCast(elements.len));
+            } else {
+                try self.emitOp(.op_build_array_wide);
+                try self.emitByte(@intCast((elements.len >> 8) & 0xff));
+                try self.emitByte(@intCast(elements.len & 0xff));
+            }
+
             self.simulatePop(elements.len);
             self.simulatePush(1);
         } else {
@@ -1066,8 +1076,15 @@ pub const Compiler = struct {
 
             if (entries.len > limits.MAX_HASH_ENTRIES) return error.TooManyConstants;
 
-            try self.emitOp(.op_build_map);
-            try self.emitByte(@intCast(entries.len));
+            if (entries.len <= limits.MAX_SHORT_CONSTANTS) {
+                try self.emitOp(.op_build_map);
+                try self.emitByte(@intCast(entries.len));
+            } else {
+                try self.emitOp(.op_build_map_wide);
+                try self.emitByte(@intCast((entries.len >> 8) & 0xff));
+                try self.emitByte(@intCast(entries.len & 0xff));
+            }
+
             self.simulatePop(entries.len * 2);
             self.simulatePush(1);
         } else {

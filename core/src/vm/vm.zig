@@ -182,7 +182,7 @@ pub const VM = struct {
 
             switch (op) {
                 .op_constant, .op_constant_wide => {
-                    const const_idx = self.readConstantIndex(exec_chunk, frame, op == .op_constant_wide);
+                    const const_idx = self.readOperand(exec_chunk, frame, op == .op_constant_wide);
                     self.push(exec_chunk.constants.items[const_idx]);
                 },
                 .op_nil => self.push(value.Value.initNil()),
@@ -259,7 +259,7 @@ pub const VM = struct {
                     self.push(value.Value.initBool(nums[0] > nums[1]));
                 },
                 .op_get_property, .op_get_property_wide => {
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_get_property_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_property_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
                     const receiver = self.stack[self.stack_top - 1];
@@ -279,7 +279,7 @@ pub const VM = struct {
                     }
                 },
                 .op_get_global, .op_get_global_wide => {
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_get_global_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_global_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", name_val.asObj()));
                     if (self.globals.get(str_obj.chars)) |val| {
@@ -392,10 +392,8 @@ pub const VM = struct {
                     self.push(err_val);
                     self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
                 },
-                .op_build_array => {
-                    const item_count = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
-
+                .op_build_array, .op_build_array_wide => {
+                    const item_count = self.readOperand(exec_chunk, frame, op == .op_build_array_wide);
                     const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
                     const arr_val = value.Value.initObj(&arr_obj.obj);
 
@@ -406,15 +404,12 @@ pub const VM = struct {
                     for (self.stack[start_idx..self.stack_top]) |item| {
                         arr_obj.items.appendAssumeCapacity(item);
                     }
-
                     // Clear the consumed stack space and push the resulting Array
                     self.stack_top -= item_count;
                     self.push(arr_val);
                 },
-                .op_build_map => {
-                    const pair_count = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
-
+                .op_build_map, .op_build_map_wide => {
+                    const pair_count = self.readOperand(exec_chunk, frame, op == .op_build_map_wide);
                     const map_obj = self.gc.allocateMap(self) catch return .runtime_error;
                     const map_val = value.Value.initObj(&map_obj.obj);
 
@@ -427,7 +422,6 @@ pub const VM = struct {
                         map_obj.keys.appendAssumeCapacity(self.stack[start_idx + i]);
                         map_obj.values.appendAssumeCapacity(self.stack[start_idx + i + 1]);
                     }
-
                     // Clear consumed keys & values, push the resulting Map
                     self.stack_top -= (pair_count * 2);
                     self.push(map_val);
@@ -554,7 +548,7 @@ pub const VM = struct {
                     frame.ip -= offset; // Jump backwards
                 },
                 .op_import, .op_import_wide => {
-                    const path_idx = self.readConstantIndex(exec_chunk, frame, op == .op_import_wide);
+                    const path_idx = self.readOperand(exec_chunk, frame, op == .op_import_wide);
                     const path_val = exec_chunk.constants.items[path_idx];
 
                     if (self.host.import_handler) |handler| {
@@ -617,7 +611,7 @@ pub const VM = struct {
                     }
                 },
                 .op_closure, .op_closure_wide => {
-                    const func_idx = self.readConstantIndex(exec_chunk, frame, op == .op_closure_wide);
+                    const func_idx = self.readOperand(exec_chunk, frame, op == .op_closure_wide);
                     const func_val = exec_chunk.constants.items[func_idx];
                     const func_obj = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", func_val.asObj())));
 
@@ -687,7 +681,7 @@ pub const VM = struct {
                     }
                 },
                 .op_module, .op_module_wide => {
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_module_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_module_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
 
                     // Removed `.chars` to pass the *ObjString pointer!
@@ -711,7 +705,7 @@ pub const VM = struct {
                     class_obj.included_modules.append(self.allocator, module_val.asModule()) catch return .runtime_error;
                 },
                 .op_class, .op_class_wide => {
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_class_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_class_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
 
@@ -727,7 +721,7 @@ pub const VM = struct {
                     self.push(value.Value.initObj(&class_obj.obj));
                 },
                 .op_method, .op_method_wide => {
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_method_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_method_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
@@ -741,7 +735,7 @@ pub const VM = struct {
                     } else return .runtime_error;
                 },
                 .op_define_global, .op_define_global_wide => {
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_define_global_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_define_global_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
@@ -750,7 +744,7 @@ pub const VM = struct {
                 },
                 .op_set_property, .op_set_property_wide => {
                     const val = self.pop();
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_set_property_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_property_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
@@ -868,7 +862,7 @@ pub const VM = struct {
                     self.push(value.Value.initBool(block_val.isClosure()));
                 },
                 .op_class_method, .op_class_method_wide => {
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_class_method_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_class_method_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
                     const method = self.pop();
@@ -877,7 +871,7 @@ pub const VM = struct {
                     class_obj.class_methods.put(self.allocator, name_str, method) catch return .runtime_error;
                 },
                 .op_get_class_var, .op_get_class_var_wide => {
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_get_class_var_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_class_var_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
@@ -894,7 +888,7 @@ pub const VM = struct {
                     } else return .runtime_error;
                 },
                 .op_set_class_var, .op_set_class_var_wide => {
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_set_class_var_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_class_var_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
@@ -940,7 +934,7 @@ pub const VM = struct {
                     }
                 },
                 .op_defined, .op_defined_wide => {
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_defined_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_defined_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
@@ -951,7 +945,7 @@ pub const VM = struct {
                 .op_extract_kwarg, .op_extract_kwarg_wide => {
                     const map_slot = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
-                    const name_idx = self.readConstantIndex(exec_chunk, frame, op == .op_extract_kwarg_wide);
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_extract_kwarg_wide);
 
                     var extracted = value.Value.initNil();
 
@@ -1309,7 +1303,7 @@ pub const VM = struct {
     }
 
     inline fn executeInvoke(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
-        const method_name_idx = self.readConstantIndex(exec_chunk, frame, is_wide);
+        const method_name_idx = self.readOperand(exec_chunk, frame, is_wide);
         const arg_count = exec_chunk.code.items[frame.ip];
         frame.ip += 1;
 
@@ -1575,7 +1569,7 @@ pub const VM = struct {
         }
     }
 
-    inline fn readConstantIndex(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame, is_wide: bool) u16 {
+    inline fn readOperand(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame, is_wide: bool) u16 {
         _ = self;
         if (is_wide) {
             const high = @as(u16, exec_chunk.code.items[frame.ip]);

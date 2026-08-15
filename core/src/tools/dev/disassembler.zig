@@ -63,6 +63,9 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         .op_get_local, .op_set_local, .op_call, .op_build_array, .op_build_map, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield => {
             return byteInstruction(@tagName(op), c, offset, writer);
         },
+        .op_build_array_wide, .op_build_map_wide => {
+            return wideOperandInstruction(@tagName(op), c, offset, writer);
+        },
         .op_unpack_splat, .op_pack_splat => {
             return twoByteInstruction(@tagName(op), c, offset, writer);
         },
@@ -203,4 +206,10 @@ fn switchInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, wri
     try writer.print("{s:<20} default: jump +{d} -> {d}\n", .{ "", default_jump, current_offset + 2 + default_jump });
 
     return current_offset + 2;
+}
+
+fn wideOperandInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
+    const operand = (@as(u16, c.code.items[offset + 1]) << 8) | c.code.items[offset + 2];
+    try writer.print("{s: <16} {d: >4}\n", .{ name, operand });
+    return offset + 3;
 }
