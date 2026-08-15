@@ -769,7 +769,7 @@ pub const Compiler = struct {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_constant, .op_closure, .op_get_upvalue, .op_dup, .op_import, .op_block_given, .op_get_class_var, .op_defined, .op_extract_kwarg, .op_module => self.simulatePush(1),
             .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method, .op_unpack, .op_unpack_splat, .op_mixin => self.simulatePop(1),
             .op_map_insert => self.simulatePop(2),
-            .op_is_instance, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent => {
+            .op_is_instance, .op_case_equal, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent => {
                 self.simulatePop(2);
                 self.simulatePush(1);
             },
@@ -1206,7 +1206,7 @@ pub const Compiler = struct {
                 for (conds) |cond_idx| {
                     try self.emitOp(.op_dup);
                     try self.compileNode(cond_idx);
-                    try self.emitOp(.op_equal);
+                    try self.emitOp(.op_case_equal);
                     const skip_jump = try self.emitJump(.op_jump_if_false);
                     try self.emitOp(.op_pop);
                     try self.emitOp(.op_pop);

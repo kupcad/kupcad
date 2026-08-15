@@ -246,6 +246,13 @@ pub const VM = struct {
                     defer self.releaseValue(a);
                     self.push(value.Value.initBool(self.valuesEqual(a, b)));
                 },
+                .op_case_equal => {
+                    const case_val = self.pop();
+                    defer self.releaseValue(case_val);
+                    const test_val = self.pop();
+                    defer self.releaseValue(test_val);
+                    self.push(value.Value.initBool(self.valuesCaseEqual(case_val, test_val)));
+                },
                 .op_less => {
                     const nums = self.popBinaryNumbers() catch return .runtime_error;
                     self.push(value.Value.initBool(nums[0] < nums[1]));
@@ -295,12 +302,9 @@ pub const VM = struct {
 
                     if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
                         const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
-                        const idx = @as(usize, @intFromFloat(index.asNumber()));
-                        if (idx >= arr.items.items.len) {
-                            self.reportError("Runtime Error: Array index out of bounds.\n", .{});
-                            return .runtime_error;
-                        }
-                        self.push(arr.items.items[idx]);
+                        if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
+                            self.push(arr.items.items[idx]);
+                        } else |_| return .runtime_error;
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
                         if (self.findMapKey(map, index)) |i| {
@@ -322,17 +326,13 @@ pub const VM = struct {
 
                     if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
                         const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
-                        const idx = @as(usize, @intFromFloat(index.asNumber()));
-                        if (idx >= arr.items.items.len) {
-                            self.reportError("Runtime Error: Array index out of bounds.\n", .{});
-                            return .runtime_error;
-                        }
-                        // ARC: Safely release the old value before overwriting it
-                        self.releaseValue(arr.items.items[idx]);
-                        self.retainValue(val);
-
-                        arr.items.items[idx] = val;
-                        self.push(val);
+                        if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
+                            // ARC: Safely release the old value before overwriting it
+                            self.releaseValue(arr.items.items[idx]);
+                            self.retainValue(val);
+                            arr.items.items[idx] = val;
+                            self.push(val);
+                        } else |_| return .runtime_error;
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
                         if (self.findMapKey(map, index)) |i| {
@@ -603,7 +603,7 @@ pub const VM = struct {
 
                         if (!matched) {
                             const case_val = exec_chunk.constants.items[const_idx];
-                            if (self.valuesEqual(test_val, case_val)) {
+                            if (self.valuesCaseEqual(case_val, test_val)) {
                                 matched = true;
                                 jump_offset = offset;
                             }
@@ -1559,6 +1559,45 @@ pub const VM = struct {
             return .runtime_error;
         }
         return .ok;
+    }
+
+    inline fn resolveArrayIndex(self: *VM, arr_len: usize, index_val: value.Value) !usize {
+        const num_idx = index_val.asNumber();
+        if (num_idx < 0) {
+            const offset = @as(usize, @intFromFloat(-num_idx));
+            if (offset == 0 or offset > arr_len) {
+                self.reportError("Runtime Error: Array index out of bounds.\n", .{});
+                return error.RuntimeError;
+            }
+            return arr_len - offset;
+        } else {
+            const idx = @as(usize, @intFromFloat(num_idx));
+            if (idx >= arr_len) {
+                self.reportError("Runtime Error: Array index out of bounds.\n", .{});
+                return error.RuntimeError;
+            }
+            return idx;
+        }
+    }
+
+    pub fn valuesCaseEqual(self: *VM, case_val: value.Value, test_val: value.Value) bool {
+        if (case_val.isClass()) {
+            if (test_val.isInstance()) {
+                return isSubclassOf(test_val.asInstance().class, case_val.asClass());
+            }
+            return false;
+        } else if (case_val.isObject() and case_val.asObj().obj_type == .range) {
+            const range = @as(*value.ObjRange, @alignCast(@fieldParentPtr("obj", case_val.asObj())));
+            if (!test_val.isNumber()) return false;
+            const n = test_val.asNumber();
+            if (range.is_exclusive) {
+                return n >= range.start and n < range.end;
+            } else {
+                return n >= range.start and n <= range.end;
+            }
+        }
+        // Fallback to standard equality
+        return self.valuesEqual(case_val, test_val);
     }
 
     fn popBinaryNumbers(self: *VM) !struct { f64, f64 } {

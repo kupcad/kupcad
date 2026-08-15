@@ -67,6 +67,7 @@ pub const OpCode = enum(u8) {
     // Logical
     op_not,
     op_equal,
+    op_case_equal,
     op_greater,
     op_less,
 
