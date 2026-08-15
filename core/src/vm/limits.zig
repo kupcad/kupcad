@@ -1,7 +1,8 @@
 const std = @import("std");
 
 // Bytecode & Operand Limits
-pub const MAX_CONSTANTS: usize = std.math.maxInt(u8); // 255 (TODO: op_constant_wide)
+pub const MAX_CONSTANTS: usize = std.math.maxInt(u16); // 65_535
+pub const MAX_SHORT_CONSTANTS: usize = std.math.maxInt(u8); // 255
 pub const MAX_LOCALS: usize = std.math.maxInt(u8); // 255
 pub const MAX_UPVALUES: usize = std.math.maxInt(u8); // 255
 pub const MAX_ARGS: usize = std.math.maxInt(u8); // 255

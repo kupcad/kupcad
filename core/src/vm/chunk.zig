@@ -5,6 +5,7 @@ const value = @import("../core/value.zig");
 pub const OpCode = enum(u8) {
     // Constants & Literals
     op_constant,
+    op_constant_wide,
     op_nil,
     op_true,
     op_false,
@@ -23,25 +24,36 @@ pub const OpCode = enum(u8) {
 
     // Closures & Upvalues
     op_closure,
+    op_closure_wide,
     op_get_upvalue,
     op_set_upvalue,
     op_close_upvalue,
 
     // Object Orientation
     op_class,
+    op_class_wide,
     op_get_property,
+    op_get_property_wide,
     op_set_property,
+    op_set_property_wide,
     op_class_method,
+    op_class_method_wide,
     op_get_class_var,
+    op_get_class_var_wide,
     op_set_class_var,
+    op_set_class_var_wide,
     op_module,
+    op_module_wide,
     op_mixin,
     op_method,
+    op_method_wide,
     op_unpack,
     op_unpack_splat,
     op_pack_splat,
     op_defined,
+    op_defined_wide,
     op_extract_kwarg,
+    op_extract_kwarg_wide,
     op_is_instance,
 
     // Stack Operations
@@ -52,8 +64,11 @@ pub const OpCode = enum(u8) {
     op_get_local,
     op_set_local,
     op_get_global,
+    op_get_global_wide,
     op_define_global,
+    op_define_global_wide,
     op_set_global,
+    op_set_global_wide,
 
     // Math
     op_add,
@@ -87,8 +102,10 @@ pub const OpCode = enum(u8) {
     // Functions & Builtins
     op_call,
     op_invoke,
+    op_invoke_wide,
     op_super_invoke,
     op_import,
+    op_import_wide,
     op_inherit,
     op_yield,
     op_block_given,
@@ -130,9 +147,9 @@ pub const Chunk = struct {
     }
 
     /// Adds a Value to the constant pool and returns its 0-based index
-    pub fn addConstant(self: *Chunk, allocator: std.mem.Allocator, val: value.Value) !u8 {
+    pub fn addConstant(self: *Chunk, allocator: std.mem.Allocator, val: value.Value) !usize {
         try self.constants.append(allocator, val);
-        return @intCast(self.constants.items.len - 1);
+        return self.constants.items.len - 1; // Return usize
     }
 
     /// O(log N) binary search could be used here, but linear is fine for error traces

@@ -79,7 +79,7 @@ test "VM: Execute native CAD function (cube) generates symbolic DAG node" {
     _ = vm.pop();
 
     try out_chunk.writeOp(testing.allocator, .op_get_global, 0);
-    try out_chunk.write(testing.allocator, name_idx, 0);
+    try out_chunk.write(testing.allocator, @intCast(name_idx), 0);
     try out_chunk.writeOp(testing.allocator, .op_call, 0);
     try out_chunk.write(testing.allocator, 0, 0);
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
@@ -244,12 +244,12 @@ test "VM: Closures correctly capture and return upvalues" {
     // Push 42 (simulating `let x = 42`)
     const const_42 = try main_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
     try main_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try main_chunk.write(testing.allocator, const_42, 0);
+    try main_chunk.write(testing.allocator, @intCast(const_42), 0);
 
     // Instantiate the Closure
     const const_func = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&func.obj));
     try main_chunk.writeOp(testing.allocator, .op_closure, 0);
-    try main_chunk.write(testing.allocator, const_func, 0);
+    try main_chunk.write(testing.allocator, @intCast(const_func), 0);
 
     // Upvalue parameters: is_local = 1, index = 1 (captures stack slot 1, where 42 is sitting)
     try main_chunk.write(testing.allocator, 1, 0);
@@ -290,16 +290,16 @@ test "VM: executes dynamic array building and spreading" {
     // 2. Element 1: Push 42 and op_array_push
     const c42 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, c42, 0);
+    try out_chunk.write(testing.allocator, @intCast(c42), 0);
     try out_chunk.writeOp(testing.allocator, .op_array_push, 0);
 
     // 3. Source Array: Build [1, 2]
     const c1 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(1.0));
     const c2 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(2.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, c1, 0);
+    try out_chunk.write(testing.allocator, @intCast(c1), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, c2, 0);
+    try out_chunk.write(testing.allocator, @intCast(c2), 0);
     try out_chunk.writeOp(testing.allocator, .op_build_array, 0);
     try out_chunk.write(testing.allocator, 2, 0);
 
@@ -340,7 +340,7 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
     // 2. Push a dummy variable to prove stack unwinding drops dead variables cleanly
     const dummy = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(99.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, dummy, 0);
+    try out_chunk.write(testing.allocator, @intCast(dummy), 0);
 
     // 3. Throw an Error!
     const err_str_val = try vm.allocateString("Crash!");
@@ -350,7 +350,7 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
     _ = vm.pop();
 
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, err_str, 0);
+    try out_chunk.write(testing.allocator, @intCast(err_str), 0);
     try out_chunk.writeOp(testing.allocator, .op_throw, 0);
 
     // 4. Success path (Should be completely skipped by the VM unwinder!)
@@ -372,7 +372,7 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
     // Return a fallback value of 42
     const c42 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, c42, 0);
+    try out_chunk.write(testing.allocator, @intCast(c42), 0);
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 5;
@@ -399,7 +399,7 @@ test "VM Edge Case: Uncaught exceptions halt gracefully without panicking" {
     _ = vm.pop();
 
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, err_idx, 0);
+    try out_chunk.write(testing.allocator, @intCast(err_idx), 0);
 
     // Throw the error with NO rescue block set up!
     try out_chunk.writeOp(testing.allocator, .op_throw, 0);
@@ -428,9 +428,9 @@ test "VM Edge Case: Gracefully handles type mismatches in arithmetic" {
     const num_idx = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(5.0));
 
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, str_idx, 0);
+    try out_chunk.write(testing.allocator, @intCast(str_idx), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, num_idx, 0);
+    try out_chunk.write(testing.allocator, @intCast(num_idx), 0);
     try out_chunk.writeOp(testing.allocator, .op_add, 0);
 
     out_chunk.max_stack_slots = 3;
@@ -455,9 +455,9 @@ test "VM Edge Case: Gracefully handles method calls on raw primitives" {
     _ = vm.pop();
 
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, num_idx, 0);
+    try out_chunk.write(testing.allocator, @intCast(num_idx), 0);
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
-    try out_chunk.write(testing.allocator, m_idx, 0);
+    try out_chunk.write(testing.allocator, @intCast(m_idx), 0);
     try out_chunk.write(testing.allocator, 0, 0); // 0 args
 
     out_chunk.max_stack_slots = 3;
@@ -483,19 +483,21 @@ test "VM: natively executes op_switch jump table" {
 
     // Push test value
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, test_val, 0);
+    try out_chunk.write(testing.allocator, @intCast(test_val), 0);
 
     // op_switch with 2 cases
     try out_chunk.writeOp(testing.allocator, .op_switch, 0);
     try out_chunk.write(testing.allocator, 2, 0); // case count
 
     // Table Entry 1: case 10
-    try out_chunk.write(testing.allocator, case1_val, 0);
+    try out_chunk.write(testing.allocator, @intCast((case1_val >> 8) & 0xFF), 0); // const high
+    try out_chunk.write(testing.allocator, @intCast(case1_val & 0xFF), 0); // const low
     try out_chunk.write(testing.allocator, 0, 0); // jump high
     try out_chunk.write(testing.allocator, 0, 0); // relative offset 0
 
     // Table Entry 2: case 42
-    try out_chunk.write(testing.allocator, case2_val, 0);
+    try out_chunk.write(testing.allocator, @intCast((case2_val >> 8) & 0xFF), 0); // const high
+    try out_chunk.write(testing.allocator, @intCast(case2_val & 0xFF), 0); // const low
     try out_chunk.write(testing.allocator, 0, 0); // jump high
     try out_chunk.write(testing.allocator, 3, 0); // relative offset 3
 
@@ -506,19 +508,19 @@ test "VM: natively executes op_switch jump table" {
     // Branch 1 (Target: offset + 7) -> Pushes 100
     const b1_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(100.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, b1_val, 0);
+    try out_chunk.write(testing.allocator, @intCast(b1_val), 0);
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     // Branch 2 (Target: offset + 11) -> Pushes 200 [THIS SHOULD EXECUTE]
     const b2_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(200.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, b2_val, 0);
+    try out_chunk.write(testing.allocator, @intCast(b2_val), 0);
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     // Default Branch (Target: offset + 15) -> Pushes 300
     const bdef_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(300.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, bdef_val, 0);
+    try out_chunk.write(testing.allocator, @intCast(bdef_val), 0);
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 5;
@@ -540,9 +542,9 @@ test "VM: op_unpack correctly destructs array into stack slots" {
     const val1 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(10.0));
     const val2 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(20.0));
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, val1, 0);
+    try out_chunk.write(testing.allocator, @intCast(val1), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, val2, 0);
+    try out_chunk.write(testing.allocator, @intCast(val2), 0);
 
     // Build Array [10, 20]
     try out_chunk.writeOp(testing.allocator, .op_build_array, 0);
@@ -734,9 +736,9 @@ test "VM: Math module namespace and functions" {
     const math_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("Math"));
     const pi_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("PI"));
     try out_chunk.writeOp(testing.allocator, .op_get_global, 0);
-    try out_chunk.write(testing.allocator, math_str, 0);
+    try out_chunk.write(testing.allocator, @intCast(math_str), 0);
     try out_chunk.writeOp(testing.allocator, .op_get_property, 0);
-    try out_chunk.write(testing.allocator, pi_str, 0);
+    try out_chunk.write(testing.allocator, @intCast(pi_str), 0);
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 5;
@@ -752,12 +754,12 @@ test "VM: Math module namespace and functions" {
     const arg_0 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(0));
 
     try out_chunk.writeOp(testing.allocator, .op_get_global, 0);
-    try out_chunk.write(testing.allocator, math_str, 0); // Receiver (Math)
+    try out_chunk.write(testing.allocator, @intCast(math_str), 0); // Receiver (Math)
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, arg_0, 0); // Argument (0)
+    try out_chunk.write(testing.allocator, @intCast(arg_0), 0); // Argument (0)
 
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0); // Invoke method on receiver
-    try out_chunk.write(testing.allocator, sin_str, 0);
+    try out_chunk.write(testing.allocator, @intCast(sin_str), 0);
     try out_chunk.write(testing.allocator, 1, 0); // 1 arg
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
@@ -780,11 +782,11 @@ test "VM: String Native Methods (split, replace)" {
     const delim_val = try out_chunk.addConstant(testing.allocator, try vm.allocateString(" "));
 
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, str_val, 0);
+    try out_chunk.write(testing.allocator, @intCast(str_val), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, delim_val, 0);
+    try out_chunk.write(testing.allocator, @intCast(delim_val), 0);
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
-    try out_chunk.write(testing.allocator, split_str, 0);
+    try out_chunk.write(testing.allocator, @intCast(split_str), 0);
     try out_chunk.write(testing.allocator, 1, 0); // 1 arg
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
@@ -812,11 +814,11 @@ test "VM: Array and Map Native Methods (slice, keys)" {
     const val_30 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(30));
 
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, val_10, 0);
+    try out_chunk.write(testing.allocator, @intCast(val_10), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, val_20, 0);
+    try out_chunk.write(testing.allocator, @intCast(val_20), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, val_30, 0);
+    try out_chunk.write(testing.allocator, @intCast(val_30), 0);
     try out_chunk.writeOp(testing.allocator, .op_build_array, 0);
     try out_chunk.write(testing.allocator, 3, 0); // stack[0] = Array
 
@@ -826,11 +828,11 @@ test "VM: Array and Map Native Methods (slice, keys)" {
     const len_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(2));
 
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, start_idx, 0);
+    try out_chunk.write(testing.allocator, @intCast(start_idx), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, len_val, 0);
+    try out_chunk.write(testing.allocator, @intCast(len_val), 0);
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
-    try out_chunk.write(testing.allocator, slice_str, 0);
+    try out_chunk.write(testing.allocator, @intCast(slice_str), 0);
     try out_chunk.write(testing.allocator, 2, 0); // 2 args
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
@@ -864,7 +866,7 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     try block_chunk.write(testing.allocator, 1, 0);
     const const_2 = try block_chunk.addConstant(testing.allocator, value.Value.initNumber(2.0));
     try block_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try block_chunk.write(testing.allocator, const_2, 0);
+    try block_chunk.write(testing.allocator, @intCast(const_2), 0);
     try block_chunk.writeOp(testing.allocator, .op_multiply, 0);
     try block_chunk.writeOp(testing.allocator, .op_return, 0);
     block_chunk.max_stack_slots = 5;
@@ -885,7 +887,7 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     // Push 21, then Yield with 1 argument!
     const const_21 = try parent_chunk.addConstant(testing.allocator, value.Value.initNumber(21.0));
     try parent_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try parent_chunk.write(testing.allocator, const_21, 0);
+    try parent_chunk.write(testing.allocator, @intCast(const_21), 0);
     try parent_chunk.writeOp(testing.allocator, .op_yield, 0);
     try parent_chunk.write(testing.allocator, 1, 0); // 1 arg
     try parent_chunk.writeOp(testing.allocator, .op_return, 0);
@@ -904,10 +906,10 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     const b_const = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&block_func.obj));
 
     try main_chunk.writeOp(testing.allocator, .op_closure, 0);
-    try main_chunk.write(testing.allocator, p_const, 0);
+    try main_chunk.write(testing.allocator, @intCast(p_const), 0);
 
     try main_chunk.writeOp(testing.allocator, .op_closure, 0);
-    try main_chunk.write(testing.allocator, b_const, 0);
+    try main_chunk.write(testing.allocator, @intCast(b_const), 0);
 
     // Call Parent with 1 argument (the block counts as +1 in the raw arg_count before padding!)
     try main_chunk.writeOp(testing.allocator, .op_call, 0);
