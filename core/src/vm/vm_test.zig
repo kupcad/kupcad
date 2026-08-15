@@ -1752,3 +1752,45 @@ test "VM: case statement subsumption (===) with ranges and classes" {
     try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[1].asNumber()); // Matches Range
     try testing.expectEqual(@as(f64, 300.0), arr_obj.items.items[2].asNumber()); // Fallback
 }
+
+test "VM Edge Case: executes 24-bit control flow jump correctly (> 65KB block)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Push 'false' to trigger the jump
+    try out_chunk.writeOp(testing.allocator, .op_false, 0);
+
+    // Jump if false over 70,000 bytes!
+    try out_chunk.writeOp(testing.allocator, .op_jump_if_false, 0);
+    const jump_dist: usize = 70000;
+    try out_chunk.write(testing.allocator, @intCast((jump_dist >> 16) & 0xFF), 0);
+    try out_chunk.write(testing.allocator, @intCast((jump_dist >> 8) & 0xFF), 0);
+    try out_chunk.write(testing.allocator, @intCast(jump_dist & 0xFF), 0);
+
+    try out_chunk.writeOp(testing.allocator, .op_pop, 0); // pop condition if true
+
+    // Pad exactly 70,000 bytes of dummy instructions
+    try out_chunk.code.appendNTimes(testing.allocator, @intFromEnum(chunk.OpCode.op_nil), jump_dist);
+
+    // Landing zone
+    try out_chunk.writeOp(testing.allocator, .op_pop, 0); // pop condition if false
+    const success_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, @intCast(success_val), 0);
+    try out_chunk.writeOp(testing.allocator, .op_return, 0);
+
+    out_chunk.max_stack_slots = 5;
+
+    // Temporarily increase gas limit because decoding 70,000 nils counts against instructions run
+    vm.instruction_limit = 200_000;
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // The VM should successfully land and return 42!
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+}

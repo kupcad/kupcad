@@ -436,3 +436,39 @@ test "Compiler: correctly maps AST token offsets into DebugSpans" {
     // The very first instruction should be mapped to offset 0 (the "10" literal)
     try testing.expectEqual(@as(u32, 0), out_chunk.getOffset(0));
 }
+
+test "Compiler Edge Case: compiles array literal with > 255 elements (wide operand)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Generate 300 literal "1" nodes
+    var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
+    defer elements.deinit(testing.allocator);
+
+    for (0..300) |_| {
+        const num = try b.number("1", 0);
+        try elements.append(testing.allocator, num);
+    }
+    const span = try b.addNodes(elements.items);
+    const arr_node = try b.arrayLiteral(span, 0, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(arr_node);
+
+    // Verify op_build_array_wide is present in the bytecode!
+    var found_wide = false;
+    for (out_chunk.code.items) |byte| {
+        if (byte == @intFromEnum(chunk.OpCode.op_build_array_wide)) found_wide = true;
+    }
+
+    // If it fell back to the standard op_build_array, this test will fail
+    try testing.expect(found_wide);
+}
