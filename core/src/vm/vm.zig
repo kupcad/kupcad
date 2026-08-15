@@ -437,45 +437,7 @@ pub const VM = struct {
                     self.push(map_val);
                 },
                 .op_build_range => {
-                    const is_exclusive = exec_chunk.code.items[frame.ip] == 1;
-                    frame.ip += 1;
-
-                    const step_val = self.pop();
-                    defer self.releaseValue(step_val);
-                    const end_val = self.pop();
-                    defer self.releaseValue(end_val);
-                    const start_val = self.pop();
-                    defer self.releaseValue(start_val);
-
-                    if (start_val.isNumber() and end_val.isNumber() and step_val.isNumber()) {
-                        const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
-                        self.push(value.Value.initObj(&range_obj.obj));
-                    } else if (start_val.isObject() and start_val.asObj().obj_type == .string and end_val.isObject() and end_val.asObj().obj_type == .string) {
-                        const s_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", start_val.asObj()))).chars;
-                        const e_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", end_val.asObj()))).chars;
-
-                        if (s_str.len == 1 and e_str.len == 1) {
-                            const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
-                            const arr_val = value.Value.initObj(&arr_obj.obj);
-                            self.push(arr_val); // Protect from GC while building
-
-                            var curr = s_str[0];
-                            const limit = if (is_exclusive) e_str[0] else e_str[0] + 1;
-
-                            while (curr < limit) : (curr += 1) {
-                                const char_slice = &[_]u8{curr};
-                                const char_str = self.allocateString(char_slice) catch return .runtime_error;
-                                self.retainValue(char_str);
-                                arr_obj.items.append(self.allocator, char_str) catch return .runtime_error;
-                            }
-                        } else {
-                            self.reportError("Runtime Error: String ranges must be single characters.\n", .{});
-                            return .runtime_error;
-                        }
-                    } else {
-                        self.reportError("Runtime Error: Range bounds must be numbers or characters.\n", .{});
-                        return .runtime_error;
-                    }
+                    if (self.executeBuildRange(frame, exec_chunk) != .ok) return .runtime_error;
                 },
                 .op_interpolate => {
                     const count = exec_chunk.code.items[frame.ip];
@@ -1553,6 +1515,47 @@ pub const VM = struct {
 
         // Push the block back on top to maintain the Uniform Padding invariant
         self.push(block_val);
+        return .ok;
+    }
+
+    inline fn executeBuildRange(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
+        const is_exclusive = exec_chunk.code.items[frame.ip] == 1;
+        frame.ip += 1;
+
+        const step_val = self.pop();
+        defer self.releaseValue(step_val);
+        const end_val = self.pop();
+        defer self.releaseValue(end_val);
+        const start_val = self.pop();
+        defer self.releaseValue(start_val);
+
+        if (start_val.isNumber() and end_val.isNumber() and step_val.isNumber()) {
+            const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
+            self.push(value.Value.initObj(&range_obj.obj));
+        } else if (start_val.isObject() and start_val.asObj().obj_type == .string and end_val.isObject() and end_val.asObj().obj_type == .string) {
+            const s_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", start_val.asObj()))).chars;
+            const e_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", end_val.asObj()))).chars;
+
+            if (s_str.len == 1 and e_str.len == 1) {
+                const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                const arr_val = value.Value.initObj(&arr_obj.obj);
+                self.push(arr_val); // Protect from GC while building
+                var curr = s_str[0];
+                const limit = if (is_exclusive) e_str[0] else e_str[0] + 1;
+                while (curr < limit) : (curr += 1) {
+                    const char_slice = &[_]u8{curr};
+                    const char_str = self.allocateString(char_slice) catch return .runtime_error;
+                    self.retainValue(char_str);
+                    arr_obj.items.append(self.allocator, char_str) catch return .runtime_error;
+                }
+            } else {
+                self.reportError("Runtime Error: String ranges must be single characters.\n", .{});
+                return .runtime_error;
+            }
+        } else {
+            self.reportError("Runtime Error: Range bounds must be numbers or characters.\n", .{});
+            return .runtime_error;
+        }
         return .ok;
     }
 

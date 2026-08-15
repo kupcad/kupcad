@@ -1439,3 +1439,76 @@ test "VM: Monkey-patching native Primitives dynamically (Array extension)" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 6.0), vm.stack[0].asNumber());
 }
+
+test "VM: executes while loops with break and next" {
+    const Document = @import("../core/document.zig").Document;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Loop from 1 to 5.
+    // Skip 3 (next), stop at 5 (break).
+    // Sum should be 1 + 2 + 4 = 7.
+    const source =
+        \\i = 0
+        \\sum = 0
+        \\while (i < 5)
+        \\  i = i + 1
+        \\  if (i == 3)
+        \\    next
+        \\  end
+        \\  if (i == 5)
+        \\    break
+        \\  end
+        \\  sum = sum + i
+        \\end
+        \\sum
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 7.0), vm.stack[0].asNumber());
+}
+
+test "VM: executes ternary operator with short-circuiting" {
+    const Document = @import("../core/document.zig").Document;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\x = 10
+        \\y = 10
+        \\true ? (x = 20) : (x = 30)
+        \\false ? (y = 20) : (y = 30)
+        \\[x, y]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Result should be an array: [20, 30]
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isObject() and arr_val.asObj().obj_type == .array);
+
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
+}

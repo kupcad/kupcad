@@ -16,6 +16,44 @@ pub const DocumentBuffer = struct {
     }
 };
 
+const ScopeContext = struct {
+    def_name: ?[]const u8 = null,
+    class_name: ?[]const u8 = null,
+};
+
+inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex) ScopeContext {
+    var current = start_node;
+    var ctx = ScopeContext{};
+
+    while (current != .none) {
+        const p_idx = doc.parents[@intFromEnum(current)];
+        if (p_idx == .none) break;
+        const p_node = doc.tree.getNode(p_idx) orelse break;
+        switch (p_node.tag) {
+            .def_stmt => {
+                if (ctx.def_name == null) {
+                    const ds = doc.tree.defStmt(p_node);
+                    ctx.def_name = doc.tree.getString(ds.name);
+                }
+            },
+            .class_stmt => {
+                if (ctx.class_name == null) {
+                    const cs = doc.tree.classStmt(p_node);
+                    const name_node = doc.tree.getNode(cs.name);
+                    if (name_node) |nn| {
+                        if (nn.tag == .identifier) {
+                            ctx.class_name = doc.tree.getString(@as(ast.StringId, @enumFromInt(nn.data)));
+                        }
+                    }
+                }
+            },
+            else => {},
+        }
+        current = p_idx;
+    }
+    return ctx;
+}
+
 pub const Handler = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -243,37 +281,9 @@ pub const Handler = struct {
         const target_node = doc.tree.getNode(found_node_idx).?;
 
         // Walk parents using `doc.parents` side-table to gather enclosing context
-        var current = found_node_idx;
-        var def_name: ?[]const u8 = null;
-        var class_name: ?[]const u8 = null;
-
-        while (current != .none) {
-            const p_idx = doc.parents[@intFromEnum(current)];
-            if (p_idx == .none) break;
-            const p_node = doc.tree.getNode(p_idx) orelse break;
-
-            switch (p_node.tag) {
-                .def_stmt => {
-                    if (def_name == null) {
-                        const ds = doc.tree.defStmt(p_node);
-                        def_name = doc.tree.getString(ds.name);
-                    }
-                },
-                .class_stmt => {
-                    if (class_name == null) {
-                        const cs = doc.tree.classStmt(p_node);
-                        const name_node = doc.tree.getNode(cs.name);
-                        if (name_node) |nn| {
-                            if (nn.tag == .identifier) {
-                                class_name = doc.tree.getString(@as(ast.StringId, @enumFromInt(nn.data)));
-                            }
-                        }
-                    }
-                },
-                else => {},
-            }
-            current = p_idx;
-        }
+        const scope = findEnclosingScope(&doc, found_node_idx);
+        const def_name = scope.def_name;
+        const class_name = scope.class_name;
 
         // Build Markdown response string using std.Io.Writer.Allocating
         var out: std.Io.Writer.Allocating = .init(arena);

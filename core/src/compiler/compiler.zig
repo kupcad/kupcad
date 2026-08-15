@@ -424,59 +424,6 @@ pub const Compiler = struct {
 
                 try self.emitOp(.op_set_index);
             },
-            .binary_op => {
-                const bin_expr = self.tree.binaryExpr(node);
-
-                // 1. Handle Short-Circuiting Logical Operators BEFORE compiling the right side!
-                if (bin_expr.op == .logical_and) {
-                    try self.compileNode(bin_expr.left);
-                    const end_jump = try self.emitJump(.op_jump_if_false);
-                    try self.emitOp(.op_pop); // pop the true left value
-                    try self.compileNode(bin_expr.right);
-                    self.patchJump(end_jump);
-                    return;
-                } else if (bin_expr.op == .logical_or) {
-                    try self.compileNode(bin_expr.left);
-                    const else_jump = try self.emitJump(.op_jump_if_false);
-                    const end_jump = try self.emitJump(.op_jump); // If true, skip right side
-
-                    self.patchJump(else_jump); // If false, land here
-                    try self.emitOp(.op_pop); // pop the false left value
-                    try self.compileNode(bin_expr.right);
-
-                    self.patchJump(end_jump); // True branch lands here
-                    return;
-                }
-
-                // 2. Standard Binary Operators
-                try self.compileNode(bin_expr.left);
-                try self.compileNode(bin_expr.right);
-
-                switch (bin_expr.op) {
-                    .add => try self.emitOp(.op_add),
-                    .subtract => try self.emitOp(.op_subtract),
-                    .multiply => try self.emitOp(.op_multiply),
-                    .divide => try self.emitOp(.op_divide),
-                    .modulo => try self.emitOp(.op_modulo),
-                    .exponent => try self.emitOp(.op_exponent),
-                    .equal => try self.emitOp(.op_equal),
-                    .not_equal => {
-                        try self.emitOp(.op_equal);
-                        try self.emitOp(.op_not);
-                    },
-                    .less => try self.emitOp(.op_less),
-                    .greater => try self.emitOp(.op_greater),
-                    .less_equal => {
-                        try self.emitOp(.op_greater);
-                        try self.emitOp(.op_not);
-                    },
-                    .greater_equal => {
-                        try self.emitOp(.op_less);
-                        try self.emitOp(.op_not);
-                    },
-                    else => return error.UnknownNode,
-                }
-            },
             .unary_op => {
                 const un_expr = self.tree.unaryExpr(node);
                 try self.compileNode(un_expr.operand);
@@ -486,6 +433,7 @@ pub const Compiler = struct {
                     else => return error.UnknownNode,
                 }
             },
+            .binary_op => try self.compileBinaryOp(node),
             .array_literal => try self.compileArrayLiteral(node),
             .hash_literal => try self.compileHashLiteral(node),
             .case_stmt => try self.compileCaseStmt(node),
@@ -1542,6 +1490,58 @@ pub const Compiler = struct {
 
         self.simulatePop(actual_arg_count + 1);
         self.simulatePush(1);
+    }
+
+    fn compileBinaryOp(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const bin_expr = self.tree.binaryExpr(node);
+
+        // Handle Short-Circuiting Logical Operators BEFORE compiling the right side!
+        if (bin_expr.op == .logical_and) {
+            try self.compileNode(bin_expr.left);
+            const end_jump = try self.emitJump(.op_jump_if_false);
+            try self.emitOp(.op_pop); // pop the true left value
+            try self.compileNode(bin_expr.right);
+            self.patchJump(end_jump);
+            return;
+        } else if (bin_expr.op == .logical_or) {
+            try self.compileNode(bin_expr.left);
+            const else_jump = try self.emitJump(.op_jump_if_false);
+            const end_jump = try self.emitJump(.op_jump); // If true, skip right side
+            self.patchJump(else_jump); // If false, land here
+            try self.emitOp(.op_pop); // pop the false left value
+            try self.compileNode(bin_expr.right);
+            self.patchJump(end_jump); // True branch lands here
+            return;
+        }
+
+        // Standard Binary Operators
+        try self.compileNode(bin_expr.left);
+        try self.compileNode(bin_expr.right);
+
+        switch (bin_expr.op) {
+            .add => try self.emitOp(.op_add),
+            .subtract => try self.emitOp(.op_subtract),
+            .multiply => try self.emitOp(.op_multiply),
+            .divide => try self.emitOp(.op_divide),
+            .modulo => try self.emitOp(.op_modulo),
+            .exponent => try self.emitOp(.op_exponent),
+            .equal => try self.emitOp(.op_equal),
+            .not_equal => {
+                try self.emitOp(.op_equal);
+                try self.emitOp(.op_not);
+            },
+            .less => try self.emitOp(.op_less),
+            .greater => try self.emitOp(.op_greater),
+            .less_equal => {
+                try self.emitOp(.op_greater);
+                try self.emitOp(.op_not);
+            },
+            .greater_equal => {
+                try self.emitOp(.op_less);
+                try self.emitOp(.op_not);
+            },
+            else => return error.UnknownNode,
+        }
     }
 
     fn emitVariableLoad(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!void {
