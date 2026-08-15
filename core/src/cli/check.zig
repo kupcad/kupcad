@@ -4,6 +4,7 @@ const ProjectConfig = @import("config.zig").ProjectConfig;
 const LintConfig = @import("../tools/lint/config.zig").Config;
 const CommandOptions = @import("options.zig").CommandOptions;
 const walker = @import("walker.zig");
+const LimitAllocator = @import("../core/limit_allocator.zig").LimitAllocator;
 
 const Color = struct {
     const cyan = "\x1b[36m";
@@ -19,6 +20,7 @@ const Totals = struct {
     warnings: usize = 0,
     infos: usize = 0,
     config: LintConfig,
+    compiler_memory_limit: ?usize = null,
 };
 
 fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
@@ -41,7 +43,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     var setup = try @import("options.zig").CommandSetup.init(allocator, init.io, args_iter, "check");
     defer setup.deinit(allocator);
 
-    var totals = Totals{ .config = setup.config.lint };
+    var totals = Totals{
+        .config = setup.config.lint,
+        .compiler_memory_limit = setup.config.compiler_memory_limit, // Hook it up
+    };
+
     try walker.walkPaths(init.io, allocator, setup.options.paths.items, &totals, processFile);
 
     if (totals.errors == 0 and totals.warnings == 0 and totals.infos == 0) {
@@ -53,7 +59,6 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             totals.infos, Color.reset,
         });
     }
-
     if (totals.errors > 0) std.process.exit(1);
 }
 
@@ -62,16 +67,27 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
     var totals = @as(*Totals, @ptrCast(@alignCast(context.?)));
     totals.files += 1;
 
-    const diags = api.checkCode(allocator, source, totals.config) catch |err| {
-        std.debug.print("{s}Error checking '{s}': {}{s}\n", .{ Color.red, file_path, err, Color.reset });
+    // Apply the Memory Sandbox
+    var limit_alloc: ?LimitAllocator = null;
+    var compile_allocator = allocator;
+    if (totals.compiler_memory_limit) |limit| {
+        limit_alloc = LimitAllocator.init(allocator, limit);
+        compile_allocator = limit_alloc.?.allocator();
+    }
+
+    const diags = api.checkCode(compile_allocator, source, totals.config) catch |err| {
+        if (err == error.OutOfMemory) {
+            std.debug.print("{s}Sandbox Error: '{s}' exceeded memory limit during AST parsing.{s}\n", .{ Color.red, file_path, Color.reset });
+        } else {
+            std.debug.print("{s}Error checking '{s}': {}{s}\n", .{ Color.red, file_path, err, Color.reset });
+        }
         totals.errors += 1;
         return;
     };
-    defer api.freeDiagnostics(allocator, diags);
+    defer api.freeDiagnostics(compile_allocator, diags);
 
     if (diags.len > 0) {
-        // Initialize the LineIndex to compute exact coordinates
-        var line_index = try api.LineIndex.init(allocator, source);
+        var line_index = try api.LineIndex.init(compile_allocator, source);
 
         for (diags) |d| {
             const sev_color = d.severity.toColor();
@@ -82,17 +98,12 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
                 .info => totals.infos += 1,
             }
 
-            // Compute the exact line and column
             const line = line_index.getLine(d.loc.offset) + 1;
             const col = line_index.getUtf8Column(d.loc.offset) + 1;
 
-            // Use the computed coordinates
             std.debug.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}\n", .{ Color.cyan, file_path, line, col, Color.reset, sev_color, sev_char, Color.reset, d.message });
-
-            // Use the local getSourceLine function to fix the unused warning
             const source_line = getSourceLine(source, line);
             std.debug.print("{s}\n", .{source_line});
-
             const col_idx = if (col > 0) col - 1 else 0;
             for (0..col_idx) |_| std.debug.print(" ", .{});
             std.debug.print("{s}", .{sev_color});

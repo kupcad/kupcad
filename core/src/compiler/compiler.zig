@@ -456,7 +456,6 @@ pub const Compiler = struct {
                 const loop_start = self.current_chunk.code.items.len;
 
                 // Push loop state
-                if (self.loops.items.len >= limits.MAX_LOOPS) return error.UnknownNode;
                 try self.loops.append(self.allocator, .{ .start = loop_start });
 
                 try self.compileNode(while_payload.condition);
