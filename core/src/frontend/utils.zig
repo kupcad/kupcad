@@ -68,8 +68,14 @@ pub const LexerUtils = struct {
             if (std.ascii.isDigit(c) or c == '_') {
                 index.* += 1;
             } else if (c == '.') {
-                if (index.* + 1 < buffer.len and buffer[index.* + 1] == '.') break; // Avoid range operator `..`
-                index.* += 1;
+                // Avoid range operator `..`
+                if (index.* + 1 < buffer.len and buffer[index.* + 1] == '.') break;
+
+                // Only consume '.' as a decimal point IF the next character is a digit!
+                // If it is followed by an identifier (e.g., `3.14159.round`), leave the dot for method dispatch!
+                if (index.* + 1 < buffer.len and std.ascii.isDigit(buffer[index.* + 1])) {
+                    index.* += 1;
+                } else break;
             } else if (c == 'e' or c == 'E') {
                 var advance_count: usize = 1;
                 if (index.* + 1 < buffer.len and (buffer[index.* + 1] == '+' or buffer[index.* + 1] == '-')) {

@@ -38,6 +38,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.string_class = try defineBuiltinClass(vm, "String", null);
     vm.map_class = try defineBuiltinClass(vm, "Map", null);
     vm.number_class = try defineBuiltinClass(vm, "Number", null);
+    vm.symbol_class = try defineBuiltinClass(vm, "Symbol", null);
 
     // Bootstrap Standard Modules
     // Set up Math module (as an instance of a pseudo-class to support property access)

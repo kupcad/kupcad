@@ -54,6 +54,7 @@ pub const VM = struct {
     array_class: ?*value.ObjClass = null,
     map_class: ?*value.ObjClass = null,
     number_class: ?*value.ObjClass = null,
+    symbol_class: ?*value.ObjClass = null,
     // safety for infinite loops
     instruction_count: usize,
     instruction_limit: usize,
@@ -1331,6 +1332,7 @@ pub const VM = struct {
         } else if (receiver.isObject()) {
             switch (receiver.asObj().obj_type) {
                 .string => class_obj = self.string_class,
+                .symbol => class_obj = self.symbol_class,
                 .array => class_obj = self.array_class,
                 .map => class_obj = self.map_class,
                 else => {},
