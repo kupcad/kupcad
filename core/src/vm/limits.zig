@@ -11,4 +11,4 @@ pub const MAX_HASH_ENTRIES: usize = MAX_CONSTANTS / 2; // 32_767
 // Runtime Execution Limits
 pub const INITIAL_STACK_CAPACITY: usize = 1024;
 pub const MAX_CALL_FRAMES: usize = 4096; // Safely expanded for deep recursive modeling!
-pub const DEFAULT_INSTRUCTION_LIMIT: usize = 1_000_000;
+pub const DEFAULT_INSTRUCTION_LIMIT: usize = 50_000_000;
