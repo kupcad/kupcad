@@ -108,6 +108,10 @@ pub const Handler = struct {
         return self.offset_encoding == .@"utf-8";
     }
 
+    inline fn getColumn(self: *const Handler, line_index: *const api.LineIndex, offset: u32) u32 {
+        return if (self.useUtf8()) line_index.getUtf8Column(offset) else line_index.getUtf16Column(offset);
+    }
+
     pub fn @"textDocument/didOpen"(
         self: *Handler,
         arena: std.mem.Allocator,
@@ -188,10 +192,7 @@ pub const Handler = struct {
         var line_index = try api.LineIndex.init(arena, source);
         const end_offset: u32 = @intCast(source.len);
         const end_line = line_index.getLine(end_offset);
-        const end_char = if (self.useUtf8())
-            line_index.getUtf8Column(end_offset)
-        else
-            line_index.getUtf16Column(end_offset);
+        const end_char = self.getColumn(&line_index, end_offset);
 
         var edits = std.ArrayListUnmanaged(lsp.types.TextEdit).empty;
         try edits.append(arena, .{
@@ -339,8 +340,8 @@ pub const Handler = struct {
             const start_line = line_index.getLine(d.loc.offset);
             const end_offset = d.loc.offset + if (d.loc.length > 0) d.loc.length else 1;
             const end_line = line_index.getLine(end_offset);
-            const start_char = if (self.useUtf8()) line_index.getUtf8Column(d.loc.offset) else line_index.getUtf16Column(d.loc.offset);
-            const end_char = if (self.useUtf8()) line_index.getUtf8Column(end_offset) else line_index.getUtf16Column(end_offset);
+            const start_char = self.getColumn(&line_index, d.loc.offset);
+            const end_char = self.getColumn(&line_index, end_offset);
 
             try lsp_diags.append(arena, .{
                 .range = .{
