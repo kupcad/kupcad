@@ -163,6 +163,69 @@ pub fn arrayReduce(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     return acc_val;
 }
 
+pub fn arrayFilter(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapArray(vm_opaque, arg_count, 1, args);
+    const closure_val = args[0];
+    if (!closure_val.isClosure()) return error.RuntimeError;
+    const closure = closure_val.asClosure();
+
+    const new_arr = try ctx.vm.gc.allocateArray(ctx.vm);
+    ctx.vm.push(value.Value.initObj(&new_arr.obj));
+    defer _ = ctx.vm.pop();
+
+    for (ctx.arr.items.items) |item| {
+        const res = try ctx.vm.callClosureSync(closure, &.{item});
+        const is_truthy = !res.isNil() and !(res.isBool() and !res.asBool());
+        if (is_truthy) {
+            ctx.vm.retainValue(item);
+            try new_arr.items.append(ctx.vm.allocator, item);
+        }
+    }
+    return value.Value.initObj(&new_arr.obj);
+}
+
+pub fn arrayFirst(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapArray(vm_opaque, arg_count, 0, args);
+    if (ctx.arr.items.items.len > 0) return ctx.arr.items.items[0];
+    return value.Value.initNil();
+}
+
+pub fn arrayLast(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapArray(vm_opaque, arg_count, 0, args);
+    const len = ctx.arr.items.items.len;
+    if (len > 0) return ctx.arr.items.items[len - 1];
+    return value.Value.initNil();
+}
+
+pub fn arrayContains(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapArray(vm_opaque, arg_count, 1, args);
+    for (ctx.arr.items.items) |item| {
+        if (ctx.vm.valuesEqual(item, args[0])) return value.Value.initBool(true);
+    }
+    return value.Value.initBool(false);
+}
+
+pub fn arrayFlatten(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapArray(vm_opaque, arg_count, 0, args);
+    const new_arr = try ctx.vm.gc.allocateArray(ctx.vm);
+    ctx.vm.push(value.Value.initObj(&new_arr.obj));
+    defer _ = ctx.vm.pop();
+
+    for (ctx.arr.items.items) |item| {
+        if (item.isObject() and item.asObj().obj_type == .array) {
+            const inner_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", item.asObj())));
+            for (inner_arr.items.items) |inner_item| {
+                ctx.vm.retainValue(inner_item);
+                try new_arr.items.append(ctx.vm.allocator, inner_item);
+            }
+        } else {
+            ctx.vm.retainValue(item);
+            try new_arr.items.append(ctx.vm.allocator, item);
+        }
+    }
+    return value.Value.initObj(&new_arr.obj);
+}
+
 // --- Map Methods ---
 
 pub fn mapKeys(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -218,6 +281,53 @@ pub fn mapEach(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyer
         _ = try ctx.vm.callClosureSync(closure, &.{ k, v });
     }
     return ctx.receiver;
+}
+
+pub fn mapEmpty(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapMap(vm_opaque, arg_count, 0, args);
+    return value.Value.initBool(ctx.map.keys.items.len == 0);
+}
+
+pub fn mapGet(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapMap(vm_opaque, arg_count, 2, args);
+    if (ctx.vm.findMapKey(ctx.map, args[0])) |idx| {
+        return ctx.map.values.items[idx];
+    }
+    return args[1]; // Return default value
+}
+
+pub fn mapMerge(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapMap(vm_opaque, arg_count, 1, args);
+    if (!args[0].isObject() or args[0].asObj().obj_type != .map) return error.RuntimeError;
+    const other_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[0].asObj())));
+
+    const new_map = try ctx.vm.gc.allocateMap(ctx.vm);
+    ctx.vm.push(value.Value.initObj(&new_map.obj));
+    defer _ = ctx.vm.pop();
+
+    // Copy self
+    for (ctx.map.keys.items, 0..) |k, i| {
+        ctx.vm.retainValue(k);
+        ctx.vm.retainValue(ctx.map.values.items[i]);
+        try new_map.keys.append(ctx.vm.allocator, k);
+        try new_map.values.append(ctx.vm.allocator, ctx.map.values.items[i]);
+    }
+
+    // Merge other
+    for (other_map.keys.items, 0..) |k, i| {
+        const v = other_map.values.items[i];
+        if (ctx.vm.findMapKey(new_map, k)) |existing_idx| {
+            ctx.vm.releaseValue(new_map.values.items[existing_idx]);
+            ctx.vm.retainValue(v);
+            new_map.values.items[existing_idx] = v;
+        } else {
+            ctx.vm.retainValue(k);
+            ctx.vm.retainValue(v);
+            try new_map.keys.append(ctx.vm.allocator, k);
+            try new_map.values.append(ctx.vm.allocator, v);
+        }
+    }
+    return value.Value.initObj(&new_map.obj);
 }
 
 // --- String Methods ---
@@ -279,6 +389,38 @@ pub fn stringReplace(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value)
     return try ctx.vm.allocateString(replaced);
 }
 
+pub fn stringToF(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapString(vm_opaque, arg_count, 0, args);
+    const float_val = std.fmt.parseFloat(f64, ctx.str.chars) catch return value.Value.initNil();
+    return value.Value.initNumber(float_val);
+}
+
+pub fn stringToI(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapString(vm_opaque, arg_count, 0, args);
+    const int_val = std.fmt.parseInt(i64, ctx.str.chars, 10) catch return value.Value.initNil();
+    return value.Value.initNumber(@floatFromInt(int_val));
+}
+
+pub fn stringTrim(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapString(vm_opaque, arg_count, 0, args);
+    const trimmed = std.mem.trim(u8, ctx.str.chars, " \t\r\n");
+    return try ctx.vm.allocateString(trimmed);
+}
+
+pub fn stringStartsWith(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapString(vm_opaque, arg_count, 1, args);
+    if (!args[0].isObject() or args[0].asObj().obj_type != .string) return error.RuntimeError;
+    const prefix = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", args[0].asObj()))).chars;
+    return value.Value.initBool(std.mem.startsWith(u8, ctx.str.chars, prefix));
+}
+
+pub fn stringEndsWith(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const ctx = try unwrapString(vm_opaque, arg_count, 1, args);
+    if (!args[0].isObject() or args[0].asObj().obj_type != .string) return error.RuntimeError;
+    const suffix = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", args[0].asObj()))).chars;
+    return value.Value.initBool(std.mem.endsWith(u8, ctx.str.chars, suffix));
+}
+
 // --- Math Methods ---
 
 pub fn mathSin(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -311,6 +453,66 @@ pub fn mathAbs(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyer
     return value.Value.initNumber(@abs(args[0].asNumber()));
 }
 
+pub fn mathAsin(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+    if (arg_count != 1 or !args[0].isNumber()) return error.RuntimeError;
+    return value.Value.initNumber(std.math.asin(args[0].asNumber()));
+}
+
+pub fn mathAcos(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+    if (arg_count != 1 or !args[0].isNumber()) return error.RuntimeError;
+    return value.Value.initNumber(std.math.acos(args[0].asNumber()));
+}
+
+pub fn mathAtan2(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+    if (arg_count != 2 or !args[0].isNumber() or !args[1].isNumber()) return error.RuntimeError;
+    return value.Value.initNumber(std.math.atan2(args[0].asNumber(), args[1].asNumber()));
+}
+
+pub fn mathRound(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+    if (arg_count != 1 or !args[0].isNumber()) return error.RuntimeError;
+    return value.Value.initNumber(@round(args[0].asNumber()));
+}
+
+pub fn mathCeil(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+    if (arg_count != 1 or !args[0].isNumber()) return error.RuntimeError;
+    return value.Value.initNumber(@ceil(args[0].asNumber()));
+}
+
+pub fn mathFloor(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+    if (arg_count != 1 or !args[0].isNumber()) return error.RuntimeError;
+    return value.Value.initNumber(@floor(args[0].asNumber()));
+}
+
+pub fn mathDeg2Rad(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+    if (arg_count != 1 or !args[0].isNumber()) return error.RuntimeError;
+    return value.Value.initNumber(args[0].asNumber() * std.math.pi / 180.0);
+}
+
+pub fn mathRad2Deg(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+    if (arg_count != 1 or !args[0].isNumber()) return error.RuntimeError;
+    return value.Value.initNumber(args[0].asNumber() * 180.0 / std.math.pi);
+}
+
+pub fn mathMin(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+    if (arg_count != 2 or !args[0].isNumber() or !args[1].isNumber()) return error.RuntimeError;
+    return value.Value.initNumber(@min(args[0].asNumber(), args[1].asNumber()));
+}
+
+pub fn mathMax(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+    if (arg_count != 2 or !args[0].isNumber() or !args[1].isNumber()) return error.RuntimeError;
+    return value.Value.initNumber(@max(args[0].asNumber(), args[1].asNumber()));
+}
+
 // --- Registration ---
 
 fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
@@ -335,7 +537,12 @@ const array_methods = [_]MethodDef{
     .{ .name = "join", .func = arrayJoin },
     .{ .name = "each", .func = arrayEach },
     .{ .name = "map", .func = arrayMap },
+    .{ .name = "filter", .func = arrayFilter },
     .{ .name = "reduce", .func = arrayReduce },
+    .{ .name = "first", .func = arrayFirst },
+    .{ .name = "last", .func = arrayLast },
+    .{ .name = "contains?", .func = arrayContains },
+    .{ .name = "flatten", .func = arrayFlatten },
 };
 
 const map_methods = [_]MethodDef{
@@ -344,23 +551,39 @@ const map_methods = [_]MethodDef{
     .{ .name = "has_key?", .func = mapHasKey },
     .{ .name = "delete", .func = mapDelete },
     .{ .name = "each", .func = mapEach },
+    .{ .name = "empty?", .func = mapEmpty },
+    .{ .name = "get", .func = mapGet },
+    .{ .name = "merge", .func = mapMerge },
 };
 
 const string_methods = [_]MethodDef{
-    .{ .name = "length", .func = stringLength },
-    .{ .name = "size", .func = stringLength },
     .{ .name = "upcase", .func = stringUpcase },
     .{ .name = "downcase", .func = stringDowncase },
     .{ .name = "split", .func = stringSplit },
     .{ .name = "replace", .func = stringReplace },
+    .{ .name = "to_f", .func = stringToF },
+    .{ .name = "to_i", .func = stringToI },
+    .{ .name = "trim", .func = stringTrim },
+    .{ .name = "starts_with?", .func = stringStartsWith },
+    .{ .name = "ends_with?", .func = stringEndsWith },
 };
 
 const math_methods = [_]MethodDef{
     .{ .name = "sin", .func = mathSin },
     .{ .name = "cos", .func = mathCos },
     .{ .name = "tan", .func = mathTan },
+    .{ .name = "asin", .func = mathAsin },
+    .{ .name = "acos", .func = mathAcos },
+    .{ .name = "atan2", .func = mathAtan2 },
     .{ .name = "sqrt", .func = mathSqrt },
     .{ .name = "abs", .func = mathAbs },
+    .{ .name = "round", .func = mathRound },
+    .{ .name = "ceil", .func = mathCeil },
+    .{ .name = "floor", .func = mathFloor },
+    .{ .name = "deg2rad", .func = mathDeg2Rad },
+    .{ .name = "rad2deg", .func = mathRad2Deg },
+    .{ .name = "min", .func = mathMin },
+    .{ .name = "max", .func = mathMax },
 };
 
 pub fn registerCoreClasses(vm: *VM) !void {
