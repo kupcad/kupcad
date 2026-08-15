@@ -1066,7 +1066,9 @@ pub const Compiler = struct {
                 }
                 try self.compileNode(entry.value);
             }
+
             if (entries.len > limits.MAX_HASH_ENTRIES) return error.TooManyConstants;
+
             try self.emitOp(.op_build_map);
             try self.emitByte(@intCast(entries.len));
             self.simulatePop(entries.len * 2);
