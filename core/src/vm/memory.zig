@@ -12,6 +12,9 @@ pub const GC = struct {
     bytes_allocated: usize,
     next_gc_threshold: usize,
 
+    // Hard Sandbox Memory Limit
+    max_memory_limit: ?usize,
+
     const HEAP_GROW_FACTOR: usize = 2;
 
     pub fn init(allocator: std.mem.Allocator) GC {
@@ -20,6 +23,7 @@ pub const GC = struct {
             .first_object = null,
             .bytes_allocated = 0,
             .next_gc_threshold = 1024 * 1024, // 1MB starting threshold
+            .max_memory_limit = null, // Can be configured post-init for sandboxing
         };
     }
 
@@ -31,19 +35,31 @@ pub const GC = struct {
         if (!force_full) {
             self.markRoots(vm);
         }
-        self.sweep(vm);
 
+        self.sweep(vm);
         self.next_gc_threshold = self.bytes_allocated * HEAP_GROW_FACTOR;
         _ = before;
         // std.debug.print("-- GC End (Freed {} bytes) --\n", .{before - self.bytes_allocated});
     }
 
     inline fn allocateObject(self: *GC, vm: *VM, comptime T: type, obj_type: value.ObjType) !*T {
-        if (self.bytes_allocated > self.next_gc_threshold) {
+        // 1. Soft Threshold: Trigger standard GC
+        if (self.bytes_allocated + @sizeOf(T) > self.next_gc_threshold) {
             self.collectGarbage(vm, false);
         }
+
+        // 2. Hard Limit: Sandbox Check!
+        if (self.max_memory_limit) |limit| {
+            if (self.bytes_allocated + @sizeOf(T) > limit) {
+                // We tried sweeping, but we are still out of memory. Sandbox killed the script.
+                vm.reportError("Sandbox Error: Script exceeded maximum memory limit of {d} bytes.\n", .{limit});
+                return error.OutOfMemory;
+            }
+        }
+
         const ptr = try self.allocator.create(T);
         self.bytes_allocated += @sizeOf(T);
+
         ptr.obj = .{
             .obj_type = obj_type,
             .is_marked = false,
@@ -125,13 +141,27 @@ pub const GC = struct {
     }
 
     pub fn allocateClosure(self: *GC, vm: *VM, function: *value.ObjFunction) !*value.ObjClosure {
-        const ptr = try self.allocateObject(vm, value.ObjClosure, .closure);
+        // Pre-calculate secondary memory allocation to safely check sandbox limits
+        const upvals_size = @sizeOf(?*value.ObjUpvalue) * function.upvalue_count;
 
-        // Handle secondary allocation manually
+        if (self.max_memory_limit) |limit| {
+            if (self.bytes_allocated + upvals_size + @sizeOf(value.ObjClosure) > limit) {
+                vm.reportError("Sandbox Error: Script exceeded maximum memory limit.\n", .{});
+                return error.OutOfMemory;
+            }
+        }
+
+        // Allocate secondary buffers first so errdefer handles clean up
         const upvalues = try self.allocator.alloc(?*value.ObjUpvalue, function.upvalue_count);
         @memset(upvalues, null);
-        self.bytes_allocated += @sizeOf(?*value.ObjUpvalue) * upvalues.len;
 
+        // Only register into the GC heap safely after secondary memory succeeds
+        const ptr = self.allocateObject(vm, value.ObjClosure, .closure) catch |err| {
+            self.allocator.free(upvalues);
+            return err;
+        };
+
+        self.bytes_allocated += upvals_size;
         ptr.function = function;
         ptr.upvalues = upvalues.ptr;
         return ptr;
@@ -140,19 +170,58 @@ pub const GC = struct {
     pub fn allocateString(self: *GC, vm: *VM, chars: []const u8) !*value.ObjString {
         if (vm.strings.get(chars)) |existing| return existing;
 
-        const ptr = try self.allocateObject(vm, value.ObjString, .string);
+        if (self.max_memory_limit) |limit| {
+            if (self.bytes_allocated + chars.len + @sizeOf(value.ObjString) > limit) {
+                vm.reportError("Sandbox Error: Script exceeded maximum memory limit.\n", .{});
+                return error.OutOfMemory;
+            }
+        }
 
-        // Handle secondary string allocation manually
+        // Dupe secondary buffer first
         const owned_chars = try self.allocator.dupe(u8, chars);
+
+        const ptr = self.allocateObject(vm, value.ObjString, .string) catch |err| {
+            self.allocator.free(owned_chars);
+            return err;
+        };
+
         self.bytes_allocated += owned_chars.len;
         ptr.chars = owned_chars;
 
-        try vm.strings.put(self.allocator, ptr.chars, ptr);
+        vm.strings.put(self.allocator, ptr.chars, ptr) catch |err| {
+            return err;
+        };
+        return ptr;
+    }
+
+    pub fn allocateSymbol(self: *GC, vm: *VM, chars: []const u8) !*value.ObjSymbol {
+        if (vm.symbols.get(chars)) |existing| return existing;
+
+        if (self.max_memory_limit) |limit| {
+            if (self.bytes_allocated + chars.len + @sizeOf(value.ObjSymbol) > limit) {
+                vm.reportError("Sandbox Error: Script exceeded maximum memory limit.\n", .{});
+                return error.OutOfMemory;
+            }
+        }
+
+        // Dupe secondary buffer first
+        const owned_chars = try self.allocator.dupe(u8, chars);
+
+        const ptr = self.allocateObject(vm, value.ObjSymbol, .symbol) catch |err| {
+            self.allocator.free(owned_chars);
+            return err;
+        };
+
+        self.bytes_allocated += owned_chars.len;
+        ptr.chars = owned_chars;
+
+        vm.symbols.put(self.allocator, ptr.chars, ptr) catch |err| {
+            return err;
+        };
         return ptr;
     }
 
     // --- ARC Allocators (Bypasses GC Tracking) ---
-
     pub fn allocateGeometry(self: *GC, state: value.GeometryState) !*value.ObjGeometry {
         const ptr = try self.allocator.create(value.ObjGeometry);
         ptr.* = .{
@@ -193,22 +262,7 @@ pub const GC = struct {
         return ptr;
     }
 
-    pub fn allocateSymbol(self: *GC, vm: *VM, chars: []const u8) !*value.ObjSymbol {
-        if (vm.symbols.get(chars)) |existing| return existing;
-
-        const ptr = try self.allocateObject(vm, value.ObjSymbol, .symbol);
-
-        // Handle secondary string allocation manually
-        const owned_chars = try self.allocator.dupe(u8, chars);
-        self.bytes_allocated += owned_chars.len;
-        ptr.chars = owned_chars;
-
-        try vm.symbols.put(self.allocator, ptr.chars, ptr);
-        return ptr;
-    }
-
     // --- ARC Deallocators ---
-
     pub fn freeWorkplane(self: *GC, vm: *VM, wp_obj: *value.ObjWorkplane) void {
         // Automatically release the reference to the parent 3D geometry
         const parent_val = value.Value.initGeometry(wp_obj.parent);
@@ -229,7 +283,6 @@ pub const GC = struct {
     }
 
     // --- Phase 1: Mark ---
-
     fn markRoots(self: *GC, vm: *VM) void {
         // Mark the Shadow Stack (WASM-Safe!)
         for (vm.stack[0..vm.stack_top]) |val| {
@@ -280,6 +333,7 @@ pub const GC = struct {
             .closure => {
                 const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
                 self.markObject(&closure.function.obj);
+
                 // Trace captured upvalues to prevent them from being swept
                 for (0..closure.function.upvalue_count) |i| {
                     if (closure.upvalues[i]) |upvalue| {
@@ -307,10 +361,13 @@ pub const GC = struct {
                 self.markObject(&class_obj.name.obj);
                 if (class_obj.superclass) |sup| self.markObject(&sup.obj);
                 for (class_obj.included_modules.items) |mod| self.markObject(&mod.obj);
+
                 var it = class_obj.methods.valueIterator();
                 while (it.next()) |val| self.markValue(val.*);
+
                 var c_it = class_obj.class_methods.valueIterator();
                 while (c_it.next()) |val| self.markValue(val.*);
+
                 var f_it = class_obj.class_fields.valueIterator();
                 while (f_it.next()) |val| self.markValue(val.*);
             },
@@ -331,7 +388,6 @@ pub const GC = struct {
     }
 
     // --- Phase 2: Sweep ---
-
     fn sweep(self: *GC, vm: *VM) void {
         var previous: ?*value.Obj = null;
         var current: ?*value.Obj = self.first_object;
@@ -346,13 +402,11 @@ pub const GC = struct {
                 // Object is dead. Unlink and free it.
                 const unreached = obj;
                 current = obj.next;
-
                 if (previous) |prev| {
                     prev.next = current;
                 } else {
                     self.first_object = current;
                 }
-
                 self.freeObject(vm, unreached);
             }
         }
@@ -363,7 +417,6 @@ pub const GC = struct {
             .string => {
                 const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", obj));
                 _ = vm.strings.remove(str_obj.chars);
-
                 self.allocator.free(str_obj.chars);
                 self.bytes_allocated -= str_obj.chars.len;
                 self.allocator.destroy(str_obj);
@@ -399,14 +452,12 @@ pub const GC = struct {
                 const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
                 // Calculate the size of the slice to subtract accurately
                 const upvals_size = @sizeOf(?*value.ObjUpvalue) * closure.function.upvalue_count;
-
                 self.allocator.free(closure.upvalues[0..closure.function.upvalue_count]);
                 self.allocator.destroy(closure);
                 self.bytes_allocated -= (@sizeOf(value.ObjClosure) + upvals_size);
             },
             .function => {
                 const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
-
                 // Ensure the child chunk memory is freed when the function dies
                 if (func.owns_chunk) {
                     if (func.chunk) |c| {
@@ -415,7 +466,6 @@ pub const GC = struct {
                         self.allocator.destroy(chnk);
                     }
                 }
-
                 self.allocator.destroy(func);
                 self.bytes_allocated -= @sizeOf(value.ObjFunction);
             },

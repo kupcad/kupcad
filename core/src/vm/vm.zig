@@ -35,7 +35,6 @@ pub const RescueFrame = struct {
 pub const VM = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
-    cwd: std.Io.Dir,
     stack: []value.Value,
     stack_top: usize,
     frames: std.ArrayListUnmanaged(CallFrame),
@@ -67,7 +66,6 @@ pub const VM = struct {
         return .{
             .allocator = allocator,
             .io = io,
-            .cwd = std.Io.Dir.cwd(),
             .stack = initial_stack,
             .stack_top = 0,
             .frames = .empty,

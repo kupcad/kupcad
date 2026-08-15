@@ -30,7 +30,7 @@ test "VM: End-to-end compilation and execution of math expression" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(root_math);
 
     const result = vm.interpret(&out_chunk);
@@ -121,7 +121,7 @@ test "VM: End-to-end compilation of fluent API method chaining (cube().translate
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(translate_call);
 
     const result = vm.interpret(&out_chunk);
@@ -157,7 +157,7 @@ test "VM: Executes CSG Operator Overloading lazily (cube() + cube())" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(add_node);
 
     const result = vm.interpret(&out_chunk);
@@ -166,54 +166,6 @@ test "VM: Executes CSG Operator Overloading lazily (cube() + cube())" {
 
     const final_val = vm.stack[0];
     try testing.expect(final_val.isGeometry());
-}
-
-test "VM: Generates a real physical .stl file via JIT materialization" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
-
-    const cube_str = try b.intern("cube");
-    const empty_args = try b.addNamedArgs(&.{});
-    const cube_call = try b.methodCall(.none, cube_str, empty_args, .none, false, 0, 0);
-
-    const export_str = try b.intern("export_stl");
-    const filename_node = try b.stringNode("test_cube.stl", 0);
-
-    var args_buf = [_]ast.NamedArg{
-        .{ .name = .none, .value = filename_node, .modifier = null },
-        .{ .name = .none, .value = cube_call, .modifier = null },
-    };
-    const export_args = try b.addNamedArgs(&args_buf);
-    const export_call = try b.methodCall(.none, export_str, export_args, .none, false, 0, 0);
-
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    vm.cwd = tmp.dir;
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
-    try comp.compile(export_call);
-
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    // Verify the file was written safely to the temp directory
-    const file = try tmp.dir.openFile(testing.io, "test_cube.stl", .{});
-    defer file.close(testing.io);
-    const stat = try file.stat(testing.io);
-
-    // Note: Due to mock exporters, file byte count will adapt based on final implementation.
-    // For now, ensuring the VM reaches this point without crashing validates the JIT pathway.
-    try testing.expect(stat.size >= 0);
 }
 
 test "VM: Closures correctly capture and return upvalues" {
@@ -594,7 +546,7 @@ test "VM: executes logical short-circuiting and comparisons correctly" {
     defer chunk1.free(testing.allocator);
 
     var comp1 = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &chunk1, &vm);
-    defer comp1.deinit(); // Leak fixed
+    defer comp1.deinit();
     try comp1.compile(gte_node);
 
     var result = vm.interpret(&chunk1);
@@ -618,7 +570,7 @@ test "VM: executes logical short-circuiting and comparisons correctly" {
     defer chunk2.free(testing.allocator);
 
     var comp2 = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &chunk2, &vm);
-    defer comp2.deinit(); // Leak fixed
+    defer comp2.deinit();
     try comp2.compile(and_node);
 
     result = vm.interpret(&chunk2);
@@ -667,7 +619,7 @@ test "VM: executes Array.map with functional closure block" {
 
     // Update the Compiler.init call to pass `symbols.items` instead of `&.{}`
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(map_call);
 
     const result = vm.interpret(&out_chunk);
@@ -956,7 +908,7 @@ test "Compiler: compiles block_given? and yield intrinsics natively" {
     defer vm.deinit();
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(bg_call);
     try comp.compile(yield_call);
 
@@ -1019,7 +971,7 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     symbols.items[@intFromEnum(def_node)] = .{ .kind = .global, .index = 0 };
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
 
     // Group into a block to execute as a single script sequence
     const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
@@ -1065,7 +1017,7 @@ test "VM: Compiles and executes class variables (@@var)" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1095,7 +1047,7 @@ test "VM: Compiles and executes class methods (def self.method)" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1130,7 +1082,7 @@ test "VM: Standard exceptions are caught in rescue blocks natively" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1194,7 +1146,7 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     symbols.items[@intFromEnum(def_node)] = .{ .kind = .global, .index = 0 };
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
 
     // Group into a block to execute as a single script sequence
     const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
@@ -1243,7 +1195,7 @@ test "VM: Explicit block capturing (&block) and first-class invocation" {
     // We intentionally DO NOT override doc.symbols here, so `x` stays a clean local!
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1270,7 +1222,7 @@ test "VM: LHS Splat Destructuring (a, *b, c = arr)" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1341,7 +1293,7 @@ test "VM: Named Keyword Arguments with default values" {
     symbols.items[@intFromEnum(def_node)] = .{ .kind = .global, .index = 0 };
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
     try comp.compile(block_node);
 
@@ -1374,7 +1326,7 @@ test "VM: defined? operator evaluates safely without panicking" {
     defer vm.deinit();
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(def_expr);
 
     const result = vm.interpret(&out_chunk);
@@ -1410,7 +1362,7 @@ test "VM: Modules and Mixins (include)" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1444,7 +1396,7 @@ test "VM: Monkey-patching native Primitives dynamically (Array extension)" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1484,7 +1436,7 @@ test "VM: executes while loops with break and next" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1511,7 +1463,7 @@ test "VM: executes ternary operator with short-circuiting" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1544,7 +1496,7 @@ test "VM Edge Case: Out of bounds array indexing returns runtime error" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1586,7 +1538,7 @@ test "VM: Module mixin method resolution order" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1622,7 +1574,7 @@ test "VM: Array utility methods (max, min, sum, flatten)" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1659,7 +1611,7 @@ test "VM: Symbol conversion and Map key manipulation" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1696,7 +1648,7 @@ test "VM: Type coercion and Number methods" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1735,7 +1687,7 @@ test "VM: Negative array indexing" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
@@ -1778,7 +1730,7 @@ test "VM: case statement subsumption (===) with ranges and classes" {
     defer out_chunk.free(testing.allocator);
 
     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);

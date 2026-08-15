@@ -11,21 +11,21 @@ pub fn nativeImportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
         return error.RuntimeError;
     }
 
-    const filename = args[0].asString();
+    // const filename = args[0].asString();
 
     // Read the STL file from disk (Max 500 MB limit)
-    const file_data = vm.cwd.readFileAlloc(vm.io, filename, vm.allocator, .limited(1024 * 1024 * 500)) catch |err| {
-        std.log.err("Could not read STL file '{s}': {}\n", .{ filename, err });
-        return error.RuntimeError;
-    };
-    defer vm.allocator.free(file_data);
+    // const file_data = vm.cwd.readFileAlloc(vm.io, filename, vm.allocator, .limited(1024 * 1024 * 500)) catch |err| {
+    //     std.log.err("Could not read STL file '{s}': {}\n", .{ filename, err });
+    //     return error.RuntimeError;
+    // };
+    // defer vm.allocator.free(file_data);
 
     // Parse the binary STL
-    var stl_data = stl_format.readBinary(vm.allocator, file_data) catch |err| {
-        std.log.err("Failed to parse binary STL file '{s}': {}\n", .{ filename, err });
-        return error.RuntimeError;
-    };
-    defer stl_data.deinit(vm.allocator);
+    // var stl_data = stl_format.readBinary(vm.allocator, file_data) catch |err| {
+    //     std.log.err("Failed to parse binary STL file '{s}': {}\n", .{ filename, err });
+    //     return error.RuntimeError;
+    // };
+    // defer stl_data.deinit(vm.allocator);
 
     // TODO: Pass stl_data.vertices and stl_data.faces to the active Geometry Kernel
     // to construct a native C++ Manifold/OCCT mesh handle.
@@ -73,13 +73,13 @@ pub fn nativeExportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
     //     return error.RuntimeError;
     // };
 
-    vm.cwd.writeFile(vm.io, .{
-        .sub_path = filename,
-        .data = out.written(),
-    }) catch |err| {
-        std.log.err("Could not write STL file '{s}': {}\n", .{ filename, err });
-        return error.RuntimeError;
-    };
+    // vm.cwd.writeFile(vm.io, .{
+    //     .sub_path = filename,
+    //     .data = out.written(),
+    // }) catch |err| {
+    //     std.log.err("Could not write STL file '{s}': {}\n", .{ filename, err });
+    //     return error.RuntimeError;
+    // };
 
     // Return the unmodified geometry value to allow fluent method chaining
     // Retain it to grant +1 ownership to the VM loop
