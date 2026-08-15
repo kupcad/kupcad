@@ -26,8 +26,7 @@ pub const Local = struct {
 
 pub const LoopState = struct {
     start: usize,
-    exit_jumps: [limits.MAX_LOOP_EXITS]usize = undefined,
-    exit_count: usize = 0,
+    exit_jumps: std.ArrayListUnmanaged(usize) = .empty,
 };
 
 const Intrinsic = enum {
@@ -55,14 +54,9 @@ pub const Compiler = struct {
     enclosing: ?*Compiler = null,
     function: ?*value.ObjFunction = null,
 
-    upvalues: [limits.MAX_UPVALUES]Upvalue = undefined,
-    upvalue_count: usize = 0,
-
-    locals: [limits.MAX_LOCALS]Local = undefined,
-    local_count: usize = 0,
-
-    loops: [limits.MAX_LOOPS]LoopState = undefined,
-    loop_count: usize = 0,
+    upvalues: std.ArrayListUnmanaged(Upvalue) = .empty,
+    locals: std.ArrayListUnmanaged(Local) = .empty,
+    loops: std.ArrayListUnmanaged(LoopState) = .empty,
 
     current_stack_depth: usize,
     max_stack_depth: usize,
@@ -84,32 +78,39 @@ pub const Compiler = struct {
             .vm = vm,
             .enclosing = null,
             .function = null,
-            .upvalue_count = 0,
-            .local_count = 0,
+            .upvalues = .empty,
+            .locals = .empty,
+            .loops = .empty,
             .current_stack_depth = 0,
             .max_stack_depth = 0,
-            .loop_count = 0,
             .current_source_offset = 0,
         };
     }
 
+    pub fn deinit(self: *Compiler) void {
+        self.upvalues.deinit(self.allocator);
+        self.locals.deinit(self.allocator);
+        for (self.loops.items) |*loop| {
+            loop.exit_jumps.deinit(self.allocator);
+        }
+        self.loops.deinit(self.allocator);
+    }
+
     // --- Lexical Scope Resolvers ---
 
-    fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u8) void {
-        for (self.locals[0..self.local_count]) |loc| {
+    fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u8) CompileError!void {
+        for (self.locals.items) |loc| {
             if (loc.name_id == name_id) return;
         }
-        if (self.local_count < limits.MAX_LOCALS) {
-            self.locals[self.local_count] = .{ .name_id = name_id, .slot = slot };
-            self.local_count += 1;
-        }
+        if (self.locals.items.len >= limits.MAX_LOCALS) return error.TooManyLocals;
+        try self.locals.append(self.allocator, .{ .name_id = name_id, .slot = slot });
     }
 
     fn resolveLocal(self: *Compiler, name_id: ast.StringId) ?u8 {
-        var i: usize = self.local_count;
+        var i: usize = self.locals.items.len;
         while (i > 0) {
             i -= 1;
-            if (self.locals[i].name_id == name_id) return self.locals[i].slot;
+            if (self.locals.items[i].name_id == name_id) return self.locals.items[i].slot;
         }
         return null;
     }
@@ -132,16 +133,15 @@ pub const Compiler = struct {
     }
 
     fn addUpvalue(self: *Compiler, index: u8, is_local: bool) CompileError!u8 {
-        for (self.upvalues[0..self.upvalue_count], 0..) |upv, i| {
+        for (self.upvalues.items, 0..) |upv, i| {
             if (upv.index == index and upv.is_local == is_local) {
                 return @intCast(i);
             }
         }
-        if (self.upvalue_count >= limits.MAX_UPVALUES) return error.TooManyLocals;
-        self.upvalues[self.upvalue_count] = .{ .index = index, .is_local = is_local };
-        self.upvalue_count += 1;
-        if (self.function) |f| f.upvalue_count = @intCast(self.upvalue_count);
-        return @intCast(self.upvalue_count - 1);
+        if (self.upvalues.items.len >= limits.MAX_UPVALUES) return error.TooManyLocals;
+        try self.upvalues.append(self.allocator, .{ .index = index, .is_local = is_local });
+        if (self.function) |f| f.upvalue_count = @intCast(self.upvalues.items.len);
+        return @intCast(self.upvalues.items.len - 1);
     }
 
     // --- Compilation Engine ---
@@ -216,12 +216,10 @@ pub const Compiler = struct {
                 } else {
                     try self.emitOp(.op_nil);
                 }
-                if (self.loop_count == 0) return error.UnknownNode;
+                if (self.loops.items.len == 0) return error.UnknownNode;
                 const jump = try self.emitJump(.op_jump);
-                var cur_loop = &self.loops[self.loop_count - 1];
-                if (cur_loop.exit_count >= limits.MAX_LOOP_EXITS) return error.UnknownNode;
-                cur_loop.exit_jumps[cur_loop.exit_count] = jump;
-                cur_loop.exit_count += 1;
+                var cur_loop = &self.loops.items[self.loops.items.len - 1];
+                try cur_loop.exit_jumps.append(self.allocator, jump);
                 self.simulatePush(1); // Equilibrium for dead code
             },
             .next_stmt => {
@@ -232,8 +230,8 @@ pub const Compiler = struct {
                     try self.emitOp(.op_nil);
                 }
                 try self.emitOp(.op_pop);
-                if (self.loop_count == 0) return error.UnknownNode;
-                const cur_loop = &self.loops[self.loop_count - 1];
+                if (self.loops.items.len == 0) return error.UnknownNode;
+                const cur_loop = &self.loops.items[self.loops.items.len - 1];
                 try self.emitLoop(cur_loop.start);
                 self.simulatePush(1); // Equilibrium for dead code
             },
@@ -373,7 +371,7 @@ pub const Compiler = struct {
                         try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
                         try self.emitOp(.op_nil);
                     } else {
-                        self.addLocal(def_name_id, @intCast(sym.index));
+                        try self.addLocal(def_name_id, @intCast(sym.index));
                         try self.emitOp(.op_set_local);
                         try self.emitByte(@intCast(sym.index));
                     }
@@ -458,9 +456,8 @@ pub const Compiler = struct {
                 const loop_start = self.current_chunk.code.items.len;
 
                 // Push loop state
-                if (self.loop_count >= limits.MAX_LOOPS) return error.UnknownNode;
-                self.loops[self.loop_count] = .{ .start = loop_start, .exit_count = 0 };
-                self.loop_count += 1;
+                if (self.loops.items.len >= limits.MAX_LOOPS) return error.UnknownNode;
+                try self.loops.append(self.allocator, .{ .start = loop_start });
 
                 try self.compileNode(while_payload.condition);
                 if (while_payload.is_until) try self.emitOp(.op_not);
@@ -478,10 +475,10 @@ pub const Compiler = struct {
                 try self.emitOp(.op_pop);
                 try self.emitOp(.op_nil); // Natural exit yields nil
 
-                // Pop loop state and safely patch all 'break' jump addresses
-                self.loop_count -= 1;
-                const cur_loop = self.loops[self.loop_count];
-                for (cur_loop.exit_jumps[0..cur_loop.exit_count]) |jmp| {
+                var cur_loop = self.loops.pop().?;
+
+                defer cur_loop.exit_jumps.deinit(self.allocator);
+                for (cur_loop.exit_jumps.items) |jmp| {
                     self.patchJump(jmp);
                 }
             },
@@ -616,7 +613,7 @@ pub const Compiler = struct {
 
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 if (sym.kind == .local) {
-                    self.addLocal(name_id, @intCast(sym.index));
+                    try self.addLocal(name_id, @intCast(sym.index));
                     try self.emitOp(.op_set_local);
                     try self.emitByte(@intCast(sym.index));
                 } else {
@@ -875,29 +872,30 @@ pub const Compiler = struct {
             .vm = self.vm,
             .enclosing = self,
             .function = func,
-            .upvalue_count = 0,
-            .local_count = 0,
+            .upvalues = .empty,
+            .locals = .empty,
+            .loops = .empty,
             .current_stack_depth = 0,
             .max_stack_depth = 0,
             .current_source_offset = self.current_source_offset,
         };
+        defer child_compiler.deinit();
 
         // Reserve slot 0 for the closure itself
-        child_compiler.local_count = 1;
-        child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
+        try child_compiler.addLocal(.none, 0);
 
         var current_slot: u8 = 1;
         const map_slot = if (has_kwargs) @as(u8, @intCast(positional_count)) else 0;
 
         for (params) |param| {
             if (param.modifier != null and param.modifier.? == .block) {
-                child_compiler.addLocal(param.name, @intCast(positional_count + 1));
+                try child_compiler.addLocal(param.name, @intCast(positional_count + 1));
             } else if (param.is_keyword) {
                 // Handled dynamically via virtual slots below
             } else if (param.modifier != null and param.modifier.? == .double_splat) {
-                child_compiler.addLocal(param.name, map_slot);
+                try child_compiler.addLocal(param.name, map_slot);
             } else {
-                child_compiler.addLocal(param.name, current_slot);
+                try child_compiler.addLocal(param.name, current_slot);
                 current_slot += 1;
             }
         }
@@ -906,7 +904,7 @@ pub const Compiler = struct {
         var num_virtuals: usize = 0;
         for (params) |param| {
             if (param.is_keyword) {
-                child_compiler.addLocal(param.name, virtual_slot);
+                try child_compiler.addLocal(param.name, virtual_slot);
                 virtual_slot += 1;
                 num_virtuals += 1;
             }
@@ -961,7 +959,7 @@ pub const Compiler = struct {
 
         try self.emitConstantInstruction(.op_closure, .op_closure_wide, func_idx);
 
-        for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
+        for (child_compiler.upvalues.items) |upv| {
             try self.emitByte(if (upv.is_local) 1 else 0);
             try self.emitByte(upv.index);
         }
@@ -984,9 +982,9 @@ pub const Compiler = struct {
                 if (self.enclosing == null) {
                     try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
                 } else {
-                    self.addLocal(name_id, @intCast(self.local_count));
+                    try self.addLocal(name_id, @intCast(self.locals.items.len));
                     try self.emitOp(.op_set_local);
-                    try self.emitByte(@intCast(self.local_count - 1));
+                    try self.emitByte(@intCast(self.locals.items.len - 1));
                     try self.emitOp(.op_pop);
                 }
             }
@@ -1143,8 +1141,9 @@ pub const Compiler = struct {
             try self.emitByte(0xFF); // default low
 
             var condition_idx: usize = 0;
-            var end_jumps: [limits.MAX_CASE_BRANCHES]usize = undefined;
-            var end_jump_count: usize = 0;
+            var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+            defer end_jumps.deinit(self.allocator);
+
             for (branches) |branch| {
                 const body_jump_target = self.current_chunk.code.items.len;
                 const conds = self.tree.getNodes(branch.conditions);
@@ -1176,10 +1175,7 @@ pub const Compiler = struct {
 
                 // Compile the actual body
                 try self.compileNode(branch.body);
-                if (end_jump_count < limits.MAX_CASE_BRANCHES) {
-                    end_jumps[end_jump_count] = try self.emitJump(.op_jump);
-                    end_jump_count += 1;
-                }
+                try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
             }
 
             // Backpatch Default Branch
@@ -1195,15 +1191,16 @@ pub const Compiler = struct {
             }
 
             // Cap off all successful branch executions
-            for (end_jumps[0..end_jump_count]) |jmp| {
+            for (end_jumps.items) |jmp| {
                 self.patchJump(jmp);
             }
             self.current_stack_depth = saved_depth + 1;
         } else {
             // ====== LINEAR FALLBACK PATH ======
             try self.compileNode(cs.condition);
-            var end_jumps: [limits.MAX_CASE_BRANCHES]usize = undefined;
-            var end_jump_count: usize = 0;
+
+            var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+            defer end_jumps.deinit(self.allocator);
 
             for (branches) |branch| {
                 const conds = self.tree.getNodes(branch.conditions);
@@ -1216,10 +1213,7 @@ pub const Compiler = struct {
                     try self.emitOp(.op_pop);
 
                     try self.compileNode(branch.body);
-                    if (end_jump_count < limits.MAX_CASE_BRANCHES) {
-                        end_jumps[end_jump_count] = try self.emitJump(.op_jump);
-                        end_jump_count += 1;
-                    }
+                    try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
                     self.current_stack_depth = saved_depth + 2;
                     self.patchJump(skip_jump);
                     try self.emitOp(.op_pop);
@@ -1233,7 +1227,7 @@ pub const Compiler = struct {
                 try self.emitOp(.op_nil);
             }
 
-            for (end_jumps[0..end_jump_count]) |jmp| {
+            for (end_jumps.items) |jmp| {
                 self.patchJump(jmp);
             }
             self.current_stack_depth = saved_depth + 1;
@@ -1259,8 +1253,9 @@ pub const Compiler = struct {
             self.patchJump(rescue_jump);
             self.simulatePush(1); // Simulator: op_throw pushed the error value on the stack
             const error_depth = self.current_stack_depth; // Save the stack depth!
-            var rescue_end_jumps: [limits.MAX_RESCUE_CLAUSES]usize = undefined;
-            var rescue_end_jump_count: usize = 0;
+            var rescue_end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+            defer rescue_end_jumps.deinit(self.allocator);
+
             var next_rescue_jump: ?usize = null;
 
             for (rescues) |rescue| {
@@ -1271,8 +1266,8 @@ pub const Compiler = struct {
                 next_rescue_jump = null;
 
                 const errors = self.tree.getStringLists(rescue.errors);
-                var match_jumps: [limits.MAX_RESCUE_ERRORS]usize = undefined;
-                var match_jump_count: usize = 0;
+                var match_jumps: std.ArrayListUnmanaged(usize) = .empty;
+                defer match_jumps.deinit(self.allocator);
 
                 if (errors.len > 0) {
                     for (errors) |err_id| {
@@ -1285,10 +1280,7 @@ pub const Compiler = struct {
                         const skip_jump = try self.emitJump(.op_jump_if_false);
                         try self.emitOp(.op_pop); // Discard True
 
-                        if (match_jump_count < limits.MAX_RESCUE_ERRORS) {
-                            match_jumps[match_jump_count] = try self.emitJump(.op_jump);
-                            match_jump_count += 1;
-                        }
+                        try match_jumps.append(self.allocator, try self.emitJump(.op_jump));
 
                         self.current_stack_depth = error_depth + 1; // False branch has error + false
                         self.patchJump(skip_jump);
@@ -1300,23 +1292,20 @@ pub const Compiler = struct {
 
                 // --- MATCHED ROUTE ---
                 self.current_stack_depth = error_depth; // Jump lands here with error on top
-                for (match_jumps[0..match_jump_count]) |jmp| {
+                for (match_jumps.items) |jmp| {
                     self.patchJump(jmp);
                 }
 
                 const var_str = self.tree.getString(rescue.variable);
                 if (var_str.len > 0) {
-                    self.addLocal(rescue.variable, @intCast(self.local_count));
+                    try self.addLocal(rescue.variable, @intCast(self.locals.items.len));
                     try self.emitOp(.op_set_local);
-                    try self.emitByte(@intCast(self.local_count - 1));
+                    try self.emitByte(@intCast(self.locals.items.len - 1));
                 }
                 try self.emitOp(.op_pop); // Pop the error value off stack
                 try self.compileNode(rescue.body);
 
-                if (rescue_end_jump_count < limits.MAX_RESCUE_CLAUSES) {
-                    rescue_end_jumps[rescue_end_jump_count] = try self.emitJump(.op_jump);
-                    rescue_end_jump_count += 1;
-                }
+                try rescue_end_jumps.append(self.allocator, try self.emitJump(.op_jump));
             }
 
             // If it fell through ALL rescue blocks without matching, re-throw it!
@@ -1328,7 +1317,7 @@ pub const Compiler = struct {
             }
 
             // Patch all successful rescue block ends to arrive here
-            for (rescue_end_jumps[0..rescue_end_jump_count]) |jmp| {
+            for (rescue_end_jumps.items) |jmp| {
                 self.patchJump(jmp);
             }
             self.current_stack_depth = error_depth; // The block successfully yields 1 value (error_depth is depth + 1)
@@ -1441,20 +1430,22 @@ pub const Compiler = struct {
                 .vm = self.vm,
                 .enclosing = self,
                 .function = func,
-                .upvalue_count = 0,
-                .local_count = 0,
+                .upvalues = .empty,
+                .locals = .empty,
+                .loops = .empty,
                 .current_stack_depth = 0,
                 .max_stack_depth = 0,
                 .current_source_offset = self.current_source_offset,
             };
+            defer child_compiler.deinit();
 
-            child_compiler.local_count = 1;
-            child_compiler.locals[0] = .{ .name_id = .none, .slot = 0 };
+            // Reserve slot 0 for the closure itself
+            try child_compiler.addLocal(.none, 0);
 
             for (block_params, 0..) |p_idx, i| {
                 const p_node = self.tree.getNode(p_idx).?;
                 const name_id = @as(ast.StringId, @enumFromInt(p_node.data));
-                child_compiler.addLocal(name_id, @intCast(i + 1));
+                try child_compiler.addLocal(name_id, @intCast(i + 1));
             }
 
             // Compiling a block automatically leaves the last statement on the stack as an implicit return!
@@ -1467,7 +1458,7 @@ pub const Compiler = struct {
 
             try self.emitConstantInstruction(.op_closure, .op_closure_wide, func_idx);
 
-            for (child_compiler.upvalues[0..child_compiler.upvalue_count]) |upv| {
+            for (child_compiler.upvalues.items) |upv| {
                 try self.emitByte(if (upv.is_local) 1 else 0);
                 try self.emitByte(upv.index);
             }
@@ -1580,7 +1571,7 @@ pub const Compiler = struct {
             try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
             try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
         } else {
-            self.addLocal(name_id, @intCast(sym.index));
+            try self.addLocal(name_id, @intCast(sym.index));
             try self.emitOp(.op_set_local);
             try self.emitByte(@intCast(sym.index));
         }

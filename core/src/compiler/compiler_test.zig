@@ -308,6 +308,7 @@ test "Compiler Edge Case: Compiles complex Begin/Rescue with specific Type Check
     defer vm.deinit();
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
 
     // We are ensuring the complex `op_is_instance` dynamic routing compiles without crashing
     try comp.compile(begin_stmt);
