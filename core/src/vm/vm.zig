@@ -728,73 +728,6 @@ pub const VM = struct {
                         }
                     }
                 },
-                .op_unpack_splat => {
-                    const pre_count = exec_chunk.code.items[frame.ip];
-                    const post_count = exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
-
-                    const val = self.pop();
-                    defer self.releaseValue(val);
-
-                    if (val.isObject() and val.asObj().obj_type == .array) {
-                        const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", val.asObj())));
-                        const total = arr.items.items.len;
-
-                        for (0..pre_count) |i| {
-                            if (i < total) self.push(arr.items.items[i]) else self.push(value.Value.initNil());
-                        }
-
-                        const splat_arr = self.gc.allocateArray(self) catch return .runtime_error;
-                        const splat_val = value.Value.initObj(&splat_arr.obj);
-                        self.push(splat_val);
-
-                        if (total > pre_count + post_count) {
-                            const splat_size = total - pre_count - post_count;
-                            splat_arr.items.ensureTotalCapacity(self.allocator, splat_size) catch return .runtime_error;
-                            for (0..splat_size) |i| {
-                                const item = arr.items.items[pre_count + i];
-                                self.retainValue(item);
-                                splat_arr.items.appendAssumeCapacity(item);
-                            }
-                        }
-
-                        _ = self.pop();
-                        self.push(splat_val);
-
-                        for (0..post_count) |i| {
-                            const rev_idx = post_count - i;
-                            if (total >= pre_count + rev_idx) {
-                                self.push(arr.items.items[total - rev_idx]);
-                            } else {
-                                self.push(value.Value.initNil());
-                            }
-                        }
-                    } else {
-                        // Fallback: If not array, splat gets empty array, first var gets the value
-                        if (pre_count > 0) {
-                            self.push(val);
-                            for (1..pre_count) |_| self.push(value.Value.initNil());
-
-                            const empty_arr = self.gc.allocateArray(self) catch return .runtime_error;
-                            self.push(value.Value.initObj(&empty_arr.obj));
-
-                            for (0..post_count) |_| self.push(value.Value.initNil());
-                        } else if (post_count > 0) {
-                            const empty_arr = self.gc.allocateArray(self) catch return .runtime_error;
-                            self.push(value.Value.initObj(&empty_arr.obj));
-
-                            for (0..post_count - 1) |_| self.push(value.Value.initNil());
-                            self.push(val);
-                        } else {
-                            const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
-                            self.push(value.Value.initObj(&arr_obj.obj));
-                            self.retainValue(val);
-                            arr_obj.items.append(self.allocator, val) catch return .runtime_error;
-                            _ = self.pop();
-                            self.push(value.Value.initObj(&arr_obj.obj));
-                        }
-                    }
-                },
                 .op_module => {
                     const name_idx = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
@@ -924,111 +857,13 @@ pub const VM = struct {
                     }
                 },
                 .op_invoke => {
-                    const method_name_idx = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
-                    const arg_count = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
-                    const method_name_val = exec_chunk.constants.items[method_name_idx];
-                    const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
-
-                    const base_slot = self.stack_top - 1 - arg_count;
-                    const receiver = self.stack[base_slot];
-                    const args_ptr = self.stack.ptr + base_slot + 1;
-
-                    // Resolve Class of Receiver for Native Methods & Monkey-Patching
-                    var class_obj: ?*value.ObjClass = null;
-                    if (receiver.isInstance()) {
-                        class_obj = receiver.asInstance().class;
-                    } else if (receiver.isObject()) {
-                        switch (receiver.asObj().obj_type) {
-                            .string => class_obj = self.string_class,
-                            .array => class_obj = self.array_class,
-                            .map => class_obj = self.map_class,
-                            else => {},
-                        }
-                    } else if (receiver.isNumber()) {
-                        class_obj = self.number_class;
-                    }
-
-                    // Handle Property Access (Instances only)
-                    if (receiver.isInstance() and arg_count == 0) {
-                        if (receiver.asInstance().fields.get(method_name_str)) |val| {
-                            self.popAndRelease(1); // Pop receiver
-                            self.push(val);
-                            continue;
-                        }
-                    }
-
-                    // Method Lookup
-                    var method_val: ?value.Value = null;
-                    if (receiver.isClass()) {
-                        method_val = self.findClassMethod(receiver.asClass(), method_name_str);
-                        if (method_val == null and std.mem.eql(u8, method_name_str, "new")) {
-                            const class_to_instantiate = receiver.asClass();
-                            const instance = self.gc.allocateInstance(self, class_to_instantiate) catch return .runtime_error;
-                            self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj);
-
-                            if (self.findMethod(class_to_instantiate, "initialize")) |init_method| {
-                                if (init_method.isClosure()) {
-                                    self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
-                                }
-                                continue;
-                            } else if (arg_count > 0) {
-                                self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
-                                return .runtime_error;
-                            }
-                            continue;
-                        }
-                    } else if (class_obj) |c| {
-                        method_val = self.findMethod(c, method_name_str);
-                    }
-
-                    // Dispatch Method if Found
-                    if (method_val) |m_val| {
-                        if (m_val.isNative()) {
-                            const native_obj = m_val.asNative();
-                            const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
-
-                            self.popAndRelease(arg_count + 1);
-
-                            // Absorb the native +1 reference directly
-                            self.stack.ptr[self.stack_top] = result;
-                            self.stack_top += 1;
-                            continue;
-                        } else if (m_val.isClosure()) {
-                            self.dispatchClosure(m_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
-                            continue;
-                        }
-                    }
-
-                    // Dispatch Method if Found
-                    if (method_val) |m_val| {
-                        if (m_val.isNative()) {
-                            const native_obj = m_val.asNative();
-                            const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
-
-                            self.popAndRelease(arg_count + 1);
-                            self.push(result); // Use push()
-                            continue;
-                        } else if (m_val.isClosure()) {
-                            self.dispatchClosure(m_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
-                            continue;
-                        }
-                    }
-
-                    // FALLBACK: NATIVE C++ KERNEL METHODS (Geometry)
-                    if (self.host.invoke_handler) |handler| {
-                        const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch return .runtime_error;
-
-                        self.popAndRelease(arg_count + 1);
-
-                        // Absorb the native +1 reference directly
-                        self.stack.ptr[self.stack_top] = result;
-                        self.stack_top += 1;
-                    } else {
-                        self.reportError("Runtime Error: No invoke handler registered for method '{s}'.\n", .{method_name_str});
-                        return .runtime_error;
-                    }
+                    if (self.executeInvoke(frame, exec_chunk) != .ok) return .runtime_error;
+                },
+                .op_unpack_splat => {
+                    if (self.executeUnpackSplat(frame, exec_chunk) != .ok) return .runtime_error;
+                },
+                .op_pack_splat => {
+                    if (self.executePackSplat(frame, exec_chunk) != .ok) return .runtime_error;
                 },
                 .op_super_invoke => {
                     const arg_count = exec_chunk.code.items[frame.ip];
@@ -1078,53 +913,6 @@ pub const VM = struct {
                     const expected_args = frame.closure.function.arity;
                     const block_val = self.stack[frame.base_slot + expected_args + 1];
                     self.push(value.Value.initBool(block_val.isClosure()));
-                },
-                .op_pack_splat => {
-                    const fixed_arity = exec_chunk.code.items[frame.ip];
-                    const trailing_arity = exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
-                    const block_val = self.stack[self.stack_top - 1]; // Grab the implicit block early!
-
-                    // The arguments start at frame.base_slot + 1 and end exactly before the block
-                    const total_args_passed = (self.stack_top - 1) - (frame.base_slot + 1);
-                    var splat_size: usize = 0;
-                    if (total_args_passed > fixed_arity + trailing_arity) {
-                        splat_size = total_args_passed - fixed_arity - trailing_arity;
-                    }
-
-                    const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
-                    const arr_val = value.Value.initObj(&arr_obj.obj);
-                    arr_obj.items.ensureTotalCapacity(self.allocator, splat_size) catch return .runtime_error;
-
-                    // Pack all excess arguments starting immediately after the fixed arity
-                    const start_idx = frame.base_slot + 1 + fixed_arity;
-                    for (0..splat_size) |i| {
-                        const item = self.stack[start_idx + i];
-                        self.retainValue(item);
-                        arr_obj.items.appendAssumeCapacity(item);
-                    }
-
-                    // Shift any trailing arguments down to close the gap left by the packed arguments
-                    if (splat_size != 1) {
-                        if (splat_size > 1) {
-                            for (0..trailing_arity) |i| {
-                                self.stack[start_idx + 1 + i] = self.stack[start_idx + splat_size + i];
-                            }
-                        } else {
-                            var i: usize = trailing_arity;
-                            while (i > 0) {
-                                i -= 1;
-                                self.stack[start_idx + 1 + i] = self.stack[start_idx + i];
-                            }
-                        }
-                    }
-
-                    // Rewrite the stack to hold the new Array in the splat parameter's slot
-                    self.stack[start_idx] = arr_val;
-                    self.stack_top = start_idx + 1 + trailing_arity;
-
-                    // Push the block back on top to maintain the Uniform Padding invariant
-                    self.push(block_val);
                 },
                 .op_class_method => {
                     const name_idx = exec_chunk.code.items[frame.ip];
@@ -1559,6 +1347,213 @@ pub const VM = struct {
             self.reportError("Runtime Error: Invalid operands for '{s}'\n", .{op_symbol});
             return .runtime_error;
         }
+    }
+
+    inline fn executeInvoke(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
+        const method_name_idx = exec_chunk.code.items[frame.ip];
+        frame.ip += 1;
+        const arg_count = exec_chunk.code.items[frame.ip];
+        frame.ip += 1;
+
+        const method_name_val = exec_chunk.constants.items[method_name_idx];
+        const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
+
+        const base_slot = self.stack_top - 1 - arg_count;
+        const receiver = self.stack[base_slot];
+        const args_ptr = self.stack.ptr + base_slot + 1;
+
+        // Resolve Class of Receiver for Native Methods & Monkey-Patching
+        var class_obj: ?*value.ObjClass = null;
+        if (receiver.isInstance()) {
+            class_obj = receiver.asInstance().class;
+        } else if (receiver.isObject()) {
+            switch (receiver.asObj().obj_type) {
+                .string => class_obj = self.string_class,
+                .array => class_obj = self.array_class,
+                .map => class_obj = self.map_class,
+                else => {},
+            }
+        } else if (receiver.isNumber()) {
+            class_obj = self.number_class;
+        }
+
+        // Handle Property Access (Instances only)
+        if (receiver.isInstance() and arg_count == 0) {
+            if (receiver.asInstance().fields.get(method_name_str)) |val| {
+                self.popAndRelease(1); // Pop receiver
+                self.push(val);
+                return .ok;
+            }
+        }
+
+        // Method Lookup
+        var method_val: ?value.Value = null;
+        if (receiver.isClass()) {
+            method_val = self.findClassMethod(receiver.asClass(), method_name_str);
+            if (method_val == null and std.mem.eql(u8, method_name_str, "new")) {
+                const class_to_instantiate = receiver.asClass();
+                const instance = self.gc.allocateInstance(self, class_to_instantiate) catch return .runtime_error;
+                self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj);
+                if (self.findMethod(class_to_instantiate, "initialize")) |init_method| {
+                    if (init_method.isClosure()) {
+                        self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
+                    }
+                    return .ok;
+                } else if (arg_count > 0) {
+                    self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
+                    return .runtime_error;
+                }
+                return .ok;
+            }
+        } else if (class_obj) |c| {
+            method_val = self.findMethod(c, method_name_str);
+        }
+
+        // Dispatch Method if Found
+        if (method_val) |m_val| {
+            if (m_val.isNative()) {
+                const native_obj = m_val.asNative();
+                const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
+                self.popAndRelease(arg_count + 1);
+                // Absorb the native +1 reference directly
+                self.stack.ptr[self.stack_top] = result;
+                self.stack_top += 1;
+                return .ok;
+            } else if (m_val.isClosure()) {
+                self.dispatchClosure(m_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
+                return .ok;
+            }
+        }
+
+        // FALLBACK: NATIVE C++ KERNEL METHODS (Geometry)
+        if (self.host.invoke_handler) |handler| {
+            const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch return .runtime_error;
+            self.popAndRelease(arg_count + 1);
+            // Absorb the native +1 reference directly
+            self.stack.ptr[self.stack_top] = result;
+            self.stack_top += 1;
+            return .ok;
+        } else {
+            self.reportError("Runtime Error: No invoke handler registered for method '{s}'.\n", .{method_name_str});
+            return .runtime_error;
+        }
+    }
+
+    inline fn executeUnpackSplat(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
+        const pre_count = exec_chunk.code.items[frame.ip];
+        const post_count = exec_chunk.code.items[frame.ip + 1];
+        frame.ip += 2;
+
+        const val = self.pop();
+        defer self.releaseValue(val);
+
+        if (val.isObject() and val.asObj().obj_type == .array) {
+            const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", val.asObj())));
+            const total = arr.items.items.len;
+
+            for (0..pre_count) |i| {
+                if (i < total) self.push(arr.items.items[i]) else self.push(value.Value.initNil());
+            }
+
+            const splat_arr = self.gc.allocateArray(self) catch return .runtime_error;
+            const splat_val = value.Value.initObj(&splat_arr.obj);
+            self.push(splat_val);
+
+            if (total > pre_count + post_count) {
+                const splat_size = total - pre_count - post_count;
+                splat_arr.items.ensureTotalCapacity(self.allocator, splat_size) catch return .runtime_error;
+                for (0..splat_size) |i| {
+                    const item = arr.items.items[pre_count + i];
+                    self.retainValue(item);
+                    splat_arr.items.appendAssumeCapacity(item);
+                }
+            }
+
+            _ = self.pop();
+            self.push(splat_val);
+
+            for (0..post_count) |i| {
+                const rev_idx = post_count - i;
+                if (total >= pre_count + rev_idx) {
+                    self.push(arr.items.items[total - rev_idx]);
+                } else {
+                    self.push(value.Value.initNil());
+                }
+            }
+        } else {
+            // Fallback: If not array, splat gets empty array, first var gets the value
+            if (pre_count > 0) {
+                self.push(val);
+                for (1..pre_count) |_| self.push(value.Value.initNil());
+                const empty_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                self.push(value.Value.initObj(&empty_arr.obj));
+                for (0..post_count) |_| self.push(value.Value.initNil());
+            } else if (post_count > 0) {
+                const empty_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                self.push(value.Value.initObj(&empty_arr.obj));
+                for (0..post_count - 1) |_| self.push(value.Value.initNil());
+                self.push(val);
+            } else {
+                const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                self.push(value.Value.initObj(&arr_obj.obj));
+                self.retainValue(val);
+                arr_obj.items.append(self.allocator, val) catch return .runtime_error;
+                _ = self.pop();
+                self.push(value.Value.initObj(&arr_obj.obj));
+            }
+        }
+        return .ok;
+    }
+
+    inline fn executePackSplat(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
+        const fixed_arity = exec_chunk.code.items[frame.ip];
+        const trailing_arity = exec_chunk.code.items[frame.ip + 1];
+        frame.ip += 2;
+
+        const block_val = self.stack[self.stack_top - 1]; // Grab the implicit block early!
+
+        // The arguments start at frame.base_slot + 1 and end exactly before the block
+        const total_args_passed = (self.stack_top - 1) - (frame.base_slot + 1);
+
+        var splat_size: usize = 0;
+        if (total_args_passed > fixed_arity + trailing_arity) {
+            splat_size = total_args_passed - fixed_arity - trailing_arity;
+        }
+
+        const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+        const arr_val = value.Value.initObj(&arr_obj.obj);
+        arr_obj.items.ensureTotalCapacity(self.allocator, splat_size) catch return .runtime_error;
+
+        // Pack all excess arguments starting immediately after the fixed arity
+        const start_idx = frame.base_slot + 1 + fixed_arity;
+        for (0..splat_size) |i| {
+            const item = self.stack[start_idx + i];
+            self.retainValue(item);
+            arr_obj.items.appendAssumeCapacity(item);
+        }
+
+        // Shift any trailing arguments down to close the gap left by the packed arguments
+        if (splat_size != 1) {
+            if (splat_size > 1) {
+                for (0..trailing_arity) |i| {
+                    self.stack[start_idx + 1 + i] = self.stack[start_idx + splat_size + i];
+                }
+            } else {
+                var i: usize = trailing_arity;
+                while (i > 0) {
+                    i -= 1;
+                    self.stack[start_idx + 1 + i] = self.stack[start_idx + i];
+                }
+            }
+        }
+
+        // Rewrite the stack to hold the new Array in the splat parameter's slot
+        self.stack[start_idx] = arr_val;
+        self.stack_top = start_idx + 1 + trailing_arity;
+
+        // Push the block back on top to maintain the Uniform Padding invariant
+        self.push(block_val);
+        return .ok;
     }
 
     fn popBinaryNumbers(self: *VM) !struct { f64, f64 } {
