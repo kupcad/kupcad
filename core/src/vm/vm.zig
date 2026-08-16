@@ -1264,7 +1264,12 @@ pub const VM = struct {
             self.push(new_val);
             return .ok;
         } else if (self.host.binary_handler) |handler| {
-            const result = handler(self, op, a_val, b_val) catch return .runtime_error;
+            const result = handler(self, op, a_val, b_val) catch {
+                const err_val = self.allocateString("CSG Binary Operation Failed") catch return .runtime_error;
+                self.push(err_val);
+                return self.executeThrow();
+            };
+
             self.stack.ptr[self.stack_top] = result;
             self.stack_top += 1;
             return .ok;
@@ -1419,7 +1424,12 @@ pub const VM = struct {
 
         // FALLBACK: NATIVE C++ KERNEL METHODS (Geometry)
         if (self.host.invoke_handler) |handler| {
-            const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch return .runtime_error;
+            const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch {
+                const err_val = self.allocateString("CAD Kernel / Method Error") catch return .runtime_error;
+                self.push(err_val);
+                return self.executeThrow();
+            };
+
             self.popAndRelease(arg_count + 1);
 
             // Absorb the native +1 reference directly
@@ -1646,7 +1656,13 @@ pub const VM = struct {
         if (callee.isNative()) {
             const native_obj = callee.asNative();
             const args_ptr = self.stack.ptr + base_slot + 1;
-            const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
+
+            const result = native_obj.function(self, arg_count, args_ptr) catch {
+                const err_val = self.allocateString("Native Execution Error") catch return .runtime_error;
+                self.push(err_val);
+                return self.executeThrow();
+            };
+
             self.popAndRelease(arg_count + 1);
             self.stack.ptr[self.stack_top] = result;
             self.stack_top += 1;

@@ -2441,3 +2441,41 @@ test "VM Edge Case: Safe casting prevents panics on invalid CAD arguments" {
     // It should cleanly catch the invalid type and safely abort the execution
     try testing.expectEqual(.runtime_error, result);
 }
+
+test "VM Edge Case: Native C++ FFI failures are safely caught by rescue blocks" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    vm.mute_errors = true; // Prevent the error string from cluttering test output
+
+    // Attempt to translate a geometry using an invalid String instead of a Number.
+    // In Phase 2, this caused a fatal process panic. Now it should gracefully throw to rescue!
+    const source =
+        \\begin
+        \\  c = cube(10)
+        \\  c.translate("hello") # FFI Boundary rejects the type and throws error.RuntimeError
+        \\  100
+        \\rescue => e
+        \\  42
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+
+    // The script should successfully exit with .ok, returning 42 from the rescue block!
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+}
