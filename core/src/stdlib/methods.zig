@@ -3,6 +3,24 @@ const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const geom = @import("../kernel/geometry_handle.zig");
 
+pub fn meshRotate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const x = if (arg_count > 0) args[0].asNumber() else 0.0;
+    const y = if (arg_count > 1) args[1].asNumber() else 0.0;
+    const z = if (arg_count > 2) args[2].asNumber() else 0.0;
+    const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, x, y, z);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+pub fn meshScale(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const x = if (arg_count > 0) args[0].asNumber() else 1.0;
+    // Smart default: If user only provides X, scale uniformly (x, x, x)
+    const y = if (arg_count > 1) args[1].asNumber() else x;
+    const z = if (arg_count > 2) args[2].asNumber() else x;
+
+    const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, x, y, z);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
 pub fn meshTranslate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const x = if (arg_count > 0) args[0].asNumber() else 0.0;
     const y = if (arg_count > 1) args[1].asNumber() else 0.0;

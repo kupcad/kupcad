@@ -54,8 +54,8 @@ pub const MeshMethod = struct {
 
 pub const mesh_methods = [_]MeshMethod{
     .{ .name = "translate", .category = .transform, .func = methods.meshTranslate },
-    .{ .name = "rotate", .category = .transform, .func = methods.meshMockTransform },
-    .{ .name = "chamfer", .category = .transform, .func = methods.meshMockTransform },
+    .{ .name = "rotate", .category = .transform, .func = methods.meshRotate },
+    .{ .name = "scale", .category = .transform, .func = methods.meshScale },
     .{ .name = "on_face", .category = .workplane_method, .func = methods.meshOnFace },
     .{ .name = "bbox", .category = .inspection_method, .func = methods.meshBBox },
     .{ .name = "volume", .category = .inspection_method, .func = methods.meshBBox },

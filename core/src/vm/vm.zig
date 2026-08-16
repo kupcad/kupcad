@@ -1099,6 +1099,44 @@ pub const VM = struct {
                 const p = self.dag_builder.getSpherePayload(node);
                 return kernel.sphere(p.radius) orelse return error.RuntimeError;
             },
+            .rotate => {
+                const payload = self.dag_builder.getRotatePayload(node);
+                const target_handle = try self.evaluateDAG(payload.target);
+
+                // Convert degrees to radians for math
+                const x_rad = payload.x * std.math.pi / 180.0;
+                const y_rad = payload.y * std.math.pi / 180.0;
+                const z_rad = payload.z * std.math.pi / 180.0;
+
+                const cx = @cos(x_rad);
+                const sx = @sin(x_rad);
+                const cy = @cos(y_rad);
+                const sy = @sin(y_rad);
+                const cz = @cos(z_rad);
+                const sz = @sin(z_rad);
+
+                // Standard 3D Euler Rotation Matrix (Column-Major)
+                const matrix = [16]f64{
+                    cy * cz,                cy * sz,                -sy,     0.0,
+                    sx * sy * cz - cx * sz, sx * sy * sz + cx * cz, sx * cy, 0.0,
+                    cx * sy * cz + sx * sz, cx * sy * sz - sx * cz, cx * cy, 0.0,
+                    0.0,                    0.0,                    0.0,     1.0,
+                };
+                return kernel.transform(target_handle, matrix) orelse return error.RuntimeError;
+            },
+            .scale => {
+                const payload = self.dag_builder.getScalePayload(node);
+                const target_handle = try self.evaluateDAG(payload.target);
+
+                // Scale Matrix (Column-Major)
+                const matrix = [16]f64{
+                    payload.x, 0.0,       0.0,       0.0,
+                    0.0,       payload.y, 0.0,       0.0,
+                    0.0,       0.0,       payload.z, 0.0,
+                    0.0,       0.0,       0.0,       1.0,
+                };
+                return kernel.transform(target_handle, matrix) orelse return error.RuntimeError;
+            },
             .union_op, .difference_op, .intersection_op => {
                 const payload = self.dag_builder.getBinaryPayload(node);
                 const left_handle = try self.evaluateDAG(payload.left);
@@ -1126,7 +1164,6 @@ pub const VM = struct {
 
                 return kernel.transform(target_handle, matrix) orelse return error.RuntimeError;
             },
-            else => return error.RuntimeError,
         }
     }
 

@@ -118,6 +118,46 @@ pub const DAGBuilder = struct {
         return node_idx;
     }
 
+    /// Appends a Rotate transform node (Euler angles in degrees)
+    pub fn addRotate(self: *DAGBuilder, target: DAGNodeIndex, x: f64, y: f64, z: f64) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.extra_data.append(alloc, target);
+        try self.extra_data.append(alloc, num_idx);
+        try self.numbers.append(alloc, x);
+        try self.numbers.append(alloc, y);
+        try self.numbers.append(alloc, z);
+
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{
+            .tag = .rotate,
+            .flags = 0,
+            .data = extra_idx,
+        });
+        return node_idx;
+    }
+
+    /// Appends a Scale transform node
+    pub fn addScale(self: *DAGBuilder, target: DAGNodeIndex, x: f64, y: f64, z: f64) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.extra_data.append(alloc, target);
+        try self.extra_data.append(alloc, num_idx);
+        try self.numbers.append(alloc, x);
+        try self.numbers.append(alloc, y);
+        try self.numbers.append(alloc, z);
+
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{
+            .tag = .scale,
+            .flags = 0,
+            .data = extra_idx,
+        });
+        return node_idx;
+    }
+
     /// Appends a Translate transform node
     pub fn addTranslate(self: *DAGBuilder, target: DAGNodeIndex, x: f64, y: f64, z: f64) !DAGNodeIndex {
         const alloc = self.allocator();
@@ -179,4 +219,7 @@ pub const DAGBuilder = struct {
             .z = self.numbers.items[num_idx + 2],
         };
     }
+
+    pub const getRotatePayload = getTranslatePayload;
+    pub const getScalePayload = getTranslatePayload;
 };

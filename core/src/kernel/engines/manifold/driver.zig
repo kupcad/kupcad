@@ -32,10 +32,10 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
 }
 
 fn transformImpl(a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle {
-    _ = a;
-    _ = matrix;
-    // TODO: Manifold transform implementation
-    return null;
+    std.debug.assert(a.engine == .manifold);
+    const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
+    const ptr = manifold.transform(obj, &matrix) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
