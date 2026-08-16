@@ -1970,3 +1970,53 @@ test "VM: Inspection methods (volume, bbox) and p() work in KupCAD scripts" {
     const vol = vm.active_kernel.?.volume(handle);
     try testing.expect(vol > 24600.0 and vol < 24700.0);
 }
+
+test "VM: 2D primitives, sweeps, and Bitwise AND (Intersection) work seamlessly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Mute print_handler during unit tests
+    vm.host.print_handler = null;
+
+    // Test script:
+    // 1. Create a 10x10 square and extrude it 50 units (Volume should be 5000)
+    // 2. Create two 10x10x10 cubes, shift one by 5, and Intersect them (Volume should be 125)
+    const source =
+        \\sq = square(size: 10, center: true)
+        \\part1 = sq.extrude(50)
+        \\
+        \\box1 = cube(10, 10, 10, false)
+        \\box2 = cube(10, 10, 10, false).translate(5, 5, 5)
+        \\part2 = box1 & box2
+        \\
+        \\[part1.volume(), part2.volume()]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+    const arr_obj = arr_val.asArray();
+
+    // Extruded 10x10 square up to 50 = 5000 volume
+    try testing.expect(arr_obj.items.items[0].asNumber() > 4999.0);
+    try testing.expect(arr_obj.items.items[0].asNumber() < 5001.0);
+
+    // Intersecting cubes should yield a 5x5x5 cube = 125 volume
+    try testing.expect(arr_obj.items.items[1].asNumber() > 124.0);
+    try testing.expect(arr_obj.items.items[1].asNumber() < 126.0);
+}

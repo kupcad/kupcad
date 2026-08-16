@@ -1,10 +1,26 @@
-base = cube(size: 30, center: true)
-hole = cylinder(d: 10, h: 40, center: true)
-part = base - hole
+# 1. 2D Profile Extrusion
+plate_2d = square(size: 40, center: true)
+plate_3d = plate_2d.extrude(15)
 
-# Inspect volume and bounding box
-p(part.volume())
-p(part.bbox())
+# 2. 3D Boolean Intersection (Bitwise AND)
+dome = sphere(r: 25).translate(0, 0, -5)
+domed_plate = plate_3d & dome
 
-# Final expression evaluated by the VM (triggers implicit STL export)
-part
+# 3. 2D Circle Extrusion for a central hole
+hole_2d = circle(d: 12)
+hole_3d = hole_2d.extrude(40).translate(0, 0, -10)
+
+# 4. Standard CSG Difference
+part = domed_plate - hole_3d
+
+# 5. Advanced Trim By Plane (Slice off the right side)
+# Keeps geometry on the opposite side of the normal (X=1, cut at X=12)
+final_part = part.trim_by_plane(1, 0, 0, 12)
+
+# Output Diagnostics
+puts("--- Part Specifications ---")
+p("Volume:", final_part.volume().round(2))
+p("Bounding Box:", final_part.bbox())
+
+# Implicitly export final geometry
+final_part
