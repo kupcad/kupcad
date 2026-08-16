@@ -161,7 +161,7 @@
       "name": "keyword.control.kupcad"
     },
     "primitives_3d": {
-      "match": "(?<![\\\\w])(cube)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(cube|cylinder|sphere)(?![\\\\w?!])",
       "name": "support.class.primitive.3d.kupcad"
     },
     "primitives_2d": {
@@ -169,7 +169,7 @@
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\\\w])(translate|rotate|chamfer)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(translate|rotate|scale)(?![\\\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {
@@ -181,7 +181,7 @@
       "name": "support.function.workplane.kupcad"
     },
     "inspections": {
-      "match": "(?<![\\\\w])(bbox|volume)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(bbox|volume|surface_area)(?![\\\\w?!])",
       "name": "support.function.inspection.kupcad"
     },
     "hash_keys": {
