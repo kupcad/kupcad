@@ -946,12 +946,22 @@ pub const VM = struct {
 
     // --- Allocators ---
     pub fn allocateString(self: *VM, chars: []const u8) !value.Value {
+        // Return existing interned pointer if already allocated
+        if (self.strings.get(chars)) |interned| {
+            return value.Value.initObj(&interned.obj);
+        }
         const str_obj = try self.gc.allocateString(self, chars);
+        try self.strings.put(self.allocator, str_obj.chars, str_obj);
         return value.Value.initObj(&str_obj.obj);
     }
 
     pub fn allocateSymbol(self: *VM, chars: []const u8) !value.Value {
+        // Return existing interned pointer if already allocated
+        if (self.symbols.get(chars)) |interned| {
+            return value.Value.initObj(&interned.obj);
+        }
         const sym_obj = try self.gc.allocateSymbol(self, chars);
+        try self.symbols.put(self.allocator, sym_obj.chars, sym_obj);
         return value.Value.initObj(&sym_obj.obj);
     }
 
@@ -1200,10 +1210,8 @@ pub const VM = struct {
         _ = self;
         if (a.isNumber() and b.isNumber()) return a.asNumber() == b.asNumber();
 
-        if (a.isObject() and b.isObject() and a.asObj().obj_type == .string and b.asObj().obj_type == .string) {
-            const a_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", a.asObj()))).chars;
-            const b_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", b.asObj()))).chars;
-            return std.mem.eql(u8, a_str, b_str);
+        if (a.isObject() and b.isObject()) {
+            if (a.asObj() == b.asObj()) return true;
         }
 
         return a.isEqual(b);

@@ -407,23 +407,38 @@ pub const GC = struct {
 
     // --- Phase 2: Sweep ---
     fn sweep(self: *GC, vm: *VM) void {
-        var previous: ?*value.Obj = null;
-        var current: ?*value.Obj = self.first_object;
+        // Prune unmarked interned strings and symbols from VM lookup maps
+        var str_iter = vm.strings.iterator();
+        while (str_iter.next()) |entry| {
+            if (!entry.value_ptr.*.obj.is_marked) {
+                _ = vm.strings.remove(entry.key_ptr.*);
+            }
+        }
 
-        while (current) |obj| {
+        var sym_iter = vm.symbols.iterator();
+        while (sym_iter.next()) |entry| {
+            if (!entry.value_ptr.*.obj.is_marked) {
+                _ = vm.symbols.remove(entry.key_ptr.*);
+            }
+        }
+
+        // Proceed with standard object deallocation sweep...
+        var previous: ?*value.Obj = null;
+        var object = self.first_object;
+        while (object) |obj| {
             if (obj.is_marked) {
                 // Object is alive. Unmark it for the next GC cycle and move on.
-                obj.is_marked = false;
+                obj.is_marked = false; // Reset mark for next GC cycle
                 previous = obj;
-                current = obj.next;
+                object = obj.next;
             } else {
                 // Object is dead. Unlink and free it.
                 const unreached = obj;
-                current = obj.next;
+                object = obj.next;
                 if (previous) |prev| {
-                    prev.next = current;
+                    prev.next = object;
                 } else {
-                    self.first_object = current;
+                    self.first_object = object;
                 }
                 self.freeObject(vm, unreached);
             }
