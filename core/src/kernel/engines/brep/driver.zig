@@ -82,6 +82,12 @@ fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
     return 0.0;
 }
 
+fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
+    _ = allocator;
+    _ = handle;
+    return null;
+}
+
 fn destructImpl(handle: geom.GeometryHandle) void {
     std.debug.assert(handle.engine == .brep_native);
     _ = handle;
@@ -96,6 +102,8 @@ pub const driver = kernel.GeometryKernel{
     .translateFn = translateImpl,
     .rotateFn = rotateImpl,
     .scaleFn = scaleImpl,
+
+    .getMeshFn = getMeshImpl,
 
     .boundingBoxFn = boundingBoxImpl,
     .queryFacesFn = queryFacesImpl,

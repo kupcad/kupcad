@@ -36,3 +36,9 @@ pub const FaceArray = struct {
     ptr: [*]FaceHandle,
     len: usize,
 };
+
+pub const Mesh = struct {
+    vert_props: []f32,
+    tri_verts: []u32,
+    num_prop: usize,
+};

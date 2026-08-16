@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const ManifoldObj = opaque {};
 pub const ManifoldBox = opaque {};
+pub const ManifoldMeshGL = opaque {};
 
 pub const OpType = enum(c_int) {
     add = 0,
@@ -38,6 +39,17 @@ extern "C" fn manifold_box_max(b: ?*ManifoldBox) ManifoldVec3;
 
 extern "C" fn manifold_volume(m: ?*ManifoldObj) f64;
 extern "C" fn manifold_surface_area(m: ?*ManifoldObj) f64;
+
+extern "C" fn manifold_alloc_meshgl() ?*ManifoldMeshGL;
+extern "C" fn manifold_delete_meshgl(m: ?*ManifoldMeshGL) void;
+extern "C" fn manifold_get_meshgl(mem: ?*ManifoldMeshGL, m: ?*ManifoldObj) ?*ManifoldMeshGL;
+
+extern "C" fn manifold_meshgl_num_prop(m: ?*ManifoldMeshGL) usize;
+extern "C" fn manifold_meshgl_vert_properties_length(m: ?*ManifoldMeshGL) usize;
+extern "C" fn manifold_meshgl_tri_length(m: ?*ManifoldMeshGL) usize;
+
+extern "C" fn manifold_meshgl_vert_properties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32;
+extern "C" fn manifold_meshgl_tri_verts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32;
 
 pub fn cube(x: f64, y: f64, z: f64, center: bool) ?*ManifoldObj {
     const mem = manifold_alloc_manifold();
@@ -96,6 +108,31 @@ pub fn volume(obj: ?*ManifoldObj) f64 {
 
 pub fn surfaceArea(obj: ?*ManifoldObj) f64 {
     return manifold_surface_area(obj);
+}
+
+pub fn allocMeshGL() ?*ManifoldMeshGL {
+    return manifold_alloc_meshgl();
+}
+pub fn deleteMeshGL(m: ?*ManifoldMeshGL) void {
+    manifold_delete_meshgl(m);
+}
+pub fn getMeshGL(mem: ?*ManifoldMeshGL, m: ?*ManifoldObj) ?*ManifoldMeshGL {
+    return manifold_get_meshgl(mem, m);
+}
+pub fn meshGLNumProp(m: ?*ManifoldMeshGL) usize {
+    return manifold_meshgl_num_prop(m);
+}
+pub fn meshGLVertPropertiesLength(m: ?*ManifoldMeshGL) usize {
+    return manifold_meshgl_vert_properties_length(m);
+}
+pub fn meshGLTriLength(m: ?*ManifoldMeshGL) usize {
+    return manifold_meshgl_tri_length(m);
+}
+pub fn meshGLVertProperties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32 {
+    return manifold_meshgl_vert_properties(mem, m);
+}
+pub fn meshGLTriVerts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32 {
+    return manifold_meshgl_tri_verts(mem, m);
 }
 
 pub fn destruct(m: ?*ManifoldObj) void {

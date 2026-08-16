@@ -1834,3 +1834,47 @@ test "VM: JIT materialization cascades through DAG and ARC safely cleans up" {
     // The GC will immediately route the pointer to `host.mesh_destructor`, safely freeing the C++ Manifold memory.
     // If ANY memory is leaked across the FFI boundary, Zig's testing allocator will fail the test right here!
 }
+
+test "VM: Generates a physical STL file to disk" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Register the standard library so `cube`, `sphere`, and `export_stl` are available
+    try registry.registerStandardLibrary(&vm);
+
+    // A KupCAD script that creates a hollowed-out box and exports it!
+    const source =
+        \\box = cube(20, 20, 20, true)
+        \\hole = sphere(12)
+        \\part = box - hole
+        \\export_stl("test_output.stl", part)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // Compile the script to bytecode
+    try comp.compile(doc.tree.root);
+
+    // Execute the bytecode
+    const result = vm.interpret(&out_chunk);
+
+    // Ensure the VM executed the script without any runtime errors
+    try testing.expectEqual(.ok, result);
+
+    // Verify the file was actually written to the file system
+    const cwd = std.Io.Dir.cwd();
+
+    // Pass testing.io as the required explicit Io parameter
+    cwd.access(testing.io, "test_output.stl", .{}) catch |err| {
+        if (err == error.FileNotFound) {
+            try testing.expect(false); // Fail the test if the file wasn't created!
+        }
+    };
+}
