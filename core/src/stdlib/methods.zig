@@ -4,6 +4,10 @@ const VM = @import("../vm/vm.zig").VM;
 const geom = @import("../kernel/geometry_handle.zig");
 
 pub fn meshRotate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
+    if (arg_count > 1 and !args[1].isNumber()) return error.RuntimeError;
+    if (arg_count > 2 and !args[2].isNumber()) return error.RuntimeError;
+
     const x = if (arg_count > 0) args[0].asNumber() else 0.0;
     const y = if (arg_count > 1) args[1].asNumber() else 0.0;
     const z = if (arg_count > 2) args[2].asNumber() else 0.0;
@@ -23,6 +27,10 @@ pub fn meshRotate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.
 }
 
 pub fn meshScale(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
+    if (arg_count > 1 and !args[1].isNumber()) return error.RuntimeError;
+    if (arg_count > 2 and !args[2].isNumber()) return error.RuntimeError;
+
     const x = if (arg_count > 0) args[0].asNumber() else 1.0;
     const y = if (arg_count > 1) args[1].asNumber() else x;
     const z = if (arg_count > 2) args[2].asNumber() else x;
@@ -39,6 +47,10 @@ pub fn meshScale(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.V
 }
 
 pub fn meshTranslate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
+    if (arg_count > 1 and !args[1].isNumber()) return error.RuntimeError;
+    if (arg_count > 2 and !args[2].isNumber()) return error.RuntimeError;
+
     const x = if (arg_count > 0) args[0].asNumber() else 0.0;
     const y = if (arg_count > 1) args[1].asNumber() else 0.0;
     const z = if (arg_count > 2) args[2].asNumber() else 0.0;
@@ -59,23 +71,26 @@ pub fn meshOnFace(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.
     const handle = try vm.ensureConcrete(receiver);
     const geom_obj = receiver.asGeometry();
 
-    // Extract direction symbol (e.g., :top)
-    if (arg_count < 1 or !args[0].isString()) return error.RuntimeError;
-    const direction_sym = args[0].asString();
+    // Check type explicitly before relying on asString representation
+    if (arg_count < 1 or (!args[0].isString() and !(args[0].isObject() and args[0].asObj().obj_type == .symbol))) return error.RuntimeError;
+
+    // Extract direction symbol
+    const direction_sym = if (args[0].isObject() and args[0].asObj().obj_type == .string)
+        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", args[0].asObj()))).chars
+    else
+        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", args[0].asObj()))).chars;
 
     // Lazy Topology Initialization
     if (geom_obj.cached_topology == null) {
         geom_obj.cached_topology = try vm.allocator.create(value.TopologyCache);
         geom_obj.cached_topology.?.* = .{ .is_populated = true };
     }
-
     var filter = geom.FaceFilter.top;
     if (std.mem.eql(u8, direction_sym, "bottom")) filter = .bottom;
 
     // Query Kernel (Mocked for now)
     _ = vm.active_kernel.?.queryFaces(handle, filter);
-
-    // Spawn Workplane tied to parent geometry!
+    // Spawn Workplane tied to parent geometry
     return try vm.allocateWorkplane(geom_obj, [3]f64{ 0, 0, 0 }, [3]f64{ 0, 0, 1 });
 }
 
@@ -83,7 +98,7 @@ pub fn meshBBox(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Va
     _ = arg_count;
     _ = args;
 
-    // Force JIT Materialization!
+    // Force JIT Materialization
     const handle = try vm.ensureConcrete(receiver);
     const geom_obj = receiver.asGeometry();
 
@@ -161,14 +176,17 @@ pub fn meshSurfaceArea(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]v
 
 pub fn meshExtrude(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     if (!receiver.isCrossSection()) return error.RuntimeError;
+    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
+
     const height = if (arg_count > 0) args[0].asNumber() else 1.0;
-    // For now, default twist and scale. You can expand kwargs here later!
     const new_idx = try vm.dag_builder.addExtrude(receiver.asCrossSection().dag_idx, height, 0, 0.0, 1.0, 1.0);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
 pub fn meshRevolve(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     if (!receiver.isCrossSection()) return error.RuntimeError;
+    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
+
     const degrees = if (arg_count > 0) args[0].asNumber() else 360.0;
     const new_idx = try vm.dag_builder.addRevolve(receiver.asCrossSection().dag_idx, 0, degrees);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -183,6 +201,9 @@ pub fn meshHull(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Va
 
 pub fn meshTrimByPlane(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     if (arg_count < 3) return error.RuntimeError;
+    if (!args[0].isNumber() or !args[1].isNumber() or !args[2].isNumber()) return error.RuntimeError;
+    if (arg_count > 3 and !args[3].isNumber()) return error.RuntimeError;
+
     const nx = args[0].asNumber();
     const ny = args[1].asNumber();
     const nz = args[2].asNumber();
@@ -199,6 +220,8 @@ pub fn meshMinkowski(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]val
 
 pub fn meshOffset(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     if (!receiver.isCrossSection()) return error.RuntimeError;
+    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
+
     const delta = if (arg_count > 0) args[0].asNumber() else 1.0;
     const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, delta, 1); // 1 = round
     return try vm.allocateCrossSection(new_idx);
@@ -207,7 +230,6 @@ pub fn meshOffset(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.
 pub fn meshTransform(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     if (arg_count < 1 or !args[0].isArray()) return error.RuntimeError;
     const arr = args[0].asArray().items.items;
-
     if (receiver.isGeometry()) {
         if (arr.len < 12) return error.RuntimeError;
         var mat: [12]f64 = undefined;
@@ -226,6 +248,8 @@ pub fn meshTransform(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]val
 
 pub fn meshMinGap(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     if (arg_count < 1 or !args[0].isGeometry()) return error.RuntimeError;
+    if (arg_count > 1 and !args[1].isNumber()) return error.RuntimeError;
+
     const search_length = if (arg_count > 1) args[1].asNumber() else 100.0;
     const a_handle = try vm.ensureConcrete(receiver);
     const b_handle = try vm.ensureConcrete(args[0]);
@@ -237,6 +261,8 @@ pub fn meshContains(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]valu
     if (arg_count < 1 or !args[0].isArray()) return error.RuntimeError;
     const pt_arr = args[0].asArray().items.items;
     if (pt_arr.len < 3) return error.RuntimeError;
+    if (!pt_arr[0].isNumber() or !pt_arr[1].isNumber() or !pt_arr[2].isNumber()) return error.RuntimeError;
+
     const handle = try vm.ensureConcrete(receiver);
     const inside = vm.active_kernel.?.containsPoint(handle, .{ pt_arr[0].asNumber(), pt_arr[1].asNumber(), pt_arr[2].asNumber() });
     return value.Value.initBool(inside);
@@ -246,7 +272,10 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value
     if (arg_count < 2 or !args[0].isArray() or !args[1].isArray()) return error.RuntimeError;
     const o_arr = args[0].asArray().items.items;
     const e_arr = args[1].asArray().items.items;
+
     if (o_arr.len < 3 or e_arr.len < 3) return error.RuntimeError;
+    if (!o_arr[0].isNumber() or !o_arr[1].isNumber() or !o_arr[2].isNumber()) return error.RuntimeError;
+    if (!e_arr[0].isNumber() or !e_arr[1].isNumber() or !e_arr[2].isNumber()) return error.RuntimeError;
 
     const handle = try vm.ensureConcrete(receiver);
     const hits = vm.active_kernel.?.rayCast(vm.allocator, handle, .{ o_arr[0].asNumber(), o_arr[1].asNumber(), o_arr[2].asNumber() }, .{ e_arr[0].asNumber(), e_arr[1].asNumber(), e_arr[2].asNumber() }) orelse return value.Value.initNil();
@@ -272,6 +301,7 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[0]));
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[1]));
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[2]));
+
         try map_obj.keys.append(vm.allocator, pos_str);
         try map_obj.values.append(vm.allocator, value.Value.initObj(&pos_arr.obj));
 

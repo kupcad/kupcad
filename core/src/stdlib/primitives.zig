@@ -2,6 +2,18 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 
+const ArgParseCtx = struct {
+    pos_count: u8,
+    kwargs: ?value.Value,
+};
+
+fn parseArgs(arg_count: u8, args: [*]value.Value) ArgParseCtx {
+    if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
+        return .{ .pos_count = arg_count - 1, .kwargs = args[arg_count - 1] };
+    }
+    return .{ .pos_count = arg_count, .kwargs = null };
+}
+
 /// Helper to safely extract a value from the trailing keyword arguments map
 fn getKwarg(map_val: ?value.Value, key: []const u8) ?value.Value {
     if (map_val) |mv| {
@@ -14,7 +26,6 @@ fn getKwarg(map_val: ?value.Value, key: []const u8) ?value.Value {
                         @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
                     else
                         @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
-
                     if (std.mem.eql(u8, k_str, key)) {
                         return map.values.items[i];
                     }
@@ -27,49 +38,39 @@ fn getKwarg(map_val: ?value.Value, key: []const u8) ?value.Value {
 
 pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
     var x: f64 = 1.0;
     var y: f64 = 1.0;
     var z: f64 = 1.0;
     var center: bool = false;
 
-    var pos_count = arg_count;
-    var kwargs: ?value.Value = null;
+    const parsed = parseArgs(arg_count, args);
 
-    // Check if the last argument is a map (Keyword Arguments)
-    if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
-        kwargs = args[arg_count - 1];
-        pos_count -= 1;
-    }
-
-    // 1. Parse Positional Arguments
-    if (pos_count > 0 and args[0].isNumber()) {
+    if (parsed.pos_count > 0 and args[0].isNumber()) {
         x = args[0].asNumber();
-        y = x; // Default to a uniform cube if only 1 arg is passed
+        y = x;
         z = x;
     }
-    if (pos_count > 1 and args[1].isNumber()) y = args[1].asNumber();
-    if (pos_count > 2 and args[2].isNumber()) z = args[2].asNumber();
-    if (pos_count > 3 and args[3].isBool()) center = args[3].asBool();
+    if (parsed.pos_count > 1 and args[1].isNumber()) y = args[1].asNumber();
+    if (parsed.pos_count > 2 and args[2].isNumber()) z = args[2].asNumber();
+    if (parsed.pos_count > 3 and args[3].isBool()) center = args[3].asBool();
 
-    // 2. Parse Keyword Arguments (Overrides positionals)
-    if (getKwarg(kwargs, "size")) |v| {
+    if (getKwarg(parsed.kwargs, "size")) |v| {
         if (v.isNumber()) {
             x = v.asNumber();
             y = x;
             z = x;
         }
     }
-    if (getKwarg(kwargs, "x")) |v| {
+    if (getKwarg(parsed.kwargs, "x")) |v| {
         if (v.isNumber()) x = v.asNumber();
     }
-    if (getKwarg(kwargs, "y")) |v| {
+    if (getKwarg(parsed.kwargs, "y")) |v| {
         if (v.isNumber()) y = v.asNumber();
     }
-    if (getKwarg(kwargs, "z")) |v| {
+    if (getKwarg(parsed.kwargs, "z")) |v| {
         if (v.isNumber()) z = v.asNumber();
     }
-    if (getKwarg(kwargs, "center")) |v| {
+    if (getKwarg(parsed.kwargs, "center")) |v| {
         if (v.isBool()) center = v.asBool();
     }
 
@@ -80,33 +81,26 @@ pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
 
 pub fn nativeCylinder(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
     var r: f64 = 1.0;
     var h: f64 = 1.0;
     var center: bool = false;
 
-    var pos_count = arg_count;
-    var kwargs: ?value.Value = null;
+    const parsed = parseArgs(arg_count, args);
 
-    if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
-        kwargs = args[arg_count - 1];
-        pos_count -= 1;
-    }
+    if (parsed.pos_count > 0 and args[0].isNumber()) r = args[0].asNumber();
+    if (parsed.pos_count > 1 and args[1].isNumber()) h = args[1].asNumber();
+    if (parsed.pos_count > 2 and args[2].isBool()) center = args[2].asBool();
 
-    if (pos_count > 0 and args[0].isNumber()) r = args[0].asNumber();
-    if (pos_count > 1 and args[1].isNumber()) h = args[1].asNumber();
-    if (pos_count > 2 and args[2].isBool()) center = args[2].asBool();
-
-    if (getKwarg(kwargs, "r")) |v| {
+    if (getKwarg(parsed.kwargs, "r")) |v| {
         if (v.isNumber()) r = v.asNumber();
     }
-    if (getKwarg(kwargs, "d")) |v| {
+    if (getKwarg(parsed.kwargs, "d")) |v| {
         if (v.isNumber()) r = v.asNumber() / 2.0;
     }
-    if (getKwarg(kwargs, "h")) |v| {
+    if (getKwarg(parsed.kwargs, "h")) |v| {
         if (v.isNumber()) h = v.asNumber();
     }
-    if (getKwarg(kwargs, "center")) |v| {
+    if (getKwarg(parsed.kwargs, "center")) |v| {
         if (v.isBool()) center = v.asBool();
     }
 
@@ -117,23 +111,16 @@ pub fn nativeCylinder(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value
 
 pub fn nativeSphere(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
     var r: f64 = 1.0;
 
-    var pos_count = arg_count;
-    var kwargs: ?value.Value = null;
+    const parsed = parseArgs(arg_count, args);
 
-    if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
-        kwargs = args[arg_count - 1];
-        pos_count -= 1;
-    }
+    if (parsed.pos_count > 0 and args[0].isNumber()) r = args[0].asNumber();
 
-    if (pos_count > 0 and args[0].isNumber()) r = args[0].asNumber();
-
-    if (getKwarg(kwargs, "r")) |v| {
+    if (getKwarg(parsed.kwargs, "r")) |v| {
         if (v.isNumber()) r = v.asNumber();
     }
-    if (getKwarg(kwargs, "d")) |v| {
+    if (getKwarg(parsed.kwargs, "d")) |v| {
         if (v.isNumber()) r = v.asNumber() / 2.0;
     }
 
@@ -147,33 +134,29 @@ pub fn nativeSquare(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     var x: f64 = 1.0;
     var y: f64 = 1.0;
     var center: bool = false;
-    var pos_count = arg_count;
-    var kwargs: ?value.Value = null;
 
-    if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
-        kwargs = args[arg_count - 1];
-        pos_count -= 1;
-    }
-    if (pos_count > 0 and args[0].isNumber()) {
+    const parsed = parseArgs(arg_count, args);
+
+    if (parsed.pos_count > 0 and args[0].isNumber()) {
         x = args[0].asNumber();
         y = x;
     }
-    if (pos_count > 1 and args[1].isNumber()) y = args[1].asNumber();
-    if (pos_count > 2 and args[2].isBool()) center = args[2].asBool();
+    if (parsed.pos_count > 1 and args[1].isNumber()) y = args[1].asNumber();
+    if (parsed.pos_count > 2 and args[2].isBool()) center = args[2].asBool();
 
-    if (getKwarg(kwargs, "size")) |v| {
+    if (getKwarg(parsed.kwargs, "size")) |v| {
         if (v.isNumber()) {
             x = v.asNumber();
             y = x;
         }
     }
-    if (getKwarg(kwargs, "x")) |v| {
+    if (getKwarg(parsed.kwargs, "x")) |v| {
         if (v.isNumber()) x = v.asNumber();
     }
-    if (getKwarg(kwargs, "y")) |v| {
+    if (getKwarg(parsed.kwargs, "y")) |v| {
         if (v.isNumber()) y = v.asNumber();
     }
-    if (getKwarg(kwargs, "center")) |v| {
+    if (getKwarg(parsed.kwargs, "center")) |v| {
         if (v.isBool()) center = v.asBool();
     }
 
@@ -185,22 +168,18 @@ pub fn nativeCircle(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     var r: f64 = 1.0;
     var segments: i32 = 0; // 0 lets Manifold auto-calculate
-    var pos_count = arg_count;
-    var kwargs: ?value.Value = null;
 
-    if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
-        kwargs = args[arg_count - 1];
-        pos_count -= 1;
-    }
-    if (pos_count > 0 and args[0].isNumber()) r = args[0].asNumber();
+    const parsed = parseArgs(arg_count, args);
 
-    if (getKwarg(kwargs, "r")) |v| {
+    if (parsed.pos_count > 0 and args[0].isNumber()) r = args[0].asNumber();
+
+    if (getKwarg(parsed.kwargs, "r")) |v| {
         if (v.isNumber()) r = v.asNumber();
     }
-    if (getKwarg(kwargs, "d")) |v| {
+    if (getKwarg(parsed.kwargs, "d")) |v| {
         if (v.isNumber()) r = v.asNumber() / 2.0;
     }
-    if (getKwarg(kwargs, "segments")) |v| {
+    if (getKwarg(parsed.kwargs, "segments")) |v| {
         if (v.isNumber()) segments = @intFromFloat(v.asNumber());
     }
 
@@ -210,6 +189,7 @@ pub fn nativeCircle(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
 
 pub fn nativePolygon(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+
     if (arg_count < 1 or !args[0].isArray()) return error.RuntimeError;
     const pt_arr = args[0].asArray().items.items;
 
