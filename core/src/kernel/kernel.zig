@@ -31,12 +31,16 @@ pub const GeometryKernel = struct {
     splitByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair,
     crossSectionBooleanFn: *const fn (a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle,
     genusFn: *const fn (a: geom.GeometryHandle) i32,
+    polygonFn: *const fn (allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle,
     destructCrossSectionFn: *const fn (handle: geom.CrossSectionHandle) void,
     boundingBoxFn: *const fn (handle: geom.GeometryHandle) ?geom.BoundingBox,
     queryFacesFn: *const fn (handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray,
     volumeFn: *const fn (handle: geom.GeometryHandle) f64,
     surfaceAreaFn: *const fn (handle: geom.GeometryHandle) f64,
     getMeshFn: *const fn (allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh,
+    containsPointFn: *const fn (a: geom.GeometryHandle, pt: [3]f64) bool,
+    minGapFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, search_length: f64) f64,
+    rayCastFn: *const fn (allocator: std.mem.Allocator, a: geom.GeometryHandle, origin: [3]f64, end: [3]f64) ?[]geom.RayHit,
     destructFn: *const fn (handle: geom.GeometryHandle) void,
 
     pub inline fn translate(self: *const GeometryKernel, handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
@@ -61,7 +65,10 @@ pub const GeometryKernel = struct {
         return self.booleanFn(a, b, op);
     }
 
-    // Inline wrappers for Phase 2
+    pub inline fn polygon(self: *const GeometryKernel, allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle {
+        return self.polygonFn(allocator, pts);
+    }
+
     pub inline fn square(self: *const GeometryKernel, x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
         return self.squareFn(x, y, center);
     }
@@ -136,6 +143,17 @@ pub const GeometryKernel = struct {
     pub inline fn getMesh(self: *const GeometryKernel, allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
         return self.getMeshFn(allocator, handle);
     }
+
+    pub inline fn containsPoint(self: *const GeometryKernel, a: geom.GeometryHandle, pt: [3]f64) bool {
+        return self.containsPointFn(a, pt);
+    }
+    pub inline fn minGap(self: *const GeometryKernel, a: geom.GeometryHandle, b: geom.GeometryHandle, search_length: f64) f64 {
+        return self.minGapFn(a, b, search_length);
+    }
+    pub inline fn rayCast(self: *const GeometryKernel, allocator: std.mem.Allocator, a: geom.GeometryHandle, origin: [3]f64, end: [3]f64) ?[]geom.RayHit {
+        return self.rayCastFn(allocator, a, origin, end);
+    }
+
     pub inline fn destruct(self: *const GeometryKernel, handle: geom.GeometryHandle) void {
         self.destructFn(handle);
     }

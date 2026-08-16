@@ -1185,10 +1185,10 @@ pub const VM = struct {
                 return kernel.revolve(cs, p.segments, p.degrees) orelse return error.RuntimeError;
             },
             .transform_matrix => {
-                const target = try self.evaluateDAG(node.data);
-                const num_idx = self.dag_builder.extra_data.items[node_idx]; // The matching extra_data index matches node_idx in our appending strategy
+                const p = self.dag_builder.getTransformPayload(node);
+                const target = try self.evaluateDAG(p.target);
                 var mat: [12]f64 = undefined;
-                std.mem.copyForwards(f64, &mat, self.dag_builder.numbers.items[num_idx .. num_idx + 12]);
+                std.mem.copyForwards(f64, &mat, self.dag_builder.numbers.items[p.num_idx .. p.num_idx + 12]);
                 return kernel.transformMatrix(target, mat) orelse return error.RuntimeError;
             },
             else => {
@@ -1227,11 +1227,22 @@ pub const VM = struct {
                 return kernel.offset(target, p.delta, p.join_type) orelse return error.RuntimeError;
             },
             .cs_transform => {
-                const target = try self.evaluateCrossSectionDAG(node.data);
-                const num_idx = self.dag_builder.extra_data.items[node_idx];
+                const p = self.dag_builder.getTransformPayload(node);
+                const target = try self.evaluateCrossSectionDAG(p.target);
                 var mat: [6]f64 = undefined;
-                std.mem.copyForwards(f64, &mat, self.dag_builder.numbers.items[num_idx .. num_idx + 6]);
+                std.mem.copyForwards(f64, &mat, self.dag_builder.numbers.items[p.num_idx .. p.num_idx + 6]);
                 return kernel.crossSectionTransform(target, mat) orelse return error.RuntimeError;
+            },
+            .polygon => {
+                const num_idx = self.dag_builder.extra_data.items[node.data];
+                const pt_count = self.dag_builder.extra_data.items[node.data + 1];
+                var pts = try self.allocator.alloc([2]f64, pt_count);
+                defer self.allocator.free(pts);
+                for (0..pt_count) |i| {
+                    pts[i][0] = self.dag_builder.numbers.items[num_idx + (i * 2)];
+                    pts[i][1] = self.dag_builder.numbers.items[num_idx + (i * 2) + 1];
+                }
+                return kernel.polygon(self.allocator, pts) orelse return error.RuntimeError;
             },
             .cs_union_op, .cs_difference_op, .cs_intersection_op => {
                 const payload = self.dag_builder.getBinaryPayload(node);

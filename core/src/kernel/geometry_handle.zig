@@ -52,3 +52,9 @@ pub const Mesh = struct {
     tri_verts: []u32,
     num_prop: usize,
 };
+
+pub const RayHit = struct {
+    distance: f64,
+    position: [3]f64,
+    normal: [3]f64,
+};

@@ -198,3 +198,59 @@ pub fn meshTransform(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]val
     }
     return error.RuntimeError;
 }
+
+pub fn meshMinGap(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (arg_count < 1 or !args[0].isGeometry()) return error.RuntimeError;
+    const search_length = if (arg_count > 1) args[1].asNumber() else 100.0;
+    const a_handle = try vm.ensureConcrete(receiver);
+    const b_handle = try vm.ensureConcrete(args[0]);
+    const gap = vm.active_kernel.?.minGap(a_handle, b_handle, search_length);
+    return value.Value.initNumber(gap);
+}
+
+pub fn meshContains(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (arg_count < 1 or !args[0].isArray()) return error.RuntimeError;
+    const pt_arr = args[0].asArray().items.items;
+    if (pt_arr.len < 3) return error.RuntimeError;
+    const handle = try vm.ensureConcrete(receiver);
+    const inside = vm.active_kernel.?.containsPoint(handle, .{ pt_arr[0].asNumber(), pt_arr[1].asNumber(), pt_arr[2].asNumber() });
+    return value.Value.initBool(inside);
+}
+
+pub fn meshRayCast(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (arg_count < 2 or !args[0].isArray() or !args[1].isArray()) return error.RuntimeError;
+    const o_arr = args[0].asArray().items.items;
+    const e_arr = args[1].asArray().items.items;
+    if (o_arr.len < 3 or e_arr.len < 3) return error.RuntimeError;
+
+    const handle = try vm.ensureConcrete(receiver);
+    const hits = vm.active_kernel.?.rayCast(vm.allocator, handle, .{ o_arr[0].asNumber(), o_arr[1].asNumber(), o_arr[2].asNumber() }, .{ e_arr[0].asNumber(), e_arr[1].asNumber(), e_arr[2].asNumber() }) orelse return value.Value.initNil();
+    defer vm.allocator.free(hits);
+
+    const hit_arr_obj = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&hit_arr_obj.obj)); // GC protect
+    defer _ = vm.pop();
+
+    for (hits) |hit| {
+        const map_obj = try vm.gc.allocateMap(vm);
+        vm.push(value.Value.initObj(&map_obj.obj));
+        defer _ = vm.pop();
+
+        // Put Distance
+        const d_str = try vm.allocateString("distance");
+        try map_obj.keys.append(vm.allocator, d_str);
+        try map_obj.values.append(vm.allocator, value.Value.initNumber(hit.distance));
+
+        // Put Position
+        const pos_str = try vm.allocateString("position");
+        const pos_arr = try vm.gc.allocateArray(vm);
+        try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[0]));
+        try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[1]));
+        try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[2]));
+        try map_obj.keys.append(vm.allocator, pos_str);
+        try map_obj.values.append(vm.allocator, value.Value.initObj(&pos_arr.obj));
+
+        try hit_arr_obj.items.append(vm.allocator, value.Value.initObj(&map_obj.obj));
+    }
+    return value.Value.initObj(&hit_arr_obj.obj);
+}

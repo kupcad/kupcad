@@ -28,6 +28,7 @@ pub const DAGTag = enum(u8) {
     cs_intersection_op,
     offset,
     cs_transform,
+    polygon,
 };
 
 /// Exactly 8 bytes for optimal L1 cache line density (8 nodes per 64B line)
@@ -39,11 +40,14 @@ pub const DAGNode = struct {
 };
 
 pub const BinaryPayload = struct { left: DAGNodeIndex, right: DAGNodeIndex };
-pub const TransformPayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
 pub const ExtrudePayload = struct { target: DAGNodeIndex, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64 };
 pub const RevolvePayload = struct { target: DAGNodeIndex, segments: i32, degrees: f64 };
 pub const PlanePayload = struct { target: DAGNodeIndex, nx: f64, ny: f64, nz: f64, offset: f64 };
 pub const OffsetPayload = struct { target: DAGNodeIndex, delta: f64, join_type: u8 };
+pub const TranslatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
+pub const RotatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
+pub const ScalePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
+pub const TransformPayload = struct { target: DAGNodeIndex, num_idx: u32 };
 
 pub const DAGBuilder = struct {
     arena: std.heap.ArenaAllocator,
@@ -218,21 +222,23 @@ pub const DAGBuilder = struct {
 
     pub fn addTransformMatrix(self: *DAGBuilder, target: DAGNodeIndex, mat: [12]f64) !DAGNodeIndex {
         const alloc = self.allocator();
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
         const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &mat);
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .transform_matrix, .flags = 0, .data = target });
-        try self.extra_data.append(alloc, num_idx); // Save where the matrix starts
+        try self.nodes.append(alloc, .{ .tag = .transform_matrix, .flags = 0, .data = extra_idx });
         return node_idx;
     }
 
     pub fn addCrossSectionTransform(self: *DAGBuilder, target: DAGNodeIndex, mat: [6]f64) !DAGNodeIndex {
         const alloc = self.allocator();
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
         const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &mat);
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .cs_transform, .flags = 0, .data = target });
-        try self.extra_data.append(alloc, num_idx);
+        try self.nodes.append(alloc, .{ .tag = .cs_transform, .flags = 0, .data = extra_idx });
         return node_idx;
     }
 
@@ -255,15 +261,27 @@ pub const DAGBuilder = struct {
     pub inline fn getCirclePayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64, segments: i32 } {
         return .{ .radius = self.numbers.items[node.data], .segments = @intFromFloat(self.numbers.items[node.data + 1]) };
     }
+    pub inline fn getTranslatePayload(self: *const DAGBuilder, node: DAGNode) TranslatePayload {
+        const target = self.extra_data.items[node.data];
+        const num_idx = self.extra_data.items[node.data + 1];
+        return .{
+            .target = target,
+            .x = self.numbers.items[num_idx],
+            .y = self.numbers.items[num_idx + 1],
+            .z = self.numbers.items[num_idx + 2],
+        };
+    }
+
     pub inline fn getTransformPayload(self: *const DAGBuilder, node: DAGNode) TransformPayload {
         const target = self.extra_data.items[node.data];
         const num_idx = self.extra_data.items[node.data + 1];
-        return .{ .target = target, .x = self.numbers.items[num_idx], .y = self.numbers.items[num_idx + 1], .z = self.numbers.items[num_idx + 2] };
+        return .{ .target = target, .num_idx = num_idx };
     }
-    pub const getTranslatePayload = getTransformPayload;
-    pub const getRotatePayload = getTransformPayload;
-    pub const getScalePayload = getTransformPayload;
-    pub const getMirrorPayload = getTransformPayload;
+
+    pub const getRotatePayload = getTranslatePayload;
+    pub const getScalePayload = getTranslatePayload;
+    pub const getMirrorPayload = getTranslatePayload;
+
     pub inline fn getHullPayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex } {
         return .{ .target = self.extra_data.items[node.data] };
     }
@@ -291,5 +309,18 @@ pub const DAGBuilder = struct {
         const target = self.extra_data.items[node.data];
         const num_idx = self.extra_data.items[node.data + 1];
         return .{ .target = target, .segments = @intFromFloat(self.numbers.items[num_idx]), .degrees = self.numbers.items[num_idx + 1] };
+    }
+    pub fn addPolygon(self: *DAGBuilder, pts: [][2]f64) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        for (pts) |pt| {
+            try self.numbers.append(alloc, pt[0]);
+            try self.numbers.append(alloc, pt[1]);
+        }
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+        try self.extra_data.appendSlice(alloc, &.{ num_idx, @intCast(pts.len) });
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{ .tag = .polygon, .flags = 0, .data = extra_idx });
+        return node_idx;
     }
 };

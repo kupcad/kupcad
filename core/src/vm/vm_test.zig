@@ -2163,3 +2163,106 @@ test "VM: Affine transformations via multmatrix evaluate correctly" {
     try testing.expectEqual(@as(f64, -3.0), sq_min.items.items[0].asNumber()); // -5 + 2
     try testing.expectEqual(@as(f64, -1.0), sq_min.items.items[1].asNumber()); // -5 + 4
 }
+
+test "VM: Spatial Queries (min_gap, contains?, ray_cast) evaluate safely" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    vm.host.print_handler = null;
+
+    // Script:
+    // 1. Min Gap between two cubes offset by 15 units. Gap should be 5.
+    // 2. Contains point: cube size 10, center true. contains [0,0,0], doesn't contain [10, 10, 10]
+    // 3. Ray cast: cube size 10. Cast from [0, 0, 10] to [0, 0, -10]. Hits top face at z=5.
+    const source =
+        \\c1 = cube(size: 10, center: true)
+        \\c2 = cube(size: 10, center: true).translate(15, 0, 0)
+        \\gap = c1.min_gap(c2)
+        \\
+        \\in1 = c1.contains?([0, 0, 0])
+        \\in2 = c1.contains?([10, 10, 10])
+        \\
+        \\ray_hits = c1.ray_cast([0, 0, 10], [0, 0, -10])
+        \\
+        \\[gap, in1, in2, ray_hits.length(), ray_hits[0]["distance"], ray_hits[0]["position"][2]]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+    const arr_obj = arr_val.asArray();
+
+    // 1. Min gap (kernel extrema search)
+    try testing.expect(arr_obj.items.items[0].asNumber() > 0.0);
+    // 2. Contains [0,0,0] = true
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool());
+    // 3. Contains [10,10,10] = false
+    try testing.expectEqual(false, arr_obj.items.items[2].asBool());
+    // 4. Ray hits length
+    try testing.expect(arr_obj.items.items[3].asNumber() > 0.0);
+    // 5. Metric distance from [0, 0, 10] to top face [0, 0, 5] = 5.0 units!
+    try testing.expectApproxEqAbs(@as(f64, 5.0), arr_obj.items.items[4].asNumber(), 0.1);
+    // 6. Hit position Z = 5.0
+    try testing.expectApproxEqAbs(@as(f64, 5.0), arr_obj.items.items[5].asNumber(), 0.1);
+}
+
+test "VM: Custom Polygons and Fixed Matrix Transforms evaluate seamlessly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    vm.host.print_handler = null;
+
+    // Test Script:
+    // 1. Create a custom 2D Triangle using `polygon`
+    // 2. Skew the 2D polygon using a 3x2 Transformation Matrix
+    // 3. Extrude to 3D and skew again using a 4x3 Transformation Matrix
+    const source =
+        \\pts = [ [0, 0], [10, 0], [0, 10] ]
+        \\poly = polygon(pts)
+        \\
+        \\# 2D Transform (Scale X by 2, Translate Y by 5)
+        \\poly_trans = poly.transform([2, 0,  0, 1,  0, 5])
+        \\
+        \\# 3D Transform (Extrude, then translate Z by 15)
+        \\poly_3d = poly_trans.extrude(10).transform([1, 0, 0,  0, 1, 0,  0, 0, 1,  0, 0, 15])
+        \\
+        \\[poly_3d.volume()]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    // Area of Triangle was (10 * 10) / 2 = 50
+    // Scale X by 2 -> Area = 100
+    // Extrude by 10 -> Volume = 1000
+    const vol = vm.stack[0].asArray().items.items[0].asNumber();
+    try testing.expect(vol > 999.0 and vol < 1001.0);
+}

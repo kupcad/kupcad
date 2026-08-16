@@ -211,6 +211,29 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     };
 }
 
+fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
+    std.debug.assert(a.engine == .manifold);
+    return manifold.containsPoint(@ptrCast(@alignCast(a.ptr)), pt[0], pt[1], pt[2]);
+}
+
+fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, search_length: f64) f64 {
+    std.debug.assert(a.engine == .manifold and b.engine == .manifold);
+    return manifold.minGap(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr)), search_length);
+}
+
+fn rayCastImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, origin: [3]f64, end: [3]f64) ?[]geom.RayHit {
+    std.debug.assert(a.engine == .manifold);
+    return manifold.rayCast(allocator, @ptrCast(@alignCast(a.ptr)), origin[0], origin[1], origin[2], end[0], end[1], end[2]);
+}
+
+fn polygonImpl(allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle {
+    const m_pts = allocator.alloc(manifold.ManifoldVec2, pts.len) catch return null;
+    defer allocator.free(m_pts);
+    for (pts, 0..) |p, i| m_pts[i] = .{ .x = p[0], .y = p[1] };
+    const ptr = manifold.polygon(m_pts) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 fn destructImpl(handle: geom.GeometryHandle) void {
     std.debug.assert(handle.engine == .manifold);
     manifold.destruct(@ptrCast(@alignCast(handle.ptr)));
@@ -252,6 +275,11 @@ pub const driver = kernel.GeometryKernel{
     .volumeFn = volumeImpl,
     .surfaceAreaFn = surfaceAreaImpl,
     .getMeshFn = getMeshImpl,
+    .containsPointFn = containsPointImpl,
+    .minGapFn = minGapImpl,
+    .rayCastFn = rayCastImpl,
+    .polygonFn = polygonImpl,
+
     .destructFn = destructImpl,
     .destructCrossSectionFn = destructCrossSectionImpl,
 };

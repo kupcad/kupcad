@@ -150,6 +150,30 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     _ = handle;
     return null;
 }
+fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
+    _ = a;
+    _ = pt;
+    return false;
+}
+fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
+    _ = a;
+    _ = b;
+    _ = sl;
+    return 0.0;
+}
+fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
+    _ = alloc;
+    _ = a;
+    _ = o;
+    _ = e;
+    return null;
+}
+fn polygonImpl(allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle {
+    _ = allocator;
+    _ = pts;
+    return null;
+}
+
 fn destructImpl(handle: geom.GeometryHandle) void {
     _ = handle;
 }
@@ -186,6 +210,11 @@ pub const driver = kernel.GeometryKernel{
     .volumeFn = volumeImpl,
     .surfaceAreaFn = surfaceAreaImpl,
     .getMeshFn = getMeshImpl,
+    .containsPointFn = containsPointImpl,
+    .minGapFn = minGapImpl,
+    .rayCastFn = rayCastImpl,
+    .polygonFn = polygonImpl,
+
     .destructFn = destructImpl,
     .destructCrossSectionFn = destructCrossSectionImpl,
 };

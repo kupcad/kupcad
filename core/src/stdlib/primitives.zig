@@ -207,3 +207,22 @@ pub fn nativeCircle(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     const dag_idx = try vm.dag_builder.addCircle(r, segments);
     return try vm.allocateCrossSection(dag_idx);
 }
+
+pub fn nativePolygon(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    if (arg_count < 1 or !args[0].isArray()) return error.RuntimeError;
+    const pt_arr = args[0].asArray().items.items;
+
+    var pts = try vm.allocator.alloc([2]f64, pt_arr.len);
+    defer vm.allocator.free(pts);
+
+    for (pt_arr, 0..) |val, i| {
+        if (!val.isArray()) return error.RuntimeError;
+        const inner = val.asArray().items.items;
+        pts[i][0] = if (inner.len > 0 and inner[0].isNumber()) inner[0].asNumber() else 0.0;
+        pts[i][1] = if (inner.len > 1 and inner[1].isNumber()) inner[1].asNumber() else 0.0;
+    }
+
+    const dag_idx = try vm.dag_builder.addPolygon(pts);
+    return try vm.allocateCrossSection(dag_idx);
+}

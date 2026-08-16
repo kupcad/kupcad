@@ -1,10 +1,12 @@
 const std = @import("std");
+const geom = @import("../../kernel/geometry_handle.zig");
 
 pub const ManifoldObj = opaque {};
 pub const ManifoldBox = opaque {};
 pub const ManifoldMeshGL = opaque {};
 pub const ManifoldCrossSection = opaque {};
 pub const ManifoldPolygons = opaque {};
+pub const ManifoldSimplePolygon = opaque {};
 
 pub const OpType = enum(c_int) {
     add = 0,
@@ -19,10 +21,19 @@ pub const JoinType = enum(c_int) {
     bevel = 3,
 };
 
+pub const ManifoldVec2 = extern struct { x: f64, y: f64 };
 pub const ManifoldVec3 = extern struct { x: f64, y: f64, z: f64 };
 pub const ManifoldManifoldPair = extern struct {
     first: ?*ManifoldObj,
     second: ?*ManifoldObj,
+};
+
+pub const ManifoldRayHitVec = opaque {};
+pub const ManifoldRayHit = extern struct {
+    face_id: u64,
+    distance: f64,
+    position: ManifoldVec3,
+    normal: ManifoldVec3,
 };
 
 extern "C" fn manifold_alloc_manifold() ?*ManifoldObj;
@@ -80,6 +91,19 @@ extern "C" fn manifold_meshgl_vert_properties_length(m: ?*ManifoldMeshGL) usize;
 extern "C" fn manifold_meshgl_tri_length(m: ?*ManifoldMeshGL) usize;
 extern "C" fn manifold_meshgl_vert_properties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32;
 extern "C" fn manifold_meshgl_tri_verts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32;
+
+extern "C" fn manifold_alloc_ray_hit_vec() ?*ManifoldRayHitVec;
+extern "C" fn manifold_delete_ray_hit_vec(v: ?*ManifoldRayHitVec) void;
+extern "C" fn manifold_ray_cast(mem: ?*ManifoldRayHitVec, m: ?*ManifoldObj, origin_x: f64, origin_y: f64, origin_z: f64, end_x: f64, end_y: f64, end_z: f64) ?*ManifoldRayHitVec;
+extern "C" fn manifold_ray_hit_vec_length(v: ?*ManifoldRayHitVec) usize;
+extern "C" fn manifold_ray_hit_vec_get(v: ?*ManifoldRayHitVec, idx: usize) ManifoldRayHit;
+extern "C" fn manifold_min_gap(m: ?*ManifoldObj, other: ?*ManifoldObj, searchLength: f64) f64;
+extern "C" fn manifold_winding_number(m: ?*ManifoldObj, x: f64, y: f64, z: f64) c_int;
+
+extern "C" fn manifold_simple_polygon(mem: ?*ManifoldSimplePolygon, ps: [*]const ManifoldVec2, length: usize) ?*ManifoldSimplePolygon;
+extern "C" fn manifold_alloc_simple_polygon() ?*ManifoldSimplePolygon;
+extern "C" fn manifold_delete_simple_polygon(p: ?*ManifoldSimplePolygon) void;
+extern "C" fn manifold_cross_section_of_simple_polygon(mem: ?*ManifoldCrossSection, p: ?*ManifoldSimplePolygon) ?*ManifoldCrossSection;
 
 // ==========================================
 // Zig Idiomatic Wrappers
@@ -175,6 +199,15 @@ pub fn offset(cs: ?*ManifoldCrossSection, delta: f64, jt: JoinType, miter_limit:
     return manifold_cross_section_offset(manifold_alloc_cross_section(), cs, delta, jt, miter_limit, @intCast(circular_segments));
 }
 
+pub fn minGap(m: ?*ManifoldObj, other: ?*ManifoldObj, search_length: f64) f64 {
+    return manifold_min_gap(m, other, search_length);
+}
+
+pub fn containsPoint(m: ?*ManifoldObj, x: f64, y: f64, z: f64) bool {
+    // A non-zero winding number indicates the point is inside the solid geometry
+    return manifold_winding_number(m, x, y, z) != 0;
+}
+
 pub fn project(obj: ?*ManifoldObj) ?*ManifoldCrossSection {
     const polys = manifold_project(manifold_alloc_polygons(), obj);
     defer manifold_delete_polygons(polys);
@@ -227,6 +260,37 @@ pub fn meshGLVertProperties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32 {
 }
 pub fn meshGLTriVerts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32 {
     return manifold_meshgl_tri_verts(mem, m);
+}
+
+pub fn rayCast(allocator: std.mem.Allocator, m: ?*ManifoldObj, ox: f64, oy: f64, oz: f64, ex: f64, ey: f64, ez: f64) ?[]geom.RayHit {
+    const vec = manifold_ray_cast(manifold_alloc_ray_hit_vec(), m, ox, oy, oz, ex, ey, ez);
+    defer if (vec != null) manifold_delete_ray_hit_vec(vec);
+    if (vec == null) return null;
+
+    const len = manifold_ray_hit_vec_length(vec);
+    const hits = allocator.alloc(geom.RayHit, len) catch return null;
+
+    // Calculate total ray length for metric conversion
+    const dx = ex - ox;
+    const dy = ey - oy;
+    const dz = ez - oz;
+    const ray_length = @sqrt(dx * dx + dy * dy + dz * dz);
+
+    for (0..len) |i| {
+        const h = manifold_ray_hit_vec_get(vec, i);
+        hits[i] = .{
+            .distance = h.distance * ray_length, // Scale normalized fraction to metric world distance!
+            .position = .{ h.position.x, h.position.y, h.position.z },
+            .normal = .{ h.normal.x, h.normal.y, h.normal.z },
+        };
+    }
+    return hits;
+}
+
+pub fn polygon(points: []const ManifoldVec2) ?*ManifoldCrossSection {
+    const p = manifold_simple_polygon(manifold_alloc_simple_polygon(), points.ptr, points.len);
+    defer manifold_delete_simple_polygon(p);
+    return manifold_cross_section_of_simple_polygon(manifold_alloc_cross_section(), p);
 }
 
 pub fn destruct(m: ?*ManifoldObj) void {

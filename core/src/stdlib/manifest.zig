@@ -39,6 +39,7 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "sphere", .func = primitives.nativeSphere, .category = .primitive_3d },
     .{ .name = "square", .func = primitives.nativeSquare, .category = .primitive_2d },
     .{ .name = "circle", .func = primitives.nativeCircle, .category = .primitive_2d },
+    .{ .name = "polygon", .func = primitives.nativePolygon, .category = .primitive_2d },
     .{ .name = "import_stl", .func = stl.nativeImportStl, .category = .file_io },
     .{ .name = "export_stl", .func = stl.nativeExportStl, .category = .file_io },
     .{ .name = "import_step", .func = step.nativeImportStep, .category = .file_io },
@@ -69,6 +70,9 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "minkowski", .category = .transform, .func = methods.meshMinkowski },
     .{ .name = "offset", .category = .transform, .func = methods.meshOffset },
     .{ .name = "transform", .category = .transform, .func = methods.meshTransform },
+    .{ .name = "min_gap", .category = .inspection_method, .func = methods.meshMinGap },
+    .{ .name = "contains?", .category = .inspection_method, .func = methods.meshContains },
+    .{ .name = "ray_cast", .category = .inspection_method, .func = methods.meshRayCast },
 };
 
 // Compile-time generated O(1) jump table
