@@ -44,7 +44,7 @@ const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
 pub const Compiler = struct {
     allocator: std.mem.Allocator,
     tree: *const ast.Tree,
-    script_globals: std.ArrayListUnmanaged(ast.StringId) = .empty,
+    script_globals: std.AutoHashMapUnmanaged(ast.StringId, void) = .empty,
     symbols: []const resolver.ResolvedSymbol,
     token_starts: []const u32, // Map AST nodes back to Lexer byte offsets
     current_source_offset: u32, // Implictly passed to Chunk
@@ -847,8 +847,8 @@ pub const Compiler = struct {
                 const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
                 if (self.enclosing == null or self.isScriptGlobal(name_id)) {
                     // Track it if we are assigning it for the first time at the top level
-                    if (self.enclosing == null and !self.isScriptGlobal(name_id)) {
-                        try self.script_globals.append(self.allocator, name_id);
+                    if (self.enclosing == null) {
+                        try self.script_globals.put(self.allocator, name_id, {});
                     }
                     try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
                 } else {
@@ -1462,8 +1462,8 @@ pub const Compiler = struct {
             try self.emitByte(upvalue_slot);
         } else if (self.enclosing == null or sym.kind == .global or self.isScriptGlobal(name_id)) {
             // Track it if we are assigning it for the first time at the top level
-            if (self.enclosing == null and !self.isScriptGlobal(name_id)) {
-                try self.script_globals.append(self.allocator, name_id);
+            if (self.enclosing == null) {
+                try self.script_globals.put(self.allocator, name_id, {});
             }
 
             const name_idx = try self.makeStringConstant(name_str);
@@ -1670,19 +1670,7 @@ pub const Compiler = struct {
             root = parent;
         }
 
-        // Safely extract and trim the target name
-        const raw_target = self.tree.getString(name_id);
-        const target_name = std.mem.trim(u8, raw_target, " \t\r\n\x00");
-
-        for (root.script_globals.items) |global_id| {
-            const raw_global = root.tree.getString(global_id);
-            const global_name = std.mem.trim(u8, raw_global, " \t\r\n\x00");
-
-            // Compare the cleaned string values
-            if (std.mem.eql(u8, global_name, target_name)) {
-                return true;
-            }
-        }
-        return false;
+        // Pure O(1) integer matching. No string comparisons required!
+        return root.script_globals.contains(name_id);
     }
 };
