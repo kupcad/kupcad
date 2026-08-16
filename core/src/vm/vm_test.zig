@@ -2373,3 +2373,71 @@ test "VM: Object Reflection (is_a? and responds_to?)" {
     // [1, 2, 3].responds_to?(:push) -> true (Testing primitive methods)
     try testing.expectEqual(true, arr_obj.items.items[7].asBool());
 }
+
+test "VM: GC Grey Stack handles deeply nested objects without C-stack overflow" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Create an array nested 2,000 levels deep.
+    // A recursive markObject would blow the C call stack here.
+    const source =
+        \\arr = []
+        \\i = 0
+        \\while (i < 2000)
+        \\  arr = [arr]
+        \\  i = i + 1
+        \\end
+        \\arr
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Full garbage collection sweep right now
+    vm.gc.collectGarbage(&vm, false);
+
+    // If we reach this line, the iterative grey stack successfully prevented a stack overflow!
+    try testing.expect(true);
+}
+
+test "VM Edge Case: Safe casting prevents panics on invalid CAD arguments" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    vm.mute_errors = true; // Prevent the error from cluttering test output
+
+    // Attempt to translate a geometry using a String instead of a Number
+    const source =
+        \\c = cube(10)
+        \\c.translate("hello", 0, 0)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+
+    // It should cleanly catch the invalid type and safely abort the execution
+    try testing.expectEqual(.runtime_error, result);
+}
