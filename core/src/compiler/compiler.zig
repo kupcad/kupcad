@@ -371,12 +371,17 @@ pub const Compiler = struct {
                 try self.compileNode(ia.index);
 
                 if (ia.op) |op| {
-                    // Double-evaluate target and index to fetch current value.
-                    try self.compileNode(ia.target);
-                    try self.compileNode(ia.index);
+                    // Stack is currently: [target, index]
+
+                    // Duplicate BOTH so we can fetch the current value without losing the target/index pointers for the setter
+                    try self.emitOp(.op_dup_two);
+                    // Stack is now: [target, index, target, index]
+
                     try self.emitOp(.op_get_index);
+                    // Stack is now: [target, index, current_val]
 
                     try self.compileNode(ia.value);
+                    // Stack is now: [target, index, current_val, rhs_val]
 
                     switch (op) {
                         .add => try self.emitOp(.op_add),
@@ -385,10 +390,12 @@ pub const Compiler = struct {
                         .divide => try self.emitOp(.op_divide),
                         else => return error.UnknownNode,
                     }
+                    // Stack is now: [target, index, new_val]
                 } else {
                     try self.compileNode(ia.value);
                 }
 
+                // op_set_index consumes [target, index, new_val] and pushes [new_val] back
                 try self.emitOp(.op_set_index);
             },
             .unary_op => {
@@ -621,6 +628,7 @@ pub const Compiler = struct {
                 self.simulatePush(1);
             },
             .op_class, .op_class_wide => self.simulatePush(1),
+            .op_dup_two => self.simulatePush(2),
             .op_method, .op_method_wide, .op_define_global, .op_define_global_wide => self.simulatePop(1),
             .op_set_property, .op_set_property_wide => {
                 self.simulatePop(2);

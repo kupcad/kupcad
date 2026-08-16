@@ -61,6 +61,7 @@ pub const OpCode = enum(u8) {
     // Stack Operations
     op_pop,
     op_dup,
+    op_dup_two,
 
     // Variables
     op_get_local,

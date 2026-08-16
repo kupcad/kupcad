@@ -537,6 +537,12 @@ pub const VM = struct {
                     const val = self.stack[self.stack_top - 1];
                     self.push(val);
                 },
+                .op_dup_two => {
+                    const b = self.stack[self.stack_top - 1];
+                    const a = self.stack[self.stack_top - 2];
+                    self.push(a); // Push copies in the exact same order
+                    self.push(b);
+                },
                 .op_loop => {
                     // Properly read 3-byte offset
                     const offset = self.readJumpOffset(exec_chunk, frame);

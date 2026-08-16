@@ -26,6 +26,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         .op_false,
         .op_pop,
         .op_dup,
+        .op_dup_two,
         .op_array_push,
         .op_array_spread,
         .op_map_insert,
