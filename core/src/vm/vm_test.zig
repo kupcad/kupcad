@@ -2307,3 +2307,69 @@ test "VM: Native string and array addition (+ operator)" {
     try testing.expectEqual(@as(f64, 1.0), inner_arr[0].asNumber());
     try testing.expectEqual(@as(f64, 4.0), inner_arr[3].asNumber());
 }
+
+test "VM: Object Reflection (is_a? and responds_to?)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Animal
+        \\  def speak() "roar" end
+        \\end
+        \\class Dog < Animal
+        \\  def bark() "woof" end
+        \\end
+        \\
+        \\d = Dog.new()
+        \\[
+        \\  d.is_a?(Dog),
+        \\  d.is_a?(Animal),
+        \\  d.is_a?(String),
+        \\  "test".is_a?(String),
+        \\  d.responds_to?(:bark),
+        \\  d.responds_to?("speak"),
+        \\  d.responds_to?(:meow),
+        \\  [1, 2, 3].responds_to?(:push)
+        \\]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 8), arr_obj.items.items.len);
+
+    // d.is_a?(Dog) -> true
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+    // d.is_a?(Animal) -> true (Testing superclass inheritance tracking)
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool());
+    // d.is_a?(String) -> false
+    try testing.expectEqual(false, arr_obj.items.items[2].asBool());
+    // "test".is_a?(String) -> true (Testing primitive class tracking)
+    try testing.expectEqual(true, arr_obj.items.items[3].asBool());
+
+    // d.responds_to?(:bark) -> true
+    try testing.expectEqual(true, arr_obj.items.items[4].asBool());
+    // d.responds_to?("speak") -> true (Testing superclass method tracking and String arg)
+    try testing.expectEqual(true, arr_obj.items.items[5].asBool());
+    // d.responds_to?(:meow) -> false
+    try testing.expectEqual(false, arr_obj.items.items[6].asBool());
+    // [1, 2, 3].responds_to?(:push) -> true (Testing primitive methods)
+    try testing.expectEqual(true, arr_obj.items.items[7].asBool());
+}

@@ -1521,6 +1521,67 @@ pub const VM = struct {
             }
         }
 
+        // --- Global `is_a?` Interceptor ---
+        if (std.mem.eql(u8, method_name_str, "is_a?")) {
+            if (arg_count != 1) {
+                self.reportError("Runtime Error: is_a? expects exactly 1 argument.\n", .{});
+                return .runtime_error;
+            }
+
+            const target_val = args_ptr[0];
+            if (!target_val.isClass()) {
+                self.reportError("Runtime Error: is_a? expects a Class as its argument.\n", .{});
+                return .runtime_error;
+            }
+
+            var match = false;
+            if (class_obj) |start_class| {
+                // Safely traverse the inheritance tree!
+                match = isSubclassOf(start_class, target_val.asClass());
+            }
+
+            self.popAndRelease(2); // Safely clear the receiver and argument
+            self.push(value.Value.initBool(match));
+            return .ok;
+        }
+
+        if (std.mem.eql(u8, method_name_str, "responds_to?")) {
+            if (arg_count != 1) {
+                self.reportError("Runtime Error: responds_to? expects exactly 1 argument.\n", .{});
+                return .runtime_error;
+            }
+
+            const target_val = args_ptr[0];
+            var query_name: []const u8 = "";
+
+            // Allow checking with both Symbols (:method) and Strings ("method")
+            if (target_val.isObject() and target_val.asObj().obj_type == .symbol) {
+                query_name = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
+            } else if (target_val.isObject() and target_val.asObj().obj_type == .string) {
+                query_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
+            } else {
+                self.reportError("Runtime Error: responds_to? expects a Symbol or String.\n", .{});
+                return .runtime_error;
+            }
+
+            var match = false;
+            if (receiver.isClass()) {
+                if (self.findClassMethod(receiver.asClass(), query_name) != null) match = true;
+                if (!match and std.mem.eql(u8, query_name, "new")) match = true;
+            } else if (class_obj) |c| {
+                if (self.findMethod(c, query_name) != null) match = true;
+            }
+
+            // Also return true if the user is checking an instance property!
+            if (!match and receiver.isInstance()) {
+                if (receiver.asInstance().fields.contains(query_name)) match = true;
+            }
+
+            self.popAndRelease(2); // Clear receiver and argument
+            self.push(value.Value.initBool(match));
+            return .ok;
+        }
+
         // Method Lookup
         var method_val: ?value.Value = null;
         if (receiver.isClass()) {
