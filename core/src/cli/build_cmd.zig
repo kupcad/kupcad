@@ -51,6 +51,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     // Set up the execution environment
     var vm = try VM.init(allocator, init.io);
     defer vm.deinit();
+    vm.line_index = &doc.line_index;
+
     try registry.registerStandardLibrary(&vm);
 
     var main_chunk = chunk.Chunk.init();

@@ -8,7 +8,7 @@ const manifest = @import("manifest.zig");
 const manifold_driver = @import("../kernel/engines/manifold/driver.zig").driver;
 
 fn defaultPrintHandler(vm: *VM, message: []const u8) void {
-    std.Io.File.stdout().writeStreamingAll(vm.io, message) catch {};
+    std.Io.File.stderr().writeStreamingAll(vm.io, message) catch {};
 }
 
 // --- Bootstrap Helpers ---

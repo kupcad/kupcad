@@ -1,3 +1,10 @@
 base = cube(size: 30, center: true)
 hole = cylinder(d: 10, h: 40, center: true)
-base - hole
+part = base - hole
+
+# Inspect volume and bounding box
+p(part.volume())
+p(part.bbox())
+
+# Final expression evaluated by the VM (triggers implicit STL export)
+part

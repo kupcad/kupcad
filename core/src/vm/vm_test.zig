@@ -1930,3 +1930,43 @@ test "STL Exporter: exports valid Binary STL file with expected byte structure" 
     const expected_file_size = 84 + (@as(usize, tri_count) * 50);
     try testing.expectEqual(expected_file_size, file_contents.len);
 }
+
+test "VM: Inspection methods (volume, bbox) and p() work in KupCAD scripts" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    try registry.registerStandardLibrary(&vm);
+
+    // Mute print_handler during unit tests
+    vm.host.print_handler = null;
+
+    const source =
+        \\base = cube(size: 30, center: true)
+        \\hole = cylinder(d: 10, h: 40, center: true)
+        \\part = base - hole
+        \\p(part.volume())
+        \\p(part.bbox())
+        \\part
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expect(vm.stack[0].isGeometry());
+
+    // Verify discrete tessellated volume calculation (~24,658.92)
+    const handle = try vm.ensureConcrete(vm.stack[0]);
+    const vol = vm.active_kernel.?.volume(handle);
+    try testing.expect(vol > 24600.0 and vol < 24700.0);
+}
