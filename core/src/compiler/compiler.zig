@@ -1662,8 +1662,19 @@ pub const Compiler = struct {
         while (root.enclosing) |parent| {
             root = parent;
         }
+
+        // Safely extract and trim the target name
+        const raw_target = self.tree.getString(name_id);
+        const target_name = std.mem.trim(u8, raw_target, " \t\r\n\x00");
+
         for (root.script_globals.items) |global_id| {
-            if (global_id == name_id) return true;
+            const raw_global = root.tree.getString(global_id);
+            const global_name = std.mem.trim(u8, raw_global, " \t\r\n\x00");
+
+            // Compare the cleaned string values
+            if (std.mem.eql(u8, global_name, target_name)) {
+                return true;
+            }
         }
         return false;
     }

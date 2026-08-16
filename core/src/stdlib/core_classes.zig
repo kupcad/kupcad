@@ -419,6 +419,40 @@ pub fn mapStringifyKeys(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     return value.Value.initObj(&new_map.obj);
 }
 
+// --- Boolean Methods ---
+
+pub fn booleanToS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (arg_count != 0) return error.RuntimeError;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = (args - 1)[0];
+    if (!receiver.isBool()) return error.RuntimeError;
+
+    const str = if (receiver.asBool()) "true" else "false";
+    return try vm.allocateString(str);
+}
+
+pub fn booleanToNum(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+
+    if (arg_count != 0) return error.RuntimeError;
+    const receiver = (args - 1)[0];
+    if (!receiver.isBool()) return error.RuntimeError;
+
+    // true -> 1.0, false -> 0.0
+    const num_val: f64 = if (receiver.asBool()) 1.0 else 0.0;
+    return value.Value.initNumber(num_val);
+}
+
+pub fn booleanInvert(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = vm_opaque;
+
+    if (arg_count != 0) return error.RuntimeError;
+    const receiver = (args - 1)[0];
+    if (!receiver.isBool()) return error.RuntimeError;
+
+    return value.Value.initBool(!receiver.asBool());
+}
+
 // --- Number Methods ---
 
 pub fn numberRound(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -767,6 +801,14 @@ const string_methods = [_]MethodDef{
     .{ .name = "to_s", .func = stringToS },
 };
 
+const boolean_methods = [_]MethodDef{
+    .{ .name = "to_s", .func = booleanToS },
+    .{ .name = "inspect", .func = booleanToS },
+    .{ .name = "to_i", .func = booleanToNum },
+    .{ .name = "to_f", .func = booleanToNum },
+    .{ .name = "invert", .func = booleanInvert },
+};
+
 const symbol_methods = [_]MethodDef{
     .{ .name = "to_s", .func = symbolToS },
     .{ .name = "to_sym", .func = symbolToSym },
@@ -819,6 +861,10 @@ pub fn registerCoreClasses(vm: *VM) !void {
 
     if (vm.symbol_class) |cls| {
         for (symbol_methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
+    }
+
+    if (vm.boolean_class) |cls| {
+        for (boolean_methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
     }
 
     if (vm.globals.get("Math")) |v| {

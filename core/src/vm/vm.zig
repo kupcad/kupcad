@@ -60,6 +60,7 @@ pub const VM = struct {
     map_class: ?*value.ObjClass = null,
     number_class: ?*value.ObjClass = null,
     symbol_class: ?*value.ObjClass = null,
+    boolean_class: ?*value.ObjClass = null,
 
     // safety for infinite loops
     instruction_count: usize,
@@ -1507,6 +1508,8 @@ pub const VM = struct {
             }
         } else if (receiver.isNumber()) {
             class_obj = self.number_class;
+        } else if (receiver.isBool()) {
+            class_obj = self.boolean_class;
         }
 
         // Handle Property Access (Instances only)

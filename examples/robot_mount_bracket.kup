@@ -51,25 +51,25 @@ puts("--- Spatial Inspection Diagnostics ---")
 # 1. Point Containment Check
 test_point = [22.0, 17.5, 12.0]
 is_inside = main_assembly.contains?(test_point)
-puts("Is point [22, 17.5, 12] inside assembly?: " + is_inside.to_s())
+puts("Is point [22, 17.5, 12] inside assembly?: " + is_inside.to_s)
 
 # 2. Clearance Gap Analysis
 obstacle = sphere(r: 5.0).translate(60.0, 0.0, 10.0)
 gap_distance = main_assembly.min_gap(obstacle, 100.0)
-puts("Min gap distance to obstacle: " + gap_distance.round(2).to_s() + " mm")
+puts("Min gap distance to obstacle: " + gap_distance.round(2).to_s + " mm")
 
 # 3. Ray Casting Inspection
 ray_hits = main_assembly.ray_cast([22.0, 17.5, 40.0], [22.0, 17.5, -10.0])
-puts("Total Ray Intersection Hits: " + ray_hits.length().to_s())
+puts("Total Ray Intersection Hits: " + ray_hits.length.to_s)
 
-if ray_hits.length() > 0
+if ray_hits.length > 0
   first_hit = ray_hits[0]
   p("Top Surface Distance:", first_hit["distance"].round(2))
   p("Top Surface Position Z:", first_hit["position"][2].round(2))
 end
 
 puts("Final Mass Properties:")
-p("Volume:", main_assembly.volume().round(2))
-p("Bounding Box:", main_assembly.bbox())
+p("Volume:", main_assembly.volume.round(2))
+p("Bounding Box:", main_assembly.bbox)
 
 main_assembly
