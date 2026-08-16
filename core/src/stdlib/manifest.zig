@@ -58,7 +58,8 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "scale", .category = .transform, .func = methods.meshScale },
     .{ .name = "on_face", .category = .workplane_method, .func = methods.meshOnFace },
     .{ .name = "bbox", .category = .inspection_method, .func = methods.meshBBox },
-    .{ .name = "volume", .category = .inspection_method, .func = methods.meshBBox },
+    .{ .name = "volume", .category = .inspection_method, .func = methods.meshVolume },
+    .{ .name = "surface_area", .category = .inspection_method, .func = methods.meshSurfaceArea },
 };
 
 // Compile-time generated O(1) jump table

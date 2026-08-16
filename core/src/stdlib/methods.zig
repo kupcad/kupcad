@@ -57,13 +57,79 @@ pub fn meshOnFace(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.
 pub fn meshBBox(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     _ = args;
-    _ = try vm.ensureConcrete(receiver);
-    return value.Value.initNil();
+
+    // Force JIT Materialization!
+    const handle = try vm.ensureConcrete(receiver);
+    const geom_obj = receiver.asGeometry();
+
+    // Cache the bounding box so we don't recalculate it continuously
+    if (geom_obj.cached_bbox == null) {
+        if (vm.active_kernel.?.boundingBox(handle)) |k_box| {
+            geom_obj.cached_bbox = value.BBox{
+                .min_x = k_box.min[0],
+                .min_y = k_box.min[1],
+                .min_z = k_box.min[2],
+                .max_x = k_box.max[0],
+                .max_y = k_box.max[1],
+                .max_z = k_box.max[2],
+            };
+        }
+    }
+    const box = geom_obj.cached_bbox orelse return value.Value.initNil();
+
+    // Allocate the resulting dictionary map
+    const map_obj = try vm.gc.allocateMap(vm);
+    vm.push(value.Value.initObj(&map_obj.obj)); // protect from GC
+    defer _ = vm.pop();
+
+    // Helper to build coordinates into a KupCAD Array
+    const build_arr = struct {
+        fn build(v: *VM, coords: [3]f64) !value.Value {
+            const a = try v.gc.allocateArray(v);
+            v.push(value.Value.initObj(&a.obj));
+            defer _ = v.pop();
+            try a.items.append(v.allocator, value.Value.initNumber(coords[0]));
+            try a.items.append(v.allocator, value.Value.initNumber(coords[1]));
+            try a.items.append(v.allocator, value.Value.initNumber(coords[2]));
+            return value.Value.initObj(&a.obj);
+        }
+    }.build;
+
+    const min_str = try vm.allocateString("min");
+    vm.push(min_str);
+    defer _ = vm.pop();
+    const max_str = try vm.allocateString("max");
+    vm.push(max_str);
+    defer _ = vm.pop();
+
+    const min_arr = try build_arr(vm, [3]f64{ box.min_x, box.min_y, box.min_z });
+    const max_arr = try build_arr(vm, [3]f64{ box.max_x, box.max_y, box.max_z });
+
+    vm.retainValue(min_str);
+    vm.retainValue(min_arr);
+    try map_obj.keys.append(vm.allocator, min_str);
+    try map_obj.values.append(vm.allocator, min_arr);
+
+    vm.retainValue(max_str);
+    vm.retainValue(max_arr);
+    try map_obj.keys.append(vm.allocator, max_str);
+    try map_obj.values.append(vm.allocator, max_arr);
+
+    return value.Value.initObj(&map_obj.obj);
 }
 
-pub fn meshMockTransform(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+pub fn meshVolume(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     _ = args;
-    vm.retainValue(receiver);
-    return receiver;
+    const handle = try vm.ensureConcrete(receiver);
+    const vol = vm.active_kernel.?.volume(handle);
+    return value.Value.initNumber(vol);
+}
+
+pub fn meshSurfaceArea(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    _ = args;
+    const handle = try vm.ensureConcrete(receiver);
+    const area = vm.active_kernel.?.surfaceArea(handle);
+    return value.Value.initNumber(area);
 }

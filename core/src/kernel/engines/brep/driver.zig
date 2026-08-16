@@ -41,11 +41,6 @@ fn transformImpl(a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle {
     return null;
 }
 
-fn destructImpl(handle: geom.GeometryHandle) void {
-    std.debug.assert(handle.engine == .brep_native);
-    _ = handle;
-}
-
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
     std.debug.assert(handle.engine == .brep_native);
     return null;
@@ -57,6 +52,21 @@ fn queryFacesImpl(handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.Fa
     return null;
 }
 
+fn volumeImpl(handle: geom.GeometryHandle) f64 {
+    _ = handle;
+    return 0.0;
+}
+
+fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
+    _ = handle;
+    return 0.0;
+}
+
+fn destructImpl(handle: geom.GeometryHandle) void {
+    std.debug.assert(handle.engine == .brep_native);
+    _ = handle;
+}
+
 pub const driver = kernel.GeometryKernel{
     .cubeFn = cubeImpl,
     .cylinderFn = cylinderImpl,
@@ -65,5 +75,7 @@ pub const driver = kernel.GeometryKernel{
     .transformFn = transformImpl,
     .boundingBoxFn = boundingBoxImpl,
     .queryFacesFn = queryFacesImpl,
+    .volumeFn = volumeImpl,
+    .surfaceAreaFn = surfaceAreaImpl,
     .destructFn = destructImpl,
 };

@@ -38,15 +38,29 @@ fn transformImpl(a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle {
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
-fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
-    _ = handle;
-    return null;
-}
-
 fn queryFacesImpl(handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
     _ = handle;
     _ = filter;
     return null;
+}
+
+fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
+    std.debug.assert(handle.engine == .manifold);
+    const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
+    const box = manifold.boundingBox(obj);
+    return geom.BoundingBox{ .min = box.min, .max = box.max };
+}
+
+fn volumeImpl(handle: geom.GeometryHandle) f64 {
+    std.debug.assert(handle.engine == .manifold);
+    const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
+    return manifold.volume(obj);
+}
+
+fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
+    std.debug.assert(handle.engine == .manifold);
+    const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
+    return manifold.surfaceArea(obj);
 }
 
 fn destructImpl(handle: geom.GeometryHandle) void {
@@ -62,5 +76,7 @@ pub const driver = kernel.GeometryKernel{
     .transformFn = transformImpl,
     .boundingBoxFn = boundingBoxImpl,
     .queryFacesFn = queryFacesImpl,
+    .volumeFn = volumeImpl,
+    .surfaceAreaFn = surfaceAreaImpl,
     .destructFn = destructImpl,
 };

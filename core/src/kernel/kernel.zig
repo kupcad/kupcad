@@ -15,6 +15,8 @@ pub const GeometryKernel = struct {
     transformFn: *const fn (a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle,
     boundingBoxFn: *const fn (handle: geom.GeometryHandle) ?geom.BoundingBox,
     queryFacesFn: *const fn (handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray,
+    volumeFn: *const fn (handle: geom.GeometryHandle) f64,
+    surfaceAreaFn: *const fn (handle: geom.GeometryHandle) f64,
     destructFn: *const fn (handle: geom.GeometryHandle) void,
 
     pub inline fn transform(self: *const GeometryKernel, handle: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle {
@@ -43,6 +45,14 @@ pub const GeometryKernel = struct {
 
     pub inline fn queryFaces(self: *const GeometryKernel, handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
         return self.queryFacesFn(handle, filter);
+    }
+
+    pub inline fn volume(self: *const GeometryKernel, handle: geom.GeometryHandle) f64 {
+        return self.volumeFn(handle);
+    }
+
+    pub inline fn surfaceArea(self: *const GeometryKernel, handle: geom.GeometryHandle) f64 {
+        return self.surfaceAreaFn(handle);
     }
 
     pub inline fn destruct(self: *const GeometryKernel, handle: geom.GeometryHandle) void {
