@@ -1091,6 +1091,14 @@ pub const VM = struct {
                 const dims = self.dag_builder.getCubeDimensions(node);
                 return kernel.cube(dims.x, dims.y, dims.z, dims.center) orelse return error.RuntimeError;
             },
+            .cylinder => {
+                const p = self.dag_builder.getCylinderPayload(node);
+                return kernel.cylinder(p.radius, p.height, p.center) orelse return error.RuntimeError;
+            },
+            .sphere => {
+                const p = self.dag_builder.getSpherePayload(node);
+                return kernel.sphere(p.radius) orelse return error.RuntimeError;
+            },
             .union_op, .difference_op, .intersection_op => {
                 const payload = self.dag_builder.getBinaryPayload(node);
                 const left_handle = try self.evaluateDAG(payload.left);

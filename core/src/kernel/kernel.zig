@@ -9,9 +9,10 @@ pub const BooleanOp = enum {
 
 pub const GeometryKernel = struct {
     cubeFn: *const fn (x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle,
+    cylinderFn: *const fn (radius: f64, height: f64, center: bool) ?geom.GeometryHandle,
+    sphereFn: *const fn (radius: f64) ?geom.GeometryHandle,
     booleanFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle,
     transformFn: *const fn (a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle,
-
     boundingBoxFn: *const fn (handle: geom.GeometryHandle) ?geom.BoundingBox,
     queryFacesFn: *const fn (handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray,
     destructFn: *const fn (handle: geom.GeometryHandle) void,
@@ -22,6 +23,14 @@ pub const GeometryKernel = struct {
 
     pub inline fn cube(self: *const GeometryKernel, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
         return self.cubeFn(x, y, z, center);
+    }
+
+    pub inline fn cylinder(self: *const GeometryKernel, radius: f64, height: f64, center: bool) ?geom.GeometryHandle {
+        return self.cylinderFn(radius, height, center);
+    }
+
+    pub inline fn sphere(self: *const GeometryKernel, radius: f64) ?geom.GeometryHandle {
+        return self.sphereFn(radius);
     }
 
     pub inline fn boolean(self: *const GeometryKernel, a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle {

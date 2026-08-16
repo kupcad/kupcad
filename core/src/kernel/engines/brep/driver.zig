@@ -12,6 +12,20 @@ fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     return null;
 }
 
+fn cylinderImpl(radius: f64, height: f64, center: bool) ?geom.GeometryHandle {
+    _ = radius;
+    _ = height;
+    _ = center;
+    std.log.info("Native B-Rep Driver: Constructing exact topological Cylinder...", .{});
+    return null;
+}
+
+fn sphereImpl(radius: f64) ?geom.GeometryHandle {
+    _ = radius;
+    std.log.info("Native B-Rep Driver: Constructing exact topological Sphere...", .{});
+    return null;
+}
+
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
     _ = a;
     _ = b;
@@ -45,6 +59,8 @@ fn queryFacesImpl(handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.Fa
 
 pub const driver = kernel.GeometryKernel{
     .cubeFn = cubeImpl,
+    .cylinderFn = cylinderImpl,
+    .sphereFn = sphereImpl,
     .booleanFn = booleanImpl,
     .transformFn = transformImpl,
     .boundingBoxFn = boundingBoxImpl,

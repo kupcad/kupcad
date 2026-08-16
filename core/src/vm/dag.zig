@@ -87,6 +87,37 @@ pub const DAGBuilder = struct {
         return node_idx;
     }
 
+    /// Appends a Cylinder primitive
+    pub fn addCylinder(self: *DAGBuilder, radius: f64, height: f64, center: bool) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.numbers.append(alloc, radius);
+        try self.numbers.append(alloc, height);
+
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{
+            .tag = .cylinder,
+            .flags = if (center) 1 else 0,
+            .data = num_idx,
+        });
+        return node_idx;
+    }
+
+    /// Appends a Sphere primitive
+    pub fn addSphere(self: *DAGBuilder, radius: f64) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.numbers.append(alloc, radius);
+
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{
+            .tag = .sphere,
+            .flags = 0,
+            .data = num_idx,
+        });
+        return node_idx;
+    }
+
     /// Appends a Translate transform node
     pub fn addTranslate(self: *DAGBuilder, target: DAGNodeIndex, x: f64, y: f64, z: f64) !DAGNodeIndex {
         const alloc = self.allocator();
@@ -124,6 +155,18 @@ pub const DAGBuilder = struct {
             .z = self.numbers.items[node.data + 2],
             .center = (node.flags & 1) != 0,
         };
+    }
+
+    pub inline fn getCylinderPayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64, height: f64, center: bool } {
+        return .{
+            .radius = self.numbers.items[node.data],
+            .height = self.numbers.items[node.data + 1],
+            .center = (node.flags & 1) != 0,
+        };
+    }
+
+    pub inline fn getSpherePayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64 } {
+        return .{ .radius = self.numbers.items[node.data] };
     }
 
     pub inline fn getTranslatePayload(self: *const DAGBuilder, node: DAGNode) TransformPayload {

@@ -8,6 +8,16 @@ fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn cylinderImpl(radius: f64, height: f64, center: bool) ?geom.GeometryHandle {
+    const ptr = manifold.cylinder(radius, height, center) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn sphereImpl(radius: f64) ?geom.GeometryHandle {
+    const ptr = manifold.sphere(radius) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold and b.engine == .manifold);
     const m1: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
@@ -46,6 +56,8 @@ fn destructImpl(handle: geom.GeometryHandle) void {
 
 pub const driver = kernel.GeometryKernel{
     .cubeFn = cubeImpl,
+    .cylinderFn = cylinderImpl,
+    .sphereFn = sphereImpl,
     .booleanFn = booleanImpl,
     .transformFn = transformImpl,
     .boundingBoxFn = boundingBoxImpl,

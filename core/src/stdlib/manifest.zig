@@ -35,6 +35,8 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "p", .func = io_mod.nativeP, .category = .io },
     .{ .name = "debugger", .func = debug_mod.nativeDebugger, .category = .io },
     .{ .name = "cube", .func = primitives.nativeCube, .category = .primitive_3d },
+    .{ .name = "cylinder", .func = primitives.nativeCylinder, .category = .primitive_3d },
+    .{ .name = "sphere", .func = primitives.nativeSphere, .category = .primitive_3d },
     .{ .name = "import_stl", .func = stl.nativeImportStl, .category = .file_io },
     .{ .name = "export_stl", .func = stl.nativeExportStl, .category = .file_io },
     .{ .name = "import_step", .func = step.nativeImportStep, .category = .file_io },
