@@ -7,6 +7,7 @@ const value = @import("../core/value.zig");
 const kernel_mod = @import("../kernel/kernel.zig");
 const host_mod = @import("host.zig");
 const geom = @import("../kernel/geometry_handle.zig");
+const dag_evaluator = @import("dag_evaluator.zig");
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const Brep = @import("../kernel/engines/brep/topology.zig").Brep;
 
@@ -1033,7 +1034,7 @@ pub const VM = struct {
 
         if (geometry.cached_handle) |handle| return handle;
 
-        const handle = try self.evaluateDAG(geometry.dag_idx);
+        const handle = try dag_evaluator.evaluateDAG(self, geometry.dag_idx);
         geometry.cached_handle = handle;
         return handle;
     }
@@ -1042,166 +1043,9 @@ pub const VM = struct {
         if (!val.isCrossSection()) return error.RuntimeError;
         var cs = val.asCrossSection();
         if (cs.cached_handle) |handle| return handle;
-        const handle = try self.evaluateCrossSectionDAG(cs.dag_idx);
+        const handle = try dag_evaluator.evaluateCrossSectionDAG(self, cs.dag_idx);
         cs.cached_handle = handle;
         return handle;
-    }
-
-    fn evaluateDAG(self: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHandle {
-        const node = self.dag_builder.nodes.items[node_idx];
-        const kernel = self.active_kernel orelse {
-            self.reportError("Runtime Error: No geometry kernel active\n", .{});
-            return error.RuntimeError;
-        };
-
-        switch (node.tag) {
-            .cube => {
-                const dims = self.dag_builder.getCubeDimensions(node);
-                return kernel.cube(dims.x, dims.y, dims.z, dims.center) orelse return error.RuntimeError;
-            },
-            .cylinder => {
-                const p = self.dag_builder.getCylinderPayload(node);
-                return kernel.cylinder(p.radius, p.height, p.center) orelse return error.RuntimeError;
-            },
-            .sphere => {
-                const p = self.dag_builder.getSpherePayload(node);
-                return kernel.sphere(p.radius) orelse return error.RuntimeError;
-            },
-            .union_op, .difference_op, .intersection_op => {
-                const payload = self.dag_builder.getBinaryPayload(node);
-                const left_handle = try self.evaluateDAG(payload.left);
-                const right_handle = try self.evaluateDAG(payload.right);
-                const op: kernel_mod.BooleanOp = switch (node.tag) {
-                    .union_op => .union_op,
-                    .difference_op => .difference_op,
-                    .intersection_op => .intersection_op,
-                    else => unreachable,
-                };
-                return kernel.boolean(left_handle, right_handle, op) orelse return error.RuntimeError;
-            },
-            .translate => {
-                const p = self.dag_builder.getTranslatePayload(node);
-                const target_handle = try self.evaluateDAG(p.target);
-                return kernel.translate(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
-            },
-            .rotate => {
-                const p = self.dag_builder.getRotatePayload(node);
-                const target_handle = try self.evaluateDAG(p.target);
-                return kernel.rotate(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
-            },
-            .scale => {
-                const p = self.dag_builder.getScalePayload(node);
-                const target_handle = try self.evaluateDAG(p.target);
-                return kernel.scale(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
-            },
-            .mirror => {
-                const p = self.dag_builder.getMirrorPayload(node);
-                const target_handle = try self.evaluateDAG(p.target);
-                return kernel.mirror(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
-            },
-            .trim_by_plane => {
-                const p = self.dag_builder.getTrimByPlanePayload(node);
-                const target_handle = try self.evaluateDAG(p.target);
-                return kernel.trimByPlane(target_handle, p.nx, p.ny, p.nz, p.offset) orelse return error.RuntimeError;
-            },
-            .hull => {
-                const p = self.dag_builder.getHullPayload(node);
-                const target_handle = try self.evaluateDAG(p.target);
-                return kernel.hull(target_handle) orelse return error.RuntimeError;
-            },
-            .minkowski => {
-                const p = self.dag_builder.getBinaryPayload(node);
-                const left_handle = try self.evaluateDAG(p.left);
-                const right_handle = try self.evaluateDAG(p.right);
-                return kernel.minkowski(left_handle, right_handle) orelse return error.RuntimeError;
-            },
-            .extrude => {
-                const p = self.dag_builder.getExtrudePayload(node);
-                const cs = try self.evaluateCrossSectionDAG(p.target);
-                return kernel.extrude(cs, p.height, p.slices, p.twist_degrees, p.scale_x, p.scale_y) orelse return error.RuntimeError;
-            },
-            .revolve => {
-                const p = self.dag_builder.getRevolvePayload(node);
-                const cs = try self.evaluateCrossSectionDAG(p.target);
-                return kernel.revolve(cs, p.segments, p.degrees) orelse return error.RuntimeError;
-            },
-            .transform_matrix => {
-                const p = self.dag_builder.getTransformPayload(node);
-                const target = try self.evaluateDAG(p.target);
-                var mat: [12]f64 = undefined;
-                std.mem.copyForwards(f64, &mat, self.dag_builder.numbers.items[p.num_idx .. p.num_idx + 12]);
-                return kernel.transformMatrix(target, mat) orelse return error.RuntimeError;
-            },
-            else => {
-                self.reportError("Runtime Error: Expected 3D Geometry node in DAG.\n", .{});
-                return error.RuntimeError;
-            },
-        }
-    }
-
-    fn evaluateCrossSectionDAG(self: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.CrossSectionHandle {
-        const node = self.dag_builder.nodes.items[node_idx];
-        const kernel = self.active_kernel orelse return error.RuntimeError;
-
-        switch (node.tag) {
-            .square => {
-                const p = self.dag_builder.getSquarePayload(node);
-                return kernel.square(p.x, p.y, p.center) orelse return error.RuntimeError;
-            },
-            .circle => {
-                const p = self.dag_builder.getCirclePayload(node);
-                return kernel.circle(p.radius, p.segments) orelse return error.RuntimeError;
-            },
-            .slice_op => {
-                const p = self.dag_builder.getSlicePayload(node);
-                const target = try self.evaluateDAG(p.target);
-                return kernel.slice(target, p.height) orelse return error.RuntimeError;
-            },
-            .project_op => {
-                const p = self.dag_builder.getProjectPayload(node);
-                const target = try self.evaluateDAG(p.target);
-                return kernel.project(target) orelse return error.RuntimeError;
-            },
-            .offset => {
-                const p = self.dag_builder.getOffsetPayload(node);
-                const target = try self.evaluateCrossSectionDAG(p.target);
-                return kernel.offset(target, p.delta, p.join_type) orelse return error.RuntimeError;
-            },
-            .cs_transform => {
-                const p = self.dag_builder.getTransformPayload(node);
-                const target = try self.evaluateCrossSectionDAG(p.target);
-                var mat: [6]f64 = undefined;
-                std.mem.copyForwards(f64, &mat, self.dag_builder.numbers.items[p.num_idx .. p.num_idx + 6]);
-                return kernel.crossSectionTransform(target, mat) orelse return error.RuntimeError;
-            },
-            .polygon => {
-                const num_idx = self.dag_builder.extra_data.items[node.data];
-                const pt_count = self.dag_builder.extra_data.items[node.data + 1];
-                var pts = try self.allocator.alloc([2]f64, pt_count);
-                defer self.allocator.free(pts);
-                for (0..pt_count) |i| {
-                    pts[i][0] = self.dag_builder.numbers.items[num_idx + (i * 2)];
-                    pts[i][1] = self.dag_builder.numbers.items[num_idx + (i * 2) + 1];
-                }
-                return kernel.polygon(self.allocator, pts) orelse return error.RuntimeError;
-            },
-            .cs_union_op, .cs_difference_op, .cs_intersection_op => {
-                const payload = self.dag_builder.getBinaryPayload(node);
-                const left_handle = try self.evaluateCrossSectionDAG(payload.left);
-                const right_handle = try self.evaluateCrossSectionDAG(payload.right);
-                const op: kernel_mod.BooleanOp = switch (node.tag) {
-                    .cs_union_op => .union_op,
-                    .cs_difference_op => .difference_op,
-                    .cs_intersection_op => .intersection_op,
-                    else => unreachable,
-                };
-                return kernel.crossSectionBoolean(left_handle, right_handle, op) orelse return error.RuntimeError;
-            },
-            else => {
-                self.reportError("Runtime Error: Expected 2D CrossSection node in DAG.\n", .{});
-                return error.RuntimeError;
-            },
-        }
     }
 
     fn captureUpvalue(self: *VM, local_ptr: *value.Value) !*value.ObjUpvalue {
