@@ -171,10 +171,12 @@ pub const VM = struct {
     fn runUntil(self: *VM, target_depth: usize) InterpretResult {
         while (self.frames.items.len > target_depth) {
             // Gas Check
-            self.instruction_count += 1;
-            if (self.instruction_count > self.instruction_limit) {
-                self.reportError("Runtime Error: Execution limit exceeded (Infinite loop detected).\n", .{});
-                return .execution_limit_exceeded;
+            if (self.instruction_limit > 0) {
+                self.instruction_count += 1;
+                if (self.instruction_count > self.instruction_limit) {
+                    self.reportError("Runtime Error: Execution limit exceeded (Infinite loop detected).\n", .{});
+                    return .execution_limit_exceeded;
+                }
             }
 
             var frame = &self.frames.items[self.frames.items.len - 1];
