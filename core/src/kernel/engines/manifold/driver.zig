@@ -113,6 +113,17 @@ fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f
     };
 }
 
+fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
+    std.debug.assert(a.engine == .manifold and b.engine == .manifold);
+    const m_op = switch (op) {
+        .union_op => manifold.OpType.add,
+        .difference_op => manifold.OpType.subtract,
+        .intersection_op => manifold.OpType.intersect,
+    };
+    const ptr = manifold.crossSectionBoolean(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr)), m_op) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 fn genusImpl(handle: geom.GeometryHandle) i32 {
     std.debug.assert(handle.engine == .manifold);
     return manifold.genus(@ptrCast(@alignCast(handle.ptr)));
@@ -199,6 +210,7 @@ pub const driver = kernel.GeometryKernel{
     .hullFn = hullImpl,
     .trimByPlaneFn = trimByPlaneImpl,
     .splitByPlaneFn = splitByPlaneImpl,
+    .crossSectionBooleanFn = crossSectionBooleanImpl,
     .genusFn = genusImpl,
 
     .boundingBoxFn = boundingBoxImpl,

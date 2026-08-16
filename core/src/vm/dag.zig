@@ -12,7 +12,6 @@ pub const DAGTag = enum(u8) {
     translate,
     rotate,
     scale,
-    // Phase 3 Extensions:
     square,
     circle,
     extrude,
@@ -22,6 +21,9 @@ pub const DAGTag = enum(u8) {
     mirror,
     hull,
     trim_by_plane,
+    cs_union_op,
+    cs_difference_op,
+    cs_intersection_op,
 };
 
 /// Exactly 8 bytes for optimal L1 cache line density (8 nodes per 64B line)

@@ -2020,3 +2020,41 @@ test "VM: 2D primitives, sweeps, and Bitwise AND (Intersection) work seamlessly"
     try testing.expect(arr_obj.items.items[1].asNumber() > 124.0);
     try testing.expect(arr_obj.items.items[1].asNumber() < 126.0);
 }
+
+test "VM: 2D Boolean Operations (Union, Difference, Intersection) work seamlessly before 3D extrusion" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    vm.host.print_handler = null;
+
+    // Test script:
+    // 1. Create a 20x20 square plate (Area = 400)
+    // 2. Subtract a D=10 circle from it (Area = pi * r^2 = ~78.54)
+    // 3. Extrude the result by 10 units (Volume = Area * 10 = ~3214.6)
+    const source =
+        \\sq = square(size: 20, center: true)
+        \\circ = circle(d: 10)
+        \\part2d = sq - circ
+        \\part3d = part2d.extrude(10)
+        \\part3d.volume()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const vol = vm.stack[0].asNumber();
+    try testing.expect(vol > 3200.0 and vol < 3230.0);
+}

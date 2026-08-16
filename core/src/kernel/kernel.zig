@@ -25,6 +25,7 @@ pub const GeometryKernel = struct {
     hullFn: *const fn (a: geom.GeometryHandle) ?geom.GeometryHandle,
     trimByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle,
     splitByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) geom.SolidPair,
+    crossSectionBooleanFn: *const fn (a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle,
     genusFn: *const fn (a: geom.GeometryHandle) i32,
     destructCrossSectionFn: *const fn (handle: geom.CrossSectionHandle) void,
     boundingBoxFn: *const fn (handle: geom.GeometryHandle) ?geom.BoundingBox,
@@ -78,15 +79,23 @@ pub const GeometryKernel = struct {
     pub inline fn mirror(self: *const GeometryKernel, a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {
         return self.mirrorFn(a, nx, ny, nz);
     }
+
     pub inline fn hull(self: *const GeometryKernel, a: geom.GeometryHandle) ?geom.GeometryHandle {
         return self.hullFn(a);
     }
+
     pub inline fn trimByPlane(self: *const GeometryKernel, a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
         return self.trimByPlaneFn(a, nx, ny, nz, offset);
     }
+
     pub inline fn splitByPlane(self: *const GeometryKernel, a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) geom.SolidPair {
         return self.splitByPlaneFn(a, nx, ny, nz, offset);
     }
+
+    pub inline fn crossSectionBoolean(self: *const GeometryKernel, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle {
+        return self.crossSectionBooleanFn(a, b, op);
+    }
+
     pub inline fn genus(self: *const GeometryKernel, a: geom.GeometryHandle) i32 {
         return self.genusFn(a);
     }
@@ -94,6 +103,7 @@ pub const GeometryKernel = struct {
     pub inline fn boundingBox(self: *const GeometryKernel, handle: geom.GeometryHandle) ?geom.BoundingBox {
         return self.boundingBoxFn(handle);
     }
+
     pub inline fn queryFaces(self: *const GeometryKernel, handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
         return self.queryFacesFn(handle, filter);
     }

@@ -108,6 +108,12 @@ fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f
     _ = offset;
     return .{ .first = null, .second = null };
 }
+fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
+    _ = a;
+    _ = b;
+    _ = op;
+    return null;
+}
 fn genusImpl(handle: geom.GeometryHandle) i32 {
     _ = handle;
     return 0;
@@ -160,6 +166,7 @@ pub const driver = kernel.GeometryKernel{
     .hullFn = hullImpl,
     .trimByPlaneFn = trimByPlaneImpl,
     .splitByPlaneFn = splitByPlaneImpl,
+    .crossSectionBooleanFn = crossSectionBooleanImpl,
     .genusFn = genusImpl,
 
     .boundingBoxFn = boundingBoxImpl,

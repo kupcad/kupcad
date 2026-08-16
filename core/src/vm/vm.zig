@@ -1208,6 +1208,18 @@ pub const VM = struct {
                 const target = try self.evaluateDAG(p.target);
                 return kernel.project(target) orelse return error.RuntimeError;
             },
+            .cs_union_op, .cs_difference_op, .cs_intersection_op => {
+                const payload = self.dag_builder.getBinaryPayload(node);
+                const left_handle = try self.evaluateCrossSectionDAG(payload.left);
+                const right_handle = try self.evaluateCrossSectionDAG(payload.right);
+                const op: kernel_mod.BooleanOp = switch (node.tag) {
+                    .cs_union_op => .union_op,
+                    .cs_difference_op => .difference_op,
+                    .cs_intersection_op => .intersection_op,
+                    else => unreachable,
+                };
+                return kernel.crossSectionBoolean(left_handle, right_handle, op) orelse return error.RuntimeError;
+            },
             else => {
                 self.reportError("Runtime Error: Expected 2D CrossSection node in DAG.\n", .{});
                 return error.RuntimeError;
