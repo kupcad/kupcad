@@ -176,12 +176,13 @@ pub const Compiler = struct {
             },
             .string => {
                 const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
-                const str_val = try self.vm.allocateString(str_content);
-                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                self.vm.push(str_val);
-                const str_idx = try self.makeConstant(str_val);
-                _ = self.vm.pop();
+                const str_idx = try self.makeStringConstant(str_content);
                 try self.emitOpWithOperand(.op_constant, .op_constant_wide, str_idx);
+            },
+            .symbol => {
+                const sym_str = self.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
+                const sym_idx = try self.makeSymbolConstant(sym_str);
+                try self.emitOpWithOperand(.op_constant, .op_constant_wide, sym_idx);
             },
             .boolean => {
                 const val = self.tree.boolean(node);
@@ -189,15 +190,6 @@ pub const Compiler = struct {
             },
             .undef => {
                 try self.emitOp(.op_nil);
-            },
-            .symbol => {
-                const sym_str = self.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
-                const sym_val = try self.vm.allocateSymbol(sym_str);
-                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                self.vm.push(sym_val);
-                const sym_idx = try self.makeConstant(sym_val);
-                _ = self.vm.pop();
-                try self.emitOpWithOperand(.op_constant, .op_constant_wide, sym_idx);
             },
             .identifier => {
                 const sym = self.symbols[@intFromEnum(node_idx)];
@@ -522,11 +514,7 @@ pub const Compiler = struct {
                 const pa = self.tree.propertyAssignment(node);
                 const prop_name = self.tree.getString(pa.property);
 
-                const name_val = try self.vm.allocateString(prop_name);
-                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                self.vm.push(name_val);
-                const name_idx = try self.makeConstant(name_val);
-                _ = self.vm.pop();
+                const name_idx = try self.makeStringConstant(prop_name);
 
                 try self.compileNode(pa.target); // Stack: [target]
 
@@ -681,6 +669,15 @@ pub const Compiler = struct {
         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
         self.vm.push(str_val);
         const idx = try self.makeConstant(str_val);
+        _ = self.vm.pop();
+        return idx;
+    }
+
+    fn makeSymbolConstant(self: *Compiler, text: []const u8) CompileError!usize {
+        const sym_val = try self.vm.allocateSymbol(text);
+        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+        self.vm.push(sym_val);
+        const idx = try self.makeConstant(sym_val);
         _ = self.vm.pop();
         return idx;
     }
@@ -932,11 +929,7 @@ pub const Compiler = struct {
                 const key_node = self.tree.getNode(entry.key).?;
                 if (key_node.tag == .identifier) {
                     const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data)));
-                    const str_val = try self.vm.allocateString(str_content);
-                    self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                    self.vm.push(str_val);
-                    const str_idx = try self.makeConstant(str_val);
-                    _ = self.vm.pop();
+                    const str_idx = try self.makeStringConstant(str_content);
                     try self.emitOpWithOperand(.op_constant, .op_constant_wide, str_idx);
                 } else {
                     try self.compileNode(entry.key);
