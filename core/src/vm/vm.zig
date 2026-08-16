@@ -189,7 +189,7 @@ pub const VM = struct {
             if (self.instruction_limit > 0) {
                 self.instruction_count += 1;
                 if (self.instruction_count > self.instruction_limit) {
-                    self.reportError("Runtime Error: Execution limit exceeded (Infinite loop detected).\n", .{});
+                    self.runtimeError("Runtime Error: Execution limit exceeded (Infinite loop detected).\n", .{});
                     return .execution_limit_exceeded;
                 }
             }
@@ -236,7 +236,7 @@ pub const VM = struct {
                     const a = self.pop();
                     defer self.releaseValue(a);
                     if (!a.isNumber()) {
-                        self.reportError("Runtime Error: Invalid operand for '-'\n", .{});
+                        self.runtimeError("Runtime Error: Invalid operand for '-'\n", .{});
                         return .runtime_error;
                     }
                     self.push(value.Value.initNumber(-a.asNumber()));
@@ -290,11 +290,11 @@ pub const VM = struct {
                             self.stack_top -= 1; // Pop receiver
                             self.push(val);
                         } else {
-                            self.reportError("Runtime Error: Undefined property '{s}'.\n", .{name_str});
+                            self.runtimeError("Runtime Error: Undefined property '{s}'.\n", .{name_str});
                             return .runtime_error;
                         }
                     } else {
-                        self.reportError("Runtime Error: Only instances have properties.\n", .{});
+                        self.runtimeError("Runtime Error: Only instances have properties.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -306,7 +306,7 @@ pub const VM = struct {
                     if (self.globals.get(str_obj.chars)) |val| {
                         self.push(val);
                     } else {
-                        self.reportError("Runtime Error: Undefined variable '{s}'\n", .{str_obj.chars});
+                        self.runtimeError("Runtime Error: Undefined variable '{s}'\n", .{str_obj.chars});
                         return .runtime_error;
                     }
                 },
@@ -329,7 +329,7 @@ pub const VM = struct {
                             self.push(value.Value.initNil());
                         }
                     } else {
-                        self.reportError("Runtime Error: Cannot index target.\n", .{});
+                        self.runtimeError("Runtime Error: Cannot index target.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -363,7 +363,7 @@ pub const VM = struct {
                         }
                         self.push(val);
                     } else {
-                        self.reportError("Runtime Error: Cannot assign to index on target.\n", .{});
+                        self.runtimeError("Runtime Error: Cannot assign to index on target.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -465,7 +465,7 @@ pub const VM = struct {
                             target_arr.items.append(self.allocator, item) catch return .runtime_error;
                         }
                     } else {
-                        self.reportError("Runtime Error: Can only spread arrays into arrays.\n", .{});
+                        self.runtimeError("Runtime Error: Can only spread arrays into arrays.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -497,7 +497,7 @@ pub const VM = struct {
                             target_map.values.append(self.allocator, val) catch return .runtime_error;
                         }
                     } else {
-                        self.reportError("Runtime Error: Can only spread maps into maps.\n", .{});
+                        self.runtimeError("Runtime Error: Can only spread maps into maps.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -695,7 +695,7 @@ pub const VM = struct {
                     const module_val = self.pop();
                     defer self.releaseValue(module_val);
                     if (!module_val.isModule()) {
-                        self.reportError("Runtime Error: Can only include Modules.\n", .{});
+                        self.runtimeError("Runtime Error: Can only include Modules.\n", .{});
                         return .runtime_error;
                     }
                     const class_val = self.stack[self.stack_top - 1]; // Peek at class
@@ -762,7 +762,7 @@ pub const VM = struct {
                         instance.fields.put(self.allocator, name_str, val) catch return .runtime_error;
                         self.push(val);
                     } else {
-                        self.reportError("Runtime Error: Only instances have properties.\n", .{});
+                        self.runtimeError("Runtime Error: Only instances have properties.\n", .{});
                         return .runtime_error;
                     }
                 },
@@ -795,7 +795,7 @@ pub const VM = struct {
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
                         const superclass = instance.class.superclass orelse {
-                            self.reportError("Runtime Error: No superclass exists for receiver.\n", .{});
+                            self.runtimeError("Runtime Error: No superclass exists for receiver.\n", .{});
                             return .runtime_error;
                         };
 
@@ -804,11 +804,11 @@ pub const VM = struct {
                             continue;
                         }
 
-                        self.reportError("Runtime Error: Superclass method '{s}' not found.\n", .{method_name_str});
+                        self.runtimeError("Runtime Error: Superclass method '{s}' not found.\n", .{method_name_str});
                         return .runtime_error;
                     }
 
-                    self.reportError("Runtime Error: super can only be called on instances.\n", .{});
+                    self.runtimeError("Runtime Error: super can only be called on instances.\n", .{});
                     return .runtime_error;
                 },
                 .op_yield => {
@@ -819,7 +819,7 @@ pub const VM = struct {
                     const block_val = self.stack[frame.base_slot + expected_args + 1];
 
                     if (!block_val.isClosure()) {
-                        self.reportError("Runtime Error: No block given to yield.\n", .{});
+                        self.runtimeError("Runtime Error: No block given to yield.\n", .{});
                         return .runtime_error;
                     }
 
@@ -861,7 +861,7 @@ pub const VM = struct {
                         if (c.class_fields.get(name_str)) |val| {
                             self.push(val);
                         } else {
-                            self.reportError("Runtime Error: Undefined class variable '{s}'.\n", .{name_str});
+                            self.runtimeError("Runtime Error: Undefined class variable '{s}'.\n", .{name_str});
                             return .runtime_error;
                         }
                     } else return .runtime_error;
@@ -888,7 +888,7 @@ pub const VM = struct {
                     defer self.releaseValue(thrown_val);
 
                     if (!class_val.isClass()) {
-                        self.reportError("Runtime Error: Rescue type must be a Class.\n", .{});
+                        self.runtimeError("Runtime Error: Rescue type must be a Class.\n", .{});
                         return .runtime_error;
                     }
 
@@ -943,7 +943,7 @@ pub const VM = struct {
                     self.push(extracted);
                 },
                 else => {
-                    self.reportError("Runtime Error: Unhandled OpCode {}\n", .{op});
+                    self.runtimeError("Runtime Error: Unhandled OpCode {}\n", .{op});
                     return .runtime_error;
                 },
             }
@@ -1123,7 +1123,7 @@ pub const VM = struct {
 
     pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize) !void {
         if (self.frames.items.len >= limits.MAX_CALL_FRAMES) {
-            self.reportError("Runtime Error: Call stack overflow (exceeded max call frames).\n", .{});
+            self.runtimeError("Runtime Error: Call stack overflow (exceeded max call frames).\n", .{});
             return error.RuntimeError;
         }
 
@@ -1150,7 +1150,7 @@ pub const VM = struct {
 
             if (has_block) self.push(block_copy.?);
         } else if (provided_args > expected_args and !closure.function.has_splat) {
-            self.reportError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
+            self.runtimeError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
             return error.RuntimeError;
         }
 
@@ -1169,7 +1169,7 @@ pub const VM = struct {
 
     pub fn callClosureSync(self: *VM, closure: *value.ObjClosure, args: []const value.Value) !value.Value {
         if (self.frames.items.len >= limits.MAX_CALL_FRAMES) {
-            self.reportError("Runtime Error: Call stack overflow.\n", .{});
+            self.runtimeError("Runtime Error: Call stack overflow.\n", .{});
             return error.RuntimeError;
         }
 
@@ -1281,7 +1281,7 @@ pub const VM = struct {
             return .ok;
         } else {
             const op_symbol = if (op == .op_add) "+" else "-";
-            self.reportError("Runtime Error: Invalid operands for '{s}'\n", .{op_symbol});
+            self.runtimeError("Runtime Error: Invalid operands for '{s}'\n", .{op_symbol});
             return .runtime_error;
         }
     }
@@ -1328,13 +1328,13 @@ pub const VM = struct {
         // --- Global `is_a?` Interceptor ---
         if (std.mem.eql(u8, method_name_str, "is_a?")) {
             if (arg_count != 1) {
-                self.reportError("Runtime Error: is_a? expects exactly 1 argument.\n", .{});
+                self.runtimeError("Runtime Error: is_a? expects exactly 1 argument.\n", .{});
                 return .runtime_error;
             }
 
             const target_val = args_ptr[0];
             if (!target_val.isClass()) {
-                self.reportError("Runtime Error: is_a? expects a Class as its argument.\n", .{});
+                self.runtimeError("Runtime Error: is_a? expects a Class as its argument.\n", .{});
                 return .runtime_error;
             }
 
@@ -1351,7 +1351,7 @@ pub const VM = struct {
 
         if (std.mem.eql(u8, method_name_str, "responds_to?")) {
             if (arg_count != 1) {
-                self.reportError("Runtime Error: responds_to? expects exactly 1 argument.\n", .{});
+                self.runtimeError("Runtime Error: responds_to? expects exactly 1 argument.\n", .{});
                 return .runtime_error;
             }
 
@@ -1364,7 +1364,7 @@ pub const VM = struct {
             } else if (target_val.isObject() and target_val.asObj().obj_type == .string) {
                 query_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
             } else {
-                self.reportError("Runtime Error: responds_to? expects a Symbol or String.\n", .{});
+                self.runtimeError("Runtime Error: responds_to? expects a Symbol or String.\n", .{});
                 return .runtime_error;
             }
 
@@ -1402,7 +1402,7 @@ pub const VM = struct {
                     }
                     return .ok;
                 } else if (arg_count > 0) {
-                    self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
+                    self.runtimeError("Runtime Error: Expected 0 args for default constructor.\n", .{});
                     return .runtime_error;
                 }
                 return .ok;
@@ -1443,7 +1443,7 @@ pub const VM = struct {
             self.stack_top += 1;
             return .ok;
         } else {
-            self.reportError("Runtime Error: No invoke handler registered for method '{s}'.\n", .{method_name_str});
+            self.runtimeError("Runtime Error: No invoke handler registered for method '{s}'.\n", .{method_name_str});
             return .runtime_error;
         }
     }
@@ -1600,11 +1600,11 @@ pub const VM = struct {
                     arr_obj.items.append(self.allocator, char_str) catch return .runtime_error;
                 }
             } else {
-                self.reportError("Runtime Error: String ranges must be single characters.\n", .{});
+                self.runtimeError("Runtime Error: String ranges must be single characters.\n", .{});
                 return .runtime_error;
             }
         } else {
-            self.reportError("Runtime Error: Range bounds must be numbers or characters.\n", .{});
+            self.runtimeError("Runtime Error: Range bounds must be numbers or characters.\n", .{});
             return .runtime_error;
         }
         return .ok;
@@ -1615,14 +1615,14 @@ pub const VM = struct {
         if (num_idx < 0) {
             const offset = @as(usize, @intFromFloat(-num_idx));
             if (offset == 0 or offset > arr_len) {
-                self.reportError("Runtime Error: Array index out of bounds.\n", .{});
+                self.runtimeError("Runtime Error: Array index out of bounds.\n", .{});
                 return error.RuntimeError;
             }
             return arr_len - offset;
         } else {
             const idx = @as(usize, @intFromFloat(num_idx));
             if (idx >= arr_len) {
-                self.reportError("Runtime Error: Array index out of bounds.\n", .{});
+                self.runtimeError("Runtime Error: Array index out of bounds.\n", .{});
                 return error.RuntimeError;
             }
             return idx;
@@ -1682,11 +1682,11 @@ pub const VM = struct {
             if (self.findMethod(class_obj, "initialize")) |init_method| {
                 self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
             } else if (arg_count > 0) {
-                self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
+                self.runtimeError("Runtime Error: Expected 0 args for default constructor.\n", .{});
                 return .runtime_error;
             }
         } else {
-            self.reportError("Runtime Error: Can only call functions and classes.\n", .{});
+            self.runtimeError("Runtime Error: Can only call functions and classes.\n", .{});
             return .runtime_error;
         }
         return .ok;
@@ -1762,7 +1762,7 @@ pub const VM = struct {
             return .{ a.asNumber(), b.asNumber() };
         }
 
-        self.reportError("Runtime Error: Invalid operands for math operation.\n", .{});
+        self.runtimeError("Runtime Error: Invalid operands for math operation.\n", .{});
         return error.RuntimeError;
     }
 
@@ -1783,6 +1783,11 @@ pub const VM = struct {
             current = c.superclass;
         }
         return false;
+    }
+
+    pub fn runtimeError(self: *VM, comptime fmt: []const u8, args: anytype) void {
+        self.reportError(fmt, args);
+        self.printStacktrace(); // Append the exact line and column
     }
 
     pub fn reportError(self: *VM, comptime fmt: []const u8, args: anytype) void {

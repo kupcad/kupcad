@@ -24,8 +24,13 @@ fn dumpNode(
 
     // Extract and print specific Node payloads
     switch (node.tag) {
-        .identifier, .symbol, .string => {
-            out.writer.print(" '{s}'", .{tree.getString(@as(ast.StringId, @enumFromInt(node.data)))}) catch {};
+        .identifier, .string, .symbol => {
+            // Extract the StringId from the node's data payload
+            const name_id = @as(ast.StringId, @enumFromInt(node.data));
+            // Look up the actual string text from the AST tree
+            const str_content = tree.getString(name_id);
+
+            try out.writer.print(" '{s}'", .{str_content});
         },
         .number => {
             out.writer.print(" {d}", .{tree.number(node)}) catch {};
