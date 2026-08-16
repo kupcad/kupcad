@@ -1436,7 +1436,6 @@ pub const VM = struct {
         defer self.releaseValue(b_val);
         const a_val = self.pop();
         defer self.releaseValue(a_val);
-
         if (a_val.isNumber() and b_val.isNumber()) {
             const res = switch (op) {
                 .op_add => a_val.asNumber() + b_val.asNumber(),
@@ -1445,6 +1444,30 @@ pub const VM = struct {
                 else => unreachable,
             };
             self.push(value.Value.initNumber(res));
+            return .ok;
+        } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .string and b_val.asObj().obj_type == .string) {
+            const a_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", a_val.asObj()))).chars;
+            const b_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", b_val.asObj()))).chars;
+            const merged = std.fmt.allocPrint(self.allocator, "{s}{s}", .{ a_str, b_str }) catch return .runtime_error;
+            defer self.allocator.free(merged);
+            const str_val = self.allocateString(merged) catch return .runtime_error;
+            self.push(str_val);
+            return .ok;
+        } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .array and b_val.asObj().obj_type == .array) {
+            const a_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", a_val.asObj())));
+            const b_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", b_val.asObj())));
+            const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
+            const new_val = value.Value.initObj(&new_arr.obj);
+            new_arr.items.ensureTotalCapacity(self.allocator, a_arr.items.items.len + b_arr.items.items.len) catch return .runtime_error;
+            for (a_arr.items.items) |item| {
+                self.retainValue(item);
+                new_arr.items.appendAssumeCapacity(item);
+            }
+            for (b_arr.items.items) |item| {
+                self.retainValue(item);
+                new_arr.items.appendAssumeCapacity(item);
+            }
+            self.push(new_val);
             return .ok;
         } else if (self.host.binary_handler) |handler| {
             const result = handler(self, op, a_val, b_val) catch return .runtime_error;

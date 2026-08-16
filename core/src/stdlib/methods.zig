@@ -7,26 +7,51 @@ pub fn meshRotate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.
     const x = if (arg_count > 0) args[0].asNumber() else 0.0;
     const y = if (arg_count > 1) args[1].asNumber() else 0.0;
     const z = if (arg_count > 2) args[2].asNumber() else 0.0;
-    const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, x, y, z);
-    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+
+    if (receiver.isGeometry()) {
+        const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, x, y, z);
+        return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    } else if (receiver.isCrossSection()) {
+        const rad = x * std.math.pi / 180.0;
+        const cos_a = std.math.cos(rad);
+        const sin_a = std.math.sin(rad);
+        const mat = [6]f64{ cos_a, sin_a, -sin_a, cos_a, 0.0, 0.0 };
+        const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
+        return try vm.allocateCrossSection(new_idx);
+    }
+    return error.RuntimeError;
 }
 
 pub fn meshScale(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const x = if (arg_count > 0) args[0].asNumber() else 1.0;
-    // Smart default: If user only provides X, scale uniformly (x, x, x)
     const y = if (arg_count > 1) args[1].asNumber() else x;
     const z = if (arg_count > 2) args[2].asNumber() else x;
 
-    const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, x, y, z);
-    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    if (receiver.isGeometry()) {
+        const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, x, y, z);
+        return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    } else if (receiver.isCrossSection()) {
+        const mat = [6]f64{ x, 0.0, 0.0, y, 0.0, 0.0 };
+        const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
+        return try vm.allocateCrossSection(new_idx);
+    }
+    return error.RuntimeError;
 }
 
 pub fn meshTranslate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const x = if (arg_count > 0) args[0].asNumber() else 0.0;
     const y = if (arg_count > 1) args[1].asNumber() else 0.0;
     const z = if (arg_count > 2) args[2].asNumber() else 0.0;
-    const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, x, y, z);
-    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+
+    if (receiver.isGeometry()) {
+        const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, x, y, z);
+        return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    } else if (receiver.isCrossSection()) {
+        const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, x, y };
+        const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
+        return try vm.allocateCrossSection(new_idx);
+    }
+    return error.RuntimeError;
 }
 
 pub fn meshOnFace(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {

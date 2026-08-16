@@ -44,6 +44,7 @@ const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
 pub const Compiler = struct {
     allocator: std.mem.Allocator,
     tree: *const ast.Tree,
+    script_globals: std.ArrayListUnmanaged(ast.StringId) = .empty,
     symbols: []const resolver.ResolvedSymbol,
     token_starts: []const u32, // Map AST nodes back to Lexer byte offsets
     current_source_offset: u32, // Implictly passed to Chunk
@@ -72,6 +73,7 @@ pub const Compiler = struct {
         return .{
             .allocator = allocator,
             .tree = tree,
+            .script_globals = .empty,
             .symbols = symbols,
             .token_starts = token_starts,
             .current_chunk = output_chunk,
@@ -89,6 +91,7 @@ pub const Compiler = struct {
 
     pub fn deinit(self: *Compiler) void {
         self.upvalues.deinit(self.allocator);
+        self.script_globals.deinit(self.allocator);
         self.locals.deinit(self.allocator);
         for (self.loops.items) |*loop| {
             loop.exit_jumps.deinit(self.allocator);
@@ -150,6 +153,8 @@ pub const Compiler = struct {
         if (root == .none) {
             try self.emitOp(.op_nil);
         } else {
+            // Guarantee safe stack space before evaluating any AST nodes
+            try self.reserveLocalSlots();
             try self.compileNode(root);
         }
         try self.emitOp(.op_return);
@@ -992,7 +997,11 @@ pub const Compiler = struct {
                 try self.emitOp(.op_pop);
             } else {
                 const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
-                if (self.enclosing == null) {
+                if (self.enclosing == null or self.isScriptGlobal(name_id)) {
+                    // Track it if we are assigning it for the first time at the top level
+                    if (self.enclosing == null and !self.isScriptGlobal(name_id)) {
+                        try self.script_globals.append(self.allocator, name_id);
+                    }
                     try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
                 } else {
                     try self.addLocal(name_id, @intCast(self.locals.items.len));
@@ -1585,7 +1594,7 @@ pub const Compiler = struct {
         } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
             try self.emitOp(.op_get_upvalue);
             try self.emitByte(upvalue_slot);
-        } else if (self.enclosing == null or (sym != null and sym.?.kind == .global) or sym == null) {
+        } else if (self.enclosing == null or (sym != null and sym.?.kind == .global) or sym == null or self.isScriptGlobal(name_id)) {
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitConstantInstruction(.op_get_global, .op_get_global_wide, name_idx);
         } else {
@@ -1603,7 +1612,12 @@ pub const Compiler = struct {
         } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
             try self.emitOp(.op_set_upvalue);
             try self.emitByte(upvalue_slot);
-        } else if (self.enclosing == null or sym.kind == .global) {
+        } else if (self.enclosing == null or sym.kind == .global or self.isScriptGlobal(name_id)) {
+            // Track it if we are assigning it for the first time at the top level
+            if (self.enclosing == null and !self.isScriptGlobal(name_id)) {
+                try self.script_globals.append(self.allocator, name_id);
+            }
+
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
             try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
@@ -1611,5 +1625,46 @@ pub const Compiler = struct {
             try self.addLocal(name_id, @intCast(sym.index));
             try self.emitLocalInstruction(.op_set_local, .op_set_local_wide, sym.index);
         }
+    }
+
+    fn reserveLocalSlots(self: *Compiler) CompileError!void {
+        // The top-level script uses globals, not locals. Abort padding
+        if (self.enclosing == null) return;
+
+        var max_slot: u24 = 0;
+        var found_local = false;
+
+        // Scan for the highest local slot required
+        for (self.symbols) |sym| {
+            if (sym.kind == .local) {
+                found_local = true;
+                if (sym.index > max_slot) {
+                    max_slot = sym.index;
+                }
+            }
+        }
+
+        if (!found_local) return;
+
+        const needed_slots: usize = max_slot + 1;
+
+        // Pad the stack with nil placeholders to reserve permanent memory
+        // for variables so they survive expression op_pops
+        while (self.locals.items.len < needed_slots) {
+            // Bypass `addLocal` duplicate checks for dummy `.none` slots
+            try self.locals.append(self.allocator, .{ .name_id = .none, .slot = @intCast(self.locals.items.len) });
+            try self.emitOp(.op_nil);
+        }
+    }
+
+    fn isScriptGlobal(self: *Compiler, name_id: ast.StringId) bool {
+        var root: *Compiler = self;
+        while (root.enclosing) |parent| {
+            root = parent;
+        }
+        for (root.script_globals.items) |global_id| {
+            if (global_id == name_id) return true;
+        }
+        return false;
     }
 };

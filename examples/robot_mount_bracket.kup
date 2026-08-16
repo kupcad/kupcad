@@ -1,0 +1,75 @@
+# examples/robot_mount_bracket.kup
+# Parametric Robot Mount Bracket showcasing 2D/3D CSG,
+# 2D Offsets, 3D Minkowski sums, Plane Trimming, and Spatial Queries.
+
+# --- 1. Custom 2D Polygon & 2D Affine Matrix Transformation ---
+raw_pts = [ [0.0, 0.0], [40.0, 0.0], [30.0, 25.0], [10.0, 25.0] ]
+base_poly = polygon(raw_pts)
+
+# Apply 2D Matrix Transform (Scale X by 1.1, Translate Y by +5)
+transformed_poly = base_poly.transform([1.1, 0.0,  0.0, 1.0,  0.0, 5.0])
+
+# 2D Offsetting & CSG Difference with 2D Translation
+outer_profile = transformed_poly.offset(4.0)
+center_hole = circle(d: 12.0).translate(22.0, 17.5) # Polymorphic 2D translate!
+bracket_profile = outer_profile - center_hole
+
+# --- 2. 3D Extrusion & 3D Matrix Transformation ---
+bracket_3d = bracket_profile.extrude(12.0)
+
+# Apply 3D Matrix Transform (Shift Z by +10)
+matrix_3d = [
+  1.0, 0.0, 0.0,
+  0.0, 1.0, 0.0,
+  0.0, 0.0, 1.0,
+  0.0, 0.0, 10.0
+]
+shifted_bracket = bracket_3d.transform(matrix_3d)
+
+# Plane Trimming
+trimmed_bracket = shifted_bracket.trim_by_plane(0.0, 0.0, 1.0, 18.0)
+
+# --- 3. 3D Minkowski Softening & Union ---
+pin_core = cube(x: 6.0, y: 6.0, z: 8.0, center: true)
+softener = sphere(r: 1.5)
+soft_pin = pin_core.minkowski(softener).translate(22.0, 17.5, 12.0)
+
+main_assembly = trimmed_bracket + soft_pin
+
+# --- 4. Iterative Feature Generation ---
+standoffs = [ [5.0, 10.0], [39.0, 10.0], [22.0, 25.0] ]
+
+standoffs.each do |pt|
+  radius = pt[0] > 20.0 ? 3.0 : 2.0
+  boss = cylinder(r: radius, h: 15.0).translate(pt[0], pt[1], 0.0)
+  main_assembly = main_assembly + boss
+end
+
+# --- 5. Spatial Queries & Inspection Engine ---
+puts("--- Spatial Inspection Diagnostics ---")
+
+# 1. Point Containment Check
+test_point = [22.0, 17.5, 12.0]
+is_inside = main_assembly.contains?(test_point)
+puts("Is point [22, 17.5, 12] inside assembly?: " + is_inside.to_s())
+
+# 2. Clearance Gap Analysis
+obstacle = sphere(r: 5.0).translate(60.0, 0.0, 10.0)
+gap_distance = main_assembly.min_gap(obstacle, 100.0)
+puts("Min gap distance to obstacle: " + gap_distance.round(2).to_s() + " mm")
+
+# 3. Ray Casting Inspection
+ray_hits = main_assembly.ray_cast([22.0, 17.5, 40.0], [22.0, 17.5, -10.0])
+puts("Total Ray Intersection Hits: " + ray_hits.length().to_s())
+
+if ray_hits.length() > 0
+  first_hit = ray_hits[0]
+  p("Top Surface Distance:", first_hit["distance"].round(2))
+  p("Top Surface Position Z:", first_hit["position"][2].round(2))
+end
+
+puts("Final Mass Properties:")
+p("Volume:", main_assembly.volume().round(2))
+p("Bounding Box:", main_assembly.bbox())
+
+main_assembly

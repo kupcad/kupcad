@@ -2266,3 +2266,44 @@ test "VM: Custom Polygons and Fixed Matrix Transforms evaluate seamlessly" {
     const vol = vm.stack[0].asArray().items.items[0].asNumber();
     try testing.expect(vol > 999.0 and vol < 1001.0);
 }
+
+test "VM: Native string and array addition (+ operator)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    vm.host.print_handler = null;
+
+    const source =
+        \\s = "Hello " + "World"
+        \\arr = [1, 2] + [3, 4]
+        \\[s, arr]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const outer_arr = vm.stack[0].asArray().items.items;
+
+    // Check String Concatenation
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", outer_arr[0].asObj())));
+    try testing.expectEqualStrings("Hello World", str_obj.chars);
+
+    // Check Array Concatenation
+    const inner_arr = outer_arr[1].asArray().items.items;
+    try testing.expectEqual(@as(usize, 4), inner_arr.len);
+    try testing.expectEqual(@as(f64, 1.0), inner_arr[0].asNumber());
+    try testing.expectEqual(@as(f64, 4.0), inner_arr[3].asNumber());
+}
