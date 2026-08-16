@@ -126,13 +126,22 @@ pub const VM = struct {
 
     pub fn getLocal(self: *VM, frame: *const CallFrame, slot_index: usize) value.Value {
         const absolute_slot = frame.base_slot + slot_index;
-        std.debug.assert(absolute_slot < self.stack_top);
+        if (absolute_slot >= self.stack_top) return value.Value.initNil();
         return self.stack[absolute_slot];
     }
 
     pub fn setLocal(self: *VM, frame: *const CallFrame, slot_index: usize, val: value.Value) void {
         const absolute_slot = frame.base_slot + slot_index;
-        std.debug.assert(absolute_slot < self.stack_top);
+
+        // Dynamically expand the stack if the compiler points to a new local slot
+        if (absolute_slot >= self.stack_top) {
+            self.ensureStackCapacity(absolute_slot + 1) catch @panic("OOM during stack expansion");
+            while (self.stack_top <= absolute_slot) {
+                self.stack.ptr[self.stack_top] = value.Value.initNil();
+                self.stack_top += 1;
+            }
+        }
+
         self.retainValue(val);
         self.releaseValue(self.stack[absolute_slot]);
         self.stack[absolute_slot] = val;
@@ -1534,17 +1543,7 @@ pub const VM = struct {
 
         // Shift any trailing arguments down to close the gap left by the packed arguments
         if (splat_size != 1) {
-            if (splat_size > 1) {
-                for (0..trailing_arity) |i| {
-                    self.stack[start_idx + 1 + i] = self.stack[start_idx + splat_size + i];
-                }
-            } else {
-                var i: usize = trailing_arity;
-                while (i > 0) {
-                    i -= 1;
-                    self.stack[start_idx + 1 + i] = self.stack[start_idx + i];
-                }
-            }
+            std.mem.copyForwards(value.Value, self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity], self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity]);
         }
 
         // Rewrite the stack to hold the new Array in the splat parameter's slot

@@ -153,8 +153,6 @@ pub const Compiler = struct {
         if (root == .none) {
             try self.emitOp(.op_nil);
         } else {
-            // Guarantee safe stack space before evaluating any AST nodes
-            try self.reserveLocalSlots();
             try self.compileNode(root);
         }
         try self.emitOp(.op_return);
@@ -304,16 +302,10 @@ pub const Compiler = struct {
 
                 try self.emitOpWithOperand(.op_import, .op_import_wide, path_idx);
 
-                const symbols = self.tree.getStringLists(is_stmt.symbols);
-                if (symbols.len == 0) {
-                    // Standard import for side-effects. Ignore returned module.
-                    try self.emitOp(.op_pop);
-                    try self.emitOp(.op_nil);
-                } else {
-                    // Extract specific symbols via destructuring
-                    try self.emitOp(.op_pop);
-                    try self.emitOp(.op_nil); // Yield nil for MVP
-                }
+                // MVP: Standard import for side-effects. Ignore returned module.
+                // Destructuring explicit symbols will be implemented in future phases.
+                try self.emitOp(.op_pop);
+                try self.emitOp(.op_nil);
             },
             .export_stmt => {
                 // MVP: Yields nil. Real exporting requires writing to the VM's active export Map.
@@ -1625,36 +1617,6 @@ pub const Compiler = struct {
 
         self.simulatePop(pos_count + 1);
         self.simulatePush(1);
-    }
-
-    fn reserveLocalSlots(self: *Compiler) CompileError!void {
-        // The top-level script uses globals, not locals. Abort padding
-        if (self.enclosing == null) return;
-
-        var max_slot: u24 = 0;
-        var found_local = false;
-
-        // Scan for the highest local slot required
-        for (self.symbols) |sym| {
-            if (sym.kind == .local) {
-                found_local = true;
-                if (sym.index > max_slot) {
-                    max_slot = sym.index;
-                }
-            }
-        }
-
-        if (!found_local) return;
-
-        const needed_slots: usize = max_slot + 1;
-
-        // Pad the stack with nil placeholders to reserve permanent memory
-        // for variables so they survive expression op_pops
-        while (self.locals.items.len < needed_slots) {
-            // Bypass `addLocal` duplicate checks for dummy `.none` slots
-            try self.locals.append(self.allocator, .{ .name_id = .none, .slot = @intCast(self.locals.items.len) });
-            try self.emitOp(.op_nil);
-        }
     }
 
     fn isScriptGlobal(self: *Compiler, name_id: ast.StringId) bool {
