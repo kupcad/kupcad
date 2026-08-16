@@ -124,6 +124,18 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold);
+    const ptr = manifold.transform(@ptrCast(@alignCast(a.ptr)), mat[0], mat[1], mat[2], mat[3], mat[4], mat[5], mat[6], mat[7], mat[8], mat[9], mat[10], mat[11]) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
+    std.debug.assert(cs.engine == .manifold);
+    const ptr = manifold.crossSectionTransform(@ptrCast(@alignCast(cs.ptr)), mat[0], mat[1], mat[2], mat[3], mat[4], mat[5]) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 fn genusImpl(handle: geom.GeometryHandle) i32 {
     std.debug.assert(handle.engine == .manifold);
     return manifold.genus(@ptrCast(@alignCast(handle.ptr)));
@@ -232,6 +244,8 @@ pub const driver = kernel.GeometryKernel{
     .genusFn = genusImpl,
     .minkowskiFn = minkowskiImpl,
     .offsetFn = offsetImpl,
+    .transformMatrixFn = transformMatrixImpl,
+    .crossSectionTransformFn = crossSectionTransformImpl,
 
     .boundingBoxFn = boundingBoxImpl,
     .queryFacesFn = queryFacesImpl,

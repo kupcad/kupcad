@@ -114,6 +114,16 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
     _ = op;
     return null;
 }
+fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
+    _ = a;
+    _ = mat;
+    return null;
+}
+fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
+    _ = cs;
+    _ = mat;
+    return null;
+}
 fn genusImpl(handle: geom.GeometryHandle) i32 {
     _ = handle;
     return 0;
@@ -168,6 +178,8 @@ pub const driver = kernel.GeometryKernel{
     .splitByPlaneFn = splitByPlaneImpl,
     .crossSectionBooleanFn = crossSectionBooleanImpl,
     .genusFn = genusImpl,
+    .transformMatrixFn = transformMatrixImpl,
+    .crossSectionTransformFn = crossSectionTransformImpl,
 
     .boundingBoxFn = boundingBoxImpl,
     .queryFacesFn = queryFacesImpl,

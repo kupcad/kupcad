@@ -2111,3 +2111,55 @@ test "VM: Minkowski sums and 2D Offsets evaluate correctly" {
     const vol = arr_obj.items.items[1].asNumber();
     try testing.expect(vol > 1900.0 and vol < 2000.0);
 }
+
+test "VM: Affine transformations via multmatrix evaluate correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    vm.host.print_handler = null;
+
+    // Test script:
+    // 1. 3D Transform: Translate a cube by +5, +10, +15 using an explicit 4x3 matrix.
+    // 2. 2D Transform: Translate a square by +2, +4 using an explicit 3x2 matrix.
+    const source =
+        \\c = cube(size: 10, center: true)
+        \\c_trans = c.transform([1, 0, 0,  0, 1, 0,  0, 0, 1,  5, 10, 15])
+        \\
+        \\sq = square(size: 10, center: true)
+        \\sq_trans = sq.transform([1, 0,  0, 1,  2, 4])
+        \\
+        \\[c_trans.bbox(), sq_trans.extrude(10).bbox()]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+    const arr_obj = arr_val.asArray();
+
+    // Check 3D Transform
+    const c_bbox = arr_obj.items.items[0].asMap();
+    const c_min = c_bbox.values.items[0].asArray();
+    try testing.expectEqual(@as(f64, 0.0), c_min.items.items[0].asNumber()); // -5 + 5
+    try testing.expectEqual(@as(f64, 5.0), c_min.items.items[1].asNumber()); // -5 + 10
+
+    // Check 2D Transform
+    const sq_bbox = arr_obj.items.items[1].asMap();
+    const sq_min = sq_bbox.values.items[0].asArray();
+    try testing.expectEqual(@as(f64, -3.0), sq_min.items.items[0].asNumber()); // -5 + 2
+    try testing.expectEqual(@as(f64, -1.0), sq_min.items.items[1].asNumber()); // -5 + 4
+}

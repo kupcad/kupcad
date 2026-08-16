@@ -1184,6 +1184,13 @@ pub const VM = struct {
                 const cs = try self.evaluateCrossSectionDAG(p.target);
                 return kernel.revolve(cs, p.segments, p.degrees) orelse return error.RuntimeError;
             },
+            .transform_matrix => {
+                const target = try self.evaluateDAG(node.data);
+                const num_idx = self.dag_builder.extra_data.items[node_idx]; // The matching extra_data index matches node_idx in our appending strategy
+                var mat: [12]f64 = undefined;
+                std.mem.copyForwards(f64, &mat, self.dag_builder.numbers.items[num_idx .. num_idx + 12]);
+                return kernel.transformMatrix(target, mat) orelse return error.RuntimeError;
+            },
             else => {
                 self.reportError("Runtime Error: Expected 3D Geometry node in DAG.\n", .{});
                 return error.RuntimeError;
@@ -1218,6 +1225,13 @@ pub const VM = struct {
                 const p = self.dag_builder.getOffsetPayload(node);
                 const target = try self.evaluateCrossSectionDAG(p.target);
                 return kernel.offset(target, p.delta, p.join_type) orelse return error.RuntimeError;
+            },
+            .cs_transform => {
+                const target = try self.evaluateCrossSectionDAG(node.data);
+                const num_idx = self.dag_builder.extra_data.items[node_idx];
+                var mat: [6]f64 = undefined;
+                std.mem.copyForwards(f64, &mat, self.dag_builder.numbers.items[num_idx .. num_idx + 6]);
+                return kernel.crossSectionTransform(target, mat) orelse return error.RuntimeError;
             },
             .cs_union_op, .cs_difference_op, .cs_intersection_op => {
                 const payload = self.dag_builder.getBinaryPayload(node);

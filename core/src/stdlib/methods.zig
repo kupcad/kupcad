@@ -178,3 +178,23 @@ pub fn meshOffset(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.
     const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, delta, 1); // 1 = round
     return try vm.allocateCrossSection(new_idx);
 }
+
+pub fn meshTransform(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (arg_count < 1 or !args[0].isArray()) return error.RuntimeError;
+    const arr = args[0].asArray().items.items;
+
+    if (receiver.isGeometry()) {
+        if (arr.len < 12) return error.RuntimeError;
+        var mat: [12]f64 = undefined;
+        for (0..12) |i| mat[i] = if (arr[i].isNumber()) arr[i].asNumber() else 0.0;
+        const new_idx = try vm.dag_builder.addTransformMatrix(receiver.asGeometry().dag_idx, mat);
+        return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    } else if (receiver.isCrossSection()) {
+        if (arr.len < 6) return error.RuntimeError;
+        var mat: [6]f64 = undefined;
+        for (0..6) |i| mat[i] = if (arr[i].isNumber()) arr[i].asNumber() else 0.0;
+        const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
+        return try vm.allocateCrossSection(new_idx);
+    }
+    return error.RuntimeError;
+}

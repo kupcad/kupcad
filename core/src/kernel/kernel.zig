@@ -15,9 +15,11 @@ pub const GeometryKernel = struct {
     translateFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,
     rotateFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,
     scaleFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,
+    transformMatrixFn: *const fn (a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle,
     squareFn: *const fn (x: f64, y: f64, center: bool) ?geom.CrossSectionHandle,
     circleFn: *const fn (radius: f64, circular_segments: i32) ?geom.CrossSectionHandle,
     offsetFn: *const fn (cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle,
+    crossSectionTransformFn: *const fn (cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle,
     extrudeFn: *const fn (cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle,
     revolveFn: *const fn (cs: geom.CrossSectionHandle, circular_segments: i32, revolve_degrees: f64) ?geom.GeometryHandle,
     sliceFn: *const fn (a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle,
@@ -104,6 +106,14 @@ pub const GeometryKernel = struct {
 
     pub inline fn crossSectionBoolean(self: *const GeometryKernel, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle {
         return self.crossSectionBooleanFn(a, b, op);
+    }
+
+    pub inline fn transformMatrix(self: *const GeometryKernel, handle: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
+        return self.transformMatrixFn(handle, mat);
+    }
+
+    pub inline fn crossSectionTransform(self: *const GeometryKernel, cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
+        return self.crossSectionTransformFn(cs, mat);
     }
 
     pub inline fn genus(self: *const GeometryKernel, a: geom.GeometryHandle) i32 {

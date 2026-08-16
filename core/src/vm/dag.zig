@@ -22,10 +22,12 @@ pub const DAGTag = enum(u8) {
     hull,
     minkowski,
     trim_by_plane,
+    transform_matrix,
     cs_union_op,
     cs_difference_op,
     cs_intersection_op,
     offset,
+    cs_transform,
 };
 
 /// Exactly 8 bytes for optimal L1 cache line density (8 nodes per 64B line)
@@ -211,6 +213,26 @@ pub const DAGBuilder = struct {
         try self.numbers.appendSlice(alloc, &.{ @floatFromInt(segments), degrees });
         const node_idx: u32 = @intCast(self.nodes.items.len);
         try self.nodes.append(alloc, .{ .tag = .revolve, .flags = 0, .data = extra_idx });
+        return node_idx;
+    }
+
+    pub fn addTransformMatrix(self: *DAGBuilder, target: DAGNodeIndex, mat: [12]f64) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.numbers.appendSlice(alloc, &mat);
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{ .tag = .transform_matrix, .flags = 0, .data = target });
+        try self.extra_data.append(alloc, num_idx); // Save where the matrix starts
+        return node_idx;
+    }
+
+    pub fn addCrossSectionTransform(self: *DAGBuilder, target: DAGNodeIndex, mat: [6]f64) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.numbers.appendSlice(alloc, &mat);
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{ .tag = .cs_transform, .flags = 0, .data = target });
+        try self.extra_data.append(alloc, num_idx);
         return node_idx;
     }
 
