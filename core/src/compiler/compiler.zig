@@ -1570,6 +1570,7 @@ pub const Compiler = struct {
                 try self.emitOp(.op_less);
                 try self.emitOp(.op_not);
             },
+            .bitwise_and => try self.emitOp(.op_bitwise_and),
             else => return error.UnknownNode,
         }
     }

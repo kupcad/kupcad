@@ -97,7 +97,7 @@ pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Valu
     const dag_tag: dag.DAGTag = switch (op) {
         .op_add => .union_op,
         .op_subtract => .difference_op,
-        // .op_bitwise_and => .intersection_op,
+        .op_bitwise_and => .intersection_op,
         else => return error.RuntimeError,
     };
     const result_idx = try vm.dag_builder.addBinary(dag_tag, geom_a.dag_idx, geom_b.dag_idx);
