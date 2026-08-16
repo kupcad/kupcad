@@ -133,3 +133,35 @@ pub fn meshSurfaceArea(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]v
     const area = vm.active_kernel.?.surfaceArea(handle);
     return value.Value.initNumber(area);
 }
+
+pub fn meshExtrude(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (!receiver.isCrossSection()) return error.RuntimeError;
+    const height = if (arg_count > 0) args[0].asNumber() else 1.0;
+    // For now, default twist and scale. You can expand kwargs here later!
+    const new_idx = try vm.dag_builder.addExtrude(receiver.asCrossSection().dag_idx, height, 0, 0.0, 1.0, 1.0);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+pub fn meshRevolve(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (!receiver.isCrossSection()) return error.RuntimeError;
+    const degrees = if (arg_count > 0) args[0].asNumber() else 360.0;
+    const new_idx = try vm.dag_builder.addRevolve(receiver.asCrossSection().dag_idx, 0, degrees);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+pub fn meshHull(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    _ = args;
+    const new_idx = try vm.dag_builder.addHull(receiver.asGeometry().dag_idx);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+pub fn meshTrimByPlane(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (arg_count < 3) return error.RuntimeError;
+    const nx = args[0].asNumber();
+    const ny = args[1].asNumber();
+    const nz = args[2].asNumber();
+    const offset = if (arg_count > 3) args[3].asNumber() else 0.0;
+    const new_idx = try vm.dag_builder.addTrimByPlane(receiver.asGeometry().dag_idx, nx, ny, nz, offset);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}

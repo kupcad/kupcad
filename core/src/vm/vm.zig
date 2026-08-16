@@ -1038,6 +1038,8 @@ pub const VM = struct {
         _ = self;
         if (val.isGeometry()) {
             val.asGeometry().ref_count += 1;
+        } else if (val.isCrossSection()) {
+            val.asCrossSection().ref_count += 1;
         } else if (val.isWorkplane()) {
             val.asWorkplane().ref_count += 1;
         }
@@ -1051,6 +1053,11 @@ pub const VM = struct {
             if (geom_obj.ref_count == 0) {
                 self.gc.freeGeometry(self, geom_obj);
             }
+        } else if (val.isCrossSection()) {
+            const cs_obj = val.asCrossSection();
+            std.debug.assert(cs_obj.ref_count > 0);
+            cs_obj.ref_count -= 1;
+            if (cs_obj.ref_count == 0) self.gc.freeCrossSection(self, cs_obj);
         } else if (val.isWorkplane()) {
             const wp_obj = val.asWorkplane();
             std.debug.assert(wp_obj.ref_count > 0);
@@ -1087,6 +1094,15 @@ pub const VM = struct {
 
         const handle = try self.evaluateDAG(geometry.dag_idx);
         geometry.cached_handle = handle;
+        return handle;
+    }
+
+    pub fn ensureConcreteCrossSection(self: *VM, val: value.Value) !geom.CrossSectionHandle {
+        if (!val.isCrossSection()) return error.RuntimeError;
+        var cs = val.asCrossSection();
+        if (cs.cached_handle) |handle| return handle;
+        const handle = try self.evaluateCrossSectionDAG(cs.dag_idx);
+        cs.cached_handle = handle;
         return handle;
     }
 
@@ -1339,6 +1355,11 @@ pub const VM = struct {
         if (res != .ok) return error.RuntimeError;
 
         return self.pop();
+    }
+
+    pub fn allocateCrossSection(self: *VM, dag_idx: u32) !value.Value {
+        const cs_obj = try self.gc.allocateCrossSection(dag_idx);
+        return value.Value.initCrossSection(cs_obj);
     }
 
     // --- Shared Execution Helpers ---

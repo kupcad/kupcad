@@ -141,3 +141,69 @@ pub fn nativeSphere(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = dag_idx });
     return value.Value.initGeometry(geom_obj);
 }
+
+pub fn nativeSquare(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    var x: f64 = 1.0;
+    var y: f64 = 1.0;
+    var center: bool = false;
+    var pos_count = arg_count;
+    var kwargs: ?value.Value = null;
+
+    if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
+        kwargs = args[arg_count - 1];
+        pos_count -= 1;
+    }
+    if (pos_count > 0 and args[0].isNumber()) {
+        x = args[0].asNumber();
+        y = x;
+    }
+    if (pos_count > 1 and args[1].isNumber()) y = args[1].asNumber();
+    if (pos_count > 2 and args[2].isBool()) center = args[2].asBool();
+
+    if (getKwarg(kwargs, "size")) |v| {
+        if (v.isNumber()) {
+            x = v.asNumber();
+            y = x;
+        }
+    }
+    if (getKwarg(kwargs, "x")) |v| {
+        if (v.isNumber()) x = v.asNumber();
+    }
+    if (getKwarg(kwargs, "y")) |v| {
+        if (v.isNumber()) y = v.asNumber();
+    }
+    if (getKwarg(kwargs, "center")) |v| {
+        if (v.isBool()) center = v.asBool();
+    }
+
+    const dag_idx = try vm.dag_builder.addSquare(x, y, center);
+    return try vm.allocateCrossSection(dag_idx);
+}
+
+pub fn nativeCircle(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    var r: f64 = 1.0;
+    var segments: i32 = 0; // 0 lets Manifold auto-calculate
+    var pos_count = arg_count;
+    var kwargs: ?value.Value = null;
+
+    if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
+        kwargs = args[arg_count - 1];
+        pos_count -= 1;
+    }
+    if (pos_count > 0 and args[0].isNumber()) r = args[0].asNumber();
+
+    if (getKwarg(kwargs, "r")) |v| {
+        if (v.isNumber()) r = v.asNumber();
+    }
+    if (getKwarg(kwargs, "d")) |v| {
+        if (v.isNumber()) r = v.asNumber() / 2.0;
+    }
+    if (getKwarg(kwargs, "segments")) |v| {
+        if (v.isNumber()) segments = @intFromFloat(v.asNumber());
+    }
+
+    const dag_idx = try vm.dag_builder.addCircle(r, segments);
+    return try vm.allocateCrossSection(dag_idx);
+}

@@ -241,6 +241,17 @@ pub const GC = struct {
         return ptr;
     }
 
+    pub fn allocateCrossSection(self: *GC, dag_idx: u32) !*value.ObjCrossSection {
+        const ptr = try self.allocator.create(value.ObjCrossSection);
+        ptr.* = .{
+            .obj = .{ .obj_type = .cross_section, .is_marked = false, .next = null },
+            .ref_count = 1,
+            .dag_idx = dag_idx,
+            .cached_handle = null,
+        };
+        return ptr;
+    }
+
     pub fn allocateWorkplane(self: *GC, parent: *value.ObjGeometry, origin: [3]f64, normal: [3]f64) !*value.ObjWorkplane {
         const ptr = try self.allocator.create(value.ObjWorkplane);
         ptr.* = .{
@@ -280,6 +291,13 @@ pub const GC = struct {
             }
         }
         self.allocator.destroy(geom_obj);
+    }
+
+    pub fn freeCrossSection(self: *GC, vm: *VM, cs_obj: *value.ObjCrossSection) void {
+        if (cs_obj.cached_handle) |handle| {
+            if (vm.active_kernel) |k| k.destructCrossSection(handle);
+        }
+        self.allocator.destroy(cs_obj);
     }
 
     // --- Phase 1: Mark ---
@@ -512,7 +530,7 @@ pub const GC = struct {
                 self.allocator.destroy(brep_obj); // Free the wrapper
                 self.bytes_allocated -= @sizeOf(value.ObjBrep);
             },
-            .geometry, .workplane => {
+            .geometry, .workplane, .cross_section => {
                 // Ignored by tracing GC. Managed via ARC or not implemented yet.
             },
         }

@@ -37,6 +37,8 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "cube", .func = primitives.nativeCube, .category = .primitive_3d },
     .{ .name = "cylinder", .func = primitives.nativeCylinder, .category = .primitive_3d },
     .{ .name = "sphere", .func = primitives.nativeSphere, .category = .primitive_3d },
+    .{ .name = "square", .func = primitives.nativeSquare, .category = .primitive_2d },
+    .{ .name = "circle", .func = primitives.nativeCircle, .category = .primitive_2d },
     .{ .name = "import_stl", .func = stl.nativeImportStl, .category = .file_io },
     .{ .name = "export_stl", .func = stl.nativeExportStl, .category = .file_io },
     .{ .name = "import_step", .func = step.nativeImportStep, .category = .file_io },
@@ -60,6 +62,10 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "bbox", .category = .inspection_method, .func = methods.meshBBox },
     .{ .name = "volume", .category = .inspection_method, .func = methods.meshVolume },
     .{ .name = "surface_area", .category = .inspection_method, .func = methods.meshSurfaceArea },
+    .{ .name = "extrude", .category = .transform, .func = methods.meshExtrude },
+    .{ .name = "revolve", .category = .transform, .func = methods.meshRevolve },
+    .{ .name = "hull", .category = .transform, .func = methods.meshHull },
+    .{ .name = "trim_by_plane", .category = .transform, .func = methods.meshTrimByPlane },
 };
 
 // Compile-time generated O(1) jump table
@@ -74,16 +80,14 @@ pub const method_map = std.StaticStringMap(MeshMethodFn).initComptime(blk: {
 
 // The O(1) Dynamic Dispatcher
 pub fn cadInvokeHandler(vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (!receiver.isGeometry()) {
-        vm.reportError("Runtime Error: Methods can only be called on Geometry objects.\n", .{});
+    if (!receiver.isGeometry() and !receiver.isCrossSection()) {
+        vm.reportError("Runtime Error: Methods can only be called on Geometry/CrossSection objects.\n", .{});
         return error.RuntimeError;
     }
-
     if (method_map.get(method_name)) |method_func| {
         return method_func(vm, receiver, arg_count, args);
     }
-
-    vm.reportError("Runtime Error: Unknown method '{s}' on Geometry object.\n", .{method_name});
+    vm.reportError("Runtime Error: Unknown method '{s}'.\n", .{method_name});
     return error.RuntimeError;
 }
 

@@ -28,6 +28,7 @@ pub const ObjType = enum(u8) {
     instance,
     bound_method,
     range,
+    cross_section,
     geometry,
     workplane,
 };
@@ -175,6 +176,13 @@ pub const ObjGeometry = struct {
     }
 };
 
+pub const ObjCrossSection = struct {
+    obj: Obj,
+    ref_count: u32,
+    dag_idx: u32,
+    cached_handle: ?@import("../kernel/geometry_handle.zig").CrossSectionHandle,
+};
+
 /// Signature for all Native CAD Built-ins
 /// Takes an opaque VM pointer to avoid circular imports, argument count, and a pointer to the first argument on the stack.
 pub const NativeFn = *const fn (vm: *anyopaque, arg_count: u8, args: [*]Value) anyerror!Value;
@@ -228,6 +236,10 @@ pub const Value = extern struct {
 
     pub fn initGeometry(ptr: *ObjGeometry) Value {
         return .{ .tag = .object, .payload = .{ .obj = &ptr.obj } };
+    }
+
+    pub inline fn initCrossSection(obj: *ObjCrossSection) Value {
+        return initObj(&obj.obj);
     }
 
     pub inline fn initWorkplane(ptr: *ObjWorkplane) Value {
@@ -290,6 +302,10 @@ pub const Value = extern struct {
 
     pub inline fn isObjType(self: Value, obj_type: ObjType) bool {
         return self.isObject() and self.asObj().obj_type == obj_type;
+    }
+
+    pub inline fn isCrossSection(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .cross_section;
     }
 
     pub inline fn isNative(self: Value) bool {
@@ -379,6 +395,11 @@ pub const Value = extern struct {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
+    pub inline fn asCrossSection(self: Value) *ObjCrossSection {
+        std.debug.assert(self.isCrossSection());
+        return @ptrCast(@alignCast(self.asObj()));
+    }
+
     pub inline fn asWorkplane(self: Value) *ObjWorkplane {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
@@ -457,6 +478,10 @@ pub const Value = extern struct {
                     try writer.print("{d}{s}{d}", .{ r.start, op_str, r.end });
                 },
                 .geometry => try writer.print("<Geometry DAG:{d}>", .{@as(*ObjGeometry, @alignCast(@fieldParentPtr("obj", obj))).dag_idx}),
+                .cross_section => {
+                    const cs = @as(*ObjCrossSection, @alignCast(@fieldParentPtr("obj", obj)));
+                    try writer.print("<CrossSection DAG:{d} Ref:{d}>", .{ cs.dag_idx, cs.ref_count });
+                },
                 .workplane => try writer.writeAll("<Workplane>"),
                 else => try writer.writeAll("<Object>"),
             }
