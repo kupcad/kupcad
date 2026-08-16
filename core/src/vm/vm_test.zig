@@ -1835,46 +1835,98 @@ test "VM: JIT materialization cascades through DAG and ARC safely cleans up" {
     // If ANY memory is leaked across the FFI boundary, Zig's testing allocator will fail the test right here!
 }
 
-// test "VM: Generates a physical STL file to disk" {
-//     var vm = try VM.init(testing.allocator, testing.io);
-//     defer vm.deinit();
+test "VM: Primitives support flexible keyword arguments and shortcuts" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
 
-//     // Register the standard library so `cube`, `sphere`, and `export_stl` are available
-//     try registry.registerStandardLibrary(&vm);
+    // Tests:
+    // 1. cube(10) -> uniform 10x10x10 cube
+    // 2. cube(x: 10, y: 20, z: 30, center: true) -> explicit axes & center
+    // 3. sphere(d: 20) -> diameter conversion to r=10
+    // 4. cylinder(d: 10, h: 15) -> diameter & height overrides
+    const source =
+        \\c1 = cube(10)
+        \\c2 = cube(x: 10, y: 20, z: 30, center: true)
+        \\s1 = sphere(d: 20)
+        \\cyl = cylinder(d: 10, h: 15)
+        \\[c1.bbox(), c2.bbox(), s1.bbox(), cyl.bbox()]
+    ;
 
-//     // A KupCAD script that creates a hollowed-out box and exports it!
-//     const source =
-//         \\box = cube(20, 20, 20, true)
-//         \\hole = sphere(12)
-//         \\part = box - hole
-//         \\export_stl("test_output.stl", part)
-//     ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
 
-//     var doc = try Document.parse(testing.allocator, source);
-//     defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
 
-//     var out_chunk = chunk.Chunk.init();
-//     defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
 
-//     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-//     defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
 
-//     // Compile the script to bytecode
-//     try comp.compile(doc.tree.root);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
 
-//     // Execute the bytecode
-//     const result = vm.interpret(&out_chunk);
+    // Verify the returned array contains all 4 bounding boxes
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+}
 
-//     // Ensure the VM executed the script without any runtime errors
-//     try testing.expectEqual(.ok, result);
+test "STL Exporter: exports valid Binary STL file with expected byte structure" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
 
-//     // Verify the file was actually written to the file system
-//     const cwd = std.Io.Dir.cwd();
+    try registry.registerStandardLibrary(&vm);
 
-//     // Pass testing.io as the required explicit Io parameter
-//     cwd.access(testing.io, "test_output.stl", .{}) catch |err| {
-//         if (err == error.FileNotFound) {
-//             try testing.expect(false); // Fail the test if the file wasn't created!
-//         }
-//     };
-// }
+    const test_stl_path = "test_export_cube.stl";
+
+    // Clean up the output file if it already exists before running the test
+    const cwd = std.Io.Dir.cwd();
+    cwd.deleteFile(testing.io, test_stl_path) catch {};
+    defer cwd.deleteFile(testing.io, test_stl_path) catch {};
+
+    // 1. Run script exporting a 10x10x10 cube
+    const source =
+        \\part = cube(10)
+        \\export_stl("test_export_cube.stl", part)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+
+    // 2. Read the generated STL file back using @enumFromInt for std.Io.Limit
+    const file_contents = try cwd.readFileAlloc(
+        testing.io,
+        test_stl_path,
+        testing.allocator,
+        @enumFromInt(10 * 1024 * 1024),
+    );
+    defer testing.allocator.free(file_contents);
+
+    // Header must be at least 84 bytes (80-byte header + 4-byte triangle count)
+    try testing.expect(file_contents.len >= 84);
+
+    // Read the 32-bit triangle count from bytes 80..84 (little-endian)
+    const tri_count = std.mem.readInt(u32, file_contents[80..84], .little);
+
+    // A standard cube has 12 triangles (2 per face * 6 faces)
+    try testing.expectEqual(@as(u32, 12), tri_count);
+
+    // Verify exact binary size: 84 + (12 triangles * 50 bytes) = 684 bytes
+    const expected_file_size = 84 + (@as(usize, tri_count) * 50);
+    try testing.expectEqual(expected_file_size, file_contents.len);
+}
