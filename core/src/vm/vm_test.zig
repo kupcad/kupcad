@@ -2058,3 +2058,56 @@ test "VM: 2D Boolean Operations (Union, Difference, Intersection) work seamlessl
     const vol = vm.stack[0].asNumber();
     try testing.expect(vol > 3200.0 and vol < 3230.0);
 }
+
+test "VM: Minkowski sums and 2D Offsets evaluate correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    vm.host.print_handler = null;
+
+    // Test script:
+    // 1. Minkowski: A 10x10x10 cube and a r=2 sphere.
+    //    Bounds should expand from [-5, 5] to [-7, 7].
+    // 2. Offset: A 10x10 square offset by 2 (creates rounded corners by default).
+    //    Area = 100 (base) + 80 (edges) + ~12.56 (corners) = ~192.56.
+    //    Extruded by 10 = ~1925.6 volume.
+    const source =
+        \\c = cube(size: 10, center: true)
+        \\s = sphere(r: 2)
+        \\m_part = c.minkowski(s)
+        \\
+        \\sq = square(size: 10, center: true)
+        \\off_sq = sq.offset(2)
+        \\off_part = off_sq.extrude(10)
+        \\
+        \\[m_part.bbox(), off_part.volume()]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+    const arr_obj = arr_val.asArray();
+
+    // 1. Minkowski BBox map checks
+    const bbox_map = arr_obj.items.items[0].asMap();
+    try testing.expectEqual(@as(usize, 2), bbox_map.keys.items.len); // min, max exist
+
+    // 2. Offset volume check (~1925.6)
+    const vol = arr_obj.items.items[1].asNumber();
+    try testing.expect(vol > 1900.0 and vol < 2000.0);
+}

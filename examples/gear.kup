@@ -1,26 +1,29 @@
-# 1. 2D Profile Extrusion
-plate_2d = square(size: 40, center: true)
-plate_3d = plate_2d.extrude(15)
+# examples/advanced_modifiers.kup
 
-# 2. 3D Boolean Intersection (Bitwise AND)
-dome = sphere(r: 25).translate(0, 0, -5)
-domed_plate = plate_3d & dome
+# 1. 2D Offsets & Booleans
+# Create a seamlessly rounded hollow tube using offsets
+outer_profile = square(size: 40, center: true).offset(5)  # Expands and rounds corners
+inner_profile = square(size: 36, center: true).offset(3)
+wall_profile = outer_profile - inner_profile              # 2D Difference!
 
-# 3. 2D Circle Extrusion for a central hole
-hole_2d = circle(d: 12)
-hole_3d = hole_2d.extrude(40).translate(0, 0, -10)
+# 2. Extrude into a 3D wall
+walls = wall_profile.extrude(25)
 
-# 4. Standard CSG Difference
-part = domed_plate - hole_3d
+# 3. Create a solid base plate that matches the outer profile
+base = outer_profile.extrude(4).translate(0, 0, -2)
 
-# 5. Advanced Trim By Plane (Slice off the right side)
-# Keeps geometry on the opposite side of the normal (X=1, cut at X=12)
-final_part = part.trim_by_plane(1, 0, 0, 12)
+# 4. Minkowski Sum for Soft Feet
+# We use Minkowski to sweep a sphere around a thin cube,
+# resulting in a perfectly filleted/pillowed rectangular foot pad.
+foot_base = cube(x: 30, y: 30, z: 1, center: true)
+rounder = sphere(r: 3)
+soft_feet = foot_base.minkowski(rounder).translate(0, 0, -4)
 
-# Output Diagnostics
-puts("--- Part Specifications ---")
-p("Volume:", final_part.volume().round(2))
-p("Bounding Box:", final_part.bbox())
+# Combine everything
+final_enclosure = walls + base + soft_feet
 
-# Implicitly export final geometry
-final_part
+puts("--- Enclosure Specifications ---")
+p("Volume:", final_enclosure.volume().round(2))
+p("Bounding Box:", final_enclosure.bbox())
+
+final_enclosure
