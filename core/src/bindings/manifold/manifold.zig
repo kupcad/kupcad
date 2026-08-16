@@ -12,6 +12,13 @@ pub const OpType = enum(c_int) {
     intersect = 2,
 };
 
+pub const JoinType = enum(c_int) {
+    square = 0,
+    round = 1,
+    miter = 2,
+    bevel = 3,
+};
+
 pub const ManifoldVec3 = extern struct { x: f64, y: f64, z: f64 };
 pub const ManifoldManifoldPair = extern struct {
     first: ?*ManifoldObj,
@@ -43,6 +50,8 @@ extern "C" fn manifold_hull(mem: ?*ManifoldObj, m: ?*ManifoldObj) ?*ManifoldObj;
 extern "C" fn manifold_trim_by_plane(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ?*ManifoldObj;
 extern "C" fn manifold_split_by_plane(mem_first: ?*ManifoldObj, mem_second: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ManifoldManifoldPair;
 extern "C" fn manifold_cross_section_boolean(mem: ?*ManifoldCrossSection, a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection;
+extern "C" fn manifold_minkowski_sum(mem: ?*ManifoldObj, a: ?*ManifoldObj, b: ?*ManifoldObj) ?*ManifoldObj;
+extern "C" fn manifold_cross_section_offset(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, delta: f64, jt: JoinType, miter_limit: f64, circular_segments: c_int) ?*ManifoldCrossSection;
 
 extern "C" fn manifold_cross_section_square(mem: ?*ManifoldCrossSection, x: f64, y: f64, center: c_int) ?*ManifoldCrossSection;
 extern "C" fn manifold_cross_section_circle(mem: ?*ManifoldCrossSection, radius: f64, circular_segments: c_int) ?*ManifoldCrossSection;
@@ -109,12 +118,12 @@ pub fn hull(obj: ?*ManifoldObj) ?*ManifoldObj {
     return manifold_hull(manifold_alloc_manifold(), obj);
 }
 
-pub fn trimByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ?*ManifoldObj {
-    return manifold_trim_by_plane(manifold_alloc_manifold(), obj, nx, ny, nz, offset);
+pub fn trimByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?*ManifoldObj {
+    return manifold_trim_by_plane(manifold_alloc_manifold(), obj, nx, ny, nz, offset_dist);
 }
 
-pub fn splitByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) [2]?*ManifoldObj {
-    const pair = manifold_split_by_plane(manifold_alloc_manifold(), manifold_alloc_manifold(), obj, nx, ny, nz, offset);
+pub fn splitByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset_dist: f64) [2]?*ManifoldObj {
+    const pair = manifold_split_by_plane(manifold_alloc_manifold(), manifold_alloc_manifold(), obj, nx, ny, nz, offset_dist);
     return .{ pair.first, pair.second };
 }
 
@@ -146,6 +155,14 @@ pub fn slice(obj: ?*ManifoldObj, height: f64) ?*ManifoldCrossSection {
     const polys = manifold_slice(manifold_alloc_polygons(), obj, height);
     defer manifold_delete_polygons(polys);
     return manifold_cross_section_of_polygons(manifold_alloc_cross_section(), polys);
+}
+
+pub fn minkowskiSum(a: ?*ManifoldObj, b: ?*ManifoldObj) ?*ManifoldObj {
+    return manifold_minkowski_sum(manifold_alloc_manifold(), a, b);
+}
+
+pub fn offset(cs: ?*ManifoldCrossSection, delta: f64, jt: JoinType, miter_limit: f64, circular_segments: i32) ?*ManifoldCrossSection {
+    return manifold_cross_section_offset(manifold_alloc_cross_section(), cs, delta, jt, miter_limit, @intCast(circular_segments));
 }
 
 pub fn project(obj: ?*ManifoldObj) ?*ManifoldCrossSection {

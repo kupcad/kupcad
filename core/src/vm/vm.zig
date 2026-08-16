@@ -1168,6 +1168,12 @@ pub const VM = struct {
                 const target_handle = try self.evaluateDAG(p.target);
                 return kernel.hull(target_handle) orelse return error.RuntimeError;
             },
+            .minkowski => {
+                const p = self.dag_builder.getBinaryPayload(node);
+                const left_handle = try self.evaluateDAG(p.left);
+                const right_handle = try self.evaluateDAG(p.right);
+                return kernel.minkowski(left_handle, right_handle) orelse return error.RuntimeError;
+            },
             .extrude => {
                 const p = self.dag_builder.getExtrudePayload(node);
                 const cs = try self.evaluateCrossSectionDAG(p.target);
@@ -1207,6 +1213,11 @@ pub const VM = struct {
                 const p = self.dag_builder.getProjectPayload(node);
                 const target = try self.evaluateDAG(p.target);
                 return kernel.project(target) orelse return error.RuntimeError;
+            },
+            .offset => {
+                const p = self.dag_builder.getOffsetPayload(node);
+                const target = try self.evaluateCrossSectionDAG(p.target);
+                return kernel.offset(target, p.delta, p.join_type) orelse return error.RuntimeError;
             },
             .cs_union_op, .cs_difference_op, .cs_intersection_op => {
                 const payload = self.dag_builder.getBinaryPayload(node);

@@ -20,10 +20,12 @@ pub const DAGTag = enum(u8) {
     project_op,
     mirror,
     hull,
+    minkowski,
     trim_by_plane,
     cs_union_op,
     cs_difference_op,
     cs_intersection_op,
+    offset,
 };
 
 /// Exactly 8 bytes for optimal L1 cache line density (8 nodes per 64B line)
@@ -39,6 +41,7 @@ pub const TransformPayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f
 pub const ExtrudePayload = struct { target: DAGNodeIndex, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64 };
 pub const RevolvePayload = struct { target: DAGNodeIndex, segments: i32, degrees: f64 };
 pub const PlanePayload = struct { target: DAGNodeIndex, nx: f64, ny: f64, nz: f64, offset: f64 };
+pub const OffsetPayload = struct { target: DAGNodeIndex, delta: f64, join_type: u8 };
 
 pub const DAGBuilder = struct {
     arena: std.heap.ArenaAllocator,
@@ -189,6 +192,17 @@ pub const DAGBuilder = struct {
         return node_idx;
     }
 
+    pub fn addOffset(self: *DAGBuilder, target: DAGNodeIndex, delta: f64, join_type: u8) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
+        try self.numbers.append(alloc, delta);
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{ .tag = .offset, .flags = join_type, .data = extra_idx });
+        return node_idx;
+    }
+
     pub fn addRevolve(self: *DAGBuilder, target: DAGNodeIndex, segments: i32, degrees: f64) !DAGNodeIndex {
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
@@ -230,6 +244,11 @@ pub const DAGBuilder = struct {
     pub const getMirrorPayload = getTransformPayload;
     pub inline fn getHullPayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex } {
         return .{ .target = self.extra_data.items[node.data] };
+    }
+    pub inline fn getOffsetPayload(self: *const DAGBuilder, node: DAGNode) OffsetPayload {
+        const target = self.extra_data.items[node.data];
+        const num_idx = self.extra_data.items[node.data + 1];
+        return .{ .target = target, .delta = self.numbers.items[num_idx], .join_type = node.flags };
     }
     pub const getProjectPayload = getHullPayload;
     pub inline fn getSlicePayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex, height: f64 } {

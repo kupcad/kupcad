@@ -66,6 +66,8 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "revolve", .category = .transform, .func = methods.meshRevolve },
     .{ .name = "hull", .category = .transform, .func = methods.meshHull },
     .{ .name = "trim_by_plane", .category = .transform, .func = methods.meshTrimByPlane },
+    .{ .name = "minkowski", .category = .transform, .func = methods.meshMinkowski },
+    .{ .name = "offset", .category = .transform, .func = methods.meshOffset },
 };
 
 // Compile-time generated O(1) jump table

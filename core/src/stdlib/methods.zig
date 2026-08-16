@@ -165,3 +165,16 @@ pub fn meshTrimByPlane(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]v
     const new_idx = try vm.dag_builder.addTrimByPlane(receiver.asGeometry().dag_idx, nx, ny, nz, offset);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
+
+pub fn meshMinkowski(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (arg_count < 1 or !args[0].isGeometry()) return error.RuntimeError;
+    const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.asGeometry().dag_idx, args[0].asGeometry().dag_idx);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+pub fn meshOffset(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    if (!receiver.isCrossSection()) return error.RuntimeError;
+    const delta = if (arg_count > 0) args[0].asNumber() else 1.0;
+    const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, delta, 1); // 1 = round
+    return try vm.allocateCrossSection(new_idx);
+}

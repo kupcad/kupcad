@@ -17,14 +17,16 @@ pub const GeometryKernel = struct {
     scaleFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,
     squareFn: *const fn (x: f64, y: f64, center: bool) ?geom.CrossSectionHandle,
     circleFn: *const fn (radius: f64, circular_segments: i32) ?geom.CrossSectionHandle,
+    offsetFn: *const fn (cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle,
     extrudeFn: *const fn (cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle,
     revolveFn: *const fn (cs: geom.CrossSectionHandle, circular_segments: i32, revolve_degrees: f64) ?geom.GeometryHandle,
     sliceFn: *const fn (a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle,
     projectFn: *const fn (a: geom.GeometryHandle) ?geom.CrossSectionHandle,
     mirrorFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle,
     hullFn: *const fn (a: geom.GeometryHandle) ?geom.GeometryHandle,
-    trimByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle,
-    splitByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) geom.SolidPair,
+    minkowskiFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle,
+    trimByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?geom.GeometryHandle,
+    splitByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair,
     crossSectionBooleanFn: *const fn (a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle,
     genusFn: *const fn (a: geom.GeometryHandle) i32,
     destructCrossSectionFn: *const fn (handle: geom.CrossSectionHandle) void,
@@ -84,12 +86,20 @@ pub const GeometryKernel = struct {
         return self.hullFn(a);
     }
 
-    pub inline fn trimByPlane(self: *const GeometryKernel, a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
-        return self.trimByPlaneFn(a, nx, ny, nz, offset);
+    pub inline fn minkowski(self: *const GeometryKernel, a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
+        return self.minkowskiFn(a, b);
     }
 
-    pub inline fn splitByPlane(self: *const GeometryKernel, a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) geom.SolidPair {
-        return self.splitByPlaneFn(a, nx, ny, nz, offset);
+    pub inline fn trimByPlane(self: *const GeometryKernel, a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?geom.GeometryHandle {
+        return self.trimByPlaneFn(a, nx, ny, nz, offset_dist);
+    }
+
+    pub inline fn splitByPlane(self: *const GeometryKernel, a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair {
+        return self.splitByPlaneFn(a, nx, ny, nz, offset_dist);
+    }
+
+    pub inline fn offset(self: *const GeometryKernel, cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
+        return self.offsetFn(cs, delta, join_type);
     }
 
     pub inline fn crossSectionBoolean(self: *const GeometryKernel, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle {

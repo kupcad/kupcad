@@ -98,15 +98,15 @@ fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
-fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
+fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    const ptr = manifold.trimByPlane(@ptrCast(@alignCast(a.ptr)), nx, ny, nz, offset) orelse return null;
+    const ptr = manifold.trimByPlane(@ptrCast(@alignCast(a.ptr)), nx, ny, nz, offset_dist) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
-fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) geom.SolidPair {
+fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair {
     std.debug.assert(a.engine == .manifold);
-    const pair = manifold.splitByPlane(@ptrCast(@alignCast(a.ptr)), nx, ny, nz, offset);
+    const pair = manifold.splitByPlane(@ptrCast(@alignCast(a.ptr)), nx, ny, nz, offset_dist);
     return geom.SolidPair{
         .first = if (pair[0] != null) geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(pair[0]) } else null,
         .second = if (pair[1] != null) geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(pair[1]) } else null,
@@ -146,6 +146,24 @@ fn volumeImpl(handle: geom.GeometryHandle) f64 {
     std.debug.assert(handle.engine == .manifold);
     const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
     return manifold.volume(obj);
+}
+
+fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold and b.engine == .manifold);
+    const ptr = manifold.minkowskiSum(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr))) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
+    std.debug.assert(cs.engine == .manifold);
+    const jt: manifold.JoinType = switch (join_type) {
+        0 => .square,
+        2 => .miter,
+        3 => .bevel,
+        else => .round,
+    };
+    const ptr = manifold.offset(@ptrCast(@alignCast(cs.ptr)), delta, jt, 2.0, 0) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
@@ -212,6 +230,8 @@ pub const driver = kernel.GeometryKernel{
     .splitByPlaneFn = splitByPlaneImpl,
     .crossSectionBooleanFn = crossSectionBooleanImpl,
     .genusFn = genusImpl,
+    .minkowskiFn = minkowskiImpl,
+    .offsetFn = offsetImpl,
 
     .boundingBoxFn = boundingBoxImpl,
     .queryFacesFn = queryFacesImpl,
