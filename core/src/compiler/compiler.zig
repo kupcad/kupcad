@@ -300,34 +300,6 @@ pub const Compiler = struct {
                     try self.emitConstantInstruction(.op_get_property, .op_get_property_wide, seg_idx);
                 }
             },
-            .module_stmt => {
-                const ms = self.tree.moduleStmt(node);
-                const name_str = self.tree.getString(ms.name);
-                const name_idx = try self.makeStringConstant(name_str);
-
-                try self.emitConstantInstruction(.op_module, .op_module_wide, name_idx);
-
-                const body_node = self.tree.getNode(ms.body).?;
-                const block_payload = self.tree.block(body_node);
-                const stmts = self.tree.getNodes(block_payload.stmts);
-
-                for (stmts) |stmt_idx| {
-                    const stmt_node = self.tree.getNode(stmt_idx).?;
-                    if (stmt_node.tag == .def_stmt) {
-                        const ds = self.tree.defStmt(stmt_node);
-                        const method_name = self.tree.getString(ds.name);
-                        const m_name_idx = try self.makeStringConstant(method_name);
-
-                        const params = self.tree.getParams(ds.params);
-                        try self.compileClosureBlock(params, ds.body);
-
-                        try self.emitConstantInstruction(.op_method, .op_method_wide, m_name_idx);
-                    }
-                }
-
-                try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
-                try self.emitOp(.op_nil);
-            },
             .import_stmt => {
                 const is_stmt = self.tree.importStmt(node);
                 const path_str = self.tree.getString(is_stmt.path);
@@ -535,134 +507,10 @@ pub const Compiler = struct {
                 self.simulatePop(parts.len);
                 self.simulatePush(1); // Pushes the final merged String
             },
-            .multiple_assignment => {
-                const ma = self.tree.multipleAssignment(node);
-                const lhs = self.tree.getLhsExprs(ma.lhs);
-                try self.compileNode(ma.value);
-
-                var splat_idx: ?usize = null;
-                for (lhs, 0..) |l, i| {
-                    if (l.modifier != null and l.modifier.? == .splat) {
-                        splat_idx = i;
-                        break;
-                    }
-                }
-
-                if (splat_idx) |s_idx| {
-                    const pre_count = s_idx;
-                    const post_count = lhs.len - 1 - s_idx;
-                    if (pre_count > limits.MAX_LOCALS or post_count > limits.MAX_LOCALS) return error.TooManyConstants;
-                    try self.emitOp(.op_unpack_splat);
-                    try self.emitByte(@intCast(pre_count));
-                    try self.emitByte(@intCast(post_count));
-                    self.simulatePush(lhs.len); // pre + splat (1) + post
-                } else {
-                    if (lhs.len > limits.MAX_LOCALS) return error.TooManyConstants;
-                    try self.emitOp(.op_unpack);
-                    try self.emitByte(@intCast(lhs.len));
-                    self.simulatePush(lhs.len);
-                }
-
-                var i: usize = lhs.len;
-                while (i > 0) {
-                    i -= 1;
-                    try self.compileDestructure(lhs[i]);
-                }
-                try self.emitOp(.op_nil);
-            },
-            .class_stmt => {
-                const cs = self.tree.classStmt(node);
-                const name_node = self.tree.getNode(cs.name).?;
-                const name_id = @as(ast.StringId, @enumFromInt(name_node.data));
-                const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
-
-                try self.emitConstantInstruction(.op_class, .op_class_wide, name_idx);
-                if (cs.super_class != .none) {
-                    try self.compileNode(cs.super_class);
-                    try self.emitOp(.op_inherit);
-                }
-
-                const body_node = self.tree.getNode(cs.body).?;
-                const block_payload = self.tree.block(body_node);
-                const stmts = self.tree.getNodes(block_payload.stmts);
-
-                for (stmts) |stmt_idx| {
-                    const stmt_node = self.tree.getNode(stmt_idx).?;
-                    if (stmt_node.tag == .def_stmt) {
-                        const ds = self.tree.defStmt(stmt_node);
-                        const method_name = self.tree.getString(ds.name);
-
-                        const is_class_method = ds.is_class_method or std.mem.startsWith(u8, method_name, "self.");
-                        var final_name = method_name;
-                        if (std.mem.startsWith(u8, method_name, "self.")) {
-                            final_name = method_name[5..];
-                        }
-                        const m_name_idx = try self.makeStringConstant(final_name);
-
-                        const params = self.tree.getParams(ds.params);
-                        try self.compileClosureBlock(params, ds.body);
-
-                        try self.emitConstantInstruction(if (is_class_method) .op_class_method else .op_method, if (is_class_method) .op_class_method_wide else .op_method_wide, m_name_idx);
-                    } else if (stmt_node.tag == .method_call) {
-                        const mc = self.tree.methodCall(stmt_node);
-                        const func_name = self.tree.getString(mc.method_name);
-                        if (std.mem.eql(u8, func_name, "include") and mc.receiver == .none) {
-                            const args = self.tree.getNamedArgs(mc.args);
-                            if (args.len == 1) {
-                                try self.compileNode(args[0].value);
-                                try self.emitOp(.op_mixin);
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-                const sym = self.symbols[@intFromEnum(node_idx)];
-                if (sym.kind == .local) {
-                    try self.addLocal(name_id, @intCast(sym.index));
-                    try self.emitOp(.op_set_local);
-                    try self.emitByte(@intCast(sym.index));
-                } else {
-                    try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
-                    try self.emitOp(.op_nil);
-                }
-            },
-            .super_call => {
-                const sc = self.tree.superCall(node);
-                try self.emitOp(.op_get_local);
-                try self.emitByte(0); // push `self`
-
-                const args = self.tree.getNamedArgs(sc.args);
-                var pos_count: usize = 0;
-                var kw_count: usize = 0;
-
-                for (args) |arg| {
-                    if (arg.name == .none) {
-                        try self.compileNode(arg.value);
-                        pos_count += 1;
-                    }
-                }
-                for (args) |arg| {
-                    if (arg.name != .none) {
-                        const name_idx = try self.makeStringConstant(self.tree.getString(arg.name));
-                        try self.emitConstantInstruction(.op_constant, .op_constant_wide, name_idx);
-                        try self.compileNode(arg.value);
-                        kw_count += 1;
-                    }
-                }
-
-                if (kw_count > 0) {
-                    try self.emitOp(.op_build_map);
-                    try self.emitByte(@intCast(kw_count));
-                    pos_count += 1;
-                }
-
-                try self.emitOp(.op_super_invoke);
-                try self.emitByte(@intCast(pos_count));
-
-                self.simulatePop(pos_count + 1);
-                self.simulatePush(1);
-            },
+            .multiple_assignment => try self.compileMultipleAssignment(node),
+            .class_stmt => try self.compileClassStmt(node, node_idx),
+            .module_stmt => try self.compileModuleStmt(node),
+            .super_call => try self.compileSuperCall(node),
             .property_assignment => {
                 const pa = self.tree.propertyAssignment(node);
 
@@ -1625,6 +1473,165 @@ pub const Compiler = struct {
             try self.addLocal(name_id, @intCast(sym.index));
             try self.emitLocalInstruction(.op_set_local, .op_set_local_wide, sym.index);
         }
+    }
+
+    fn compileMultipleAssignment(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const ma = self.tree.multipleAssignment(node);
+        const lhs = self.tree.getLhsExprs(ma.lhs);
+        try self.compileNode(ma.value);
+
+        var splat_idx: ?usize = null;
+        for (lhs, 0..) |l, i| {
+            if (l.modifier != null and l.modifier.? == .splat) {
+                splat_idx = i;
+                break;
+            }
+        }
+
+        if (splat_idx) |s_idx| {
+            const pre_count = s_idx;
+            const post_count = lhs.len - 1 - s_idx;
+            if (pre_count > limits.MAX_LOCALS or post_count > limits.MAX_LOCALS) return error.TooManyConstants;
+            try self.emitOp(.op_unpack_splat);
+            try self.emitByte(@intCast(pre_count));
+            try self.emitByte(@intCast(post_count));
+            self.simulatePush(lhs.len);
+        } else {
+            if (lhs.len > limits.MAX_LOCALS) return error.TooManyConstants;
+            try self.emitOp(.op_unpack);
+            try self.emitByte(@intCast(lhs.len));
+            self.simulatePush(lhs.len);
+        }
+
+        var i: usize = lhs.len;
+        while (i > 0) {
+            i -= 1;
+            try self.compileDestructure(lhs[i]);
+        }
+        try self.emitOp(.op_nil);
+    }
+
+    fn compileClassStmt(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
+        const cs = self.tree.classStmt(node);
+        const name_node = self.tree.getNode(cs.name).?;
+        const name_id = @as(ast.StringId, @enumFromInt(name_node.data));
+        const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
+
+        try self.emitConstantInstruction(.op_class, .op_class_wide, name_idx);
+
+        if (cs.super_class != .none) {
+            try self.compileNode(cs.super_class);
+            try self.emitOp(.op_inherit);
+        }
+
+        const body_node = self.tree.getNode(cs.body).?;
+        const block_payload = self.tree.block(body_node);
+        const stmts = self.tree.getNodes(block_payload.stmts);
+
+        for (stmts) |stmt_idx| {
+            const stmt_node = self.tree.getNode(stmt_idx).?;
+            if (stmt_node.tag == .def_stmt) {
+                const ds = self.tree.defStmt(stmt_node);
+                const method_name = self.tree.getString(ds.name);
+                const is_class_method = ds.is_class_method or std.mem.startsWith(u8, method_name, "self.");
+
+                var final_name = method_name;
+                if (std.mem.startsWith(u8, method_name, "self.")) {
+                    final_name = method_name[5..];
+                }
+                const m_name_idx = try self.makeStringConstant(final_name);
+
+                const params = self.tree.getParams(ds.params);
+                try self.compileClosureBlock(params, ds.body);
+
+                try self.emitConstantInstruction(if (is_class_method) .op_class_method else .op_method, if (is_class_method) .op_class_method_wide else .op_method_wide, m_name_idx);
+            } else if (stmt_node.tag == .method_call) {
+                const mc = self.tree.methodCall(stmt_node);
+                const func_name = self.tree.getString(mc.method_name);
+                if (std.mem.eql(u8, func_name, "include") and mc.receiver == .none) {
+                    const args = self.tree.getNamedArgs(mc.args);
+                    if (args.len == 1) {
+                        try self.compileNode(args[0].value);
+                        try self.emitOp(.op_mixin);
+                        continue;
+                    }
+                }
+            }
+        }
+
+        const sym = self.symbols[@intFromEnum(node_idx)];
+        if (sym.kind == .local) {
+            try self.addLocal(name_id, @intCast(sym.index));
+            try self.emitOp(.op_set_local);
+            try self.emitByte(@intCast(sym.index));
+        } else {
+            try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
+            try self.emitOp(.op_nil);
+        }
+    }
+
+    fn compileModuleStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const ms = self.tree.moduleStmt(node);
+        const name_str = self.tree.getString(ms.name);
+        const name_idx = try self.makeStringConstant(name_str);
+
+        try self.emitConstantInstruction(.op_module, .op_module_wide, name_idx);
+
+        const body_node = self.tree.getNode(ms.body).?;
+        const block_payload = self.tree.block(body_node);
+        const stmts = self.tree.getNodes(block_payload.stmts);
+
+        for (stmts) |stmt_idx| {
+            const stmt_node = self.tree.getNode(stmt_idx).?;
+            if (stmt_node.tag == .def_stmt) {
+                const ds = self.tree.defStmt(stmt_node);
+                const method_name = self.tree.getString(ds.name);
+                const m_name_idx = try self.makeStringConstant(method_name);
+                const params = self.tree.getParams(ds.params);
+                try self.compileClosureBlock(params, ds.body);
+                try self.emitConstantInstruction(.op_method, .op_method_wide, m_name_idx);
+            }
+        }
+
+        try self.emitConstantInstruction(.op_define_global, .op_define_global_wide, name_idx);
+        try self.emitOp(.op_nil);
+    }
+
+    fn compileSuperCall(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const sc = self.tree.superCall(node);
+        try self.emitOp(.op_get_local);
+        try self.emitByte(0); // push `self`
+
+        const args = self.tree.getNamedArgs(sc.args);
+        var pos_count: usize = 0;
+        var kw_count: usize = 0;
+
+        for (args) |arg| {
+            if (arg.name == .none) {
+                try self.compileNode(arg.value);
+                pos_count += 1;
+            }
+        }
+        for (args) |arg| {
+            if (arg.name != .none) {
+                const name_idx = try self.makeStringConstant(self.tree.getString(arg.name));
+                try self.emitConstantInstruction(.op_constant, .op_constant_wide, name_idx);
+                try self.compileNode(arg.value);
+                kw_count += 1;
+            }
+        }
+
+        if (kw_count > 0) {
+            try self.emitOp(.op_build_map);
+            try self.emitByte(@intCast(kw_count));
+            pos_count += 1;
+        }
+
+        try self.emitOp(.op_super_invoke);
+        try self.emitByte(@intCast(pos_count));
+
+        self.simulatePop(pos_count + 1);
+        self.simulatePush(1);
     }
 
     fn reserveLocalSlots(self: *Compiler) CompileError!void {

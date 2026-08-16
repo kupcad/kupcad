@@ -379,34 +379,7 @@ pub const VM = struct {
                     _ = self.rescue_frames.pop();
                 },
                 .op_throw => {
-                    const err_val = self.pop();
-                    if (self.rescue_frames.items.len == 0) {
-                        self.reportError("\n[Uncaught Exception] ", .{});
-                        if (err_val.isObject() and err_val.asObj().obj_type == .string) {
-                            const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", err_val.asObj()))).chars;
-                            self.reportError("{s}\n", .{str});
-                        } else {
-                            self.reportError("Unknown error.\n", .{});
-                        }
-                        self.printStacktrace(); // Natively formats the exact line and column
-                        return .runtime_error;
-                    }
-                    const r_frame = self.rescue_frames.pop().?;
-
-                    // Unwind and cleanly close any closures captured inside the failed block
-                    self.closeUpvalues(&self.stack[r_frame.stack_top]);
-
-                    // Unwind Call Frames
-                    while (self.frames.items.len > r_frame.frame_count) {
-                        _ = self.frames.pop();
-                    }
-
-                    // Unwind the Stack variables safely using ARC
-                    self.shrinkStack(r_frame.stack_top);
-
-                    // Push the exception payload and jump into the rescue block!
-                    self.push(err_val);
-                    self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
+                    if (self.executeThrow() != .ok) return .runtime_error;
                 },
                 .op_build_array, .op_build_array_wide => {
                     const item_count = self.readOperand(exec_chunk, frame, op == .op_build_array_wide);
@@ -792,40 +765,7 @@ pub const VM = struct {
                     sub_val.asClass().superclass = super_val.asClass();
                 },
                 .op_call => {
-                    const arg_count = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
-
-                    // Natively calculate the absolute base slot of the closure!
-                    const base_slot = self.stack_top - 1 - arg_count;
-                    const callee = self.stack[base_slot];
-
-                    if (callee.isNative()) {
-                        const native_obj = callee.asNative();
-                        const args_ptr = self.stack.ptr + base_slot + 1;
-                        const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
-                        self.popAndRelease(arg_count + 1); // Clean up args and callee
-
-                        // Absorb the native +1 reference directly
-                        self.stack.ptr[self.stack_top] = result;
-                        self.stack_top += 1;
-                    } else if (callee.isClosure()) {
-                        self.dispatchClosure(callee.asClosure(), arg_count, base_slot) catch return .runtime_error;
-                    } else if (callee.isClass()) {
-                        const class_obj = callee.asClass();
-                        const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
-                        self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
-
-                        if (self.findMethod(class_obj, "initialize")) |init_method| {
-                            self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
-                            continue;
-                        } else if (arg_count > 0) {
-                            self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
-                            return .runtime_error;
-                        }
-                    } else {
-                        self.reportError("Runtime Error: Can only call functions and classes.\n", .{});
-                        return .runtime_error;
-                    }
+                    if (self.executeCall(frame, exec_chunk) != .ok) return .runtime_error;
                 },
                 .op_invoke, .op_invoke_wide => {
                     if (self.executeInvoke(frame, exec_chunk, op == .op_invoke_wide) != .ok) return .runtime_error;
@@ -1841,6 +1781,68 @@ pub const VM = struct {
         const low = @as(usize, exec_chunk.code.items[frame.ip + 2]);
         frame.ip += 3;
         return (high << 16) | (mid << 8) | low;
+    }
+
+    inline fn executeCall(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
+        const arg_count = exec_chunk.code.items[frame.ip];
+        frame.ip += 1;
+
+        const base_slot = self.stack_top - 1 - arg_count;
+        const callee = self.stack[base_slot];
+
+        if (callee.isNative()) {
+            const native_obj = callee.asNative();
+            const args_ptr = self.stack.ptr + base_slot + 1;
+            const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
+            self.popAndRelease(arg_count + 1);
+            self.stack.ptr[self.stack_top] = result;
+            self.stack_top += 1;
+        } else if (callee.isClosure()) {
+            self.dispatchClosure(callee.asClosure(), arg_count, base_slot) catch return .runtime_error;
+        } else if (callee.isClass()) {
+            const class_obj = callee.asClass();
+            const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
+            self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj);
+
+            if (self.findMethod(class_obj, "initialize")) |init_method| {
+                self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
+            } else if (arg_count > 0) {
+                self.reportError("Runtime Error: Expected 0 args for default constructor.\n", .{});
+                return .runtime_error;
+            }
+        } else {
+            self.reportError("Runtime Error: Can only call functions and classes.\n", .{});
+            return .runtime_error;
+        }
+        return .ok;
+    }
+
+    inline fn executeThrow(self: *VM) InterpretResult {
+        const err_val = self.pop();
+        if (self.rescue_frames.items.len == 0) {
+            self.reportError("\n[Uncaught Exception] ", .{});
+            if (err_val.isObject() and err_val.asObj().obj_type == .string) {
+                const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", err_val.asObj()))).chars;
+                self.reportError("{s}\n", .{str});
+            } else {
+                self.reportError("Unknown error.\n", .{});
+            }
+            self.printStacktrace();
+            return .runtime_error;
+        }
+
+        const r_frame = self.rescue_frames.pop().?;
+        self.closeUpvalues(&self.stack[r_frame.stack_top]);
+
+        while (self.frames.items.len > r_frame.frame_count) {
+            _ = self.frames.pop();
+        }
+
+        self.shrinkStack(r_frame.stack_top);
+        self.push(err_val);
+        self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
+
+        return .ok;
     }
 
     pub fn valuesCaseEqual(self: *VM, case_val: value.Value, test_val: value.Value) bool {
