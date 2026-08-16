@@ -2479,3 +2479,61 @@ test "VM Edge Case: Native C++ FFI failures are safely caught by rescue blocks" 
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
 }
+
+test "VM: ARC objects correctly track memory against the Sandbox limit" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Verify initial state
+    try testing.expectEqual(@as(usize, 0), vm.gc.bytes_allocated);
+
+    // Allocate an ARC object and verify it counts towards the GC heap size
+    const geom_val = try vm.allocateGeometry(.{ .symbolic = 1 });
+
+    // FIX: Manual allocations belong to the tester, not the VM.
+    // We must manually release it to balance the initial ref_count = 1.
+    defer vm.releaseValue(geom_val);
+
+    try testing.expect(vm.gc.bytes_allocated > 0);
+
+    // Clamp the sandbox limit to exactly the current usage
+    vm.gc.max_memory_limit = vm.gc.bytes_allocated;
+
+    // Attempt to allocate another geometry. The Sandbox MUST block it.
+    const result = vm.allocateGeometry(.{ .symbolic = 2 });
+    try testing.expectError(error.OutOfMemory, result);
+}
+
+test "VM: Symbols are weak references and swept when unused" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Allocate a symbol (it gets cached in vm.symbols)
+    const sym_val = try vm.allocateSymbol("ephemeral_key");
+    vm.push(sym_val);
+
+    try testing.expect(vm.symbols.contains("ephemeral_key"));
+
+    // Pop the symbol off the stack so nothing references it
+    _ = vm.pop();
+
+    // Force a garbage collection cycle
+    vm.gc.collectGarbage(&vm, false);
+
+    // The symbol MUST be swept from the VM's internal cache
+    try testing.expectEqual(false, vm.symbols.contains("ephemeral_key"));
+}
+
+test "VM: Brep topology deinit cleanly frees all arrays" {
+    // If Brep.deinit() leaks, std.testing.allocator will fail the test automatically!
+    const Brep = @import("../kernel/engines/brep/topology.zig").Brep;
+    var brep = Brep.initEmpty(testing.allocator);
+    defer brep.deinit();
+
+    // Simulate allocating topology slices
+    brep.vertices = try testing.allocator.alloc(@import("../kernel/engines/brep/topology.zig").Vertex, 10);
+    brep.wires = try testing.allocator.alloc(@import("../kernel/engines/brep/topology.zig").Wire, 5);
+
+    // The defer brep.deinit() will trigger here.
+    // If it doesn't free `.vertices` and `.wires`, Zig's test runner will panic with a memory leak.
+}

@@ -51,6 +51,15 @@ pub const Brep = struct {
     }
 
     pub fn deinit(self: *Brep) void {
-        _ = self;
+        if (self.vertices.len > 0) self.allocator.free(self.vertices);
+        if (self.edges.len > 0) self.allocator.free(self.edges);
+        if (self.wires.len > 0) self.allocator.free(self.wires);
+        if (self.faces.len > 0) self.allocator.free(self.faces);
+        if (self.shells.len > 0) self.allocator.free(self.shells);
+        if (self.solids.len > 0) self.allocator.free(self.solids);
+
+        if (self.wire_edges.len > 0) self.allocator.free(self.wire_edges);
+        if (self.face_inner_wires.len > 0) self.allocator.free(self.face_inner_wires);
+        if (self.shell_faces.len > 0) self.allocator.free(self.shell_faces);
     }
 };

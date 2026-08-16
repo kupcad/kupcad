@@ -224,7 +224,12 @@ pub const GC = struct {
 
     // --- ARC Allocators (Bypasses GC Tracking) ---
     pub fn allocateGeometry(self: *GC, state: value.GeometryState) !*value.ObjGeometry {
+        if (self.max_memory_limit) |limit| {
+            if (self.bytes_allocated + @sizeOf(value.ObjGeometry) > limit) return error.OutOfMemory;
+        }
         const ptr = try self.allocator.create(value.ObjGeometry);
+        self.bytes_allocated += @sizeOf(value.ObjGeometry);
+
         ptr.* = .{
             .obj = .{ .obj_type = .geometry, .is_marked = false, .next = null },
             .ref_count = 1,
@@ -243,7 +248,12 @@ pub const GC = struct {
     }
 
     pub fn allocateCrossSection(self: *GC, dag_idx: u32) !*value.ObjCrossSection {
+        if (self.max_memory_limit) |limit| {
+            if (self.bytes_allocated + @sizeOf(value.ObjCrossSection) > limit) return error.OutOfMemory;
+        }
         const ptr = try self.allocator.create(value.ObjCrossSection);
+        self.bytes_allocated += @sizeOf(value.ObjCrossSection);
+
         ptr.* = .{
             .obj = .{ .obj_type = .cross_section, .is_marked = false, .next = null },
             .ref_count = 1,
@@ -254,7 +264,12 @@ pub const GC = struct {
     }
 
     pub fn allocateWorkplane(self: *GC, parent: *value.ObjGeometry, origin: [3]f64, normal: [3]f64) !*value.ObjWorkplane {
+        if (self.max_memory_limit) |limit| {
+            if (self.bytes_allocated + @sizeOf(value.ObjWorkplane) > limit) return error.OutOfMemory;
+        }
         const ptr = try self.allocator.create(value.ObjWorkplane);
+        self.bytes_allocated += @sizeOf(value.ObjWorkplane);
+
         ptr.* = .{
             .obj = .{ .obj_type = .workplane, .is_marked = false, .next = null },
             .ref_count = 1,
@@ -279,6 +294,7 @@ pub const GC = struct {
         const parent_val = value.Value.initGeometry(wp_obj.parent);
         vm.releaseValue(parent_val);
         self.allocator.destroy(wp_obj);
+        self.bytes_allocated -= @sizeOf(value.ObjWorkplane);
     }
 
     pub fn freeGeometry(self: *GC, vm: *VM, geom_obj: *value.ObjGeometry) void {
@@ -286,11 +302,10 @@ pub const GC = struct {
             self.allocator.destroy(cache);
         }
         if (geom_obj.cached_handle) |handle| {
-            if (vm.host.mesh_destructor) |destructor| {
-                destructor(handle);
-            }
+            if (vm.host.mesh_destructor) |destructor| destructor(handle);
         }
         self.allocator.destroy(geom_obj);
+        self.bytes_allocated -= @sizeOf(value.ObjGeometry);
     }
 
     pub fn freeCrossSection(self: *GC, vm: *VM, cs_obj: *value.ObjCrossSection) void {
@@ -298,6 +313,7 @@ pub const GC = struct {
             if (vm.active_kernel) |k| k.destructCrossSection(handle);
         }
         self.allocator.destroy(cs_obj);
+        self.bytes_allocated -= @sizeOf(value.ObjCrossSection);
     }
 
     // --- Phase 1: Mark ---
@@ -316,11 +332,6 @@ pub const GC = struct {
         var globals_it = vm.globals.valueIterator();
         while (globals_it.next()) |val| {
             self.markValue(val.*);
-        }
-
-        var symbols_it = vm.symbols.valueIterator();
-        while (symbols_it.next()) |val| {
-            self.markObject(&val.*.obj);
         }
     }
 
@@ -538,6 +549,8 @@ pub const GC = struct {
             },
             .brep => {
                 const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));
+                brep_obj.data.deinit();
+
                 self.allocator.destroy(brep_obj.data);
                 self.allocator.destroy(brep_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjBrep);

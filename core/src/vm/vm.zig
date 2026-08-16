@@ -953,22 +953,12 @@ pub const VM = struct {
 
     // --- Allocators ---
     pub fn allocateString(self: *VM, chars: []const u8) !value.Value {
-        // Return existing interned pointer if already allocated
-        if (self.strings.get(chars)) |interned| {
-            return value.Value.initObj(&interned.obj);
-        }
         const str_obj = try self.gc.allocateString(self, chars);
-        try self.strings.put(self.allocator, str_obj.chars, str_obj);
         return value.Value.initObj(&str_obj.obj);
     }
 
     pub fn allocateSymbol(self: *VM, chars: []const u8) !value.Value {
-        // Return existing interned pointer if already allocated
-        if (self.symbols.get(chars)) |interned| {
-            return value.Value.initObj(&interned.obj);
-        }
         const sym_obj = try self.gc.allocateSymbol(self, chars);
-        try self.symbols.put(self.allocator, sym_obj.chars, sym_obj);
         return value.Value.initObj(&sym_obj.obj);
     }
 
