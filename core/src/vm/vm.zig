@@ -38,13 +38,17 @@ pub const VM = struct {
     stack: []value.Value,
     stack_top: usize,
     frames: std.ArrayListUnmanaged(CallFrame),
+
     gc: memory.GC,
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
+
     globals: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
     symbols: std.StringHashMapUnmanaged(*value.ObjSymbol),
+
     open_upvalues: ?*value.ObjUpvalue = null,
     rescue_frames: std.ArrayListUnmanaged(RescueFrame) = .empty,
+
     host: Host = .{},
     active_kernel: ?*const kernel_mod.GeometryKernel = null,
     dag_builder: dag.DAGBuilder,
@@ -65,6 +69,7 @@ pub const VM = struct {
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
         const initial_stack = try allocator.alloc(value.Value, limits.INITIAL_STACK_CAPACITY);
+
         return .{
             .allocator = allocator,
             .io = io,
@@ -84,8 +89,16 @@ pub const VM = struct {
 
     pub fn deinit(self: *VM) void {
         self.resetStack();
+
+        // Ensure ARC objects held by script global variables are correctly released before teardown
+        var globals_it = self.globals.valueIterator();
+        while (globals_it.next()) |val| {
+            self.releaseValue(val.*);
+        }
+
         self.gc.collectGarbage(self, true);
         self.dag_builder.deinit();
+
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
         self.strings.deinit(self.allocator);
@@ -95,7 +108,6 @@ pub const VM = struct {
     }
 
     // --- Dynamic Stack Operations ---
-
     pub fn push(self: *VM, val: value.Value) void {
         std.debug.assert(self.stack_top < self.stack.len);
         self.retainValue(val);
@@ -135,7 +147,6 @@ pub const VM = struct {
     }
 
     // --- Execution Core ---
-
     pub fn interpret(self: *VM, execution_chunk: *chunk.Chunk) InterpretResult {
         self.instruction_count = 0; // Reset gas on fresh run
         self.frames.clearRetainingCapacity();
@@ -170,6 +181,7 @@ pub const VM = struct {
 
     fn runUntil(self: *VM, target_depth: usize) InterpretResult {
         while (self.frames.items.len > target_depth) {
+
             // Gas Check
             if (self.instruction_limit > 0) {
                 self.instruction_count += 1;
@@ -181,9 +193,9 @@ pub const VM = struct {
 
             var frame = &self.frames.items[self.frames.items.len - 1];
             const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
-
             const instruction = exec_chunk.code.items[frame.ip];
             frame.ip += 1;
+
             const op: chunk.OpCode = @enumFromInt(instruction);
 
             switch (op) {
@@ -268,6 +280,7 @@ pub const VM = struct {
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
                     const receiver = self.stack[self.stack_top - 1];
+
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
                         if (instance.fields.get(name_str)) |val| {
@@ -366,7 +379,6 @@ pub const VM = struct {
                 },
                 .op_throw => {
                     const err_val = self.pop();
-
                     if (self.rescue_frames.items.len == 0) {
                         self.reportError("\n[Uncaught Exception] ", .{});
                         if (err_val.isObject() and err_val.asObj().obj_type == .string) {
@@ -378,7 +390,6 @@ pub const VM = struct {
                         self.printStacktrace(); // Natively formats the exact line and column
                         return .runtime_error;
                     }
-
                     const r_frame = self.rescue_frames.pop().?;
 
                     // Unwind and cleanly close any closures captured inside the failed block
@@ -408,6 +419,7 @@ pub const VM = struct {
                     for (self.stack[start_idx..self.stack_top]) |item| {
                         arr_obj.items.appendAssumeCapacity(item);
                     }
+
                     // Clear the consumed stack space and push the resulting Array
                     self.stack_top -= item_count;
                     self.push(arr_val);
@@ -426,6 +438,7 @@ pub const VM = struct {
                         map_obj.keys.appendAssumeCapacity(self.stack[start_idx + i]);
                         map_obj.values.appendAssumeCapacity(self.stack[start_idx + i + 1]);
                     }
+
                     // Clear consumed keys & values, push the resulting Map
                     self.stack_top -= (pair_count * 2);
                     self.push(map_val);
@@ -445,6 +458,7 @@ pub const VM = struct {
                     for (self.stack[start_idx..self.stack_top]) |val| {
                         val.stringify(false, &out.writer) catch return .runtime_error;
                     }
+
                     const merged_str = self.allocateString(out.written()) catch return .runtime_error;
 
                     // Pop and release all original stack fragments
@@ -519,11 +533,9 @@ pub const VM = struct {
                 .op_jump_if_false => {
                     // Properly read 3-byte offset
                     const offset = self.readJumpOffset(exec_chunk, frame);
-
                     // Falsey values in KupCAD are only `nil` and `false`
                     const val = self.stack[self.stack_top - 1];
                     const is_falsey = val.isNil() or (val.isBool() and !val.asBool());
-
                     if (is_falsey) {
                         frame.ip += offset;
                     }
@@ -531,7 +543,6 @@ pub const VM = struct {
                 .op_jump_if_nil => {
                     // Properly read 3-byte offset
                     const offset = self.readJumpOffset(exec_chunk, frame);
-
                     // Peek at the receiver. If it is nil, take the jump
                     const val = self.stack[self.stack_top - 1];
                     if (val.isNil()) {
@@ -587,7 +598,6 @@ pub const VM = struct {
                     defer self.releaseValue(test_val);
 
                     const case_count = self.readOperand(exec_chunk, frame, op == .op_switch_wide);
-
                     var matched = false;
                     var jump_offset: usize = 0;
 
@@ -634,7 +644,6 @@ pub const VM = struct {
                     for (0..func_obj.upvalue_count) |i| {
                         const is_local = exec_chunk.code.items[frame.ip];
                         frame.ip += 1;
-
                         // Read 16-bit upvalue index
                         const index = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
                         frame.ip += 2;
@@ -669,6 +678,7 @@ pub const VM = struct {
                 .op_unpack => {
                     const count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
+
                     const val = self.pop();
                     defer self.releaseValue(val);
 
@@ -695,6 +705,7 @@ pub const VM = struct {
                     const name_val = exec_chunk.constants.items[name_idx];
                     // Removed `.chars` to pass the *ObjString pointer!
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
+
                     const mod_obj = self.gc.allocateModule(self, name_str) catch return .runtime_error;
                     self.push(value.Value.initObj(&mod_obj.obj));
                 },
@@ -707,7 +718,6 @@ pub const VM = struct {
                     }
                     const class_val = self.stack[self.stack_top - 1]; // Peek at class
                     if (!class_val.isClass()) return .runtime_error;
-
                     const class_obj = class_val.asClass();
                     class_obj.included_modules.append(self.allocator, module_val.asModule()) catch return .runtime_error;
                 },
@@ -745,8 +755,12 @@ pub const VM = struct {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_define_global_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-
                     const val = self.pop();
+
+                    // Safely release existing ARC objects if they are overwritten
+                    if (self.globals.get(name_str)) |old_val| {
+                        self.releaseValue(old_val);
+                    }
                     self.globals.put(self.allocator, name_str, val) catch return .runtime_error;
                 },
                 .op_set_property, .op_set_property_wide => {
@@ -762,6 +776,7 @@ pub const VM = struct {
                         self.retainValue(val);
                         // Release old value if overriding
                         if (instance.fields.get(name_str)) |old_val| self.releaseValue(old_val);
+
                         instance.fields.put(self.allocator, name_str, val) catch return .runtime_error;
                         self.push(val);
                     } else {
@@ -772,7 +787,6 @@ pub const VM = struct {
                 .op_inherit => {
                     const super_val = self.pop();
                     if (!super_val.isClass()) return .runtime_error;
-
                     const sub_val = self.stack[self.stack_top - 1];
                     sub_val.asClass().superclass = super_val.asClass();
                 },
@@ -788,8 +802,8 @@ pub const VM = struct {
                         const native_obj = callee.asNative();
                         const args_ptr = self.stack.ptr + base_slot + 1;
                         const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
-
                         self.popAndRelease(arg_count + 1); // Clean up args and callee
+
                         // Absorb the native +1 reference directly
                         self.stack.ptr[self.stack_top] = result;
                         self.stack_top += 1;
@@ -840,9 +854,11 @@ pub const VM = struct {
                             self.dispatchClosure(method_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
                             continue;
                         }
+
                         self.reportError("Runtime Error: Superclass method '{s}' not found.\n", .{method_name_str});
                         return .runtime_error;
                     }
+
                     self.reportError("Runtime Error: super can only be called on instances.\n", .{});
                     return .runtime_error;
                 },
@@ -937,7 +953,6 @@ pub const VM = struct {
                         // If user threw a primitive string instead of an Error object
                         match = false;
                     }
-
                     self.push(value.Value.initBool(match));
                 },
                 .op_defined, .op_defined_wide => {
@@ -952,8 +967,8 @@ pub const VM = struct {
                 .op_extract_kwarg, .op_extract_kwarg_wide => {
                     const map_slot = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_extract_kwarg_wide);
 
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_extract_kwarg_wide);
                     var extracted = value.Value.initNil();
 
                     // Safely check if the caller provided a map
@@ -962,8 +977,8 @@ pub const VM = struct {
                         if (map_val.isObject() and map_val.asObj().obj_type == .map) {
                             const name_val = exec_chunk.constants.items[name_idx];
                             const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-                            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", map_val.asObj())));
 
+                            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", map_val.asObj())));
                             for (map.keys.items, 0..) |k, i| {
                                 if (k.isObject() and k.asObj().obj_type == .string) {
                                     const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
@@ -975,6 +990,7 @@ pub const VM = struct {
                             }
                         }
                     }
+
                     self.push(extracted);
                 },
                 else => {
@@ -987,7 +1003,6 @@ pub const VM = struct {
     }
 
     // --- Allocators ---
-
     pub fn allocateString(self: *VM, chars: []const u8) !value.Value {
         const str_obj = try self.gc.allocateString(self, chars);
         return value.Value.initObj(&str_obj.obj);
@@ -1011,17 +1026,14 @@ pub const VM = struct {
     pub fn defineNative(self: *VM, name: []const u8, function: value.NativeFn) !void {
         const native_obj = try self.gc.allocateNative(self, function);
         const native_val = value.Value.initObj(&native_obj.obj);
-
         try self.ensureStackCapacity(self.stack_top + 1);
         self.push(native_val);
         try self.globals.put(self.allocator, name, native_val);
-
         const dropped = self.pop();
         self.releaseValue(dropped);
     }
 
     // --- ARC Helpers ---
-
     pub fn retainValue(self: *VM, val: value.Value) void {
         _ = self;
         if (val.isGeometry()) {
@@ -1067,10 +1079,10 @@ pub const VM = struct {
     }
 
     // --- JIT Materialization ---
-
     pub fn ensureConcrete(self: *VM, val: value.Value) !geom.GeometryHandle {
         if (!val.isGeometry()) return error.RuntimeError;
         var geometry = val.asGeometry();
+
         if (geometry.cached_handle) |handle| return handle;
 
         const handle = try self.evaluateDAG(geometry.dag_idx);
@@ -1080,7 +1092,6 @@ pub const VM = struct {
 
     fn evaluateDAG(self: *VM, node_idx: dag.DAGNodeIndex) !geom.GeometryHandle {
         const node = self.dag_builder.nodes.items[node_idx];
-
         const kernel = self.active_kernel orelse {
             self.reportError("Runtime Error: No geometry kernel active\n", .{});
             return error.RuntimeError;
@@ -1099,44 +1110,6 @@ pub const VM = struct {
                 const p = self.dag_builder.getSpherePayload(node);
                 return kernel.sphere(p.radius) orelse return error.RuntimeError;
             },
-            .rotate => {
-                const payload = self.dag_builder.getRotatePayload(node);
-                const target_handle = try self.evaluateDAG(payload.target);
-
-                // Convert degrees to radians for math
-                const x_rad = payload.x * std.math.pi / 180.0;
-                const y_rad = payload.y * std.math.pi / 180.0;
-                const z_rad = payload.z * std.math.pi / 180.0;
-
-                const cx = @cos(x_rad);
-                const sx = @sin(x_rad);
-                const cy = @cos(y_rad);
-                const sy = @sin(y_rad);
-                const cz = @cos(z_rad);
-                const sz = @sin(z_rad);
-
-                // Standard 3D Euler Rotation Matrix (Column-Major)
-                const matrix = [16]f64{
-                    cy * cz,                cy * sz,                -sy,     0.0,
-                    sx * sy * cz - cx * sz, sx * sy * sz + cx * cz, sx * cy, 0.0,
-                    cx * sy * cz + sx * sz, cx * sy * sz - sx * cz, cx * cy, 0.0,
-                    0.0,                    0.0,                    0.0,     1.0,
-                };
-                return kernel.transform(target_handle, matrix) orelse return error.RuntimeError;
-            },
-            .scale => {
-                const payload = self.dag_builder.getScalePayload(node);
-                const target_handle = try self.evaluateDAG(payload.target);
-
-                // Scale Matrix (Column-Major)
-                const matrix = [16]f64{
-                    payload.x, 0.0,       0.0,       0.0,
-                    0.0,       payload.y, 0.0,       0.0,
-                    0.0,       0.0,       payload.z, 0.0,
-                    0.0,       0.0,       0.0,       1.0,
-                };
-                return kernel.transform(target_handle, matrix) orelse return error.RuntimeError;
-            },
             .union_op, .difference_op, .intersection_op => {
                 const payload = self.dag_builder.getBinaryPayload(node);
                 const left_handle = try self.evaluateDAG(payload.left);
@@ -1151,18 +1124,19 @@ pub const VM = struct {
                 return kernel.boolean(left_handle, right_handle, op) orelse return error.RuntimeError;
             },
             .translate => {
-                const payload = self.dag_builder.getTranslatePayload(node);
-                const target_handle = try self.evaluateDAG(payload.target);
-
-                // Column-major 4x4 translation matrix
-                const matrix = [16]f64{
-                    1.0,       0.0,       0.0,       0.0,
-                    0.0,       1.0,       0.0,       0.0,
-                    0.0,       0.0,       1.0,       0.0,
-                    payload.x, payload.y, payload.z, 1.0,
-                };
-
-                return kernel.transform(target_handle, matrix) orelse return error.RuntimeError;
+                const p = self.dag_builder.getTranslatePayload(node);
+                const target_handle = try self.evaluateDAG(p.target);
+                return kernel.translate(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
+            },
+            .rotate => {
+                const p = self.dag_builder.getRotatePayload(node);
+                const target_handle = try self.evaluateDAG(p.target);
+                return kernel.rotate(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
+            },
+            .scale => {
+                const p = self.dag_builder.getScalePayload(node);
+                const target_handle = try self.evaluateDAG(p.target);
+                return kernel.scale(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
             },
         }
     }
@@ -1244,6 +1218,7 @@ pub const VM = struct {
         if (provided_args < expected_args) {
             const missing = expected_args - provided_args;
             try self.ensureStackCapacity(self.stack_top + missing);
+
             const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
             if (has_block) self.stack_top -= 1;
 
@@ -1275,7 +1250,6 @@ pub const VM = struct {
         }
 
         const target_depth = self.frames.items.len;
-
         const provided_args = args.len;
         const expected_args = closure.function.arity;
 
@@ -1284,13 +1258,16 @@ pub const VM = struct {
         try self.ensureStackCapacity(self.stack_top + total_pushes);
 
         const base_slot = self.stack_top; // Record where the closure lands exactly
+
         self.push(value.Value.initObj(&closure.obj)); // closure itself
+
         for (args) |arg| self.push(arg);
 
         if (provided_args < expected_args) {
             const missing = expected_args - provided_args;
             for (0..missing) |_| self.push(value.Value.initNil());
         }
+
         // Pad the implicit empty block
         self.push(value.Value.initNil());
 
@@ -1307,15 +1284,16 @@ pub const VM = struct {
     }
 
     // --- Shared Execution Helpers ---
-
     pub fn valuesEqual(self: *VM, a: value.Value, b: value.Value) bool {
         _ = self;
         if (a.isNumber() and b.isNumber()) return a.asNumber() == b.asNumber();
+
         if (a.isObject() and b.isObject() and a.asObj().obj_type == .string and b.asObj().obj_type == .string) {
             const a_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", a.asObj()))).chars;
             const b_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", b.asObj()))).chars;
             return std.mem.eql(u8, a_str, b_str);
         }
+
         return a.isEqual(b);
     }
 
@@ -1366,7 +1344,6 @@ pub const VM = struct {
 
         // Resolve Class of Receiver for Native Methods & Monkey-Patching
         var class_obj: ?*value.ObjClass = null;
-
         if (receiver.isInstance()) {
             class_obj = receiver.asInstance().class;
         } else if (receiver.isObject()) {
@@ -1392,7 +1369,6 @@ pub const VM = struct {
 
         // Method Lookup
         var method_val: ?value.Value = null;
-
         if (receiver.isClass()) {
             method_val = self.findClassMethod(receiver.asClass(), method_name_str);
 
@@ -1421,8 +1397,8 @@ pub const VM = struct {
             if (m_val.isNative()) {
                 const native_obj = m_val.asNative();
                 const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
-
                 self.popAndRelease(arg_count + 1);
+
                 // Absorb the native +1 reference directly
                 self.stack.ptr[self.stack_top] = result;
                 self.stack_top += 1;
@@ -1437,6 +1413,7 @@ pub const VM = struct {
         if (self.host.invoke_handler) |handler| {
             const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch return .runtime_error;
             self.popAndRelease(arg_count + 1);
+
             // Absorb the native +1 reference directly
             self.stack.ptr[self.stack_top] = result;
             self.stack_top += 1;
@@ -1470,12 +1447,14 @@ pub const VM = struct {
             if (total > pre_count + post_count) {
                 const splat_size = total - pre_count - post_count;
                 splat_arr.items.ensureTotalCapacity(self.allocator, splat_size) catch return .runtime_error;
+
                 for (0..splat_size) |i| {
                     const item = arr.items.items[pre_count + i];
                     self.retainValue(item);
                     splat_arr.items.appendAssumeCapacity(item);
                 }
             }
+
             _ = self.pop();
             self.push(splat_val);
 
@@ -1589,6 +1568,7 @@ pub const VM = struct {
 
                 var curr = s_str[0];
                 const limit = if (is_exclusive) e_str[0] else e_str[0] + 1;
+
                 while (curr < limit) : (curr += 1) {
                     const char_slice = &[_]u8{curr};
                     const char_str = self.allocateString(char_slice) catch return .runtime_error;
@@ -1603,7 +1583,6 @@ pub const VM = struct {
             self.reportError("Runtime Error: Range bounds must be numbers or characters.\n", .{});
             return .runtime_error;
         }
-
         return .ok;
     }
 
@@ -1676,6 +1655,7 @@ pub const VM = struct {
                 return n >= range.start and n <= range.end;
             }
         }
+
         // Fallback to standard equality
         return self.valuesEqual(case_val, test_val);
     }
@@ -1689,6 +1669,7 @@ pub const VM = struct {
         if (a.isNumber() and b.isNumber()) {
             return .{ a.asNumber(), b.asNumber() };
         }
+
         self.reportError("Runtime Error: Invalid operands for math operation.\n", .{});
         return error.RuntimeError;
     }
@@ -1729,6 +1710,7 @@ pub const VM = struct {
             // The actual instruction that failed is immediately prior to the IP
             const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
             const source_offset = exec_chunk.getOffset(instruction_ip);
+
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
 
             // Format flawlessly using the injected LineIndex

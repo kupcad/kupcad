@@ -31,10 +31,24 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
-fn transformImpl(a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle {
+fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
     const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
-    const ptr = manifold.transform(obj, &matrix) orelse return null;
+    const ptr = manifold.translate(obj, x, y, z) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold);
+    const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
+    const ptr = manifold.rotate(obj, x, y, z) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold);
+    const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
+    const ptr = manifold.scale(obj, x, y, z) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -73,7 +87,9 @@ pub const driver = kernel.GeometryKernel{
     .cylinderFn = cylinderImpl,
     .sphereFn = sphereImpl,
     .booleanFn = booleanImpl,
-    .transformFn = transformImpl,
+    .translateFn = translateImpl,
+    .rotateFn = rotateImpl,
+    .scaleFn = scaleImpl,
     .boundingBoxFn = boundingBoxImpl,
     .queryFacesFn = queryFacesImpl,
     .volumeFn = volumeImpl,

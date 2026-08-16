@@ -1795,3 +1795,42 @@ test "VM Edge Case: executes 24-bit control flow jump correctly (> 65KB block)" 
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
 }
+
+test "VM: JIT materialization cascades through DAG and ARC safely cleans up" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Build a complex symbolic DAG (Cube + Sphere + Translate)
+    // 2. Call `.bbox()` to force JIT materialization down the entire tree!
+    const source =
+        \\part = cube(10, 10, 10, true) + sphere(5).translate(0, 0, 5)
+        \\part.bbox()
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Execute the script
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    // The output should be the bounding box Map returned by Phase 3
+    const bbox_val = vm.stack[0];
+    try testing.expect(bbox_val.isMap());
+
+    const map_obj = bbox_val.asMap();
+    try testing.expectEqual(@as(usize, 2), map_obj.keys.items.len); // "min" and "max"
+
+    // When the test scope ends, `defer vm.deinit()` will clear the VM stack.
+    // This will drop the ARC ref_count of the `part` geometry to 0.
+    // The GC will immediately route the pointer to `host.mesh_destructor`, safely freeing the C++ Manifold memory.
+    // If ANY memory is leaked across the FFI boundary, Zig's testing allocator will fail the test right here!
+}

@@ -35,19 +35,39 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
     return null;
 }
 
-fn transformImpl(a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle {
+fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
     _ = a;
-    _ = matrix;
+    _ = x;
+    _ = y;
+    _ = z;
+    return null;
+}
+
+fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+    _ = a;
+    _ = x;
+    _ = y;
+    _ = z;
+    return null;
+}
+
+fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+    _ = a;
+    _ = x;
+    _ = y;
+    _ = z;
     return null;
 }
 
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
     std.debug.assert(handle.engine == .brep_native);
+    _ = handle;
     return null;
 }
 
 fn queryFacesImpl(handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
     std.debug.assert(handle.engine == .brep_native);
+    _ = handle;
     _ = filter;
     return null;
 }
@@ -72,7 +92,11 @@ pub const driver = kernel.GeometryKernel{
     .cylinderFn = cylinderImpl,
     .sphereFn = sphereImpl,
     .booleanFn = booleanImpl,
-    .transformFn = transformImpl,
+
+    .translateFn = translateImpl,
+    .rotateFn = rotateImpl,
+    .scaleFn = scaleImpl,
+
     .boundingBoxFn = boundingBoxImpl,
     .queryFacesFn = queryFacesImpl,
     .volumeFn = volumeImpl,

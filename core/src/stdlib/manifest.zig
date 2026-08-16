@@ -92,19 +92,17 @@ pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Valu
         vm.reportError("Runtime Error: Invalid operands for CSG operation\n", .{});
         return error.RuntimeError;
     }
-
     const geom_a = a.asGeometry();
     const geom_b = b.asGeometry();
-
     const dag_tag: dag.DAGTag = switch (op) {
         .op_add => .union_op,
         .op_subtract => .difference_op,
         // .op_bitwise_and => .intersection_op,
         else => return error.RuntimeError,
     };
-
     const result_idx = try vm.dag_builder.addBinary(dag_tag, geom_a.dag_idx, geom_b.dag_idx);
 
-    // Defer to VM ARC allocator
-    return try vm.allocateGeometry(.{ .symbolic = result_idx });
+    // Allocate the geometry and let allocateGeometry handle its initial reference safely
+    const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = result_idx });
+    return value.Value.initGeometry(geom_obj);
 }

@@ -12,49 +12,50 @@ pub const GeometryKernel = struct {
     cylinderFn: *const fn (radius: f64, height: f64, center: bool) ?geom.GeometryHandle,
     sphereFn: *const fn (radius: f64) ?geom.GeometryHandle,
     booleanFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle,
-    transformFn: *const fn (a: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle,
+
+    translateFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,
+    rotateFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,
+    scaleFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,
+
     boundingBoxFn: *const fn (handle: geom.GeometryHandle) ?geom.BoundingBox,
     queryFacesFn: *const fn (handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray,
     volumeFn: *const fn (handle: geom.GeometryHandle) f64,
     surfaceAreaFn: *const fn (handle: geom.GeometryHandle) f64,
     destructFn: *const fn (handle: geom.GeometryHandle) void,
 
-    pub inline fn transform(self: *const GeometryKernel, handle: geom.GeometryHandle, matrix: [16]f64) ?geom.GeometryHandle {
-        return self.transformFn(handle, matrix);
+    pub inline fn translate(self: *const GeometryKernel, handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+        return self.translateFn(handle, x, y, z);
     }
-
+    pub inline fn rotate(self: *const GeometryKernel, handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+        return self.rotateFn(handle, x, y, z);
+    }
+    pub inline fn scale(self: *const GeometryKernel, handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+        return self.scaleFn(handle, x, y, z);
+    }
     pub inline fn cube(self: *const GeometryKernel, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
         return self.cubeFn(x, y, z, center);
     }
-
     pub inline fn cylinder(self: *const GeometryKernel, radius: f64, height: f64, center: bool) ?geom.GeometryHandle {
         return self.cylinderFn(radius, height, center);
     }
-
     pub inline fn sphere(self: *const GeometryKernel, radius: f64) ?geom.GeometryHandle {
         return self.sphereFn(radius);
     }
-
     pub inline fn boolean(self: *const GeometryKernel, a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle {
         return self.booleanFn(a, b, op);
     }
-
     pub inline fn boundingBox(self: *const GeometryKernel, handle: geom.GeometryHandle) ?geom.BoundingBox {
         return self.boundingBoxFn(handle);
     }
-
     pub inline fn queryFaces(self: *const GeometryKernel, handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
         return self.queryFacesFn(handle, filter);
     }
-
     pub inline fn volume(self: *const GeometryKernel, handle: geom.GeometryHandle) f64 {
         return self.volumeFn(handle);
     }
-
     pub inline fn surfaceArea(self: *const GeometryKernel, handle: geom.GeometryHandle) f64 {
         return self.surfaceAreaFn(handle);
     }
-
     pub inline fn destruct(self: *const GeometryKernel, handle: geom.GeometryHandle) void {
         self.destructFn(handle);
     }
