@@ -11,6 +11,16 @@ pub const GeometryHandle = struct {
     ptr: *anyopaque,
 };
 
+pub const CrossSectionHandle = struct {
+    engine: EngineType,
+    ptr: *anyopaque,
+};
+
+pub const SolidPair = struct {
+    first: ?GeometryHandle,
+    second: ?GeometryHandle,
+};
+
 pub const BoundingBox = struct {
     min: [3]f64,
     max: [3]f64,

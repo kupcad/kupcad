@@ -52,6 +52,72 @@ fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandl
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn squareImpl(x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
+    const ptr = manifold.square(x, y, center) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn circleImpl(radius: f64, segments: i32) ?geom.CrossSectionHandle {
+    const ptr = manifold.circle(radius, segments) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
+    std.debug.assert(cs.engine == .manifold);
+    const ptr = manifold.extrude(@ptrCast(@alignCast(cs.ptr)), height, slices, twist_degrees, scale_x, scale_y) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
+    std.debug.assert(cs.engine == .manifold);
+    const ptr = manifold.revolve(@ptrCast(@alignCast(cs.ptr)), segments, revolve_degrees) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
+    std.debug.assert(a.engine == .manifold);
+    const ptr = manifold.slice(@ptrCast(@alignCast(a.ptr)), height) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
+    std.debug.assert(a.engine == .manifold);
+    const ptr = manifold.project(@ptrCast(@alignCast(a.ptr))) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold);
+    const ptr = manifold.mirror(@ptrCast(@alignCast(a.ptr)), nx, ny, nz) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold);
+    const ptr = manifold.hull(@ptrCast(@alignCast(a.ptr))) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold);
+    const ptr = manifold.trimByPlane(@ptrCast(@alignCast(a.ptr)), nx, ny, nz, offset) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) geom.SolidPair {
+    std.debug.assert(a.engine == .manifold);
+    const pair = manifold.splitByPlane(@ptrCast(@alignCast(a.ptr)), nx, ny, nz, offset);
+    return geom.SolidPair{
+        .first = if (pair[0] != null) geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(pair[0]) } else null,
+        .second = if (pair[1] != null) geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(pair[1]) } else null,
+    };
+}
+
+fn genusImpl(handle: geom.GeometryHandle) i32 {
+    std.debug.assert(handle.engine == .manifold);
+    return manifold.genus(@ptrCast(@alignCast(handle.ptr)));
+}
+
 fn queryFacesImpl(handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
     _ = handle;
     _ = filter;
@@ -109,22 +175,37 @@ fn destructImpl(handle: geom.GeometryHandle) void {
     manifold.destruct(@ptrCast(@alignCast(handle.ptr)));
 }
 
+fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
+    std.debug.assert(handle.engine == .manifold);
+    manifold.destructCrossSection(@ptrCast(@alignCast(handle.ptr)));
+}
+
 pub const driver = kernel.GeometryKernel{
     .cubeFn = cubeImpl,
     .cylinderFn = cylinderImpl,
     .sphereFn = sphereImpl,
     .booleanFn = booleanImpl,
-
     .translateFn = translateImpl,
     .rotateFn = rotateImpl,
     .scaleFn = scaleImpl,
+
+    .squareFn = squareImpl,
+    .circleFn = circleImpl,
+    .extrudeFn = extrudeImpl,
+    .revolveFn = revolveImpl,
+    .sliceFn = sliceImpl,
+    .projectFn = projectImpl,
+    .mirrorFn = mirrorImpl,
+    .hullFn = hullImpl,
+    .trimByPlaneFn = trimByPlaneImpl,
+    .splitByPlaneFn = splitByPlaneImpl,
+    .genusFn = genusImpl,
 
     .boundingBoxFn = boundingBoxImpl,
     .queryFacesFn = queryFacesImpl,
     .volumeFn = volumeImpl,
     .surfaceAreaFn = surfaceAreaImpl,
-
     .getMeshFn = getMeshImpl,
-
     .destructFn = destructImpl,
+    .destructCrossSectionFn = destructCrossSectionImpl,
 };
