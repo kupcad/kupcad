@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_cmd = @import("cli/build_cmd.zig");
 const fmt_cmd = @import("cli/fmt.zig");
 const check_cmd = @import("cli/check.zig");
 const lsp_cmd = @import("cli/lsp.zig");
@@ -16,7 +17,9 @@ pub fn main(init: std.process.Init) !void {
     };
 
     // Route to the appropriate CLI command module
-    if (std.mem.eql(u8, cmd, "fmt")) {
+    if (std.mem.eql(u8, cmd, "build")) {
+        try build_cmd.execute(init, allocator, &args_iter);
+    } else if (std.mem.eql(u8, cmd, "fmt")) {
         try fmt_cmd.execute(init, allocator, &args_iter);
     } else if (std.mem.eql(u8, cmd, "check")) {
         try check_cmd.execute(init, allocator, &args_iter);
@@ -35,6 +38,7 @@ fn printUsage() void {
         \\Usage: kupcad <command> [options]
         \\
         \\Commands:
+        \\  build  Run a KupCAD script and export its final geometry
         \\  fmt    Format a KupCAD source file
         \\  check  Lint and analyze a KupCAD source file
         \\  lsp    Start the Language Server over stdio

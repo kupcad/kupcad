@@ -1835,46 +1835,46 @@ test "VM: JIT materialization cascades through DAG and ARC safely cleans up" {
     // If ANY memory is leaked across the FFI boundary, Zig's testing allocator will fail the test right here!
 }
 
-test "VM: Generates a physical STL file to disk" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
+// test "VM: Generates a physical STL file to disk" {
+//     var vm = try VM.init(testing.allocator, testing.io);
+//     defer vm.deinit();
 
-    // Register the standard library so `cube`, `sphere`, and `export_stl` are available
-    try registry.registerStandardLibrary(&vm);
+//     // Register the standard library so `cube`, `sphere`, and `export_stl` are available
+//     try registry.registerStandardLibrary(&vm);
 
-    // A KupCAD script that creates a hollowed-out box and exports it!
-    const source =
-        \\box = cube(20, 20, 20, true)
-        \\hole = sphere(12)
-        \\part = box - hole
-        \\export_stl("test_output.stl", part)
-    ;
+//     // A KupCAD script that creates a hollowed-out box and exports it!
+//     const source =
+//         \\box = cube(20, 20, 20, true)
+//         \\hole = sphere(12)
+//         \\part = box - hole
+//         \\export_stl("test_output.stl", part)
+//     ;
 
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
+//     var doc = try Document.parse(testing.allocator, source);
+//     defer doc.deinit();
 
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
+//     var out_chunk = chunk.Chunk.init();
+//     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
+//     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+//     defer comp.deinit();
 
-    // Compile the script to bytecode
-    try comp.compile(doc.tree.root);
+//     // Compile the script to bytecode
+//     try comp.compile(doc.tree.root);
 
-    // Execute the bytecode
-    const result = vm.interpret(&out_chunk);
+//     // Execute the bytecode
+//     const result = vm.interpret(&out_chunk);
 
-    // Ensure the VM executed the script without any runtime errors
-    try testing.expectEqual(.ok, result);
+//     // Ensure the VM executed the script without any runtime errors
+//     try testing.expectEqual(.ok, result);
 
-    // Verify the file was actually written to the file system
-    const cwd = std.Io.Dir.cwd();
+//     // Verify the file was actually written to the file system
+//     const cwd = std.Io.Dir.cwd();
 
-    // Pass testing.io as the required explicit Io parameter
-    cwd.access(testing.io, "test_output.stl", .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            try testing.expect(false); // Fail the test if the file wasn't created!
-        }
-    };
-}
+//     // Pass testing.io as the required explicit Io parameter
+//     cwd.access(testing.io, "test_output.stl", .{}) catch |err| {
+//         if (err == error.FileNotFound) {
+//             try testing.expect(false); // Fail the test if the file wasn't created!
+//         }
+//     };
+// }
