@@ -8,6 +8,9 @@ pub const GC = struct {
     allocator: std.mem.Allocator,
     first_object: ?*value.Obj,
 
+    // Explicit Grey Stack to prevent C-Stack Overflow
+    gray_stack: std.ArrayListUnmanaged(*value.Obj) = .empty,
+
     // GC triggering metrics
     bytes_allocated: usize,
     next_gc_threshold: usize,
@@ -27,31 +30,34 @@ pub const GC = struct {
         };
     }
 
+    pub fn deinit(self: *GC) void {
+        self.gray_stack.deinit(self.allocator);
+    }
+
     /// The main entry point for the Garbage Collector
     pub fn collectGarbage(self: *GC, vm: *VM, force_full: bool) void {
-        // std.debug.print("-- GC Begin --\n", .{});
         const before = self.bytes_allocated;
 
         if (!force_full) {
             self.markRoots(vm);
+            // Process the Grey Stack
+            self.traceReferences();
         }
 
         self.sweep(vm);
         self.next_gc_threshold = self.bytes_allocated * HEAP_GROW_FACTOR;
         _ = before;
-        // std.debug.print("-- GC End (Freed {} bytes) --\n", .{before - self.bytes_allocated});
     }
 
     inline fn allocateObject(self: *GC, vm: *VM, comptime T: type, obj_type: value.ObjType) !*T {
-        // 1. Soft Threshold: Trigger standard GC
+        // Soft Threshold: Trigger standard GC
         if (self.bytes_allocated + @sizeOf(T) > self.next_gc_threshold) {
             self.collectGarbage(vm, false);
         }
 
-        // 2. Hard Limit: Sandbox Check!
+        // Hard Limit: Sandbox Check
         if (self.max_memory_limit) |limit| {
             if (self.bytes_allocated + @sizeOf(T) > limit) {
-                // We tried sweeping, but we are still out of memory. Sandbox killed the script.
                 vm.reportError("Sandbox Error: Script exceeded maximum memory limit of {d} bytes.\n", .{limit});
                 return error.OutOfMemory;
             }
@@ -141,7 +147,6 @@ pub const GC = struct {
     }
 
     pub fn allocateClosure(self: *GC, vm: *VM, function: *value.ObjFunction) !*value.ObjClosure {
-        // Pre-calculate secondary memory allocation to safely check sandbox limits
         const upvals_size = @sizeOf(?*value.ObjUpvalue) * function.upvalue_count;
 
         if (self.max_memory_limit) |limit| {
@@ -151,11 +156,9 @@ pub const GC = struct {
             }
         }
 
-        // Allocate secondary buffers first so errdefer handles clean up
         const upvalues = try self.allocator.alloc(?*value.ObjUpvalue, function.upvalue_count);
         @memset(upvalues, null);
 
-        // Only register into the GC heap safely after secondary memory succeeds
         const ptr = self.allocateObject(vm, value.ObjClosure, .closure) catch |err| {
             self.allocator.free(upvalues);
             return err;
@@ -177,7 +180,6 @@ pub const GC = struct {
             }
         }
 
-        // Dupe secondary buffer first
         const owned_chars = try self.allocator.dupe(u8, chars);
 
         const ptr = self.allocateObject(vm, value.ObjString, .string) catch |err| {
@@ -204,7 +206,6 @@ pub const GC = struct {
             }
         }
 
-        // Dupe secondary buffer first
         const owned_chars = try self.allocator.dupe(u8, chars);
 
         const ptr = self.allocateObject(vm, value.ObjSymbol, .symbol) catch |err| {
@@ -225,7 +226,7 @@ pub const GC = struct {
     pub fn allocateGeometry(self: *GC, state: value.GeometryState) !*value.ObjGeometry {
         const ptr = try self.allocator.create(value.ObjGeometry);
         ptr.* = .{
-            .obj = .{ .obj_type = .geometry, .is_marked = false, .next = null }, // Not in GC list
+            .obj = .{ .obj_type = .geometry, .is_marked = false, .next = null },
             .ref_count = 1,
             .dag_idx = switch (state) {
                 .symbolic => |idx| idx,
@@ -275,7 +276,6 @@ pub const GC = struct {
 
     // --- ARC Deallocators ---
     pub fn freeWorkplane(self: *GC, vm: *VM, wp_obj: *value.ObjWorkplane) void {
-        // Automatically release the reference to the parent 3D geometry
         const parent_val = value.Value.initGeometry(wp_obj.parent);
         vm.releaseValue(parent_val);
         self.allocator.destroy(wp_obj);
@@ -302,12 +302,10 @@ pub const GC = struct {
 
     // --- Phase 1: Mark ---
     fn markRoots(self: *GC, vm: *VM) void {
-        // Mark the Shadow Stack (WASM-Safe!)
         for (vm.stack[0..vm.stack_top]) |val| {
             self.markValue(val);
         }
 
-        // Extract chunk through the closure
         for (vm.frames.items) |frame| {
             const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
             for (exec_chunk.constants.items) |val| {
@@ -315,7 +313,6 @@ pub const GC = struct {
             }
         }
 
-        // Mark Global Variables (Built-ins and Script Globals)
         var globals_it = vm.globals.valueIterator();
         while (globals_it.next()) |val| {
             self.markValue(val.*);
@@ -335,7 +332,18 @@ pub const GC = struct {
     fn markObject(self: *GC, obj: *value.Obj) void {
         if (obj.is_marked) return;
         obj.is_marked = true;
+        // O(1) Push to Grey Stack. Avoids blowing C Call Stack.
+        self.gray_stack.append(self.allocator, obj) catch @panic("OOM during GC Grey Stack tracking.");
+    }
 
+    fn traceReferences(self: *GC) void {
+        while (self.gray_stack.items.len > 0) {
+            const obj = self.gray_stack.pop();
+            self.blackenObject(obj.?);
+        }
+    }
+
+    fn blackenObject(self: *GC, obj: *value.Obj) void {
         switch (obj.obj_type) {
             .array => {
                 const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", obj)));
@@ -351,8 +359,6 @@ pub const GC = struct {
             .closure => {
                 const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
                 self.markObject(&closure.function.obj);
-
-                // Trace captured upvalues to prevent them from being swept
                 for (0..closure.function.upvalue_count) |i| {
                     if (closure.upvalues[i]) |upvalue| {
                         self.markObject(&upvalue.obj);
@@ -366,7 +372,6 @@ pub const GC = struct {
             .function => {
                 const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
                 if (func.name) |name| self.markObject(&name.obj);
-                // Note: The function's Chunk constants are traced via CallFrames
             },
             .module => {
                 const module_obj = @as(*value.ObjModule, @alignCast(@fieldParentPtr("obj", obj)));
@@ -400,14 +405,12 @@ pub const GC = struct {
                 self.markValue(bound_obj.receiver);
                 self.markObject(&bound_obj.method.obj);
             },
-            .range => {}, // Ranges only hold raw f64 numbers, nothing to trace
             else => {},
         }
     }
 
     // --- Phase 2: Sweep ---
     fn sweep(self: *GC, vm: *VM) void {
-        // Prune unmarked interned strings and symbols from VM lookup maps
         var str_iter = vm.strings.iterator();
         while (str_iter.next()) |entry| {
             if (!entry.value_ptr.*.obj.is_marked) {
@@ -422,17 +425,14 @@ pub const GC = struct {
             }
         }
 
-        // Proceed with standard object deallocation sweep...
         var previous: ?*value.Obj = null;
         var object = self.first_object;
         while (object) |obj| {
             if (obj.is_marked) {
-                // Object is alive. Unmark it for the next GC cycle and move on.
                 obj.is_marked = false; // Reset mark for next GC cycle
                 previous = obj;
                 object = obj.next;
             } else {
-                // Object is dead. Unlink and free it.
                 const unreached = obj;
                 object = obj.next;
                 if (previous) |prev| {
@@ -483,7 +483,6 @@ pub const GC = struct {
             },
             .closure => {
                 const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
-                // Calculate the size of the slice to subtract accurately
                 const upvals_size = @sizeOf(?*value.ObjUpvalue) * closure.function.upvalue_count;
                 self.allocator.free(closure.upvalues[0..closure.function.upvalue_count]);
                 self.allocator.destroy(closure);
@@ -491,7 +490,6 @@ pub const GC = struct {
             },
             .function => {
                 const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
-                // Ensure the child chunk memory is freed when the function dies
                 if (func.owns_chunk) {
                     if (func.chunk) |c| {
                         const chnk = @as(*chunk.Chunk, @ptrCast(@alignCast(c)));
@@ -540,14 +538,11 @@ pub const GC = struct {
             },
             .brep => {
                 const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));
-                // TODO: Call brep_obj.data.deinit() when Brep memory management is fleshed out
-                self.allocator.destroy(brep_obj.data); // Free the inner struct
-                self.allocator.destroy(brep_obj); // Free the wrapper
+                self.allocator.destroy(brep_obj.data);
+                self.allocator.destroy(brep_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjBrep);
             },
-            .geometry, .workplane, .cross_section => {
-                // Ignored by tracing GC. Managed via ARC or not implemented yet.
-            },
+            .geometry, .workplane, .cross_section => {},
         }
     }
 };

@@ -107,6 +107,7 @@ pub const VM = struct {
         self.symbols.deinit(self.allocator);
         self.frames.deinit(self.allocator);
         self.rescue_frames.deinit(self.allocator);
+        self.gc.deinit();
     }
 
     // --- Dynamic Stack Operations ---
