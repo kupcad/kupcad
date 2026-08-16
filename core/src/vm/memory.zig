@@ -93,6 +93,7 @@ pub const GC = struct {
         ptr.name = null;
         ptr.arity = 0;
         ptr.upvalue_count = 0;
+        ptr.local_count = 0;
         ptr.has_splat = false;
         ptr.chunk = null;
         ptr.owns_chunk = true;
@@ -557,5 +558,33 @@ pub const GC = struct {
             },
             .geometry, .workplane, .cross_section => {},
         }
+    }
+
+    pub fn takeString(self: *GC, vm: *VM, chars: []u8) !*value.ObjString {
+        if (vm.strings.get(chars)) |existing| {
+            self.allocator.free(chars); // Free the duplicate
+            return existing;
+        }
+
+        if (self.max_memory_limit) |limit| {
+            if (self.bytes_allocated + chars.len + @sizeOf(value.ObjString) > limit) {
+                self.allocator.free(chars);
+                return error.OutOfMemory;
+            }
+        }
+
+        const ptr = self.allocateObject(vm, value.ObjString, .string) catch |err| {
+            self.allocator.free(chars);
+            return err;
+        };
+
+        self.bytes_allocated += chars.len;
+        ptr.chars = chars; // Takes ownership directly
+
+        vm.strings.put(self.allocator, ptr.chars, ptr) catch |err| {
+            self.allocator.free(chars);
+            return err;
+        };
+        return ptr;
     }
 };

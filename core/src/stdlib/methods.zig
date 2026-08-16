@@ -3,20 +3,26 @@ const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const geom = @import("../kernel/geometry_handle.zig");
 
-pub fn meshRotate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+fn parseVec3(arg_count: u8, args: [*]value.Value, default_val: f64) !struct { f64, f64, f64 } {
     if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
     if (arg_count > 1 and !args[1].isNumber()) return error.RuntimeError;
     if (arg_count > 2 and !args[2].isNumber()) return error.RuntimeError;
 
-    const x = if (arg_count > 0) args[0].asNumber() else 0.0;
-    const y = if (arg_count > 1) args[1].asNumber() else 0.0;
-    const z = if (arg_count > 2) args[2].asNumber() else 0.0;
+    const x = if (arg_count > 0) args[0].asNumber() else default_val;
+    const y = if (arg_count > 1) args[1].asNumber() else default_val;
+    const z = if (arg_count > 2) args[2].asNumber() else default_val;
+
+    return .{ x, y, z };
+}
+
+pub fn meshRotate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vec = try parseVec3(arg_count, args, 0.0);
 
     if (receiver.isGeometry()) {
-        const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, x, y, z);
+        const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const rad = x * std.math.pi / 180.0;
+        const rad = vec[0] * std.math.pi / 180.0;
         const cos_a = std.math.cos(rad);
         const sin_a = std.math.sin(rad);
         const mat = [6]f64{ cos_a, sin_a, -sin_a, cos_a, 0.0, 0.0 };
@@ -27,19 +33,13 @@ pub fn meshRotate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.
 }
 
 pub fn meshScale(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
-    if (arg_count > 1 and !args[1].isNumber()) return error.RuntimeError;
-    if (arg_count > 2 and !args[2].isNumber()) return error.RuntimeError;
-
-    const x = if (arg_count > 0) args[0].asNumber() else 1.0;
-    const y = if (arg_count > 1) args[1].asNumber() else x;
-    const z = if (arg_count > 2) args[2].asNumber() else x;
+    const vec = try parseVec3(arg_count, args, 1.0);
 
     if (receiver.isGeometry()) {
-        const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, x, y, z);
+        const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const mat = [6]f64{ x, 0.0, 0.0, y, 0.0, 0.0 };
+        const mat = [6]f64{ vec[0], 0.0, 0.0, vec[1], 0.0, 0.0 };
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
@@ -47,19 +47,13 @@ pub fn meshScale(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.V
 }
 
 pub fn meshTranslate(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
-    if (arg_count > 1 and !args[1].isNumber()) return error.RuntimeError;
-    if (arg_count > 2 and !args[2].isNumber()) return error.RuntimeError;
-
-    const x = if (arg_count > 0) args[0].asNumber() else 0.0;
-    const y = if (arg_count > 1) args[1].asNumber() else 0.0;
-    const z = if (arg_count > 2) args[2].asNumber() else 0.0;
+    const vec = try parseVec3(arg_count, args, 0.0);
 
     if (receiver.isGeometry()) {
-        const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, x, y, z);
+        const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, x, y };
+        const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, vec[0], vec[1] };
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }

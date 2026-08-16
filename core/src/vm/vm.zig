@@ -126,22 +126,13 @@ pub const VM = struct {
 
     pub fn getLocal(self: *VM, frame: *const CallFrame, slot_index: usize) value.Value {
         const absolute_slot = frame.base_slot + slot_index;
-        if (absolute_slot >= self.stack_top) return value.Value.initNil();
+        std.debug.assert(absolute_slot < self.stack_top);
         return self.stack[absolute_slot];
     }
 
     pub fn setLocal(self: *VM, frame: *const CallFrame, slot_index: usize, val: value.Value) void {
         const absolute_slot = frame.base_slot + slot_index;
-
-        // Dynamically expand the stack if the compiler points to a new local slot
-        if (absolute_slot >= self.stack_top) {
-            self.ensureStackCapacity(absolute_slot + 1) catch @panic("OOM during stack expansion");
-            while (self.stack_top <= absolute_slot) {
-                self.stack.ptr[self.stack_top] = value.Value.initNil();
-                self.stack_top += 1;
-            }
-        }
-
+        std.debug.assert(absolute_slot < self.stack_top);
         self.retainValue(val);
         self.releaseValue(self.stack[absolute_slot]);
         self.stack[absolute_slot] = val;
@@ -169,6 +160,7 @@ pub const VM = struct {
         func.chunk = execution_chunk;
         func.owns_chunk = false;
         func.upvalue_count = 0;
+        func.local_count = execution_chunk.local_count;
 
         // Protect func from GC during allocateClosure
         self.push(value.Value.initObj(&func.obj));
@@ -177,6 +169,14 @@ pub const VM = struct {
         // Swap func for closure on stack
         _ = self.pop();
         self.push(value.Value.initObj(&closure.obj));
+
+        // Pad the top-level script frame for its local variables
+        const total_locals = func.local_count;
+        if (total_locals > 1) {
+            const locals_to_pad = total_locals - 1; // Slot 0 is occupied by the script closure
+            self.ensureStackCapacity(self.stack_top + locals_to_pad) catch return .runtime_error;
+            for (0..locals_to_pad) |_| self.push(value.Value.initNil());
+        }
 
         self.frames.appendAssumeCapacity(.{
             .closure = closure,
@@ -436,15 +436,25 @@ pub const VM = struct {
                     frame.ip += 1;
 
                     var out: std.Io.Writer.Allocating = .init(self.allocator);
-                    defer out.deinit();
 
                     // The string fragments were pushed in order; slice them off the top
                     const start_idx = self.stack_top - count;
                     for (self.stack[start_idx..self.stack_top]) |val| {
-                        val.stringify(false, &out.writer) catch return .runtime_error;
+                        val.stringify(false, &out.writer) catch {
+                            out.deinit();
+                            return .runtime_error;
+                        };
                     }
 
-                    const merged_str = self.allocateString(out.written()) catch return .runtime_error;
+                    // We must duplicate the buffer because `out` destroys its internal array on deinit
+                    const merged_bytes = self.allocator.dupe(u8, out.written()) catch {
+                        out.deinit();
+                        return .runtime_error;
+                    };
+                    out.deinit(); // Clean up the writer explicitly
+
+                    // Pass ownership to the VM!
+                    const merged_str = self.allocateStringTakeOwnership(merged_bytes) catch return .runtime_error;
 
                     // Pop and release all original stack fragments
                     for (0..count) |_| {
@@ -966,6 +976,11 @@ pub const VM = struct {
         return value.Value.initObj(&str_obj.obj);
     }
 
+    pub fn allocateStringTakeOwnership(self: *VM, chars: []u8) !value.Value {
+        const str_obj = try self.gc.takeString(self, chars);
+        return value.Value.initObj(&str_obj.obj);
+    }
+
     pub fn allocateSymbol(self: *VM, chars: []const u8) !value.Value {
         const sym_obj = try self.gc.allocateSymbol(self, chars);
         return value.Value.initObj(&sym_obj.obj);
@@ -1159,6 +1174,16 @@ pub const VM = struct {
             self.push(value.Value.initNil());
         }
 
+        // Prevents underflows by comparing against actual current frame size!
+        const total_locals = closure.function.local_count;
+        const current_frame_size = self.stack_top - base_slot;
+
+        if (total_locals > current_frame_size) {
+            const locals_to_pad = total_locals - current_frame_size;
+            try self.ensureStackCapacity(self.stack_top + locals_to_pad);
+            for (0..locals_to_pad) |_| self.push(value.Value.initNil());
+        }
+
         try self.frames.append(self.allocator, .{
             .closure = closure,
             .ip = 0,
@@ -1193,6 +1218,15 @@ pub const VM = struct {
 
         // Pad the implicit empty block
         self.push(value.Value.initNil());
+
+        const total_locals = closure.function.local_count;
+        const current_frame_size = self.stack_top - base_slot;
+
+        if (total_locals > current_frame_size) {
+            const locals_to_pad = total_locals - current_frame_size;
+            try self.ensureStackCapacity(self.stack_top + locals_to_pad);
+            for (0..locals_to_pad) |_| self.push(value.Value.initNil());
+        }
 
         try self.frames.append(self.allocator, .{
             .closure = closure,
@@ -1247,9 +1281,13 @@ pub const VM = struct {
         } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .string and b_val.asObj().obj_type == .string) {
             const a_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", a_val.asObj()))).chars;
             const b_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", b_val.asObj()))).chars;
+
+            // Allocates a brand new slice on the heap.
             const merged = std.fmt.allocPrint(self.allocator, "{s}{s}", .{ a_str, b_str }) catch return .runtime_error;
-            defer self.allocator.free(merged);
-            const str_val = self.allocateString(merged) catch return .runtime_error;
+
+            // Pass ownership directly to the VM! No double-duping!
+            const str_val = self.allocateStringTakeOwnership(merged) catch return .runtime_error;
+
             self.push(str_val);
             return .ok;
         } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .array and b_val.asObj().obj_type == .array) {
@@ -1326,7 +1364,10 @@ pub const VM = struct {
 
         // --- Global `is_a?` Interceptor ---
         if (std.mem.eql(u8, method_name_str, "is_a?")) {
-            if (arg_count != 1) {
+            const has_block = arg_count > 0 and args_ptr[arg_count - 1].isClosure();
+            const pos_args = if (has_block) arg_count - 1 else arg_count;
+
+            if (pos_args != 1) {
                 self.runtimeError("Runtime Error: is_a? expects exactly 1 argument.\n", .{});
                 return .runtime_error;
             }
@@ -1339,17 +1380,19 @@ pub const VM = struct {
 
             var match = false;
             if (class_obj) |start_class| {
-                // Safely traverse the inheritance tree!
                 match = isSubclassOf(start_class, target_val.asClass());
             }
 
-            self.popAndRelease(2); // Safely clear the receiver and argument
+            self.popAndRelease(arg_count + 1);
             self.push(value.Value.initBool(match));
             return .ok;
         }
 
         if (std.mem.eql(u8, method_name_str, "responds_to?")) {
-            if (arg_count != 1) {
+            const has_block = arg_count > 0 and args_ptr[arg_count - 1].isClosure();
+            const pos_args = if (has_block) arg_count - 1 else arg_count;
+
+            if (pos_args != 1) {
                 self.runtimeError("Runtime Error: responds_to? expects exactly 1 argument.\n", .{});
                 return .runtime_error;
             }
@@ -1357,7 +1400,6 @@ pub const VM = struct {
             const target_val = args_ptr[0];
             var query_name: []const u8 = "";
 
-            // Allow checking with both Symbols (:method) and Strings ("method")
             if (target_val.isObject() and target_val.asObj().obj_type == .symbol) {
                 query_name = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
             } else if (target_val.isObject() and target_val.asObj().obj_type == .string) {
@@ -1375,12 +1417,11 @@ pub const VM = struct {
                 if (self.findMethod(c, query_name) != null) match = true;
             }
 
-            // Also return true if the user is checking an instance property!
             if (!match and receiver.isInstance()) {
                 if (receiver.asInstance().fields.contains(query_name)) match = true;
             }
 
-            self.popAndRelease(2); // Clear receiver and argument
+            self.popAndRelease(arg_count + 1);
             self.push(value.Value.initBool(match));
             return .ok;
         }

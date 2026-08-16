@@ -59,8 +59,9 @@ pub const Compiler = struct {
     locals: std.ArrayListUnmanaged(Local) = .empty,
     loops: std.ArrayListUnmanaged(LoopState) = .empty,
 
-    current_stack_depth: usize,
-    max_stack_depth: usize,
+    current_stack_depth: usize = 0,
+    max_stack_depth: usize = 0,
+    max_local_slot: usize = 0,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -86,6 +87,7 @@ pub const Compiler = struct {
             .current_stack_depth = 0,
             .max_stack_depth = 0,
             .current_source_offset = 0,
+            .max_local_slot = 0,
         };
     }
 
@@ -107,6 +109,7 @@ pub const Compiler = struct {
         }
         if (self.locals.items.len >= limits.MAX_LOCALS) return error.TooManyLocals;
         try self.locals.append(self.allocator, .{ .name_id = name_id, .slot = slot });
+        if (slot > self.max_local_slot) self.max_local_slot = slot;
     }
 
     fn resolveLocal(self: *Compiler, name_id: ast.StringId) ?u16 {
@@ -157,6 +160,7 @@ pub const Compiler = struct {
         }
         try self.emitOp(.op_return);
         self.current_chunk.max_stack_slots = self.max_stack_depth;
+        self.current_chunk.local_count = @max(self.locals.items.len, self.max_local_slot + 1);
     }
 
     fn compileNode(self: *Compiler, node_idx: ast.NodeIndex) CompileError!void {
@@ -192,7 +196,32 @@ pub const Compiler = struct {
             .identifier => {
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = @as(ast.StringId, @enumFromInt(node.data));
-                try self.emitVariableLoad(name_id, sym);
+                const name_str = self.tree.getString(name_id);
+
+                const is_local = (self.resolveLocal(name_id) != null) or
+                    (sym.kind == .local);
+                const is_upvalue = (try self.resolveUpvalue(name_id)) != null;
+                const is_script_global = self.isScriptGlobal(name_id);
+
+                const is_special_or_const = name_str.len == 0 or
+                    std.mem.startsWith(u8, name_str, "@") or
+                    std.mem.startsWith(u8, name_str, "$") or
+                    std.ascii.isUpper(name_str[0]);
+
+                const is_variable = is_local or is_upvalue or is_script_global or is_special_or_const;
+
+                if (!is_variable) {
+                    // Bare identifier that is not a known variable or constant:
+                    // In Ruby/KupCAD, this is a 0-argument function/method invocation!
+                    const name_idx = try self.makeStringConstant(name_str);
+                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+                    try self.emitOp(.op_call);
+                    try self.emitByte(0); // 0 arguments
+                    self.simulatePop(1); // Consumes function pointer
+                    self.simulatePush(1); // Pushes function return value
+                } else {
+                    try self.emitVariableLoad(name_id, sym);
+                }
             },
             .return_stmt => {
                 const ret_idx = self.tree.nodeIndex(node);
@@ -331,14 +360,14 @@ pub const Compiler = struct {
 
                 if (node.tag == .def_stmt) {
                     const sym = self.symbols[@intFromEnum(node_idx)];
-                    if (sym.kind == .global) {
+                    if (self.enclosing == null or sym.kind == .global) {
                         const name_idx = try self.makeStringConstant(self.tree.getString(def_name_id));
                         try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
                         try self.emitOp(.op_nil);
                     } else {
-                        try self.addLocal(def_name_id, @intCast(sym.index));
-                        try self.emitOp(.op_set_local);
-                        try self.emitByte(@intCast(sym.index));
+                        const slot = @as(u16, @intCast(self.locals.items.len));
+                        try self.addLocal(def_name_id, slot);
+                        try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
                     }
                 }
             },
@@ -490,7 +519,7 @@ pub const Compiler = struct {
                     try self.compileNode(part);
                 }
 
-                if (parts.len > limits.MAX_CONSTANTS) return error.TooManyConstants;
+                if (parts.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
 
                 try self.emitOp(.op_interpolate);
                 try self.emitByte(@intCast(parts.len));
@@ -675,6 +704,10 @@ pub const Compiler = struct {
     }
 
     fn emitOpWithOperand(self: *Compiler, short_op: chunk.OpCode, wide_op: chunk.OpCode, operand: usize) CompileError!void {
+        if (short_op == .op_get_local or short_op == .op_set_local) {
+            if (operand > self.max_local_slot) self.max_local_slot = operand;
+        }
+
         if (operand <= limits.MAX_SHORT_CONSTANTS) {
             try self.emitOp(short_op);
             try self.emitByte(@intCast(operand));
@@ -808,6 +841,9 @@ pub const Compiler = struct {
 
         try child_compiler.compile(body_node);
         _ = self.vm.pop();
+
+        // Extract the exact local footprint from the child AFTER compiling
+        func.local_count = @max(child_compiler.locals.items.len, child_compiler.max_local_slot + 1);
 
         const func_val = value.Value.initObj(&func.obj);
         const func_idx = try self.makeConstant(func_val);
@@ -1172,9 +1208,9 @@ pub const Compiler = struct {
 
                 const var_str = self.tree.getString(rescue.variable);
                 if (var_str.len > 0) {
-                    try self.addLocal(rescue.variable, @intCast(self.locals.items.len));
-                    try self.emitOp(.op_set_local);
-                    try self.emitByte(@intCast(self.locals.items.len - 1));
+                    const slot = @as(u16, @intCast(self.locals.items.len));
+                    try self.addLocal(rescue.variable, slot);
+                    try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
                 }
                 try self.emitOp(.op_pop); // Pop the error value off stack
                 try self.compileNode(rescue.body);
@@ -1418,6 +1454,7 @@ pub const Compiler = struct {
     }
 
     fn emitVariableLoad(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!void {
+        _ = sym;
         const name_str = self.tree.getString(name_id);
         if (std.mem.startsWith(u8, name_str, "@@")) {
             const name_idx = try self.makeStringConstant(name_str);
@@ -1427,11 +1464,9 @@ pub const Compiler = struct {
         } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
             try self.emitOp(.op_get_upvalue);
             try self.emitByte(upvalue_slot);
-        } else if (self.enclosing == null or (sym != null and sym.?.kind == .global) or sym == null or self.isScriptGlobal(name_id)) {
+        } else {
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
-        } else {
-            try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, sym.?.index);
         }
     }
 
@@ -1450,13 +1485,14 @@ pub const Compiler = struct {
             if (self.enclosing == null) {
                 try self.script_globals.put(self.allocator, name_id, {});
             }
-
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
             try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
         } else {
-            try self.addLocal(name_id, @intCast(sym.index));
-            try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, sym.index);
+            // Allocate sequential local slots starting at 1 (slot 0 is reserved for closure)
+            const slot = @as(u16, @intCast(self.locals.items.len));
+            try self.addLocal(name_id, slot);
+            try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
         }
     }
 
@@ -1476,13 +1512,13 @@ pub const Compiler = struct {
         if (splat_idx) |s_idx| {
             const pre_count = s_idx;
             const post_count = lhs.len - 1 - s_idx;
-            if (pre_count > limits.MAX_LOCALS or post_count > limits.MAX_LOCALS) return error.TooManyConstants;
+            if (pre_count > limits.MAX_SHORT_CONSTANTS or post_count > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
             try self.emitOp(.op_unpack_splat);
             try self.emitByte(@intCast(pre_count));
             try self.emitByte(@intCast(post_count));
             self.simulatePush(lhs.len);
         } else {
-            if (lhs.len > limits.MAX_LOCALS) return error.TooManyConstants;
+            if (lhs.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
             try self.emitOp(.op_unpack);
             try self.emitByte(@intCast(lhs.len));
             self.simulatePush(lhs.len);
@@ -1545,10 +1581,10 @@ pub const Compiler = struct {
         }
 
         const sym = self.symbols[@intFromEnum(node_idx)];
-        if (sym.kind == .local) {
-            try self.addLocal(name_id, @intCast(sym.index));
-            try self.emitOp(.op_set_local);
-            try self.emitByte(@intCast(sym.index));
+        if (sym.kind == .local and self.enclosing != null) {
+            const slot = @as(u16, @intCast(self.locals.items.len));
+            try self.addLocal(name_id, slot);
+            try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
         } else {
             try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
             try self.emitOp(.op_nil);

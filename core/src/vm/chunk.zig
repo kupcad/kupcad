@@ -129,6 +129,7 @@ pub const Chunk = struct {
     debug_spans: std.ArrayListUnmanaged(DebugSpan),
     constants: value.ValueArray,
     max_stack_slots: usize,
+    local_count: usize,
 
     pub fn init() Chunk {
         return .{
@@ -136,6 +137,7 @@ pub const Chunk = struct {
             .debug_spans = .empty,
             .constants = .empty,
             .max_stack_slots = 0,
+            .local_count = 0,
         };
     }
 

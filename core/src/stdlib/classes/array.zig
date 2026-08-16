@@ -69,12 +69,25 @@ pub fn arrayJoin(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
     const delim = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", args[0].asObj()))).chars;
 
     var out: std.Io.Writer.Allocating = .init(ctx.vm.allocator);
-    defer out.deinit();
+
     for (ctx.arr.items.items, 0..) |item, idx| {
-        try item.stringify(false, &out.writer);
-        if (idx < ctx.arr.items.items.len - 1) try out.writer.writeAll(delim);
+        item.stringify(false, &out.writer) catch {
+            out.deinit();
+            return error.RuntimeError;
+        };
+        if (idx < ctx.arr.items.items.len - 1) {
+            out.writer.writeAll(delim) catch {
+                out.deinit();
+                return error.RuntimeError;
+            };
+        }
     }
-    return try ctx.vm.allocateString(out.written());
+
+    // Duplicate the slice before the writer is destroyed
+    const merged_bytes = try ctx.vm.allocator.dupe(u8, out.written());
+    out.deinit();
+
+    return try ctx.vm.allocateStringTakeOwnership(merged_bytes);
 }
 
 pub fn arrayEach(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {

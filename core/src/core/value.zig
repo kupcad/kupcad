@@ -69,6 +69,7 @@ pub const ObjFunction = struct {
     obj: Obj,
     arity: u8,
     upvalue_count: u16,
+    local_count: usize,
     has_splat: bool,
     chunk: ?*anyopaque, // Pointer to chunk.Chunk (avoids circular dependency)
     name: ?*ObjString,

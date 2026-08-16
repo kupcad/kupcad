@@ -2537,3 +2537,72 @@ test "VM: Brep topology deinit cleanly frees all arrays" {
     // The defer brep.deinit() will trigger here.
     // If it doesn't free `.vertices` and `.wires`, Zig's test runner will panic with a memory leak.
 }
+
+test "VM: Closure stack frame safely pre-allocates local variables" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def calc()
+        \\  x = 10
+        \\  y = 20
+        \\  z = x + y
+        \\  z
+        \\end
+        \\
+        \\calc()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 30.0), vm.stack[0].asNumber());
+}
+
+test "VM: Reflection methods safely pop implicit blocks without corrupting stack" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\val = "hello"
+        \\check1 = val.is_a?(String)
+        \\check2 = val.responds_to?("split")
+        \\[check1, check2]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool());
+}
