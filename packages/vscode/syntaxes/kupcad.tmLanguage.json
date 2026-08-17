@@ -165,11 +165,11 @@
       "name": "support.class.primitive.3d.kupcad"
     },
     "primitives_2d": {
-      "match": "(?<![\\\\w])(dummy_prim_2d)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(square|circle|polygon)(?![\\\\w?!])",
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\\\w])(translate|rotate|scale)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(translate|rotate|scale|extrude|revolve|hull|trim_by_plane|minkowski|offset|transform)(?![\\\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {
@@ -181,7 +181,7 @@
       "name": "support.function.workplane.kupcad"
     },
     "inspections": {
-      "match": "(?<![\\\\w])(bbox|volume|surface_area)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(bbox|volume|surface_area|min_gap|contains?|ray_cast)(?![\\\\w?!])",
       "name": "support.function.inspection.kupcad"
     },
     "hash_keys": {
