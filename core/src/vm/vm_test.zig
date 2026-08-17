@@ -2846,3 +2846,142 @@ test "VM: Comprehensive Ruby-like language features integration" {
     const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[4].asObj())));
     try testing.expectEqualStrings("Count: 42", str_obj.chars);
 }
+
+test "VM: Map indexing and compound assignment" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\m = { "score" => 10 }
+        \\m["score"] += 15
+        \\m["lives"] = 3
+        \\[m["score"], m["lives"]]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 25.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: Ensure block executes and applies side effects" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\x = 0
+        \\begin
+        \\  raise(ArgumentError)
+        \\rescue => e
+        \\  x += 10
+        \\ensure
+        \\  x += 100
+        \\end
+        \\x
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 110.0), vm.stack[0].asNumber()); // 10 from rescue, 100 from ensure
+}
+
+test "VM: Class variables (@@var) are shared globally across instances" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Counter
+        \\  def initialize() @@c = 0 end
+        \\  def inc() @@c += 1 end
+        \\  def get() @@c end
+        \\end
+        \\
+        \\a = Counter.new()
+        \\b = Counter.new()
+        \\a.inc()
+        \\b.inc()
+        \\[a.get(), b.get()]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    // Because they share the same @@c, both should read `2`!
+    try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: Advanced Math (exponent, modulo) and nested String Interpolation" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\base = 2 ** 3 # 8
+        \\rem = 14 % 5  # 4
+        \\"Result: #{base + rem}!"
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", vm.stack[0].asObj())));
+    try testing.expectEqualStrings("Result: 12!", str_obj.chars);
+}
