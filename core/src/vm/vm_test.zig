@@ -2734,3 +2734,115 @@ test "VM: Fluent method chaining" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 30.0), vm.stack[0].asNumber());
 }
+
+test "VM: Comprehensive Ruby-like language features integration" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\module MathHelpers
+        \\  def square(x)
+        \\    x * x
+        \\  end
+        \\end
+        \\
+        \\class Calculator
+        \\  include MathHelpers
+        \\
+        \\  def initialize(offset)
+        \\    self.offset = offset
+        \\    @@count = 42
+        \\  end
+        \\
+        \\  def self.get_count
+        \\    @@count
+        \\  end
+        \\
+        \\  def compute(arr)
+        \\    res = []
+        \\    i = 0
+        \\    while i < arr.length
+        \\      val = arr[i]
+        \\      processed = case val
+        \\      when 1..5
+        \\        self.square(val)
+        \\      when 10
+        \\        val * 2
+        \\      else
+        \\        -1
+        \\      end
+        \\      res.push(processed + self.offset)
+        \\      i += 1
+        \\    end
+        \\    res
+        \\  end
+        \\end
+        \\
+        \\class AdvancedCalculator < Calculator
+        \\  def initialize(offset, multiplier)
+        \\    super(offset)
+        \\    self.multiplier = multiplier
+        \\  end
+        \\
+        \\  def compute(arr)
+        \\    base_res = super(arr)
+        \\    # Proves `self` is correctly captured as an Upvalue inside the block!
+        \\    base_res.map { |x| x * self.multiplier }
+        \\  end
+        \\end
+        \\
+        \\calc = AdvancedCalculator.new(5, 2)
+        \\# 2  -> (2^2 + 5) * 2  = 18
+        \\# 10 -> (10*2 + 5) * 2 = 50
+        \\# 42 -> (-1 + 5) * 2   = 8
+        \\result = calc.compute([2, 10, 42])
+        \\
+        \\err_caught = false
+        \\begin
+        \\  raise(ArgumentError)
+        \\rescue ArgumentError => e
+        \\  err_caught = true
+        \\end
+        \\
+        \\dict = { first: result[0], second: result[1] }
+        \\a, *b, c = [*result, 100, 200]
+        \\
+        \\summary = "Count: #{Calculator.get_count}"
+        \\
+        \\[dict[:first], b.length(), c, err_caught, summary]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 5), arr_obj.items.items.len);
+
+    // dict["first"] == 18
+    try testing.expectEqual(@as(f64, 18.0), arr_obj.items.items[0].asNumber());
+    // b.length() == 3 (the middle splat captured [50, 8, 100])
+    try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[1].asNumber());
+    // c == 200 (the tail end of the destructure)
+    try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[2].asNumber());
+    // err_caught == true
+    try testing.expectEqual(true, arr_obj.items.items[3].asBool());
+
+    // Interpolated summary == "Count: 42"
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[4].asObj())));
+    try testing.expectEqualStrings("Count: 42", str_obj.chars);
+}

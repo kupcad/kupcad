@@ -54,6 +54,7 @@ pub const Compiler = struct {
     // Lexical Scope Tracking
     enclosing: ?*Compiler = null,
     function: ?*value.ObjFunction = null,
+    is_method: bool = false,
 
     upvalues: std.ArrayListUnmanaged(Upvalue) = .empty,
     locals: std.ArrayListUnmanaged(Local) = .empty,
@@ -81,6 +82,7 @@ pub const Compiler = struct {
             .vm = vm,
             .enclosing = null,
             .function = null,
+            .is_method = false,
             .upvalues = .empty,
             .locals = .empty,
             .loops = .empty,
@@ -125,13 +127,30 @@ pub const Compiler = struct {
         if (self.enclosing == null) return null;
         const enclosing = self.enclosing.?;
 
-        // 1. Look for it as a direct local variable in the parent
+        // Look for it as a direct local variable in the parent
         if (enclosing.resolveLocal(name_id)) |local_idx| {
             return try self.addUpvalue(local_idx, true);
         }
 
-        // 2. Recursively look up the scope chain for an already captured upvalue
+        // Recursively look up the scope chain for an already captured upvalue
         if (try enclosing.resolveUpvalue(name_id)) |upv_idx| {
+            return try self.addUpvalue(upv_idx, false);
+        }
+
+        return null;
+    }
+
+    fn resolveSelfUpvalue(self: *Compiler) CompileError!?u8 {
+        if (self.enclosing == null) return null;
+        const enclosing = self.enclosing.?;
+
+        if (enclosing.is_method) {
+            // The parent IS a method. Its `self` is at local 0.
+            return try self.addUpvalue(0, true);
+        }
+
+        // The parent is also a block. Recursively capture.
+        if (try enclosing.resolveSelfUpvalue()) |upv_idx| {
             return try self.addUpvalue(upv_idx, false);
         }
 
@@ -356,8 +375,9 @@ pub const Compiler = struct {
                     body_node = ls.body;
                 }
 
+                const is_method = (node.tag == .def_stmt);
                 const name_str = if (def_name_id != .none) self.tree.getString(def_name_id) else null;
-                try self.compileClosureBlock(params, body_node, name_str);
+                try self.compileClosureBlock(params, body_node, name_str, is_method);
 
                 if (node.tag == .def_stmt) {
                     const sym = self.symbols[@intFromEnum(node_idx)];
@@ -449,7 +469,18 @@ pub const Compiler = struct {
                 self.patchJump(else_jump);
             },
             .self_expr => {
-                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+                if (self.is_method or self.enclosing == null) {
+                    try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+                } else {
+                    // We are in a block. Capture the parent method's `self`
+                    if (try self.resolveSelfUpvalue()) |upv_idx| {
+                        try self.emitOp(.op_get_upvalue);
+                        try self.emitByte(upv_idx);
+                    } else {
+                        // Fallback (shouldn't happen in valid code)
+                        try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+                    }
+                }
             },
             .while_stmt => {
                 const while_payload = self.tree.whileStmt(node);
@@ -620,33 +651,39 @@ pub const Compiler = struct {
     fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
         try self.emitByte(@intFromEnum(op));
         switch (op) {
-            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_get_global_wide, .op_constant, .op_constant_wide, .op_closure, .op_closure_wide, .op_get_upvalue, .op_dup, .op_import, .op_import_wide, .op_block_given, .op_get_class_var, .op_get_class_var_wide, .op_defined, .op_defined_wide, .op_extract_kwarg, .op_extract_kwarg_wide, .op_module, .op_module_wide => self.simulatePush(1),
+            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_get_global_wide, .op_constant, .op_constant_wide, .op_closure, .op_closure_wide, .op_get_upvalue, .op_dup, .op_import, .op_import_wide, .op_block_given, .op_defined, .op_defined_wide, .op_extract_kwarg, .op_extract_kwarg_wide, .op_module, .op_module_wide => self.simulatePush(1),
+
             .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method, .op_class_method_wide, .op_unpack, .op_unpack_splat, .op_mixin => self.simulatePop(1),
+
             .op_map_insert => self.simulatePop(2),
-            .op_is_instance, .op_case_equal, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent => {
+
+            .op_is_instance, .op_case_equal, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent, .op_get_index => {
                 self.simulatePop(2);
                 self.simulatePush(1);
             },
-            .op_get_index => {
-                self.simulatePop(2);
-                self.simulatePush(1);
-            },
+
             .op_set_index => {
                 self.simulatePop(3);
-                self.simulatePush(1); // Assignment yields the assigned value
+                self.simulatePush(1);
             },
-            .op_negate, .op_not => {
+
+            .op_negate, .op_not, .op_get_class_var, .op_get_class_var_wide => {
                 self.simulatePop(1);
                 self.simulatePush(1);
             },
+
             .op_class, .op_class_wide => self.simulatePush(1),
+
             .op_dup_two => self.simulatePush(2),
+
             .op_method, .op_method_wide, .op_define_global, .op_define_global_wide => self.simulatePop(1),
-            .op_set_property, .op_set_property_wide => {
+
+            .op_set_property, .op_set_property_wide, .op_set_class_var, .op_set_class_var_wide => {
                 self.simulatePop(2);
-                self.simulatePush(1); // Assignment yields value
+                self.simulatePush(1);
             },
-            .op_set_class_var, .op_set_class_var_wide, .op_jump_if_not_nil => {},
+
+            .op_jump_if_not_nil => {},
             else => {},
         }
     }
@@ -721,7 +758,7 @@ pub const Compiler = struct {
         }
     }
 
-    fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex, func_name: ?[]const u8) CompileError!void {
+    fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex, func_name: ?[]const u8, is_method: bool) CompileError!void {
         const func = try self.vm.gc.allocateFunction(self.vm);
 
         // Assign the method name so `super()` can dynamically look up the hierarchy
@@ -770,6 +807,7 @@ pub const Compiler = struct {
             .vm = self.vm,
             .enclosing = self,
             .function = func,
+            .is_method = is_method,
             .upvalues = .empty,
             .locals = .empty,
             .loops = .empty,
@@ -1354,6 +1392,7 @@ pub const Compiler = struct {
                 .current_chunk = child_chunk,
                 .vm = self.vm,
                 .enclosing = self,
+                .is_method = false,
                 .function = func,
                 .upvalues = .empty,
                 .locals = .empty,
@@ -1466,6 +1505,16 @@ pub const Compiler = struct {
         _ = sym;
         const name_str = self.tree.getString(name_id);
         if (std.mem.startsWith(u8, name_str, "@@")) {
+            if (self.is_method or self.enclosing == null) {
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+            } else {
+                if (try self.resolveSelfUpvalue()) |upv_idx| {
+                    try self.emitOp(.op_get_upvalue);
+                    try self.emitByte(upv_idx);
+                } else {
+                    try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+                }
+            }
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_get_class_var, .op_get_class_var_wide, name_idx);
         } else if (self.resolveLocal(name_id)) |local_slot| {
@@ -1482,6 +1531,16 @@ pub const Compiler = struct {
     fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ResolvedSymbol) CompileError!void {
         const name_str = self.tree.getString(name_id);
         if (std.mem.startsWith(u8, name_str, "@@")) {
+            if (self.is_method or self.enclosing == null) {
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+            } else {
+                if (try self.resolveSelfUpvalue()) |upv_idx| {
+                    try self.emitOp(.op_get_upvalue);
+                    try self.emitByte(upv_idx);
+                } else {
+                    try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+                }
+            }
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_set_class_var, .op_set_class_var_wide, name_idx);
         } else if (self.resolveLocal(name_id)) |local_slot| {
@@ -1572,7 +1631,7 @@ pub const Compiler = struct {
                 const m_name_idx = try self.makeStringConstant(final_name);
 
                 const params = self.tree.getParams(ds.params);
-                try self.compileClosureBlock(params, ds.body, final_name);
+                try self.compileClosureBlock(params, ds.body, final_name, true);
 
                 try self.emitOpWithOperand(if (is_class_method) .op_class_method else .op_method, if (is_class_method) .op_class_method_wide else .op_method_wide, m_name_idx);
             } else if (stmt_node.tag == .method_call) {
@@ -1618,7 +1677,7 @@ pub const Compiler = struct {
                 const method_name = self.tree.getString(ds.name);
                 const m_name_idx = try self.makeStringConstant(method_name);
                 const params = self.tree.getParams(ds.params);
-                try self.compileClosureBlock(params, ds.body, method_name);
+                try self.compileClosureBlock(params, ds.body, method_name, true);
                 try self.emitOpWithOperand(.op_method, .op_method_wide, m_name_idx);
             }
         }

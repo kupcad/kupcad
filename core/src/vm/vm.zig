@@ -875,32 +875,76 @@ pub const VM = struct {
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
-                    const receiver = self.stack[frame.base_slot];
+                    const receiver = self.pop(); // Explicitly pop receiver from stack
                     const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
 
                     if (class_obj) |c| {
-                        if (c.class_fields.get(name_str)) |val| {
-                            self.push(val);
+                        var current: ?*value.ObjClass = c;
+                        var found_val: ?value.Value = null;
+
+                        // Search up the hierarchy
+                        while (current) |cls| {
+                            if (cls.class_fields.get(name_str)) |val| {
+                                found_val = val;
+                                break;
+                            }
+                            current = cls.superclass;
+                        }
+
+                        if (found_val) |v| {
+                            self.push(v);
                         } else {
                             self.runtimeError("Runtime Error: Undefined class variable '{s}'.\n", .{name_str});
                             return .runtime_error;
                         }
-                    } else return .runtime_error;
+                    } else {
+                        self.runtimeError("Runtime Error: Receiver has no class context.\n", .{});
+                        return .runtime_error;
+                    }
                 },
                 .op_set_class_var, .op_set_class_var_wide => {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_class_var_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
-                    const val = self.stack[self.stack_top - 1]; // Peek
-                    const receiver = self.stack[frame.base_slot];
+                    const receiver = self.pop(); // Pop explicit receiver
+                    const val = self.pop(); // Pop RHS value
+
                     const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
 
                     if (class_obj) |c| {
+                        var current: ?*value.ObjClass = c;
+                        var target_class: *value.ObjClass = c;
+
+                        // Update the variable if it exists anywhere in the hierarchy
+                        var found = false;
+                        while (current) |cls| {
+                            if (cls.class_fields.contains(name_str)) {
+                                target_class = cls;
+                                found = true;
+                                break;
+                            }
+                            current = cls.superclass;
+                        }
+
+                        // If it's a new variable, bind it to the highest root class to ensure it is shared!
+                        if (!found) {
+                            var root = c;
+                            while (root.superclass) |sup| {
+                                root = sup;
+                            }
+                            target_class = root;
+                        }
+
                         self.retainValue(val);
-                        if (c.class_fields.get(name_str)) |old_val| self.releaseValue(old_val);
-                        c.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
-                    } else return .runtime_error;
+                        if (target_class.class_fields.get(name_str)) |old_val| self.releaseValue(old_val);
+                        target_class.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
+
+                        self.push(val); // Yield the assigned value
+                    } else {
+                        self.runtimeError("Runtime Error: Receiver has no class context.\n", .{});
+                        return .runtime_error;
+                    }
                 },
                 .op_is_instance => {
                     const class_val = self.pop();
