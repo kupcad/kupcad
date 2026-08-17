@@ -139,6 +139,19 @@ pub const VM = struct {
         self.stack[absolute_slot] = val;
     }
 
+    pub fn mapSet(self: *VM, map: *value.ObjMap, key: value.Value, val: value.Value) !void {
+        if (self.findMapKey(map, key)) |idx| {
+            self.releaseValue(map.values.items[idx]); // drop old value
+            self.retainValue(val); // keep new value
+            map.values.items[idx] = val;
+        } else {
+            self.retainValue(key);
+            self.retainValue(val);
+            try map.keys.append(self.allocator, key);
+            try map.values.append(self.allocator, val);
+        }
+    }
+
     pub fn ensureStackCapacity(self: *VM, required_capacity: usize) !void {
         if (required_capacity <= self.stack.len) return;
 
@@ -361,16 +374,8 @@ pub const VM = struct {
                         } else |_| return .runtime_error;
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
-                        if (self.findMapKey(map, index)) |i| {
-                            self.releaseValue(map.values.items[i]);
-                            self.retainValue(val);
-                            map.values.items[i] = val;
-                        } else {
-                            self.retainValue(index);
-                            self.retainValue(val);
-                            map.keys.append(self.allocator, index) catch return .runtime_error;
-                            map.values.append(self.allocator, val) catch return .runtime_error;
-                        }
+
+                        self.mapSet(map, index, val) catch return .runtime_error;
                         self.push(val);
                     } else {
                         self.runtimeError("Runtime Error: Cannot assign to index on target.\n", .{});
@@ -415,17 +420,22 @@ pub const VM = struct {
                     const map_obj = self.gc.allocateMap(self) catch return .runtime_error;
                     const map_val = value.Value.initObj(&map_obj.obj);
 
+                    // Pre-allocate for performance
                     map_obj.keys.ensureTotalCapacity(self.allocator, pair_count) catch return .runtime_error;
                     map_obj.values.ensureTotalCapacity(self.allocator, pair_count) catch return .runtime_error;
 
                     const start_idx = self.stack_top - (pair_count * 2);
                     var i: usize = 0;
                     while (i < pair_count * 2) : (i += 2) {
-                        map_obj.keys.appendAssumeCapacity(self.stack[start_idx + i]);
-                        map_obj.values.appendAssumeCapacity(self.stack[start_idx + i + 1]);
-                    }
+                        const key = self.stack[start_idx + i];
+                        const val = self.stack[start_idx + i + 1];
 
-                    // Clear consumed keys & values, push the resulting Map
+                        self.mapSet(map_obj, key, val) catch return .runtime_error;
+
+                        // We must release the stack's ownership of these values
+                        self.releaseValue(key);
+                        self.releaseValue(val);
+                    }
                     self.stack_top -= (pair_count * 2);
                     self.push(map_val);
                 },
@@ -497,10 +507,8 @@ pub const VM = struct {
                     defer self.releaseValue(key);
                     const map_val = self.stack[self.stack_top - 1];
                     const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", map_val.asObj())));
-                    self.retainValue(key);
-                    self.retainValue(val);
-                    map.keys.append(self.allocator, key) catch return .runtime_error;
-                    map.values.append(self.allocator, val) catch return .runtime_error;
+
+                    self.mapSet(map, key, val) catch return .runtime_error;
                 },
                 .op_map_spread => {
                     const source_val = self.pop();
@@ -512,10 +520,8 @@ pub const VM = struct {
                         const source_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", source_val.asObj())));
                         for (source_map.keys.items, 0..) |key, i| {
                             const val = source_map.values.items[i];
-                            self.retainValue(key);
-                            self.retainValue(val);
-                            target_map.keys.append(self.allocator, key) catch return .runtime_error;
-                            target_map.values.append(self.allocator, val) catch return .runtime_error;
+
+                            self.mapSet(target_map, key, val) catch return .runtime_error;
                         }
                     } else {
                         self.runtimeError("Runtime Error: Can only spread maps into maps.\n", .{});

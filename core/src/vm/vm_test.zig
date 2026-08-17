@@ -3022,3 +3022,106 @@ test "VM: op_interpolate prevents memory leak on GC OOM" {
     try testing.expectEqual(.runtime_error, result);
     // If the leak exists, Zig's testing allocator will panic at the end of this test.
 }
+
+test "VM: Logical OR (||) short-circuiting and Unary NOT (!) truthiness" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // true/false and nil truthiness evaluation
+    const source =
+        \\a = false || 42
+        \\b = 100 || 50
+        \\c = !nil
+        \\d = !10
+        \\[a, b, c, d]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+
+    try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber()); // false || 42 -> 42
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[1].asNumber()); // 100 || 50 -> 100
+    try testing.expectEqual(true, arr_obj.items.items[2].asBool()); // !nil -> true
+    try testing.expectEqual(false, arr_obj.items.items[3].asBool()); // !10 -> false
+}
+
+test "VM: Map literal spreading (**kwargs) executes seamlessly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests op_map_spread and op_map_insert ordering
+    const source =
+        \\base = { "a" => 1, "b" => 2 }
+        \\merged = { "c" => 3, **base, "a" => 99 }
+        \\[merged["c"], merged["b"], merged["a"]]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 99.0), arr_obj.items.items[2].asNumber()); // Overwritten by tail key
+}
+
+test "VM: Lexical block scopes isolate shadowed variables" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Ensure `x` inside the block doesn't overwrite `x` outside the block
+    const source =
+        \\x = 10
+        \\[1, 2].each do |x|
+        \\  y = x * 2
+        \\end
+        \\x
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    // x should remain 10, completely unaffected by the inner block's parameter
+    try testing.expectEqual(@as(f64, 10.0), vm.stack[0].asNumber());
+}
