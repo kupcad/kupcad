@@ -65,27 +65,25 @@ pub fn arraySlice(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
 
 pub fn arrayJoin(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try common.unwrapArray(vm_opaque, arg_count, 1, args);
+
     if (!args[0].isObject() or args[0].asObj().obj_type != .string) return error.RuntimeError;
     const delim = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", args[0].asObj()))).chars;
 
     var out: std.Io.Writer.Allocating = .init(ctx.vm.allocator);
+    errdefer out.deinit();
 
     for (ctx.arr.items.items, 0..) |item, idx| {
-        item.stringify(false, &out.writer) catch {
-            out.deinit();
-            return error.RuntimeError;
-        };
+        item.stringify(false, &out.writer) catch return error.RuntimeError;
         if (idx < ctx.arr.items.items.len - 1) {
-            out.writer.writeAll(delim) catch {
-                out.deinit();
-                return error.RuntimeError;
-            };
+            out.writer.writeAll(delim) catch return error.RuntimeError;
         }
     }
 
-    // Duplicate the slice before the writer is destroyed
     const merged_bytes = try ctx.vm.allocator.dupe(u8, out.written());
     out.deinit();
+
+    // The critical memory leak patch!
+    errdefer ctx.vm.allocator.free(merged_bytes);
 
     return try ctx.vm.allocateStringTakeOwnership(merged_bytes);
 }

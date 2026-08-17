@@ -436,15 +436,16 @@ pub const VM = struct {
                         };
                     }
 
-                    // We must duplicate the buffer because `out` destroys its internal array on deinit
                     const merged_bytes = self.allocator.dupe(u8, out.written()) catch {
                         out.deinit();
                         return .runtime_error;
                     };
                     out.deinit(); // Clean up the writer explicitly
+
+                    // The critical memory leak patch
                     errdefer self.allocator.free(merged_bytes);
 
-                    // Pass ownership to the VM!
+                    // Pass ownership to the VM
                     const merged_str = self.allocateStringTakeOwnership(merged_bytes) catch return .runtime_error;
 
                     // Pop and release all original stack fragments
