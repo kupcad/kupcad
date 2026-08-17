@@ -2,6 +2,7 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
+const kernel = @import("../kernel/kernel.zig");
 const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
 
 pub const GC = struct {
@@ -310,8 +311,10 @@ pub const GC = struct {
     }
 
     pub fn freeCrossSection(self: *GC, vm: *VM, cs_obj: *value.ObjCrossSection) void {
+        _ = vm;
+
         if (cs_obj.cached_handle) |handle| {
-            if (vm.active_kernel) |k| k.destructCrossSection(handle);
+            kernel.destructCrossSection(handle);
         }
         self.allocator.destroy(cs_obj);
         self.bytes_allocated -= @sizeOf(value.ObjCrossSection);

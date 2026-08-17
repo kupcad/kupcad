@@ -5,6 +5,7 @@ const chunk = @import("chunk.zig");
 const registry = @import("../stdlib/registry.zig");
 const resolver = @import("../core/resolver.zig");
 const value = @import("../core/value.zig");
+const kernel = @import("../kernel/kernel.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const Document = @import("../core/document.zig").Document;
 const VM = @import("vm.zig").VM;
@@ -1967,7 +1968,7 @@ test "VM: Inspection methods (volume, bbox) and p() work in KupCAD scripts" {
 
     // Verify discrete tessellated volume calculation (~24,658.92)
     const handle = try vm.ensureConcrete(vm.stack[0]);
-    const vol = vm.active_kernel.?.volume(handle);
+    const vol = kernel.volume(handle);
     try testing.expect(vol > 24600.0 and vol < 24700.0);
 }
 

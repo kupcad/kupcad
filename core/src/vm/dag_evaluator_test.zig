@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const VM = @import("vm.zig").VM;
+const kernel = @import("../kernel/kernel.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const registry = @import("../stdlib/registry.zig");
 
@@ -21,11 +22,11 @@ test "DAG Evaluator: correctly evaluates 3D primitive (Cube)" {
     try testing.expectEqual(.manifold, handle.engine);
 
     // Verify physics to prove the Manifold C++ object is a 10x20x30 cube
-    const vol = vm.active_kernel.?.volume(handle);
+    const vol = kernel.volume(handle);
     try testing.expectEqual(@as(f64, 6000.0), vol);
 
     // Clean up the C++ memory (Normally handled by ARC, but we skipped ARC here)
-    vm.active_kernel.?.destruct(handle);
+    kernel.destruct(handle);
 }
 
 test "DAG Evaluator: correctly evaluates CSG tree (Union)" {
@@ -43,8 +44,8 @@ test "DAG Evaluator: correctly evaluates CSG tree (Union)" {
     const handle = try dag_evaluator.evaluateDAG(&vm, union_idx);
 
     // Two 10x10x10 cubes side-by-side should be exactly 2000 volume
-    const vol = vm.active_kernel.?.volume(handle);
+    const vol = kernel.volume(handle);
     try testing.expectEqual(@as(f64, 2000.0), vol);
 
-    vm.active_kernel.?.destruct(handle);
+    kernel.destruct(handle);
 }

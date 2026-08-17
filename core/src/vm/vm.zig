@@ -52,7 +52,6 @@ pub const VM = struct {
     rescue_frames: std.ArrayListUnmanaged(RescueFrame) = .empty,
 
     host: Host = .{},
-    active_kernel: ?*const kernel_mod.GeometryKernel = null,
     dag_builder: dag.DAGBuilder,
     mute_errors: bool = false,
 

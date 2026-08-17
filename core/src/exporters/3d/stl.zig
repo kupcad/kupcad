@@ -1,11 +1,12 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 
 // Extracted reusable STL writer!
 pub fn writeStl(vm: *VM, handle: geom.GeometryHandle, path_str: []const u8) anyerror!void {
-    const mesh = vm.active_kernel.?.getMesh(vm.allocator, handle) orelse return error.RuntimeError;
+    const mesh = kernel.getMesh(vm.allocator, handle) orelse return error.RuntimeError;
     defer {
         vm.allocator.free(mesh.vert_props);
         vm.allocator.free(mesh.tri_verts);

@@ -1,6 +1,7 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
+const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 
 fn parseVec3(arg_count: u8, args: [*]value.Value, default_val: f64) !struct { f64, f64, f64 } {
@@ -83,7 +84,7 @@ pub fn meshOnFace(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.
     if (std.mem.eql(u8, direction_sym, "bottom")) filter = .bottom;
 
     // Query Kernel (Mocked for now)
-    _ = vm.active_kernel.?.queryFaces(handle, filter);
+    _ = kernel.queryFaces(handle, filter);
     // Spawn Workplane tied to parent geometry
     return try vm.allocateWorkplane(geom_obj, [3]f64{ 0, 0, 0 }, [3]f64{ 0, 0, 1 });
 }
@@ -98,7 +99,7 @@ pub fn meshBBox(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Va
 
     // Cache the bounding box so we don't recalculate it continuously
     if (geom_obj.cached_bbox == null) {
-        if (vm.active_kernel.?.boundingBox(handle)) |k_box| {
+        if (kernel.boundingBox(handle)) |k_box| {
             geom_obj.cached_bbox = value.BBox{
                 .min_x = k_box.min[0],
                 .min_y = k_box.min[1],
@@ -156,7 +157,7 @@ pub fn meshVolume(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.
     _ = arg_count;
     _ = args;
     const handle = try vm.ensureConcrete(receiver);
-    const vol = vm.active_kernel.?.volume(handle);
+    const vol = kernel.volume(handle);
     return value.Value.initNumber(vol);
 }
 
@@ -164,7 +165,7 @@ pub fn meshSurfaceArea(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]v
     _ = arg_count;
     _ = args;
     const handle = try vm.ensureConcrete(receiver);
-    const area = vm.active_kernel.?.surfaceArea(handle);
+    const area = kernel.surfaceArea(handle);
     return value.Value.initNumber(area);
 }
 
@@ -247,7 +248,7 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.
     const search_length = if (arg_count > 1) args[1].asNumber() else 100.0;
     const a_handle = try vm.ensureConcrete(receiver);
     const b_handle = try vm.ensureConcrete(args[0]);
-    const gap = vm.active_kernel.?.minGap(a_handle, b_handle, search_length);
+    const gap = kernel.minGap(a_handle, b_handle, search_length);
     return value.Value.initNumber(gap);
 }
 
@@ -258,7 +259,7 @@ pub fn meshContains(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]valu
     if (!pt_arr[0].isNumber() or !pt_arr[1].isNumber() or !pt_arr[2].isNumber()) return error.RuntimeError;
 
     const handle = try vm.ensureConcrete(receiver);
-    const inside = vm.active_kernel.?.containsPoint(handle, .{ pt_arr[0].asNumber(), pt_arr[1].asNumber(), pt_arr[2].asNumber() });
+    const inside = kernel.containsPoint(handle, .{ pt_arr[0].asNumber(), pt_arr[1].asNumber(), pt_arr[2].asNumber() });
     return value.Value.initBool(inside);
 }
 
@@ -272,7 +273,7 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value
     if (!e_arr[0].isNumber() or !e_arr[1].isNumber() or !e_arr[2].isNumber()) return error.RuntimeError;
 
     const handle = try vm.ensureConcrete(receiver);
-    const hits = vm.active_kernel.?.rayCast(vm.allocator, handle, .{ o_arr[0].asNumber(), o_arr[1].asNumber(), o_arr[2].asNumber() }, .{ e_arr[0].asNumber(), e_arr[1].asNumber(), e_arr[2].asNumber() }) orelse return value.Value.initNil();
+    const hits = kernel.rayCast(vm.allocator, handle, .{ o_arr[0].asNumber(), o_arr[1].asNumber(), o_arr[2].asNumber() }, .{ e_arr[0].asNumber(), e_arr[1].asNumber(), e_arr[2].asNumber() }) orelse return value.Value.initNil();
     defer vm.allocator.free(hits);
 
     const hit_arr_obj = try vm.gc.allocateArray(vm);

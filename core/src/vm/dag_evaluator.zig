@@ -1,15 +1,11 @@
 const std = @import("std");
 const dag = @import("dag.zig");
-const kernel_mod = @import("../kernel/kernel.zig");
+const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
 
 pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHandle {
     const node = vm.dag_builder.nodes.items[node_idx];
-    const kernel = vm.active_kernel orelse {
-        vm.reportError("Runtime Error: No geometry kernel active\n", .{});
-        return error.RuntimeError;
-    };
 
     switch (node.tag) {
         .cube => {
@@ -28,7 +24,7 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
             const payload = vm.dag_builder.getBinaryPayload(node);
             const left_handle = try evaluateDAG(vm, payload.left);
             const right_handle = try evaluateDAG(vm, payload.right);
-            const op: kernel_mod.BooleanOp = switch (node.tag) {
+            const op: kernel.BooleanOp = switch (node.tag) {
                 .union_op => .union_op,
                 .difference_op => .difference_op,
                 .intersection_op => .intersection_op,
@@ -98,7 +94,6 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
 
 pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.CrossSectionHandle {
     const node = vm.dag_builder.nodes.items[node_idx];
-    const kernel = vm.active_kernel orelse return error.RuntimeError;
 
     switch (node.tag) {
         .square => {
@@ -146,7 +141,7 @@ pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geo
             const payload = vm.dag_builder.getBinaryPayload(node);
             const left_handle = try evaluateCrossSectionDAG(vm, payload.left);
             const right_handle = try evaluateCrossSectionDAG(vm, payload.right);
-            const op: kernel_mod.BooleanOp = switch (node.tag) {
+            const op: kernel.BooleanOp = switch (node.tag) {
                 .cs_union_op => .union_op,
                 .cs_difference_op => .difference_op,
                 .cs_intersection_op => .intersection_op,

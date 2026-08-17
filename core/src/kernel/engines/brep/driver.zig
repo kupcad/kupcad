@@ -161,6 +161,17 @@ fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
     _ = sl;
     return 0.0;
 }
+fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
+    _ = a;
+    _ = b;
+    return null;
+}
+fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
+    _ = cs;
+    _ = delta;
+    _ = join_type;
+    return null;
+}
 fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
     _ = alloc;
     _ = a;
@@ -203,6 +214,8 @@ pub const driver = kernel.GeometryKernel{
     .crossSectionBooleanFn = crossSectionBooleanImpl,
     .genusFn = genusImpl,
     .transformMatrixFn = transformMatrixImpl,
+    .minkowskiFn = minkowskiImpl,
+    .offsetFn = offsetImpl,
     .crossSectionTransformFn = crossSectionTransformImpl,
 
     .boundingBoxFn = boundingBoxImpl,
