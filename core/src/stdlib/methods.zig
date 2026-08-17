@@ -112,12 +112,38 @@ pub fn meshBBox(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Va
     }
     const box = geom_obj.cached_bbox orelse return value.Value.initNil();
 
-    // Allocate the resulting dictionary map
-    const map_obj = try vm.gc.allocateMap(vm);
-    vm.push(value.Value.initObj(&map_obj.obj)); // protect from GC
+    // Allocate a BoundingBox class instance instead of a Map
+    const bbox_inst = try vm.gc.allocateInstance(vm, vm.bbox_class.?);
+    vm.push(value.Value.initObj(&bbox_inst.obj)); // protect from GC
     defer _ = vm.pop();
 
-    // Helper to build coordinates into a KupCAD Array
+    // Pre-calculate highly useful dimensional properties
+    const size_x = box.max_x - box.min_x;
+    const size_y = box.max_y - box.min_y;
+    const size_z = box.max_z - box.min_z;
+
+    const center_x = box.min_x + (size_x / 2.0);
+    const center_y = box.min_y + (size_y / 2.0);
+    const center_z = box.min_z + (size_z / 2.0);
+
+    // Attach Scalar Properties (e.g. `bbox.size_x`, `bbox.center_y`)
+    try bbox_inst.fields.put(vm.allocator, "size_x", value.Value.initNumber(size_x));
+    try bbox_inst.fields.put(vm.allocator, "size_y", value.Value.initNumber(size_y));
+    try bbox_inst.fields.put(vm.allocator, "size_z", value.Value.initNumber(size_z));
+
+    try bbox_inst.fields.put(vm.allocator, "center_x", value.Value.initNumber(center_x));
+    try bbox_inst.fields.put(vm.allocator, "center_y", value.Value.initNumber(center_y));
+    try bbox_inst.fields.put(vm.allocator, "center_z", value.Value.initNumber(center_z));
+
+    try bbox_inst.fields.put(vm.allocator, "min_x", value.Value.initNumber(box.min_x));
+    try bbox_inst.fields.put(vm.allocator, "min_y", value.Value.initNumber(box.min_y));
+    try bbox_inst.fields.put(vm.allocator, "min_z", value.Value.initNumber(box.min_z));
+
+    try bbox_inst.fields.put(vm.allocator, "max_x", value.Value.initNumber(box.max_x));
+    try bbox_inst.fields.put(vm.allocator, "max_y", value.Value.initNumber(box.max_y));
+    try bbox_inst.fields.put(vm.allocator, "max_z", value.Value.initNumber(box.max_z));
+
+    // Attach Array Tuples for easy destructuring (e.g. `x, y, z = bbox.size`)
     const build_arr = struct {
         fn build(v: *VM, coords: [3]f64) !value.Value {
             const a = try v.gc.allocateArray(v);
@@ -130,27 +156,12 @@ pub fn meshBBox(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Va
         }
     }.build;
 
-    const min_str = try vm.allocateString("min");
-    vm.push(min_str);
-    defer _ = vm.pop();
-    const max_str = try vm.allocateString("max");
-    vm.push(max_str);
-    defer _ = vm.pop();
+    try bbox_inst.fields.put(vm.allocator, "size", try build_arr(vm, .{ size_x, size_y, size_z }));
+    try bbox_inst.fields.put(vm.allocator, "center", try build_arr(vm, .{ center_x, center_y, center_z }));
+    try bbox_inst.fields.put(vm.allocator, "min", try build_arr(vm, .{ box.min_x, box.min_y, box.min_z }));
+    try bbox_inst.fields.put(vm.allocator, "max", try build_arr(vm, .{ box.max_x, box.max_y, box.max_z }));
 
-    const min_arr = try build_arr(vm, [3]f64{ box.min_x, box.min_y, box.min_z });
-    const max_arr = try build_arr(vm, [3]f64{ box.max_x, box.max_y, box.max_z });
-
-    vm.retainValue(min_str);
-    vm.retainValue(min_arr);
-    try map_obj.keys.append(vm.allocator, min_str);
-    try map_obj.values.append(vm.allocator, min_arr);
-
-    vm.retainValue(max_str);
-    vm.retainValue(max_arr);
-    try map_obj.keys.append(vm.allocator, max_str);
-    try map_obj.values.append(vm.allocator, max_arr);
-
-    return value.Value.initObj(&map_obj.obj);
+    return value.Value.initObj(&bbox_inst.obj);
 }
 
 pub fn meshVolume(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value {

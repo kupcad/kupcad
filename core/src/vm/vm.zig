@@ -62,6 +62,7 @@ pub const VM = struct {
     number_class: ?*value.ObjClass = null,
     symbol_class: ?*value.ObjClass = null,
     boolean_class: ?*value.ObjClass = null,
+    bbox_class: ?*value.ObjClass = null,
 
     // safety for infinite loops
     instruction_count: usize,

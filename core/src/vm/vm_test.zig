@@ -1823,12 +1823,12 @@ test "VM: JIT materialization cascades through DAG and ARC safely cleans up" {
     try testing.expectEqual(.ok, result);
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
 
-    // The output should be the bounding box Map returned by Phase 3
     const bbox_val = vm.stack[0];
-    try testing.expect(bbox_val.isMap());
+    try testing.expect(bbox_val.isInstance());
+    const bbox_inst = bbox_val.asInstance();
 
-    const map_obj = bbox_val.asMap();
-    try testing.expectEqual(@as(usize, 2), map_obj.keys.items.len); // "min" and "max"
+    // BoundingBox now has 16 dynamically assigned fields
+    try testing.expectEqual(@as(u32, 16), bbox_inst.fields.count());
 
     // When the test scope ends, `defer vm.deinit()` will clear the VM stack.
     // This will drop the ARC ref_count of the `part` geometry to 0.
@@ -2105,8 +2105,9 @@ test "VM: Minkowski sums and 2D Offsets evaluate correctly" {
     const arr_obj = arr_val.asArray();
 
     // 1. Minkowski BBox map checks
-    const bbox_map = arr_obj.items.items[0].asMap();
-    try testing.expectEqual(@as(usize, 2), bbox_map.keys.items.len); // min, max exist
+    const bbox_inst = arr_obj.items.items[0].asInstance();
+    try testing.expect(bbox_inst.fields.contains("min"));
+    try testing.expect(bbox_inst.fields.contains("max"));
 
     // 2. Offset volume check (~1925.6)
     const vol = arr_obj.items.items[1].asNumber();
@@ -2153,14 +2154,14 @@ test "VM: Affine transformations via multmatrix evaluate correctly" {
     const arr_obj = arr_val.asArray();
 
     // Check 3D Transform
-    const c_bbox = arr_obj.items.items[0].asMap();
-    const c_min = c_bbox.values.items[0].asArray();
+    const c_bbox = arr_obj.items.items[0].asInstance();
+    const c_min = c_bbox.fields.get("min").?.asArray();
     try testing.expectEqual(@as(f64, 0.0), c_min.items.items[0].asNumber()); // -5 + 5
     try testing.expectEqual(@as(f64, 5.0), c_min.items.items[1].asNumber()); // -5 + 10
 
     // Check 2D Transform
-    const sq_bbox = arr_obj.items.items[1].asMap();
-    const sq_min = sq_bbox.values.items[0].asArray();
+    const sq_bbox = arr_obj.items.items[1].asInstance();
+    const sq_min = sq_bbox.fields.get("min").?.asArray();
     try testing.expectEqual(@as(f64, -3.0), sq_min.items.items[0].asNumber()); // -5 + 2
     try testing.expectEqual(@as(f64, -1.0), sq_min.items.items[1].asNumber()); // -5 + 4
 }
