@@ -30,10 +30,10 @@ pub const Brep = struct {
     shells: std.ArrayListUnmanaged(Shell),
     solids: std.ArrayListUnmanaged(Solid),
 
-    // Flattened Relationship Arrays
-    wire_edges: []const u32,
-    face_inner_wires: []const u32,
-    shell_faces: []const u32,
+    // Flattened Relationship Arrays (Upgraded to dynamic DOD)
+    wire_edges: std.ArrayListUnmanaged(u32),
+    face_inner_wires: std.ArrayListUnmanaged(u32),
+    shell_faces: std.ArrayListUnmanaged(u32),
 
     pub fn initEmpty(allocator: std.mem.Allocator) Brep {
         return .{
@@ -44,9 +44,9 @@ pub const Brep = struct {
             .faces = .empty,
             .shells = .empty,
             .solids = .empty,
-            .wire_edges = &[_]u32{},
-            .face_inner_wires = &[_]u32{},
-            .shell_faces = &[_]u32{},
+            .wire_edges = .empty,
+            .face_inner_wires = .empty,
+            .shell_faces = .empty,
         };
     }
 
@@ -58,8 +58,9 @@ pub const Brep = struct {
         self.shells.deinit(self.allocator);
         self.solids.deinit(self.allocator);
 
-        if (self.wire_edges.len > 0) self.allocator.free(self.wire_edges);
-        if (self.face_inner_wires.len > 0) self.allocator.free(self.face_inner_wires);
-        if (self.shell_faces.len > 0) self.allocator.free(self.shell_faces);
+        // Clean up the dynamic relationship arrays
+        self.wire_edges.deinit(self.allocator);
+        self.face_inner_wires.deinit(self.allocator);
+        self.shell_faces.deinit(self.allocator);
     }
 };

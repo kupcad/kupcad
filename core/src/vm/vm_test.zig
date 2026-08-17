@@ -2541,8 +2541,12 @@ test "VM: Brep topology deinit cleanly frees all arrays" {
         try brep.wires.append(testing.allocator, Wire{ .first_edge = 0, .num_edges = 0 });
     }
 
+    // Simulate appending to the relationship arrays
+    try brep.wire_edges.append(testing.allocator, 1);
+    try brep.wire_edges.append(testing.allocator, 2);
+
     // The defer brep.deinit() will trigger here.
-    // If it doesn't correctly free `.vertices` and `.wires`, Zig's test runner will panic with a memory leak.
+    // If it doesn't correctly free `.vertices`, `.wires`, and `.wire_edges`, Zig's test runner will panic with a memory leak.
 }
 
 test "VM: Closure stack frame safely pre-allocates local variables" {
