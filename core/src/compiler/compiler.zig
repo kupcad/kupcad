@@ -469,18 +469,7 @@ pub const Compiler = struct {
                 self.patchJump(else_jump);
             },
             .self_expr => {
-                if (self.is_method or self.enclosing == null) {
-                    try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
-                } else {
-                    // We are in a block. Capture the parent method's `self`
-                    if (try self.resolveSelfUpvalue()) |upv_idx| {
-                        try self.emitOp(.op_get_upvalue);
-                        try self.emitByte(upv_idx);
-                    } else {
-                        // Fallback (shouldn't happen in valid code)
-                        try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
-                    }
-                }
+                try self.emitPushSelf();
             },
             .while_stmt => {
                 const while_payload = self.tree.whileStmt(node);
@@ -1497,20 +1486,27 @@ pub const Compiler = struct {
         }
     }
 
+    fn emitPushSelf(self: *Compiler) CompileError!void {
+        if (self.is_method or self.enclosing == null) {
+            try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+        } else {
+            // We are in a block. Capture the parent method's `self`
+            if (try self.resolveSelfUpvalue()) |upv_idx| {
+                try self.emitOp(.op_get_upvalue);
+                try self.emitByte(upv_idx);
+            } else {
+                // Fallback (shouldn't happen in valid code)
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+            }
+        }
+    }
+
     fn emitVariableLoad(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!void {
         _ = sym;
         const name_str = self.tree.getString(name_id);
+
         if (std.mem.startsWith(u8, name_str, "@@")) {
-            if (self.is_method or self.enclosing == null) {
-                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
-            } else {
-                if (try self.resolveSelfUpvalue()) |upv_idx| {
-                    try self.emitOp(.op_get_upvalue);
-                    try self.emitByte(upv_idx);
-                } else {
-                    try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
-                }
-            }
+            try self.emitPushSelf(); // <-- Replaces 9 lines
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_get_class_var, .op_get_class_var_wide, name_idx);
         } else if (self.resolveLocal(name_id)) |local_slot| {
@@ -1526,17 +1522,9 @@ pub const Compiler = struct {
 
     fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ResolvedSymbol) CompileError!void {
         const name_str = self.tree.getString(name_id);
+
         if (std.mem.startsWith(u8, name_str, "@@")) {
-            if (self.is_method or self.enclosing == null) {
-                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
-            } else {
-                if (try self.resolveSelfUpvalue()) |upv_idx| {
-                    try self.emitOp(.op_get_upvalue);
-                    try self.emitByte(upv_idx);
-                } else {
-                    try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
-                }
-            }
+            try self.emitPushSelf(); // <-- Replaces 9 lines
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_set_class_var, .op_set_class_var_wide, name_idx);
         } else if (self.resolveLocal(name_id)) |local_slot| {
@@ -1545,15 +1533,13 @@ pub const Compiler = struct {
             try self.emitOp(.op_set_upvalue);
             try self.emitByte(upvalue_slot);
         } else if (self.enclosing == null or sym.kind == .global or self.isScriptGlobal(name_id)) {
-            // Track it if we are assigning it for the first time at the top level
             if (self.enclosing == null) {
                 try self.script_globals.put(self.allocator, name_id, {});
             }
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-            try self.emitOp(.op_nil); // Equilibrium: Assignment blocks yield nil
+            try self.emitOp(.op_nil);
         } else {
-            // Allocate sequential local slots starting at 1 (slot 0 is reserved for closure)
             const slot = @as(u16, @intCast(self.locals.items.len));
             try self.addLocal(name_id, slot);
             try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
