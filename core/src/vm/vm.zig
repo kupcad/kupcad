@@ -24,6 +24,7 @@ pub const CallFrame = struct {
     closure: *value.ObjClosure,
     ip: usize,
     base_slot: usize,
+    is_constructor: bool = false,
 };
 
 pub const RescueFrame = struct {
@@ -661,15 +662,15 @@ pub const VM = struct {
                 .op_return => {
                     const result = self.pop();
 
-                    // Close all remaining upvalues for this function before it dies
                     self.closeUpvalues(&self.stack[frame.base_slot]);
+
+                    // Constructor intercepts the return and yields `self` instead of the function's result
+                    const return_val = if (frame.is_constructor) self.stack[frame.base_slot] else result;
 
                     self.shrinkStack(frame.base_slot);
                     _ = self.frames.pop();
 
-                    // Put the result back on the stack WITHOUT incrementing its ARC
-                    // (It already holds a +1 reference from when it was initially popped)
-                    self.stack.ptr[self.stack_top] = result;
+                    self.stack.ptr[self.stack_top] = return_val;
                     self.stack_top += 1;
 
                     if (self.frames.items.len == target_depth) {
@@ -808,7 +809,8 @@ pub const VM = struct {
                     frame.ip += 1;
 
                     const base_slot = self.stack_top - 1 - arg_count;
-                    const method_name_str = frame.closure.function.name.?.chars;
+
+                    const method_name_str = if (frame.closure.function.name) |n| n.chars else "";
                     const receiver = self.stack[base_slot];
 
                     if (receiver.isInstance()) {
@@ -819,7 +821,7 @@ pub const VM = struct {
                         };
 
                         if (self.findMethod(superclass, method_name_str)) |method_val| {
-                            self.dispatchClosure(method_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
+                            self.dispatchClosure(method_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
                             continue;
                         }
 
@@ -1135,7 +1137,7 @@ pub const VM = struct {
         return null;
     }
 
-    pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize) !void {
+    pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize, is_constructor: bool) !void {
         if (self.frames.items.len >= limits.MAX_CALL_FRAMES) {
             self.runtimeError("Runtime Error: Call stack overflow (exceeded max call frames).\n", .{});
             return error.RuntimeError;
@@ -1188,6 +1190,7 @@ pub const VM = struct {
             .closure = closure,
             .ip = 0,
             .base_slot = base_slot,
+            .is_constructor = is_constructor,
         });
     }
 
@@ -1438,7 +1441,7 @@ pub const VM = struct {
 
                 if (self.findMethod(class_to_instantiate, "initialize")) |init_method| {
                     if (init_method.isClosure()) {
-                        self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
+                        self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, true) catch return .runtime_error;
                     }
                     return .ok;
                 } else if (arg_count > 0) {
@@ -1463,7 +1466,7 @@ pub const VM = struct {
                 self.stack_top += 1;
                 return .ok;
             } else if (m_val.isClosure()) {
-                self.dispatchClosure(m_val.asClosure(), arg_count, base_slot) catch return .runtime_error;
+                self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
                 return .ok;
             }
         }
@@ -1703,14 +1706,14 @@ pub const VM = struct {
             self.stack.ptr[self.stack_top] = result;
             self.stack_top += 1;
         } else if (callee.isClosure()) {
-            self.dispatchClosure(callee.asClosure(), arg_count, base_slot) catch return .runtime_error;
+            self.dispatchClosure(callee.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
         } else if (callee.isClass()) {
             const class_obj = callee.asClass();
             const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
             self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj);
 
             if (self.findMethod(class_obj, "initialize")) |init_method| {
-                self.dispatchClosure(init_method.asClosure(), arg_count, base_slot) catch return .runtime_error;
+                self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
             } else if (arg_count > 0) {
                 self.runtimeError("Runtime Error: Expected 0 args for default constructor.\n", .{});
                 return .runtime_error;

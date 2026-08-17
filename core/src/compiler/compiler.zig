@@ -356,7 +356,8 @@ pub const Compiler = struct {
                     body_node = ls.body;
                 }
 
-                try self.compileClosureBlock(params, body_node);
+                const name_str = if (def_name_id != .none) self.tree.getString(def_name_id) else null;
+                try self.compileClosureBlock(params, body_node, name_str);
 
                 if (node.tag == .def_stmt) {
                     const sym = self.symbols[@intFromEnum(node_idx)];
@@ -542,8 +543,10 @@ pub const Compiler = struct {
                 if (pa.op) |op| {
                     // Duplicate the pointer instead of re-evaluating the AST
                     try self.emitOp(.op_dup); // Stack: [target, target]
-                    try self.emitOpWithOperand(.op_invoke, .op_invoke_wide, name_idx);
-                    try self.emitByte(0); // 0 args -> Stack: [target, old_val]
+
+                    // Compound assignments must read properties via op_get_property, not op_invoke
+                    try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+                    // Stack is now: [target, old_val]
 
                     try self.compileNode(pa.value); // Stack: [target, old_val, rhs_val]
 
@@ -554,7 +557,7 @@ pub const Compiler = struct {
                         .divide => try self.emitOp(.op_divide),
                         else => return error.UnknownNode,
                     }
-                    // Stack: [target, new_val]
+                    // Stack is now: [target, new_val]
                 } else {
                     try self.compileNode(pa.value); // Stack: [target, new_val]
                 }
@@ -718,8 +721,14 @@ pub const Compiler = struct {
         }
     }
 
-    fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex) CompileError!void {
+    fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex, func_name: ?[]const u8) CompileError!void {
         const func = try self.vm.gc.allocateFunction(self.vm);
+
+        // Assign the method name so `super()` can dynamically look up the hierarchy
+        if (func_name) |n| {
+            const str_val = try self.vm.allocateStringTakeOwnership(try self.allocator.dupe(u8, n));
+            func.name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
+        }
 
         var positional_count: usize = 0;
         var splat_idx: ?usize = null;
@@ -1563,7 +1572,7 @@ pub const Compiler = struct {
                 const m_name_idx = try self.makeStringConstant(final_name);
 
                 const params = self.tree.getParams(ds.params);
-                try self.compileClosureBlock(params, ds.body);
+                try self.compileClosureBlock(params, ds.body, final_name);
 
                 try self.emitOpWithOperand(if (is_class_method) .op_class_method else .op_method, if (is_class_method) .op_class_method_wide else .op_method_wide, m_name_idx);
             } else if (stmt_node.tag == .method_call) {
@@ -1609,7 +1618,7 @@ pub const Compiler = struct {
                 const method_name = self.tree.getString(ds.name);
                 const m_name_idx = try self.makeStringConstant(method_name);
                 const params = self.tree.getParams(ds.params);
-                try self.compileClosureBlock(params, ds.body);
+                try self.compileClosureBlock(params, ds.body, method_name);
                 try self.emitOpWithOperand(.op_method, .op_method_wide, m_name_idx);
             }
         }
@@ -1651,7 +1660,9 @@ pub const Compiler = struct {
         try self.emitOp(.op_super_invoke);
         try self.emitByte(@intCast(pos_count));
 
-        self.simulatePop(pos_count + 1);
+        // op_super_invoke inherently simulates popping 1 (the map).
+        // We only need to pop the remaining positional args to perfectly balance the tracker.
+        self.simulatePop(pos_count);
         self.simulatePush(1);
     }
 

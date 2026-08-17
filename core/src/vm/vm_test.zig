@@ -2606,3 +2606,131 @@ test "VM: Reflection methods safely pop implicit blocks without corrupting stack
     try testing.expectEqual(true, arr_obj.items.items[0].asBool());
     try testing.expectEqual(true, arr_obj.items.items[1].asBool());
 }
+
+test "VM: OOP Inheritance, instance fields, and super() expressions" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Base
+        \\  def initialize(base_val)
+        \\    self.val = base_val
+        \\  end
+        \\  def calc(x)
+        \\    self.val + x
+        \\  end
+        \\end
+        \\
+        \\class Child < Base
+        \\  def initialize(base_val, child_val)
+        \\    super(base_val)
+        \\    self.c_val = child_val
+        \\  end
+        \\  def calc(x)
+        \\    super(x) + self.c_val
+        \\  end
+        \\end
+        \\
+        \\c = Child.new(10, 20)
+        \\c.calc(5) # Base(10 + 5) + Child(20) = 35
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 35.0), vm.stack[0].asNumber());
+}
+
+test "VM: Object properties and compound assignments" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Point
+        \\  def initialize(x, y)
+        \\    self.x = x
+        \\    self.y = y
+        \\  end
+        \\end
+        \\
+        \\p = Point.new(10, 20)
+        \\p.x += 5
+        \\p.y = p.y * 2
+        \\[p.x, p.y]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Stack: [Point closure, [15, 40]]
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 15.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 40.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: Fluent method chaining" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Builder
+        \\  def initialize
+        \\    self.val = 0
+        \\  end
+        \\  def add(x)
+        \\    self.val += x
+        \\    self
+        \\  end
+        \\  def build
+        \\    self.val
+        \\  end
+        \\end
+        \\
+        \\Builder.new.add(10).add(20).build
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 30.0), vm.stack[0].asNumber());
+}
