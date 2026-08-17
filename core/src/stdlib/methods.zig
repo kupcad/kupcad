@@ -143,24 +143,6 @@ pub fn meshBBox(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Va
     try bbox_inst.fields.put(vm.allocator, "max_y", value.Value.initNumber(box.max_y));
     try bbox_inst.fields.put(vm.allocator, "max_z", value.Value.initNumber(box.max_z));
 
-    // Attach Array Tuples for easy destructuring (e.g. `x, y, z = bbox.size`)
-    const build_arr = struct {
-        fn build(v: *VM, coords: [3]f64) !value.Value {
-            const a = try v.gc.allocateArray(v);
-            v.push(value.Value.initObj(&a.obj));
-            defer _ = v.pop();
-            try a.items.append(v.allocator, value.Value.initNumber(coords[0]));
-            try a.items.append(v.allocator, value.Value.initNumber(coords[1]));
-            try a.items.append(v.allocator, value.Value.initNumber(coords[2]));
-            return value.Value.initObj(&a.obj);
-        }
-    }.build;
-
-    try bbox_inst.fields.put(vm.allocator, "size", try build_arr(vm, .{ size_x, size_y, size_z }));
-    try bbox_inst.fields.put(vm.allocator, "center", try build_arr(vm, .{ center_x, center_y, center_z }));
-    try bbox_inst.fields.put(vm.allocator, "min", try build_arr(vm, .{ box.min_x, box.min_y, box.min_z }));
-    try bbox_inst.fields.put(vm.allocator, "max", try build_arr(vm, .{ box.max_x, box.max_y, box.max_z }));
-
     return value.Value.initObj(&bbox_inst.obj);
 }
 

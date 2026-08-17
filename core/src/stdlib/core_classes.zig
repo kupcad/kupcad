@@ -8,6 +8,7 @@ const string_class = @import("classes/string.zig");
 const number_class = @import("classes/number.zig");
 const symbol_class = @import("classes/symbol.zig");
 const boolean_class = @import("classes/boolean.zig");
+const bbox_class = @import("classes/bbox.zig");
 const math_class = @import("classes/math.zig");
 
 fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
@@ -34,6 +35,9 @@ pub fn registerCoreClasses(vm: *VM) !void {
     }
     if (vm.boolean_class) |cls| {
         for (boolean_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
+    }
+    if (vm.bbox_class) |cls| {
+        for (bbox_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
     }
     if (vm.globals.get("Math")) |v| {
         const math_cls = v.asInstance().class;
