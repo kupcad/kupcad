@@ -24,61 +24,51 @@ fn parseArgs(arg_count: u8, args: [*]value.Value) ArgParseCtx {
     return .{ .pos_count = arg_count, .kwargs = null };
 }
 
-/// Helper to safely extract a value from the trailing keyword arguments map
-fn getKwarg(map_val: ?value.Value, key: []const u8) ?value.Value {
-    if (map_val) |mv| {
-        if (mv.isObject() and mv.asObj().obj_type == .map) {
-            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", mv.asObj())));
+fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
+    var opts = GeomOptions{};
+
+    if (parsed.kwargs) |kw| {
+        if (kw.isObject() and kw.asObj().obj_type == .map) {
+            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", kw.asObj())));
+
             for (map.keys.items, 0..) |k, i| {
-                // Check both Strings and Symbols for the key
+                // Ensure the key is a String or Symbol before trying to read it
                 if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
                     const k_str = if (k.asObj().obj_type == .string)
                         @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
                     else
                         @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
-                    if (std.mem.eql(u8, k_str, key)) {
-                        return map.values.items[i];
+
+                    const v = map.values.items[i];
+
+                    if (std.mem.eql(u8, k_str, "size")) {
+                        if (v.isNumber()) {
+                            opts.x = v.asNumber();
+                            opts.y = opts.x;
+                            opts.z = opts.x;
+                        }
+                    } else if (std.mem.eql(u8, k_str, "x")) {
+                        if (v.isNumber()) opts.x = v.asNumber();
+                    } else if (std.mem.eql(u8, k_str, "y")) {
+                        if (v.isNumber()) opts.y = v.asNumber();
+                    } else if (std.mem.eql(u8, k_str, "z")) {
+                        if (v.isNumber()) opts.z = v.asNumber();
+                    } else if (std.mem.eql(u8, k_str, "r")) {
+                        if (v.isNumber()) opts.r = v.asNumber();
+                    } else if (std.mem.eql(u8, k_str, "d")) {
+                        if (v.isNumber()) opts.r = v.asNumber() / 2.0;
+                    } else if (std.mem.eql(u8, k_str, "h")) {
+                        if (v.isNumber()) opts.h = v.asNumber();
+                    } else if (std.mem.eql(u8, k_str, "segments")) {
+                        if (v.isNumber()) opts.segments = @intFromFloat(v.asNumber());
+                    } else if (std.mem.eql(u8, k_str, "center")) {
+                        if (v.isBool()) opts.center = v.asBool();
                     }
                 }
             }
         }
     }
-    return null;
-}
 
-fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
-    var opts = GeomOptions{};
-    if (getKwarg(parsed.kwargs, "size")) |v| {
-        if (v.isNumber()) {
-            opts.x = v.asNumber();
-            opts.y = opts.x;
-            opts.z = opts.x;
-        }
-    }
-    if (getKwarg(parsed.kwargs, "x")) |v| {
-        if (v.isNumber()) opts.x = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "y")) |v| {
-        if (v.isNumber()) opts.y = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "z")) |v| {
-        if (v.isNumber()) opts.z = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "r")) |v| {
-        if (v.isNumber()) opts.r = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "d")) |v| {
-        if (v.isNumber()) opts.r = v.asNumber() / 2.0;
-    }
-    if (getKwarg(parsed.kwargs, "h")) |v| {
-        if (v.isNumber()) opts.h = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "segments")) |v| {
-        if (v.isNumber()) opts.segments = @intFromFloat(v.asNumber());
-    }
-    if (getKwarg(parsed.kwargs, "center")) |v| {
-        if (v.isBool()) opts.center = v.asBool();
-    }
     return opts;
 }
 
