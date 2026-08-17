@@ -3129,3 +3129,136 @@ test "VM: Lexical block scopes isolate shadowed variables" {
     // x should remain 10, completely unaffected by the inner block's parameter
     try testing.expectEqual(@as(f64, 10.0), vm.stack[0].asNumber());
 }
+
+test "VM: Relational operators (<=, >=, <, >, !=) evaluate correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Prove that the compiler's desugaring of <= and >= into (< !) and (> !) works perfectly
+    const source =
+        \\[ 5 <= 5, 5 <= 6, 5 >= 5, 5 >= 4, 10 < 20, 20 > 10, 5 != 6, 10 <= 5 ]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", vm.stack[0].asObj())));
+    try testing.expectEqual(@as(usize, 8), arr_obj.items.items.len);
+
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool()); // 5 <= 5
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool()); // 5 <= 6
+    try testing.expectEqual(true, arr_obj.items.items[2].asBool()); // 5 >= 5
+    try testing.expectEqual(true, arr_obj.items.items[3].asBool()); // 5 >= 4
+    try testing.expectEqual(true, arr_obj.items.items[4].asBool()); // 10 < 20
+    try testing.expectEqual(true, arr_obj.items.items[5].asBool()); // 20 > 10
+    try testing.expectEqual(true, arr_obj.items.items[6].asBool()); // 5 != 6
+    try testing.expectEqual(false, arr_obj.items.items[7].asBool()); // 10 <= 5 (False!)
+}
+
+test "VM: Consolidated numeric operations (*, /, %, **) evaluate correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\[ 10 * 5, 10 / 2, 11 % 3, 2 ** 4 ]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", vm.stack[0].asObj())));
+    try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+
+    try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber()); // 10 * 5
+    try testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[1].asNumber()); // 10 / 2
+    try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[2].asNumber()); // 11 % 3
+    try testing.expectEqual(@as(f64, 16.0), arr_obj.items.items[3].asNumber()); // 2 ^ 4
+}
+
+test "VM: Optimized String methods operate safely without leaks" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Proves that allocateStringTakeOwnership correctly takes over the memory
+    // from our stringUpcase/stringReplace refactor without double allocating.
+    const source =
+        \\[ "hello".upcase(), "WORLD".downcase(), "foo bar".replace("foo", "baz") ]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", vm.stack[0].asObj())));
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+
+    const s1 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[0].asObj())));
+    try testing.expectEqualStrings("HELLO", s1.chars);
+
+    const s2 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj())));
+    try testing.expectEqualStrings("world", s2.chars);
+
+    const s3 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj())));
+    try testing.expectEqualStrings("baz bar", s3.chars);
+}
+
+test "VM Edge Case: CSG operations across mixed 2D/3D types throw runtime error" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true; // Don't pollute terminal output
+
+    // Attempt to Union (+) a 3D Cube with a 2D Square
+    const source =
+        \\c = cube(10)
+        \\s = square(10)
+        \\c + s
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    // Our DRY'd cadBinaryHandler should instantly block this as a type mismatch
+    try testing.expectEqual(.runtime_error, result);
+}
