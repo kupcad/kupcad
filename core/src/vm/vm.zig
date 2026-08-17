@@ -247,13 +247,8 @@ pub const VM = struct {
                 .op_add, .op_subtract, .op_bitwise_and => {
                     if (self.executeBinaryArithmetic(op) != .ok) return .runtime_error;
                 },
-                .op_multiply => {
-                    const nums = self.popBinaryNumbers() catch return .runtime_error;
-                    self.push(value.Value.initNumber(nums[0] * nums[1]));
-                },
-                .op_divide => {
-                    const nums = self.popBinaryNumbers() catch return .runtime_error;
-                    self.push(value.Value.initNumber(nums[0] / nums[1]));
+                .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater => {
+                    if (self.executeNumericBinary(op) != .ok) return .runtime_error;
                 },
                 .op_negate => {
                     const a = self.pop();
@@ -263,14 +258,6 @@ pub const VM = struct {
                         return .runtime_error;
                     }
                     self.push(value.Value.initNumber(-a.asNumber()));
-                },
-                .op_modulo => {
-                    const nums = self.popBinaryNumbers() catch return .runtime_error;
-                    self.push(value.Value.initNumber(@mod(nums[0], nums[1])));
-                },
-                .op_exponent => {
-                    const nums = self.popBinaryNumbers() catch return .runtime_error;
-                    self.push(value.Value.initNumber(std.math.pow(f64, nums[0], nums[1])));
                 },
                 .op_not => {
                     const val = self.pop();
@@ -291,14 +278,6 @@ pub const VM = struct {
                     const test_val = self.pop();
                     defer self.releaseValue(test_val);
                     self.push(value.Value.initBool(self.valuesCaseEqual(case_val, test_val)));
-                },
-                .op_less => {
-                    const nums = self.popBinaryNumbers() catch return .runtime_error;
-                    self.push(value.Value.initBool(nums[0] < nums[1]));
-                },
-                .op_greater => {
-                    const nums = self.popBinaryNumbers() catch return .runtime_error;
-                    self.push(value.Value.initBool(nums[0] > nums[1]));
                 },
                 .op_get_property, .op_get_property_wide => {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_property_wide);
@@ -1375,6 +1354,20 @@ pub const VM = struct {
             self.runtimeError("Runtime Error: Invalid operands for '{s}'\n", .{op_symbol});
             return .runtime_error;
         }
+    }
+
+    inline fn executeNumericBinary(self: *VM, op: chunk.OpCode) InterpretResult {
+        const nums = self.popBinaryNumbers() catch return .runtime_error;
+        switch (op) {
+            .op_multiply => self.push(value.Value.initNumber(nums[0] * nums[1])),
+            .op_divide => self.push(value.Value.initNumber(nums[0] / nums[1])),
+            .op_modulo => self.push(value.Value.initNumber(@mod(nums[0], nums[1]))),
+            .op_exponent => self.push(value.Value.initNumber(std.math.pow(f64, nums[0], nums[1]))),
+            .op_less => self.push(value.Value.initBool(nums[0] < nums[1])),
+            .op_greater => self.push(value.Value.initBool(nums[0] > nums[1])),
+            else => unreachable,
+        }
+        return .ok;
     }
 
     inline fn executeInvoke(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
