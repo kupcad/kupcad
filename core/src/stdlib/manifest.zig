@@ -99,35 +99,33 @@ pub fn cadInvokeHandler(vm: *VM, receiver: value.Value, method_name: []const u8,
 }
 
 pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value {
-    if (a.isGeometry() and b.isGeometry()) {
-        const geom_a = a.asGeometry();
-        const geom_b = b.asGeometry();
+    const is_3d = a.isGeometry() and b.isGeometry();
+    const is_2d = a.isCrossSection() and b.isCrossSection();
 
-        const dag_tag: dag.DAGTag = switch (op) {
-            .op_add => .union_op,
-            .op_subtract => .difference_op,
-            .op_bitwise_and => .intersection_op,
-            else => return error.RuntimeError,
-        };
-
-        const result_idx = try vm.dag_builder.addBinary(dag_tag, geom_a.dag_idx, geom_b.dag_idx);
-        const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = result_idx });
-        return value.Value.initGeometry(geom_obj);
-    } else if (a.isCrossSection() and b.isCrossSection()) {
-        const cs_a = a.asCrossSection();
-        const cs_b = b.asCrossSection();
-
-        const dag_tag: dag.DAGTag = switch (op) {
-            .op_add => .cs_union_op,
-            .op_subtract => .cs_difference_op,
-            .op_bitwise_and => .cs_intersection_op,
-            else => return error.RuntimeError,
-        };
-
-        const result_idx = try vm.dag_builder.addBinary(dag_tag, cs_a.dag_idx, cs_b.dag_idx);
-        return try vm.allocateCrossSection(result_idx);
-    } else {
+    if (!is_3d and !is_2d) {
         vm.reportError("Runtime Error: Invalid operands for CSG operation. Both must be 3D Geometries or 2D Profiles.\n", .{});
         return error.RuntimeError;
+    }
+
+    // Unified tag resolution
+    const dag_tag: dag.DAGTag = switch (op) {
+        .op_add => if (is_3d) .union_op else .cs_union_op,
+        .op_subtract => if (is_3d) .difference_op else .cs_difference_op,
+        .op_bitwise_and => if (is_3d) .intersection_op else .cs_intersection_op,
+        else => return error.RuntimeError,
+    };
+
+    // Unified index extraction
+    const idx_a = if (is_3d) a.asGeometry().dag_idx else a.asCrossSection().dag_idx;
+    const idx_b = if (is_3d) b.asGeometry().dag_idx else b.asCrossSection().dag_idx;
+
+    // Execute insertion once
+    const result_idx = try vm.dag_builder.addBinary(dag_tag, idx_a, idx_b);
+
+    if (is_3d) {
+        const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = result_idx });
+        return value.Value.initGeometry(geom_obj);
+    } else {
+        return try vm.allocateCrossSection(result_idx);
     }
 }
