@@ -225,10 +225,6 @@ pub const VM = struct {
             const op: chunk.OpCode = @enumFromInt(instruction);
 
             switch (op) {
-                .op_constant, .op_constant_wide => {
-                    const const_idx = self.readOperand(exec_chunk, frame, op == .op_constant_wide);
-                    self.push(exec_chunk.constants.items[const_idx]);
-                },
                 .op_nil => self.push(value.Value.initNil()),
                 .op_true => self.push(value.Value.initBool(true)),
                 .op_false => self.push(value.Value.initBool(false)),
@@ -236,13 +232,38 @@ pub const VM = struct {
                     const dropped = self.pop();
                     self.releaseValue(dropped);
                 },
-                .op_get_local, .op_get_local_wide => {
-                    const slot = self.readOperand(exec_chunk, frame, op == .op_get_local_wide);
+                .op_constant => {
+                    const const_idx = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
+                    self.push(exec_chunk.constants.items[const_idx]);
+                },
+                .op_constant_wide => {
+                    const high = @as(usize, exec_chunk.code.items[frame.ip]);
+                    const low = @as(usize, exec_chunk.code.items[frame.ip + 1]);
+                    frame.ip += 2;
+                    self.push(exec_chunk.constants.items[(high << 8) | low]);
+                },
+                .op_get_local => {
+                    const slot = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
                     self.push(self.getLocal(frame, slot));
                 },
-                .op_set_local, .op_set_local_wide => {
-                    const slot = self.readOperand(exec_chunk, frame, op == .op_set_local_wide);
+                .op_get_local_wide => {
+                    const high = @as(usize, exec_chunk.code.items[frame.ip]);
+                    const low = @as(usize, exec_chunk.code.items[frame.ip + 1]);
+                    frame.ip += 2;
+                    self.push(self.getLocal(frame, (high << 8) | low));
+                },
+                .op_set_local => {
+                    const slot = exec_chunk.code.items[frame.ip];
+                    frame.ip += 1;
                     self.setLocal(frame, slot, self.stack[self.stack_top - 1]);
+                },
+                .op_set_local_wide => {
+                    const high = @as(usize, exec_chunk.code.items[frame.ip]);
+                    const low = @as(usize, exec_chunk.code.items[frame.ip + 1]);
+                    frame.ip += 2;
+                    self.setLocal(frame, (high << 8) | low, self.stack[self.stack_top - 1]);
                 },
                 .op_add, .op_subtract, .op_bitwise_and => {
                     if (self.executeBinaryArithmetic(op) != .ok) return .runtime_error;
