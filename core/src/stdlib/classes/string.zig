@@ -13,17 +13,21 @@ pub fn stringLength(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
 pub fn stringUpcase(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try common.unwrapString(vm_opaque, arg_count, 0, args);
     const new_str = try ctx.vm.allocator.alloc(u8, ctx.str.chars.len);
-    defer ctx.vm.allocator.free(new_str);
+    errdefer ctx.vm.allocator.free(new_str); // Free ONLY if GC allocation fails
+
     for (ctx.str.chars, 0..) |c, i| new_str[i] = std.ascii.toUpper(c);
-    return try ctx.vm.allocateString(new_str);
+
+    return try ctx.vm.allocateStringTakeOwnership(new_str);
 }
 
 pub fn stringDowncase(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try common.unwrapString(vm_opaque, arg_count, 0, args);
     const new_str = try ctx.vm.allocator.alloc(u8, ctx.str.chars.len);
-    defer ctx.vm.allocator.free(new_str);
+    errdefer ctx.vm.allocator.free(new_str);
+
     for (ctx.str.chars, 0..) |c, i| new_str[i] = std.ascii.toLower(c);
-    return try ctx.vm.allocateString(new_str);
+
+    return try ctx.vm.allocateStringTakeOwnership(new_str);
 }
 
 pub fn stringSplit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -49,6 +53,7 @@ pub fn stringReplace(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value)
     const ctx = try common.unwrapString(vm_opaque, arg_count, 2, args);
     const target_val = args[0];
     const replace_val = args[1];
+
     if (!target_val.isObject() or target_val.asObj().obj_type != .string) return error.RuntimeError;
     if (!replace_val.isObject() or replace_val.asObj().obj_type != .string) return error.RuntimeError;
 
@@ -56,8 +61,9 @@ pub fn stringReplace(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value)
     const r_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", replace_val.asObj()))).chars;
 
     const replaced = try std.mem.replaceOwned(u8, ctx.vm.allocator, ctx.str.chars, t_str, r_str);
-    defer ctx.vm.allocator.free(replaced);
-    return try ctx.vm.allocateString(replaced);
+    errdefer ctx.vm.allocator.free(replaced);
+
+    return try ctx.vm.allocateStringTakeOwnership(replaced);
 }
 
 pub fn stringToF(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
