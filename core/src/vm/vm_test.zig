@@ -2527,15 +2527,22 @@ test "VM: Symbols are weak references and swept when unused" {
 test "VM: Brep topology deinit cleanly frees all arrays" {
     // If Brep.deinit() leaks, std.testing.allocator will fail the test automatically!
     const Brep = @import("../kernel/engines/brep/topology.zig").Brep;
+    const Vertex = @import("../kernel/engines/brep/topology.zig").Vertex;
+    const Wire = @import("../kernel/engines/brep/topology.zig").Wire;
+
     var brep = Brep.initEmpty(testing.allocator);
     defer brep.deinit();
 
-    // Simulate allocating topology slices
-    brep.vertices = try testing.allocator.alloc(@import("../kernel/engines/brep/topology.zig").Vertex, 10);
-    brep.wires = try testing.allocator.alloc(@import("../kernel/engines/brep/topology.zig").Wire, 5);
+    // Simulate allocating topology slices using the new ArrayListUnmanaged API
+    for (0..10) |_| {
+        try brep.vertices.append(testing.allocator, Vertex{ .point = .{ .x = 0.0, .y = 0.0, .z = 0.0 } });
+    }
+    for (0..5) |_| {
+        try brep.wires.append(testing.allocator, Wire{ .first_edge = 0, .num_edges = 0 });
+    }
 
     // The defer brep.deinit() will trigger here.
-    // If it doesn't free `.vertices` and `.wires`, Zig's test runner will panic with a memory leak.
+    // If it doesn't correctly free `.vertices` and `.wires`, Zig's test runner will panic with a memory leak.
 }
 
 test "VM: Closure stack frame safely pre-allocates local variables" {
@@ -2984,4 +2991,34 @@ test "VM: Advanced Math (exponent, modulo) and nested String Interpolation" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", vm.stack[0].asObj())));
     try testing.expectEqualStrings("Result: 12!", str_obj.chars);
+}
+
+test "VM: op_interpolate prevents memory leak on GC OOM" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Allocate string fragments BEFORE artificially restricting the GC
+    const s1 = try out_chunk.addConstant(testing.allocator, try vm.allocateString("A"));
+    const s2 = try out_chunk.addConstant(testing.allocator, try vm.allocateString("B"));
+
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, @intCast(s1), 0);
+    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
+    try out_chunk.write(testing.allocator, @intCast(s2), 0);
+
+    try out_chunk.writeOp(testing.allocator, .op_interpolate, 0);
+    try out_chunk.write(testing.allocator, 2, 0); // 2 parts
+    try out_chunk.writeOp(testing.allocator, .op_return, 0);
+
+    // NOW restrict memory to force an OOM during execution of op_interpolate
+    vm.gc.max_memory_limit = 10;
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
+    // If the leak exists, Zig's testing allocator will panic at the end of this test.
 }

@@ -453,6 +453,7 @@ pub const VM = struct {
                         return .runtime_error;
                     };
                     out.deinit(); // Clean up the writer explicitly
+                    errdefer self.allocator.free(merged_bytes);
 
                     // Pass ownership to the VM!
                     const merged_str = self.allocateStringTakeOwnership(merged_bytes) catch return .runtime_error;

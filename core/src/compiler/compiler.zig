@@ -1725,6 +1725,12 @@ pub const Compiler = struct {
         self.simulatePush(1);
     }
 
+    fn writeJumpOffset(self: *Compiler, target_index: usize, offset: usize) void {
+        self.current_chunk.code.items[target_index] = @intCast((offset >> 16) & 0xFF);
+        self.current_chunk.code.items[target_index + 1] = @intCast((offset >> 8) & 0xFF);
+        self.current_chunk.code.items[target_index + 2] = @intCast(offset & 0xFF);
+    }
+
     fn isScriptGlobal(self: *Compiler, name_id: ast.StringId) bool {
         var root: *Compiler = self;
         while (root.enclosing) |parent| {

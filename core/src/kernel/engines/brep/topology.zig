@@ -23,12 +23,12 @@ pub const Brep = struct {
     allocator: std.mem.Allocator,
 
     // Entity Arrays
-    vertices: []const Vertex,
-    edges: []const Edge,
-    wires: []const Wire,
-    faces: []const Face,
-    shells: []const Shell,
-    solids: []const Solid,
+    vertices: std.ArrayListUnmanaged(Vertex),
+    edges: std.ArrayListUnmanaged(Edge),
+    wires: std.ArrayListUnmanaged(Wire),
+    faces: std.ArrayListUnmanaged(Face),
+    shells: std.ArrayListUnmanaged(Shell),
+    solids: std.ArrayListUnmanaged(Solid),
 
     // Flattened Relationship Arrays
     wire_edges: []const u32,
@@ -38,12 +38,12 @@ pub const Brep = struct {
     pub fn initEmpty(allocator: std.mem.Allocator) Brep {
         return .{
             .allocator = allocator,
-            .vertices = &[_]Vertex{},
-            .edges = &[_]Edge{},
-            .wires = &[_]Wire{},
-            .faces = &[_]Face{},
-            .shells = &[_]Shell{},
-            .solids = &[_]Solid{},
+            .vertices = .empty,
+            .edges = .empty,
+            .wires = .empty,
+            .faces = .empty,
+            .shells = .empty,
+            .solids = .empty,
             .wire_edges = &[_]u32{},
             .face_inner_wires = &[_]u32{},
             .shell_faces = &[_]u32{},
@@ -51,12 +51,12 @@ pub const Brep = struct {
     }
 
     pub fn deinit(self: *Brep) void {
-        if (self.vertices.len > 0) self.allocator.free(self.vertices);
-        if (self.edges.len > 0) self.allocator.free(self.edges);
-        if (self.wires.len > 0) self.allocator.free(self.wires);
-        if (self.faces.len > 0) self.allocator.free(self.faces);
-        if (self.shells.len > 0) self.allocator.free(self.shells);
-        if (self.solids.len > 0) self.allocator.free(self.solids);
+        self.vertices.deinit(self.allocator);
+        self.edges.deinit(self.allocator);
+        self.wires.deinit(self.allocator);
+        self.faces.deinit(self.allocator);
+        self.shells.deinit(self.allocator);
+        self.solids.deinit(self.allocator);
 
         if (self.wire_edges.len > 0) self.allocator.free(self.wire_edges);
         if (self.face_inner_wires.len > 0) self.allocator.free(self.face_inner_wires);
