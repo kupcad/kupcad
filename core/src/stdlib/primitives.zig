@@ -7,6 +7,16 @@ const ArgParseCtx = struct {
     kwargs: ?value.Value,
 };
 
+const GeomOptions = struct {
+    x: f64 = 1.0,
+    y: f64 = 1.0,
+    z: f64 = 1.0,
+    r: f64 = 1.0,
+    h: f64 = 1.0,
+    segments: i32 = 0,
+    center: bool = false,
+};
+
 fn parseArgs(arg_count: u8, args: [*]value.Value) ArgParseCtx {
     if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
         return .{ .pos_count = arg_count - 1, .kwargs = args[arg_count - 1] };
@@ -36,154 +46,111 @@ fn getKwarg(map_val: ?value.Value, key: []const u8) ?value.Value {
     return null;
 }
 
-pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    var x: f64 = 1.0;
-    var y: f64 = 1.0;
-    var z: f64 = 1.0;
-    var center: bool = false;
-
-    const parsed = parseArgs(arg_count, args);
-
-    if (parsed.pos_count > 0 and args[0].isNumber()) {
-        x = args[0].asNumber();
-        y = x;
-        z = x;
-    }
-    if (parsed.pos_count > 1 and args[1].isNumber()) y = args[1].asNumber();
-    if (parsed.pos_count > 2 and args[2].isNumber()) z = args[2].asNumber();
-    if (parsed.pos_count > 3 and args[3].isBool()) center = args[3].asBool();
-
+fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
+    var opts = GeomOptions{};
     if (getKwarg(parsed.kwargs, "size")) |v| {
         if (v.isNumber()) {
-            x = v.asNumber();
-            y = x;
-            z = x;
+            opts.x = v.asNumber();
+            opts.y = opts.x;
+            opts.z = opts.x;
         }
     }
     if (getKwarg(parsed.kwargs, "x")) |v| {
-        if (v.isNumber()) x = v.asNumber();
+        if (v.isNumber()) opts.x = v.asNumber();
     }
     if (getKwarg(parsed.kwargs, "y")) |v| {
-        if (v.isNumber()) y = v.asNumber();
+        if (v.isNumber()) opts.y = v.asNumber();
     }
     if (getKwarg(parsed.kwargs, "z")) |v| {
-        if (v.isNumber()) z = v.asNumber();
+        if (v.isNumber()) opts.z = v.asNumber();
+    }
+    if (getKwarg(parsed.kwargs, "r")) |v| {
+        if (v.isNumber()) opts.r = v.asNumber();
+    }
+    if (getKwarg(parsed.kwargs, "d")) |v| {
+        if (v.isNumber()) opts.r = v.asNumber() / 2.0;
+    }
+    if (getKwarg(parsed.kwargs, "h")) |v| {
+        if (v.isNumber()) opts.h = v.asNumber();
+    }
+    if (getKwarg(parsed.kwargs, "segments")) |v| {
+        if (v.isNumber()) opts.segments = @intFromFloat(v.asNumber());
     }
     if (getKwarg(parsed.kwargs, "center")) |v| {
-        if (v.isBool()) center = v.asBool();
+        if (v.isBool()) opts.center = v.asBool();
     }
+    return opts;
+}
 
-    const dag_idx = try vm.dag_builder.addCube(x, y, z, center);
+pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const parsed = parseArgs(arg_count, args);
+    var opts = extractGeomOptions(parsed);
+
+    if (parsed.pos_count > 0 and args[0].isNumber()) {
+        opts.x = args[0].asNumber();
+        opts.y = opts.x;
+        opts.z = opts.x;
+    }
+    if (parsed.pos_count > 1 and args[1].isNumber()) opts.y = args[1].asNumber();
+    if (parsed.pos_count > 2 and args[2].isNumber()) opts.z = args[2].asNumber();
+    if (parsed.pos_count > 3 and args[3].isBool()) opts.center = args[3].asBool();
+
+    const dag_idx = try vm.dag_builder.addCube(opts.x, opts.y, opts.z, opts.center);
     const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = dag_idx });
     return value.Value.initGeometry(geom_obj);
 }
 
 pub fn nativeCylinder(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    var r: f64 = 1.0;
-    var h: f64 = 1.0;
-    var center: bool = false;
-
     const parsed = parseArgs(arg_count, args);
+    var opts = extractGeomOptions(parsed);
 
-    if (parsed.pos_count > 0 and args[0].isNumber()) r = args[0].asNumber();
-    if (parsed.pos_count > 1 and args[1].isNumber()) h = args[1].asNumber();
-    if (parsed.pos_count > 2 and args[2].isBool()) center = args[2].asBool();
+    if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
+    if (parsed.pos_count > 1 and args[1].isNumber()) opts.h = args[1].asNumber();
+    if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
 
-    if (getKwarg(parsed.kwargs, "r")) |v| {
-        if (v.isNumber()) r = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "d")) |v| {
-        if (v.isNumber()) r = v.asNumber() / 2.0;
-    }
-    if (getKwarg(parsed.kwargs, "h")) |v| {
-        if (v.isNumber()) h = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "center")) |v| {
-        if (v.isBool()) center = v.asBool();
-    }
-
-    const dag_idx = try vm.dag_builder.addCylinder(r, h, center);
+    const dag_idx = try vm.dag_builder.addCylinder(opts.r, opts.h, opts.center);
     const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = dag_idx });
     return value.Value.initGeometry(geom_obj);
 }
 
 pub fn nativeSphere(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    var r: f64 = 1.0;
-
     const parsed = parseArgs(arg_count, args);
+    var opts = extractGeomOptions(parsed);
 
-    if (parsed.pos_count > 0 and args[0].isNumber()) r = args[0].asNumber();
+    if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
 
-    if (getKwarg(parsed.kwargs, "r")) |v| {
-        if (v.isNumber()) r = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "d")) |v| {
-        if (v.isNumber()) r = v.asNumber() / 2.0;
-    }
-
-    const dag_idx = try vm.dag_builder.addSphere(r);
+    const dag_idx = try vm.dag_builder.addSphere(opts.r);
     const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = dag_idx });
     return value.Value.initGeometry(geom_obj);
 }
 
 pub fn nativeSquare(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    var x: f64 = 1.0;
-    var y: f64 = 1.0;
-    var center: bool = false;
-
     const parsed = parseArgs(arg_count, args);
+    var opts = extractGeomOptions(parsed);
 
     if (parsed.pos_count > 0 and args[0].isNumber()) {
-        x = args[0].asNumber();
-        y = x;
+        opts.x = args[0].asNumber();
+        opts.y = opts.x;
     }
-    if (parsed.pos_count > 1 and args[1].isNumber()) y = args[1].asNumber();
-    if (parsed.pos_count > 2 and args[2].isBool()) center = args[2].asBool();
+    if (parsed.pos_count > 1 and args[1].isNumber()) opts.y = args[1].asNumber();
+    if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
 
-    if (getKwarg(parsed.kwargs, "size")) |v| {
-        if (v.isNumber()) {
-            x = v.asNumber();
-            y = x;
-        }
-    }
-    if (getKwarg(parsed.kwargs, "x")) |v| {
-        if (v.isNumber()) x = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "y")) |v| {
-        if (v.isNumber()) y = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "center")) |v| {
-        if (v.isBool()) center = v.asBool();
-    }
-
-    const dag_idx = try vm.dag_builder.addSquare(x, y, center);
+    const dag_idx = try vm.dag_builder.addSquare(opts.x, opts.y, opts.center);
     return try vm.allocateCrossSection(dag_idx);
 }
 
 pub fn nativeCircle(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    var r: f64 = 1.0;
-    var segments: i32 = 0; // 0 lets Manifold auto-calculate
-
     const parsed = parseArgs(arg_count, args);
+    var opts = extractGeomOptions(parsed);
 
-    if (parsed.pos_count > 0 and args[0].isNumber()) r = args[0].asNumber();
+    if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
 
-    if (getKwarg(parsed.kwargs, "r")) |v| {
-        if (v.isNumber()) r = v.asNumber();
-    }
-    if (getKwarg(parsed.kwargs, "d")) |v| {
-        if (v.isNumber()) r = v.asNumber() / 2.0;
-    }
-    if (getKwarg(parsed.kwargs, "segments")) |v| {
-        if (v.isNumber()) segments = @intFromFloat(v.asNumber());
-    }
-
-    const dag_idx = try vm.dag_builder.addCircle(r, segments);
+    const dag_idx = try vm.dag_builder.addCircle(opts.r, opts.segments);
     return try vm.allocateCrossSection(dag_idx);
 }
 

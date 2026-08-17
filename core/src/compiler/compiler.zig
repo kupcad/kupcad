@@ -711,9 +711,7 @@ pub const Compiler = struct {
     fn patchJump(self: *Compiler, offset: usize) void {
         const jump = self.current_chunk.code.items.len - offset - 3;
         std.debug.assert(jump <= 0xFFFFFF); // Assert it fits in 24 bits
-        self.current_chunk.code.items[offset] = @intCast((jump >> 16) & 0xff);
-        self.current_chunk.code.items[offset + 1] = @intCast((jump >> 8) & 0xff);
-        self.current_chunk.code.items[offset + 2] = @intCast(jump & 0xff);
+        self.writeJumpOffset(offset, jump);
     }
 
     fn emitLoop(self: *Compiler, loop_start: usize) CompileError!void {
@@ -1123,9 +1121,7 @@ pub const Compiler = struct {
 
                     // Calculate offset from the END of the entire switch instruction block
                     const offset = body_jump_target - (default_jump_offset + 3);
-                    self.current_chunk.code.items[table_idx + 2] = @intCast((offset >> 16) & 0xFF);
-                    self.current_chunk.code.items[table_idx + 3] = @intCast((offset >> 8) & 0xFF);
-                    self.current_chunk.code.items[table_idx + 4] = @intCast(offset & 0xFF);
+                    self.writeJumpOffset(table_idx + 2, offset);
                     condition_idx += 1;
                 }
 
