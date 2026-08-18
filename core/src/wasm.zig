@@ -64,6 +64,10 @@ fn inner_check(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
     return out.written();
 }
 
+fn inner_build_stl(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
+    return try api.buildStl(allocator, source);
+}
+
 // --- WASM Export Boundaries ---
 
 pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize) ?[*]const u8 {
@@ -87,6 +91,25 @@ pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) ?[*]co
         return res.ptr;
     } else |_| {
         last_error_msg = "Internal Linter Error\x00".ptr;
+        return null;
+    }
+}
+
+/// Builds an STL from a KupCAD script.
+/// Returns a pointer to the STL bytes, and populates `out_len`.
+/// The caller MUST free the pointer using `wasm_free(ptr, out_len)`.
+pub export fn build_stl_wasm(source_ptr: [*]const u8, source_len: usize, out_len: *usize) ?[*]const u8 {
+    const source = source_ptr[0..source_len];
+    if (inner_build_stl(std.heap.wasm_allocator, source)) |res| {
+        out_len.* = res.len;
+        return res.ptr;
+    } else |err| {
+        if (err == error.SyntaxError) {
+            last_error_msg = "Syntax Error\x00".ptr;
+        } else {
+            last_error_msg = "Build Error\x00".ptr;
+        }
+        out_len.* = 0;
         return null;
     }
 }

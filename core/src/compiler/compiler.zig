@@ -610,7 +610,11 @@ pub const Compiler = struct {
                     for (stmts, 0..) |stmt_idx, i| {
                         try self.compileNode(stmt_idx);
                         if (i < stmts.len - 1) {
-                            try self.emitOp(.op_pop);
+                            const stmt_node = self.tree.getNode(stmt_idx).?;
+                            // Do not pop if the statement was a local variable assignment
+                            if (stmt_node.tag != .assignment) {
+                                try self.emitOp(.op_pop);
+                            }
                         }
                     }
                 }

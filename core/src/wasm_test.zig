@@ -158,3 +158,25 @@ test "VM: Closure invocation pads missing arguments with nil natively" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expect(vm.stack[0].isNil());
 }
+
+test "WASM Interop: build_stl_wasm evaluates geometry, anchors Manifold, and returns binary STL" {
+    // A simple script that generates a standard cube
+    const src = "cube(10)";
+
+    var out_len: usize = 0;
+    const res_ptr = wasm.build_stl_wasm(src.ptr, src.len, &out_len);
+
+    // The build should successfully yield a pointer to memory
+    try testing.expect(res_ptr != null);
+
+    // An STL file must have an 80 byte header + 4 byte count + triangles.
+    // A cube has exactly 12 triangles (50 bytes each), so size = 84 + (12 * 50) = 684 bytes
+    try testing.expectEqual(@as(usize, 684), out_len);
+
+    const stl_bytes = res_ptr.?[0..out_len];
+    const tri_count = std.mem.readInt(u32, stl_bytes[80..84], .little);
+    try testing.expectEqual(@as(u32, 12), tri_count);
+
+    // Ensure we don't leak memory in the test environment
+    wasm.wasm_free(@constCast(res_ptr.?), out_len);
+}

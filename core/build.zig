@@ -103,6 +103,9 @@ pub fn build(b: *std.Build) void {
         &.{
             "-std=c++17",
             "-fno-exceptions",
+            "-fno-rtti", // Removes RTTI overhead
+            "-fno-sanitize=undefined", // Prevents UBSan helper generation
+            "-DNDEBUG", // Disables debug/assert machinery
             "-DMANIFOLD_NO_IOSTREAM",
             "-DMANIFOLD_NO_FILESYSTEM",
             "-DMANIFOLD_PAR=-1",
