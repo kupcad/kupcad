@@ -3322,3 +3322,40 @@ test "VM: Global assignments maintain strict stack equilibrium" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 60.0), vm.stack[0].asNumber());
 }
+
+test "VM: Stack does not leak on local variable assignments inside loops" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // The script initializes 'i', then loops 10 times.
+    // Inside the loop, it declares a brand new local variable 'temp'.
+    // If the compiler emits `op_nil` dynamically here, the stack will leak by +10.
+    const source =
+        \\i = 0
+        \\while (i < 10)
+        \\  temp = i * 2
+        \\  i = i + 1
+        \\end
+        \\i
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+
+    // The stack must contain EXACTLY 1 item (the final result: 10.0).
+    // Before the fix, stack_top would be 11 (10 leaked nils + 1 result).
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 10.0), vm.stack[0].asNumber());
+}

@@ -1653,7 +1653,13 @@ pub const VM = struct {
 
         // Shift any trailing arguments down to close the gap left by the packed arguments
         if (splat_size != 1) {
-            std.mem.copyForwards(value.Value, self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity], self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity]);
+            const dest = self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity];
+            const src = self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity];
+            if (@intFromPtr(dest.ptr) > @intFromPtr(src.ptr)) {
+                std.mem.copyBackwards(value.Value, dest, src);
+            } else {
+                std.mem.copyForwards(value.Value, dest, src);
+            }
         }
 
         // Rewrite the stack to hold the new Array in the splat parameter's slot

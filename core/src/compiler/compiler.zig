@@ -302,7 +302,6 @@ pub const Compiler = struct {
                     (try self.resolveUpvalue(name_id)) == null;
 
                 if (is_new_local) {
-                    try self.emitOp(.op_nil);
                     const slot = @as(u16, @intCast(self.locals.items.len));
                     try self.addLocal(name_id, slot);
                 }
@@ -856,8 +855,6 @@ pub const Compiler = struct {
         }
 
         if (has_kwargs) {
-            for (0..num_virtuals) |_| try child_compiler.emitOp(.op_nil);
-
             for (params) |param| {
                 if (param.is_keyword) {
                     const name_str = self.tree.getString(param.name);
@@ -1600,7 +1597,6 @@ pub const Compiler = struct {
                     self.resolveLocal(name_id) == null and
                     (try self.resolveUpvalue(name_id)) == null)
                 {
-                    try self.emitOp(.op_nil);
                     const slot = @as(u16, @intCast(self.locals.items.len));
                     try self.addLocal(name_id, slot);
                 }
