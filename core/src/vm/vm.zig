@@ -1571,11 +1571,21 @@ pub const VM = struct {
                 if (self.findMethod(class_to_instantiate, "initialize")) |init_method| {
                     if (init_method.isClosure()) {
                         self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, true) catch return .runtime_error;
+                        return .ok;
+                    } else if (init_method.isNative()) {
+                        const native_obj = init_method.asNative();
+                        // We just use the `args_ptr` that is already defined at the top of executeInvoke
+                        _ = native_obj.function(self, arg_count, args_ptr) catch {
+                            return self.throwDynamicError("Runtime Error: Native Constructor Error", .{});
+                        };
+                        // Pop the arguments, leaving the newly initialized instance safely at base_slot
+                        self.popAndRelease(arg_count);
+                        return .ok;
                     }
-                    return .ok;
-                } else if (arg_count > 0) {
-                    self.runtimeError("Runtime Error: Expected 0 args for default constructor.\n", .{});
-                    return .runtime_error;
+                }
+
+                if (arg_count > 0) {
+                    return self.throwDynamicError("Runtime Error: Expected 0 args for default constructor.\n", .{});
                 }
                 return .ok;
             }

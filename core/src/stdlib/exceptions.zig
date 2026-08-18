@@ -6,13 +6,13 @@ const value = @import("../core/value.zig");
 
 // Default initializer for Exception.new("message")
 fn exceptionInit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque)); // Safe Cast
-    const receiver = args[0];
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = (args - 1)[0]; // Safely step back 1 slot to get the Receiver
     const instance = receiver.asInstance();
 
     var msg = value.Value.initNil();
     if (arg_count > 0) {
-        msg = args[1];
+        msg = args[0]; // First argument
     } else {
         msg = try vm.allocateString(instance.class.name.chars);
     }
@@ -23,9 +23,9 @@ fn exceptionInit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
 
 // e.message()
 fn exceptionMessage(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque)); // Safe Cast
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     _ = arg_count;
-    const receiver = args[0];
+    const receiver = (args - 1)[0]; // Safely step back 1 slot to get the Receiver
     const instance = receiver.asInstance();
 
     if (instance.class.instance_layout.get("message")) |idx| {
@@ -39,11 +39,9 @@ fn exceptionMessage(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
 
 // e.backtrace()
 fn exceptionBacktrace(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque)); // Safe Cast
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     _ = arg_count;
     _ = args;
-    // MVP: Return an empty array.
-    // True backtraces require pushing the CallFrame IP history during op_throw.
     const arr_obj = try vm.gc.allocateArray(vm);
     return value.Value.initObj(&arr_obj.obj);
 }

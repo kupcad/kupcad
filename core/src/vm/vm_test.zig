@@ -3661,3 +3661,47 @@ test "VM: Unified Exception hierarchy with native methods" {
     const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj())));
     try testing.expectEqualStrings("Runtime Error: Array index out of bounds.", str_obj.chars);
 }
+
+test "VM: Custom exceptions inherit properly and rescue block ordering is respected" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Define a CustomError inheriting from StandardError
+    // 2. Raise it using the native `.new` constructor to pass a custom message
+    // 3. Catch it in the FIRST block, proving it doesn't fall through to StandardError
+    // 4. Extract and yield the message natively via method call `e.message()`
+    const source =
+        \\class CustomError < StandardError
+        \\end
+        \\
+        \\begin
+        \\  raise(CustomError.new("My custom failure!"))
+        \\rescue CustomError => e
+        \\  e.message
+        \\rescue StandardError => e
+        \\  "wrong block"
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Stack should contain exactly the yielded message string!
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const str_val = vm.stack[0];
+    try testing.expect(str_val.isObject() and str_val.asObj().obj_type == .string);
+
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
+    try testing.expectEqualStrings("My custom failure!", str_obj.chars);
+}
