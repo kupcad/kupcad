@@ -3705,3 +3705,60 @@ test "VM: Custom exceptions inherit properly and rescue block ordering is respec
     const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
     try testing.expectEqualStrings("My custom failure!", str_obj.chars);
 }
+
+test "VM: defined? operator works dynamically on globals, instance, and class variables" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\global_var = 42
+        \\class TestClass
+        \\  def initialize
+        \\    @inst_var = 10
+        \\    @@class_var = 20
+        \\  end
+        \\  def check
+        \\    [
+        \\      defined?(global_var),
+        \\      defined?(missing_global),
+        \\      defined?(@inst_var),
+        \\      defined?(@missing_inst),
+        \\      defined?(@@class_var),
+        \\      defined?(@@missing_class)
+        \\    ]
+        \\  end
+        \\end
+        \\TestClass.new.check
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 6), arr_obj.items.items.len);
+
+    // Global
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+    try testing.expect(arr_obj.items.items[1].isNil());
+
+    // Instance (@)
+    try testing.expectEqual(true, arr_obj.items.items[2].asBool());
+    try testing.expect(arr_obj.items.items[3].isNil());
+
+    // Class (@@)
+    try testing.expectEqual(true, arr_obj.items.items[4].asBool());
+    try testing.expect(arr_obj.items.items[5].isNil());
+}

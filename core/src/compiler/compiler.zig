@@ -34,12 +34,14 @@ const Intrinsic = enum {
     raise_err,
     block_given_chk,
     yield_call,
+    defined_chk,
 };
 
 const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "raise", .raise_err },
     .{ "block_given?", .block_given_chk },
     .{ "yield", .yield_call },
+    .{ "defined?", .defined_chk },
 });
 
 pub const Compiler = struct {
@@ -291,10 +293,36 @@ pub const Compiler = struct {
                 const assign_payload = self.tree.assignment(node);
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = assign_payload.name;
+                const name_str = self.tree.getString(name_id);
+
+                // Intercept Instance Variables (@x) securely
+                if (std.mem.startsWith(u8, name_str, "@") and !std.mem.startsWith(u8, name_str, "@@")) {
+                    try self.emitPushSelf(); // Stack: [self]
+
+                    if (assign_payload.op) |op| {
+                        try self.emitOp(.op_dup); // Stack: [self, self]
+                        const name_idx = try self.makeStringConstant(name_str);
+                        try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+
+                        try self.compileNode(assign_payload.value);
+                        switch (op) {
+                            .add => try self.emitOp(.op_add),
+                            .subtract => try self.emitOp(.op_subtract),
+                            .multiply => try self.emitOp(.op_multiply),
+                            .divide => try self.emitOp(.op_divide),
+                            else => return error.UnknownNode,
+                        }
+                    } else {
+                        try self.compileNode(assign_payload.value); // Stack: [self, new_val]
+                    }
+
+                    const name_idx = try self.makeStringConstant(name_str);
+                    try self.emitOpWithOperand(.op_set_property, .op_set_property_wide, name_idx);
+                    return;
+                }
 
                 // Pad the stack with `nil` if this is a newly declared local variable.
                 // This reserves the permanent stack slot safely below the RHS evaluation.
-                const name_str = self.tree.getString(name_id);
                 const is_new_local = self.enclosing != null and
                     sym.kind == .local and
                     !std.mem.startsWith(u8, name_str, "@@") and
@@ -1346,6 +1374,27 @@ pub const Compiler = struct {
                     self.simulatePush(1); // Yield returns the block's result
                     return;
                 },
+                .defined_chk => {
+                    const args = self.tree.getNamedArgs(mc.args);
+                    if (args.len > 0) {
+                        const target_node = self.tree.getNode(args[0].value).?;
+                        if (target_node.tag == .identifier) {
+                            const name_id = @as(ast.StringId, @enumFromInt(target_node.data));
+                            if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
+                                try self.emitOp(.op_true); // Locals are statically known
+                            } else {
+                                const name_str = self.tree.getString(name_id);
+                                const name_idx = try self.makeStringConstant(name_str);
+                                try self.emitOpWithOperand(.op_defined, .op_defined_wide, name_idx);
+                            }
+                        } else {
+                            try self.emitOp(.op_true); // Complex expressions evaluate to true
+                        }
+                    } else {
+                        try self.emitOp(.op_nil);
+                    }
+                    return;
+                },
             }
         }
 
@@ -1548,9 +1597,13 @@ pub const Compiler = struct {
         const name_str = self.tree.getString(name_id);
 
         if (std.mem.startsWith(u8, name_str, "@@")) {
-            try self.emitPushSelf(); // <-- Replaces 9 lines
+            try self.emitPushSelf();
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_get_class_var, .op_get_class_var_wide, name_idx);
+        } else if (std.mem.startsWith(u8, name_str, "@")) {
+            try self.emitPushSelf();
+            const name_idx = try self.makeStringConstant(name_str);
+            try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
         } else if (self.resolveLocal(name_id)) |local_slot| {
             try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, local_slot);
         } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
@@ -1566,7 +1619,7 @@ pub const Compiler = struct {
         const name_str = self.tree.getString(name_id);
 
         if (std.mem.startsWith(u8, name_str, "@@")) {
-            try self.emitPushSelf(); // <-- Replaces 9 lines
+            try self.emitPushSelf();
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_set_class_var, .op_set_class_var_wide, name_idx);
         } else if (self.resolveLocal(name_id)) |local_slot| {

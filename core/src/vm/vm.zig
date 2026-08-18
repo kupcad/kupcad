@@ -1014,8 +1014,33 @@ pub const VM = struct {
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
-                    // Safely probe globals and natives without triggering a VM panic
-                    const is_def = self.globals.contains(name_str);
+                    var is_def = false;
+
+                    if (std.mem.startsWith(u8, name_str, "@@")) {
+                        // Class Variable Check: Grab `self` and walk the class hierarchy
+                        const self_val = self.getLocal(frame, 0);
+                        const class_obj = if (self_val.isInstance()) self_val.asInstance().class else if (self_val.isClass()) self_val.asClass() else null;
+                        if (class_obj) |c| {
+                            var current: ?*value.ObjClass = c;
+                            while (current) |cls| {
+                                if (cls.class_fields.contains(name_str)) {
+                                    is_def = true;
+                                    break;
+                                }
+                                current = cls.superclass;
+                            }
+                        }
+                    } else if (std.mem.startsWith(u8, name_str, "@")) {
+                        // Instance Variable Check: Grab `self` and check the layout map
+                        const self_val = self.getLocal(frame, 0);
+                        if (self_val.isInstance()) {
+                            is_def = self_val.asInstance().class.instance_layout.contains(name_str);
+                        }
+                    } else {
+                        // Global / Native Check
+                        is_def = self.globals.contains(name_str);
+                    }
+
                     self.push(if (is_def) value.Value.initBool(true) else value.Value.initNil());
                 },
                 .op_extract_kwarg, .op_extract_kwarg_wide => {
