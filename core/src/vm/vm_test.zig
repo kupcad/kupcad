@@ -3405,3 +3405,56 @@ test "VM: GC correctly marks executing closures and primitive classes" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 3.0), vm.stack[0].asNumber());
 }
+
+test "VM: super correctly resolves and executes Native C++ methods" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Create a safe custom native base class instead of subclassing `Array`
+    const base_name = try vm.allocateString("NativeBase");
+    vm.push(base_name); // Protect from GC
+    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", base_name.asObj())));
+    const base_class = try vm.gc.allocateClass(&vm, name_str, null);
+    try vm.globals.put(vm.allocator, "NativeBase", value.Value.initObj(&base_class.obj));
+    _ = vm.pop();
+
+    // Bind a native method to it that returns 42
+    const native_func = struct {
+        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+            _ = vm_opaque;
+            _ = arg_count;
+            _ = args;
+            return value.Value.initNumber(42.0);
+        }
+    }.run;
+    const native_obj = try vm.gc.allocateNative(&vm, native_func);
+    try base_class.methods.put(vm.allocator, "get_val", value.Value.initObj(&native_obj.obj));
+
+    // Subclass it and call super
+    const source =
+        \\class Child < NativeBase
+        \\  def get_val
+        \\    super + 100
+        \\  end
+        \\end
+        \\
+        \\c = Child.new
+        \\c.get_val
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 142.0), vm.stack[0].asNumber()); // 42 (Native) + 100
+}

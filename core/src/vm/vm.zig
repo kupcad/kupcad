@@ -829,8 +829,27 @@ pub const VM = struct {
                         };
 
                         if (self.findMethod(superclass, method_name_str)) |method_val| {
-                            self.dispatchClosure(method_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
-                            continue;
+                            if (method_val.isClosure()) {
+                                self.dispatchClosure(method_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
+                                continue;
+                            } else if (method_val.isNative()) {
+                                const native_obj = method_val.asNative();
+                                const args_ptr = self.stack.ptr + base_slot + 1;
+
+                                const result = native_obj.function(self, arg_count, args_ptr) catch {
+                                    const err_val = self.allocateString("Native Super Execution Error") catch return .runtime_error;
+                                    self.push(err_val);
+                                    return self.executeThrow();
+                                };
+
+                                self.popAndRelease(arg_count + 1);
+                                self.stack.ptr[self.stack_top] = result;
+                                self.stack_top += 1;
+                                continue;
+                            } else {
+                                self.runtimeError("Runtime Error: Superclass method '{s}' is not callable.\n", .{method_name_str});
+                                return .runtime_error;
+                            }
                         }
 
                         self.runtimeError("Runtime Error: Superclass method '{s}' not found.\n", .{method_name_str});
