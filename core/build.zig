@@ -161,12 +161,11 @@ pub fn build(b: *std.Build) void {
     // Targets
     // ====================================================================
     if (is_wasm) {
-        // --- WASM Executable ---
         const wasm = b.addExecutable(.{
             .name = "kupcad",
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/wasm.zig"),
-                .target = target,
+                .target = wasm_target,
                 .optimize = optimize,
                 .link_libc = true,
                 .link_libcpp = true,
@@ -186,24 +185,23 @@ pub fn build(b: *std.Build) void {
         wasm.max_memory = 4294967296;
         wasm.stack_size = 67108864;
 
-        // Link libraries directly to the artifact to enforce correct wasm-ld order
-        wasm.root_module.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
-
         b.installArtifact(wasm);
 
-        // --- WASM Testing ---
+        // tests
         const wasm_test = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/wasm_test.zig"),
-                .target = target,
+                .target = wasm_target,
                 .optimize = optimize,
+                .link_libc = true,
+                .link_libcpp = true,
+                .imports = &.{
+                    .{ .name = "kupcad", .module = mod },
+                },
             }),
         });
+        wasm_test.root_module.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
 
-        wasm_test.entry = .disabled;
-        wasm_test.wasi_exec_model = .reactor;
-        wasm_test.rdynamic = false;
-        // all mem must be aligned in 65536 bytes (64Kb)
         wasm_test.initial_memory = 134217728;
         wasm_test.max_memory = 4294967296;
         wasm_test.stack_size = 67108864;
@@ -213,7 +211,6 @@ pub fn build(b: *std.Build) void {
 
         const test_wasm_step = b.step("test-wasm", "Run WASM tests");
         test_wasm_step.dependOn(&run_wasm_test.step);
-        // exec and lib build
     } else {
         const lsp_kit = b.dependency("lsp_kit", .{
             .target = target,

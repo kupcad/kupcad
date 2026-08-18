@@ -3262,3 +3262,63 @@ test "VM Edge Case: CSG operations across mixed 2D/3D types throw runtime error"
     // Our DRY'd cadBinaryHandler should instantly block this as a type mismatch
     try testing.expectEqual(.runtime_error, result);
 }
+
+test "VM: Script globals are correctly updated from within blocks without shadowing" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // If the compiler incorrectly flags `sum` as a new local inside the block,
+    // the outer `sum` will remain 0. If fixed, it will correctly output 6.
+    const source =
+        \\sum = 0
+        \\[1, 2, 3].each do |x|
+        \\  sum = sum + x
+        \\end
+        \\sum
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 6.0), vm.stack[0].asNumber());
+}
+
+test "VM: Global assignments maintain strict stack equilibrium" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // If `op_define_global` leaks a `nil` onto the stack, multiple assignments
+    // will leave residual garbage, causing the stack top to be > 1.
+    const source =
+        \\a = 10
+        \\b = 20
+        \\c = 30
+        \\a + b + c
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // The stack must contain EXACTLY 1 item (the final result: 60.0).
+    // If it contains 4, the compiler is leaking assignment expressions!
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 60.0), vm.stack[0].asNumber());
+}
