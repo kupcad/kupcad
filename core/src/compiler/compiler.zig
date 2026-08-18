@@ -26,6 +26,7 @@ pub const Local = struct {
 
 pub const LoopState = struct {
     start: usize,
+    depth: usize,
     exit_jumps: std.ArrayListUnmanaged(usize) = .empty,
 };
 
@@ -259,11 +260,13 @@ pub const Compiler = struct {
                 } else {
                     try self.emitOp(.op_nil);
                 }
-
                 if (self.loops.items.len == 0) return error.UnknownNode;
+                const cur_loop = &self.loops.items[self.loops.items.len - 1];
+
+                // Prevent stack leaks from breaking inside expressions
+                if (self.current_stack_depth > cur_loop.depth + 1) return error.UnsupportedScope;
 
                 const jump = try self.emitJump(.op_jump);
-                var cur_loop = &self.loops.items[self.loops.items.len - 1];
                 try cur_loop.exit_jumps.append(self.allocator, jump);
                 self.simulatePush(1); // Equilibrium for dead code
             },
@@ -275,10 +278,12 @@ pub const Compiler = struct {
                     try self.emitOp(.op_nil);
                 }
                 try self.emitOp(.op_pop);
-
                 if (self.loops.items.len == 0) return error.UnknownNode;
-
                 const cur_loop = &self.loops.items[self.loops.items.len - 1];
+
+                // Prevent stack leaks from skipping inside expressions
+                if (self.current_stack_depth > cur_loop.depth) return error.UnsupportedScope;
+
                 try self.emitLoop(cur_loop.start);
                 self.simulatePush(1); // Equilibrium for dead code
             },
@@ -490,8 +495,11 @@ pub const Compiler = struct {
                 const while_payload = self.tree.whileStmt(node);
                 const loop_start = self.current_chunk.code.items.len;
 
-                // Push loop state
-                try self.loops.append(self.allocator, .{ .start = loop_start });
+                // Push loop state WITH stack depth
+                try self.loops.append(self.allocator, .{
+                    .start = loop_start,
+                    .depth = self.current_stack_depth,
+                });
 
                 try self.compileNode(while_payload.condition);
                 if (while_payload.is_until) try self.emitOp(.op_not);

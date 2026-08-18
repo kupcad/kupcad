@@ -5,6 +5,7 @@ const chunk = @import("../vm/chunk.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("compiler.zig").Compiler;
+const Document = @import("../core/document.zig").Document;
 const resolver = @import("../core/resolver.zig");
 const VM = @import("../vm/vm.zig").VM;
 
@@ -305,7 +306,7 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[11])));
 }
 
-test "Compiler Edge Case: Compiles complex Begin/Rescue with specific Type Checking" {
+test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var b = ast.Builder.init(arena.allocator());
@@ -471,4 +472,60 @@ test "Compiler Edge Case: compiles array literal with > 255 elements (wide opera
 
     // If it fell back to the standard op_build_array, this test will fail
     try testing.expect(found_wide);
+}
+
+test "Compiler Edge Case: Prevent stack leaks from break inside expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // 1. Construct AST manually to bypass the parser: 10 + (break 5)
+    const ten = try b.number("10", 0);
+    const five = try b.number("5", 0);
+
+    // Inject the break statement payload directly
+    const break_node = try b.createNode(.break_stmt, 0, @intFromEnum(five));
+    const add_node = try b.binary(.add, ten, break_node, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // 2. Inject a fake loop state into the compiler so it permits the break
+    try comp.loops.append(comp.allocator, .{ .start = 0, .depth = 0 });
+
+    // 3. Compile the addition. The compiler will catch the depth mismatch and abort!
+    const result = comp.compile(add_node);
+    try testing.expectError(error.UnsupportedScope, result);
+}
+
+test "Compiler: Prevent stack leaks from next inside expressions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // 1. Construct AST manually: 10 + (next)
+    const ten = try b.number("10", 0);
+    const next_node = try b.createNode(.next_stmt, 0, @intFromEnum(ast.NodeIndex.none));
+    const add_node = try b.binary(.add, ten, next_node, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // 2. Inject a fake loop state
+    try comp.loops.append(comp.allocator, .{ .start = 0, .depth = 0 });
+
+    const result = comp.compile(add_node);
+    try testing.expectError(error.UnsupportedScope, result);
 }
