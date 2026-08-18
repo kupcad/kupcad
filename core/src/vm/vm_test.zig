@@ -3359,3 +3359,49 @@ test "VM: Stack does not leak on local variable assignments inside loops" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 10.0), vm.stack[0].asNumber());
 }
+
+test "VM: GC correctly marks executing closures and primitive classes" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Bind a native function to aggressively force a GC cycle mid-execution
+    const force_gc = struct {
+        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+            _ = arg_count;
+            _ = args;
+            const v: *VM = @ptrCast(@alignCast(vm_opaque));
+            v.gc.collectGarbage(v, false);
+            return value.Value.initNil();
+        }
+    }.run;
+    try vm.defineNative("force_gc", force_gc);
+
+    // The script:
+    // 1. Overwrites 'Array' global, losing the only global reference to the array class.
+    // 2. Runs an anonymous closure (not saved to any variable) that forces a GC.
+    // 3. Tries to use an Array method. If the Array class or closure was swept, it crashes!
+    const source =
+        \\Array = nil
+        \\(def ()
+        \\  force_gc()
+        \\  [1, 2, 3].length()
+        \\end)()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+
+    // If we reach here without a panic or segfault, the GC roots are watertight!
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 3.0), vm.stack[0].asNumber());
+}

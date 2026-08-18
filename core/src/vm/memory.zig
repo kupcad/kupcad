@@ -322,21 +322,43 @@ pub const GC = struct {
 
     // --- Phase 1: Mark ---
     fn markRoots(self: *GC, vm: *VM) void {
+        // Mark the Stack
         for (vm.stack[0..vm.stack_top]) |val| {
             self.markValue(val);
         }
 
+        // Mark Call Frames
         for (vm.frames.items) |frame| {
+            // Explicitly mark the closure running this frame
+            self.markObject(&frame.closure.obj);
+
             const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
             for (exec_chunk.constants.items) |val| {
                 self.markValue(val);
             }
         }
 
+        // Mark Open Upvalues
+        var upval = vm.open_upvalues;
+        while (upval) |u| {
+            self.markObject(&u.obj);
+            upval = u.next;
+        }
+
+        // Mark Script Globals
         var globals_it = vm.globals.valueIterator();
         while (globals_it.next()) |val| {
             self.markValue(val.*);
         }
+
+        // Mark Built-in Primitive Classes
+        if (vm.string_class) |c| self.markObject(&c.obj);
+        if (vm.array_class) |c| self.markObject(&c.obj);
+        if (vm.map_class) |c| self.markObject(&c.obj);
+        if (vm.number_class) |c| self.markObject(&c.obj);
+        if (vm.symbol_class) |c| self.markObject(&c.obj);
+        if (vm.boolean_class) |c| self.markObject(&c.obj);
+        if (vm.bbox_class) |c| self.markObject(&c.obj);
     }
 
     fn markValue(self: *GC, val: value.Value) void {
