@@ -3568,3 +3568,48 @@ test "VM: Positional parameters properly evaluate default values" {
     try testing.expectEqual(@as(f64, 50.0), call3.items.items[1].asNumber());
     try testing.expectEqual(@as(f64, 60.0), call3.items.items[2].asNumber());
 }
+
+test "VM: ARC references are safely released when receivers are discarded" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    const baseline_memory = vm.gc.bytes_allocated;
+
+    // By wrapping this in a Lambda, we prevent global namespace pollution.
+    // When `f` is reassigned to `nil`, the closure and the error variable `e`
+    // are unreferenced, allowing the GC to cleanly sweep the entire test from memory!
+    const source =
+        \\f = ->() do
+        \\  begin
+        \\    cube(10).invalid_property = 42
+        \\  rescue => e
+        \\    nil
+        \\  end
+        \\end
+        \\f()
+        \\f = nil
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // The stack contains exactly 1 item (the `nil` from `f = nil`)
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    // Force a GC cycle to sweep the closure and the rescued error string
+    vm.gc.collectGarbage(&vm, false);
+
+    // CRITICAL FIX PROOF: Memory footprint returns to exactly the baseline
+    try testing.expectEqual(baseline_memory, vm.gc.bytes_allocated);
+}

@@ -1278,29 +1278,14 @@ pub const Compiler = struct {
                 }
 
                 const var_str = self.tree.getString(rescue.variable);
-                var is_new_local = false;
-
                 if (var_str.len > 0) {
                     const name_id = rescue.variable;
-
-                    // Determine if the target is a brand new local variable
-                    is_new_local = self.enclosing != null and
-                        !std.mem.startsWith(u8, var_str, "@@") and
-                        self.resolveLocal(name_id) == null and
-                        (try self.resolveUpvalue(name_id)) == null and
-                        !self.isScriptGlobal(name_id);
-
-                    // Assign the error value to the target variable.
-                    // A dummy symbol is perfectly safe here because emitVariableStore natively routes new locals.
                     const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
                     try self.emitVariableStore(name_id, dummy_sym);
                 }
 
-                // If the error was captured as a newly declared local variable,
-                // we DO NOT pop it! It must remain on the stack permanently as the local slot.
-                if (!is_new_local) {
-                    try self.emitOp(.op_pop); // Pop the temporary error value off stack
-                }
+                // Always pop the temporary error value off the expression stack!
+                try self.emitOp(.op_pop);
 
                 try self.compileNode(rescue.body);
 

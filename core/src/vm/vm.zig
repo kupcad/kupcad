@@ -275,8 +275,8 @@ pub const VM = struct {
                     const a = self.pop();
                     defer self.releaseValue(a);
                     if (!a.isNumber()) {
-                        self.runtimeError("Runtime Error: Invalid operand for '-'\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Invalid operand for '-'\n", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
                     self.push(value.Value.initNumber(-a.asNumber()));
                 },
@@ -319,12 +319,12 @@ pub const VM = struct {
                                 self.push(value.Value.initNil());
                             }
                         } else {
-                            self.runtimeError("Runtime Error: Undefined property '{s}'.\n", .{name_str});
-                            return .runtime_error;
+                            if (self.throwDynamicError("Runtime Error: Undefined property '{s}'.", .{name_str}) != .ok) return .runtime_error;
+                            continue;
                         }
                     } else {
-                        self.runtimeError("Runtime Error: Only instances have properties.\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Only instances have properties.\n", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
                 },
                 .op_get_global, .op_get_global_wide => {
@@ -335,8 +335,8 @@ pub const VM = struct {
                     if (self.globals.get(str_obj.chars)) |val| {
                         self.push(val);
                     } else {
-                        self.runtimeError("Runtime Error: Undefined variable '{s}'\n", .{str_obj.chars});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Undefined variable '{s}'\n", .{str_obj.chars}) != .ok) return .runtime_error;
+                        continue;
                     }
                 },
                 .op_get_index => {
@@ -358,8 +358,8 @@ pub const VM = struct {
                             self.push(value.Value.initNil());
                         }
                     } else {
-                        self.runtimeError("Runtime Error: Cannot index target.\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Cannot index target.", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
                 },
                 .op_set_index => {
@@ -384,8 +384,8 @@ pub const VM = struct {
                         self.mapSet(map, index, val) catch return .runtime_error;
                         self.push(val);
                     } else {
-                        self.runtimeError("Runtime Error: Cannot assign to index on target.\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Cannot assign to index on target.\n", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
                 },
                 .op_setup_rescue => {
@@ -503,8 +503,8 @@ pub const VM = struct {
                             target_arr.items.append(self.allocator, item) catch return .runtime_error;
                         }
                     } else {
-                        self.runtimeError("Runtime Error: Can only spread arrays into arrays.\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Can only spread arrays into arrays.\n", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
                 },
                 .op_map_insert => {
@@ -531,8 +531,8 @@ pub const VM = struct {
                             self.mapSet(target_map, key, val) catch return .runtime_error;
                         }
                     } else {
-                        self.runtimeError("Runtime Error: Can only spread maps into maps.\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Can only spread maps into maps.\n", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
                 },
                 .op_jump => {
@@ -729,8 +729,8 @@ pub const VM = struct {
                     const module_val = self.pop();
                     defer self.releaseValue(module_val);
                     if (!module_val.isModule()) {
-                        self.runtimeError("Runtime Error: Can only include Modules.\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Can only include Modules.\n", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
                     const class_val = self.stack[self.stack_top - 1]; // Peek at class
                     if (!class_val.isClass()) return .runtime_error;
@@ -781,19 +781,23 @@ pub const VM = struct {
                 },
                 .op_set_property, .op_set_property_wide => {
                     const val = self.pop();
+                    defer self.releaseValue(val);
+
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_property_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
                     const receiver = self.pop();
+                    defer self.releaseValue(receiver); // Prevent ARC Memory Leak
 
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
                         self.setInstanceField(instance, name_str, val) catch return .runtime_error;
                         self.push(val);
                     } else {
-                        self.runtimeError("Runtime Error: Only instances have properties.\n", .{});
-                        return .runtime_error;
+                        // Safely allocate the error, push it to the stack, and let the VM unwind to the rescue block
+                        if (self.throwDynamicError("Runtime Error: Only instances have properties.", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
                 },
                 .op_inherit => {
@@ -826,8 +830,7 @@ pub const VM = struct {
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
                         const superclass = instance.class.superclass orelse {
-                            self.runtimeError("Runtime Error: No superclass exists for receiver.\n", .{});
-                            return .runtime_error;
+                            return self.throwDynamicError("Runtime Error: No superclass exists for receiver.\n", .{});
                         };
 
                         if (self.findMethod(superclass, method_name_str)) |method_val| {
@@ -839,9 +842,7 @@ pub const VM = struct {
                                 const args_ptr = self.stack.ptr + base_slot + 1;
 
                                 const result = native_obj.function(self, arg_count, args_ptr) catch {
-                                    const err_val = self.allocateString("Native Super Execution Error") catch return .runtime_error;
-                                    self.push(err_val);
-                                    return self.executeThrow();
+                                    return self.throwDynamicError("Runtime Error: Native Super Execution Error", .{});
                                 };
 
                                 self.popAndRelease(arg_count + 1);
@@ -849,17 +850,17 @@ pub const VM = struct {
                                 self.stack_top += 1;
                                 continue;
                             } else {
-                                self.runtimeError("Runtime Error: Superclass method '{s}' is not callable.\n", .{method_name_str});
-                                return .runtime_error;
+                                if (self.throwDynamicError("Runtime Error: Superclass method '{s}' is not callable.\n", .{method_name_str}) != .ok) return .runtime_error;
+                                continue;
                             }
                         }
 
-                        self.runtimeError("Runtime Error: Superclass method '{s}' not found.\n", .{method_name_str});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Superclass method '{s}' not found.\n", .{method_name_str}) != .ok) return .runtime_error;
+                        continue;
                     }
 
-                    self.runtimeError("Runtime Error: super can only be called on instances.\n", .{});
-                    return .runtime_error;
+                    if (self.throwDynamicError("Runtime Error: super can only be called on instances.\n", .{}) != .ok) return .runtime_error;
+                    continue;
                 },
                 .op_yield => {
                     const yield_arg_count = exec_chunk.code.items[frame.ip];
@@ -869,8 +870,8 @@ pub const VM = struct {
                     const block_val = self.stack[frame.base_slot + expected_args + 1];
 
                     if (!block_val.isClosure()) {
-                        self.runtimeError("Runtime Error: No block given to yield.\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: No block given to yield.\n", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
 
                     const block_closure = block_val.asClosure();
@@ -905,6 +906,8 @@ pub const VM = struct {
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
                     const receiver = self.pop(); // Explicitly pop receiver from stack
+                    defer self.releaseValue(receiver); // Prevent ARC Memory Leak
+
                     const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
 
                     if (class_obj) |c| {
@@ -923,12 +926,12 @@ pub const VM = struct {
                         if (found_val) |v| {
                             self.push(v);
                         } else {
-                            self.runtimeError("Runtime Error: Undefined class variable '{s}'.\n", .{name_str});
-                            return .runtime_error;
+                            if (self.throwDynamicError("Runtime Error: Undefined class variable '{s}'.\n", .{name_str}) != .ok) return .runtime_error;
+                            continue;
                         }
                     } else {
-                        self.runtimeError("Runtime Error: Receiver has no class context.\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Receiver has no class context.\n", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
                 },
                 .op_set_class_var, .op_set_class_var_wide => {
@@ -937,7 +940,9 @@ pub const VM = struct {
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
                     const receiver = self.pop(); // Pop explicit receiver
+                    defer self.releaseValue(receiver); // Prevent ARC Memory Leak
                     const val = self.pop(); // Pop RHS value
+                    defer self.releaseValue(val); // Prevent ARC Memory Leak
 
                     const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
 
@@ -971,8 +976,8 @@ pub const VM = struct {
 
                         self.push(val); // Yield the assigned value
                     } else {
-                        self.runtimeError("Runtime Error: Receiver has no class context.\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Receiver has no class context.\n", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
                 },
                 .op_is_instance => {
@@ -982,8 +987,8 @@ pub const VM = struct {
                     defer self.releaseValue(thrown_val);
 
                     if (!class_val.isClass()) {
-                        self.runtimeError("Runtime Error: Rescue type must be a Class.\n", .{});
-                        return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Rescue type must be a Class.\n", .{}) != .ok) return .runtime_error;
+                        continue;
                     }
 
                     var match = false;
@@ -1411,9 +1416,7 @@ pub const VM = struct {
             return .ok;
         } else if (self.host.binary_handler) |handler| {
             const result = handler(self, op, a_val, b_val) catch {
-                const err_val = self.allocateString("CSG Binary Operation Failed") catch return .runtime_error;
-                self.push(err_val);
-                return self.executeThrow();
+                return self.throwDynamicError("Runtime Error: CSG Binary Operation Failed", .{});
             };
 
             self.stack.ptr[self.stack_top] = result;
@@ -1421,8 +1424,7 @@ pub const VM = struct {
             return .ok;
         } else {
             const op_symbol = if (op == .op_add) "+" else "-";
-            self.runtimeError("Runtime Error: Invalid operands for '{s}'\n", .{op_symbol});
-            return .runtime_error;
+            return self.throwDynamicError("Runtime Error: Invalid operands for '{s}'", .{op_symbol});
         }
     }
 
@@ -1593,9 +1595,7 @@ pub const VM = struct {
         // FALLBACK: NATIVE C++ KERNEL METHODS (Geometry)
         if (self.host.invoke_handler) |handler| {
             const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch {
-                const err_val = self.allocateString("CAD Kernel / Method Error") catch return .runtime_error;
-                self.push(err_val);
-                return self.executeThrow();
+                return self.throwDynamicError("Runtime Error: CAD Kernel / Method Error", .{});
             };
 
             self.popAndRelease(arg_count + 1);
@@ -1773,14 +1773,14 @@ pub const VM = struct {
         if (num_idx < 0) {
             const offset = @as(usize, @intFromFloat(-num_idx));
             if (offset == 0 or offset > arr_len) {
-                self.runtimeError("Runtime Error: Array index out of bounds.\n", .{});
+                _ = self.throwDynamicError("Runtime Error: Array index out of bounds.", .{});
                 return error.RuntimeError;
             }
             return arr_len - offset;
         } else {
             const idx = @as(usize, @intFromFloat(num_idx));
             if (idx >= arr_len) {
-                self.runtimeError("Runtime Error: Array index out of bounds.\n", .{});
+                _ = self.throwDynamicError("Runtime Error: Array index out of bounds.", .{});
                 return error.RuntimeError;
             }
             return idx;
@@ -1822,9 +1822,7 @@ pub const VM = struct {
             const args_ptr = self.stack.ptr + base_slot + 1;
 
             const result = native_obj.function(self, arg_count, args_ptr) catch {
-                const err_val = self.allocateString("Native Execution Error") catch return .runtime_error;
-                self.push(err_val);
-                return self.executeThrow();
+                return self.throwDynamicError("Runtime Error: Native Execution Error", .{});
             };
 
             self.popAndRelease(arg_count + 1);
@@ -1844,8 +1842,7 @@ pub const VM = struct {
                 return .runtime_error;
             }
         } else {
-            self.runtimeError("Runtime Error: Can only call functions and classes.\n", .{});
-            return .runtime_error;
+            return self.throwDynamicError("Runtime Error: Can only call functions and classes.", .{});
         }
         return .ok;
     }
@@ -1945,7 +1942,7 @@ pub const VM = struct {
             return .{ a.asNumber(), b.asNumber() };
         }
 
-        self.runtimeError("Runtime Error: Invalid operands for math operation.\n", .{});
+        _ = self.throwDynamicError("Runtime Error: Invalid operands for math operation.", .{});
         return error.RuntimeError;
     }
 
@@ -1966,6 +1963,20 @@ pub const VM = struct {
             current = c.superclass;
         }
         return false;
+    }
+
+    pub fn throwDynamicError(self: *VM, comptime fmt: []const u8, args: anytype) InterpretResult {
+        var buf: [256]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, fmt, args) catch "Runtime Error";
+
+        if (self.allocateString(msg)) |err_val| {
+            self.push(err_val);
+            return self.executeThrow();
+        } else |_| {
+            // Fallback to hard crash if we run out of memory while trying to throw an error
+            self.runtimeError("Fatal: OOM while throwing exception.\n", .{});
+            return .runtime_error;
+        }
     }
 
     pub fn runtimeError(self: *VM, comptime fmt: []const u8, args: anytype) void {
