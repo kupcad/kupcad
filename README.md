@@ -171,7 +171,7 @@ kupcad/
 ## Deps
 
 ```
-brew install manifold wasmtime
+brew install wabt wasmtime
 ```
 
 
