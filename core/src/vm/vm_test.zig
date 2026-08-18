@@ -3512,3 +3512,59 @@ test "Compiler/VM: Splat parameters calculate trailing arity correctly alongside
     try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[2].asNumber());
     try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[3].asNumber());
 }
+
+test "VM: Positional parameters properly evaluate default values" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests three invocation patterns:
+    // 1. Missing both defaults
+    // 2. Missing one default
+    // 3. Overriding all defaults
+    const source =
+        \\def make_box(width, height = 20, depth = 20 + 10)
+        \\  [width, height, depth]
+        \\end
+        \\
+        \\[make_box(10), make_box(10, 50), make_box(10, 50, 60)]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+
+    // First call: make_box(10) -> [10, 20, 30]
+    const call1 = arr_obj.items.items[0].asArray();
+    try testing.expectEqual(@as(f64, 10.0), call1.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), call1.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), call1.items.items[2].asNumber());
+
+    // Second call: make_box(10, 50) -> [10, 50, 30]
+    const call2 = arr_obj.items.items[1].asArray();
+    try testing.expectEqual(@as(f64, 10.0), call2.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 50.0), call2.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), call2.items.items[2].asNumber());
+
+    // Third call: make_box(10, 50, 60) -> [10, 50, 60]
+    const call3 = arr_obj.items.items[2].asArray();
+    try testing.expectEqual(@as(f64, 10.0), call3.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 50.0), call3.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 60.0), call3.items.items[2].asNumber());
+}

@@ -886,6 +886,32 @@ pub const Compiler = struct {
             }
         }
 
+        // Positional Parameter Defaults Handling
+        for (params) |param| {
+            if (!param.is_keyword and param.modifier == null and param.default_value != .none) {
+                if (child_compiler.resolveLocal(param.name)) |local_slot| {
+                    // Read the padded parameter from the stack
+                    try child_compiler.emitOpWithOperand(.op_get_local, .op_get_local_wide, local_slot);
+
+                    // If the caller provided an argument (it is NOT nil), jump over the default assignment
+                    const skip_default_jump = try child_compiler.emitJump(.op_jump_if_not_nil);
+
+                    // If it IS nil, pop the nil and evaluate the default AST expression
+                    try child_compiler.emitOp(.op_pop);
+                    try child_compiler.compileNode(param.default_value);
+
+                    // Store the evaluated default back into the local variable slot
+                    try child_compiler.emitOpWithOperand(.op_set_local, .op_set_local_wide, local_slot);
+
+                    // The landing zone for the jump
+                    child_compiler.patchJump(skip_default_jump);
+
+                    // Clean up the stack (pop the result of set_local or the unskipped get_local)
+                    try child_compiler.emitOp(.op_pop);
+                }
+            }
+        }
+
         try child_compiler.compile(body_node);
         _ = self.vm.pop();
 
