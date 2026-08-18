@@ -1210,47 +1210,74 @@ pub const VM = struct {
 
     pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize, is_constructor: bool) !void {
         if (self.frames.items.len >= limits.MAX_CALL_FRAMES) {
-            self.runtimeError("Runtime Error: Call stack overflow (exceeded max call frames).\n", .{});
+            self.runtimeError("Runtime Error: Call stack overflow.\n", .{});
             return error.RuntimeError;
         }
 
         var provided_args = arg_count;
         var has_block = false;
 
-        // Extract implicit blocks cleanly
         if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
             has_block = true;
             provided_args -= 1;
         }
 
+        const block_val = if (has_block) self.pop() else null;
         const expected_args = closure.function.arity;
 
-        // Pad missing arguments with 'nil' natively
+        // Pad missing arguments so we strictly match `expected_args`
         if (provided_args < expected_args) {
             const missing = expected_args - provided_args;
             try self.ensureStackCapacity(self.stack_top + missing);
-
-            const block_copy = if (has_block) self.stack[self.stack_top - 1] else null;
-            if (has_block) self.stack_top -= 1;
-
             for (0..missing) |_| self.push(value.Value.initNil());
-
-            if (has_block) self.push(block_copy.?);
-        } else if (provided_args > expected_args and !closure.function.has_splat) {
+            provided_args = expected_args;
+        } else if (provided_args > expected_args and closure.function.splat_pos == null) {
             self.runtimeError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
             return error.RuntimeError;
         }
 
-        // Pad the implicit block slot with 'nil' if none was provided
-        if (!has_block) {
+        // Safely Pack Splat Arguments in-place
+        if (closure.function.splat_pos) |splat_pos| {
+            const fixed_arity = splat_pos;
+            const trailing_arity = expected_args - fixed_arity - 1;
+            const splat_size = provided_args - fixed_arity - trailing_arity;
+
+            const arr_obj = try self.gc.allocateArray(self);
+            const arr_val = value.Value.initObj(&arr_obj.obj);
+            try arr_obj.items.ensureTotalCapacity(self.allocator, splat_size);
+
+            const start_idx = base_slot + 1 + fixed_arity;
+            for (0..splat_size) |i| {
+                const item = self.stack[start_idx + i];
+                self.retainValue(item);
+                arr_obj.items.appendAssumeCapacity(item);
+            }
+
+            if (splat_size != 1 and trailing_arity > 0) {
+                const dest = self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity];
+                const src = self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity];
+                if (@intFromPtr(dest.ptr) > @intFromPtr(src.ptr)) {
+                    std.mem.copyBackwards(value.Value, dest, src);
+                } else {
+                    std.mem.copyForwards(value.Value, dest, src);
+                }
+            }
+
+            self.stack[start_idx] = arr_val;
+            self.stack_top = start_idx + 1 + trailing_arity;
+        }
+
+        // Restore the implicit block slot
+        if (has_block) {
+            self.push(block_val.?);
+        } else {
             try self.ensureStackCapacity(self.stack_top + 1);
             self.push(value.Value.initNil());
         }
 
-        // Prevents underflows by comparing against actual current frame size!
+        // 4. Pad Virtual Local Slots perfectly
         const total_locals = closure.function.local_count;
         const current_frame_size = self.stack_top - base_slot;
-
         if (total_locals > current_frame_size) {
             const locals_to_pad = total_locals - current_frame_size;
             try self.ensureStackCapacity(self.stack_top + locals_to_pad);

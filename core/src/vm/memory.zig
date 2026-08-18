@@ -95,7 +95,7 @@ pub const GC = struct {
         ptr.arity = 0;
         ptr.upvalue_count = 0;
         ptr.local_count = 0;
-        ptr.has_splat = false;
+        ptr.splat_pos = null;
         ptr.chunk = null;
         ptr.owns_chunk = true;
         return ptr;

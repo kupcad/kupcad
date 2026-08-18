@@ -3458,3 +3458,53 @@ test "VM: super correctly resolves and executes Native C++ methods" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 142.0), vm.stack[0].asNumber()); // 42 (Native) + 100
 }
+
+test "Compiler/VM: Splat parameters calculate trailing arity correctly alongside kwargs" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // If trailing_arity is miscalculated, the VM will over-shift
+    // the stack, corrupting the kwarg map slot. `c` and `d` would evaluate to nil.
+    const source =
+        \\def test_splat(a, *args, c:, d:)
+        \\  [a, args, c, d]
+        \\end
+        \\test_splat(10, 20, 30, c: 100, d: 200)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const result_arr = vm.stack[0];
+    try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
+
+    try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+
+    // a = 10
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+
+    // args = [20, 30]
+    const packed_args = arr_obj.items.items[1];
+    const packed_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", packed_args.asObj())));
+    try testing.expectEqual(@as(usize, 2), packed_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 20.0), packed_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), packed_obj.items.items[1].asNumber());
+
+    // c = 100, d = 200
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[2].asNumber());
+    try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[3].asNumber());
+}

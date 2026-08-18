@@ -776,14 +776,13 @@ pub const Compiler = struct {
         }
 
         var positional_count: usize = 0;
-        var splat_idx: ?usize = null;
+        var splat_pos: ?u8 = null;
         var has_kwargs = false;
 
-        for (params, 0..) |p, i| {
+        for (params) |p| {
             if (p.modifier != null) {
                 if (p.modifier.? == .splat or p.modifier.? == .double_splat) {
-                    func.has_splat = true;
-                    if (p.modifier.? == .splat) splat_idx = i;
+                    if (p.modifier.? == .splat) splat_pos = @intCast(positional_count);
                 }
             }
             if (p.is_keyword or (p.modifier != null and p.modifier.? == .double_splat)) {
@@ -796,6 +795,7 @@ pub const Compiler = struct {
         // Kwargs are passed as a single Dictionary map taking exactly 1 positional slot
         if (has_kwargs) positional_count += 1;
         func.arity = @intCast(positional_count);
+        func.splat_pos = splat_pos;
 
         // Protect the function from GC while compiling the child block!
         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
@@ -884,12 +884,6 @@ pub const Compiler = struct {
                     try child_compiler.emitOp(.op_pop);
                 }
             }
-        }
-
-        if (splat_idx) |s_idx| {
-            try child_compiler.emitOp(.op_pack_splat);
-            try child_compiler.emitByte(@intCast(s_idx));
-            try child_compiler.emitByte(@intCast(params.len - 1 - s_idx));
         }
 
         try child_compiler.compile(body_node);

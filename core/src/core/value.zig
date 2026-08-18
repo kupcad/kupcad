@@ -70,7 +70,7 @@ pub const ObjFunction = struct {
     arity: u8,
     upvalue_count: u16,
     local_count: usize,
-    has_splat: bool,
+    splat_pos: ?u8,
     chunk: ?*anyopaque, // Pointer to chunk.Chunk (avoids circular dependency)
     name: ?*ObjString,
     owns_chunk: bool,
