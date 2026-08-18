@@ -51,3 +51,10 @@ inline void atomic_store(std::shared_ptr<T>* p, std::shared_ptr<T> r) {
 } // namespace std
 
 #endif // KUPCAD_WASM_STUBS_H
+
+extern "C" {
+    // Safely ignore thread-local destructors in single-threaded WASM
+    inline int __cxa_thread_atexit(void (*func)(void*), void* arg, void* dso_handle) {
+        return 0;
+    }
+}

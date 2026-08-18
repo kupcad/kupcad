@@ -287,6 +287,21 @@ pub const Compiler = struct {
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = assign_payload.name;
 
+                // Pad the stack with `nil` if this is a newly declared local variable.
+                // This reserves the permanent stack slot safely below the RHS evaluation.
+                const name_str = self.tree.getString(name_id);
+                const is_new_local = self.enclosing != null and
+                    sym.kind == .local and
+                    !std.mem.startsWith(u8, name_str, "@@") and
+                    self.resolveLocal(name_id) == null and
+                    (try self.resolveUpvalue(name_id)) == null;
+
+                if (is_new_local) {
+                    try self.emitOp(.op_nil);
+                    const slot = @as(u16, @intCast(self.locals.items.len));
+                    try self.addLocal(name_id, slot);
+                }
+
                 // Evaluate RHS (with Compound Operator getters if necessary)
                 if (assign_payload.op) |op| {
                     try self.emitVariableLoad(name_id, sym);
@@ -603,18 +618,13 @@ pub const Compiler = struct {
             .block => {
                 const block_payload = self.tree.block(node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
-
                 if (stmts.len == 0) {
                     try self.emitOp(.op_nil);
                 } else {
                     for (stmts, 0..) |stmt_idx, i| {
                         try self.compileNode(stmt_idx);
                         if (i < stmts.len - 1) {
-                            const stmt_node = self.tree.getNode(stmt_idx).?;
-                            // Do not pop if the statement was a local variable assignment
-                            if (stmt_node.tag != .assignment) {
-                                try self.emitOp(.op_pop);
-                            }
+                            try self.emitOp(.op_pop);
                         }
                     }
                 }
@@ -1243,12 +1253,30 @@ pub const Compiler = struct {
                 }
 
                 const var_str = self.tree.getString(rescue.variable);
+                var is_new_local = false;
+
                 if (var_str.len > 0) {
-                    const slot = @as(u16, @intCast(self.locals.items.len));
-                    try self.addLocal(rescue.variable, slot);
-                    try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
+                    const name_id = rescue.variable;
+
+                    // Determine if the target is a brand new local variable
+                    is_new_local = self.enclosing != null and
+                        !std.mem.startsWith(u8, var_str, "@@") and
+                        self.resolveLocal(name_id) == null and
+                        (try self.resolveUpvalue(name_id)) == null and
+                        !self.isScriptGlobal(name_id);
+
+                    // Assign the error value to the target variable.
+                    // A dummy symbol is perfectly safe here because emitVariableStore natively routes new locals.
+                    const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
+                    try self.emitVariableStore(name_id, dummy_sym);
                 }
-                try self.emitOp(.op_pop); // Pop the error value off stack
+
+                // If the error was captured as a newly declared local variable,
+                // we DO NOT pop it! It must remain on the stack permanently as the local slot.
+                if (!is_new_local) {
+                    try self.emitOp(.op_pop); // Pop the temporary error value off stack
+                }
+
                 try self.compileNode(rescue.body);
 
                 try rescue_end_jumps.append(self.allocator, try self.emitJump(.op_jump));
@@ -1553,6 +1581,24 @@ pub const Compiler = struct {
     fn compileMultipleAssignment(self: *Compiler, node: *const ast.Node) CompileError!void {
         const ma = self.tree.multipleAssignment(node);
         const lhs = self.tree.getLhsExprs(ma.lhs);
+
+        for (lhs) |l| {
+            if (l.name != .none) {
+                const name_id = l.name;
+                const name_str = self.tree.getString(name_id);
+                if (self.enclosing != null and
+                    !std.mem.startsWith(u8, name_str, "@@") and
+                    !self.isScriptGlobal(name_id) and
+                    self.resolveLocal(name_id) == null and
+                    (try self.resolveUpvalue(name_id)) == null)
+                {
+                    try self.emitOp(.op_nil);
+                    const slot = @as(u16, @intCast(self.locals.items.len));
+                    try self.addLocal(name_id, slot);
+                }
+            }
+        }
+
         try self.compileNode(ma.value);
 
         var splat_idx: ?usize = null;
