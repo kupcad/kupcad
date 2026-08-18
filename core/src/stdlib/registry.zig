@@ -1,6 +1,7 @@
 const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
 const value = @import("../core/value.zig");
+const std_exceptions = @import("exceptions.zig");
 const core_classes = @import("core_classes.zig");
 const manifest = @import("manifest.zig");
 const kernel = @import("../kernel/kernel.zig");
@@ -27,9 +28,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     }
 
     // Bootstrap Exception Hierarchy
-    const std_err_class = try defineBuiltinClass(vm, "StandardError", null);
-    _ = try defineBuiltinClass(vm, "ArgumentError", std_err_class);
-    _ = try defineBuiltinClass(vm, "TypeError", std_err_class);
+    try std_exceptions.registerExceptions(vm);
 
     // Bootstrap Primitive Classes for Monkey-Patching
     vm.array_class = try defineBuiltinClass(vm, "Array", null);

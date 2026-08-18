@@ -349,7 +349,10 @@ pub const VM = struct {
                         const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
                         if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
                             self.push(arr.items.items[idx]);
-                        } else |_| return .runtime_error;
+                        } else |_| {
+                            if (self.throwDynamicError("Runtime Error: Array index out of bounds.", .{}) != .ok) return .runtime_error;
+                            continue;
+                        }
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
                         if (self.findMapKey(map, index)) |i| {
@@ -377,7 +380,10 @@ pub const VM = struct {
                             self.retainValue(val);
                             arr.items.items[idx] = val;
                             self.push(val);
-                        } else |_| return .runtime_error;
+                        } else |_| {
+                            if (self.throwDynamicError("Runtime Error: Array index out of bounds.", .{}) != .ok) return .runtime_error;
+                            continue;
+                        }
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
 
@@ -1429,7 +1435,9 @@ pub const VM = struct {
     }
 
     inline fn executeNumericBinary(self: *VM, op: chunk.OpCode) InterpretResult {
-        const nums = self.popBinaryNumbers() catch return .runtime_error;
+        const nums = self.popBinaryNumbers() catch {
+            return self.throwDynamicError("Runtime Error: Invalid operands for math operation.", .{});
+        };
         switch (op) {
             .op_multiply => self.push(value.Value.initNumber(nums[0] * nums[1])),
             .op_divide => self.push(value.Value.initNumber(nums[0] / nums[1])),
@@ -1769,20 +1777,15 @@ pub const VM = struct {
     }
 
     inline fn resolveArrayIndex(self: *VM, arr_len: usize, index_val: value.Value) !usize {
+        _ = self;
         const num_idx = index_val.asNumber();
         if (num_idx < 0) {
             const offset = @as(usize, @intFromFloat(-num_idx));
-            if (offset == 0 or offset > arr_len) {
-                _ = self.throwDynamicError("Runtime Error: Array index out of bounds.", .{});
-                return error.RuntimeError;
-            }
+            if (offset == 0 or offset > arr_len) return error.RuntimeError;
             return arr_len - offset;
         } else {
             const idx = @as(usize, @intFromFloat(num_idx));
-            if (idx >= arr_len) {
-                _ = self.throwDynamicError("Runtime Error: Array index out of bounds.", .{});
-                return error.RuntimeError;
-            }
+            if (idx >= arr_len) return error.RuntimeError;
             return idx;
         }
     }
@@ -1851,9 +1854,25 @@ pub const VM = struct {
         const err_val = self.pop();
         if (self.rescue_frames.items.len == 0) {
             self.reportError("\n[Uncaught Exception] ", .{});
+
             if (err_val.isObject() and err_val.asObj().obj_type == .string) {
                 const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", err_val.asObj()))).chars;
                 self.reportError("{s}\n", .{str});
+            } else if (err_val.isInstance()) {
+                const inst = err_val.asInstance();
+                var printed = false;
+                // Dynamically fetch the message field for terminal output
+                if (inst.class.instance_layout.get("message")) |idx| {
+                    if (idx < inst.fields.items.len) {
+                        const msg_val = inst.fields.items[idx];
+                        if (msg_val.isObject() and msg_val.asObj().obj_type == .string) {
+                            const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj()))).chars;
+                            self.reportError("{s}: {s}\n", .{ inst.class.name.chars, str });
+                            printed = true;
+                        }
+                    }
+                }
+                if (!printed) self.reportError("{s}\n", .{inst.class.name.chars});
             } else {
                 self.reportError("Unknown error.\n", .{});
             }
@@ -1942,7 +1961,6 @@ pub const VM = struct {
             return .{ a.asNumber(), b.asNumber() };
         }
 
-        _ = self.throwDynamicError("Runtime Error: Invalid operands for math operation.", .{});
         return error.RuntimeError;
     }
 
@@ -1969,11 +1987,28 @@ pub const VM = struct {
         var buf: [256]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, fmt, args) catch "Runtime Error";
 
+        // Try to instantiate a real `RuntimeError` object so it can be rescued natively
+        if (self.globals.get("RuntimeError")) |rt_class_val| {
+            if (rt_class_val.isClass()) {
+                if (self.gc.allocateInstance(self, rt_class_val.asClass())) |inst| {
+                    if (self.allocateString(msg)) |str_val| {
+                        // Protect instance from GC during field assignment
+                        self.push(value.Value.initObj(&inst.obj));
+                        self.setInstanceField(inst, "message", str_val) catch {};
+                        _ = self.pop();
+
+                        self.push(value.Value.initObj(&inst.obj));
+                        return self.executeThrow();
+                    } else |_| {}
+                } else |_| {}
+            }
+        }
+
+        // Fallback to string if the standard library isn't loaded yet
         if (self.allocateString(msg)) |err_val| {
             self.push(err_val);
             return self.executeThrow();
         } else |_| {
-            // Fallback to hard crash if we run out of memory while trying to throw an error
             self.runtimeError("Fatal: OOM while throwing exception.\n", .{});
             return .runtime_error;
         }

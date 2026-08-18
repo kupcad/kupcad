@@ -3610,6 +3610,54 @@ test "VM: ARC references are safely released when receivers are discarded" {
     // Force a GC cycle to sweep the closure and the rescued error string
     vm.gc.collectGarbage(&vm, false);
 
-    // CRITICAL FIX PROOF: Memory footprint returns to exactly the baseline
+    // Memory footprint returns to exactly the baseline
     try testing.expectEqual(baseline_memory, vm.gc.bytes_allocated);
+}
+
+test "VM: Unified Exception hierarchy with native methods" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Trigger a native VM soft exception (indexing an array out of bounds).
+    // 2. Rescue it explicitly using StandardError to test inheritance.
+    // 3. Return an array proving its class hierarchy and message extraction
+    const source =
+        \\begin
+        \\  [1, 2][5]
+        \\rescue StandardError => e
+        \\  [e.is_a?(RuntimeError), e.is_a?(Exception), e.message()]
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+
+    // Prove `e` is an instance of RuntimeError natively wrapped by throwDynamicError
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+
+    // Prove `RuntimeError` successfully inherits from `Exception`
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool());
+
+    // Prove `e.message()` evaluates successfully to the VM's formatted array bounds error
+    const msg_val = arr_obj.items.items[2];
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj())));
+    try testing.expectEqualStrings("Runtime Error: Array index out of bounds.", str_obj.chars);
 }
