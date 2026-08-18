@@ -529,3 +529,48 @@ test "Compiler: Prevent stack leaks from next inside expressions" {
     const result = comp.compile(add_node);
     try testing.expectError(error.UnsupportedScope, result);
 }
+
+test "Compiler: op_pop_rescue does not corrupt max_stack_slots calculation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST:
+    // begin
+    //   10
+    // rescue => e
+    //   20
+    // end
+    const begin_body = try b.block(&.{}, &.{try b.number("10", 0)}, 0, 0);
+    const rescue_body = try b.block(&.{}, &.{try b.number("20", 0)}, 0, 0);
+
+    const err_name = try b.intern("StandardError");
+    const err_list = try b.addStringLists(&.{err_name});
+    const var_name = try b.intern("e");
+
+    const rescue_clause = ast.RescueClause{ .errors = err_list, .variable = var_name, .body = rescue_body };
+    const rescues = try b.addRescueClauses(&.{rescue_clause});
+    const begin_stmt = try b.beginStmt(begin_body, rescues, .none, 0);
+
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(begin_stmt) + 1);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(begin_stmt);
+
+    // The maximum stack depth for this simple begin/rescue should be 2
+    // (1 for the pushed number/error, 1 temporarily used during error type checking).
+    // Before the fix, `op_pop_rescue` would simulate a pop, causing under-calculation
+    // and potentially returning a smaller maximum stack size than physically needed.
+    try testing.expect(out_chunk.max_stack_slots >= 2);
+}

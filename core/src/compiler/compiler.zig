@@ -663,7 +663,7 @@ pub const Compiler = struct {
         switch (op) {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_get_global_wide, .op_constant, .op_constant_wide, .op_closure, .op_closure_wide, .op_get_upvalue, .op_dup, .op_import, .op_import_wide, .op_block_given, .op_defined, .op_defined_wide, .op_extract_kwarg, .op_extract_kwarg_wide, .op_module, .op_module_wide => self.simulatePush(1),
 
-            .op_pop, .op_return, .op_close_upvalue, .op_pop_rescue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method, .op_class_method_wide, .op_unpack, .op_unpack_splat, .op_mixin => self.simulatePop(1),
+            .op_pop, .op_return, .op_close_upvalue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method, .op_class_method_wide, .op_unpack, .op_unpack_splat, .op_mixin => self.simulatePop(1),
 
             .op_map_insert => self.simulatePop(2),
 
