@@ -1828,7 +1828,7 @@ test "VM: JIT materialization cascades through DAG and ARC safely cleans up" {
     const bbox_inst = bbox_val.asInstance();
 
     // BoundingBox now has 16 dynamically assigned fields
-    try testing.expectEqual(@as(u32, 12), bbox_inst.fields.count());
+    try testing.expectEqual(@as(u32, 12), bbox_inst.class.instance_layout.count());
 
     // When the test scope ends, `defer vm.deinit()` will clear the VM stack.
     // This will drop the ARC ref_count of the `part` geometry to 0.
@@ -2106,8 +2106,8 @@ test "VM: Minkowski sums and 2D Offsets evaluate correctly" {
 
     // 1. Minkowski BBox map checks
     const bbox_inst = arr_obj.items.items[0].asInstance();
-    try testing.expect(bbox_inst.fields.contains("min_x"));
-    try testing.expect(bbox_inst.fields.contains("max_y"));
+    try testing.expect(bbox_inst.class.instance_layout.contains("min_x"));
+    try testing.expect(bbox_inst.class.instance_layout.contains("max_y"));
 
     // 2. Offset volume check (~1925.6)
     const vol = arr_obj.items.items[1].asNumber();
@@ -2155,13 +2155,17 @@ test "VM: Affine transformations via multmatrix evaluate correctly" {
 
     // Check 3D Transform
     const c_bbox = arr_obj.items.items[0].asInstance();
-    try testing.expectEqual(@as(f64, 0.0), c_bbox.fields.get("min_x").?.asNumber()); // -5 + 5
-    try testing.expectEqual(@as(f64, 5.0), c_bbox.fields.get("min_y").?.asNumber()); // -5 + 10
+    const c_min_x_idx = c_bbox.class.instance_layout.get("min_x").?;
+    const c_min_y_idx = c_bbox.class.instance_layout.get("min_y").?;
+    try testing.expectEqual(@as(f64, 0.0), c_bbox.fields.items[c_min_x_idx].asNumber()); // -5 + 5
+    try testing.expectEqual(@as(f64, 5.0), c_bbox.fields.items[c_min_y_idx].asNumber()); // -5 + 10
 
     // Check 2D Transform
     const sq_bbox = arr_obj.items.items[1].asInstance();
-    try testing.expectEqual(@as(f64, -3.0), sq_bbox.fields.get("min_x").?.asNumber()); // -5 + 2
-    try testing.expectEqual(@as(f64, -1.0), sq_bbox.fields.get("min_y").?.asNumber()); // -5 + 4
+    const sq_min_x_idx = sq_bbox.class.instance_layout.get("min_x").?;
+    const sq_min_y_idx = sq_bbox.class.instance_layout.get("min_y").?;
+    try testing.expectEqual(@as(f64, -3.0), sq_bbox.fields.items[sq_min_x_idx].asNumber()); // -5 + 2
+    try testing.expectEqual(@as(f64, -1.0), sq_bbox.fields.items[sq_min_y_idx].asNumber()); // -5 + 4
 }
 
 test "VM: Spatial Queries (min_gap, contains?, ray_cast) evaluate safely" {

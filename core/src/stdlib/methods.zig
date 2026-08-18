@@ -127,21 +127,21 @@ pub fn meshBBox(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Va
     const center_z = box.min_z + (size_z / 2.0);
 
     // Attach Scalar Properties (e.g. `bbox.size_x`, `bbox.center_y`)
-    try bbox_inst.fields.put(vm.allocator, "size_x", value.Value.initNumber(size_x));
-    try bbox_inst.fields.put(vm.allocator, "size_y", value.Value.initNumber(size_y));
-    try bbox_inst.fields.put(vm.allocator, "size_z", value.Value.initNumber(size_z));
+    try vm.setInstanceField(bbox_inst, "size_x", value.Value.initNumber(size_x));
+    try vm.setInstanceField(bbox_inst, "size_y", value.Value.initNumber(size_y));
+    try vm.setInstanceField(bbox_inst, "size_z", value.Value.initNumber(size_z));
 
-    try bbox_inst.fields.put(vm.allocator, "center_x", value.Value.initNumber(center_x));
-    try bbox_inst.fields.put(vm.allocator, "center_y", value.Value.initNumber(center_y));
-    try bbox_inst.fields.put(vm.allocator, "center_z", value.Value.initNumber(center_z));
+    try vm.setInstanceField(bbox_inst, "center_x", value.Value.initNumber(center_x));
+    try vm.setInstanceField(bbox_inst, "center_y", value.Value.initNumber(center_y));
+    try vm.setInstanceField(bbox_inst, "center_z", value.Value.initNumber(center_z));
 
-    try bbox_inst.fields.put(vm.allocator, "min_x", value.Value.initNumber(box.min_x));
-    try bbox_inst.fields.put(vm.allocator, "min_y", value.Value.initNumber(box.min_y));
-    try bbox_inst.fields.put(vm.allocator, "min_z", value.Value.initNumber(box.min_z));
+    try vm.setInstanceField(bbox_inst, "min_x", value.Value.initNumber(box.min_x));
+    try vm.setInstanceField(bbox_inst, "min_y", value.Value.initNumber(box.min_y));
+    try vm.setInstanceField(bbox_inst, "min_z", value.Value.initNumber(box.min_z));
 
-    try bbox_inst.fields.put(vm.allocator, "max_x", value.Value.initNumber(box.max_x));
-    try bbox_inst.fields.put(vm.allocator, "max_y", value.Value.initNumber(box.max_y));
-    try bbox_inst.fields.put(vm.allocator, "max_z", value.Value.initNumber(box.max_z));
+    try vm.setInstanceField(bbox_inst, "max_x", value.Value.initNumber(box.max_x));
+    try vm.setInstanceField(bbox_inst, "max_y", value.Value.initNumber(box.max_y));
+    try vm.setInstanceField(bbox_inst, "max_z", value.Value.initNumber(box.max_z));
 
     return value.Value.initObj(&bbox_inst.obj);
 }

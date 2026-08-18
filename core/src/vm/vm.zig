@@ -309,9 +309,15 @@ pub const VM = struct {
 
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
-                        if (instance.fields.get(name_str)) |val| {
+                        // Query the class layout for the O(1) array index
+                        if (instance.class.instance_layout.get(name_str)) |idx| {
                             self.stack_top -= 1; // Pop receiver
-                            self.push(val);
+                            // Ensure the instance array actually has it initialized
+                            if (idx < instance.fields.items.len) {
+                                self.push(instance.fields.items[idx]);
+                            } else {
+                                self.push(value.Value.initNil());
+                            }
                         } else {
                             self.runtimeError("Runtime Error: Undefined property '{s}'.\n", .{name_str});
                             return .runtime_error;
@@ -783,11 +789,7 @@ pub const VM = struct {
 
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
-                        self.retainValue(val);
-                        // Release old value if overriding
-                        if (instance.fields.get(name_str)) |old_val| self.releaseValue(old_val);
-
-                        instance.fields.put(self.allocator, name_str, val) catch return .runtime_error;
+                        self.setInstanceField(instance, name_str, val) catch return .runtime_error;
                         self.push(val);
                     } else {
                         self.runtimeError("Runtime Error: Only instances have properties.\n", .{});
@@ -1470,9 +1472,14 @@ pub const VM = struct {
 
         // Handle Property Access (Instances only)
         if (receiver.isInstance() and arg_count == 0) {
-            if (receiver.asInstance().fields.get(method_name_str)) |val| {
+            const instance = receiver.asInstance();
+            if (instance.class.instance_layout.get(method_name_str)) |idx| {
                 self.popAndRelease(1); // Pop receiver
-                self.push(val);
+                if (idx < instance.fields.items.len) {
+                    self.push(instance.fields.items[idx]);
+                } else {
+                    self.push(value.Value.initNil());
+                }
                 return .ok;
             }
         }
@@ -1533,7 +1540,7 @@ pub const VM = struct {
             }
 
             if (!match and receiver.isInstance()) {
-                if (receiver.asInstance().fields.contains(query_name)) match = true;
+                if (receiver.asInstance().class.instance_layout.contains(query_name)) match = true;
             }
 
             self.popAndRelease(arg_count + 1);
@@ -1901,6 +1908,31 @@ pub const VM = struct {
 
         // Fallback to standard equality
         return self.valuesEqual(case_val, test_val);
+    }
+
+    pub fn setInstanceField(self: *VM, instance: *value.ObjInstance, name: []const u8, val: value.Value) !void {
+        var idx: usize = 0;
+
+        // Look up or create the field index on the shared Class layout
+        if (instance.class.instance_layout.get(name)) |existing_idx| {
+            idx = existing_idx;
+        } else {
+            idx = instance.class.instance_layout.count();
+            try instance.class.instance_layout.put(self.allocator, name, idx);
+        }
+
+        // Ensure the instance's flat array is large enough, padding skipped indices with nil
+        if (idx >= instance.fields.items.len) {
+            const old_len = instance.fields.items.len;
+            try instance.fields.resize(self.allocator, idx + 1);
+            for (old_len..idx) |i| instance.fields.items[i] = value.Value.initNil();
+        } else {
+            // ARC: Release old value being overwritten
+            self.releaseValue(instance.fields.items[idx]);
+        }
+
+        self.retainValue(val);
+        instance.fields.items[idx] = val;
     }
 
     fn popBinaryNumbers(self: *VM) !struct { f64, f64 } {

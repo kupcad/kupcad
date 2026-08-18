@@ -4,7 +4,11 @@ const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 
 inline fn getField(inst: *value.ObjInstance, name: []const u8) f64 {
-    if (inst.fields.get(name)) |v| return v.asNumber();
+    if (inst.class.instance_layout.get(name)) |idx| {
+        if (idx < inst.fields.items.len and inst.fields.items[idx].isNumber()) {
+            return inst.fields.items[idx].asNumber();
+        }
+    }
     return 0.0;
 }
 

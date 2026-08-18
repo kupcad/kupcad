@@ -97,6 +97,7 @@ pub const ObjClass = struct {
     class_methods: std.StringHashMapUnmanaged(Value),
     class_fields: std.StringHashMapUnmanaged(Value),
     included_modules: std.ArrayListUnmanaged(*ObjModule),
+    instance_layout: std.StringHashMapUnmanaged(usize),
 };
 
 pub const ObjModule = struct {
@@ -108,7 +109,7 @@ pub const ObjModule = struct {
 pub const ObjInstance = struct {
     obj: Obj,
     class: *ObjClass,
-    fields: std.StringHashMapUnmanaged(Value),
+    fields: std.ArrayListUnmanaged(Value),
 };
 
 pub const ObjBoundMethod = struct {

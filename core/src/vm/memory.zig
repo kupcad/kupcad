@@ -109,6 +109,7 @@ pub const GC = struct {
         ptr.class_methods = .empty;
         ptr.class_fields = .empty;
         ptr.included_modules = .empty;
+        ptr.instance_layout = .empty;
         return ptr;
     }
 
@@ -434,8 +435,7 @@ pub const GC = struct {
             .instance => {
                 const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
                 self.markObject(&instance_obj.class.obj);
-                var it = instance_obj.fields.valueIterator();
-                while (it.next()) |val| self.markValue(val.*);
+                for (instance_obj.fields.items) |val| self.markValue(val);
             },
             .bound_method => {
                 const bound_obj = @as(*value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj)));
@@ -554,6 +554,7 @@ pub const GC = struct {
                 class_obj.included_modules.deinit(self.allocator);
                 class_obj.class_methods.deinit(self.allocator);
                 class_obj.class_fields.deinit(self.allocator);
+                class_obj.instance_layout.deinit(self.allocator);
                 self.allocator.destroy(class_obj);
                 self.bytes_allocated -= @sizeOf(value.ObjClass);
             },
