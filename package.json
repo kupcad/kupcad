@@ -2,10 +2,10 @@
   "name": "kupcad",
   "license": "AGPL-3.0-only",
   "scripts": {
-    "build:core:wasm": "cd core && zig build -Dtarget=wasm32-freestanding -Doptimize=ReleaseFast",
+    "build:core:wasm": "cd core && zig build -Dtarget=wasm32-wasi -Doptimize=ReleaseFast",
     "build:core:native": "cd core && zig build -Doptimize=ReleaseFast",
     "build:core:grammar": "cd core && zig build grammar -Doptimize=ReleaseFast",
     "test:core": "cd core && zig build test --summary all",
-    "test:wasm": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -fwasmtime"
+    "test:wasm": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=ReleaseFast --summary all"
   }
 }

@@ -36,74 +36,74 @@ pub const ManifoldRayHit = extern struct {
     normal: ManifoldVec3,
 };
 
-extern "C" fn manifold_alloc_manifold() ?*ManifoldObj;
-extern "C" fn manifold_delete_manifold(m: ?*ManifoldObj) void;
-extern "C" fn manifold_alloc_box() ?*ManifoldBox;
-extern "C" fn manifold_delete_box(b: ?*ManifoldBox) void;
-extern "C" fn manifold_alloc_meshgl() ?*ManifoldMeshGL;
-extern "C" fn manifold_delete_meshgl(m: ?*ManifoldMeshGL) void;
-extern "C" fn manifold_alloc_cross_section() ?*ManifoldCrossSection;
-extern "C" fn manifold_delete_cross_section(cs: ?*ManifoldCrossSection) void;
-extern "C" fn manifold_alloc_polygons() ?*ManifoldPolygons;
-extern "C" fn manifold_delete_polygons(p: ?*ManifoldPolygons) void;
+extern fn manifold_alloc_manifold() ?*ManifoldObj;
+extern fn manifold_delete_manifold(m: ?*ManifoldObj) void;
+extern fn manifold_alloc_box() ?*ManifoldBox;
+extern fn manifold_delete_box(b: ?*ManifoldBox) void;
+extern fn manifold_alloc_meshgl() ?*ManifoldMeshGL;
+extern fn manifold_delete_meshgl(m: ?*ManifoldMeshGL) void;
+extern fn manifold_alloc_cross_section() ?*ManifoldCrossSection;
+extern fn manifold_delete_cross_section(cs: ?*ManifoldCrossSection) void;
+extern fn manifold_alloc_polygons() ?*ManifoldPolygons;
+extern fn manifold_delete_polygons(p: ?*ManifoldPolygons) void;
 
-extern "C" fn manifold_cube(mem: ?*ManifoldObj, x: f64, y: f64, z: f64, center: c_int) ?*ManifoldObj;
-extern "C" fn manifold_cylinder(mem: ?*ManifoldObj, height: f64, radiusLow: f64, radiusHigh: f64, circularSegments: c_int, center: c_int) ?*ManifoldObj;
-extern "C" fn manifold_sphere(mem: ?*ManifoldObj, radius: f64, circularSegments: c_int) ?*ManifoldObj;
-extern "C" fn manifold_boolean(mem: ?*ManifoldObj, a: ?*ManifoldObj, b: ?*ManifoldObj, op: OpType) ?*ManifoldObj;
+extern fn manifold_cube(mem: ?*ManifoldObj, x: f64, y: f64, z: f64, center: c_int) ?*ManifoldObj;
+extern fn manifold_cylinder(mem: ?*ManifoldObj, height: f64, radiusLow: f64, radiusHigh: f64, circularSegments: c_int, center: c_int) ?*ManifoldObj;
+extern fn manifold_sphere(mem: ?*ManifoldObj, radius: f64, circularSegments: c_int) ?*ManifoldObj;
+extern fn manifold_boolean(mem: ?*ManifoldObj, a: ?*ManifoldObj, b: ?*ManifoldObj, op: OpType) ?*ManifoldObj;
 
-extern "C" fn manifold_translate(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z: f64) ?*ManifoldObj;
-extern "C" fn manifold_rotate(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z: f64) ?*ManifoldObj;
-extern "C" fn manifold_scale(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z: f64) ?*ManifoldObj;
+extern fn manifold_translate(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z: f64) ?*ManifoldObj;
+extern fn manifold_rotate(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z: f64) ?*ManifoldObj;
+extern fn manifold_scale(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z: f64) ?*ManifoldObj;
 
-extern "C" fn manifold_mirror(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64) ?*ManifoldObj;
-extern "C" fn manifold_hull(mem: ?*ManifoldObj, m: ?*ManifoldObj) ?*ManifoldObj;
-extern "C" fn manifold_trim_by_plane(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ?*ManifoldObj;
-extern "C" fn manifold_split_by_plane(mem_first: ?*ManifoldObj, mem_second: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ManifoldManifoldPair;
-extern "C" fn manifold_cross_section_boolean(mem: ?*ManifoldCrossSection, a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection;
-extern "C" fn manifold_minkowski_sum(mem: ?*ManifoldObj, a: ?*ManifoldObj, b: ?*ManifoldObj) ?*ManifoldObj;
-extern "C" fn manifold_cross_section_offset(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, delta: f64, jt: JoinType, miter_limit: f64, circular_segments: c_int) ?*ManifoldCrossSection;
+extern fn manifold_mirror(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64) ?*ManifoldObj;
+extern fn manifold_hull(mem: ?*ManifoldObj, m: ?*ManifoldObj) ?*ManifoldObj;
+extern fn manifold_trim_by_plane(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ?*ManifoldObj;
+extern fn manifold_split_by_plane(mem_first: ?*ManifoldObj, mem_second: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ManifoldManifoldPair;
+extern fn manifold_cross_section_boolean(mem: ?*ManifoldCrossSection, a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection;
+extern fn manifold_minkowski_sum(mem: ?*ManifoldObj, a: ?*ManifoldObj, b: ?*ManifoldObj) ?*ManifoldObj;
+extern fn manifold_cross_section_offset(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, delta: f64, jt: JoinType, miter_limit: f64, circular_segments: c_int) ?*ManifoldCrossSection;
 
-extern "C" fn manifold_cross_section_square(mem: ?*ManifoldCrossSection, x: f64, y: f64, center: c_int) ?*ManifoldCrossSection;
-extern "C" fn manifold_cross_section_circle(mem: ?*ManifoldCrossSection, radius: f64, circular_segments: c_int) ?*ManifoldCrossSection;
-extern "C" fn manifold_cross_section_to_polygons(mem: ?*ManifoldPolygons, cs: ?*ManifoldCrossSection) ?*ManifoldPolygons;
-extern "C" fn manifold_cross_section_of_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
+extern fn manifold_cross_section_square(mem: ?*ManifoldCrossSection, x: f64, y: f64, center: c_int) ?*ManifoldCrossSection;
+extern fn manifold_cross_section_circle(mem: ?*ManifoldCrossSection, radius: f64, circular_segments: c_int) ?*ManifoldCrossSection;
+extern fn manifold_cross_section_to_polygons(mem: ?*ManifoldPolygons, cs: ?*ManifoldCrossSection) ?*ManifoldPolygons;
+extern fn manifold_cross_section_of_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
 
-extern "C" fn manifold_transform(mem: ?*ManifoldObj, m: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj;
-extern "C" fn manifold_cross_section_transform(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) ?*ManifoldCrossSection;
+extern fn manifold_transform(mem: ?*ManifoldObj, m: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj;
+extern fn manifold_cross_section_transform(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) ?*ManifoldCrossSection;
 
-extern "C" fn manifold_extrude(mem: ?*ManifoldObj, cs: ?*ManifoldPolygons, height: f64, slices: c_int, twist_degrees: f64, scale_x: f64, scale_y: f64) ?*ManifoldObj;
-extern "C" fn manifold_revolve(mem: ?*ManifoldObj, cs: ?*ManifoldPolygons, circular_segments: c_int, revolve_degrees: f64) ?*ManifoldObj;
+extern fn manifold_extrude(mem: ?*ManifoldObj, cs: ?*ManifoldPolygons, height: f64, slices: c_int, twist_degrees: f64, scale_x: f64, scale_y: f64) ?*ManifoldObj;
+extern fn manifold_revolve(mem: ?*ManifoldObj, cs: ?*ManifoldPolygons, circular_segments: c_int, revolve_degrees: f64) ?*ManifoldObj;
 
-extern "C" fn manifold_slice(mem: ?*ManifoldPolygons, m: ?*ManifoldObj, height: f64) ?*ManifoldPolygons;
-extern "C" fn manifold_project(mem: ?*ManifoldPolygons, m: ?*ManifoldObj) ?*ManifoldPolygons;
+extern fn manifold_slice(mem: ?*ManifoldPolygons, m: ?*ManifoldObj, height: f64) ?*ManifoldPolygons;
+extern fn manifold_project(mem: ?*ManifoldPolygons, m: ?*ManifoldObj) ?*ManifoldPolygons;
 
-extern "C" fn manifold_bounding_box(mem: ?*ManifoldBox, m: ?*ManifoldObj) ?*ManifoldBox;
-extern "C" fn manifold_box_min(b: ?*ManifoldBox) ManifoldVec3;
-extern "C" fn manifold_box_max(b: ?*ManifoldBox) ManifoldVec3;
-extern "C" fn manifold_volume(m: ?*ManifoldObj) f64;
-extern "C" fn manifold_surface_area(m: ?*ManifoldObj) f64;
-extern "C" fn manifold_genus(m: ?*ManifoldObj) c_int;
+extern fn manifold_bounding_box(mem: ?*ManifoldBox, m: ?*ManifoldObj) ?*ManifoldBox;
+extern fn manifold_box_min(b: ?*ManifoldBox) ManifoldVec3;
+extern fn manifold_box_max(b: ?*ManifoldBox) ManifoldVec3;
+extern fn manifold_volume(m: ?*ManifoldObj) f64;
+extern fn manifold_surface_area(m: ?*ManifoldObj) f64;
+extern fn manifold_genus(m: ?*ManifoldObj) c_int;
 
-extern "C" fn manifold_get_meshgl(mem: ?*ManifoldMeshGL, m: ?*ManifoldObj) ?*ManifoldMeshGL;
-extern "C" fn manifold_meshgl_num_prop(m: ?*ManifoldMeshGL) usize;
-extern "C" fn manifold_meshgl_vert_properties_length(m: ?*ManifoldMeshGL) usize;
-extern "C" fn manifold_meshgl_tri_length(m: ?*ManifoldMeshGL) usize;
-extern "C" fn manifold_meshgl_vert_properties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32;
-extern "C" fn manifold_meshgl_tri_verts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32;
+extern fn manifold_get_meshgl(mem: ?*ManifoldMeshGL, m: ?*ManifoldObj) ?*ManifoldMeshGL;
+extern fn manifold_meshgl_num_prop(m: ?*ManifoldMeshGL) usize;
+extern fn manifold_meshgl_vert_properties_length(m: ?*ManifoldMeshGL) usize;
+extern fn manifold_meshgl_tri_length(m: ?*ManifoldMeshGL) usize;
+extern fn manifold_meshgl_vert_properties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32;
+extern fn manifold_meshgl_tri_verts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32;
 
-extern "C" fn manifold_alloc_ray_hit_vec() ?*ManifoldRayHitVec;
-extern "C" fn manifold_delete_ray_hit_vec(v: ?*ManifoldRayHitVec) void;
-extern "C" fn manifold_ray_cast(mem: ?*ManifoldRayHitVec, m: ?*ManifoldObj, origin_x: f64, origin_y: f64, origin_z: f64, end_x: f64, end_y: f64, end_z: f64) ?*ManifoldRayHitVec;
-extern "C" fn manifold_ray_hit_vec_length(v: ?*ManifoldRayHitVec) usize;
-extern "C" fn manifold_ray_hit_vec_get(v: ?*ManifoldRayHitVec, idx: usize) ManifoldRayHit;
-extern "C" fn manifold_min_gap(m: ?*ManifoldObj, other: ?*ManifoldObj, searchLength: f64) f64;
-extern "C" fn manifold_winding_number(m: ?*ManifoldObj, x: f64, y: f64, z: f64) c_int;
+extern fn manifold_alloc_ray_hit_vec() ?*ManifoldRayHitVec;
+extern fn manifold_delete_ray_hit_vec(v: ?*ManifoldRayHitVec) void;
+extern fn manifold_ray_cast(mem: ?*ManifoldRayHitVec, m: ?*ManifoldObj, origin_x: f64, origin_y: f64, origin_z: f64, end_x: f64, end_y: f64, end_z: f64) ?*ManifoldRayHitVec;
+extern fn manifold_ray_hit_vec_length(v: ?*ManifoldRayHitVec) usize;
+extern fn manifold_ray_hit_vec_get(v: ?*ManifoldRayHitVec, idx: usize) ManifoldRayHit;
+extern fn manifold_min_gap(m: ?*ManifoldObj, other: ?*ManifoldObj, searchLength: f64) f64;
+extern fn manifold_winding_number(m: ?*ManifoldObj, x: f64, y: f64, z: f64) c_int;
 
-extern "C" fn manifold_simple_polygon(mem: ?*ManifoldSimplePolygon, ps: [*]const ManifoldVec2, length: usize) ?*ManifoldSimplePolygon;
-extern "C" fn manifold_alloc_simple_polygon() ?*ManifoldSimplePolygon;
-extern "C" fn manifold_delete_simple_polygon(p: ?*ManifoldSimplePolygon) void;
-extern "C" fn manifold_cross_section_of_simple_polygon(mem: ?*ManifoldCrossSection, p: ?*ManifoldSimplePolygon) ?*ManifoldCrossSection;
+extern fn manifold_simple_polygon(mem: ?*ManifoldSimplePolygon, ps: [*]const ManifoldVec2, length: usize) ?*ManifoldSimplePolygon;
+extern fn manifold_alloc_simple_polygon() ?*ManifoldSimplePolygon;
+extern fn manifold_delete_simple_polygon(p: ?*ManifoldSimplePolygon) void;
+extern fn manifold_cross_section_of_simple_polygon(mem: ?*ManifoldCrossSection, p: ?*ManifoldSimplePolygon) ?*ManifoldCrossSection;
 
 // ==========================================
 // Zig Idiomatic Wrappers
