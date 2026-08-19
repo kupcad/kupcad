@@ -1,34 +1,32 @@
 const std = @import("std");
 const api = @import("../api.zig");
-const walker = @import("walker.zig");
+const fs = @import("fs.zig");
+const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
-    var setup = try @import("options.zig").CommandSetup.init(allocator, init.io, args_iter, "doc");
-    defer setup.deinit(allocator);
-
-    try walker.walkPaths(init.io, allocator, setup.options.paths.items, null, processFile);
-}
-
-fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
-    _ = context;
-
-    var doc = api.Document.parse(allocator, source) catch |err| {
-        std.debug.print("Parse failed for '{s}': {}\n", .{ file_path, err });
+    const file_path = args_iter.next() orelse {
+        std.debug.print("Error: Missing input file path.\n", .{});
         return;
     };
+
+    // Use our centralized CLI file reader instead of std.fs directly
+    const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
+    defer allocator.free(source);
+
+    var doc = try api.Document.parse(allocator, source);
     defer doc.deinit();
 
-    const params = api.extractParameters(allocator, &doc) catch |err| {
-        std.debug.print("Parameter extraction failed for '{s}': {}\n", .{ file_path, err });
-        return;
-    };
-    defer allocator.free(params);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
 
-    const stdout = std.Io.File.stdout();
+    const schema = try api.extractSchema(arena.allocator(), &doc, source);
+
+    // Format JSON into an allocating writer using std.json.fmt
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
+    try out.writer.print("{f}\n", .{std.json.fmt(schema, .{ .whitespace = .indent_2 })});
 
-    try out.writer.print("{f}", .{std.json.fmt(params, .{ .whitespace = .indent_2 })});
-    try out.writer.writeByte('\n');
-    try stdout.writeStreamingAll(io, out.written());
+    // Write directly to stdout using the new std.Io API
+    const stdout = std.Io.File.stdout();
+    try stdout.writeStreamingAll(init.io, out.written());
 }

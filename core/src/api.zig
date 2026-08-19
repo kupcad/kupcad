@@ -10,7 +10,7 @@ const extractor = @import("tools/doc/extractor.zig");
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const Linter = @import("tools/lint/linter.zig").Linter;
 
-pub const ParamMetadata = extractor.ParamMetadata;
+pub const UiSchema = extractor.UiSchema;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
 pub const Document = @import("core/document.zig").Document;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
@@ -55,8 +55,8 @@ pub fn checkCode(allocator: std.mem.Allocator, source: []const u8, config: Linte
 }
 
 /// Scans a parsed document and extracts all parameter definitions and docstrings.
-pub fn extractParameters(allocator: std.mem.Allocator, doc: *const Document) ![]ParamMetadata {
-    return extractor.extractParameters(allocator, doc);
+pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source: []const u8) !UiSchema {
+    return extractor.extractSchema(allocator, doc, source);
 }
 
 /// Compiles and evaluates a KupCAD script, returning a binary STL buffer.

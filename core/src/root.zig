@@ -38,6 +38,9 @@ test {
     _ = @import("cli/options_test.zig");
     _ = @import("cli/walker_test.zig");
 
+    // Docs
+    _ = @import("tools/doc/extractor_test.zig");
+
     // Dev tools
     _ = @import("tools/dev/ast_dumper_test.zig");
 

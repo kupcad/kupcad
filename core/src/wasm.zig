@@ -68,15 +68,18 @@ fn inner_extract_params(allocator: std.mem.Allocator, source: []const u8) ![]con
     var doc = try api.Document.parse(allocator, source);
     defer doc.deinit();
 
-    const params = try api.extractParameters(allocator, &doc);
-    defer allocator.free(params);
+    // Use an Arena allocator here to cheaply manage the JSON nested tree
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const schema = try api.extractSchema(arena.allocator(), &doc, source);
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
 
-    try out.writer.print("{f}", .{std.json.fmt(params, .{})});
+    // std.json natively formats the `UiSchema` wrapper perfectly
+    try out.writer.print("{f}", .{std.json.fmt(schema, .{})});
     try out.writer.writeByte(0); // Null-terminate for JS
-
     return try out.toOwnedSlice();
 }
 

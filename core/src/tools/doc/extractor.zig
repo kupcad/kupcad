@@ -2,113 +2,212 @@ const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const Document = @import("../../core/document.zig").Document;
 
-/// Structure representing metadata extracted for a script parameter.
-pub const ParamMetadata = struct {
-    key: []const u8,
-    label: ?[]const u8 = null,
-    tooltip: ?[]const u8 = null,
-    default_val: ?f64 = null,
+pub const PresentationMeta = struct {
+    title: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    author: ?[]const u8 = null,
 };
 
-/// Scans a parsed Document's AST to extract parameter metadata (`param(:key, default: val)`)
-/// along with preceding AST `.docstring` nodes (`# @label`, `# @tooltip`).
-/// If a parameter with the same key is encountered multiple times, subsequent definitions
-/// will override and merge into the previous metadata entry.
-pub fn extractParameters(allocator: std.mem.Allocator, doc: *const Document) ![]ParamMetadata {
-    var params: std.ArrayListUnmanaged(ParamMetadata) = .empty;
-    errdefer params.deinit(allocator);
+pub const ParamUi = struct {
+    label: ?[]const u8 = null,
+    tooltip: ?[]const u8 = null,
+    group: ?[]const u8 = null,
+};
 
-    // Return empty slice if the document AST is empty
-    if (doc.tree.root == .none) return params.toOwnedSlice(allocator);
-    const root_node = doc.tree.getNode(doc.tree.root) orelse return params.toOwnedSlice(allocator);
+pub const ParamValidate = struct {
+    min: ?f64 = null,
+    max: ?f64 = null,
+    step: ?f64 = null,
+};
 
-    // Parameter declarations are top-level statements inside the root block
-    if (root_node.tag != .block) return params.toOwnedSlice(allocator);
-    const block_payload = doc.tree.block(root_node);
-    const stmts = doc.tree.getNodes(block_payload.stmts);
+pub const ParamMetadata = struct {
+    name: []const u8,
+    type: []const u8, // Zig keyword escaped for clean JSON output
+    default_value: ?std.json.Value,
+    ui: ParamUi,
+    validate: ParamValidate,
+};
 
-    var pending_label: ?[]const u8 = null;
-    var pending_tooltip: ?[]const u8 = null;
+pub const UiSchema = struct {
+    meta: PresentationMeta,
+    parameters: []ParamMetadata,
+};
 
-    for (stmts) |stmt_idx| {
-        const stmt_node = doc.tree.getNode(stmt_idx) orelse continue;
+pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source: []const u8) !UiSchema {
+    var schema = UiSchema{
+        .meta = .{},
+        .parameters = &.{},
+    };
 
-        // Collect Docstring AST Nodes preceding a statement
-        if (stmt_node.tag == .docstring) {
-            const doc_data = doc.tree.docString(stmt_node);
-            const tag_name = doc.tree.getString(doc_data.tag_name);
-            const content = doc.tree.getString(doc_data.content);
+    // Extract Presentation Metadata from Source Comments
+    var lines = std.mem.splitScalar(u8, source, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \r\t");
+        if (!std.mem.startsWith(u8, trimmed, "#")) continue;
+        const content = std.mem.trim(u8, trimmed[1..], " \r\t");
 
-            if (std.mem.eql(u8, tag_name, "label")) {
-                pending_label = content;
-            } else if (std.mem.eql(u8, tag_name, "tooltip")) {
-                pending_tooltip = content;
-            }
-            continue;
+        if (std.mem.startsWith(u8, content, "@title")) {
+            schema.meta.title = std.mem.trim(u8, content[6..], " \t");
+        } else if (std.mem.startsWith(u8, content, "@description")) {
+            schema.meta.description = std.mem.trim(u8, content[12..], " \t");
+        } else if (std.mem.startsWith(u8, content, "@author")) {
+            schema.meta.author = std.mem.trim(u8, content[7..], " \t");
         }
-
-        // Process Global `param(...)` Method Calls
-        if (stmt_node.tag == .method_call) {
-            const mc = doc.tree.methodCall(stmt_node);
-            const method_name = doc.tree.getString(mc.method_name);
-
-            // Isolate standalone "param" function calls with no receiver
-            if (std.mem.eql(u8, method_name, "param") and mc.receiver == .none) {
-                var meta = ParamMetadata{
-                    .key = "",
-                    .label = pending_label,
-                    .tooltip = pending_tooltip,
-                };
-
-                // Extract Parameter Key (First positional argument)
-                const args = doc.tree.getNamedArgs(mc.args);
-                if (args.len > 0) {
-                    const key_node = doc.tree.getNode(args[0].value).?;
-                    if (key_node.tag == .symbol or key_node.tag == .string) {
-                        meta.key = doc.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data)));
-                    }
-                }
-
-                // Process only valid parameter calls with a non-empty key
-                if (meta.key.len > 0) {
-                    // Extract Default Value (From keyword argument `default: ...`)
-                    for (args) |arg| {
-                        if (arg.name != .none) {
-                            const arg_name = doc.tree.getString(arg.name);
-                            if (std.mem.eql(u8, arg_name, "default")) {
-                                const val_node = doc.tree.getNode(arg.value).?;
-                                if (val_node.tag == .number) {
-                                    meta.default_val = doc.tree.number(val_node);
-                                }
-                            }
-                        }
-                    }
-
-                    // Key Overriding / Merging Logic
-                    // If the parameter key was already declared earlier, update its values
-                    var existing_found = false;
-                    for (params.items) |*existing| {
-                        if (std.mem.eql(u8, existing.key, meta.key)) {
-                            if (meta.label) |l| existing.label = l;
-                            if (meta.tooltip) |t| existing.tooltip = t;
-                            if (meta.default_val) |d| existing.default_val = d;
-                            existing_found = true;
-                            break;
-                        }
-                    }
-
-                    // Append as a new parameter entry if it hasn't been seen yet
-                    if (!existing_found) {
-                        try params.append(allocator, meta);
-                    }
-                }
-            }
-        }
-
-        // Reset pending docstrings after hitting any non-docstring statement
-        pending_label = null;
-        pending_tooltip = null;
     }
 
-    return params.toOwnedSlice(allocator);
+    // Walk the AST to extract `param()` setters
+    var params: std.ArrayListUnmanaged(ParamMetadata) = .empty;
+    defer params.deinit(allocator);
+
+    const root = doc.tree.root;
+    if (root != .none) {
+        const root_node = doc.tree.getNode(root).?;
+        if (root_node.tag == .block) {
+            const stmts = doc.tree.getNodes(doc.tree.block(root_node).stmts);
+            for (stmts) |stmt_idx| {
+                const stmt = doc.tree.getNode(stmt_idx).?;
+                if (stmt.tag == .method_call) {
+                    const mc = doc.tree.methodCall(stmt);
+                    const method_name = doc.tree.getString(mc.method_name);
+                    if (std.mem.eql(u8, method_name, "param")) {
+                        if (try extractParam(allocator, &doc.tree, mc)) |p| {
+                            // --- FIX: Pass allocator to append ---
+                            try params.append(allocator, p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    schema.parameters = try params.toOwnedSlice(allocator);
+    return schema;
+}
+
+fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.MethodCall) !?ParamMetadata {
+    const args = tree.getNamedArgs(mc.args);
+    if (args.len == 0) return null;
+
+    // Setter mode requires kwargs or a default value
+    const is_setter = args.len > 1 or (args.len > 0 and args[0].name != .none);
+    if (!is_setter) return null;
+
+    const p_name = extractString(tree, args[0].value) orelse "unknown";
+
+    var def_val: ?std.json.Value = null;
+    var p_type: []const u8 = "number";
+    var ui = ParamUi{};
+    var val = ParamValidate{};
+
+    for (args) |arg| {
+        if (arg.name == .none) continue;
+        const kw_name = tree.getString(arg.name);
+
+        if (std.mem.eql(u8, kw_name, "default")) {
+            def_val = extractJsonValue(tree, arg.value);
+            if (def_val) |dv| {
+                switch (dv) {
+                    .float, .integer => p_type = "number",
+                    .string => p_type = "string",
+                    .bool => p_type = "boolean",
+                    else => {},
+                }
+            }
+        } else if (std.mem.eql(u8, kw_name, "ui")) {
+            ui = extractUi(tree, arg.value);
+        } else if (std.mem.eql(u8, kw_name, "validate")) {
+            val = extractValidate(tree, arg.value);
+        }
+    }
+
+    // Free floating JSON allocations will be swept by an ArenaAllocator automatically
+    _ = allocator;
+
+    return ParamMetadata{
+        .name = p_name,
+        .type = p_type,
+        .default_value = def_val,
+        .ui = ui,
+        .validate = val,
+    };
+}
+
+fn extractUi(tree: *const ast.Tree, node_idx: ast.NodeIndex) ParamUi {
+    var ui = ParamUi{};
+    const node = tree.getNode(node_idx) orelse return ui;
+    if (node.tag != .hash_literal) return ui;
+
+    const entries = tree.getHashEntries(tree.nodeSpan(node));
+    for (entries) |entry| {
+        const key = extractString(tree, entry.key) orelse continue;
+        if (std.mem.eql(u8, key, "label")) {
+            ui.label = extractString(tree, entry.value);
+        } else if (std.mem.eql(u8, key, "tooltip")) {
+            ui.tooltip = extractString(tree, entry.value);
+        } else if (std.mem.eql(u8, key, "group")) {
+            ui.group = extractString(tree, entry.value);
+        }
+    }
+    return ui;
+}
+
+fn extractValidate(tree: *const ast.Tree, node_idx: ast.NodeIndex) ParamValidate {
+    var val = ParamValidate{};
+    const node = tree.getNode(node_idx) orelse return val;
+    if (node.tag != .hash_literal) return val;
+
+    const entries = tree.getHashEntries(tree.nodeSpan(node));
+    for (entries) |entry| {
+        const key = extractString(tree, entry.key) orelse continue;
+        if (std.mem.eql(u8, key, "min")) {
+            val.min = extractNumber(tree, entry.value);
+        } else if (std.mem.eql(u8, key, "max")) {
+            val.max = extractNumber(tree, entry.value);
+        } else if (std.mem.eql(u8, key, "step")) {
+            val.step = extractNumber(tree, entry.value);
+        }
+    }
+    return val;
+}
+
+fn extractString(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?[]const u8 {
+    const node = tree.getNode(node_idx) orelse return null;
+    switch (node.tag) {
+        .string, .symbol, .identifier => return tree.getString(@as(ast.StringId, @enumFromInt(node.data))),
+        else => return null,
+    }
+}
+
+fn extractNumber(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?f64 {
+    const node = tree.getNode(node_idx) orelse return null;
+    if (node.tag == .number) return tree.number(node);
+
+    // Catch negative numbers `-10`
+    if (node.tag == .unary_op) {
+        const un = tree.unaryExpr(node);
+        if (un.op == .negate) {
+            const inner = tree.getNode(un.operand) orelse return null;
+            if (inner.tag == .number) return -tree.number(inner);
+        }
+    }
+    return null;
+}
+
+fn extractJsonValue(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?std.json.Value {
+    const node = tree.getNode(node_idx) orelse return null;
+    switch (node.tag) {
+        .number => return .{ .float = tree.number(node) },
+        .boolean => return .{ .bool = tree.boolean(node) },
+        .string, .symbol => return .{ .string = tree.getString(@as(ast.StringId, @enumFromInt(node.data))) },
+        // Unary negative number mapping
+        .unary_op => {
+            const un = tree.unaryExpr(node);
+            if (un.op == .negate) {
+                const inner = tree.getNode(un.operand) orelse return null;
+                if (inner.tag == .number) return .{ .float = -tree.number(inner) };
+            }
+            return null;
+        },
+        else => return null,
+    }
 }
