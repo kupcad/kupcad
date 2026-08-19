@@ -3835,3 +3835,43 @@ test "VM: param getter halts execution if parameter is undefined" {
     // The VM must recognize it is missing from the registry and halt
     try testing.expectEqual(.runtime_error, result);
 }
+
+test "VM: Universal Object Protocol (nil?, empty?, tap, into, dup)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\val = nil
+        \\t1 = val.nil?
+        \\t2 = "hello".nil?
+        \\t3 = [].empty?
+        \\
+        \\t4 = cube(10).tap { |c| c.translate(5, 0, 0) }.volume()
+        \\t5 = 10.into { |x| x * 2 }
+        \\
+        \\[t1, t2, t3, t4, t5]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_obj = vm.stack[0].asArray();
+
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool()); // nil.nil? -> true
+    try testing.expectEqual(false, arr_obj.items.items[1].asBool()); // "hello".nil? -> false
+    try testing.expectEqual(true, arr_obj.items.items[2].asBool()); // [].empty? -> true
+    try testing.expectApproxEqAbs(@as(f64, 1000.0), arr_obj.items.items[3].asNumber(), 0.1); // tap returns receiver un-mutated
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[4].asNumber()); // 10.then { |x| x * 2 } -> 20
+}

@@ -4,6 +4,7 @@ const value = @import("../core/value.zig");
 const std_exceptions = @import("exceptions.zig");
 const core_classes = @import("core_classes.zig");
 const manifest = @import("manifest.zig");
+const object_mod = @import("classes/object.zig");
 const kernel = @import("../kernel/kernel.zig");
 
 fn defaultPrintHandler(vm: *VM, message: []const u8) void {
@@ -19,6 +20,11 @@ fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !
     return class_obj;
 }
 
+fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
+    const native_obj = try vm.gc.allocateNative(vm, func);
+    try class.methods.put(vm.allocator, name, value.Value.initObj(&native_obj.obj));
+}
+
 // --- Standard Library Registration ---
 
 pub fn registerStandardLibrary(vm: *VM) !void {
@@ -30,14 +36,22 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // Bootstrap Exception Hierarchy
     try std_exceptions.registerExceptions(vm);
 
+    // Object class
+    vm.object_class = try defineBuiltinClass(vm, "Object", null);
+
+    // Register Universal Object Protocol on Object root class
+    for (object_mod.methods) |def| {
+        try bindNativeMethod(vm, vm.object_class.?, def.name, def.func);
+    }
+
     // Bootstrap Primitive Classes for Monkey-Patching
-    vm.array_class = try defineBuiltinClass(vm, "Array", null);
-    vm.string_class = try defineBuiltinClass(vm, "String", null);
-    vm.map_class = try defineBuiltinClass(vm, "Map", null);
-    vm.number_class = try defineBuiltinClass(vm, "Number", null);
-    vm.symbol_class = try defineBuiltinClass(vm, "Symbol", null);
-    vm.boolean_class = try defineBuiltinClass(vm, "Boolean", null);
-    vm.bbox_class = try defineBuiltinClass(vm, "BoundingBox", null);
+    vm.array_class = try defineBuiltinClass(vm, "Array", vm.object_class);
+    vm.string_class = try defineBuiltinClass(vm, "String", vm.object_class);
+    vm.map_class = try defineBuiltinClass(vm, "Map", vm.object_class);
+    vm.number_class = try defineBuiltinClass(vm, "Number", vm.object_class);
+    vm.symbol_class = try defineBuiltinClass(vm, "Symbol", vm.object_class);
+    vm.boolean_class = try defineBuiltinClass(vm, "Boolean", vm.object_class);
+    vm.bbox_class = try defineBuiltinClass(vm, "BoundingBox", vm.object_class);
 
     // Bootstrap Standard Modules
     // Set up Math module (as an instance of a pseudo-class to support property access)

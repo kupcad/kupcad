@@ -1,6 +1,14 @@
 const std = @import("std");
 const kupcad_lexer = @import("frontend/kupcad/lexer.zig");
 const manifest = @import("stdlib/manifest.zig");
+const array_class = @import("stdlib/classes/array.zig");
+const map_class = @import("stdlib/classes/map.zig");
+const string_class = @import("stdlib/classes/string.zig");
+const number_class = @import("stdlib/classes/number.zig");
+const symbol_class = @import("stdlib/classes/symbol.zig");
+const boolean_class = @import("stdlib/classes/boolean.zig");
+const math_class = @import("stdlib/classes/math.zig");
+const object_class = @import("stdlib/classes/object.zig");
 
 /// Core generation logic separated for testing
 pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
@@ -12,6 +20,8 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     var csg_ops: std.ArrayListUnmanaged([]const u8) = .empty;
     var workplanes: std.ArrayListUnmanaged([]const u8) = .empty;
     var inspections: std.ArrayListUnmanaged([]const u8) = .empty;
+    var core_methods: std.ArrayListUnmanaged([]const u8) = .empty;
+
     defer {
         keywords.deinit(allocator);
         builtins.deinit(allocator);
@@ -21,14 +31,15 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
         csg_ops.deinit(allocator);
         workplanes.deinit(allocator);
         inspections.deinit(allocator);
+        core_methods.deinit(allocator);
     }
 
-    // 1. Extract Keywords directly from the actual frontend Lexer!
+    // Extract Keywords directly from the actual frontend Lexer
     for (kupcad_lexer.keywords.keys()) |key| {
         try keywords.append(allocator, key);
     }
 
-    // 2. Extract Native Functions from the actual Stdlib Manifest!
+    // Extract Native Functions from the actual Stdlib Manifest
     for (manifest.global_functions) |gf| {
         switch (gf.category) {
             .primitive_3d => try prim_3d.append(allocator, gf.name),
@@ -38,7 +49,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
         }
     }
 
-    // 3. Extract Methods from the actual Stdlib Manifest!
+    // Extract Methods from the actual Stdlib Manifest
     for (manifest.mesh_methods) |mm| {
         switch (mm.category) {
             .transform => try transforms.append(allocator, mm.name),
@@ -49,6 +60,16 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
         }
     }
 
+    // Dynamically extract all Primitive Class methods
+    for (object_class.methods) |m| try core_methods.append(allocator, m.name);
+    for (array_class.methods) |m| try core_methods.append(allocator, m.name);
+    for (map_class.methods) |m| try core_methods.append(allocator, m.name);
+    for (string_class.methods) |m| try core_methods.append(allocator, m.name);
+    for (number_class.methods) |m| try core_methods.append(allocator, m.name);
+    for (symbol_class.methods) |m| try core_methods.append(allocator, m.name);
+    for (boolean_class.methods) |m| try core_methods.append(allocator, m.name);
+    for (math_class.methods) |m| try core_methods.append(allocator, m.name);
+
     // Supply dummy fallbacks if a list is empty to avoid crashing the TextMate Regex engine
     if (builtins.items.len == 0) try builtins.append(allocator, "dummy_builtin");
     if (prim_3d.items.len == 0) try prim_3d.append(allocator, "dummy_prim_3d");
@@ -56,6 +77,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     if (csg_ops.items.len == 0) try csg_ops.append(allocator, "dummy_csg_op");
     if (workplanes.items.len == 0) try workplanes.append(allocator, "dummy_wp");
     if (inspections.items.len == 0) try inspections.append(allocator, "dummy_insp");
+    if (core_methods.items.len == 0) try core_methods.append(allocator, "dummy_core");
 
     // Join into OR groups (e.g., "box|cylinder|sphere")
     const joined_kw = try std.mem.join(allocator, "|", keywords.items);
@@ -97,6 +119,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     const csg_match = try buildMethodRegex(allocator, &csg_ops, "dummy_csg");
     const wp_match = try buildMethodRegex(allocator, &workplanes, "dummy_wp");
     const insp_match = try buildMethodRegex(allocator, &inspections, "dummy_insp");
+    const core_match = try buildMethodRegex(allocator, &core_methods, "dummy_core");
 
     defer allocator.free(builtins_match);
     defer allocator.free(p3d_match);
@@ -105,6 +128,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     defer allocator.free(csg_match);
     defer allocator.free(wp_match);
     defer allocator.free(insp_match);
+    defer allocator.free(core_match);
 
     // Define the grammar using anonymous list literals (tuples) for arrays
     const grammar = .{
@@ -124,6 +148,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             .{ .include = "#method_calls" },
             .{ .include = "#keywords" },
             .{ .include = "#builtins" },
+            .{ .include = "#core_methods" },
             .{ .include = "#primitives_3d" },
             .{ .include = "#primitives_2d" },
             .{ .include = "#transforms" },
@@ -204,6 +229,10 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             .builtins = .{
                 .match = builtins_match,
                 .name = "support.function.builtin.kupcad",
+            },
+            .core_methods = .{
+                .match = core_match,
+                .name = "support.function.core.kupcad",
             },
             .primitives_3d = .{
                 .match = p3d_match,

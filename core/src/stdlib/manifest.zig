@@ -93,9 +93,22 @@ pub fn cadInvokeHandler(vm: *VM, receiver: value.Value, method_name: []const u8,
         vm.reportError("Runtime Error: Methods can only be called on Geometry/CrossSection objects.\n", .{});
         return error.RuntimeError;
     }
+
+    // Try CAD-specific mesh methods (translate, rotate, bbox, etc.)
     if (method_map.get(method_name)) |method_func| {
         return method_func(vm, receiver, arg_count, args);
     }
+
+    // Fallback to Universal Object Protocol (tap, then, empty?, dup)
+    if (vm.object_class) |obj_cls| {
+        if (obj_cls.methods.get(method_name)) |method_val| {
+            if (method_val.isObject() and method_val.asObj().obj_type == .native) {
+                const native_obj = @as(*value.ObjNative, @alignCast(@fieldParentPtr("obj", method_val.asObj())));
+                return native_obj.function(vm, arg_count, args);
+            }
+        }
+    }
+
     vm.reportError("Runtime Error: Unknown method '{s}'.\n", .{method_name});
     return error.RuntimeError;
 }

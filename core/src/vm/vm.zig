@@ -51,6 +51,7 @@ pub const VM = struct {
 
     open_upvalues: ?*value.ObjUpvalue = null,
     rescue_frames: std.ArrayListUnmanaged(RescueFrame) = .empty,
+    param_registry: parameters.ParamList = .{},
 
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
@@ -64,7 +65,7 @@ pub const VM = struct {
     symbol_class: ?*value.ObjClass = null,
     boolean_class: ?*value.ObjClass = null,
     bbox_class: ?*value.ObjClass = null,
-    param_registry: parameters.ParamList = .{},
+    object_class: ?*value.ObjClass = null,
 
     // safety for infinite loops
     instruction_count: usize,
@@ -456,6 +457,10 @@ pub const VM = struct {
                 },
                 .op_build_range => {
                     if (self.executeBuildRange(frame, exec_chunk) != .ok) return .runtime_error;
+                },
+                .op_is_nil => {
+                    const val = self.pop();
+                    self.push(value.Value.initBool(val.isNil()));
                 },
                 .op_interpolate => {
                     const count = exec_chunk.code.items[frame.ip];

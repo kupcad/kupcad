@@ -743,7 +743,7 @@ pub const Compiler = struct {
                 self.simulatePush(1);
             },
 
-            .op_negate, .op_not, .op_get_class_var, .op_get_class_var_wide => {
+            .op_negate, .op_not, .op_get_class_var, .op_get_class_var_wide, .op_is_nil => {
                 self.simulatePop(1);
                 self.simulatePush(1);
             },
@@ -1384,6 +1384,13 @@ pub const Compiler = struct {
     fn compileMethodCall(self: *Compiler, node: *const ast.Node) CompileError!void {
         const mc = self.tree.methodCall(node);
         const func_name = self.tree.getString(mc.method_name);
+
+        // Fast-path: compile `obj.nil?` directly into op_is_nil
+        if (std.mem.eql(u8, func_name, "nil?") and mc.receiver != .none) {
+            try self.compileNode(mc.receiver);
+            try self.emitOp(.op_is_nil);
+            return;
+        }
 
         // Intercept Compiler Intrinsics via O(1) lookup
         if (compiler_intrinsics.get(func_name)) |intrinsic| {

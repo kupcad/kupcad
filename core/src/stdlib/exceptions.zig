@@ -52,7 +52,9 @@ pub fn registerExceptions(vm: *VM) !void {
     // Base Exception
     const exc_name = try vm.allocateStringTakeOwnership(try vm.allocator.dupe(u8, "Exception"));
     vm.push(exc_name);
-    const exc_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @ptrCast(exc_name.asObj())), null);
+
+    const exc_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @ptrCast(exc_name.asObj())), vm.object_class);
+
     try vm.globals.put(vm.allocator, "Exception", value.Value.initObj(&exc_class.obj));
     _ = vm.pop();
 

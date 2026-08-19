@@ -57,6 +57,7 @@ pub const OpCode = enum(u8) {
     op_extract_kwarg,
     op_extract_kwarg_wide,
     op_is_instance,
+    op_is_nil,
 
     // Stack Operations
     op_pop,
