@@ -1,7 +1,5 @@
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
-const lexer_mod = @import("lexer.zig");
-const parser_mod = @import("parser.zig");
 
 pub const DocstringParser = struct {
     allocator: std.mem.Allocator,
@@ -15,94 +13,106 @@ pub const DocstringParser = struct {
         var is_first_line = true;
 
         while (lines.next()) |line| {
-            const trimmed = std.mem.trim(u8, line, " \t\r#");
-            if (trimmed.len > 0) {
-                if (!is_first_line) {
+            var i: usize = 0;
+            // Skip leading whitespace before the '#'
+            while (i < line.len and (line[i] == ' ' or line[i] == '\t' or line[i] == '\r')) {
+                i += 1;
+            }
+
+            if (i < line.len and line[i] == '#') {
+                i += 1; // Consume '#'
+
+                if (is_first_line) {
+                    // First line: consume exactly 1 space if present
+                    if (i < line.len and line[i] == ' ') i += 1;
+
+                    var end = line.len;
+                    while (end > i and (line[end - 1] == ' ' or line[end - 1] == '\t' or line[end - 1] == '\r')) {
+                        end -= 1;
+                    }
+                    try clean_text.appendSlice(self.allocator, line[i..end]);
+                    is_first_line = false;
+                } else {
+                    // YARD Continuation Rule: must have an indent (>= 2 spaces after '#')
+                    var space_idx = i;
+                    var indent_count: usize = 0;
+                    while (space_idx < line.len and (line[space_idx] == ' ' or line[space_idx] == '\t')) {
+                        indent_count += if (line[space_idx] == '\t') 3 else 1;
+                        space_idx += 1;
+                    }
+
+                    if (indent_count < 2) {
+                        // If there is no indentation, it is NOT a continuation. Break out.
+                        break;
+                    }
+
+                    // It is a continuation. Consume up to 3 spaces (1 base + 2 indent)
+                    // to preserve any deeper, intentional indentation.
+                    var consumed: usize = 0;
+                    while (i < line.len and consumed < 3) {
+                        if (line[i] == ' ') {
+                            consumed += 1;
+                            i += 1;
+                        } else if (line[i] == '\t') {
+                            consumed += 3;
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    var end = line.len;
+                    while (end > i and (line[end - 1] == ' ' or line[end - 1] == '\t' or line[end - 1] == '\r')) {
+                        end -= 1;
+                    }
                     try clean_text.append(self.allocator, '\n');
+                    try clean_text.appendSlice(self.allocator, line[i..end]);
                 }
-                try clean_text.appendSlice(self.allocator, trimmed);
-                is_first_line = false;
             }
         }
 
-        const text = std.mem.trim(u8, clean_text.items, " \n");
+        const text = std.mem.trim(u8, clean_text.items, " \n\r\t");
+
         if (text.len == 0 or text[0] != '@') {
-            const empty_doc_idx = try self.b.addParamDoc(.{
+            const empty_doc_idx = try self.b.addDocString(.{
                 .tag_name = try self.b.intern(""),
-                .target_name = .none,
-                .type_name = .none,
-                .description = try self.b.intern(""),
-                .options_expr = .none,
+                .content = try self.b.intern(""),
             });
-            return self.b.createNode(.param_doc, main_token, empty_doc_idx);
+            return self.b.createNode(.docstring, main_token, empty_doc_idx);
         }
 
-        var doc = ast.ParamDoc{
+        var doc = ast.DocString{
             .tag_name = .none,
-            .target_name = .none,
-            .type_name = .none,
-            .description = try self.b.intern(""),
-            .options_expr = .none,
+            .content = .none,
         };
-        var desc_end: usize = text.len;
 
-        if (text[text.len - 1] == '}') {
-            if (std.mem.lastIndexOfScalar(u8, text, '{')) |brace_idx| {
-                const options_str = text[brace_idx..];
-                desc_end = brace_idx;
-
-                var lexer = lexer_mod.Lexer.init(options_str, 0);
-                var tokens = try lexer.lexAll(self.allocator);
-                defer tokens.deinit(self.allocator);
-
-                var parser = try parser_mod.Parser.init(tokens, options_str, self.allocator);
-                // Free temporary builder memory pre-allocated inside Parser.init
-                parser.b.deinit();
-                // Direct sub-parser to emit nodes into the parent AST builder
-                parser.b = self.b.*;
-
-                defer {
-                    // Copy mutated AST builder state back to self.b
-                    self.b.* = parser.b;
-                    // Re-init parser.b so parser.deinit() won't free parent AST memory
-                    parser.b = ast.Builder.init(self.allocator);
-                    // Clean up parser scratch buffers and diagnostics safely
-                    parser.deinit();
-                }
-
-                if (parser.parseExpression(.none)) |node_idx| {
-                    doc.options_expr = node_idx;
-                } else |_| {}
-            }
-        }
-
-        const header_str = std.mem.trim(u8, text[0..desc_end], " \n\r\t");
-        var iter = std.mem.tokenizeAny(u8, header_str, " \n\r\t");
+        // Extract the tag name (e.g., "@label" -> "label")
+        var iter = std.mem.tokenizeAny(u8, text, " \n\r\t");
+        var tag_name: []const u8 = "";
         if (iter.next()) |tag| {
+            tag_name = tag;
             doc.tag_name = try self.b.intern(tag[1..]);
         }
 
-        const tag_str = self.b.tree.getString(doc.tag_name);
-        if (std.mem.eql(u8, tag_str, "param") or std.mem.eql(u8, tag_str, "option")) {
-            if (iter.next()) |name| {
-                doc.target_name = try self.b.intern(name);
+        // The content is everything after the tag.
+        const content_start = tag_name.len;
+        if (content_start < text.len) {
+            var content = text[content_start..];
+            // Strip leading spaces from the first line's content only.
+            var c_idx: usize = 0;
+            while (c_idx < content.len and (content[c_idx] == ' ' or content[c_idx] == '\t')) {
+                c_idx += 1;
             }
-        }
-
-        const rest = iter.rest();
-        const trimmed_rest = std.mem.trim(u8, rest, " \n\r\t");
-        if (trimmed_rest.len > 0 and trimmed_rest[0] == '[') {
-            if (std.mem.indexOfScalar(u8, trimmed_rest, ']')) |close_idx| {
-                doc.type_name = try self.b.intern(trimmed_rest[1..close_idx]);
-                doc.description = try self.b.intern(std.mem.trim(u8, trimmed_rest[close_idx + 1 ..], " \n\r\t"));
-            } else {
-                doc.description = try self.b.intern(trimmed_rest);
+            var end = content.len;
+            while (end > c_idx and (content[end - 1] == ' ' or content[end - 1] == '\t' or content[end - 1] == '\n' or content[end - 1] == '\r')) {
+                end -= 1;
             }
+            doc.content = try self.b.intern(content[c_idx..end]);
         } else {
-            doc.description = try self.b.intern(trimmed_rest);
+            doc.content = try self.b.intern("");
         }
 
-        const final_doc_idx = try self.b.addParamDoc(doc);
-        return self.b.createNode(.param_doc, main_token, final_doc_idx);
+        const final_doc_idx = try self.b.addDocString(doc);
+        return self.b.createNode(.docstring, main_token, final_doc_idx);
     }
 };

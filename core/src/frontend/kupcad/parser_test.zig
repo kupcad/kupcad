@@ -1260,27 +1260,19 @@ test "KupCAD Parser: Safe Navigation Multi-line Fluent API" {
     try testing.expectEqual(true, prev_mc.is_safe);
 }
 
-test "KupCAD Parser: Parametric Doc Comments Parsing" {
-    const source = "# @param length [Length] Screw length { min: 10, max: 20 }";
+test "KupCAD Parser: Generic Docstring Parsing" {
+    const source = "# @label Bracket Width";
     var pt = try KTest.init(source);
     defer pt.deinit();
     const tree = &pt.parser.b.tree;
 
     const stmt_idx = try pt.parser.parseStatement();
     const stmt = pt.getNode(stmt_idx);
-    try testing.expectEqual(ast.Tag.param_doc, stmt.tag);
+    try testing.expectEqual(ast.Tag.docstring, stmt.tag);
 
-    const doc = tree.paramDoc(stmt);
-    try testing.expectEqualStrings("param", tree.getString(doc.tag_name));
-    try testing.expectEqualStrings("length", tree.getString(doc.target_name));
-    try testing.expectEqualStrings("Length", tree.getString(doc.type_name));
-    try testing.expectEqualStrings("Screw length", tree.getString(doc.description));
-
-    const options_hash_node = pt.getNode(doc.options_expr);
-    const options_hash = tree.getHashEntries(tree.nodeSpan(options_hash_node));
-    try testing.expectEqual(@as(usize, 2), options_hash.len);
-    try testing.expectEqualStrings("min", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(options_hash[0].key).data))));
-    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(options_hash[0].value)));
+    const doc = tree.docString(stmt);
+    try testing.expectEqualStrings("label", tree.getString(doc.tag_name));
+    try testing.expectEqualStrings("Bracket Width", tree.getString(doc.content));
 }
 
 test "KupCAD Parser: Diagnostics for Malformed Class Declaration" {
@@ -1676,7 +1668,7 @@ test "KupCAD Parser: Multi-Interpolation String with Expressions and Method Call
 test "KupCAD Parser: Module Namespaces with Doc Comments and Class Constructors" {
     const source =
         \\module Enclosures
-        \\  # @param wall_thickness [Length] Thickness of enclosure walls
+        \\  # @label Thickness of enclosure walls
         \\  class Box < Base
         \\    def initialize(w = 100)
         \\      @w = w
@@ -1700,12 +1692,10 @@ test "KupCAD Parser: Module Namespaces with Doc Comments and Class Constructors"
 
     // Statement 0: Doc Comment
     const doc_node = pt.getNode(block_stmts[0]);
-    try testing.expectEqual(ast.Tag.param_doc, doc_node.tag);
-    const doc = tree.paramDoc(doc_node);
-    try testing.expectEqualStrings("param", tree.getString(doc.tag_name));
-    try testing.expectEqualStrings("wall_thickness", tree.getString(doc.target_name));
-    try testing.expectEqualStrings("Length", tree.getString(doc.type_name));
-    try testing.expectEqualStrings("Thickness of enclosure walls", tree.getString(doc.description));
+    try testing.expectEqual(ast.Tag.docstring, doc_node.tag);
+    const doc = tree.docString(doc_node);
+    try testing.expectEqualStrings("label", tree.getString(doc.tag_name));
+    try testing.expectEqualStrings("Thickness of enclosure walls", tree.getString(doc.content));
 
     // Statement 1: Class Statement
     const class_stmt = pt.getNode(block_stmts[1]);
@@ -2756,13 +2746,11 @@ test "KupCAD Parser: Multi-line Indented Docstring Tag Node" {
 
     const doc_stmt1_idx = try pt.parser.parseStatement();
     const doc_stmt1 = pt.getNode(doc_stmt1_idx);
-    try testing.expectEqual(ast.Tag.param_doc, doc_stmt1.tag);
-    const doc = tree.paramDoc(doc_stmt1);
+    try testing.expectEqual(ast.Tag.docstring, doc_stmt1.tag);
+    const doc = tree.docString(doc_stmt1);
 
     try testing.expectEqualStrings("deprecated", tree.getString(doc.tag_name));
-    try testing.expectEqual(ast.StringId.none, doc.target_name);
-    try testing.expectEqual(ast.StringId.none, doc.type_name);
-    try testing.expectEqualStrings("Use {#my_new_method} instead of this method because\nit uses a library that is no longer supported.", tree.getString(doc.description));
+    try testing.expectEqualStrings("Use {#my_new_method} instead of this method because\nit uses a library that is no longer supported.", tree.getString(doc.content));
 
     const def_stmt_idx = try pt.parser.parseStatement();
     const def_stmt = pt.getNode(def_stmt_idx);

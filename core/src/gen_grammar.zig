@@ -105,7 +105,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
         .name = "KupCAD",
         .scopeName = "source.kupcad",
         .patterns = .{
-            .{ .include = "#param_docs" },
+            .{ .include = "#docstring" },
             .{ .include = "#comments" },
             .{ .include = "#strings" },
             .{ .include = "#method_declarations" },
@@ -127,7 +127,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             .{ .include = "#operators" },
         },
         .repository = .{
-            .param_docs = .{
+            .docstring = .{
                 .match = "^\\s*(#\\s*@[a-zA-Z_]+)(.*)$",
                 .captures = .{
                     .@"1" = .{ .name = "keyword.control.directive.kupcad" },

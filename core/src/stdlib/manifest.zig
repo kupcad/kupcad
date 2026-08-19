@@ -8,6 +8,7 @@ const dag = @import("../vm/dag.zig");
 const io_mod = @import("io.zig");
 const chunk = @import("../vm/chunk.zig");
 const methods = @import("methods.zig");
+const params_mod = @import("params.zig");
 const debug_mod = @import("debug.zig");
 
 pub const Category = enum {
@@ -34,6 +35,7 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "print", .func = io_mod.nativePrint, .category = .io },
     .{ .name = "p", .func = io_mod.nativeP, .category = .io },
     .{ .name = "debugger", .func = debug_mod.nativeDebugger, .category = .io },
+    .{ .name = "param", .func = params_mod.nativeParam, .category = .io },
     .{ .name = "cube", .func = primitives.nativeCube, .category = .primitive_3d },
     .{ .name = "cylinder", .func = primitives.nativeCylinder, .category = .primitive_3d },
     .{ .name = "sphere", .func = primitives.nativeSphere, .category = .primitive_3d },

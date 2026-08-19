@@ -12,7 +12,6 @@ fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter 
         .check_unused_vars = false,
         .check_unreachable_code = false,
         .check_self_subtraction = false,
-        .check_param_docs = false,
     });
 
     var rule_impl = UnusedVarsRule{};

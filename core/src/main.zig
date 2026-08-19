@@ -3,6 +3,7 @@ const build_cmd = @import("cli/build_cmd.zig");
 const fmt_cmd = @import("cli/fmt.zig");
 const check_cmd = @import("cli/check.zig");
 const lsp_cmd = @import("cli/lsp.zig");
+const doc_cmd = @import("cli/doc.zig");
 const dev_cmd = @import("cli/dev.zig");
 
 pub fn main(init: std.process.Init) !void {
@@ -25,6 +26,8 @@ pub fn main(init: std.process.Init) !void {
         try check_cmd.execute(init, allocator, &args_iter);
     } else if (std.mem.eql(u8, cmd, "lsp")) {
         try lsp_cmd.execute(init, allocator);
+    } else if (std.mem.eql(u8, cmd, "doc")) {
+        try doc_cmd.execute(init, allocator, &args_iter);
     } else if (std.mem.eql(u8, cmd, "dev")) {
         try dev_cmd.execute(init, allocator, &args_iter);
     } else {
@@ -43,5 +46,6 @@ fn printUsage() void {
         \\  check  Lint and analyze a KupCAD source file
         \\  lsp    Start the Language Server over stdio
         \\  dev    Developer tools and compiler debugging utilities
+        \\  doc    Extract parameter metadata and docstrings as JSON
     , .{});
 }

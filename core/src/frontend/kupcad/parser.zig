@@ -169,7 +169,7 @@ pub const Parser = struct {
     }
 
     fn skipComments(self: *Parser) void {
-        while (self.tag(0) == .comment or self.tag(0) == .param_doc) {
+        while (self.tag(0) == .comment or self.tag(0) == .docstring) {
             if (self.tag(0) == .comment) {
                 self.comments.append(self.allocator, .{
                     .lexeme = self.lexeme(0),
@@ -276,7 +276,7 @@ pub const Parser = struct {
             .keyword_break => try self.parseBreakStatement(),
             .keyword_next => try self.parseNextStatement(),
             .keyword_begin => try self.parseBeginStatement(),
-            .param_doc => try self.parseParamDoc(),
+            .docstring => try self.parseDocString(),
             else => try self.parseExprOrMultiAssign(),
         };
 
@@ -812,8 +812,8 @@ pub const Parser = struct {
         return self.b.yieldStmt(span, start_tok) catch ParseError.OutOfMemory;
     }
 
-    fn parseParamDoc(self: *Parser) ParseError!ast.NodeIndex {
-        const tok_idx = try self.expect(.param_doc);
+    fn parseDocString(self: *Parser) ParseError!ast.NodeIndex {
+        const tok_idx = try self.expect(.docstring);
         var doc_parser = docstring.DocstringParser{ .allocator = self.allocator, .b = &self.b };
         return doc_parser.parse(self.tokens.lexeme(self.source, tok_idx), tok_idx) catch return ParseError.OutOfMemory;
     }
@@ -1202,7 +1202,7 @@ pub const Parser = struct {
     fn isCommandCallStart(self: *Parser) bool {
         const t = self.tag(0);
         switch (t) {
-            .newline, .eof, .comment, .param_doc, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
+            .newline, .eof, .comment, .docstring, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
             .keyword_do, .l_brace => return true,
             else => {
                 if (isAssignmentOp(t)) return false;

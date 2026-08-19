@@ -64,8 +64,24 @@ fn inner_check(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
     return out.written();
 }
 
+fn inner_extract_params(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
+    var doc = try api.Document.parse(allocator, source);
+    defer doc.deinit();
+
+    const params = try api.extractParameters(allocator, &doc);
+    defer allocator.free(params);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+
+    try out.writer.print("{f}", .{std.json.fmt(params, .{})});
+    try out.writer.writeByte(0); // Null-terminate for JS
+
+    return try out.toOwnedSlice();
+}
+
 fn inner_build_stl(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
-    return try api.buildStl(allocator, source);
+    return try api.buildStl(allocator, source, null);
 }
 
 // --- WASM Export Boundaries ---
@@ -81,6 +97,16 @@ pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize) ?[*]c
         } else {
             last_error_msg = "Internal Formatting Error\x00".ptr;
         }
+        return null;
+    }
+}
+
+pub export fn extract_params_wasm(source_ptr: [*]const u8, source_len: usize) ?[*]const u8 {
+    const source = source_ptr[0..source_len];
+    if (inner_extract_params(std.heap.wasm_allocator, source)) |res| {
+        return res.ptr;
+    } else |_| {
+        last_error_msg = "Extraction Error\x00".ptr;
         return null;
     }
 }

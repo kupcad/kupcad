@@ -14,7 +14,7 @@ pub const Tag = enum {
     string_mid,
     string_end,
     symbol,
-    param_doc,
+    docstring,
     comment,
     keyword_do,
     keyword_end,
@@ -313,7 +313,7 @@ pub const Lexer = struct {
                 }
                 break;
             }
-            return .{ .tag = .param_doc, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+            return .{ .tag = .docstring, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
         }
         return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }

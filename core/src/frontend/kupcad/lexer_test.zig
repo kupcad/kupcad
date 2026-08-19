@@ -27,16 +27,16 @@ test "KupCAD Lexer: Basic assignment and method chaining" {
     });
 }
 
-test "KupCAD Lexer: Parametric annotations and comments" {
+test "KupCAD Lexer: Docstring annotations and comments" {
     try expectTokens(
-        \\# @param width [Length] Overall box width
+        \\# @label Overall box width
         \\# Standard comment
         \\width = 80.0
     , &.{
-        t(.param_doc, "# @param width [Length] Overall box width"), t(.newline, "\n"),
-        t(.comment, "# Standard comment"),                          t(.newline, "\n"),
-        t(.ident, "width"),                                         t(.equal, "="),
-        t(.number, "80.0"),                                         t(.eof, ""),
+        t(.docstring, "# @label Overall box width"), t(.newline, "\n"),
+        t(.comment, "# Standard comment"),           t(.newline, "\n"),
+        t(.ident, "width"),                          t(.equal, "="),
+        t(.number, "80.0"),                          t(.eof, ""),
     });
 }
 
@@ -52,31 +52,31 @@ test "KupCAD Lexer: Blocks, symbols, and CSG operators" {
 test "KupCAD Lexer: Complex Parametric Component with Imports" {
     try expectTokens(
         \\import { ThreadedInsert } from "./hardware.kup"
-        \\# @param width [Length] { range: 20..100 }
+        \\# @label Bracket Width
         \\width = 50.5
     , &.{
-        t(.keyword_import, "import"), t(.l_brace, "{"),                                            t(.constant, "ThreadedInsert"),
-        t(.r_brace, "}"),             t(.keyword_from, "from"),                                    t(.string, "./hardware.kup"),
-        t(.newline, "\n"),            t(.param_doc, "# @param width [Length] { range: 20..100 }"), t(.newline, "\n"),
-        t(.ident, "width"),           t(.equal, "="),                                              t(.number, "50.5"),
+        t(.keyword_import, "import"), t(.l_brace, "{"),                        t(.constant, "ThreadedInsert"),
+        t(.r_brace, "}"),             t(.keyword_from, "from"),                t(.string, "./hardware.kup"),
+        t(.newline, "\n"),            t(.docstring, "# @label Bracket Width"), t(.newline, "\n"),
+        t(.ident, "width"),           t(.equal, "="),                          t(.number, "50.5"),
         t(.eof, ""),
     });
 }
 
-test "KupCAD Lexer: Parametric annotations with irregular spacing and casing" {
+test "KupCAD Lexer: Docstring annotations with irregular spacing and casing" {
     const source =
-        "#@param width [Length]\n" ++
-        "#    @Param height [Length]\n" ++
-        "#\t@PARAM depth [Length]\n" ++
-        "#   @pAraM radius [Length]\n" ++
-        "# not_a_param";
+        "#@label width\n" ++
+        "#    @Label height\n" ++
+        "#\t@LABEL depth\n" ++
+        "#   @lAbEl radius\n" ++
+        "# not_a_docstring";
 
     try expectTokens(source, &.{
-        t(.param_doc, "#@param width [Length]"),      t(.newline, "\n"),
-        t(.param_doc, "#    @Param height [Length]"), t(.newline, "\n"),
-        t(.param_doc, "#\t@PARAM depth [Length]"),    t(.newline, "\n"),
-        t(.param_doc, "#   @pAraM radius [Length]"),  t(.newline, "\n"),
-        t(.comment, "# not_a_param"),                 t(.eof, ""),
+        t(.docstring, "#@label width"),      t(.newline, "\n"),
+        t(.docstring, "#    @Label height"), t(.newline, "\n"),
+        t(.docstring, "#\t@LABEL depth"),    t(.newline, "\n"),
+        t(.docstring, "#   @lAbEl radius"),  t(.newline, "\n"),
+        t(.comment, "# not_a_docstring"),    t(.eof, ""),
     });
 }
 
@@ -167,13 +167,13 @@ test "KupCAD Lexer: Nested String Interpolation" {
 
 test "KupCAD Lexer: Generalized Docstring Annotations (@return, @type, @deprecated)" {
     try expectTokens(
-        \\# @return [Mesh] Outer enclosure shell
+        \\# @return Outer enclosure shell
         \\# @deprecated Use Box.new instead
-        \\# @type [Length] Depth offset
+        \\# @type Depth offset
     , &.{
-        t(.param_doc, "# @return [Mesh] Outer enclosure shell"), t(.newline, "\n"),
-        t(.param_doc, "# @deprecated Use Box.new instead"),      t(.newline, "\n"),
-        t(.param_doc, "# @type [Length] Depth offset"),          t(.eof, ""),
+        t(.docstring, "# @return Outer enclosure shell"),   t(.newline, "\n"),
+        t(.docstring, "# @deprecated Use Box.new instead"), t(.newline, "\n"),
+        t(.docstring, "# @type Depth offset"),              t(.eof, ""),
     });
 }
 
@@ -187,7 +187,7 @@ test "KupCAD Lexer: Multi-line Indented Docstring Tag" {
     ;
 
     try expectTokens(source, &.{
-        t(.param_doc,
+        t(.docstring,
             \\# @deprecated Use {#my_new_method} instead of this method because
             \\#   it uses a library that is no longer supported.
             \\#   The new method accepts the same parameters.

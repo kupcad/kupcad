@@ -81,7 +81,7 @@ pub const Tag = enum(u8) {
     yield_stmt,
     break_stmt,
     next_stmt,
-    param_doc,
+    docstring,
     block,
     range,
     array_literal,
@@ -278,12 +278,9 @@ pub const BeginStmt = struct {
     ensure_body: NodeIndex = .none,
 };
 
-pub const ParamDoc = struct {
-    tag_name: StringId,
-    target_name: StringId = .none,
-    type_name: StringId = .none,
-    description: StringId,
-    options_expr: NodeIndex = .none,
+pub const DocString = struct {
+    tag_name: StringId, // e.g., "label", "tooltip", "description", "title"
+    content: StringId, // The text that follows the tag
 };
 
 pub const Block = struct {
@@ -623,14 +620,11 @@ pub const Tree = struct {
         };
     }
 
-    pub fn paramDoc(self: *const Tree, node: *const Node) ParamDoc {
+    pub fn docString(self: *const Tree, node: *const Node) DocString {
         const base = node.data;
         return .{
             .tag_name = @enumFromInt(self.extra_data.items[base]),
-            .target_name = @enumFromInt(self.extra_data.items[base + 1]),
-            .type_name = @enumFromInt(self.extra_data.items[base + 2]),
-            .description = @enumFromInt(self.extra_data.items[base + 3]),
-            .options_expr = @enumFromInt(self.extra_data.items[base + 4]),
+            .content = @enumFromInt(self.extra_data.items[base + 1]),
         };
     }
 
@@ -1105,7 +1099,7 @@ pub const Builder = struct {
         return self.createNode(.each_expr, main_token, @intFromEnum(expr));
     }
 
-    pub fn addParamDoc(self: *Builder, doc: ParamDoc) !u32 {
-        return try self.addExtra(.{ doc.tag_name, doc.target_name, doc.type_name, doc.description, doc.options_expr });
+    pub fn addDocString(self: *Builder, doc: DocString) !u32 {
+        return try self.addExtra(.{ doc.tag_name, doc.content });
     }
 };

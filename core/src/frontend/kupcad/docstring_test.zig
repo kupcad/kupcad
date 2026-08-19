@@ -5,69 +5,102 @@ const DocstringParser = @import("docstring.zig").DocstringParser;
 
 const dummy_token: u24 = 0;
 
-test "Docstring Parser: Standard @param with type and description" {
+test "Docstring Parser: Parses generic @label with single-line content" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
     var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
-    const raw = "# @param width [Length] Overall box width";
+
+    const raw = "# @label Bracket Width";
     const doc_idx = try parser.parse(raw, dummy_token);
     const doc_node = b.tree.getNode(doc_idx).?;
-    const doc = b.tree.paramDoc(doc_node);
-    try testing.expectEqualStrings("param", b.tree.getString(doc.tag_name));
-    try testing.expect(doc.target_name != .none);
-    try testing.expectEqualStrings("width", b.tree.getString(doc.target_name));
-    try testing.expect(doc.type_name != .none);
-    try testing.expectEqualStrings("Length", b.tree.getString(doc.type_name));
-    try testing.expectEqualStrings("Overall box width", b.tree.getString(doc.description));
-    try testing.expect(doc.options_expr == .none);
+    const doc = b.tree.docString(doc_node);
+
+    try testing.expectEqualStrings("label", b.tree.getString(doc.tag_name));
+    try testing.expectEqualStrings("Bracket Width", b.tree.getString(doc.content));
 }
 
-test "Docstring Parser: @param with Lookbook options hash" {
+test "Docstring Parser: Parses generic @tooltip with multi-line indented continuation" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
     var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
-    const raw = "# @param depth [Length] Depth offset { min: 10, max: 100 }";
-    const doc_idx = try parser.parse(raw, dummy_token);
-    const doc_node = b.tree.getNode(doc_idx).?;
-    const doc = b.tree.paramDoc(doc_node);
-    try testing.expectEqualStrings("param", b.tree.getString(doc.tag_name));
-    try testing.expect(doc.target_name != .none);
-    try testing.expectEqualStrings("depth", b.tree.getString(doc.target_name));
-    try testing.expect(doc.type_name != .none);
-    try testing.expectEqualStrings("Length", b.tree.getString(doc.type_name));
-    try testing.expectEqualStrings("Depth offset", b.tree.getString(doc.description));
-    try testing.expect(doc.options_expr != .none);
-    const hash_node = b.tree.getNode(doc.options_expr).?;
-    try testing.expectEqual(ast.Tag.hash_literal, hash_node.tag);
-    const hash = b.tree.getHashEntries(b.tree.nodeSpan(hash_node));
-    const key_node = b.tree.getNode(hash[0].key).?;
-    try testing.expectEqualStrings("min", b.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data))));
-}
 
-test "Docstring Parser: Multi-line description condensation" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
-    var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
+    // The YARD continuation must be indented by at least 2 spaces after the '#'
     const raw =
-        \\# @param config [Hash] The configuration hash that determines
-        \\#   how the component is generated and what materials
-        \\#   are explicitly supported.
+        \\# @tooltip The overall span of the bracket.
+        \\#   Keep under 50mm for standard printers.
+        \\#   Very important note.
     ;
     const doc_idx = try parser.parse(raw, dummy_token);
     const doc_node = b.tree.getNode(doc_idx).?;
-    const doc = b.tree.paramDoc(doc_node);
-    try testing.expectEqualStrings("param", b.tree.getString(doc.tag_name));
-    try testing.expect(doc.target_name != .none);
-    try testing.expectEqualStrings("config", b.tree.getString(doc.target_name));
-    try testing.expect(doc.type_name != .none);
-    try testing.expectEqualStrings("Hash", b.tree.getString(doc.type_name));
-    try testing.expectEqualStrings("The configuration hash that determines\nhow the component is generated and what materials\nare explicitly supported.", b.tree.getString(doc.description));
+    const doc = b.tree.docString(doc_node);
+
+    try testing.expectEqualStrings("tooltip", b.tree.getString(doc.tag_name));
+
+    const expected_content = "The overall span of the bracket.\nKeep under 50mm for standard printers.\nVery important note.";
+    try testing.expectEqualStrings(expected_content, b.tree.getString(doc.content));
+}
+
+test "Docstring Parser: Breaks continuation on non-indented lines" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+    var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
+
+    // The third line is NOT indented, so it should be ignored by this tag.
+    const raw =
+        \\# @label Bracket Width
+        \\#   This is a continuation.
+        \\# This is NOT a continuation.
+        \\#   This should also be ignored because the chain was broken.
+    ;
+    const doc_idx = try parser.parse(raw, dummy_token);
+    const doc_node = b.tree.getNode(doc_idx).?;
+    const doc = b.tree.docString(doc_node);
+
+    try testing.expectEqualStrings("label", b.tree.getString(doc.tag_name));
+    try testing.expectEqualStrings("Bracket Width\nThis is a continuation.", b.tree.getString(doc.content));
+}
+
+test "Docstring Parser: Preserves deep indentation inside continuation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+    var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
+
+    const raw =
+        \\# @tooltip Some info:
+        \\#   * Item 1
+        \\#     * Sub item
+    ;
+    const doc_idx = try parser.parse(raw, dummy_token);
+    const doc_node = b.tree.getNode(doc_idx).?;
+    const doc = b.tree.docString(doc_node);
+
+    try testing.expectEqualStrings("tooltip", b.tree.getString(doc.tag_name));
+    // The base 3 spaces are stripped, but the extra 2 spaces on Sub item are kept!
+    try testing.expectEqualStrings("Some info:\n* Item 1\n  * Sub item", b.tree.getString(doc.content));
+}
+
+test "Docstring Parser: Parses tag with no content" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+    var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
+
+    const raw = "# @version";
+    const doc_idx = try parser.parse(raw, dummy_token);
+    const doc_node = b.tree.getNode(doc_idx).?;
+    const doc = b.tree.docString(doc_node);
+
+    try testing.expectEqualStrings("version", b.tree.getString(doc.tag_name));
+    try testing.expectEqualStrings("", b.tree.getString(doc.content));
 }
 
 test "Docstring Parser: Non-annotation comment evaluates to empty tag" {
@@ -76,61 +109,32 @@ test "Docstring Parser: Non-annotation comment evaluates to empty tag" {
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
     var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
-    const raw = "# Just a regular comment";
+
+    // Standard comments without '@' should be silently ignored and yield empty tags
+    const raw = "# Just a regular comment about the next line";
     const doc_idx = try parser.parse(raw, dummy_token);
     const doc_node = b.tree.getNode(doc_idx).?;
-    const doc = b.tree.paramDoc(doc_node);
+    const doc = b.tree.docString(doc_node);
+
     try testing.expectEqualStrings("", b.tree.getString(doc.tag_name));
+    try testing.expectEqualStrings("", b.tree.getString(doc.content));
 }
 
-test "Docstring Parser: Graceful handling of invalid options hash" {
+test "Docstring Parser: Handles arbitrary spacing and carriage returns safely" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
     var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
-    const raw = "# @param width [Length] Width { min: 10, bad_syntax }";
+
+    // Inject heavy spaces, tabs, and carriage returns (\r) to simulate Windows files
+    const raw = "# \t  @description \t  This is deeply indented. \r\n# \t  Line 2. \r";
     const doc_idx = try parser.parse(raw, dummy_token);
     const doc_node = b.tree.getNode(doc_idx).?;
-    const doc = b.tree.paramDoc(doc_node);
-    try testing.expectEqualStrings("param", b.tree.getString(doc.tag_name));
-    try testing.expect(doc.target_name != .none);
-    try testing.expectEqualStrings("width", b.tree.getString(doc.target_name));
-    try testing.expect(doc.type_name != .none);
-    try testing.expectEqualStrings("Length", b.tree.getString(doc.type_name));
-    try testing.expectEqualStrings("Width", b.tree.getString(doc.description));
-    try testing.expect(doc.options_expr == .none);
-}
+    const doc = b.tree.docString(doc_node);
 
-test "Docstring Parser: Graceful handling of missing closing brackets and incomplete tags" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
-    var parser = DocstringParser{ .allocator = arena.allocator(), .b = &b };
-
-    const doc1_idx = try parser.parse("# @param width [Length", dummy_token);
-    const doc1_node = b.tree.getNode(doc1_idx).?;
-    const doc1 = b.tree.paramDoc(doc1_node);
-    try testing.expectEqualStrings("param", b.tree.getString(doc1.tag_name));
-    try testing.expect(doc1.target_name != .none);
-    try testing.expectEqualStrings("width", b.tree.getString(doc1.target_name));
-    try testing.expect(doc1.type_name == .none);
-    try testing.expectEqualStrings("[Length", b.tree.getString(doc1.description));
-
-    const doc2_idx = try parser.parse("# @param", dummy_token);
-    const doc2_node = b.tree.getNode(doc2_idx).?;
-    const doc2 = b.tree.paramDoc(doc2_node);
-    try testing.expectEqualStrings("param", b.tree.getString(doc2.tag_name));
-    try testing.expect(doc2.target_name == .none);
-    try testing.expect(doc2.type_name == .none);
-    try testing.expectEqualStrings("", b.tree.getString(doc2.description));
-
-    const doc3_idx = try parser.parse("# @", dummy_token);
-    const doc3_node = b.tree.getNode(doc3_idx).?;
-    const doc3 = b.tree.paramDoc(doc3_node);
-    try testing.expectEqualStrings("", b.tree.getString(doc3.tag_name));
-    try testing.expect(doc3.target_name == .none);
-    try testing.expect(doc3.type_name == .none);
-    try testing.expectEqualStrings("", b.tree.getString(doc3.description));
+    try testing.expectEqualStrings("description", b.tree.getString(doc.tag_name));
+    // Under YARD continuation rules, base continuation spacing (3 spaces) is consumed,
+    // leaving the 2 additional indentation spaces preserved:
+    try testing.expectEqualStrings("This is deeply indented.\n  Line 2.", b.tree.getString(doc.content));
 }

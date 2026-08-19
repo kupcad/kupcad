@@ -38,7 +38,6 @@ test "ProjectConfig: parses partial JSON and retains defaults" {
     try testing.expectEqual(true, config.fmt.sort_imports);
     try testing.expectEqual(true, config.lint.check_negative_dims);
     try testing.expectEqual(true, config.lint.check_unreachable_code);
-    try testing.expectEqual(true, config.lint.check_param_docs);
 }
 
 test "ProjectConfig: gracefully ignores unknown fields" {

@@ -1,12 +1,16 @@
 const std = @import("std");
 const VM = @import("vm/vm.zig").VM;
 const chunk = @import("vm/chunk.zig");
+const value = @import("core/value.zig");
 const Compiler = @import("compiler/compiler.zig").Compiler;
 const registry = @import("stdlib/registry.zig");
 const kernel = @import("kernel/kernel.zig");
+const extractor = @import("tools/doc/extractor.zig");
+
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const Linter = @import("tools/lint/linter.zig").Linter;
 
+pub const ParamMetadata = extractor.ParamMetadata;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
 pub const Document = @import("core/document.zig").Document;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
@@ -50,15 +54,41 @@ pub fn checkCode(allocator: std.mem.Allocator, source: []const u8, config: Linte
     return checkDocument(allocator, &doc, config);
 }
 
+/// Scans a parsed document and extracts all parameter definitions and docstrings.
+pub fn extractParameters(allocator: std.mem.Allocator, doc: *const Document) ![]ParamMetadata {
+    return extractor.extractParameters(allocator, doc);
+}
+
 /// Compiles and evaluates a KupCAD script, returning a binary STL buffer.
 /// The caller owns the returned slice and must free it.
-pub fn buildStl(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
+pub fn buildStl(allocator: std.mem.Allocator, source: []const u8, cli_params: ?std.StringHashMap(f64)) ![]const u8 {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
 
     var vm = try VM.init(allocator, undefined);
     defer vm.deinit();
+
     try registry.registerStandardLibrary(&vm);
+
+    // Inject CLI Params into the Global Map
+    if (cli_params) |cli_p| {
+        // Retrieve the map we just allocated in registerStandardLibrary
+        const p_val = vm.globals.get("params").?;
+        const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", p_val.asObj())));
+
+        var it = cli_p.iterator();
+        while (it.next()) |entry| {
+            // KupCAD DSL uses Symbols for keys (e.g., params[:width])
+            const sym_key = try vm.allocateSymbol(entry.key_ptr.*);
+
+            // Protect the newly allocated symbol from GC during iteration
+            vm.push(sym_key);
+            defer _ = vm.pop();
+
+            try map_obj.keys.append(vm.allocator, sym_key);
+            try map_obj.values.append(vm.allocator, value.Value.initNumber(entry.value_ptr.*));
+        }
+    }
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(allocator);

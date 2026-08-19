@@ -51,7 +51,6 @@ test {
     _ = @import("tools/lint/rules/unused_vars_test.zig");
     _ = @import("tools/lint/rules/unreachable_code_test.zig");
     _ = @import("tools/lint/rules/self_subtraction_test.zig");
-    _ = @import("tools/lint/rules/param_docs_test.zig");
 
     // VM
     _ = @import("vm/chunk_test.zig");

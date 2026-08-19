@@ -5,7 +5,7 @@ const ast_dumper = @import("ast_dumper.zig");
 
 test "AST Dumper: produces correct tree format and semantic metadata" {
     const source =
-        \\# @param width [Length] Overall box width
+        \\# @label Bracket Width
         \\#   multiline comment
         \\width = 50
         \\Box.new(x: width)
@@ -27,7 +27,7 @@ test "AST Dumper: produces correct tree format and semantic metadata" {
 
     const expected =
         \\└── block
-        \\    ├── param_doc
+        \\    ├── docstring
         \\    ├── assignment 'width'
         \\    │   └── number 50
         \\    ├── method_call 'translate'

@@ -228,7 +228,7 @@ pub const Formatter = struct {
                 }
                 try self.out.append(self.allocator, ')');
             },
-            .param_doc => try self.formatParamDoc(tree, tree.paramDoc(node)),
+            .docstring => try self.formatDocString(tree, tree.docString(node)),
         }
     }
 
@@ -729,35 +729,29 @@ pub const Formatter = struct {
         }
     }
 
-    fn formatParamDoc(self: *Formatter, tree: *const ast.Tree, doc: ast.ParamDoc) Error!void {
+    fn formatDocString(self: *Formatter, tree: *const ast.Tree, doc: ast.DocString) Error!void {
+        const tag = tree.getString(doc.tag_name);
+        const content = tree.getString(doc.content);
+
         try self.out.appendSlice(self.allocator, "# @");
-        const tag_name = tree.getString(doc.tag_name);
-        try self.out.appendSlice(self.allocator, tag_name);
+        try self.out.appendSlice(self.allocator, tag);
 
-        var current_line_len: usize = self.indent_level * self.config.indent_width + 3 + tag_name.len;
+        if (content.len > 0) {
+            var lines = std.mem.splitScalar(u8, content, '\n');
 
-        if (doc.target_name != .none) {
-            const tn = tree.getString(doc.target_name);
-            try self.out.append(self.allocator, ' ');
-            try self.out.appendSlice(self.allocator, tn);
-            current_line_len += 1 + tn.len;
-        }
-        if (doc.type_name != .none) {
-            const tn = tree.getString(doc.type_name);
-            try self.out.appendSlice(self.allocator, " [");
-            try self.out.appendSlice(self.allocator, tn);
-            try self.out.append(self.allocator, ']');
-            current_line_len += 3 + tn.len;
-        }
+            // First line sits on the same line right after the tag
+            if (lines.next()) |first_line| {
+                try self.out.append(self.allocator, ' ');
+                try self.out.appendSlice(self.allocator, first_line);
+            }
 
-        if (doc.description != .none) {
-            const desc = tree.getString(doc.description);
-            if (desc.len > 0) try self.formatWrappedText(desc, &current_line_len);
-        }
-
-        if (doc.options_expr != .none) {
-            try self.out.append(self.allocator, ' ');
-            try self.formatNode(tree, doc.options_expr);
+            // Subsequent continuation lines get an indented YARD comment prefix (#   )
+            while (lines.next()) |line| {
+                try self.ensureNewline();
+                try self.writeIndent();
+                try self.out.appendSlice(self.allocator, "#   ");
+                try self.out.appendSlice(self.allocator, line);
+            }
         }
     }
 

@@ -13,7 +13,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
 
     switch (node.tag) {
         // Leaf nodes (0 children)
-        .invalid, .number, .string, .boolean, .identifier, .symbol, .nil, .undef, .self_expr, .namespace_access, .defined_expr => {},
+        .invalid, .number, .string, .boolean, .identifier, .symbol, .nil, .undef, .self_expr, .namespace_access, .defined_expr, .docstring => {},
 
         // Multi-child nodes
         .interpolated_string, .array_literal, .yield_stmt => {
@@ -137,7 +137,6 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
         .splat_expr, .double_splat_expr, .each_expr, .return_stmt, .break_stmt, .next_stmt => {
             try walk(Context, ctx, tree, tree.nodeIndex(node));
         },
-        .param_doc => try walk(Context, ctx, tree, tree.paramDoc(node).options_expr),
     }
 
     if (comptime std.meta.hasFn(Context, "leaveNode")) {

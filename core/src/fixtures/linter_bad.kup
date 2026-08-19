@@ -1,5 +1,3 @@
-# @param missing_var [Length] This variable doesn't exist
-
 unused_var = 100
 
 Box.new(x: -15) # Should trigger CAD physical warning

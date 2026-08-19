@@ -1,5 +1,4 @@
-# @param width [Length] Overall box width
-#   multiline comment
+# @label Test
 width=50
 Box.new(  x: width )
   .chamfer( 2)

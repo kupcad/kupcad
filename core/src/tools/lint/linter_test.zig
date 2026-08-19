@@ -27,7 +27,6 @@ test "Linter: Scope shadowing inside blocks (do ... end) and lambdas" {
         .check_unused_vars = true,
         .check_unreachable_code = false,
         .check_self_subtraction = false,
-        .check_param_docs = false,
     });
     defer engine.deinit();
     try engine.registerDefaultRules();
