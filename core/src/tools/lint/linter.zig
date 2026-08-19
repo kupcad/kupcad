@@ -10,6 +10,7 @@ const NegativeDimRule = @import("rules/negative_dim.zig").NegativeDimRule;
 const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;
 const UnreachableCodeRule = @import("rules/unreachable_code.zig").UnreachableCodeRule;
 const SelfSubtractionRule = @import("rules/self_subtraction.zig").SelfSubtractionRule;
+const ParamOrderRule = @import("rules/param_order.zig").ParamOrderRule;
 
 pub const LinterSeverity = enum {
     @"error",
@@ -101,6 +102,7 @@ pub const Linter = struct {
     rule_unused_vars: UnusedVarsRule = .{},
     rule_unreachable_code: UnreachableCodeRule = .{},
     rule_self_subtraction: SelfSubtractionRule = .{},
+    rule_param_order: ParamOrderRule = .{},
 
     pub fn init(allocator: std.mem.Allocator, config: Config) Linter {
         return .{
@@ -122,6 +124,7 @@ pub const Linter = struct {
         if (self.config.check_unused_vars) try self.rules.append(self.allocator, self.rule_unused_vars.rule());
         if (self.config.check_unreachable_code) try self.rules.append(self.allocator, self.rule_unreachable_code.rule());
         if (self.config.check_self_subtraction) try self.rules.append(self.allocator, self.rule_self_subtraction.rule());
+        if (self.config.check_param_order) try self.rules.append(self.allocator, self.rule_param_order.rule());
     }
 
     pub fn getLoc(self: *const Linter, main_token: u24) token.Location {
