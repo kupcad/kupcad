@@ -1381,41 +1381,6 @@ test "VM: Modules and Mixins (include)" {
     try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
 }
 
-test "VM: Monkey-patching native Primitives dynamically (Array extension)" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm); // Initializes vm.array_class
-
-    // Define a new method natively inside KupCAD syntax on the base Array class
-    const source =
-        \\class Array
-        \\  def double_length()
-        \\    self.length() * 2
-        \\  end
-        \\end
-        \\
-        \\arr = [1, 2, 3]
-        \\arr.double_length()
-    ;
-
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    // 3 items * 2 = 6!
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 6.0), vm.stack[0].asNumber());
-}
-
 test "VM: executes while loops with break and next" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1945,8 +1910,8 @@ test "VM: Inspection methods (volume, bbox) and p() work in KupCAD scripts" {
         \\base = cube(size: 30, center: true)
         \\hole = cylinder(d: 10, h: 40, center: true)
         \\part = base - hole
-        \\p(part.volume())
-        \\p(part.bbox())
+        \\inspect(part.volume())
+        \\inspect(part.bbox())
         \\part
     ;
 
@@ -3381,12 +3346,7 @@ test "VM: GC correctly marks executing closures and primitive classes" {
     }.run;
     try vm.defineNative("force_gc", force_gc);
 
-    // The script:
-    // 1. Overwrites 'Array' global, losing the only global reference to the array class.
-    // 2. Runs an anonymous closure (not saved to any variable) that forces a GC.
-    // 3. Tries to use an Array method. If the Array class or closure was swept, it crashes!
     const source =
-        \\Array = nil
         \\(def ()
         \\  force_gc()
         \\  [1, 2, 3].length()

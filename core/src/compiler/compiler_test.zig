@@ -574,3 +574,88 @@ test "Compiler: op_pop_rescue does not corrupt max_stack_slots calculation" {
     // and potentially returning a smaller maximum stack size than physically needed.
     try testing.expect(out_chunk.max_stack_slots >= 2);
 }
+
+test "Compiler: Protects core globals from variable reassignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: cube = 10
+    const name_id = try b.intern("cube");
+    const val = try b.number("10", 0);
+    const assign_node = try b.assignment(name_id, null, val, 0);
+
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(assign_node) + 1);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // The compiler must intercept the 'cube' assignment and halt
+    const result = comp.compile(assign_node);
+    try testing.expectError(error.ProtectedSymbol, result);
+}
+
+test "Compiler: Protects core globals from function redefinition" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: def param() end
+    const func_name = try b.intern("param");
+    const params_span = try b.addParams(&.{});
+    const body = try b.createNode(.undef, 0, 0);
+    const def_node = try b.defStmt(func_name, params_span, body, false, 0, 0);
+
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(def_node) + 1);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // The compiler must intercept the 'param' def and halt
+    const result = comp.compile(def_node);
+    try testing.expectError(error.ProtectedSymbol, result);
+}
+
+test "Compiler: Protects core classes from complete reassignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: class Array; end
+    const class_name_node = try b.identifierNode("Array", 0);
+    const empty_body = try b.block(&.{}, &.{}, 0, 0);
+    const class_node = try b.classStmt(class_name_node, .none, empty_body, 0, 0);
+
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(class_node) + 1);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // The compiler must intercept the 'Array' class definition and halt
+    const result = comp.compile(class_node);
+    try testing.expectError(error.ProtectedSymbol, result);
+}

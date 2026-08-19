@@ -33,7 +33,7 @@ pub const global_functions = [_]GlobalFunction{
     // debug methods
     .{ .name = "puts", .func = io_mod.nativePuts, .category = .io },
     .{ .name = "print", .func = io_mod.nativePrint, .category = .io },
-    .{ .name = "p", .func = io_mod.nativeP, .category = .io },
+    .{ .name = "inspect", .func = io_mod.nativeInspect, .category = .io },
     .{ .name = "debugger", .func = debug_mod.nativeDebugger, .category = .io },
     .{ .name = "param", .func = params_mod.nativeParam, .category = .io },
     .{ .name = "cube", .func = primitives.nativeCube, .category = .primitive_3d },

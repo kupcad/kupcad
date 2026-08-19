@@ -30,7 +30,7 @@ pub fn nativePrint(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     return value.Value.initNil();
 }
 
-pub fn nativeP(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+pub fn nativeInspect(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
 
     if (vm.host.print_handler) |print_handler| {

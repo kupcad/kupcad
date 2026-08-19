@@ -12,6 +12,7 @@ pub const CompileError = error{
     TooManyConstants,
     TooManyLocals,
     UnsupportedScope,
+    ProtectedSymbol,
 };
 
 pub const Upvalue = struct {
@@ -35,6 +36,7 @@ const Intrinsic = enum {
     block_given_chk,
     yield_call,
     defined_chk,
+    protected_symbol,
 };
 
 const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
@@ -42,6 +44,33 @@ const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "block_given?", .block_given_chk },
     .{ "yield", .yield_call },
     .{ "defined?", .defined_chk },
+    .{ "param", .protected_symbol },
+
+    // IO & Debugging
+    .{ "puts", .protected_symbol },
+    .{ "print", .protected_symbol },
+    .{ "inspect", .protected_symbol },
+    .{ "debugger", .protected_symbol },
+
+    // 3D Primitives
+    .{ "cube", .protected_symbol },
+    .{ "cylinder", .protected_symbol },
+    .{ "sphere", .protected_symbol },
+
+    // 2D Primitives
+    .{ "square", .protected_symbol },
+    .{ "circle", .protected_symbol },
+    .{ "polygon", .protected_symbol },
+
+    // Core Classes
+    .{ "Array", .protected_symbol },
+    .{ "String", .protected_symbol },
+    .{ "Map", .protected_symbol },
+    .{ "Number", .protected_symbol },
+    .{ "Symbol", .protected_symbol },
+    .{ "Boolean", .protected_symbol },
+    .{ "BoundingBox", .protected_symbol },
+    .{ "Math", .protected_symbol },
 });
 
 pub const Compiler = struct {
@@ -295,6 +324,10 @@ pub const Compiler = struct {
                 const name_id = assign_payload.name;
                 const name_str = self.tree.getString(name_id);
 
+                if (compiler_intrinsics.has(name_str)) {
+                    return error.ProtectedSymbol;
+                }
+
                 // Intercept Instance Variables (@x) securely
                 if (std.mem.startsWith(u8, name_str, "@") and !std.mem.startsWith(u8, name_str, "@@")) {
                     try self.emitPushSelf(); // Stack: [self]
@@ -429,6 +462,11 @@ pub const Compiler = struct {
                 if (node.tag == .def_stmt) {
                     const sym = self.symbols[@intFromEnum(node_idx)];
                     if (self.enclosing == null or sym.kind == .global) {
+                        const def_name_str = self.tree.getString(def_name_id);
+                        if (compiler_intrinsics.has(def_name_str)) {
+                            return error.ProtectedSymbol;
+                        }
+
                         const name_idx = try self.makeStringConstant(self.tree.getString(def_name_id));
                         try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
                         try self.emitOp(.op_nil);
@@ -1395,6 +1433,7 @@ pub const Compiler = struct {
                     }
                     return;
                 },
+                .protected_symbol => {},
             }
         }
 
@@ -1699,6 +1738,11 @@ pub const Compiler = struct {
         const name_node = self.tree.getNode(cs.name).?;
         const name_id = @as(ast.StringId, @enumFromInt(name_node.data));
         const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
+        const name_str = self.tree.getString(name_id);
+
+        if (compiler_intrinsics.has(name_str)) {
+            return error.ProtectedSymbol;
+        }
 
         try self.emitOpWithOperand(.op_class, .op_class_wide, name_idx);
 
