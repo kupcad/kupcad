@@ -9,7 +9,6 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         return;
     };
 
-    // Use our centralized CLI file reader instead of std.fs directly
     const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
     defer allocator.free(source);
 
@@ -21,12 +20,10 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     const schema = try api.extractSchema(arena.allocator(), &doc, source);
 
-    // Format JSON into an allocating writer using std.json.fmt
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
     try out.writer.print("{f}\n", .{std.json.fmt(schema, .{ .whitespace = .indent_2 })});
 
-    // Write directly to stdout using the new std.Io API
     const stdout = std.Io.File.stdout();
     try stdout.writeStreamingAll(init.io, out.written());
 }

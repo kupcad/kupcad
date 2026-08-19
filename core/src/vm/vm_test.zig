@@ -3875,3 +3875,125 @@ test "VM: Universal Object Protocol (nil?, empty?, tap, into, dup)" {
     try testing.expectApproxEqAbs(@as(f64, 1000.0), arr_obj.items.items[3].asNumber(), 0.1); // tap returns receiver un-mutated
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[4].asNumber()); // 10.then { |x| x * 2 } -> 20
 }
+
+test "VM: Parameter definition, bounds validation, and getter retrieval" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\param(:width, default: 50, validate: { min: 10, max: 100 })
+        \\param(:height, default: 20)
+        \\
+        \\w = param(:width)
+        \\h = param(:height)
+        \\[w, h]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_obj = vm.stack[0].asArray();
+    try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: Parameter validation failure halts script execution with runtime_error" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true; // Prevent stdout error logs during intentional failure test
+
+    // Default value 150 exceeds max of 100
+    const source =
+        \\param(:width, default: 150, validate: { min: 10, max: 100 })
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
+}
+
+test "VM: CLI parameter injection overrides default script parameter values" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Simulate CLI flag injection (`--param width=85`) into the VM `params` Map
+    const params_val = vm.globals.get("params").?;
+    const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", params_val.asObj())));
+
+    const sym_key = try vm.allocateSymbol("width");
+    vm.push(sym_key);
+    defer _ = vm.pop();
+
+    try map_obj.keys.append(vm.allocator, sym_key);
+    try map_obj.values.append(vm.allocator, value.Value.initNumber(85.0));
+
+    // Script declares default: 50, but CLI injection should replace it with 85
+    const source =
+        \\param(:width, default: 50, validate: { min: 10, max: 100 })
+        \\param(:width)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 85.0), vm.stack[0].asNumber());
+}
+
+test "VM: Parameter choice validation (in: [...]) enforces allowed discrete options" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    // Value "huge" is not in ["small", "medium", "large"]
+    const source =
+        \\param(:size, default: "huge", validate: { in: ["small", "medium", "large"] })
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
+}

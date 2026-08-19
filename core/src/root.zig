@@ -25,6 +25,7 @@ test {
     _ = @import("core/parent_map_test.zig");
     _ = @import("core/workspace_test.zig");
     _ = @import("core/value_test.zig");
+    _ = @import("core/params/params_test.zig");
 
     // Frontends
     _ = @import("frontend/kupcad/docstring_test.zig");

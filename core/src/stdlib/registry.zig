@@ -60,6 +60,10 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     try vm.setInstanceField(math_inst, "PI", value.Value.initNumber(std.math.pi));
     try vm.globals.put(vm.allocator, "Math", value.Value.initObj(&math_inst.obj));
 
+    // Initialize the empty Global Parameters Map for CLI injection
+    const params_map = try vm.gc.allocateMap(vm);
+    try vm.globals.put(vm.allocator, "params", value.Value.initObj(&params_map.obj));
+
     // Bind Core Class Methods Natively
     try core_classes.registerCoreClasses(vm);
 

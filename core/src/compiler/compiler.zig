@@ -45,6 +45,8 @@ const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "yield", .yield_call },
     .{ "defined?", .defined_chk },
     .{ "param", .protected_symbol },
+    // Protect the CLI injection map
+    .{ "params", .protected_symbol },
 
     // IO & Debugging
     .{ "puts", .protected_symbol },
