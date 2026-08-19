@@ -3722,3 +3722,116 @@ test "VM: defined? operator works dynamically on globals, instance, and class va
     try testing.expectEqual(true, arr_obj.items.items[4].asBool());
     try testing.expect(arr_obj.items.items[5].isNil());
 }
+
+test "VM: DOD param registry getter and setter overloading" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Script:
+    // 1. Define :width with a default of 42.5
+    // 2. Retrieve it using param(:width)
+    const source =
+        \\param(:width, default: 42.5, validate: { min: 10, max: 100 })
+        \\param(:width)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // The script should return exactly 42.5
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 42.5), vm.stack[0].asNumber());
+
+    // Verify the DOD array actually stored it
+    try testing.expectEqual(@as(usize, 1), vm.param_registry.len);
+    try testing.expectEqual(@as(f64, 42.5), vm.param_registry.items(.current_value)[0].asNumber());
+}
+
+test "VM: param validation halts execution on max bounds violation" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Mute the console error output so it doesn't clutter the test runner
+    vm.mute_errors = true;
+
+    // The default is 200, but the max is strictly 100!
+    const source =
+        \\param(:width, default: 200, validate: { max: 100 })
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+
+    // The VM must intercept the bound violation and throw a runtime error!
+    try testing.expectEqual(.runtime_error, result);
+}
+
+test "VM: param validation halts execution on min bounds violation" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    // The default is 5, but the min is strictly 10!
+    const source =
+        \\param(:width, default: 5, validate: { min: 10 })
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
+}
+
+test "VM: param getter halts execution if parameter is undefined" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    // Fetching a parameter before it is defined
+    const source =
+        \\param(:does_not_exist)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+
+    // The VM must recognize it is missing from the registry and halt
+    try testing.expectEqual(.runtime_error, result);
+}

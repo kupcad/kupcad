@@ -39,6 +39,9 @@
       "include": "#keywords"
     },
     {
+      "include": "#builtins"
+    },
+    {
       "include": "#primitives_3d"
     },
     {
@@ -159,6 +162,10 @@
     "keywords": {
       "match": "(?<![\\\\w.])(if|or|do|end|not|def|nil|and|next|with|from|true|else|self|when|case|then|super|until|break|while|yield|elsif|false|class|begin|return|module|unless|rescue|ensure|export|import)(?![\\\\w?!])",
       "name": "keyword.control.kupcad"
+    },
+    "builtins": {
+      "match": "(?<![\\\\w])(puts|print|inspect|debugger|param|import_stl|export_stl|import_step|export_step)(?![\\\\w?!])",
+      "name": "support.function.builtin.kupcad"
     },
     "primitives_3d": {
       "match": "(?<![\\\\w])(cube|cylinder|sphere)(?![\\\\w?!])",

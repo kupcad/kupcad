@@ -4,6 +4,7 @@ const memory = @import("memory.zig");
 const dag = @import("dag.zig");
 const limits = @import("limits.zig");
 const value = @import("../core/value.zig");
+const parameters = @import("../core/parameters.zig");
 const kernel_mod = @import("../kernel/kernel.zig");
 const host_mod = @import("host.zig");
 const geom = @import("../kernel/geometry_handle.zig");
@@ -63,6 +64,7 @@ pub const VM = struct {
     symbol_class: ?*value.ObjClass = null,
     boolean_class: ?*value.ObjClass = null,
     bbox_class: ?*value.ObjClass = null,
+    param_registry: parameters.ParamList = .{},
 
     // safety for infinite loops
     instruction_count: usize,
@@ -108,6 +110,7 @@ pub const VM = struct {
         self.symbols.deinit(self.allocator);
         self.frames.deinit(self.allocator);
         self.rescue_frames.deinit(self.allocator);
+        self.param_registry.deinit(self.allocator);
         self.gc.deinit();
     }
 
@@ -1927,6 +1930,23 @@ pub const VM = struct {
         self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
 
         return .ok;
+    }
+
+    /// Zero-allocation lookup for String and Symbol map keys
+    pub fn findMapKeyByString(self: *VM, map: *value.ObjMap, search_str: []const u8) ?usize {
+        _ = self; // Included for future-proofing or if VM context is needed later
+        for (map.keys.items, 0..) |k, i| {
+            if (k.isObject()) {
+                if (k.asObj().obj_type == .string) {
+                    const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj())));
+                    if (std.mem.eql(u8, str.chars, search_str)) return i;
+                } else if (k.asObj().obj_type == .symbol) {
+                    const sym = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj())));
+                    if (std.mem.eql(u8, sym.chars, search_str)) return i;
+                }
+            }
+        }
+        return null;
     }
 
     pub fn valuesCaseEqual(self: *VM, case_val: value.Value, test_val: value.Value) bool {

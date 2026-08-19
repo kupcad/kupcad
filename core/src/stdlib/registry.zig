@@ -49,10 +49,6 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // Bind Core Class Methods Natively
     try core_classes.registerCoreClasses(vm);
 
-    // Global params
-    const params_map = try vm.gc.allocateMap(vm);
-    try vm.globals.put(vm.allocator, "params", value.Value.initObj(&params_map.obj));
-
     // Bind Host Platform Interface Hooks
     vm.host = .{
         .binary_handler = manifest.cadBinaryHandler,

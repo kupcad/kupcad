@@ -5,6 +5,7 @@ const manifest = @import("stdlib/manifest.zig");
 /// Core generation logic separated for testing
 pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     var keywords: std.ArrayListUnmanaged([]const u8) = .empty;
+    var builtins: std.ArrayListUnmanaged([]const u8) = .empty;
     var prim_3d: std.ArrayListUnmanaged([]const u8) = .empty;
     var prim_2d: std.ArrayListUnmanaged([]const u8) = .empty;
     var transforms: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -13,6 +14,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     var inspections: std.ArrayListUnmanaged([]const u8) = .empty;
     defer {
         keywords.deinit(allocator);
+        builtins.deinit(allocator);
         prim_3d.deinit(allocator);
         prim_2d.deinit(allocator);
         transforms.deinit(allocator);
@@ -31,6 +33,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
         switch (gf.category) {
             .primitive_3d => try prim_3d.append(allocator, gf.name),
             .primitive_2d => try prim_2d.append(allocator, gf.name),
+            .io, .file_io => try builtins.append(allocator, gf.name),
             else => {},
         }
     }
@@ -47,6 +50,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     }
 
     // Supply dummy fallbacks if a list is empty to avoid crashing the TextMate Regex engine
+    if (builtins.items.len == 0) try builtins.append(allocator, "dummy_builtin");
     if (prim_3d.items.len == 0) try prim_3d.append(allocator, "dummy_prim_3d");
     if (prim_2d.items.len == 0) try prim_2d.append(allocator, "dummy_prim_2d");
     if (csg_ops.items.len == 0) try csg_ops.append(allocator, "dummy_csg_op");
@@ -86,6 +90,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     defer allocator.free(kw_match);
 
     // Build Method Matchers using the consolidated helper
+    const builtins_match = try buildMethodRegex(allocator, &builtins, "dummy_builtin");
     const p3d_match = try buildMethodRegex(allocator, &prim_3d, "dummy_prim_3d");
     const p2d_match = try buildMethodRegex(allocator, &prim_2d, "dummy_prim_2d");
     const tf_match = try buildMethodRegex(allocator, &transforms, "dummy_tf");
@@ -93,6 +98,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     const wp_match = try buildMethodRegex(allocator, &workplanes, "dummy_wp");
     const insp_match = try buildMethodRegex(allocator, &inspections, "dummy_insp");
 
+    defer allocator.free(builtins_match);
     defer allocator.free(p3d_match);
     defer allocator.free(p2d_match);
     defer allocator.free(tf_match);
@@ -117,6 +123,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             .{ .include = "#constants" },
             .{ .include = "#method_calls" },
             .{ .include = "#keywords" },
+            .{ .include = "#builtins" },
             .{ .include = "#primitives_3d" },
             .{ .include = "#primitives_2d" },
             .{ .include = "#transforms" },
@@ -193,6 +200,10 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             .keywords = .{
                 .match = kw_match,
                 .name = "keyword.control.kupcad",
+            },
+            .builtins = .{
+                .match = builtins_match,
+                .name = "support.function.builtin.kupcad",
             },
             .primitives_3d = .{
                 .match = p3d_match,
