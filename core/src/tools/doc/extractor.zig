@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const Document = @import("../../core/document.zig").Document;
 
+/// Structure representing metadata extracted for a script parameter.
 pub const ParamMetadata = struct {
     key: []const u8,
     label: ?[]const u8 = null,
@@ -9,31 +10,57 @@ pub const ParamMetadata = struct {
     default_val: ?f64 = null,
 };
 
+/// Scans a parsed Document's AST to extract parameter metadata (`param(:key, default: val)`)
+/// along with preceding AST `.docstring` nodes (`# @label`, `# @tooltip`).
+/// If a parameter with the same key is encountered multiple times, subsequent definitions
+/// will override and merge into the previous metadata entry.
 pub fn extractParameters(allocator: std.mem.Allocator, doc: *const Document) ![]ParamMetadata {
     var params: std.ArrayListUnmanaged(ParamMetadata) = .empty;
     errdefer params.deinit(allocator);
 
+    // Return empty slice if the document AST is empty
     if (doc.tree.root == .none) return params.toOwnedSlice(allocator);
     const root_node = doc.tree.getNode(doc.tree.root) orelse return params.toOwnedSlice(allocator);
 
-    // Ensure root is a block
+    // Parameter declarations are top-level statements inside the root block
     if (root_node.tag != .block) return params.toOwnedSlice(allocator);
     const block_payload = doc.tree.block(root_node);
     const stmts = doc.tree.getNodes(block_payload.stmts);
 
+    var pending_label: ?[]const u8 = null;
+    var pending_tooltip: ?[]const u8 = null;
+
     for (stmts) |stmt_idx| {
         const stmt_node = doc.tree.getNode(stmt_idx) orelse continue;
 
-        // Look for Method Calls
+        // Collect Docstring AST Nodes preceding a statement
+        if (stmt_node.tag == .docstring) {
+            const doc_data = doc.tree.docString(stmt_node);
+            const tag_name = doc.tree.getString(doc_data.tag_name);
+            const content = doc.tree.getString(doc_data.content);
+
+            if (std.mem.eql(u8, tag_name, "label")) {
+                pending_label = content;
+            } else if (std.mem.eql(u8, tag_name, "tooltip")) {
+                pending_tooltip = content;
+            }
+            continue;
+        }
+
+        // Process Global `param(...)` Method Calls
         if (stmt_node.tag == .method_call) {
             const mc = doc.tree.methodCall(stmt_node);
             const method_name = doc.tree.getString(mc.method_name);
 
-            // Isolate "param" calls that have no receiver (global method)
+            // Isolate standalone "param" function calls with no receiver
             if (std.mem.eql(u8, method_name, "param") and mc.receiver == .none) {
-                var meta = ParamMetadata{ .key = "" };
+                var meta = ParamMetadata{
+                    .key = "",
+                    .label = pending_label,
+                    .tooltip = pending_tooltip,
+                };
 
-                // Extract Parameter Key (first argument)
+                // Extract Parameter Key (First positional argument)
                 const args = doc.tree.getNamedArgs(mc.args);
                 if (args.len > 0) {
                     const key_node = doc.tree.getNode(args[0].value).?;
@@ -42,50 +69,46 @@ pub fn extractParameters(allocator: std.mem.Allocator, doc: *const Document) ![]
                     }
                 }
 
-                // Extract Default value (from kwargs)
-                for (args) |arg| {
-                    if (arg.name != .none) {
-                        const arg_name = doc.tree.getString(arg.name);
-                        if (std.mem.eql(u8, arg_name, "default")) {
-                            const val_node = doc.tree.getNode(arg.value).?;
-                            if (val_node.tag == .number) {
-                                meta.default_val = doc.tree.number(val_node);
+                // Process only valid parameter calls with a non-empty key
+                if (meta.key.len > 0) {
+                    // Extract Default Value (From keyword argument `default: ...`)
+                    for (args) |arg| {
+                        if (arg.name != .none) {
+                            const arg_name = doc.tree.getString(arg.name);
+                            if (std.mem.eql(u8, arg_name, "default")) {
+                                const val_node = doc.tree.getNode(arg.value).?;
+                                if (val_node.tag == .number) {
+                                    meta.default_val = doc.tree.number(val_node);
+                                }
                             }
                         }
                     }
-                }
 
-                // Extract Comments (scan backwards from the `param` token)
-                const param_line = doc.line_index.getLine(doc.tokens.starts[stmt_node.main_token]);
-
-                var current_line = param_line;
-                while (current_line > 0) {
-                    current_line -= 1;
-                    const comment_opt = getCommentOnLine(doc, current_line);
-                    if (comment_opt) |comment_text| {
-                        if (std.mem.indexOf(u8, comment_text, "# @label")) |idx| {
-                            meta.label = std.mem.trim(u8, comment_text[idx + 8 ..], " \t\r\n");
-                        } else if (std.mem.indexOf(u8, comment_text, "# @tooltip")) |idx| {
-                            meta.tooltip = std.mem.trim(u8, comment_text[idx + 10 ..], " \t\r\n");
+                    // Key Overriding / Merging Logic
+                    // If the parameter key was already declared earlier, update its values
+                    var existing_found = false;
+                    for (params.items) |*existing| {
+                        if (std.mem.eql(u8, existing.key, meta.key)) {
+                            if (meta.label) |l| existing.label = l;
+                            if (meta.tooltip) |t| existing.tooltip = t;
+                            if (meta.default_val) |d| existing.default_val = d;
+                            existing_found = true;
+                            break;
                         }
-                    } else {
-                        break; // Stop scanning if we hit a blank line or non-comment code
+                    }
+
+                    // Append as a new parameter entry if it hasn't been seen yet
+                    if (!existing_found) {
+                        try params.append(allocator, meta);
                     }
                 }
-
-                try params.append(allocator, meta);
             }
         }
+
+        // Reset pending docstrings after hitting any non-docstring statement
+        pending_label = null;
+        pending_tooltip = null;
     }
 
     return params.toOwnedSlice(allocator);
-}
-
-// Helper function to extract a comment string given a line index.
-fn getCommentOnLine(doc: *const Document, target_line: u32) ?[]const u8 {
-    for (doc.comments) |comment| {
-        const c_line = doc.line_index.getLine(comment.loc.offset);
-        if (c_line == target_line) return comment.lexeme;
-    }
-    return null;
 }

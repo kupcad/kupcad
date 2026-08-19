@@ -40,7 +40,7 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
                 }
 
                 // Note: We intentionally ignore `type:`, `min:`, and `max:` here
-                // because the VM trusts the human/UI context. We just need the default!
+                // because the VM trusts the human/UI context. We just need the default
             }
         }
     }
@@ -49,8 +49,13 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     const p_val = vm.globals.get("params") orelse return error.RuntimeError;
     const params_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", p_val.asObj())));
 
-    // Initialize the value ONLY if it doesn't already exist (respecting CLI overrides)
-    if (vm.findMapKey(params_map, sym_key) == null) {
+    // If key exists, update its default value; otherwise append it
+    if (vm.findMapKey(params_map, sym_key)) |idx| {
+        // Update value if needed (or check CLI override flag)
+        vm.releaseValue(params_map.values.items[idx]);
+        vm.retainValue(default_val);
+        params_map.values.items[idx] = default_val;
+    } else {
         vm.retainValue(sym_key);
         vm.retainValue(default_val);
         try params_map.keys.append(vm.allocator, sym_key);

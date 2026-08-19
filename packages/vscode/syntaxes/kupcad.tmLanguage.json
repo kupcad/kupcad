@@ -3,7 +3,7 @@
   "scopeName": "source.kupcad",
   "patterns": [
     {
-      "include": "#param_docs"
+      "include": "#docstring"
     },
     {
       "include": "#comments"
@@ -64,7 +64,7 @@
     }
   ],
   "repository": {
-    "param_docs": {
+    "docstring": {
       "match": "^\\s*(#\\s*@[a-zA-Z_]+)(.*)$",
       "captures": {
         "1": {
