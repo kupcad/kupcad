@@ -71,7 +71,7 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
                     const method_name = doc.tree.getString(mc.method_name);
                     if (std.mem.eql(u8, method_name, "param")) {
                         if (try extractParam(allocator, &doc.tree, mc)) |p| {
-                            // --- FIX: Pass allocator to append ---
+                            // Pass allocator to append
                             try params.append(allocator, p);
                         }
                     }

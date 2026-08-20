@@ -2,101 +2,84 @@ const std = @import("std");
 const api = @import("../api.zig");
 const fs = @import("fs.zig");
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
-const VM = @import("../vm/vm.zig").VM;
-const chunk = @import("../vm/chunk.zig");
-const Compiler = @import("../compiler/compiler.zig").Compiler;
-const registry = @import("../stdlib/registry.zig");
-const stl = @import("../exporters/3d/stl.zig");
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
-    const file_path = args_iter.next() orelse {
-        std.debug.print("Error: Missing input file path.\n\nUsage: kupcad build <file.kup> [-o <output.stl>] [--format stl]\n", .{});
-        return;
-    };
-
+    var input_path: ?[]const u8 = null;
     var output_path: ?[]const u8 = null;
-    var format: []const u8 = "stl";
+    var format: []const u8 = "stl"; // Default format
 
-    // Parse CLI flags
+    // Hold our parsed CLI parameters
+    var cli_params = std.StringHashMap(f64).init(allocator);
+    defer cli_params.deinit();
+
+    // Parse Arguments
     while (args_iter.next()) |arg| {
-        if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
-            output_path = args_iter.next();
-        } else if (std.mem.eql(u8, arg, "--format")) {
-            format = args_iter.next() orelse "stl";
-        }
-    }
-
-    // Read the script
-    const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
-        std.debug.print("Error reading file '{s}': {}\n", .{ file_path, err });
-        return;
-    };
-    defer allocator.free(source);
-
-    // Parse the AST
-    var doc = api.Document.parse(allocator, source) catch |err| {
-        std.debug.print("Error parsing file '{s}': {}\n", .{ file_path, err });
-        return;
-    };
-    defer doc.deinit();
-
-    if (doc.diagnostics.len > 0) {
-        std.debug.print("Syntax errors found in '{s}':\n", .{file_path});
-        for (doc.diagnostics) |diag| {
-            std.debug.print("- {s}\n", .{diag.message});
-        }
-        return;
-    }
-
-    // Set up the execution environment
-    var vm = try VM.init(allocator, init.io);
-    defer vm.deinit();
-    vm.line_index = &doc.line_index;
-
-    try registry.registerStandardLibrary(&vm);
-
-    var main_chunk = chunk.Chunk.init();
-    defer main_chunk.free(allocator);
-
-    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
-    compiler.compile(doc.tree.root) catch |err| {
-        std.debug.print("Compilation failed: {}\n", .{err});
-        return;
-    };
-
-    // Execute!
-    std.debug.print("Executing '{s}'...\n", .{file_path});
-    const result = vm.interpret(&main_chunk);
-
-    if (result != .ok) {
-        std.debug.print("Script execution halted with status: {}\n", .{result});
-        return;
-    }
-
-    // Implicitly export the final geometry left on the stack
-    if (vm.stack_top > 0) {
-        const top_val = vm.stack[vm.stack_top - 1];
-
-        if (top_val.isGeometry()) {
-            // Determine default output path if none was provided
-            var default_out_buffer: [std.fs.max_path_bytes]u8 = undefined;
-            const final_out_path = if (output_path) |p| p else blk: {
-                const ext_idx = std.mem.lastIndexOf(u8, file_path, ".") orelse file_path.len;
-                const base_name = file_path[0..ext_idx];
-                break :blk try std.fmt.bufPrint(&default_out_buffer, "{s}.{s}", .{ base_name, format });
+        if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--param")) {
+            const pair = args_iter.next() orelse {
+                std.debug.print("Error: Missing key=value after {s}\n", .{arg});
+                return;
+            };
+            var it = std.mem.splitScalar(u8, pair, '=');
+            const key = it.next() orelse continue;
+            const val_str = it.next() orelse {
+                std.debug.print("Error: Invalid param format. Use --param key=value.\n", .{});
+                return;
             };
 
-            std.debug.print("Materializing Geometry...\n", .{});
-            const handle = try vm.ensureConcrete(top_val);
-
-            if (std.mem.eql(u8, format, "stl")) {
-                try stl.writeStl(&vm, handle, final_out_path);
-                std.debug.print("Successfully exported to {s}\n", .{final_out_path});
-            } else {
-                std.debug.print("Error: Unsupported export format '{s}'\n", .{format});
-            }
-        } else {
-            std.debug.print("Script executed successfully. (Final value was not a Geometry, skipping implicit export)\n", .{});
+            const val = std.fmt.parseFloat(f64, val_str) catch {
+                std.debug.print("Error: Param value must be numeric (e.g. 5.5, 1, 0). Got '{s}'\n", .{val_str});
+                return;
+            };
+            try cli_params.put(key, val);
+        } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
+            output_path = args_iter.next();
+        } else if (std.mem.eql(u8, arg, "-f") or std.mem.eql(u8, arg, "--format")) {
+            format = args_iter.next() orelse {
+                std.debug.print("Error: Missing format after {s}\n", .{arg});
+                return;
+            };
+        } else if (!std.mem.startsWith(u8, arg, "-")) {
+            input_path = arg;
         }
     }
+
+    const target_input = input_path orelse {
+        std.debug.print("Error: Missing input file path.\n", .{});
+        return;
+    };
+
+    // Auto-generate output filename if not explicitly provided
+    const generated_output = if (output_path == null) blk: {
+        const stem = std.fs.path.stem(target_input);
+        if (std.fs.path.dirname(target_input)) |dir| {
+            break :blk try std.fmt.allocPrint(allocator, "{s}{c}{s}.{s}", .{ dir, std.fs.path.sep, stem, format });
+        } else {
+            break :blk try std.fmt.allocPrint(allocator, "{s}.{s}", .{ stem, format });
+        }
+    } else null;
+    defer if (generated_output) |p| allocator.free(p);
+
+    const final_output = output_path orelse generated_output.?;
+
+    // Read Source
+    const source = try fs.readFileLimit(init.io, allocator, target_input, MAX_FILE_SIZE);
+    defer allocator.free(source);
+
+    // Compile, Inject, and Evaluate
+    // (Note: api.buildStl currently explicitly exports STL binary data.
+    // When we plug in STEP/OBJ exporters, we'll route it based on the `format` variable!)
+    const output_bytes = api.buildStl(allocator, init.io, source, cli_params) catch |err| {
+        std.debug.print("Build failed: {}\n", .{err});
+        return;
+    };
+    defer allocator.free(output_bytes);
+
+    // 5. Export File
+    const cwd = std.Io.Dir.cwd();
+    try cwd.writeFile(init.io, .{
+        .sub_path = final_output,
+        .data = output_bytes,
+    });
+
+    std.debug.print("Successfully built {s} ({d} bytes)\n", .{ final_output, output_bytes.len });
 }

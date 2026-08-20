@@ -64,12 +64,12 @@ puts("Total Ray Intersection Hits: " + ray_hits.length.to_s)
 
 if ray_hits.length > 0
   first_hit = ray_hits[0]
-  p("Top Surface Distance:", first_hit["distance"].round(2))
-  p("Top Surface Position Z:", first_hit["position"][2].round(2))
+  inspect("Top Surface Distance:", first_hit["distance"].round(2))
+  inspect("Top Surface Position Z:", first_hit["position"][2].round(2))
 end
 
 puts("Final Mass Properties:")
-p("Volume:", main_assembly.volume.round(2))
-p("Bounding Box:", main_assembly.bbox)
+inspect("Volume:", main_assembly.volume.round(2))
+inspect("Bounding Box:", main_assembly.bbox)
 
 main_assembly

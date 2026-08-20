@@ -146,10 +146,9 @@ pub fn nativeCircle(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
 
 pub fn nativePolygon(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
     if (arg_count < 1 or !args[0].isArray()) return error.RuntimeError;
-    const pt_arr = args[0].asArray().items.items;
 
+    const pt_arr = args[0].asArray().items.items;
     var pts = try vm.allocator.alloc([2]f64, pt_arr.len);
     defer vm.allocator.free(pts);
 

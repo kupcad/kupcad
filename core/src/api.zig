@@ -61,13 +61,12 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
 
 /// Compiles and evaluates a KupCAD script, returning a binary STL buffer.
 /// The caller owns the returned slice and must free it.
-pub fn buildStl(allocator: std.mem.Allocator, source: []const u8, cli_params: ?std.StringHashMap(f64)) ![]const u8 {
+pub fn buildStl(allocator: std.mem.Allocator, io: std.Io, source: []const u8, cli_params: ?std.StringHashMap(f64)) ![]const u8 {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
 
-    var vm = try VM.init(allocator, undefined);
+    var vm = try VM.init(allocator, io);
     defer vm.deinit();
-
     try registry.registerStandardLibrary(&vm);
 
     // Inject CLI Params into the Global Map

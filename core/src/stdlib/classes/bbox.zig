@@ -51,9 +51,37 @@ pub fn bboxMax(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyer
     return buildVec3(vm, getField(inst, "max_x"), getField(inst, "max_y"), getField(inst, "max_z"));
 }
 
+/// Rich string formatting for `inspect(bbox)` and `bbox.to_s()`
+pub fn bboxToS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const inst = (args - 1)[0].asInstance();
+
+    const min_x = getField(inst, "min_x");
+    const min_y = getField(inst, "min_y");
+    const min_z = getField(inst, "min_z");
+    const max_x = getField(inst, "max_x");
+    const max_y = getField(inst, "max_y");
+    const max_z = getField(inst, "max_z");
+    const sz_x = getField(inst, "size_x");
+    const sz_y = getField(inst, "size_y");
+    const sz_z = getField(inst, "size_z");
+
+    var buf: [256]u8 = undefined;
+    const str = try std.fmt.bufPrint(&buf, "BoundingBox(min: [{d}, {d}, {d}], max: [{d}, {d}, {d}], size: [{d}, {d}, {d}])", .{
+        min_x, min_y, min_z,
+        max_x, max_y, max_z,
+        sz_x,  sz_y,  sz_z,
+    });
+
+    return try vm.allocateString(str);
+}
+
 pub const methods = [_]common.MethodDef{
     .{ .name = "size", .func = bboxSize },
     .{ .name = "center", .func = bboxCenter },
     .{ .name = "min", .func = bboxMin },
     .{ .name = "max", .func = bboxMax },
+    .{ .name = "to_s", .func = bboxToS },
+    .{ .name = "inspect", .func = bboxToS },
 };

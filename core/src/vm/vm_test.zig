@@ -1897,7 +1897,7 @@ test "STL Exporter: exports valid Binary STL file with expected byte structure" 
     try testing.expectEqual(expected_file_size, file_contents.len);
 }
 
-test "VM: Inspection methods (volume, bbox) and p() work in KupCAD scripts" {
+test "VM: Inspection methods (volume, bbox) and inspect() work in KupCAD scripts" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -3996,4 +3996,136 @@ test "VM: Parameter choice validation (in: [...]) enforces allowed discrete opti
 
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.runtime_error, result);
+}
+
+// At the bottom of src/vm/vm_test.zig
+
+test "VM Edge Case: Robot Mount Bracket execution safely resolves Spatial Queries without Segfaulting" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.host.print_handler = null; // Mute prints during CI testing
+
+    // Use core snippets from the reported segfault
+    const source =
+        \\raw_pts = [ [0.0, 0.0], [40.0, 0.0], [30.0, 25.0], [10.0, 25.0] ]
+        \\base_poly = polygon(raw_pts)
+        \\outer_profile = base_poly.offset(4.0)
+        \\center_hole = circle(d: 12.0).translate(22.0, 17.5)
+        \\bracket_profile = outer_profile - center_hole
+        \\bracket_3d = bracket_profile.extrude(12.0)
+        \\trimmed_bracket = bracket_3d.trim_by_plane(0.0, 0.0, 1.0, 18.0)
+        \\
+        \\# Spatial query which triggered GC sweep bug
+        \\ray_hits = trimmed_bracket.ray_cast([22.0, 17.5, 40.0], [22.0, 17.5, -10.0])
+        \\
+        \\inspect("Ray hit:", ray_hits.length)
+        \\trimmed_bracket
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Test that the return is the valid constructed Geometry
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expect(vm.stack[0].isGeometry());
+}
+
+test "VM: Global variable re-assignment inside block closures updates global scope" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\main_val = 10
+        \\[1, 2, 3].each do |x|
+        \\  main_val = main_val + x
+        \\end
+        \\main_val
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // 10 + 1 + 2 + 3 = 16
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 16.0), vm.stack[0].asNumber());
+}
+
+test "VM: inspect() formats Instance objects using native inspect/to_s methods" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.host.print_handler = null;
+
+    const source =
+        \\c = cube(10)
+        \\inspect(c.bbox())
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+}
+
+test "VM: Block closure local variables do not collide with implicit block slot" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\total = 0
+        \\[5, 10, 20].each do |val|
+        \\  scale_factor = val > 15 ? 3 : 2
+        \\  scaled = val * scale_factor
+        \\  total = total + scaled
+        \\end
+        \\total
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // 5*2 (10) + 10*2 (20) + 20*3 (60) = 90
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 90.0), vm.stack[0].asNumber());
 }

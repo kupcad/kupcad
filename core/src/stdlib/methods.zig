@@ -260,7 +260,6 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value
     if (arg_count < 2 or !args[0].isArray() or !args[1].isArray()) return error.RuntimeError;
     const o_arr = args[0].asArray().items.items;
     const e_arr = args[1].asArray().items.items;
-
     if (o_arr.len < 3 or e_arr.len < 3) return error.RuntimeError;
     if (!o_arr[0].isNumber() or !o_arr[1].isNumber() or !o_arr[2].isNumber()) return error.RuntimeError;
     if (!e_arr[0].isNumber() or !e_arr[1].isNumber() or !e_arr[2].isNumber()) return error.RuntimeError;
@@ -270,22 +269,28 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value
     defer vm.allocator.free(hits);
 
     const hit_arr_obj = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&hit_arr_obj.obj)); // GC protect
+    vm.push(value.Value.initObj(&hit_arr_obj.obj)); // Root hit array
     defer _ = vm.pop();
 
     for (hits) |hit| {
         const map_obj = try vm.gc.allocateMap(vm);
-        vm.push(value.Value.initObj(&map_obj.obj));
+        vm.push(value.Value.initObj(&map_obj.obj)); // Root map
         defer _ = vm.pop();
 
-        // Put Distance
+        // Distance entry
         const d_str = try vm.allocateString("distance");
+        vm.push(d_str); // Root distance key
         try map_obj.keys.append(vm.allocator, d_str);
         try map_obj.values.append(vm.allocator, value.Value.initNumber(hit.distance));
+        _ = vm.pop();
 
-        // Put Position
+        // Position entry
         const pos_str = try vm.allocateString("position");
+        vm.push(pos_str); // Root position key
+
         const pos_arr = try vm.gc.allocateArray(vm);
+        vm.push(value.Value.initObj(&pos_arr.obj)); // Root position array
+
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[0]));
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[1]));
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[2]));
@@ -293,7 +298,11 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value
         try map_obj.keys.append(vm.allocator, pos_str);
         try map_obj.values.append(vm.allocator, value.Value.initObj(&pos_arr.obj));
 
+        _ = vm.pop(); // Pop pos_arr
+        _ = vm.pop(); // Pop pos_str
+
         try hit_arr_obj.items.append(vm.allocator, value.Value.initObj(&map_obj.obj));
     }
+
     return value.Value.initObj(&hit_arr_obj.obj);
 }

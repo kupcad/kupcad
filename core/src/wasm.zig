@@ -84,7 +84,7 @@ fn inner_extract_params(allocator: std.mem.Allocator, source: []const u8) ![]con
 }
 
 fn inner_build_stl(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
-    return try api.buildStl(allocator, source, null);
+    return try api.buildStl(allocator, undefined, source, null);
 }
 
 // --- WASM Export Boundaries ---

@@ -78,7 +78,10 @@ const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
 pub const Compiler = struct {
     allocator: std.mem.Allocator,
     tree: *const ast.Tree,
-    script_globals: std.AutoHashMapUnmanaged(ast.StringId, void) = .empty,
+
+    // Track script globals purely by String Slice to decouple from AST integer IDs
+    script_globals: std.StringHashMapUnmanaged(void) = .empty,
+
     symbols: []const resolver.ResolvedSymbol,
     token_starts: []const u32, // Map AST nodes back to Lexer byte offsets
     current_source_offset: u32, // Implictly passed to Chunk
@@ -140,8 +143,11 @@ pub const Compiler = struct {
     // --- Lexical Scope Resolvers ---
 
     fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u16) CompileError!void {
-        for (self.locals.items) |loc| {
-            if (loc.name_id == name_id) return;
+        // Allow anonymous padding slots (.none) to bypass deduplication ---
+        if (name_id != .none) {
+            for (self.locals.items) |loc| {
+                if (loc.name_id == name_id) return;
+            }
         }
         if (self.locals.items.len >= limits.MAX_LOCALS) return error.TooManyLocals;
         try self.locals.append(self.allocator, .{ .name_id = name_id, .slot = slot });
@@ -297,7 +303,7 @@ pub const Compiler = struct {
                 const cur_loop = &self.loops.items[self.loops.items.len - 1];
 
                 // Prevent stack leaks from breaking inside expressions
-                if (self.current_stack_depth > cur_loop.depth + 1) return error.UnsupportedScope;
+                if (self.current_stack_depth > cur_loop.depth) return error.UnsupportedScope;
 
                 const jump = try self.emitJump(.op_jump);
                 try cur_loop.exit_jumps.append(self.allocator, jump);
@@ -356,15 +362,22 @@ pub const Compiler = struct {
                     return;
                 }
 
-                // Pad the stack with `nil` if this is a newly declared local variable.
-                // This reserves the permanent stack slot safely below the RHS evaluation.
+                // Check if the variable exists locally or in an upvalue FIRST
+                const local_slot = self.resolveLocal(name_id);
+                const upval_slot = try self.resolveUpvalue(name_id);
+
+                // If it doesn't exist locally/upvalue, and we're at the top-level, it's a global.
+                // Otherwise, if it's a new local declaration inside a block:
                 const is_new_local = self.enclosing != null and
                     sym.kind == .local and
                     !std.mem.startsWith(u8, name_str, "@@") and
-                    self.resolveLocal(name_id) == null and
-                    (try self.resolveUpvalue(name_id)) == null;
+                    !std.mem.startsWith(u8, name_str, "@") and
+                    local_slot == null and
+                    upval_slot == null and
+                    !self.isScriptGlobal(name_id);
 
                 if (is_new_local) {
+                    try self.emitOp(.op_nil);
                     const slot = @as(u16, @intCast(self.locals.items.len));
                     try self.addLocal(name_id, slot);
                 }
@@ -513,7 +526,7 @@ pub const Compiler = struct {
                     }
                     // Stack is now: [target, index, new_val]
                 } else {
-                    try self.compileNode(ia.value);
+                    try self.compileNode(ia.value); // Stack: [target, index, new_val]
                 }
 
                 // op_set_index consumes [target, index, new_val] and pushes [new_val] back
@@ -699,7 +712,11 @@ pub const Compiler = struct {
                     for (stmts, 0..) |stmt_idx, i| {
                         try self.compileNode(stmt_idx);
                         if (i < stmts.len - 1) {
-                            try self.emitOp(.op_pop);
+                            const stmt_node = self.tree.getNode(stmt_idx).?;
+                            // Do not pop if the statement was a local variable assignment
+                            if (stmt_node.tag != .assignment) {
+                                try self.emitOp(.op_pop);
+                            }
                         }
                     }
                 }
@@ -877,6 +894,7 @@ pub const Compiler = struct {
         var child_compiler = Compiler{
             .allocator = self.allocator,
             .tree = self.tree,
+            .script_globals = .empty,
             .symbols = self.symbols,
             .token_starts = self.token_starts,
             .current_chunk = child_chunk,
@@ -910,6 +928,11 @@ pub const Compiler = struct {
                 try child_compiler.addLocal(param.name, current_slot);
                 current_slot += 1;
             }
+        }
+
+        // --- FIX 4: Reserve slot (positional_count + 1) for the implicit block slot safely! ---
+        while (child_compiler.locals.items.len <= positional_count + 1) {
+            try child_compiler.addLocal(.none, @intCast(child_compiler.locals.items.len));
         }
 
         var virtual_slot: u8 = @intCast(positional_count + 2);
@@ -1002,6 +1025,7 @@ pub const Compiler = struct {
         // Assign the unpacked value currently on top of the stack to the target identifier
         if (target.name != .none) {
             const name_id = target.name;
+            const sym = self.symbols[@intFromEnum(target.name)];
             if (self.resolveLocal(name_id)) |local_slot| {
                 try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, local_slot);
                 try self.emitOp(.op_pop);
@@ -1009,19 +1033,18 @@ pub const Compiler = struct {
                 try self.emitOp(.op_set_upvalue);
                 try self.emitByte(upvalue_slot);
                 try self.emitOp(.op_pop);
-            } else {
-                const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
-                if (self.enclosing == null or self.isScriptGlobal(name_id)) {
-                    // Track it if we are assigning it for the first time at the top level
-                    if (self.enclosing == null) {
-                        try self.script_globals.put(self.allocator, name_id, {});
-                    }
-                    try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-                } else {
-                    try self.addLocal(name_id, @intCast(self.locals.items.len));
-                    try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, self.locals.items.len - 1);
-                    try self.emitOp(.op_pop);
+            } else if (sym.kind == .global or self.enclosing == null or self.isScriptGlobal(name_id)) {
+                const name_str = self.tree.getString(name_id);
+                if (self.enclosing == null) {
+                    try self.script_globals.put(self.allocator, name_str, {}); // Use name_str here
                 }
+                const name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+            } else {
+                const slot = @as(u16, @intCast(self.locals.items.len));
+                try self.addLocal(name_id, slot);
+                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, self.locals.items.len - 1);
+                try self.emitOp(.op_pop);
             }
         } else {
             // Unhandled pattern or skipped element (e.g., `_`): pop to maintain stack equilibrium
@@ -1511,6 +1534,7 @@ pub const Compiler = struct {
             var child_compiler = Compiler{
                 .allocator = self.allocator,
                 .tree = self.tree,
+                .script_globals = .empty,
                 .symbols = self.symbols,
                 .token_starts = self.token_starts,
                 .current_chunk = child_chunk,
@@ -1675,9 +1699,9 @@ pub const Compiler = struct {
         } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
             try self.emitOp(.op_set_upvalue);
             try self.emitByte(upvalue_slot);
-        } else if (self.enclosing == null or sym.kind == .global or self.isScriptGlobal(name_id)) {
+        } else if (sym.kind == .global or self.enclosing == null or self.isScriptGlobal(name_id)) {
             if (self.enclosing == null) {
-                try self.script_globals.put(self.allocator, name_id, {});
+                try self.script_globals.put(self.allocator, name_str, {});
             }
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
@@ -1697,12 +1721,12 @@ pub const Compiler = struct {
             if (l.name != .none) {
                 const name_id = l.name;
                 const name_str = self.tree.getString(name_id);
-                if (self.enclosing != null and
-                    !std.mem.startsWith(u8, name_str, "@@") and
-                    !self.isScriptGlobal(name_id) and
+                if (!std.mem.startsWith(u8, name_str, "@@") and
+                    !std.mem.startsWith(u8, name_str, "@") and
                     self.resolveLocal(name_id) == null and
                     (try self.resolveUpvalue(name_id)) == null)
                 {
+                    try self.emitOp(.op_nil);
                     const slot = @as(u16, @intCast(self.locals.items.len));
                     try self.addLocal(name_id, slot);
                 }
@@ -1884,7 +1908,8 @@ pub const Compiler = struct {
             root = parent;
         }
 
-        // Pure O(1) integer matching. No string comparisons required!
-        return root.script_globals.contains(name_id);
+        // Use pure string lookup to bypass integer ID caching discrepancies
+        const name_str = self.tree.getString(name_id);
+        return root.script_globals.contains(name_str);
     }
 };

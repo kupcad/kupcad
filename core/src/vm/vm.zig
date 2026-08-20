@@ -117,7 +117,10 @@ pub const VM = struct {
 
     // --- Dynamic Stack Operations ---
     pub fn push(self: *VM, val: value.Value) void {
-        std.debug.assert(self.stack_top < self.stack.len);
+        // Dynamically grow the stack gracefully if we hit the limit
+        if (self.stack_top >= self.stack.len) {
+            self.ensureStackCapacity(self.stack_top + 1) catch @panic("OOM during stack expansion");
+        }
         self.retainValue(val);
         self.stack.ptr[self.stack_top] = val;
         self.stack_top += 1;

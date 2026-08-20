@@ -32,11 +32,9 @@ pub fn nativePrint(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
 
 pub fn nativeInspect(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
     if (vm.host.print_handler) |print_handler| {
         var loc_buf: [64]u8 = undefined;
         var loc_prefix: []const u8 = "";
-
         // Resolve current source position from call frame
         if (vm.frames.items.len > 0) {
             const frame = &vm.frames.items[vm.frames.items.len - 1];
@@ -44,7 +42,6 @@ pub fn nativeInspect(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value)
                 const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(chunk_ptr)));
                 const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
                 const source_offset = exec_chunk.getOffset(instruction_ip);
-
                 if (vm.line_index) |li| {
                     const line = li.getLine(source_offset) + 1;
                     const col = li.getUtf8Column(source_offset) + 1;
@@ -52,15 +49,30 @@ pub fn nativeInspect(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value)
                 }
             }
         }
-
         for (0..arg_count) |i| {
             var out: std.Io.Writer.Allocating = .init(vm.allocator);
             defer out.deinit();
-
             try out.writer.writeAll(loc_prefix);
-            try args[i].stringify(true, &out.writer); // Trigger Inspect Mode
-            try out.writer.writeAll("\n");
 
+            var printed = false;
+            if (args[i].isInstance()) {
+                const inst = args[i].asInstance();
+                if (inst.class.methods.get("inspect") orelse inst.class.methods.get("to_s")) |m_val| {
+                    if (m_val.isObject() and m_val.asObj().obj_type == .native) {
+                        const native_obj = @as(*value.ObjNative, @alignCast(@fieldParentPtr("obj", m_val.asObj())));
+                        if (native_obj.function(vm, 0, args + i + 1)) |res_str| {
+                            try res_str.stringify(false, &out.writer);
+                            printed = true;
+                        } else |_| {}
+                    }
+                }
+            }
+
+            if (!printed) {
+                try args[i].stringify(true, &out.writer);
+            }
+
+            try out.writer.writeAll("\n");
             print_handler(vm, out.written());
         }
     }
