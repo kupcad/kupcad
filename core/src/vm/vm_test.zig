@@ -4949,3 +4949,110 @@ test "VM: Stabby lambdas compile and execute with default and keyword parameters
     // calc(5, scale: 3) -> (5 + 10) * 3 = 45
     try testing.expectEqual(@as(f64, 45.0), arr_obj.items.items[2].asNumber());
 }
+
+test "VM: Block parameter shadowing isolates outer local upvalues" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def run_test()
+        \\  x = 100
+        \\  [50].each do |x|
+        \\    # Inner x is 50
+        \\    y = x + 1
+        \\  end
+        \\  # Outer x must remain 100
+        \\  x
+        \\end
+        \\run_test()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 100.0), vm.stack[0].asNumber());
+}
+
+test "VM: Safe navigation chaining on nil short-circuits without stack leak" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\part = nil
+        \\res = part&.translate(10, 20, 30)&.rotate(x: 45)&.bbox()
+        \\res.nil?
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(true, vm.stack[0].asBool());
+}
+
+test "VM: GC sweep during dynamic map and array splat expansion" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Bind native force_gc helper to trigger GC sweep mid-execution
+    const force_gc = struct {
+        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+            _ = arg_count;
+            _ = args;
+            const v: *VM = @ptrCast(@alignCast(vm_opaque));
+            v.gc.collectGarbage(v, false);
+            return value.Value.initNil();
+        }
+    }.run;
+    try vm.defineNative("force_gc", force_gc);
+
+    const source =
+        \\base_map = { a: 1, b: 2 }
+        \\base_arr = [10, 20]
+        \\# Force GC mid-expression via method chain
+        \\merged_map = { **base_map, c: 3 }.tap { force_gc() }
+        \\merged_arr = [ *base_arr, 30 ].tap { force_gc() }
+        \\[ merged_map[:c], merged_arr[2] ]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
+}
