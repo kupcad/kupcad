@@ -482,6 +482,11 @@ pub const GC = struct {
         }
     }
 
+    inline fn destroyObject(self: *GC, comptime T: type, ptr: *T) void {
+        self.allocator.destroy(ptr);
+        self.bytes_allocated -= @sizeOf(T);
+    }
+
     fn freeObject(self: *GC, vm: *VM, obj: *value.Obj) void {
         switch (obj.obj_type) {
             .string => {
@@ -489,41 +494,41 @@ pub const GC = struct {
                 _ = vm.strings.remove(str_obj.chars);
                 self.allocator.free(str_obj.chars);
                 self.bytes_allocated -= str_obj.chars.len;
-                self.allocator.destroy(str_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjString);
+                self.destroyObject(value.ObjString, str_obj);
             },
             .symbol => {
                 const sym_obj: *value.ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
                 _ = vm.symbols.remove(sym_obj.chars);
                 self.allocator.free(sym_obj.chars);
                 self.bytes_allocated -= sym_obj.chars.len;
-                self.allocator.destroy(sym_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjSymbol);
+                self.destroyObject(value.ObjSymbol, sym_obj);
             },
             .native => {
                 const native_obj: *value.ObjNative = @alignCast(@fieldParentPtr("obj", obj));
-                self.allocator.destroy(native_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjNative);
+                self.destroyObject(value.ObjNative, native_obj);
             },
             .array => {
                 const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", obj));
                 arr_obj.items.deinit(self.allocator);
-                self.allocator.destroy(arr_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjArray);
+                self.destroyObject(value.ObjArray, arr_obj);
             },
             .map => {
                 const map_obj: *value.ObjMap = @alignCast(@fieldParentPtr("obj", obj));
                 map_obj.keys.deinit(self.allocator);
                 map_obj.values.deinit(self.allocator);
-                self.allocator.destroy(map_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjMap);
+                self.destroyObject(value.ObjMap, map_obj);
+            },
+            .instance => {
+                const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
+                instance_obj.fields.deinit(self.allocator);
+                self.destroyObject(value.ObjInstance, instance_obj);
             },
             .closure => {
                 const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
                 const upvals_size = @sizeOf(?*value.ObjUpvalue) * closure.function.upvalue_count;
                 self.allocator.free(closure.upvalues[0..closure.function.upvalue_count]);
-                self.allocator.destroy(closure);
-                self.bytes_allocated -= (@sizeOf(value.ObjClosure) + upvals_size);
+                self.bytes_allocated -= upvals_size;
+                self.destroyObject(value.ObjClosure, closure);
             },
             .function => {
                 const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
@@ -534,19 +539,16 @@ pub const GC = struct {
                         self.allocator.destroy(chnk);
                     }
                 }
-                self.allocator.destroy(func);
-                self.bytes_allocated -= @sizeOf(value.ObjFunction);
+                self.destroyObject(value.ObjFunction, func);
             },
             .upvalue => {
                 const upvalue = @as(*value.ObjUpvalue, @alignCast(@fieldParentPtr("obj", obj)));
-                self.allocator.destroy(upvalue);
-                self.bytes_allocated -= @sizeOf(value.ObjUpvalue);
+                self.destroyObject(value.ObjUpvalue, upvalue);
             },
             .module => {
                 const module_obj = @as(*value.ObjModule, @alignCast(@fieldParentPtr("obj", obj)));
                 module_obj.methods.deinit(self.allocator);
-                self.allocator.destroy(module_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjModule);
+                self.destroyObject(value.ObjModule, module_obj);
             },
             .class => {
                 const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
@@ -555,32 +557,21 @@ pub const GC = struct {
                 class_obj.class_methods.deinit(self.allocator);
                 class_obj.class_fields.deinit(self.allocator);
                 class_obj.instance_layout.deinit(self.allocator);
-                self.allocator.destroy(class_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjClass);
-            },
-            .instance => {
-                const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
-                instance_obj.fields.deinit(self.allocator);
-                self.allocator.destroy(instance_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjInstance);
+                self.destroyObject(value.ObjClass, class_obj);
             },
             .bound_method => {
                 const bound_obj = @as(*value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj)));
-                self.allocator.destroy(bound_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjBoundMethod);
+                self.destroyObject(value.ObjBoundMethod, bound_obj);
             },
             .range => {
                 const range_obj = @as(*value.ObjRange, @alignCast(@fieldParentPtr("obj", obj)));
-                self.allocator.destroy(range_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjRange);
+                self.destroyObject(value.ObjRange, range_obj);
             },
             .brep => {
                 const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));
                 brep_obj.data.deinit();
-
                 self.allocator.destroy(brep_obj.data);
-                self.allocator.destroy(brep_obj);
-                self.bytes_allocated -= @sizeOf(value.ObjBrep);
+                self.destroyObject(value.ObjBrep, brep_obj);
             },
             .geometry, .workplane, .cross_section => {},
         }
