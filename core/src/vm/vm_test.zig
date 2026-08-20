@@ -4129,3 +4129,78 @@ test "VM: Block closure local variables do not collide with implicit block slot"
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 90.0), vm.stack[0].asNumber());
 }
+
+test "VM: Complex loops with variables, break, and next maintain perfect equilibrium" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\x = 0
+        \\while (x < 10)
+        \\  y = x + 1
+        \\  x = y
+        \\  if (x == 3)
+        \\    temp = 99
+        \\    next
+        \\  end
+        \\  if (x == 7)
+        \\    break_val = 100
+        \\    break
+        \\  end
+        \\end
+        \\x
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // The entire script must collapse perfectly back down to exactly 1 return value
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 7.0), vm.stack[0].asNumber());
+}
+
+test "VM: Nested block execution isolates local variables without colliding" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\total = 0
+        \\[1, 2].each do |a|
+        \\  level_1 = a * 10
+        \\  [1, 2].each do |b|
+        \\    level_2 = level_1 + b
+        \\    total = total + level_2
+        \\  end
+        \\end
+        \\total
+    ;
+    // Walkthrough:
+    // a=1 -> lvl1=10 -> b=1 (tot=11) -> b=2 (tot=11+12=23)
+    // a=2 -> lvl1=20 -> b=1 (tot=23+21=44) -> b=2 (tot=44+22=66)
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 66.0), vm.stack[0].asNumber());
+}

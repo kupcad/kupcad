@@ -661,3 +661,75 @@ test "Compiler: Protects core classes from complete reassignment" {
     const result = comp.compile(class_node);
     try testing.expectError(error.ProtectedSymbol, result);
 }
+
+test "Compiler: Block intermediate expressions are strictly popped" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: { 10; 20; 30 }
+    const ten = try b.number("10", 0);
+    const twenty = try b.number("20", 0);
+    const thirty = try b.number("30", 0);
+    const block_node = try b.block(&.{}, &.{ ten, twenty, thirty }, 0, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(block_node);
+
+    // Expected Bytecode:
+    // 0: op_constant (10)
+    // 2: op_pop         <-- CRITICAL
+    // 3: op_constant (20)
+    // 5: op_pop         <-- CRITICAL
+    // 6: op_constant (30)
+    // 8: op_return
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
+    // The final expression (30) should NOT be popped
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+}
+
+test "Compiler: Method blocks accurately extract local_count for the VM" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // The block defines 3 unique local variables: x (param), y, z
+    const source =
+        \\[1, 2].each do |x|
+        \\  y = x * 2
+        \\  z = y + 1
+        \\end
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    // Scan the compiled bytecode to find the closure function object
+    var closure_func: ?*value.ObjFunction = null;
+    for (out_chunk.code.items, 0..) |byte, i| {
+        if (byte == @intFromEnum(chunk.OpCode.op_closure)) {
+            const func_idx = out_chunk.code.items[i + 1];
+            closure_func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", out_chunk.constants.items[func_idx].asObj())));
+            break;
+        }
+    }
+
+    try testing.expect(closure_func != null);
+    // local_count must be at least 4: (0: closure itself, 1: x, 2: y, 3: z)
+    try testing.expect(closure_func.?.local_count >= 4);
+}
