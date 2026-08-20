@@ -1306,13 +1306,17 @@ pub const Compiler = struct {
 
     fn compileBeginStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const bs = self.tree.beginStmt(node);
+        const saved_depth = self.current_stack_depth;
+
         const rescues = self.tree.getRescueClauses(bs.rescues);
         var rescue_jump: usize = 0;
 
         if (rescues.len > 0) {
             rescue_jump = try self.emitJump(.op_setup_rescue);
         }
+
         try self.compileNode(bs.body);
+
         if (rescues.len > 0) {
             try self.emitOp(.op_pop_rescue);
         }
@@ -1321,6 +1325,9 @@ pub const Compiler = struct {
 
         if (rescues.len > 0) {
             self.patchJump(rescue_jump);
+            // Reset compiler stack depth to the begin block's entry depth
+            self.current_stack_depth = saved_depth;
+
             self.simulatePush(1); // Simulator: op_throw pushed the error value on the stack
             const error_depth = self.current_stack_depth; // Save the stack depth!
             var rescue_end_jumps: std.ArrayListUnmanaged(usize) = .empty;

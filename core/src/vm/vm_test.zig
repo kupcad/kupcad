@@ -4204,3 +4204,78 @@ test "VM: Nested block execution isolates local variables without colliding" {
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 66.0), vm.stack[0].asNumber());
 }
+
+test "VM: Closure block executes local return back to caller frame" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def run_block(&b)
+        \\  b(42)
+        \\end
+        \\run_block do |x|
+        \\  return x * 2
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 84.0), vm.stack[0].asNumber());
+}
+
+test "VM: Closed upvalues inside loops migrate to heap without slot corruption" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Counter
+        \\  def initialize(val)
+        \\    self.val = val
+        \\  end
+        \\  def get_val
+        \\    self.val
+        \\  end
+        \\end
+        \\
+        \\objs = []
+        \\i = 0
+        \\while (i < 3)
+        \\  captured = i * 10
+        \\  objs.push(Counter.new(captured))
+        \\  i = i + 1
+        \\end
+        \\[objs[0].get_val(), objs[1].get_val(), objs[2].get_val()]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 0.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[2].asNumber());
+}

@@ -733,3 +733,79 @@ test "Compiler: Method blocks accurately extract local_count for the VM" {
     // local_count must be at least 4: (0: closure itself, 1: x, 2: y, 3: z)
     try testing.expect(closure_func.?.local_count >= 4);
 }
+
+test "Compiler: Short-circuit AND/OR operands pop cleanly before loop jumps" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def run_loop()
+        \\  i = 0
+        \\  res = 0
+        \\  while (i < 10)
+        \\    i = i + 1
+        \\    if (i == 5)
+        \\      break
+        \\    end
+        \\  end
+        \\  i
+        \\end
+        \\run_loop()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 5.0), vm.stack[0].asNumber());
+}
+
+test "Compiler: Block closures calculate total local slots accurately" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\def wrapper(&b)
+        \\  b(1, 2)
+        \\end
+        \\wrapper do |x, y|
+        \\  loc1 = 100
+        \\  loc2 = 200
+        \\  loc3 = loc1 + loc2
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    var block_func: ?*value.ObjFunction = null;
+    for (out_chunk.constants.items) |c_val| {
+        if (c_val.isObject() and c_val.asObj().obj_type == .function) {
+            const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", c_val.asObj())));
+            if (func.name == null) {
+                block_func = func;
+                break;
+            }
+        }
+    }
+
+    try testing.expect(block_func != null);
+    try testing.expect(block_func.?.local_count >= 6);
+}
