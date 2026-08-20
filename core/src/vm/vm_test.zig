@@ -4582,3 +4582,241 @@ test "VM: Keyword arguments extract correctly regardless of passing order" {
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
 }
+
+test "VM: Block array destructuring safely pads missing elements with nil" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Yields an array with only 1 element, but the block destructs 3!
+    const source =
+        \\def yield_short(&b)
+        \\  b([42])
+        \\end
+        \\yield_short do |(x, y, z)|
+        \\  [x, y.nil?, z.nil?]
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber()); // x
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool()); // y was padded with nil
+    try testing.expectEqual(true, arr_obj.items.items[2].asBool()); // z was padded with nil
+}
+
+test "VM: Block strictly rejects extraneous yielded arguments" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Mute the console error output so it doesn't clutter the test runner
+    vm.mute_errors = true;
+
+    // Yields 5 arguments, but the block only takes 1
+    const source =
+        \\def yield_many(&b)
+        \\  b(99, 2, 3, 4, 5)
+        \\end
+        \\yield_many do |first|
+        \\  first
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+
+    // The VM MUST strictly reject the extra arguments to prevent silent CAD bugs!
+    try testing.expectEqual(.runtime_error, result);
+}
+
+test "Compiler: Block array destructuring rejects splats and defaults natively" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Manually build a bad destructuring parameter: |(x, *y)|
+    const x_id = try b.identifierNode("x", 0);
+    const y_id = try b.identifierNode("y", 0);
+    const y_splat = try b.splatExpr(y_id, 0); // Invalid inside tuple!
+
+    const tuple_span = try b.addNodes(&.{ x_id, y_splat });
+    const tuple_node = try b.arrayLiteral(tuple_span, 0, 0);
+
+    const block_node = try b.block(&.{tuple_node}, &.{}, 0, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // The compiler MUST reject the splat inside the tuple and return error.UnknownNode!
+    const result = comp.compile(block_node);
+    try testing.expectError(error.UnknownNode, result);
+}
+
+test "VM: Ensure block executes on successful (non-raising) path without corrupting stack" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\x = 0
+        \\result = begin
+        \\  x += 10
+        \\  42
+        \\ensure
+        \\  x += 100
+        \\end
+        \\[result, x]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber()); // result of begin block
+    try testing.expectEqual(@as(f64, 110.0), arr_obj.items.items[1].asNumber()); // x modified by ensure
+}
+
+test "VM: Rescue handles multiple comma-separated exception types in one clause" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def fail_with(err_type)
+        \\  begin
+        \\    raise(err_type)
+        \\  rescue TypeError, ArgumentError => e
+        \\    100
+        \\  rescue StandardError => e
+        \\    200
+        \\  end
+        \\end
+        \\[fail_with(ArgumentError), fail_with(TypeError)]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: Array indexing compound assignment (arr[idx] += val)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\arr = [10, 20, 30]
+        \\i = 1
+        \\arr[i] += 15
+        \\arr[i]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 35.0), vm.stack[0].asNumber());
+}
+
+test "VM: Repeated block yields in loops maintain frame and stack equilibrium" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def repeat_yield(count, &b)
+        \\  i = 0
+        \\  acc = 0
+        \\  while i < count
+        \\    acc += b(i)
+        \\    i += 1
+        \\  end
+        \\  acc
+        \\end
+        \\repeat_yield(100) do |val|
+        \\  val * 2
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Sum of (0..99)*2 = 2 * (99*100/2) = 9900
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 9900.0), vm.stack[0].asNumber());
+}

@@ -725,6 +725,11 @@ pub const Compiler = struct {
                             el_i -= 1;
                             const el_node = self.tree.getNode(elements[el_i]).?;
 
+                            // Safe Guard against unsupported nested destructuring
+                            if (el_node.tag != .identifier) {
+                                return error.UnknownNode;
+                            }
+
                             // Re-use your existing destructuring engine
                             const lhs = ast.LhsExpr{
                                 .name = @as(ast.StringId, @enumFromInt(el_node.data)),
