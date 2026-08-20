@@ -705,6 +705,36 @@ pub const Compiler = struct {
             .block => {
                 const block_payload = self.tree.block(node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
+
+                // Unpack destructured block arguments
+                const param_nodes = self.tree.getNodes(block_payload.params);
+                for (param_nodes, 0..) |p_idx, i| {
+                    const p_node = self.tree.getNode(p_idx).?;
+                    if (p_node.tag == .array_literal) {
+                        // The tuple is sitting in local slot (i + 1) because slot 0 is the closure itself
+                        try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
+
+                        const elements = self.tree.getNodes(self.tree.nodeSpan(p_node));
+                        try self.emitOp(.op_unpack);
+                        try self.emitByte(@intCast(elements.len));
+                        self.simulatePush(elements.len);
+
+                        // Unpack in reverse order to match the stack
+                        var el_i: usize = elements.len;
+                        while (el_i > 0) {
+                            el_i -= 1;
+                            const el_node = self.tree.getNode(elements[el_i]).?;
+
+                            // Re-use your existing destructuring engine
+                            const lhs = ast.LhsExpr{
+                                .name = @as(ast.StringId, @enumFromInt(el_node.data)),
+                                .modifier = null,
+                            };
+                            try self.compileDestructure(lhs);
+                        }
+                    }
+                }
+
                 if (stmts.len == 0) {
                     try self.emitOp(.op_nil);
                 } else {
@@ -875,6 +905,7 @@ pub const Compiler = struct {
         }
 
         // Kwargs are passed as a single Dictionary map taking exactly 1 positional slot
+        const kwarg_slot_offset = positional_count;
         if (has_kwargs) positional_count += 1;
         // Include the implicit block slot in the arity so the VM pads it with nil when omitted
         func.arity = @intCast(positional_count);
@@ -913,7 +944,8 @@ pub const Compiler = struct {
         try child_compiler.addLocal(.none, 0);
 
         var current_slot: u8 = 1;
-        const map_slot = if (has_kwargs) @as(u8, @intCast(positional_count)) else 0;
+        // The kwarg map goes AFTER the standard positionals
+        const map_slot = if (has_kwargs) @as(u8, @intCast(kwarg_slot_offset + 1)) else 0;
 
         for (params) |param| {
             if (param.modifier != null and param.modifier.? == .block) {
@@ -947,7 +979,7 @@ pub const Compiler = struct {
             for (params) |param| {
                 if (param.is_keyword) {
                     const name_str = self.tree.getString(param.name);
-                    const kw_name_idx = try child_compiler.makeStringConstant(name_str);
+                    const kw_name_idx = try child_compiler.makeSymbolConstant(name_str);
 
                     if (kw_name_idx <= limits.MAX_SHORT_CONSTANTS) {
                         try child_compiler.emitOp(.op_extract_kwarg);
@@ -961,10 +993,14 @@ pub const Compiler = struct {
                     }
 
                     if (param.default_value != .none) {
-                        try child_compiler.emitOp(.op_dup);
+                        // The extracted value is already sitting on top of the stack.
+                        // Peek at it. If it is NOT nil, jump directly to setting the local variable.
                         const skip_default_jump = try child_compiler.emitJump(.op_jump_if_not_nil);
+
+                        // If it IS nil, pop the nil and evaluate the default AST expression
                         try child_compiler.emitOp(.op_pop);
                         try child_compiler.compileNode(param.default_value);
+
                         child_compiler.patchJump(skip_default_jump);
                     }
 
@@ -1023,7 +1059,7 @@ pub const Compiler = struct {
         // Assign the unpacked value currently on top of the stack to the target identifier
         if (target.name != .none) {
             const name_id = target.name;
-            const sym = self.symbols[@intFromEnum(target.name)];
+
             if (self.resolveLocal(name_id)) |local_slot| {
                 try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, local_slot);
                 try self.emitOp(.op_pop);
@@ -1031,10 +1067,10 @@ pub const Compiler = struct {
                 try self.emitOp(.op_set_upvalue);
                 try self.emitByte(upvalue_slot);
                 try self.emitOp(.op_pop);
-            } else if (sym.kind == .global or self.enclosing == null or self.isScriptGlobal(name_id)) {
+            } else if (self.enclosing == null or self.isScriptGlobal(name_id)) {
                 const name_str = self.tree.getString(name_id);
                 if (self.enclosing == null) {
-                    try self.script_globals.put(self.allocator, name_str, {}); // Use name_str here
+                    try self.script_globals.put(self.allocator, name_str, {});
                 }
                 const name_idx = try self.makeStringConstant(name_str);
                 try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
@@ -1498,7 +1534,7 @@ pub const Compiler = struct {
 
         for (args) |arg| {
             if (arg.name != .none) {
-                const name_idx = try self.makeStringConstant(self.tree.getString(arg.name));
+                const name_idx = try self.makeSymbolConstant(self.tree.getString(arg.name));
                 try self.emitOpWithOperand(.op_constant, .op_constant_wide, name_idx);
                 try self.compileNode(arg.value);
                 kw_count += 1;
@@ -1523,71 +1559,14 @@ pub const Compiler = struct {
         if (mc.block != .none) {
             const block_node = self.tree.getNode(mc.block).?;
             const block_payload = self.tree.block(block_node);
-            const block_params = self.tree.getNodes(block_payload.params);
 
-            const func = try self.vm.gc.allocateFunction(self.vm);
-            func.arity = @intCast(block_params.len);
+            // Lower the raw AST nodes into ast.Param structs
+            const lowered_params = try self.lowerBlockParams(block_payload.params);
+            defer self.allocator.free(lowered_params);
 
-            self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-            self.vm.push(value.Value.initObj(&func.obj));
-            errdefer _ = self.vm.pop();
-
-            const child_chunk = try self.allocator.create(chunk.Chunk);
-            child_chunk.* = chunk.Chunk.init();
-            func.chunk = child_chunk;
-
-            var child_compiler = Compiler{
-                .allocator = self.allocator,
-                .tree = self.tree,
-                .script_globals = .empty,
-                .symbols = self.symbols,
-                .token_starts = self.token_starts,
-                .current_chunk = child_chunk,
-                .vm = self.vm,
-                .enclosing = self,
-                .is_method = false,
-                .function = func,
-                .upvalues = .empty,
-                .locals = .empty,
-                .loops = .empty,
-                .current_stack_depth = 0,
-                .max_stack_depth = 0,
-                .current_source_offset = self.current_source_offset,
-            };
-            defer child_compiler.deinit();
-
-            // Reserve slot 0 for the closure itself
-            try child_compiler.addLocal(.none, 0);
-
-            for (block_params, 0..) |p_idx, i| {
-                const p_node = self.tree.getNode(p_idx).?;
-                const name_id = @as(ast.StringId, @enumFromInt(p_node.data));
-                try child_compiler.addLocal(name_id, @intCast(i + 1));
-            }
-
-            // Reserve the implicit block slot for Block Closures safely!
-            while (child_compiler.locals.items.len <= block_params.len + 1) {
-                try child_compiler.addLocal(.none, @intCast(child_compiler.locals.items.len));
-            }
-
-            // Compiling a block automatically leaves the last statement on the stack as an implicit return!
-            try child_compiler.compile(mc.block);
-
-            _ = self.vm.pop();
-
-            // Extract the exact local footprint from the child AFTER compiling
-            func.local_count = @max(child_compiler.locals.items.len, child_compiler.max_local_slot + 1);
-
-            const func_val = value.Value.initObj(&func.obj);
-            const func_idx = try self.makeConstant(func_val);
-
-            try self.emitOpWithOperand(.op_closure, .op_closure_wide, func_idx);
-
-            for (child_compiler.upvalues.items) |upv| {
-                try self.emitByte(if (upv.is_local) 1 else 0);
-                try self.emitByte(@intCast((upv.index >> 8) & 0xff));
-                try self.emitByte(@intCast(upv.index & 0xff));
-            }
+            // Delegate to your unified closure compiler!
+            // It already handles *args, **kwargs, defaults, and arity padding.
+            try self.compileClosureBlock(lowered_params, mc.block, null, false);
 
             actual_arg_count += 1;
         }
@@ -1906,6 +1885,56 @@ pub const Compiler = struct {
         // We only need to pop the remaining positional args to perfectly balance the tracker.
         self.simulatePop(pos_count);
         self.simulatePush(1);
+    }
+
+    fn lowerBlockParams(self: *Compiler, param_span: ast.Span) CompileError![]const ast.Param {
+        const param_nodes = self.tree.getNodes(param_span);
+        var lowered = try self.allocator.alloc(ast.Param, param_nodes.len);
+
+        for (param_nodes, 0..) |node_idx, i| {
+            const node = self.tree.getNode(node_idx) orelse return error.UnknownNode;
+
+            switch (node.tag) {
+                .identifier => {
+                    lowered[i] = .{
+                        .name = @as(ast.StringId, @enumFromInt(node.data)),
+                        .default_value = .none,
+                        .modifier = null,
+                        .is_keyword = false,
+                    };
+                },
+                .splat_expr => {
+                    // The data payload of a splat_expr is the inner NodeIndex
+                    const inner_node = self.tree.getNode(@as(ast.NodeIndex, @enumFromInt(node.data))).?;
+                    lowered[i] = .{
+                        .name = @as(ast.StringId, @enumFromInt(inner_node.data)),
+                        .default_value = .none,
+                        .modifier = .splat,
+                        .is_keyword = false,
+                    };
+                },
+                .double_splat_expr => {
+                    const inner_node = self.tree.getNode(@as(ast.NodeIndex, @enumFromInt(node.data))).?;
+                    lowered[i] = .{
+                        .name = @as(ast.StringId, @enumFromInt(inner_node.data)),
+                        .default_value = .none,
+                        .modifier = .double_splat,
+                        .is_keyword = false,
+                    };
+                },
+                .array_literal => {
+                    // This represents destructuring like |(x, y)|
+                    lowered[i] = .{
+                        .name = .none, // Anonymous parameter
+                        .default_value = .none,
+                        .modifier = null,
+                        .is_keyword = false,
+                    };
+                },
+                else => return error.UnknownNode,
+            }
+        }
+        return lowered;
     }
 
     fn writeJumpOffset(self: *Compiler, target_index: usize, offset: usize) void {

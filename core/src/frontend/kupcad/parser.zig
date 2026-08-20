@@ -1309,12 +1309,21 @@ pub const Parser = struct {
     }
 
     fn parseBlockParam(self: *Parser) ParseError!ast.NodeIndex {
-        if (self.tag(0) == .ident) {
-            const tok_idx = self.tok_idx;
+        const start_tok = self.tok_idx;
+        if (self.tag(0) == .star) {
             self.advance();
-            return self.b.identifierNode(self.tokens.lexeme(self.source, tok_idx), tok_idx) catch ParseError.OutOfMemory;
+            const ident_tok = try self.expect(.ident);
+            const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
+            return self.b.splatExpr(ident_node, start_tok) catch ParseError.OutOfMemory;
+        } else if (self.tag(0) == .star_star) {
+            self.advance();
+            const ident_tok = try self.expect(.ident);
+            const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
+            return self.b.doubleSplatExpr(ident_node, start_tok) catch ParseError.OutOfMemory;
+        } else if (self.tag(0) == .ident) {
+            self.advance();
+            return self.b.identifierNode(self.tokens.lexeme(self.source, start_tok), start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .l_paren) {
-            const start_tok = self.tok_idx;
             self.advance();
             const s_len = self.scratch_nodes.items.len;
             defer self.scratch_nodes.shrinkRetainingCapacity(s_len);

@@ -3118,3 +3118,164 @@ test "Parser: parses shorthand hash keys" {
     const val1 = t.parser.b.tree.getNode(entries[0].value).?;
     try testing.expectEqual(@as(f64, 50.0), t.parser.b.tree.number(val1));
 }
+
+test "KupCAD Parser: Block with splat (*args) parameters" {
+    const source = "list.each do |first, *rest|\nend";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    const mc = tree.methodCall(stmt);
+
+    const block = pt.getNode(mc.block);
+    const params = tree.getNodes(tree.block(block).params);
+    try testing.expectEqual(@as(usize, 2), params.len);
+
+    // first
+    const param0 = pt.getNode(params[0]);
+    try testing.expectEqual(ast.Tag.identifier, param0.tag);
+    try testing.expectEqualStrings("first", tree.getString(@as(ast.StringId, @enumFromInt(param0.data))));
+
+    // *rest
+    const param1 = pt.getNode(params[1]);
+    try testing.expectEqual(ast.Tag.splat_expr, param1.tag);
+    const rest_ident = pt.getNode(@as(ast.NodeIndex, @enumFromInt(param1.data)));
+    try testing.expectEqual(ast.Tag.identifier, rest_ident.tag);
+    try testing.expectEqualStrings("rest", tree.getString(@as(ast.StringId, @enumFromInt(rest_ident.data))));
+}
+
+test "KupCAD Parser: Block with double splat (**kwargs) parameters" {
+    const source = "list.each do |val, **opts|\nend";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    const mc = tree.methodCall(stmt);
+
+    const block = pt.getNode(mc.block);
+    const params = tree.getNodes(tree.block(block).params);
+    try testing.expectEqual(@as(usize, 2), params.len);
+
+    // val
+    const param0 = pt.getNode(params[0]);
+    try testing.expectEqual(ast.Tag.identifier, param0.tag);
+    try testing.expectEqualStrings("val", tree.getString(@as(ast.StringId, @enumFromInt(param0.data))));
+
+    // **opts
+    const param1 = pt.getNode(params[1]);
+    try testing.expectEqual(ast.Tag.double_splat_expr, param1.tag);
+    const opts_ident = pt.getNode(@as(ast.NodeIndex, @enumFromInt(param1.data)));
+    try testing.expectEqual(ast.Tag.identifier, opts_ident.tag);
+    try testing.expectEqualStrings("opts", tree.getString(@as(ast.StringId, @enumFromInt(opts_ident.data))));
+}
+
+test "KupCAD Parser: Block with extreme complex arguments |(x, y), *args, **kw|" {
+    const source = "list.each do |(x, y), *args, **kw|\nend";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    const mc = tree.methodCall(stmt);
+
+    const block = pt.getNode(mc.block);
+    const params = tree.getNodes(tree.block(block).params);
+    try testing.expectEqual(@as(usize, 3), params.len);
+
+    // (x, y) -> .array_literal
+    const param0 = pt.getNode(params[0]);
+    try testing.expectEqual(ast.Tag.array_literal, param0.tag);
+    const tuple_elems = tree.getNodes(tree.nodeSpan(param0));
+    try testing.expectEqual(@as(usize, 2), tuple_elems.len);
+
+    // *args -> .splat_expr
+    const param1 = pt.getNode(params[1]);
+    try testing.expectEqual(ast.Tag.splat_expr, param1.tag);
+    const args_ident = pt.getNode(@as(ast.NodeIndex, @enumFromInt(param1.data)));
+    try testing.expectEqualStrings("args", tree.getString(@as(ast.StringId, @enumFromInt(args_ident.data))));
+
+    // **kw -> .double_splat_expr
+    const param2 = pt.getNode(params[2]);
+    try testing.expectEqual(ast.Tag.double_splat_expr, param2.tag);
+    const kw_ident = pt.getNode(@as(ast.NodeIndex, @enumFromInt(param2.data)));
+    try testing.expectEqualStrings("kw", tree.getString(@as(ast.StringId, @enumFromInt(kw_ident.data))));
+}
+
+test "KupCAD Parser: Block with empty parameter pipes (||)" {
+    const source = "list.each do ||\nend";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    const mc = tree.methodCall(stmt);
+
+    const block = pt.getNode(mc.block);
+    const params = tree.getNodes(tree.block(block).params);
+
+    // Should parse cleanly but yield 0 parameters
+    try testing.expectEqual(@as(usize, 0), params.len);
+}
+
+test "KupCAD Parser: Block with nested destructuring |((x, y), z)|" {
+    const source = "list.each do |((x, y), z)|\nend";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    const mc = tree.methodCall(stmt);
+
+    const block = pt.getNode(mc.block);
+    const params = tree.getNodes(tree.block(block).params);
+    try testing.expectEqual(@as(usize, 1), params.len); // 1 top-level param
+
+    // Outer tuple
+    const outer_tuple = pt.getNode(params[0]);
+    try testing.expectEqual(ast.Tag.array_literal, outer_tuple.tag);
+    const outer_elems = tree.getNodes(tree.nodeSpan(outer_tuple));
+    try testing.expectEqual(@as(usize, 2), outer_elems.len);
+
+    // Inner tuple (x, y)
+    const inner_tuple = pt.getNode(outer_elems[0]);
+    try testing.expectEqual(ast.Tag.array_literal, inner_tuple.tag);
+    const inner_elems = tree.getNodes(tree.nodeSpan(inner_tuple));
+    try testing.expectEqual(@as(usize, 2), inner_elems.len);
+    try testing.expectEqualStrings("x", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(inner_elems[0]).data))));
+    try testing.expectEqualStrings("y", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(inner_elems[1]).data))));
+
+    // z
+    const z_ident = pt.getNode(outer_elems[1]);
+    try testing.expectEqual(ast.Tag.identifier, z_ident.tag);
+    try testing.expectEqualStrings("z", tree.getString(@as(ast.StringId, @enumFromInt(z_ident.data))));
+}
+
+test "KupCAD Parser: Block with single element destructuring |(x,)|" {
+    const source = "list.each do |(x,)|\nend";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    const mc = tree.methodCall(stmt);
+
+    const block = pt.getNode(mc.block);
+    const params = tree.getNodes(tree.block(block).params);
+    try testing.expectEqual(@as(usize, 1), params.len);
+
+    const tuple = pt.getNode(params[0]);
+    try testing.expectEqual(ast.Tag.array_literal, tuple.tag);
+
+    // The trailing comma should be ignored, leaving exactly 1 element
+    const elems = tree.getNodes(tree.nodeSpan(tuple));
+    try testing.expectEqual(@as(usize, 1), elems.len);
+    try testing.expectEqualStrings("x", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(elems[0]).data))));
+}

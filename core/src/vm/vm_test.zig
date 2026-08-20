@@ -4279,3 +4279,156 @@ test "VM: Closed upvalues inside loops migrate to heap without slot corruption" 
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[1].asNumber());
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[2].asNumber());
 }
+
+test "VM: Block closures support splat (*args) parameters natively" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def yield_splat(&b)
+        \\  b(10, 20, 30, 40)
+        \\end
+        \\yield_splat do |first, *rest|
+        \\  [first, rest]
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+
+    const rest_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj())));
+    try testing.expectEqual(@as(usize, 3), rest_arr.items.items.len);
+    try testing.expectEqual(@as(f64, 20.0), rest_arr.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), rest_arr.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 40.0), rest_arr.items.items[2].asNumber());
+}
+
+test "VM: Block closures support array destructuring |(x, y)| natively" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def yield_array(&b)
+        \\  b([100, 200])
+        \\end
+        \\yield_array do |(x, y)|
+        \\  x + y
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 300.0), vm.stack[0].asNumber());
+}
+
+test "VM: Block closures support keyword arguments (**kwargs) cleanly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def yield_kwargs(&b)
+        \\  b(50, width: 10, height: 20)
+        \\end
+        \\yield_kwargs do |val, **opts|
+        \\  [val, opts[:width], opts[:height]]
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[2].asNumber());
+}
+
+test "VM: Block closures handle extreme complex arguments |(x, y), *args, **kw|" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def yield_complex(&b)
+        \\  b([10, 20], 30, 40, a: 1, c: 2)
+        \\end
+        \\yield_complex do |(x, y), *args, **kw|
+        \\  [x, y, args, kw[:a]]
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+
+    try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
+
+    const args_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj())));
+    try testing.expectEqual(@as(usize, 2), args_arr.items.items.len);
+    try testing.expectEqual(@as(f64, 30.0), args_arr.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 40.0), args_arr.items.items[1].asNumber());
+
+    try testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[3].asNumber());
+}

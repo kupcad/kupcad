@@ -1066,17 +1066,11 @@ pub const VM = struct {
                         const map_val = self.stack[frame.base_slot + map_slot];
                         if (map_val.isObject() and map_val.asObj().obj_type == .map) {
                             const name_val = exec_chunk.constants.items[name_idx];
-                            const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-
                             const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", map_val.asObj())));
-                            for (map.keys.items, 0..) |k, i| {
-                                if (k.isObject() and k.asObj().obj_type == .string) {
-                                    const k_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
-                                    if (std.mem.eql(u8, k_str, name_str)) {
-                                        extracted = map.values.items[i];
-                                        break;
-                                    }
-                                }
+
+                            // Use findMapKey natively
+                            if (self.findMapKey(map, name_val)) |i| {
+                                extracted = map.values.items[i];
                             }
                         }
                     }
