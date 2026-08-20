@@ -4432,3 +4432,45 @@ test "VM: Block closures handle extreme complex arguments |(x, y), *args, **kw|"
 
     try testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[3].asNumber());
 }
+
+test "VM: Block closures support default parameter assignments" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Yields multiple times with varying arguments to test default fallbacks
+    const source =
+        \\def yield_defaults(&b)
+        \\  [b(), b(5), b(5, 50)]
+        \\end
+        \\yield_defaults do |x = 10, y = 20|
+        \\  x + y
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+
+    // b() -> 10 + 20 = 30
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[0].asNumber());
+    // b(5) -> 5 + 20 = 25
+    try testing.expectEqual(@as(f64, 25.0), arr_obj.items.items[1].asNumber());
+    // b(5, 50) -> 5 + 50 = 55
+    try testing.expectEqual(@as(f64, 55.0), arr_obj.items.items[2].asNumber());
+}

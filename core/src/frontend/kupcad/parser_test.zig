@@ -3279,3 +3279,24 @@ test "KupCAD Parser: Block with single element destructuring |(x,)|" {
     try testing.expectEqual(@as(usize, 1), elems.len);
     try testing.expectEqualStrings("x", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(elems[0]).data))));
 }
+
+test "KupCAD Parser: Block with default positional parameters" {
+    const source = "list.each do |x = 10, y = 20|\nend";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    const mc = tree.methodCall(stmt);
+
+    const block = pt.getNode(mc.block);
+    const params = tree.getNodes(tree.block(block).params);
+    try testing.expectEqual(@as(usize, 2), params.len);
+
+    const param0 = pt.getNode(params[0]);
+    try testing.expectEqual(ast.Tag.assignment, param0.tag);
+    const assign0 = tree.assignment(param0);
+    try testing.expectEqualStrings("x", tree.getString(assign0.name));
+    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(assign0.value)));
+}

@@ -1903,6 +1903,15 @@ pub const Compiler = struct {
                         .is_keyword = false,
                     };
                 },
+                .assignment => {
+                    const assign = self.tree.assignment(node);
+                    lowered[i] = .{
+                        .name = assign.name,
+                        .default_value = assign.value,
+                        .modifier = null,
+                        .is_keyword = false,
+                    };
+                },
                 .splat_expr => {
                     // The data payload of a splat_expr is the inner NodeIndex
                     const inner_node = self.tree.getNode(@as(ast.NodeIndex, @enumFromInt(node.data))).?;

@@ -45,6 +45,7 @@ pub const Parser = struct {
     b: ast.Builder,
     diagnostics: Diagnostics,
     comments: std.ArrayListUnmanaged(common_token.Comment) = .empty,
+    in_block_params: bool = false,
 
     // --- Phase 3: Zero-Waste Scratch Buffers ---
     scratch_nodes: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
@@ -395,9 +396,9 @@ pub const Parser = struct {
         }
         const op = tagToBinaryOp(tok_tag) orelse return ParseError.InvalidExpression;
         const next_prec = if (tok_tag == .star_star)
-            @as(Precedence, @enumFromInt(@intFromEnum(getInfixPrecedence(tok_tag)) - 1))
+            @as(Precedence, @enumFromInt(@intFromEnum(self.getInfixPrecedence(tok_tag)) - 1))
         else
-            getInfixPrecedence(tok_tag);
+            self.getInfixPrecedence(tok_tag);
         const left_main_token = self.b.tree.getNode(left).?.main_token;
         return self.b.binary(op, left, try self.parseExpression(next_prec), left_main_token) catch ParseError.OutOfMemory;
     }
@@ -431,26 +432,36 @@ pub const Parser = struct {
         const params_start = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(params_start);
         var params_len: usize = 0;
+
         if (self.tag(0) == .pipe) {
             self.advance();
+
+            // Toggle the state flag for parameter parsing
+            self.in_block_params = true;
             const elements = try self.parseCommaSeparated(ast.NodeIndex, &self.scratch_nodes, parseBlockParam, .pipe);
+            self.in_block_params = false;
+
             params_len = elements.len;
             _ = try self.expect(.pipe);
         }
+
         const end_tags: []const Tag = if (is_brace) &.{.r_brace} else &.{.keyword_end};
         const block_node_idx = try self.parseBlock(end_tags);
         const end_tok = self.tok_idx;
+
         if (is_brace) {
             _ = try self.expect(.r_brace);
         } else {
             _ = try self.expect(.keyword_end);
         }
+
         const block_node = self.b.tree.getNode(block_node_idx).?;
         const block_payload = self.b.tree.block(block_node);
         const stmts_start = self.scratch_nodes.items.len;
         try self.scratch_nodes.appendSlice(self.allocator, self.b.tree.getNodes(block_payload.stmts));
         const safe_params = self.scratch_nodes.items[params_start .. params_start + params_len];
         const safe_stmts = self.scratch_nodes.items[stmts_start..self.scratch_nodes.items.len];
+
         return self.b.block(safe_params, safe_stmts, end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
@@ -1037,7 +1048,7 @@ pub const Parser = struct {
             }
 
             self.skipComments();
-            if (@intFromEnum(precedence) >= @intFromEnum(getInfixPrecedence(self.tag(0)))) break;
+            if (@intFromEnum(precedence) >= @intFromEnum(self.getInfixPrecedence(self.tag(0)))) break;
 
             const op_tag = self.tag(0);
             left = switch (op_tag) {
@@ -1184,7 +1195,7 @@ pub const Parser = struct {
     fn parseRescueModifierExpr(self: *Parser, left: ast.NodeIndex) ParseError!ast.NodeIndex {
         self.advance();
         const left_main_token = self.b.tree.getNode(left).?.main_token;
-        const rescue_expr = try self.parseExpression(getInfixPrecedence(.keyword_rescue));
+        const rescue_expr = try self.parseExpression(self.getInfixPrecedence(.keyword_rescue));
         return self.b.rescueModifier(left, rescue_expr, left_main_token) catch ParseError.OutOfMemory;
     }
 
@@ -1211,7 +1222,7 @@ pub const Parser = struct {
                 const curr_start = self.tokens.starts[self.tok_idx];
                 const has_space = curr_start > prev_end;
                 if (has_space and t == .l_bracket) return true;
-                if (@intFromEnum(getInfixPrecedence(t)) == 0) return true;
+                if (@intFromEnum(self.getInfixPrecedence(t)) == 0) return true;
                 return false;
             },
         }
@@ -1321,8 +1332,19 @@ pub const Parser = struct {
             const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
             return self.b.doubleSplatExpr(ident_node, start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .ident) {
+            const ident_tok = self.tok_idx;
+            const ident_str = self.tokens.lexeme(self.source, ident_tok);
             self.advance();
-            return self.b.identifierNode(self.tokens.lexeme(self.source, start_tok), start_tok) catch ParseError.OutOfMemory;
+
+            // Check for default value assignment (x = 10)
+            if (self.tag(0) == .equal) {
+                self.advance();
+                const default_val = try self.parseExpression(.none);
+                const name_id = try self.b.intern(ident_str);
+                return self.b.assignment(name_id, null, default_val, start_tok) catch ParseError.OutOfMemory;
+            }
+
+            return self.b.identifierNode(ident_str, start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .l_paren) {
             self.advance();
             const s_len = self.scratch_nodes.items.len;
@@ -1367,7 +1389,9 @@ pub const Parser = struct {
         return call_node;
     }
 
-    fn getInfixPrecedence(t: Tag) Precedence {
+    fn getInfixPrecedence(self: *const Parser, t: Tag) Precedence {
+        if (self.in_block_params and t == .pipe) return .none;
+
         return switch (t) {
             .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => .assignment,
             .keyword_rescue => .rescue_mod,
