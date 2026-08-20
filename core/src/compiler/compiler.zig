@@ -302,8 +302,8 @@ pub const Compiler = struct {
                 if (self.loops.items.len == 0) return error.UnknownNode;
                 const cur_loop = &self.loops.items[self.loops.items.len - 1];
 
-                // Prevent stack leaks from breaking inside expressions
-                if (self.current_stack_depth > cur_loop.depth) return error.UnsupportedScope;
+                // Add + 1 to account for the break payload on the stack
+                if (self.current_stack_depth > cur_loop.depth + 1) return error.UnsupportedScope;
 
                 const jump = try self.emitJump(.op_jump);
                 try cur_loop.exit_jumps.append(self.allocator, jump);
@@ -377,7 +377,6 @@ pub const Compiler = struct {
                     !self.isScriptGlobal(name_id);
 
                 if (is_new_local) {
-                    try self.emitOp(.op_nil);
                     const slot = @as(u16, @intCast(self.locals.items.len));
                     try self.addLocal(name_id, slot);
                 }
@@ -711,12 +710,10 @@ pub const Compiler = struct {
                 } else {
                     for (stmts, 0..) |stmt_idx, i| {
                         try self.compileNode(stmt_idx);
+
+                        // Unconditionally pop every statement except the last one!
                         if (i < stmts.len - 1) {
-                            const stmt_node = self.tree.getNode(stmt_idx).?;
-                            // Do not pop if the statement was a local variable assignment
-                            if (stmt_node.tag != .assignment) {
-                                try self.emitOp(.op_pop);
-                            }
+                            try self.emitOp(.op_pop);
                         }
                     }
                 }
@@ -879,6 +876,7 @@ pub const Compiler = struct {
 
         // Kwargs are passed as a single Dictionary map taking exactly 1 positional slot
         if (has_kwargs) positional_count += 1;
+        // Include the implicit block slot in the arity so the VM pads it with nil when omitted
         func.arity = @intCast(positional_count);
         func.splat_pos = splat_pos;
 
@@ -930,7 +928,7 @@ pub const Compiler = struct {
             }
         }
 
-        // --- FIX 4: Reserve slot (positional_count + 1) for the implicit block slot safely! ---
+        // Reserve slot (positional_count + 1) for the implicit block slot safely
         while (child_compiler.locals.items.len <= positional_count + 1) {
             try child_compiler.addLocal(.none, @intCast(child_compiler.locals.items.len));
         }
@@ -1560,10 +1558,18 @@ pub const Compiler = struct {
                 try child_compiler.addLocal(name_id, @intCast(i + 1));
             }
 
+            // Reserve the implicit block slot for Block Closures safely!
+            while (child_compiler.locals.items.len <= block_params.len + 1) {
+                try child_compiler.addLocal(.none, @intCast(child_compiler.locals.items.len));
+            }
+
             // Compiling a block automatically leaves the last statement on the stack as an implicit return!
             try child_compiler.compile(mc.block);
 
             _ = self.vm.pop();
+
+            // Extract the exact local footprint from the child AFTER compiling
+            func.local_count = @max(child_compiler.locals.items.len, child_compiler.max_local_slot + 1);
 
             const func_val = value.Value.initObj(&func.obj);
             const func_idx = try self.makeConstant(func_val);
@@ -1726,7 +1732,6 @@ pub const Compiler = struct {
                     self.resolveLocal(name_id) == null and
                     (try self.resolveUpvalue(name_id)) == null)
                 {
-                    try self.emitOp(.op_nil);
                     const slot = @as(u16, @intCast(self.locals.items.len));
                     try self.addLocal(name_id, slot);
                 }

@@ -365,6 +365,8 @@ test "Compiler Edge Case: Compiles empty Hashes and Arrays safely" {
     defer vm.deinit();
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
     // Ensure bounds-checking doesn't panic on length == 0
     try comp.compile(arr_node);
     try comp.compile(hash_node);
