@@ -4620,13 +4620,10 @@ test "VM: Block array destructuring safely pads missing elements with nil" {
     try testing.expectEqual(true, arr_obj.items.items[2].asBool()); // z was padded with nil
 }
 
-test "VM: Block strictly rejects extraneous yielded arguments" {
+test "VM: Block silently trims extraneous yielded arguments" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-
-    // Mute the console error output so it doesn't clutter the test runner
-    vm.mute_errors = true;
 
     // Yields 5 arguments, but the block only takes 1
     const source =
@@ -4648,9 +4645,10 @@ test "VM: Block strictly rejects extraneous yielded arguments" {
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
 
-    // The VM MUST strictly reject the extra arguments to prevent silent CAD bugs!
-    try testing.expectEqual(.runtime_error, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 99.0), vm.stack[0].asNumber());
 }
 
 test "Compiler: Block array destructuring rejects splats and defaults natively" {
@@ -4819,4 +4817,135 @@ test "VM: Repeated block yields in loops maintain frame and stack equilibrium" {
     // Sum of (0..99)*2 = 2 * (99*100/2) = 9900
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 9900.0), vm.stack[0].asNumber());
+}
+
+test "VM: Shorthand hash syntax evaluates in runtime scope" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\width = 50
+        \\height = 100
+        \\box_opts = { width:, height: }
+        \\[box_opts[:width], box_opts[:height]]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: Class re-opening preserves existing methods and field layout map" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Part
+        \\  def set_a(val) @a = val end
+        \\end
+        \\
+        \\class Part
+        \\  def set_b(val) @b = val end
+        \\  def sum() @a + @b end
+        \\end
+        \\
+        \\p = Part.new
+        \\p.set_a(10)
+        \\p.set_b(20)
+        \\p.sum()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 30.0), vm.stack[0].asNumber());
+}
+
+test "VM: Inline rescue modifier traps soft exceptions during assignment" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\arr = [10, 20]
+        \\val = arr[99] rescue 500
+        \\val
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 500.0), vm.stack[0].asNumber());
+}
+
+test "VM: Stabby lambdas compile and execute with default and keyword parameters" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\calc = ->(x, y = 10, scale: 2) { (x + y) * scale }
+        \\[calc(5), calc(5, 20), calc(5, scale: 3)]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+
+    // calc(5) -> (5 + 10) * 2 = 30
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[0].asNumber());
+    // calc(5, 20) -> (5 + 20) * 2 = 50
+    try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[1].asNumber());
+    // calc(5, scale: 3) -> (5 + 10) * 3 = 45
+    try testing.expectEqual(@as(f64, 45.0), arr_obj.items.items[2].asNumber());
 }

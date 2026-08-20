@@ -1272,11 +1272,26 @@ pub const VM = struct {
         if (provided_args < expected_args) {
             const missing = expected_args - provided_args;
             try self.ensureStackCapacity(self.stack_top + missing);
-            for (0..missing) |_| self.push(value.Value.initNil());
+
+            // Trailing Map Heuristic for skipped Positional Defaults
+            if (provided_args > 0) {
+                const last_arg = self.stack[self.stack_top - 1];
+                if (last_arg.isObject() and last_arg.asObj().obj_type == .map) {
+                    const map_val = self.pop();
+                    for (0..missing) |_| self.push(value.Value.initNil());
+                    self.push(map_val); // Shift the kwargs map to the end
+                } else {
+                    for (0..missing) |_| self.push(value.Value.initNil());
+                }
+            } else {
+                for (0..missing) |_| self.push(value.Value.initNil());
+            }
+
             provided_args = expected_args;
         } else if (provided_args > expected_args and closure.function.splat_pos == null) {
-            self.runtimeError("Runtime Error: Expected at most {d} args.\n", .{expected_args});
-            return error.RuntimeError;
+            const excess = provided_args - expected_args;
+            self.popAndRelease(excess);
+            provided_args = expected_args;
         }
 
         // Safely Pack Splat Arguments in-place
@@ -1318,7 +1333,7 @@ pub const VM = struct {
             self.push(value.Value.initNil());
         }
 
-        // 4. Pad Virtual Local Slots perfectly
+        // Pad Virtual Local Slots perfectly
         const total_locals = closure.function.local_count;
         const current_frame_size = self.stack_top - base_slot;
         if (total_locals > current_frame_size) {
@@ -1342,7 +1357,7 @@ pub const VM = struct {
         }
 
         const target_depth = self.frames.items.len;
-        const provided_args = args.len;
+        var provided_args = args.len;
         const expected_args = closure.function.arity;
 
         // Ensure stack capacity for closure, args, padded nils, and the implicit null block
@@ -1357,7 +1372,24 @@ pub const VM = struct {
 
         if (provided_args < expected_args) {
             const missing = expected_args - provided_args;
-            for (0..missing) |_| self.push(value.Value.initNil());
+
+            // --- Trailing Map Heuristic for C++ Synchronous Calls ---
+            if (provided_args > 0) {
+                const last_arg = self.stack[self.stack_top - 1];
+                if (last_arg.isObject() and last_arg.asObj().obj_type == .map) {
+                    const map_val = self.pop();
+                    for (0..missing) |_| self.push(value.Value.initNil());
+                    self.push(map_val); // Shift the kwargs map to the end
+                } else {
+                    for (0..missing) |_| self.push(value.Value.initNil());
+                }
+            } else {
+                for (0..missing) |_| self.push(value.Value.initNil());
+            }
+        } else if (provided_args > expected_args and closure.function.splat_pos == null) {
+            const excess = provided_args - expected_args;
+            self.popAndRelease(excess);
+            provided_args = expected_args;
         }
 
         // Pad the implicit empty block
