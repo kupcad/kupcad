@@ -53,6 +53,11 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.boolean_class = try defineBuiltinClass(vm, "Boolean", vm.object_class);
     vm.bbox_class = try defineBuiltinClass(vm, "BoundingBox", vm.object_class);
 
+    // Set up GC module (as an instance of a pseudo-class)
+    const gc_class = try defineBuiltinClass(vm, "GC", null);
+    const gc_inst = try vm.gc.allocateInstance(vm, gc_class);
+    try vm.globals.put(vm.allocator, "GC", value.Value.initObj(&gc_inst.obj));
+
     // Bootstrap Standard Modules
     // Set up Math module (as an instance of a pseudo-class to support property access)
     const math_class = try defineBuiltinClass(vm, "Math", null);

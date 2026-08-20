@@ -294,7 +294,8 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
     const jump_idx = out_chunk.code.items.len;
     try out_chunk.write(testing.allocator, 0xFF, 0);
     try out_chunk.write(testing.allocator, 0xFF, 0);
-    try out_chunk.write(testing.allocator, 0xFF, 0); // 3-byte offset
+    try out_chunk.write(testing.allocator, 0xFF, 0);
+    try out_chunk.write(testing.allocator, 0xFF, 0); // 4-byte offset
 
     // 2. Push a dummy variable to prove stack unwinding drops dead variables cleanly
     const dummy = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(99.0));
@@ -322,10 +323,11 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
     // --- RESCUE HANDLER ---
     // Patch the setup_rescue offset so it lands exactly here
     const handler_ip = out_chunk.code.items.len;
-    const offset = handler_ip - (jump_idx + 3);
-    out_chunk.code.items[jump_idx] = @intCast((offset >> 16) & 0xFF);
-    out_chunk.code.items[jump_idx + 1] = @intCast((offset >> 8) & 0xFF);
-    out_chunk.code.items[jump_idx + 2] = @intCast(offset & 0xFF);
+    const offset = handler_ip - (jump_idx + 4);
+    out_chunk.code.items[jump_idx] = @intCast((offset >> 24) & 0xFF);
+    out_chunk.code.items[jump_idx + 1] = @intCast((offset >> 16) & 0xFF);
+    out_chunk.code.items[jump_idx + 2] = @intCast((offset >> 8) & 0xFF);
+    out_chunk.code.items[jump_idx + 3] = @intCast(offset & 0xFF);
 
     // Pop the "Crash!" error off the stack
     try out_chunk.writeOp(testing.allocator, .op_pop, 0);
@@ -451,23 +453,26 @@ test "VM: natively executes op_switch jump table" {
     try out_chunk.write(testing.allocator, 2, 0); // case count
 
     // Table Entry 1: case 10
-    try out_chunk.write(testing.allocator, @intCast((case1_val >> 8) & 0xFF), 0); // const high
-    try out_chunk.write(testing.allocator, @intCast(case1_val & 0xFF), 0); // const low
-    try out_chunk.write(testing.allocator, 0, 0); // jump high
-    try out_chunk.write(testing.allocator, 0, 0); // jump mid
+    try out_chunk.write(testing.allocator, @intCast((case1_val >> 8) & 0xFF), 0);
+    try out_chunk.write(testing.allocator, @intCast(case1_val & 0xFF), 0);
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0);
     try out_chunk.write(testing.allocator, 0, 0); // relative offset 0
 
     // Table Entry 2: case 42
-    try out_chunk.write(testing.allocator, @intCast((case2_val >> 8) & 0xFF), 0); // const high
-    try out_chunk.write(testing.allocator, @intCast(case2_val & 0xFF), 0); // const low
-    try out_chunk.write(testing.allocator, 0, 0); // jump high
-    try out_chunk.write(testing.allocator, 0, 0); // jump mid
-    try out_chunk.write(testing.allocator, 3, 0); // relative offset 3 (Size of Branch 1 block)
+    try out_chunk.write(testing.allocator, @intCast((case2_val >> 8) & 0xFF), 0);
+    try out_chunk.write(testing.allocator, @intCast(case2_val & 0xFF), 0);
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 3, 0); // relative offset 3
 
     // Default Entry:
-    try out_chunk.write(testing.allocator, 0, 0); // jump high
-    try out_chunk.write(testing.allocator, 0, 0); // jump mid
-    try out_chunk.write(testing.allocator, 6, 0); // relative offset 6 (Size of B1 + B2 blocks)
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 6, 0); // relative offset 6
 
     // Branch 1 (Target: offset + 3) -> Pushes 100
     const b1_val = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(100.0));
@@ -674,12 +679,13 @@ test "VM: Gas limit prevents infinite loops and throws specific error" {
     defer out_chunk.free(testing.allocator);
 
     // Create an infinite loop natively in bytecode.
-    // op_loop takes a 3-byte offset to jump backwards.
-    // By jumping back exactly 4 bytes (the size of op_loop + its offset), it loops forever.
+    // op_loop takes a 4-byte offset to jump backwards.
+    // By jumping back exactly 5 bytes (the size of op_loop + its offset), it loops forever.
     try out_chunk.writeOp(testing.allocator, .op_loop, 0);
-    try out_chunk.write(testing.allocator, 0, 0); // Jump High Byte
-    try out_chunk.write(testing.allocator, 0, 0); // Jump Mid Byte
-    try out_chunk.write(testing.allocator, 4, 0); // Jump Low Byte
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 5, 0);
 
     // The VM will never reach this return
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
@@ -1720,7 +1726,7 @@ test "VM: case statement subsumption (===) with ranges and classes" {
     try testing.expectEqual(@as(f64, 300.0), arr_obj.items.items[2].asNumber()); // Fallback
 }
 
-test "VM Edge Case: executes 24-bit control flow jump correctly (> 65KB block)" {
+test "VM Edge Case: executes 32-bit control flow jump correctly (> 65KB block)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -1733,6 +1739,7 @@ test "VM Edge Case: executes 24-bit control flow jump correctly (> 65KB block)" 
     // Jump if false over 70,000 bytes!
     try out_chunk.writeOp(testing.allocator, .op_jump_if_false, 0);
     const jump_dist: usize = 70000;
+    try out_chunk.write(testing.allocator, @intCast((jump_dist >> 24) & 0xFF), 0);
     try out_chunk.write(testing.allocator, @intCast((jump_dist >> 16) & 0xFF), 0);
     try out_chunk.write(testing.allocator, @intCast((jump_dist >> 8) & 0xFF), 0);
     try out_chunk.write(testing.allocator, @intCast(jump_dist & 0xFF), 0);
@@ -5016,24 +5023,12 @@ test "VM: GC sweep during dynamic map and array splat expansion" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Bind native force_gc helper to trigger GC sweep mid-execution
-    const force_gc = struct {
-        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-            _ = arg_count;
-            _ = args;
-            const v: *VM = @ptrCast(@alignCast(vm_opaque));
-            v.gc.collectGarbage(v, false);
-            return value.Value.initNil();
-        }
-    }.run;
-    try vm.defineNative("force_gc", force_gc);
-
     const source =
         \\base_map = { a: 1, b: 2 }
         \\base_arr = [10, 20]
-        \\# Force GC mid-expression via method chain
-        \\merged_map = { **base_map, c: 3 }.tap { force_gc() }
-        \\merged_arr = [ *base_arr, 30 ].tap { force_gc() }
+        \\# Force GC mid-expression via method chain using the native GC module
+        \\merged_map = { **base_map, c: 3 }.tap { GC.collect() }
+        \\merged_arr = [ *base_arr, 30 ].tap { GC.collect() }
         \\[ merged_map[:c], merged_arr[2] ]
     ;
 
@@ -5055,4 +5050,41 @@ test "VM: GC sweep during dynamic map and array splat expansion" {
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: GC module collect and bytes_allocated methods" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\bytes_before = GC.bytes_allocated()
+        \\GC.collect()
+        \\bytes_after = GC.bytes_allocated()
+        \\[bytes_before, bytes_after]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const arr_val = vm.stack[0];
+    try testing.expect(arr_val.isArray());
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expect(arr_obj.items.items[0].isNumber());
+    try testing.expect(arr_obj.items.items[1].isNumber());
+    try testing.expect(arr_obj.items.items[0].asNumber() > 0.0);
+    try testing.expect(arr_obj.items.items[1].asNumber() > 0.0);
 }

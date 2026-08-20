@@ -9,6 +9,7 @@ const symbol_class = @import("stdlib/classes/symbol.zig");
 const boolean_class = @import("stdlib/classes/boolean.zig");
 const math_class = @import("stdlib/classes/math.zig");
 const object_class = @import("stdlib/classes/object.zig");
+const gc_class = @import("stdlib/classes/gc.zig");
 
 /// Core generation logic separated for testing
 pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
@@ -69,6 +70,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     for (symbol_class.methods) |m| try core_methods.append(allocator, m.name);
     for (boolean_class.methods) |m| try core_methods.append(allocator, m.name);
     for (math_class.methods) |m| try core_methods.append(allocator, m.name);
+    for (gc_class.methods) |m| try core_methods.append(allocator, m.name);
 
     // Supply dummy fallbacks if a list is empty to avoid crashing the TextMate Regex engine
     if (builtins.items.len == 0) try builtins.append(allocator, "dummy_builtin");

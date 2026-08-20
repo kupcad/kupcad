@@ -73,6 +73,7 @@ const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "Boolean", .protected_symbol },
     .{ "BoundingBox", .protected_symbol },
     .{ "Math", .protected_symbol },
+    .{ "GC", .protected_symbol },
 });
 
 pub const Compiler = struct {
@@ -828,23 +829,25 @@ pub const Compiler = struct {
 
     fn emitJump(self: *Compiler, op: chunk.OpCode) CompileError!usize {
         try self.emitOp(op);
-        // Write 3 bytes for a 24-bit jump offset
+        // Write 4 bytes for a 32-bit jump offset
         try self.emitByte(0xff);
         try self.emitByte(0xff);
         try self.emitByte(0xff);
-        return self.current_chunk.code.items.len - 3;
+        try self.emitByte(0xff);
+        return self.current_chunk.code.items.len - 4;
     }
 
     fn patchJump(self: *Compiler, offset: usize) void {
-        const jump = self.current_chunk.code.items.len - offset - 3;
-        std.debug.assert(jump <= 0xFFFFFF); // Assert it fits in 24 bits
+        const jump = self.current_chunk.code.items.len - offset - 4;
+        std.debug.assert(jump <= 0xFFFFFFFF); // Assert it fits in 32 bits
         self.writeJumpOffset(offset, jump);
     }
 
     fn emitLoop(self: *Compiler, loop_start: usize) CompileError!void {
         try self.emitOp(.op_loop);
-        const jump = self.current_chunk.code.items.len - loop_start + 3;
-        std.debug.assert(jump <= 0xFFFFFF);
+        const jump = self.current_chunk.code.items.len - loop_start + 4;
+        std.debug.assert(jump <= 0xFFFFFFFF);
+        try self.emitByte(@intCast((jump >> 24) & 0xff));
         try self.emitByte(@intCast((jump >> 16) & 0xff));
         try self.emitByte(@intCast((jump >> 8) & 0xff));
         try self.emitByte(@intCast(jump & 0xff));
@@ -1237,19 +1240,21 @@ pub const Compiler = struct {
             try self.compileNode(cs.condition);
             try self.emitOpWithOperand(.op_switch, .op_switch_wide, total_conditions);
 
-            // Pre-allocate the jump table in bytecode so we can backpatch it later
+            // Pre-allocate the jump table in bytecode (6 bytes per entry)
             const table_start_offset = self.current_chunk.code.items.len;
             for (0..total_conditions) |_| {
                 try self.emitByte(0); // const_high
                 try self.emitByte(0); // const_low
-                try self.emitByte(0xFF); // jump high
-                try self.emitByte(0xFF); // jump mid
-                try self.emitByte(0xFF); // jump low
+                try self.emitByte(0xFF); // jump b3
+                try self.emitByte(0xFF); // jump b2
+                try self.emitByte(0xFF); // jump b1
+                try self.emitByte(0xFF); // jump b0
             }
             const default_jump_offset = self.current_chunk.code.items.len;
-            try self.emitByte(0xFF); // default high
-            try self.emitByte(0xFF); // default mid
-            try self.emitByte(0xFF); // default low
+            try self.emitByte(0xFF); // default b3
+            try self.emitByte(0xFF); // default b2
+            try self.emitByte(0xFF); // default b1
+            try self.emitByte(0xFF); // default b0
 
             var condition_idx: usize = 0;
             var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
@@ -1259,12 +1264,11 @@ pub const Compiler = struct {
                 const body_jump_target = self.current_chunk.code.items.len;
                 const conds = self.tree.getNodes(branch.conditions);
 
-                // Backpatch the table entries for this branch
+                // Backpatch table entries (Step by 6)
                 for (conds) |cond_node_idx| {
                     const c_node = self.tree.getNode(cond_node_idx).?;
-                    const table_idx = table_start_offset + (condition_idx * 5); // Step by 5!
+                    const table_idx = table_start_offset + (condition_idx * 6);
 
-                    // Extract constant index directly
                     var raw_idx: usize = 0;
                     if (c_node.tag == .number) {
                         raw_idx = try self.makeConstant(value.Value.initNumber(self.tree.number(c_node)));
@@ -1273,27 +1277,22 @@ pub const Compiler = struct {
                         raw_idx = try self.makeStringConstant(str_content);
                     }
 
-                    // No more artificial limits! Write the 16-bit constant index:
                     self.current_chunk.code.items[table_idx] = @intCast((raw_idx >> 8) & 0xFF);
                     self.current_chunk.code.items[table_idx + 1] = @intCast(raw_idx & 0xFF);
 
-                    // Calculate offset from the END of the entire switch instruction block
-                    const offset = body_jump_target - (default_jump_offset + 3);
+                    const offset = body_jump_target - (default_jump_offset + 4);
                     self.writeJumpOffset(table_idx + 2, offset);
                     condition_idx += 1;
                 }
 
-                // Compile the actual body
                 try self.compileNode(branch.body);
                 try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
             }
 
             // Backpatch Default Branch
             const default_target = self.current_chunk.code.items.len;
-            const d_offset = default_target - (default_jump_offset + 3);
-            self.current_chunk.code.items[default_jump_offset] = @intCast((d_offset >> 16) & 0xFF);
-            self.current_chunk.code.items[default_jump_offset + 1] = @intCast((d_offset >> 8) & 0xFF);
-            self.current_chunk.code.items[default_jump_offset + 2] = @intCast(d_offset & 0xFF);
+            const d_offset = default_target - (default_jump_offset + 4);
+            self.writeJumpOffset(default_jump_offset, d_offset);
 
             if (cs.else_branch != .none) {
                 try self.compileNode(cs.else_branch);
@@ -1301,7 +1300,6 @@ pub const Compiler = struct {
                 try self.emitOp(.op_nil);
             }
 
-            // Cap off all successful branch executions
             for (end_jumps.items) |jmp| {
                 self.patchJump(jmp);
             }
@@ -1970,9 +1968,10 @@ pub const Compiler = struct {
     }
 
     fn writeJumpOffset(self: *Compiler, target_index: usize, offset: usize) void {
-        self.current_chunk.code.items[target_index] = @intCast((offset >> 16) & 0xFF);
-        self.current_chunk.code.items[target_index + 1] = @intCast((offset >> 8) & 0xFF);
-        self.current_chunk.code.items[target_index + 2] = @intCast(offset & 0xFF);
+        self.current_chunk.code.items[target_index] = @intCast((offset >> 24) & 0xFF);
+        self.current_chunk.code.items[target_index + 1] = @intCast((offset >> 16) & 0xFF);
+        self.current_chunk.code.items[target_index + 2] = @intCast((offset >> 8) & 0xFF);
+        self.current_chunk.code.items[target_index + 3] = @intCast(offset & 0xFF);
     }
 
     fn isScriptGlobal(self: *Compiler, name_id: ast.StringId) bool {

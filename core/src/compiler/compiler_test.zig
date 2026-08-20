@@ -155,14 +155,14 @@ test "Compiler: compiles safe navigation method call (obj&.cut())" {
 
     // Bytecode expected:
     // op_get_global (obj)
-    // op_jump_if_nil (Safely skip the invoke if true!) (uses 3-byte offset now!)
+    // op_jump_if_nil (Safely skip the invoke if true!) (uses 4-byte offset now)
     // op_invoke ('cut')
     // op_return
 
     try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
     try testing.expectEqual(chunk.OpCode.op_jump_if_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
-    // op_invoke shifted 1 byte right due to 3-byte jump offset
-    try testing.expectEqual(chunk.OpCode.op_invoke, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+    // op_invoke shifted 1 byte right due to 4-byte jump offset
+    try testing.expectEqual(chunk.OpCode.op_invoke, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
 }
 
 test "Compiler: compiles string interpolation" {
@@ -292,7 +292,7 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     try comp.compile(rescue_node);
 
     // Expected Bytecode:
-    // 0: op_setup_rescue (jump to rescue block on error) (uses 3-byte offset now!)
+    // 0: op_setup_rescue (jump to rescue block on error) (uses 4-byte offset now)
     // 4: op_get_local (x)
     // 6: op_pop_rescue (success path, remove frame)
     // 7: op_jump (skip rescue block)
@@ -301,9 +301,9 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     // 14: op_return
 
     try testing.expectEqual(chunk.OpCode.op_setup_rescue, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_pop_rescue, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
-    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[11])));
+    try testing.expectEqual(chunk.OpCode.op_pop_rescue, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
+    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[8])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[13])));
 }
 
 test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {

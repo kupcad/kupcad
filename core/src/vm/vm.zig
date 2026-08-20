@@ -635,25 +635,25 @@ pub const VM = struct {
                     var jump_offset: usize = 0;
 
                     for (0..case_count) |_| {
-                        // Read 5 bytes per case: [const_high] [const_low] [jump_high] [jump_mid] [jump_low]
+                        // Read 6 bytes per case: [const_high] [const_low] [b3] [b2] [b1] [b0]
                         const const_high = @as(u16, exec_chunk.code.items[frame.ip]);
                         const const_low = @as(u16, exec_chunk.code.items[frame.ip + 1]);
-                        const j_high = @as(usize, exec_chunk.code.items[frame.ip + 2]);
-                        const j_mid = @as(usize, exec_chunk.code.items[frame.ip + 3]);
-                        const j_low = @as(usize, exec_chunk.code.items[frame.ip + 4]);
-                        frame.ip += 5;
+                        const j_b3 = @as(usize, exec_chunk.code.items[frame.ip + 2]);
+                        const j_b2 = @as(usize, exec_chunk.code.items[frame.ip + 3]);
+                        const j_b1 = @as(usize, exec_chunk.code.items[frame.ip + 4]);
+                        const j_b0 = @as(usize, exec_chunk.code.items[frame.ip + 5]);
+                        frame.ip += 6;
 
                         if (!matched) {
                             const const_idx = (const_high << 8) | const_low;
                             const case_val = exec_chunk.constants.items[const_idx];
                             if (self.valuesCaseEqual(case_val, test_val)) {
                                 matched = true;
-                                jump_offset = (j_high << 16) | (j_mid << 8) | j_low;
+                                jump_offset = (j_b3 << 24) | (j_b2 << 16) | (j_b1 << 8) | j_b0;
                             }
                         }
                     }
 
-                    // Properly read 3-byte offset for default fallback
                     const default_offset = self.readJumpOffset(exec_chunk, frame);
 
                     if (matched) {
@@ -1878,11 +1878,12 @@ pub const VM = struct {
 
     inline fn readJumpOffset(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) usize {
         _ = self;
-        const high = @as(usize, exec_chunk.code.items[frame.ip]);
-        const mid = @as(usize, exec_chunk.code.items[frame.ip + 1]);
-        const low = @as(usize, exec_chunk.code.items[frame.ip + 2]);
-        frame.ip += 3;
-        return (high << 16) | (mid << 8) | low;
+        const b3 = @as(usize, exec_chunk.code.items[frame.ip]);
+        const b2 = @as(usize, exec_chunk.code.items[frame.ip + 1]);
+        const b1 = @as(usize, exec_chunk.code.items[frame.ip + 2]);
+        const b0 = @as(usize, exec_chunk.code.items[frame.ip + 3]);
+        frame.ip += 4;
+        return (b3 << 24) | (b2 << 16) | (b1 << 8) | b0;
     }
 
     inline fn executeCall(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
