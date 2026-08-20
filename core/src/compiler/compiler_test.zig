@@ -809,3 +809,27 @@ test "Compiler: Block closures calculate total local slots accurately" {
     try testing.expect(block_func != null);
     try testing.expect(block_func.?.local_count >= 6);
 }
+
+test "Compiler: Break outside of loop scope correctly emits CompileError" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: break 10
+    const val = try b.number("10", 0);
+    const break_node = try b.breakStmt(val, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // Attempting to compile a break statement without an active loop scope
+    // MUST trigger a safe compilation error, preventing the VM from executing warped bytecode.
+    const result = comp.compile(break_node);
+    try testing.expectError(error.UnknownNode, result);
+}

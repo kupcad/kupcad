@@ -1912,6 +1912,24 @@ pub const Compiler = struct {
                         .is_keyword = false,
                     };
                 },
+                .symbol => {
+                    lowered[i] = .{
+                        .name = @as(ast.StringId, @enumFromInt(node.data)),
+                        .default_value = .none,
+                        .modifier = null,
+                        .is_keyword = true,
+                    };
+                },
+                .hash_literal => {
+                    const entries = self.tree.getHashEntries(self.tree.nodeSpan(node));
+                    const key_node = self.tree.getNode(entries[0].key).?;
+                    lowered[i] = .{
+                        .name = @as(ast.StringId, @enumFromInt(key_node.data)),
+                        .default_value = entries[0].value,
+                        .modifier = null,
+                        .is_keyword = true,
+                    };
+                },
                 .splat_expr => {
                     // The data payload of a splat_expr is the inner NodeIndex
                     const inner_node = self.tree.getNode(@as(ast.NodeIndex, @enumFromInt(node.data))).?;

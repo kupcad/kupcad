@@ -4474,3 +4474,111 @@ test "VM: Block closures support default parameter assignments" {
     // b(5, 50) -> 5 + 50 = 55
     try testing.expectEqual(@as(f64, 55.0), arr_obj.items.items[2].asNumber());
 }
+
+test "VM: Deeply nested blocks modifying top-level upvalues securely" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests that Upvalue resolution correctly traverses multiple compiler boundaries
+    const source =
+        \\x = 0
+        \\[1].each do
+        \\  [2].each do
+        \\    [3].each do
+        \\      x = x + 10
+        \\    end
+        \\  end
+        \\end
+        \\x
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // The innermost block runs exactly once, so x should be 10.
+    // Most importantly, the stack should be perfectly balanced at 1.
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 10.0), vm.stack[0].asNumber());
+}
+
+test "VM: Block arguments gracefully pad with nil when missing" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Yields 0 arguments, but block expects 2.
+    const source =
+        \\def call_empty(&b)
+        \\  b()
+        \\end
+        \\call_empty do |x, y|
+        \\  [x.nil?, y.nil?]
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Should return [true, true] without reading garbage memory
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool());
+}
+
+test "VM: Keyword arguments extract correctly regardless of passing order" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Block expects |a:, b:|, caller provides (b: 20, a: 10)
+    const source =
+        \\def test_kw(&block)
+        \\  block(b: 20, a: 10)
+        \\end
+        \\test_kw do |a:, b:|
+        \\  [a, b]
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    // Should reliably map to [10, 20]
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const arr_val = vm.stack[0];
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
+}

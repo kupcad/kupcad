@@ -1342,6 +1342,25 @@ pub const Parser = struct {
                 const default_val = try self.parseExpression(.none);
                 const name_id = try self.b.intern(ident_str);
                 return self.b.assignment(name_id, null, default_val, start_tok) catch ParseError.OutOfMemory;
+            } else if (self.tag(0) == .colon) {
+                // Keyword param: a: or a: 10
+                self.advance();
+                const name_id = try self.b.intern(ident_str);
+                if (self.tag(0) != .comma and self.tag(0) != .pipe) {
+                    // Keyword with default: a: 10
+                    const default_val = try self.parseExpression(.none);
+
+                    const sym_node = self.b.createNode(.symbol, ident_tok, @intFromEnum(name_id)) catch return ParseError.OutOfMemory;
+
+                    const s_len = self.scratch_hash_entries.items.len;
+                    defer self.scratch_hash_entries.shrinkRetainingCapacity(s_len);
+                    self.scratch_hash_entries.append(self.allocator, .{ .key = sym_node, .value = default_val }) catch return ParseError.OutOfMemory;
+
+                    const span = try self.b.addHashEntries(self.scratch_hash_entries.items[s_len..]);
+                    return self.b.hashLiteral(span, ident_tok) catch ParseError.OutOfMemory;
+                }
+                // Keyword without default: a:
+                return self.b.createNode(.symbol, ident_tok, @intFromEnum(name_id)) catch return ParseError.OutOfMemory;
             }
 
             return self.b.identifierNode(ident_str, start_tok) catch ParseError.OutOfMemory;
