@@ -104,6 +104,7 @@ pub fn arrayMap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
     const ctx = try common.unwrapArray(vm_opaque, arg_count, 1, args);
     const closure_val = args[0];
     if (!closure_val.isClosure()) return error.RuntimeError;
+
     const closure = closure_val.asClosure();
 
     const new_arr = try ctx.vm.gc.allocateArray(ctx.vm);
@@ -114,6 +115,8 @@ pub fn arrayMap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
     for (ctx.arr.items.items) |item| {
         const mapped_val = try ctx.vm.callClosureSync(closure, &.{item});
         ctx.vm.retainValue(mapped_val);
+        // Ensure we haven't exceeded the pre-allocated capacity
+        std.debug.assert(new_arr.items.items.len < new_arr.items.capacity);
         new_arr.items.appendAssumeCapacity(mapped_val);
     }
     return value.Value.initObj(&new_arr.obj);

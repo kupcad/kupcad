@@ -483,6 +483,9 @@ pub const GC = struct {
     }
 
     inline fn destroyObject(self: *GC, comptime T: type, ptr: *T) void {
+        // Prevent integer underflow on double-free or size mismatch
+        std.debug.assert(self.bytes_allocated >= @sizeOf(T));
+
         self.allocator.destroy(ptr);
         self.bytes_allocated -= @sizeOf(T);
     }

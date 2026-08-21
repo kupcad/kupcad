@@ -24,6 +24,10 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
             const payload = vm.dag_builder.getBinaryPayload(node);
             const left_handle = try evaluateDAG(vm, payload.left);
             const right_handle = try evaluateDAG(vm, payload.right);
+            // Ensure evaluated handles contain valid C++ pointers
+            std.debug.assert(@intFromPtr(left_handle.ptr) != 0);
+            std.debug.assert(@intFromPtr(right_handle.ptr) != 0);
+
             const op: kernel.BooleanOp = switch (node.tag) {
                 .union_op => .union_op,
                 .difference_op => .difference_op,

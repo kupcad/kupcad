@@ -226,6 +226,9 @@ pub const VM = struct {
 
             var frame = &self.frames.items[self.frames.items.len - 1];
             const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
+            // Prevent runaway instruction pointer
+            std.debug.assert(frame.ip < exec_chunk.code.items.len);
+
             const instruction = exec_chunk.code.items[frame.ip];
             frame.ip += 1;
 
@@ -1233,6 +1236,10 @@ pub const VM = struct {
     fn closeUpvalues(self: *VM, last_stack_slot: *value.Value) void {
         while (self.open_upvalues != null and @intFromPtr(self.open_upvalues.?.location) >= @intFromPtr(last_stack_slot)) {
             var upvalue = self.open_upvalues.?;
+            // Ensure the location we are closing actually belongs to the VM stack!
+            std.debug.assert(@intFromPtr(upvalue.location) >= @intFromPtr(self.stack.ptr));
+            std.debug.assert(@intFromPtr(upvalue.location) < @intFromPtr(self.stack.ptr + self.stack.len));
+
             upvalue.closed = upvalue.location.*; // Move from Stack -> Heap
             upvalue.location = &upvalue.closed; // Repoint to internal field
             self.open_upvalues = upvalue.next; // Unlink from active list
