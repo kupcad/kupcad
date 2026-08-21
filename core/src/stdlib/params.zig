@@ -36,6 +36,9 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     vm.push(sym_key);
     defer _ = vm.pop();
 
+    // Ensure the allocateSymbol didn't return a corrupted type
+    std.debug.assert(sym_key.isObject() and sym_key.asObj().obj_type == .symbol);
+
     const sym_chars = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", sym_key.asObj()))).chars;
 
     // --- GETTER MODE ---

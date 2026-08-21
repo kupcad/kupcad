@@ -8,6 +8,9 @@ const value = @import("../core/value.zig");
 fn exceptionInit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     const receiver = (args - 1)[0]; // Safely step back 1 slot to get the Receiver
+
+    std.debug.assert(receiver.isInstance());
+
     const instance = receiver.asInstance();
 
     var msg = value.Value.initNil();

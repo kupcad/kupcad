@@ -26,7 +26,12 @@ fn buildVec3(vm: *VM, x: f64, y: f64, z: f64) !value.Value {
 pub fn bboxSize(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const inst = (args - 1)[0].asInstance();
+    const receiver = (args - 1)[0];
+
+    std.debug.assert(receiver.isInstance());
+
+    const inst = receiver.asInstance();
+
     return buildVec3(vm, getField(inst, "size_x"), getField(inst, "size_y"), getField(inst, "size_z"));
 }
 

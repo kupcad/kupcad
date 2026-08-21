@@ -125,6 +125,10 @@ pub fn arrayMap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
 pub fn arrayReduce(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     const receiver = (args - 1)[0];
+
+    // arrayReduce skips common.unwrapArray, so we must assert here!
+    std.debug.assert(receiver.isObject() and receiver.asObj().obj_type == .array);
+
     const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
 
     var closure_val: value.Value = undefined;
