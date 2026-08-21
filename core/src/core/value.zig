@@ -196,227 +196,191 @@ pub const ObjBrep = struct {
     data: *topology.Brep, // Pointer to the pure Zig B-Rep data
 };
 
-/// The Universal 16-Byte Dynamic Value.
-/// Passed by value in 2 CPU registers (no hidden pointer indirection overhead).
-pub const Value = extern struct {
-    tag: ValueTag,
+// --- NaN Tagging Constants ---
+const QNAN: u64 = 0x7FFC000000000000;
+const SIGN_BIT: u64 = 0x8000000000000000;
 
-    // 7 bytes of implicit padding exist here for alignment.
+const TAG_NIL: u64 = 1;
+const TAG_FALSE: u64 = 2;
+const TAG_TRUE: u64 = 3;
 
-    payload: extern union {
-        number: f64,
-        boolean: bool,
-        symbol: u32,
-        obj: *Obj,
-        _padding: u64, // Forces the union to always be exactly 8 bytes
-    },
+const VAL_NIL: u64 = QNAN | TAG_NIL;
+const VAL_FALSE: u64 = QNAN | TAG_FALSE;
+const VAL_TRUE: u64 = QNAN | TAG_TRUE;
+const TAG_OBJ: u64 = SIGN_BIT | QNAN;
 
-    // --- Initializers ---
+/// A completely unboxed, 8-byte value payload.
+pub const Value = packed struct {
+    val: u64,
 
-    pub inline fn initNumber(val: f64) Value {
-        return .{ .tag = .number, .payload = .{ .number = val } };
-    }
+    // --- Constructors ---
 
-    pub inline fn initBool(val: bool) Value {
-        return .{ .tag = .boolean, .payload = .{ .boolean = val } };
+    pub inline fn initNumber(num: f64) Value {
+        return .{ .val = @bitCast(num) };
     }
 
     pub inline fn initNil() Value {
-        return .{ .tag = .nil, .payload = .{ ._padding = 0 } };
+        return .{ .val = VAL_NIL };
     }
 
-    pub inline fn initSymbol(id: u32) Value {
-        return .{ .tag = .symbol, .payload = .{ .symbol = id } };
+    pub inline fn initBool(b: bool) Value {
+        return .{ .val = if (b) VAL_TRUE else VAL_FALSE };
     }
 
     pub inline fn initObj(obj: *Obj) Value {
-        return .{ .tag = .object, .payload = .{ .obj = obj } };
+        // Embed the 48-bit pointer into the 52-bit mantissa space
+        return .{ .val = TAG_OBJ | @intFromPtr(obj) };
     }
 
-    pub fn initGeometry(ptr: *ObjGeometry) Value {
-        return .{ .tag = .object, .payload = .{ .obj = &ptr.obj } };
+    pub inline fn initGeometry(geom_obj: *ObjGeometry) Value {
+        return initObj(&geom_obj.obj);
     }
 
-    pub inline fn initCrossSection(obj: *ObjCrossSection) Value {
-        return initObj(&obj.obj);
+    pub inline fn initCrossSection(cs: *ObjCrossSection) Value {
+        return initObj(&cs.obj);
     }
 
-    pub inline fn initWorkplane(ptr: *ObjWorkplane) Value {
-        return initObj(&ptr.obj);
+    pub inline fn initWorkplane(wp: *ObjWorkplane) Value {
+        return initObj(&wp.obj);
     }
 
     // --- Type Checkers ---
 
     pub inline fn isNumber(self: Value) bool {
-        return self.tag == .number;
+        // If it isn't completely matching the QNAN mask, it's a valid IEEE float!
+        return (self.val & QNAN) != QNAN;
     }
-    pub inline fn isBool(self: Value) bool {
-        return self.tag == .boolean;
-    }
+
     pub inline fn isNil(self: Value) bool {
-        return self.tag == .nil;
+        return self.val == VAL_NIL;
     }
-    pub inline fn isSymbol(self: Value) bool {
-        return self.tag == .symbol;
+
+    pub inline fn isBool(self: Value) bool {
+        return self.val == VAL_TRUE or self.val == VAL_FALSE;
     }
+
     pub inline fn isObject(self: Value) bool {
-        return self.tag == .object;
+        // Check if the Sign Bit and QNAN bits are set, indicating a Heap Pointer
+        return (self.val & TAG_OBJ) == TAG_OBJ;
     }
 
-    pub inline fn isString(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .string;
+    // --- Data Extractors ---
+
+    pub inline fn asNumber(self: Value) f64 {
+        std.debug.assert(self.isNumber());
+        return @bitCast(self.val);
     }
 
-    pub inline fn isArray(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .array;
+    pub inline fn asBool(self: Value) bool {
+        std.debug.assert(self.isBool());
+        return self.val == VAL_TRUE;
     }
 
-    pub inline fn isMap(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .map;
+    pub inline fn asObj(self: Value) *Obj {
+        std.debug.assert(self.isObject());
+        // Mask out the TAG_OBJ bits to reveal the raw memory pointer
+        const ptr_val = self.val & ~TAG_OBJ;
+        return @ptrFromInt(ptr_val);
     }
 
-    pub inline fn isClosure(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .closure;
-    }
-
-    pub inline fn isClass(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .class;
-    }
-
-    pub inline fn isModule(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .module;
-    }
-
-    pub inline fn isInstance(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .instance;
-    }
-
-    pub inline fn isBoundMethod(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .bound_method;
-    }
-
-    pub inline fn isRange(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .range;
-    }
-
-    pub inline fn isObjType(self: Value, obj_type: ObjType) bool {
-        return self.isObject() and self.asObj().obj_type == obj_type;
-    }
-
-    pub inline fn isCrossSection(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .cross_section;
-    }
-
-    pub inline fn isNative(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .native;
-    }
-
-    pub inline fn isBrep(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .brep;
-    }
+    // --- Sub-type Checkers (Convenience) ---
 
     pub inline fn isGeometry(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .geometry;
     }
-
+    pub inline fn isCrossSection(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .cross_section;
+    }
     pub inline fn isWorkplane(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .workplane;
     }
-
-    // --- Safe Accessors (with safety assertions) ---
-
-    pub inline fn asNumber(self: Value) f64 {
-        std.debug.assert(self.tag == .number);
-        return self.payload.number;
+    pub inline fn isInstance(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .instance;
+    }
+    pub inline fn isClass(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .class;
+    }
+    pub inline fn isModule(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .module;
+    }
+    pub inline fn isClosure(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .closure;
+    }
+    pub inline fn isNative(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .native;
+    }
+    pub inline fn isArray(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .array;
+    }
+    pub inline fn isString(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .string;
     }
 
-    pub inline fn asBool(self: Value) bool {
-        std.debug.assert(self.tag == .boolean);
-        return self.payload.boolean;
-    }
+    // --- Sub-type Extractors ---
 
-    pub inline fn asSymbol(self: Value) u32 {
-        std.debug.assert(self.tag == .symbol);
-        return self.payload.symbol;
+    pub inline fn asGeometry(self: Value) *ObjGeometry {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
-
-    pub inline fn asObj(self: Value) *Obj {
-        std.debug.assert(self.tag == .object);
-        return self.payload.obj;
+    pub inline fn asCrossSection(self: Value) *ObjCrossSection {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
-
-    pub inline fn asString(self: Value) []const u8 {
-        std.debug.assert(self.isString());
-        const str_obj: *ObjString = @alignCast(@fieldParentPtr("obj", self.asObj()));
-        return str_obj.chars;
+    pub inline fn asWorkplane(self: Value) *ObjWorkplane {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
-
+    pub inline fn asInstance(self: Value) *ObjInstance {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+    pub inline fn asClass(self: Value) *ObjClass {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+    pub inline fn asModule(self: Value) *ObjModule {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+    pub inline fn asClosure(self: Value) *ObjClosure {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+    pub inline fn asNative(self: Value) *ObjNative {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
     pub inline fn asArray(self: Value) *ObjArray {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
-
     pub inline fn asMap(self: Value) *ObjMap {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
-    pub inline fn asClosure(self: Value) *ObjClosure {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    // Safely unwrap String and Symbol objects directly to their inner char slices
+    pub inline fn asString(self: Value) []const u8 {
+        std.debug.assert(self.isString());
+        return @as(*ObjString, @alignCast(@fieldParentPtr("obj", self.asObj()))).chars;
+    }
+    pub inline fn asSymbol(self: Value) []const u8 {
+        std.debug.assert(self.isObject() and self.asObj().obj_type == .symbol);
+        return @as(*ObjSymbol, @alignCast(@fieldParentPtr("obj", self.asObj()))).chars;
     }
 
-    pub inline fn asClass(self: Value) *ObjClass {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    // --- Operations & Equality ---
+
+    pub inline fn isEqual(self: Value, other: Value) bool {
+        // Direct register comparison for fast-path equality!
+        // Handles interned Strings, Symbols, Booleans, Nils, and exact Object instances in O(1).
+        if (self.val == other.val) return true;
+
+        // Fallback for IEEE 754 float nuances (+0.0 == -0.0)
+        if (self.isNumber() and other.isNumber()) {
+            return self.asNumber() == other.asNumber();
+        }
+        return false;
     }
 
-    pub inline fn asModule(self: Value) *ObjModule {
-        std.debug.assert(self.isModule());
-        return @as(*ObjModule, @alignCast(@fieldParentPtr("obj", self.asObj())));
+    // Alias eql to isEqual to support any lingering tests using the old naming convention
+    pub inline fn eql(self: Value, other: Value) bool {
+        return self.isEqual(other);
     }
 
-    pub inline fn asInstance(self: Value) *ObjInstance {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    pub inline fn isFalsey(self: Value) bool {
+        return self.isNil() or (self.isBool() and !self.asBool());
     }
-
-    pub inline fn asBoundMethod(self: Value) *ObjBoundMethod {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
-    }
-
-    pub inline fn asRange(self: Value) *ObjRange {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
-    }
-
-    pub inline fn asNative(self: Value) *ObjNative {
-        std.debug.assert(self.isNative());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
-    }
-
-    pub inline fn asGeometry(self: Value) *ObjGeometry {
-        std.debug.assert(self.isGeometry());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
-    }
-
-    pub inline fn asCrossSection(self: Value) *ObjCrossSection {
-        std.debug.assert(self.isCrossSection());
-        return @ptrCast(@alignCast(self.asObj()));
-    }
-
-    pub inline fn asWorkplane(self: Value) *ObjWorkplane {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
-    }
-
-    // --- Equality Check ---
-
-    pub fn eql(a: Value, b: Value) bool {
-        if (a.tag != b.tag) return false;
-        return switch (a.tag) {
-            .nil => true,
-            .boolean => a.asBool() == b.asBool(),
-            .number => a.asNumber() == b.asNumber(),
-            .symbol => a.asSymbol() == b.asSymbol(),
-            // For objects, we check pointer equality (interned strings, exact objects)
-            .object => a.asObj() == b.asObj(),
-        };
-    }
-
     /// Safely stringifies values recursively using the new Zig 0.16 Io.Writer interface.
     pub fn stringify(self: Value, is_inspect: bool, writer: *std.Io.Writer) !void {
         if (self.isNumber()) {
@@ -479,48 +443,12 @@ pub const Value = extern struct {
                 .geometry => try writer.print("<Geometry DAG:{d}>", .{@as(*ObjGeometry, @alignCast(@fieldParentPtr("obj", obj))).dag_idx}),
                 .cross_section => {
                     const cs = @as(*ObjCrossSection, @alignCast(@fieldParentPtr("obj", obj)));
-                    try writer.print("<CrossSection DAG:{d}>", .{ cs.dag_idx });
+                    try writer.print("<CrossSection DAG:{d}>", .{cs.dag_idx});
                 },
                 .workplane => try writer.writeAll("<Workplane>"),
                 else => try writer.writeAll("<Object>"),
             }
         }
-    }
-
-    pub fn isFalsey(self: Value) bool {
-        return self.isNil() or (self.isBool() and !self.asBool());
-    }
-
-    pub fn isEqual(self: Value, other: Value) bool {
-        // First check if they are the exact same type
-        if (self.isNil() and other.isNil()) return true;
-
-        if (self.isBool() and other.isBool()) {
-            return self.asBool() == other.asBool();
-        }
-
-        if (self.isNumber() and other.isNumber()) {
-            return self.asNumber() == other.asNumber();
-        }
-
-        if (self.isObject() and other.isObject()) {
-            const a_obj = self.asObj();
-            const b_obj = other.asObj();
-
-            // For Strings, we must compare the deep character arrays!
-            if (a_obj.obj_type == .string and b_obj.obj_type == .string) {
-                const a_str = @as(*ObjString, @alignCast(@fieldParentPtr("obj", a_obj)));
-                const b_str = @as(*ObjString, @alignCast(@fieldParentPtr("obj", b_obj)));
-                return std.mem.eql(u8, a_str.chars, b_str.chars);
-            }
-
-            // For all other heap objects (Arrays, Maps, Geometry, Instances),
-            // equality means they point to the exact same memory address.
-            return a_obj == b_obj;
-        }
-
-        // Mismatched types (e.g., Number vs String) are never equal
-        return false;
     }
 };
 

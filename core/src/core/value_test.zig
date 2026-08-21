@@ -2,10 +2,10 @@ const std = @import("std");
 const testing = std.testing;
 const value = @import("value.zig");
 
-test "Value: memory size is strictly 16 bytes" {
+test "Value: memory size is strictly 8 bytes" {
     // This is the most critical assertion. If this fails, the VM loses
     // its ability to pass values cleanly in registers.
-    try testing.expectEqual(@as(usize, 16), @sizeOf(value.Value));
+    try testing.expectEqual(@as(usize, 8), @sizeOf(value.Value));
 }
 
 test "Value: correct initialization and retrieval" {
