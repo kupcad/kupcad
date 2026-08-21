@@ -919,11 +919,9 @@ test "VM: Compiles and executes class variables (@@var)" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 10.0), vm.stack[0].asNumber());
+    try testing.expectEqual(@as(f64, 10.0), result.asNumber());
 }
 
 test "VM: Compiles and executes class methods (def self.method)" {
@@ -949,11 +947,8 @@ test "VM: Compiles and executes class methods (def self.method)" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 42.0), result.asNumber());
 }
 
 test "VM: Standard exceptions are caught in rescue blocks natively" {
@@ -984,11 +979,8 @@ test "VM: Standard exceptions are caught in rescue blocks natively" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 42.0), result.asNumber());
 }
 
 test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
@@ -1051,12 +1043,8 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
     try comp.compile(block_node);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
     // The result should be an array: [ [20, 30], { "x" => 100 } ]
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const result_arr = vm.stack[0];
+    const result_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
@@ -1097,11 +1085,8 @@ test "VM: Explicit block capturing (&block) and first-class invocation" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 84.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 84.0), result.asNumber());
 }
 
 test "VM: LHS Splat Destructuring (a, *b, c = arr)" {
@@ -1124,13 +1109,8 @@ test "VM: LHS Splat Destructuring (a, *b, c = arr)" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
     // Outer array
-    const out_arr = vm.stack[0];
+    const out_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     const out_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", out_arr.asObj())));
     try testing.expectEqual(@as(usize, 3), out_obj.items.items.len);
 
@@ -1196,11 +1176,7 @@ test "VM: Named Keyword Arguments with default values" {
     const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
     try comp.compile(block_node);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const result_arr = vm.stack[0];
+    const result_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
@@ -1228,11 +1204,8 @@ test "VM: defined? operator evaluates safely without panicking" {
     defer comp.deinit();
     try comp.compile(def_expr);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expect(vm.stack[0].isNil()); // Returns nil if undefined
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isNil()); // Returns nil if undefined
 }
 
 test "VM: Modules and Mixins (include)" {
@@ -1264,11 +1237,8 @@ test "VM: Modules and Mixins (include)" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 42.0), result.asNumber());
 }
 
 test "VM: executes while loops with break and next" {
@@ -1303,10 +1273,8 @@ test "VM: executes while loops with break and next" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 7.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 7.0), result.asNumber());
 }
 
 test "VM: executes ternary operator with short-circuiting" {
@@ -1330,12 +1298,8 @@ test "VM: executes ternary operator with short-circuiting" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
     // Result should be an array: [20, 30]
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(arr_val.isObject() and arr_val.asObj().obj_type == .array);
 
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
@@ -1405,12 +1369,8 @@ test "VM: Module mixin method resolution order" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
     // Result should be an array: [3, 4]
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
 
@@ -1441,11 +1401,7 @@ test "VM: Array utility methods (max, min, sum, flatten)" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 6), arr_obj.items.items.len);
 
@@ -1478,11 +1434,7 @@ test "VM: Symbol conversion and Map key manipulation" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
 
@@ -1515,11 +1467,7 @@ test "VM: Type coercion and Number methods" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 6), arr_obj.items.items.len);
 
@@ -1554,11 +1502,7 @@ test "VM: Negative array indexing" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
 
@@ -1597,11 +1541,7 @@ test "VM: case statement subsumption (===) with ranges and classes" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
 
@@ -1645,12 +1585,9 @@ test "VM Edge Case: executes 32-bit control flow jump correctly (> 65KB block)" 
     // Temporarily increase gas limit because decoding 70,000 nils counts against instructions run
     vm.instruction_limit = 200_000;
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    // The VM should successfully land and return 42!
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+    // The VM should successfully land and return 42
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 42.0), result.asNumber());
 }
 
 test "VM: JIT materialization cascades through DAG and ARC safely cleans up" {
@@ -1675,11 +1612,7 @@ test "VM: JIT materialization cascades through DAG and ARC safely cleans up" {
     try comp.compile(doc.tree.root);
 
     // Execute the script
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const bbox_val = vm.stack[0];
+    const bbox_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(bbox_val.isInstance());
     const bbox_inst = bbox_val.asInstance();
 
@@ -1720,13 +1653,9 @@ test "VM: Primitives support flexible keyword arguments and shortcuts" {
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
-    const result = vm.interpret(&out_chunk);
-
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
 
     // Verify the returned array contains all 4 bounding boxes
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(arr_val.isArray());
     const arr_obj = arr_val.asArray();
     try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
@@ -1816,14 +1745,11 @@ test "VM: Inspection methods (volume, bbox) and inspect() work in KupCAD scripts
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
-    const result = vm.interpret(&out_chunk);
-
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expect(vm.stack[0].isGeometry());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isGeometry());
 
     // Verify discrete tessellated volume calculation (~24,658.92)
-    const handle = try vm.ensureConcrete(vm.stack[0]);
+    const handle = try vm.ensureConcrete(result);
     const vol = kernel.volume(handle);
     try testing.expect(vol > 24600.0 and vol < 24700.0);
 }
@@ -1860,12 +1786,8 @@ test "VM: 2D primitives, sweeps, and Bitwise AND (Intersection) work seamlessly"
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
-    const result = vm.interpret(&out_chunk);
 
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(arr_val.isArray());
     const arr_obj = arr_val.asArray();
 
@@ -1907,12 +1829,9 @@ test "VM: 2D Boolean Operations (Union, Difference, Intersection) work seamlessl
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
-    const result = vm.interpret(&out_chunk);
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const vol = vm.stack[0].asNumber();
+    const vol = result.asNumber();
     try testing.expect(vol > 3200.0 and vol < 3230.0);
 }
 
@@ -1951,12 +1870,8 @@ test "VM: Minkowski sums and 2D Offsets evaluate correctly" {
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
-    const result = vm.interpret(&out_chunk);
 
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(arr_val.isArray());
     const arr_obj = arr_val.asArray();
 
@@ -2000,12 +1915,8 @@ test "VM: Affine transformations via multmatrix evaluate correctly" {
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
-    const result = vm.interpret(&out_chunk);
 
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(arr_val.isArray());
     const arr_obj = arr_val.asArray();
 
@@ -2058,12 +1969,8 @@ test "VM: Spatial Queries (min_gap, contains?, ray_cast) evaluate safely" {
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
-    const result = vm.interpret(&out_chunk);
 
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(arr_val.isArray());
     const arr_obj = arr_val.asArray();
 
@@ -2115,15 +2022,12 @@ test "VM: Custom Polygons and Fixed Matrix Transforms evaluate seamlessly" {
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
-    const result = vm.interpret(&out_chunk);
-
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
     // Area of Triangle was (10 * 10) / 2 = 50
     // Scale X by 2 -> Area = 100
     // Extrude by 10 -> Volume = 1000
-    const vol = vm.stack[0].asArray().items.items[0].asNumber();
+    const vol = result.asArray().items.items[0].asNumber();
     try testing.expect(vol > 999.0 and vol < 1001.0);
 }
 
@@ -2150,12 +2054,9 @@ test "VM: Native string and array addition (+ operator)" {
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
-    const result = vm.interpret(&out_chunk);
 
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const outer_arr = vm.stack[0].asArray().items.items;
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const outer_arr = result.asArray().items.items;
 
     // Check String Concatenation
     const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", outer_arr[0].asObj())));
