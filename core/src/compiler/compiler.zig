@@ -225,6 +225,10 @@ pub const Compiler = struct {
 
     fn compileNode(self: *Compiler, node_idx: ast.NodeIndex) CompileError!void {
         if (node_idx == .none) return;
+
+        // Track where we started
+        const expected_entry_depth = self.current_stack_depth;
+
         const node = self.tree.getNode(node_idx) orelse return error.UnknownNode;
 
         if (node.main_token < self.token_starts.len) {
@@ -311,7 +315,6 @@ pub const Compiler = struct {
 
                 const jump = try self.emitJump(.op_jump);
                 try cur_loop.exit_jumps.append(self.allocator, jump);
-                self.simulatePush(1); // Equilibrium for dead code
             },
             .next_stmt => {
                 const next_idx = self.tree.nodeIndex(node);
@@ -406,17 +409,17 @@ pub const Compiler = struct {
             .rescue_modifier => {
                 const rm = self.tree.rescueModifier(node);
                 const rescue_jump = try self.emitJump(.op_setup_rescue);
-
                 try self.compileNode(rm.expr);
                 try self.emitOp(.op_pop_rescue);
-
                 const end_jump = try self.emitJump(.op_jump);
 
                 self.patchJump(rescue_jump);
-                self.simulatePush(1); // Error value
+
+                // `op_setup_rescue` jumps here with the error value pushed to the stack
+                self.current_stack_depth = expected_entry_depth + 1;
+
                 try self.emitOp(.op_pop); // Discard error value
                 try self.compileNode(rm.rescue_expr);
-
                 self.patchJump(end_jump);
             },
             .namespace_access => {
@@ -556,20 +559,30 @@ pub const Compiler = struct {
                 if (if_payload.is_unless) try self.emitOp(.op_not);
 
                 const then_jump = try self.emitJump(.op_jump_if_false);
-                try self.emitOp(.op_pop);
+                try self.emitOp(.op_pop); // pop cond for true branch
 
                 try self.compileNode(if_payload.then_branch);
+
+                // Force sync before branch jump
+                self.current_stack_depth = expected_entry_depth + 1;
                 const else_jump = try self.emitJump(.op_jump);
 
                 self.patchJump(then_jump);
-                try self.emitOp(.op_pop);
+
+                // False branch: VM stack still has the condition on it
+                self.current_stack_depth = expected_entry_depth + 1;
+
+                try self.emitOp(.op_pop); // pop cond for false branch
 
                 if (if_payload.else_branch != .none) {
                     try self.compileNode(if_payload.else_branch);
                 } else {
                     try self.emitOp(.op_nil);
                 }
+
                 self.patchJump(else_jump);
+                // Guarantee perfectly balanced exit
+                self.current_stack_depth = expected_entry_depth + 1;
             },
             .self_expr => {
                 try self.emitPushSelf();
@@ -591,12 +604,18 @@ pub const Compiler = struct {
                 try self.emitOp(.op_pop); // Clean up condition
 
                 try self.compileNode(while_payload.body);
+
+                // Force sync before loop jump
+                self.current_stack_depth = expected_entry_depth + 1;
                 try self.emitOp(.op_pop); // Pop the body's yielded result
 
                 try self.emitLoop(loop_start);
 
                 self.patchJump(exit_jump);
-                self.simulatePush(1); // The condition that was bypassed
+
+                // VM stack still has the condition on it when it jumps here!
+                self.current_stack_depth = expected_entry_depth + 1;
+
                 try self.emitOp(.op_pop);
                 try self.emitOp(.op_nil); // Natural exit yields nil
 
@@ -606,20 +625,24 @@ pub const Compiler = struct {
                 for (cur_loop.exit_jumps.items) |jmp| {
                     self.patchJump(jmp);
                 }
+
+                // Guarantee perfectly balanced exit
+                self.current_stack_depth = expected_entry_depth + 1;
             },
             .ternary_op => {
                 const ternary = self.tree.ternaryExpr(node);
                 try self.compileNode(ternary.condition);
-
                 const then_jump = try self.emitJump(.op_jump_if_false);
                 try self.emitOp(.op_pop); // pop condition if true
-
                 try self.compileNode(ternary.then_branch);
                 const else_jump = try self.emitJump(.op_jump);
 
                 self.patchJump(then_jump);
-                try self.emitOp(.op_pop); // pop condition if false
 
+                // False branch: VM stack still has the condition on it!
+                self.current_stack_depth = expected_entry_depth + 1;
+
+                try self.emitOp(.op_pop); // pop condition if false
                 try self.compileNode(ternary.else_branch);
                 self.patchJump(else_jump);
             },
@@ -721,6 +744,7 @@ pub const Compiler = struct {
                         const elements = self.tree.getNodes(self.tree.nodeSpan(p_node));
                         try self.emitOp(.op_unpack);
                         try self.emitByte(@intCast(elements.len));
+                        self.simulatePop(1);
                         self.simulatePush(elements.len);
 
                         // Unpack in reverse order to match the stack
@@ -761,6 +785,12 @@ pub const Compiler = struct {
                 try self.emitOp(.op_nil); // Push dummy value for unknown AST nodes
             },
         }
+
+        // Every compiled node is an expression in KupCAD.
+        // It MUST result in exactly ONE net value pushed to the stack
+        if (node.tag != .return_stmt and node.tag != .break_stmt and node.tag != .next_stmt and node.tag != .class_stmt and node.tag != .module_stmt) {
+            std.debug.assert(self.current_stack_depth == expected_entry_depth + 1);
+        }
     }
 
     fn simulatePush(self: *Compiler, count: usize) void {
@@ -781,41 +811,14 @@ pub const Compiler = struct {
 
     fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
         try self.emitByte(@intFromEnum(op));
-        switch (op) {
-            .op_nil, .op_true, .op_false, .op_get_local, .op_get_global, .op_get_global_wide, .op_constant, .op_constant_wide, .op_closure, .op_closure_wide, .op_get_upvalue, .op_dup, .op_import, .op_import_wide, .op_block_given, .op_defined, .op_defined_wide, .op_extract_kwarg, .op_extract_kwarg_wide, .op_module, .op_module_wide => self.simulatePush(1),
 
-            .op_pop, .op_return, .op_close_upvalue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_inherit, .op_super_invoke, .op_class_method, .op_class_method_wide, .op_unpack, .op_unpack_splat, .op_mixin => self.simulatePop(1),
-
-            .op_map_insert => self.simulatePop(2),
-
-            .op_is_instance, .op_case_equal, .op_add, .op_subtract, .op_multiply, .op_divide, .op_equal, .op_less, .op_greater, .op_modulo, .op_exponent, .op_get_index => {
-                self.simulatePop(2);
-                self.simulatePush(1);
-            },
-
-            .op_set_index => {
-                self.simulatePop(3);
-                self.simulatePush(1);
-            },
-
-            .op_negate, .op_not, .op_get_class_var, .op_get_class_var_wide, .op_is_nil => {
-                self.simulatePop(1);
-                self.simulatePush(1);
-            },
-
-            .op_class, .op_class_wide => self.simulatePush(1),
-
-            .op_dup_two => self.simulatePush(2),
-
-            .op_method, .op_method_wide, .op_define_global, .op_define_global_wide => self.simulatePop(1),
-
-            .op_set_property, .op_set_property_wide, .op_set_class_var, .op_set_class_var_wide => {
-                self.simulatePop(2);
-                self.simulatePush(1);
-            },
-
-            .op_jump_if_not_nil => {},
-            else => {},
+        // Automatically apply static stack effects
+        if (getStaticStackEffect(op)) |effect| {
+            if (effect > 0) {
+                self.simulatePush(@intCast(effect));
+            } else if (effect < 0) {
+                self.simulatePop(@intCast(-effect));
+            }
         }
     }
 
@@ -1272,6 +1275,10 @@ pub const Compiler = struct {
                 const body_jump_target = self.current_chunk.code.items.len;
                 const conds = self.tree.getNodes(branch.conditions);
 
+                // --- ADD THIS LINE ---
+                // Reset for each branch because op_switch pops the test value, returning us to baseline
+                self.current_stack_depth = saved_depth;
+
                 // Backpatch table entries (Step by 6)
                 for (conds) |cond_node_idx| {
                     const c_node = self.tree.getNode(cond_node_idx).?;
@@ -1302,6 +1309,9 @@ pub const Compiler = struct {
             const d_offset = default_target - (default_jump_offset + 4);
             self.writeJumpOffset(default_jump_offset, d_offset);
 
+            // --- ADD THIS LINE BEFORE FAST PATH ELSE ---
+            self.current_stack_depth = saved_depth;
+
             if (cs.else_branch != .none) {
                 try self.compileNode(cs.else_branch);
             } else {
@@ -1322,6 +1332,9 @@ pub const Compiler = struct {
             for (branches) |branch| {
                 const conds = self.tree.getNodes(branch.conditions);
                 for (conds) |cond_idx| {
+                    // --- ADD THIS LINE ---
+                    self.current_stack_depth = saved_depth + 1; // Condition is on stack
+
                     try self.emitOp(.op_dup);
                     try self.compileNode(cond_idx);
                     try self.emitOp(.op_case_equal);
@@ -1331,11 +1344,17 @@ pub const Compiler = struct {
 
                     try self.compileNode(branch.body);
                     try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
-                    self.current_stack_depth = saved_depth + 2;
+
+                    // --- ADD THIS LINE BEFORE PATCH JUMP ---
+                    self.current_stack_depth = saved_depth + 2; // Jump lands here with false + cond on stack
+
                     self.patchJump(skip_jump);
-                    try self.emitOp(.op_pop);
+                    try self.emitOp(.op_pop); // pop false
                 }
             }
+
+            // --- ADD THIS LINE BEFORE LINEAR ELSE ---
+            self.current_stack_depth = saved_depth + 1; // Condition is on stack
 
             try self.emitOp(.op_pop);
             if (cs.else_branch != .none) {
@@ -1561,6 +1580,10 @@ pub const Compiler = struct {
                 try self.emitByte(@intCast((kw_count >> 8) & 0xff));
                 try self.emitByte(@intCast(kw_count & 0xff));
             }
+
+            self.simulatePop(kw_count * 2);
+            self.simulatePush(1);
+
             pos_count += 1; // The Hash Map becomes the final trailing positional argument!
         }
 
@@ -1595,8 +1618,8 @@ pub const Compiler = struct {
             if (mc.is_safe) self.patchJump(safe_jump);
         }
 
-        self.simulatePop(actual_arg_count + 1);
-        self.simulatePush(1);
+        self.simulatePop(actual_arg_count + 1); // Pops args + receiver
+        self.simulatePush(1); // Pushes the returned result
     }
 
     fn compileBinaryOp(self: *Compiler, node: *const ast.Node) CompileError!void {
@@ -1752,11 +1775,13 @@ pub const Compiler = struct {
             try self.emitOp(.op_unpack_splat);
             try self.emitByte(@intCast(pre_count));
             try self.emitByte(@intCast(post_count));
+            self.simulatePop(1);
             self.simulatePush(lhs.len);
         } else {
             if (lhs.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
             try self.emitOp(.op_unpack);
             try self.emitByte(@intCast(lhs.len));
+            self.simulatePop(1);
             self.simulatePush(lhs.len);
         }
 
@@ -1886,15 +1911,17 @@ pub const Compiler = struct {
         if (kw_count > 0) {
             try self.emitOp(.op_build_map);
             try self.emitByte(@intCast(kw_count));
+            self.simulatePop(kw_count * 2);
+            self.simulatePush(1);
+
             pos_count += 1;
         }
 
         try self.emitOp(.op_super_invoke);
         try self.emitByte(@intCast(pos_count));
 
-        // op_super_invoke inherently simulates popping 1 (the map).
-        // We only need to pop the remaining positional args to perfectly balance the tracker.
-        self.simulatePop(pos_count);
+        // Pop the arguments + the implicit `self` receiver
+        self.simulatePop(pos_count + 1);
         self.simulatePush(1);
     }
 
@@ -1994,5 +2021,40 @@ pub const Compiler = struct {
         // Use pure string lookup to bypass integer ID caching discrepancies
         const name_str = self.tree.getString(name_id);
         return root.script_globals.contains(name_str);
+    }
+
+    /// Returns the net stack effect of an OpCode.
+    /// Returns `null` if the effect is dynamic (depends on the operand).
+    fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
+        return switch (op) {
+            // --- Pushes 1 (Net: +1) ---
+            .op_nil, .op_true, .op_false, .op_get_local, .op_get_local_wide, .op_get_global, .op_get_global_wide, .op_constant, .op_constant_wide, .op_closure, .op_closure_wide, .op_get_upvalue, .op_dup, .op_import, .op_import_wide, .op_block_given, .op_defined, .op_defined_wide, .op_module, .op_module_wide, .op_extract_kwarg, .op_extract_kwarg_wide, .op_class, .op_class_wide => 1,
+
+            // --- Pops 1 (Net: -1) ---
+            .op_pop, .op_return, .op_close_upvalue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_switch_wide, .op_inherit, .op_class_method, .op_class_method_wide, .op_mixin, .op_method, .op_method_wide, .op_define_global, .op_define_global_wide, .op_bitwise_and => -1,
+
+            // --- Pops 2 (Net: -2) ---
+            .op_map_insert => -2,
+
+            // --- Pops 2, Pushes 1 (Net: -1) ---
+            .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_equal, .op_case_equal, .op_is_instance, .op_get_index, .op_set_property, .op_set_property_wide, .op_set_class_var, .op_set_class_var_wide => -1,
+
+            // --- Pops 3, Pushes 1 (Net: -2) ---
+            .op_set_index => -2,
+
+            // --- Pops 1, Pushes 1 (Net: 0) ---
+            .op_negate, .op_not, .op_is_nil => 0,
+
+            // --- Pushes 2 (Net: +2) ---
+            .op_dup_two => 2,
+
+            // --- Doesn't pop or push (Net: 0) ---
+            .op_set_local, .op_set_local_wide, .op_jump_if_not_nil, .op_jump_if_false, .op_jump_if_nil, .op_jump, .op_loop, .op_setup_rescue, .op_pop_rescue, .op_get_class_var, .op_get_class_var_wide, .op_set_upvalue => 0,
+
+            // --- Dynamic Ops (Requires manual tracking) ---
+            .op_call, .op_invoke, .op_invoke_wide, .op_super_invoke, .op_build_array, .op_build_array_wide, .op_build_map, .op_build_map_wide, .op_unpack, .op_unpack_splat, .op_interpolate, .op_yield, .op_build_range, .op_pack_splat => null,
+
+            else => 0, // Fallback for unsupported ops
+        };
     }
 };

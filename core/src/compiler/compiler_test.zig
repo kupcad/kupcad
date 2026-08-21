@@ -872,3 +872,139 @@ test "Compiler: Large array literals (> 65,535 items) fallback to dynamic build 
     }
     try testing.expect(found_push);
 }
+
+test "Compiler: compiles compound property assignment (obj.x += 10)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: obj.x += 10
+    const target = try b.identifierNode("obj", 0);
+    const prop_id = try b.intern("x");
+    const val = try b.number("10", 0);
+    const prop_assign = try b.propertyAssignment(target, prop_id, .add, val, 0);
+
+    // Provide a generic symbol map to avoid out of bounds
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(prop_assign) + 1);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.script_globals.put(testing.allocator, "obj", {});
+    try comp.compile(prop_assign);
+
+    // Expected Bytecode:
+    // 0: op_get_global ("obj")
+    // 2: op_dup                <-- Duplicates the target pointer to use for the setter later!
+    // 3: op_get_property ("x") <-- Consumes one of the target pointers to get current value
+    // 5: op_constant (10)
+    // 7: op_add
+    // 8: op_set_property ("x") <-- Consumes the duplicated target pointer and the new value
+    // 10: op_return
+
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_get_property, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[3])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
+    try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
+    try testing.expectEqual(chunk.OpCode.op_set_property, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[8])));
+}
+
+test "Compiler: compiles compound index assignment (arr[1] *= 2)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: arr[1] *= 2
+    const target = try b.identifierNode("arr", 0);
+    const index = try b.number("1", 0);
+    const val = try b.number("2", 0);
+    const idx_assign = try b.indexAssignment(target, index, .multiply, val, 0);
+
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(idx_assign) + 1);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.script_globals.put(testing.allocator, "arr", {});
+
+    try comp.compile(idx_assign);
+
+    // Expected Bytecode:
+    // 0: op_get_global ("arr")
+    // 2: op_constant (1)
+    // 4: op_dup_two            <-- Duplicates BOTH target and index
+    // 5: op_get_index
+    // 6: op_constant (2)
+    // 8: op_multiply
+    // 9: op_set_index          <-- Consumes the duplicated target/index and the new result
+    // 10: op_return
+
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_dup_two, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+    try testing.expectEqual(chunk.OpCode.op_get_index, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_multiply, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[8])));
+    try testing.expectEqual(chunk.OpCode.op_set_index, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[9])));
+}
+
+test "Compiler: compiles unary NOT operator gracefully" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: !true
+    const t_node = try b.booleanNode(true, 0);
+    const not_node = try b.unary(.not, t_node, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(not_node);
+
+    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_not, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[1])));
+}
+
+test "Compiler: compiles export statement natively yielding nil" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: export { x } (Currently implemented as a stub yielding nil in MVP)
+    const export_node = try b.createNode(.export_stmt, 0, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(export_node);
+
+    try testing.expectEqual(chunk.OpCode.op_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+}
