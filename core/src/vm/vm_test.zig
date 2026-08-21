@@ -5088,3 +5088,93 @@ test "VM: GC module collect and bytes_allocated methods" {
     try testing.expect(arr_obj.items.items[0].asNumber() > 0.0);
     try testing.expect(arr_obj.items.items[1].asNumber() > 0.0);
 }
+
+test "VM ARC: Arrays containing Geometry objects do not leak on GC sweep" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Creates geometries, packs them in an array, and discards them.
+    // If memory.zig `freeObject` lacks `releaseValue` for array items,
+    // Zig's testing allocator will flag a leak here.
+    const source =
+        \\def build_array()
+        \\  [cube(10), sphere(5), square(2)]
+        \\end
+        \\build_array()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+}
+
+test "VM ARC: Stack unwinds and frees Geometry safely during Exceptions" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    // Creates a geometry, pushes it to the stack, then raises an error.
+    // If the VM's `executeThrow` unwinder doesn't release dead stack slots, it will leak.
+    const source =
+        \\begin
+        \\  c = cube(10)
+        \\  raise("Force Unwind")
+        \\rescue => e
+        \\  1
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+}
+
+test "VM ARC: Native Operator exceptions prevent double-free and leaks" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    // Mixed 3D and 2D triggers a native RuntimeError inside cadBinaryHandler.
+    // If executeBinaryArithmetic mismanages `releaseValue`, this will either leak or ABRT crash.
+    const source =
+        \\begin
+        \\  cube(10) + square(5)
+        \\rescue => e
+        \\  1
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+}

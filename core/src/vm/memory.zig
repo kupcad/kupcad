@@ -509,17 +509,25 @@ pub const GC = struct {
             },
             .array => {
                 const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", obj));
+                for (arr_obj.items.items) |item| {
+                    vm.releaseValue(item);
+                }
                 arr_obj.items.deinit(self.allocator);
                 self.destroyObject(value.ObjArray, arr_obj);
             },
             .map => {
                 const map_obj: *value.ObjMap = @alignCast(@fieldParentPtr("obj", obj));
+                // Free internal objects
+                for (map_obj.keys.items) |k| vm.releaseValue(k);
+                for (map_obj.values.items) |v| vm.releaseValue(v);
+
                 map_obj.keys.deinit(self.allocator);
                 map_obj.values.deinit(self.allocator);
                 self.destroyObject(value.ObjMap, map_obj);
             },
             .instance => {
                 const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
+                for (instance_obj.fields.items) |val| vm.releaseValue(val);
                 instance_obj.fields.deinit(self.allocator);
                 self.destroyObject(value.ObjInstance, instance_obj);
             },

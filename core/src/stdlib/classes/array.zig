@@ -170,14 +170,22 @@ pub fn arrayFilter(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
 
 pub fn arrayFirst(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try common.unwrapArray(vm_opaque, arg_count, 0, args);
-    if (ctx.arr.items.items.len > 0) return ctx.arr.items.items[0];
+    if (ctx.arr.items.items.len > 0) {
+        const val = ctx.arr.items.items[0];
+        ctx.vm.retainValue(val); // Transfer +1 ownership to VM Stack
+        return val;
+    }
     return value.Value.initNil();
 }
 
 pub fn arrayLast(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try common.unwrapArray(vm_opaque, arg_count, 0, args);
     const len = ctx.arr.items.items.len;
-    if (len > 0) return ctx.arr.items.items[len - 1];
+    if (len > 0) {
+        const val = ctx.arr.items.items[len - 1];
+        ctx.vm.retainValue(val); // Transfer +1 ownership to VM Stack
+        return val;
+    }
     return value.Value.initNil();
 }
 

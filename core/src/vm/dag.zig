@@ -191,8 +191,10 @@ pub const DAGBuilder = struct {
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         const num_idx: u32 = @intCast(self.numbers.items.len);
+
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
-        try self.numbers.appendSlice(alloc, &.{ height, @floatFromInt(slices), twist_degrees, scale_x, scale_y });
+        try self.numbers.appendSlice(alloc, &.{ height, @as(f64, @floatFromInt(slices)), twist_degrees, scale_x, scale_y });
+
         const node_idx: u32 = @intCast(self.nodes.items.len);
         try self.nodes.append(alloc, .{ .tag = .extrude, .flags = 0, .data = extra_idx });
         return node_idx;
@@ -213,8 +215,10 @@ pub const DAGBuilder = struct {
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         const num_idx: u32 = @intCast(self.numbers.items.len);
+
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
-        try self.numbers.appendSlice(alloc, &.{ @floatFromInt(segments), degrees });
+        try self.numbers.appendSlice(alloc, &.{ @as(f64, @floatFromInt(segments)), degrees });
+
         const node_idx: u32 = @intCast(self.nodes.items.len);
         try self.nodes.append(alloc, .{ .tag = .revolve, .flags = 0, .data = extra_idx });
         return node_idx;
@@ -300,16 +304,30 @@ pub const DAGBuilder = struct {
         const num_idx = self.extra_data.items[node.data + 1];
         return .{ .target = target, .nx = self.numbers.items[num_idx], .ny = self.numbers.items[num_idx + 1], .nz = self.numbers.items[num_idx + 2], .offset = self.numbers.items[num_idx + 3] };
     }
+
     pub inline fn getExtrudePayload(self: *const DAGBuilder, node: DAGNode) ExtrudePayload {
         const target = self.extra_data.items[node.data];
         const num_idx = self.extra_data.items[node.data + 1];
-        return .{ .target = target, .height = self.numbers.items[num_idx], .slices = @intFromFloat(self.numbers.items[num_idx + 1]), .twist_degrees = self.numbers.items[num_idx + 2], .scale_x = self.numbers.items[num_idx + 3], .scale_y = self.numbers.items[num_idx + 4] };
+        return .{
+            .target = target,
+            .height = self.numbers.items[num_idx],
+            .slices = @as(i32, @intFromFloat(self.numbers.items[num_idx + 1])),
+            .twist_degrees = self.numbers.items[num_idx + 2],
+            .scale_x = self.numbers.items[num_idx + 3],
+            .scale_y = self.numbers.items[num_idx + 4],
+        };
     }
+
     pub inline fn getRevolvePayload(self: *const DAGBuilder, node: DAGNode) RevolvePayload {
         const target = self.extra_data.items[node.data];
         const num_idx = self.extra_data.items[node.data + 1];
-        return .{ .target = target, .segments = @intFromFloat(self.numbers.items[num_idx]), .degrees = self.numbers.items[num_idx + 1] };
+        return .{
+            .target = target,
+            .segments = @as(i32, @intFromFloat(self.numbers.items[num_idx])),
+            .degrees = self.numbers.items[num_idx + 1],
+        };
     }
+
     pub fn addPolygon(self: *DAGBuilder, pts: [][2]f64) !DAGNodeIndex {
         const alloc = self.allocator();
         const num_idx: u32 = @intCast(self.numbers.items.len);
