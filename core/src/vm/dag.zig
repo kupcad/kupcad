@@ -308,6 +308,10 @@ pub const DAGBuilder = struct {
     pub inline fn getExtrudePayload(self: *const DAGBuilder, node: DAGNode) ExtrudePayload {
         const target = self.extra_data.items[node.data];
         const num_idx = self.extra_data.items[node.data + 1];
+
+        // Ensure the numbers payload wasn't truncated
+        std.debug.assert(num_idx + 4 < self.numbers.items.len);
+
         return .{
             .target = target,
             .height = self.numbers.items[num_idx],

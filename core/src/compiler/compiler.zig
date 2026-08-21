@@ -254,6 +254,9 @@ pub const Compiler = struct {
                 try self.emitOp(.op_nil);
             },
             .identifier => {
+                // Ensure the Resolver properly mapped this node
+                std.debug.assert(@intFromEnum(node_idx) < self.symbols.len);
+
                 const sym = self.symbols[@intFromEnum(node_idx)];
                 const name_id = @as(ast.StringId, @enumFromInt(node.data));
                 const name_str = self.tree.getString(name_id);

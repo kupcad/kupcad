@@ -93,6 +93,8 @@ pub fn meshBBox(vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Va
     _ = arg_count;
     _ = args;
 
+    std.debug.assert(receiver.isGeometry());
+
     // Force JIT Materialization
     const handle = try vm.ensureConcrete(receiver);
     const geom_obj = receiver.asGeometry();

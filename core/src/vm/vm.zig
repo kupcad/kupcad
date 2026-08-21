@@ -699,6 +699,9 @@ pub const VM = struct {
                     const return_val = if (frame.is_constructor) self.stack[frame.base_slot] else result;
 
                     self.shrinkStack(frame.base_slot);
+                    // Catch runaway returns
+                    std.debug.assert(self.frames.items.len > 0);
+
                     _ = self.frames.pop();
 
                     self.stack.ptr[self.stack_top] = return_val;
@@ -1196,6 +1199,10 @@ pub const VM = struct {
     }
 
     fn captureUpvalue(self: *VM, local_ptr: *value.Value) !*value.ObjUpvalue {
+        // Ensure the pointer is strictly within the VM's active stack memory
+        std.debug.assert(@intFromPtr(local_ptr) >= @intFromPtr(self.stack.ptr));
+        std.debug.assert(@intFromPtr(local_ptr) < @intFromPtr(self.stack.ptr + self.stack.len));
+
         var prev_upvalue: ?*value.ObjUpvalue = null;
         var upvalue = self.open_upvalues;
 
@@ -1516,6 +1523,9 @@ pub const VM = struct {
         const method_name_idx = self.readOperand(exec_chunk, frame, is_wide);
         const arg_count = exec_chunk.code.items[frame.ip];
         frame.ip += 1;
+
+        // Prevent usize underflow if stack is corrupted
+        std.debug.assert(self.stack_top > arg_count);
 
         const method_name_val = exec_chunk.constants.items[method_name_idx];
         const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;

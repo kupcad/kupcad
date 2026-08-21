@@ -12,6 +12,9 @@ pub fn unwrapArray(vm_opaque: *anyopaque, arg_count: u8, expected_args: u8, args
     if (arg_count != expected_args) return error.RuntimeError;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     const receiver = (args - 1)[0];
+
+    std.debug.assert(receiver.isObject() and receiver.asObj().obj_type == .array);
+
     const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
     return .{ .vm = vm, .receiver = receiver, .arr = arr };
 }
@@ -20,6 +23,9 @@ pub fn unwrapMap(vm_opaque: *anyopaque, arg_count: u8, expected_args: u8, args: 
     if (arg_count != expected_args) return error.RuntimeError;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     const receiver = (args - 1)[0];
+
+    std.debug.assert(receiver.isObject() and receiver.asObj().obj_type == .map);
+
     const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
     return .{ .vm = vm, .receiver = receiver, .map = map };
 }
@@ -28,6 +34,9 @@ pub fn unwrapString(vm_opaque: *anyopaque, arg_count: u8, expected_args: u8, arg
     if (arg_count != expected_args) return error.RuntimeError;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     const receiver = (args - 1)[0];
+
+    std.debug.assert(receiver.isObject() and receiver.asObj().obj_type == .string);
+
     const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
     return .{ .vm = vm, .receiver = receiver, .str = str };
 }
@@ -36,6 +45,9 @@ pub fn unwrapSymbol(vm_opaque: *anyopaque, arg_count: u8, expected_args: u8, arg
     if (arg_count != expected_args) return error.RuntimeError;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     const receiver = (args - 1)[0];
+
+    std.debug.assert(receiver.isObject() and receiver.asObj().obj_type == .symbol);
+
     const sym = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
     return .{ .vm = vm, .receiver = receiver, .sym = sym };
 }

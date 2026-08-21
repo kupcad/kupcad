@@ -146,6 +146,8 @@ pub inline fn boundingBox(handle: geom.GeometryHandle) ?geom.BoundingBox {
     }
 }
 pub inline fn volume(handle: geom.GeometryHandle) f64 {
+    std.debug.assert(@intFromPtr(handle.ptr) != 0);
+
     switch (handle.engine) {
         .manifold => return manifold_driver.volumeFn(handle),
         .brep_native => return brep_driver.volumeFn(handle),
