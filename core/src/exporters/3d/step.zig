@@ -34,8 +34,5 @@ pub fn nativeExportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     // Force JIT materialization to guarantee physical C++ geometry exists
     _ = try vm.ensureConcrete(args[1]);
 
-    // Return the unmodified geometry value to allow fluent method chaining
-    // Retain it to grant +1 ownership to the VM loop
-    vm.retainValue(args[1]);
     return args[1];
 }

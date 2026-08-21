@@ -57,14 +57,9 @@ pub fn nativeTap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
         const block_closure = args[arg_count - 1].asClosure();
 
         // Execute block and capture its result
-        const yield_res = try vm.callClosureSync(block_closure, &.{receiver});
-
-        // Safely discard the block's return value to prevent memory leaks
-        vm.releaseValue(yield_res);
+        _ = try vm.callClosureSync(block_closure, &.{receiver});
     }
 
-    // Retain receiver before returning to counteract op_invoke's stack cleanup
-    vm.retainValue(receiver);
     return receiver;
 }
 
@@ -79,18 +74,14 @@ pub fn nativeInto(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
         return try vm.callClosureSync(block_closure, &.{receiver});
     }
 
-    // If no block is provided, it acts as an identity function. Must retain!
-    vm.retainValue(receiver);
     return receiver;
 }
 
 /// Object#dup / Object#clone -> Duplicates primitive or increments ARC on geometry
 pub fn nativeDup(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    _ = vm_opaque;
     _ = arg_count;
     const receiver = (args - 1)[0];
-
-    vm.retainValue(receiver);
     return receiver;
 }
 

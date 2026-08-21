@@ -138,8 +138,7 @@ pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Valu
     const result_idx = try vm.dag_builder.addBinary(dag_tag, idx_a, idx_b);
 
     if (is_3d) {
-        const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = result_idx });
-        return value.Value.initGeometry(geom_obj);
+        return try vm.allocateGeometry(.{ .symbolic = result_idx });
     } else {
         return try vm.allocateCrossSection(result_idx);
     }

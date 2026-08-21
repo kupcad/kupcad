@@ -170,13 +170,8 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
         vm.param_registry.items(.min_val)[idx] = min_val;
         vm.param_registry.items(.max_val)[idx] = max_val;
 
-        const old_val = vm.param_registry.items(.current_value)[idx];
-        vm.releaseValue(old_val);
-        vm.retainValue(injected_val);
         vm.param_registry.items(.current_value)[idx] = injected_val;
     } else {
-        vm.retainValue(sym_key);
-        vm.retainValue(injected_val);
         try vm.param_registry.append(vm.allocator, .{
             .name = sym_key,
             .param_type = p_type,

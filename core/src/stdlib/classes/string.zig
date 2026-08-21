@@ -43,7 +43,6 @@ pub fn stringSplit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     var iter = std.mem.splitSequence(u8, ctx.str.chars, delim_str);
     while (iter.next()) |part| {
         const part_val = try ctx.vm.allocateString(part);
-        ctx.vm.retainValue(part_val);
         try arr_obj.items.append(ctx.vm.allocator, part_val);
     }
     return value.Value.initObj(&arr_obj.obj);

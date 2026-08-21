@@ -100,12 +100,6 @@ pub const VM = struct {
     pub fn deinit(self: *VM) void {
         self.resetStack();
 
-        // Ensure ARC objects held by script global variables are correctly released before teardown
-        var globals_it = self.globals.valueIterator();
-        while (globals_it.next()) |val| {
-            self.releaseValue(val.*);
-        }
-
         self.gc.collectGarbage(self, true);
         self.dag_builder.deinit();
 
@@ -125,7 +119,6 @@ pub const VM = struct {
         if (self.stack_top >= self.stack.len) {
             self.ensureStackCapacity(self.stack_top + 1) catch @panic("OOM during stack expansion");
         }
-        self.retainValue(val);
         self.stack.ptr[self.stack_top] = val;
         self.stack_top += 1;
     }
@@ -145,19 +138,13 @@ pub const VM = struct {
     pub fn setLocal(self: *VM, frame: *const CallFrame, slot_index: usize, val: value.Value) void {
         const absolute_slot = frame.base_slot + slot_index;
         std.debug.assert(absolute_slot < self.stack_top);
-        self.retainValue(val);
-        self.releaseValue(self.stack[absolute_slot]);
         self.stack[absolute_slot] = val;
     }
 
     pub fn mapSet(self: *VM, map: *value.ObjMap, key: value.Value, val: value.Value) !void {
         if (self.findMapKey(map, key)) |idx| {
-            self.releaseValue(map.values.items[idx]); // drop old value
-            self.retainValue(val); // keep new value
             map.values.items[idx] = val;
         } else {
-            self.retainValue(key);
-            self.retainValue(val);
             try map.keys.append(self.allocator, key);
             try map.values.append(self.allocator, val);
         }
@@ -251,8 +238,7 @@ pub const VM = struct {
                 .op_true => self.push(value.Value.initBool(true)),
                 .op_false => self.push(value.Value.initBool(false)),
                 .op_pop => {
-                    const dropped = self.pop();
-                    self.releaseValue(dropped);
+                    _ = self.pop();
                 },
                 .op_constant => {
                     const const_idx = exec_chunk.code.items[frame.ip];
@@ -295,7 +281,6 @@ pub const VM = struct {
                 },
                 .op_negate => {
                     const a = self.pop();
-                    defer self.releaseValue(a);
                     if (!a.isNumber()) {
                         if (self.throwDynamicError("Runtime Error: Invalid operand for '-'\n", .{}) != .ok) return .runtime_error;
                         continue;
@@ -304,22 +289,17 @@ pub const VM = struct {
                 },
                 .op_not => {
                     const val = self.pop();
-                    defer self.releaseValue(val);
                     const is_falsey = val.isNil() or (val.isBool() and !val.asBool());
                     self.push(value.Value.initBool(is_falsey));
                 },
                 .op_equal => {
                     const b = self.pop();
-                    defer self.releaseValue(b);
                     const a = self.pop();
-                    defer self.releaseValue(a);
                     self.push(value.Value.initBool(self.valuesEqual(a, b)));
                 },
                 .op_case_equal => {
                     const case_val = self.pop();
-                    defer self.releaseValue(case_val);
                     const test_val = self.pop();
-                    defer self.releaseValue(test_val);
                     self.push(value.Value.initBool(self.valuesCaseEqual(case_val, test_val)));
                 },
                 .op_get_property, .op_get_property_wide => {
@@ -363,9 +343,7 @@ pub const VM = struct {
                 },
                 .op_get_index => {
                     const index = self.pop();
-                    defer self.releaseValue(index);
                     const target = self.pop();
-                    defer self.releaseValue(target);
 
                     if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
                         const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
@@ -389,18 +367,12 @@ pub const VM = struct {
                 },
                 .op_set_index => {
                     const val = self.pop();
-                    defer self.releaseValue(val);
                     const index = self.pop();
-                    defer self.releaseValue(index);
                     const target = self.pop();
-                    defer self.releaseValue(target);
 
                     if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
                         const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
                         if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
-                            // ARC: Safely release the old value before overwriting it
-                            self.releaseValue(arr.items.items[idx]);
-                            self.retainValue(val);
                             arr.items.items[idx] = val;
                             self.push(val);
                         } else |_| {
@@ -466,10 +438,6 @@ pub const VM = struct {
                         const val = self.stack[start_idx + i + 1];
 
                         self.mapSet(map_obj, key, val) catch return .runtime_error;
-
-                        // We must release the stack's ownership of these values
-                        self.releaseValue(key);
-                        self.releaseValue(val);
                     }
                     self.stack_top -= (pair_count * 2);
                     self.push(map_val);
@@ -510,29 +478,24 @@ pub const VM = struct {
 
                     // Pop and release all original stack fragments
                     for (0..count) |_| {
-                        const dropped = self.pop();
-                        self.releaseValue(dropped);
+                        _ = self.pop();
                     }
                     self.push(merged_str);
                 },
                 .op_array_push => {
                     const val = self.pop();
-                    defer self.releaseValue(val);
                     const arr_val = self.stack[self.stack_top - 1];
                     const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
-                    self.retainValue(val);
                     arr.items.append(self.allocator, val) catch return .runtime_error;
                 },
                 .op_array_spread => {
                     const source_val = self.pop();
-                    defer self.releaseValue(source_val);
                     const target_val = self.stack[self.stack_top - 1];
                     const target_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target_val.asObj())));
 
                     if (source_val.isObject() and source_val.asObj().obj_type == .array) {
                         const source_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", source_val.asObj())));
                         for (source_arr.items.items) |item| {
-                            self.retainValue(item);
                             target_arr.items.append(self.allocator, item) catch return .runtime_error;
                         }
                     } else {
@@ -542,9 +505,7 @@ pub const VM = struct {
                 },
                 .op_map_insert => {
                     const val = self.pop();
-                    defer self.releaseValue(val);
                     const key = self.pop();
-                    defer self.releaseValue(key);
                     const map_val = self.stack[self.stack_top - 1];
                     const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", map_val.asObj())));
 
@@ -552,7 +513,6 @@ pub const VM = struct {
                 },
                 .op_map_spread => {
                     const source_val = self.pop();
-                    defer self.releaseValue(source_val);
                     const target_val = self.stack[self.stack_top - 1];
                     const target_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target_val.asObj())));
 
@@ -640,11 +600,9 @@ pub const VM = struct {
                 },
                 .op_close_upvalue => {
                     self.closeUpvalues(&self.stack[self.stack_top - 1]);
-                    self.releaseValue(self.pop());
                 },
                 .op_switch, .op_switch_wide => {
                     const test_val = self.pop();
-                    defer self.releaseValue(test_val);
 
                     const case_count = self.readOperand(exec_chunk, frame, op == .op_switch_wide);
                     var matched = false;
@@ -732,7 +690,6 @@ pub const VM = struct {
                     frame.ip += 1;
 
                     const val = self.pop();
-                    defer self.releaseValue(val);
 
                     if (val.isObject() and val.asObj().obj_type == .array) {
                         const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", val.asObj())));
@@ -763,7 +720,6 @@ pub const VM = struct {
                 },
                 .op_mixin => {
                     const module_val = self.pop();
-                    defer self.releaseValue(module_val);
                     if (!module_val.isModule()) {
                         if (self.throwDynamicError("Runtime Error: Can only include Modules.\n", .{}) != .ok) return .runtime_error;
                         continue;
@@ -809,22 +765,16 @@ pub const VM = struct {
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
                     const val = self.pop();
 
-                    // Safely release existing ARC objects if they are overwritten
-                    if (self.globals.get(name_str)) |old_val| {
-                        self.releaseValue(old_val);
-                    }
                     self.globals.put(self.allocator, name_str, val) catch return .runtime_error;
                 },
                 .op_set_property, .op_set_property_wide => {
                     const val = self.pop();
-                    defer self.releaseValue(val);
 
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_property_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
                     const receiver = self.pop();
-                    defer self.releaseValue(receiver); // Prevent ARC Memory Leak
 
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
@@ -942,7 +892,6 @@ pub const VM = struct {
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
                     const receiver = self.pop(); // Explicitly pop receiver from stack
-                    defer self.releaseValue(receiver); // Prevent ARC Memory Leak
 
                     const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
 
@@ -976,9 +925,7 @@ pub const VM = struct {
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
                     const receiver = self.pop(); // Pop explicit receiver
-                    defer self.releaseValue(receiver); // Prevent ARC Memory Leak
                     const val = self.pop(); // Pop RHS value
-                    defer self.releaseValue(val); // Prevent ARC Memory Leak
 
                     const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
 
@@ -1006,8 +953,6 @@ pub const VM = struct {
                             target_class = root;
                         }
 
-                        self.retainValue(val);
-                        if (target_class.class_fields.get(name_str)) |old_val| self.releaseValue(old_val);
                         target_class.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
 
                         self.push(val); // Yield the assigned value
@@ -1018,9 +963,7 @@ pub const VM = struct {
                 },
                 .op_is_instance => {
                     const class_val = self.pop();
-                    defer self.releaseValue(class_val);
                     const thrown_val = self.pop();
-                    defer self.releaseValue(thrown_val);
 
                     if (!class_val.isClass()) {
                         if (self.throwDynamicError("Runtime Error: Rescue type must be a Class.\n", .{}) != .ok) return .runtime_error;
@@ -1122,12 +1065,12 @@ pub const VM = struct {
     }
 
     pub fn allocateGeometry(self: *VM, state: value.GeometryState) !value.Value {
-        const geom_obj = try self.gc.allocateGeometry(state);
+        const geom_obj = try self.gc.allocateGeometry(self, state);
         return value.Value.initGeometry(geom_obj);
     }
 
     pub fn allocateWorkplane(self: *VM, parent: *value.ObjGeometry, origin: [3]f64, normal: [3]f64) !value.Value {
-        const wp_obj = try self.gc.allocateWorkplane(parent, origin, normal);
+        const wp_obj = try self.gc.allocateWorkplane(self, parent, origin, normal);
         return value.Value.initWorkplane(wp_obj);
     }
 
@@ -1137,50 +1080,13 @@ pub const VM = struct {
         try self.ensureStackCapacity(self.stack_top + 1);
         self.push(native_val);
         try self.globals.put(self.allocator, name, native_val);
-        const dropped = self.pop();
-        self.releaseValue(dropped);
-    }
-
-    // --- ARC Helpers ---
-    pub fn retainValue(self: *VM, val: value.Value) void {
-        _ = self;
-        if (val.isGeometry()) {
-            val.asGeometry().ref_count += 1;
-        } else if (val.isCrossSection()) {
-            val.asCrossSection().ref_count += 1;
-        } else if (val.isWorkplane()) {
-            val.asWorkplane().ref_count += 1;
-        }
-    }
-
-    pub fn releaseValue(self: *VM, val: value.Value) void {
-        if (val.isGeometry()) {
-            const geom_obj = val.asGeometry();
-            std.debug.assert(geom_obj.ref_count > 0);
-            geom_obj.ref_count -= 1;
-            if (geom_obj.ref_count == 0) {
-                self.gc.freeGeometry(self, geom_obj);
-            }
-        } else if (val.isCrossSection()) {
-            const cs_obj = val.asCrossSection();
-            std.debug.assert(cs_obj.ref_count > 0);
-            cs_obj.ref_count -= 1;
-            if (cs_obj.ref_count == 0) self.gc.freeCrossSection(self, cs_obj);
-        } else if (val.isWorkplane()) {
-            const wp_obj = val.asWorkplane();
-            std.debug.assert(wp_obj.ref_count > 0);
-            wp_obj.ref_count -= 1;
-            if (wp_obj.ref_count == 0) {
-                self.gc.freeWorkplane(self, wp_obj);
-            }
-        }
+        _ = self.pop();
     }
 
     pub inline fn shrinkStack(self: *VM, target_slot: usize) void {
         std.debug.assert(self.stack_top >= target_slot);
         while (self.stack_top > target_slot) {
             self.stack_top -= 1;
-            self.releaseValue(self.stack[self.stack_top]);
         }
     }
 
@@ -1335,7 +1241,6 @@ pub const VM = struct {
             const start_idx = base_slot + 1 + fixed_arity;
             for (0..splat_size) |i| {
                 const item = self.stack[start_idx + i];
-                self.retainValue(item);
                 arr_obj.items.appendAssumeCapacity(item);
             }
 
@@ -1446,7 +1351,7 @@ pub const VM = struct {
     }
 
     pub fn allocateCrossSection(self: *VM, dag_idx: u32) !value.Value {
-        const cs_obj = try self.gc.allocateCrossSection(dag_idx);
+        const cs_obj = try self.gc.allocateCrossSection(self, dag_idx);
         return value.Value.initCrossSection(cs_obj);
     }
 
@@ -1471,9 +1376,7 @@ pub const VM = struct {
 
     fn executeBinaryArithmetic(self: *VM, op: chunk.OpCode) InterpretResult {
         const b_val = self.pop();
-        defer self.releaseValue(b_val);
         const a_val = self.pop();
-        defer self.releaseValue(a_val);
         if (a_val.isNumber() and b_val.isNumber()) {
             const res = switch (op) {
                 .op_add => a_val.asNumber() + b_val.asNumber(),
@@ -1502,11 +1405,9 @@ pub const VM = struct {
             const new_val = value.Value.initObj(&new_arr.obj);
             new_arr.items.ensureTotalCapacity(self.allocator, a_arr.items.items.len + b_arr.items.items.len) catch return .runtime_error;
             for (a_arr.items.items) |item| {
-                self.retainValue(item);
                 new_arr.items.appendAssumeCapacity(item);
             }
             for (b_arr.items.items) |item| {
-                self.retainValue(item);
                 new_arr.items.appendAssumeCapacity(item);
             }
             self.push(new_val);
@@ -1728,7 +1629,6 @@ pub const VM = struct {
         frame.ip += 2;
 
         const val = self.pop();
-        defer self.releaseValue(val);
 
         if (val.isObject() and val.asObj().obj_type == .array) {
             const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", val.asObj())));
@@ -1748,7 +1648,6 @@ pub const VM = struct {
 
                 for (0..splat_size) |i| {
                     const item = arr.items.items[pre_count + i];
-                    self.retainValue(item);
                     splat_arr.items.appendAssumeCapacity(item);
                 }
             }
@@ -1780,7 +1679,6 @@ pub const VM = struct {
             } else {
                 const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
                 self.push(value.Value.initObj(&arr_obj.obj));
-                self.retainValue(val);
                 arr_obj.items.append(self.allocator, val) catch return .runtime_error;
                 _ = self.pop();
                 self.push(value.Value.initObj(&arr_obj.obj));
@@ -1812,7 +1710,6 @@ pub const VM = struct {
         const start_idx = frame.base_slot + 1 + fixed_arity;
         for (0..splat_size) |i| {
             const item = self.stack[start_idx + i];
-            self.retainValue(item);
             arr_obj.items.appendAssumeCapacity(item);
         }
 
@@ -1842,11 +1739,8 @@ pub const VM = struct {
         frame.ip += 1;
 
         const step_val = self.pop();
-        defer self.releaseValue(step_val);
         const end_val = self.pop();
-        defer self.releaseValue(end_val);
         const start_val = self.pop();
-        defer self.releaseValue(start_val);
 
         if (start_val.isNumber() and end_val.isNumber() and step_val.isNumber()) {
             const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
@@ -1866,7 +1760,6 @@ pub const VM = struct {
                 while (curr < limit) : (curr += 1) {
                     const char_slice = &[_]u8{curr};
                     const char_str = self.allocateString(char_slice) catch return .runtime_error;
-                    self.retainValue(char_str);
                     arr_obj.items.append(self.allocator, char_str) catch return .runtime_error;
                 }
             } else {
@@ -1957,7 +1850,6 @@ pub const VM = struct {
 
     inline fn executeThrow(self: *VM) InterpretResult {
         const err_val = self.pop();
-        defer self.releaseValue(err_val);
         if (self.rescue_frames.items.len == 0) {
             self.reportError("\n[Uncaught Exception] ", .{});
 
@@ -2065,20 +1957,14 @@ pub const VM = struct {
             const old_len = instance.fields.items.len;
             try instance.fields.resize(self.allocator, idx + 1);
             for (old_len..idx) |i| instance.fields.items[i] = value.Value.initNil();
-        } else {
-            // ARC: Release old value being overwritten
-            self.releaseValue(instance.fields.items[idx]);
         }
 
-        self.retainValue(val);
         instance.fields.items[idx] = val;
     }
 
     fn popBinaryNumbers(self: *VM) !struct { f64, f64 } {
         const b = self.pop();
-        defer self.releaseValue(b);
         const a = self.pop();
-        defer self.releaseValue(a);
 
         if (a.isNumber() and b.isNumber()) {
             return .{ a.asNumber(), b.asNumber() };

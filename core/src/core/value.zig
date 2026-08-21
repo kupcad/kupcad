@@ -153,7 +153,6 @@ pub const TopologyCache = struct {
 
 pub const ObjWorkplane = struct {
     obj: Obj,
-    ref_count: u32,
     parent: *ObjGeometry,
     origin: [3]f64,
     normal: [3]f64,
@@ -162,7 +161,6 @@ pub const ObjWorkplane = struct {
 /// The Hybrid ARC-managed Geometry Object.
 pub const ObjGeometry = struct {
     obj: Obj, // Must be first field for safe casting
-    ref_count: u32 = 1, // Managed explicitly by VM push/pop, NOT the GC
 
     // The DAG root index representing how this geometry was formed.
     // We retain this permanently so we can always append to it later.
@@ -180,7 +178,6 @@ pub const ObjGeometry = struct {
 
 pub const ObjCrossSection = struct {
     obj: Obj,
-    ref_count: u32,
     dag_idx: u32,
     cached_handle: ?@import("../kernel/geometry_handle.zig").CrossSectionHandle,
 };
@@ -482,7 +479,7 @@ pub const Value = extern struct {
                 .geometry => try writer.print("<Geometry DAG:{d}>", .{@as(*ObjGeometry, @alignCast(@fieldParentPtr("obj", obj))).dag_idx}),
                 .cross_section => {
                     const cs = @as(*ObjCrossSection, @alignCast(@fieldParentPtr("obj", obj)));
-                    try writer.print("<CrossSection DAG:{d} Ref:{d}>", .{ cs.dag_idx, cs.ref_count });
+                    try writer.print("<CrossSection DAG:{d}>", .{ cs.dag_idx });
                 },
                 .workplane => try writer.writeAll("<Workplane>"),
                 else => try writer.writeAll("<Object>"),

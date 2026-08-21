@@ -87,8 +87,7 @@ pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
     if (parsed.pos_count > 3 and args[3].isBool()) opts.center = args[3].asBool();
 
     const dag_idx = try vm.dag_builder.addCube(opts.x, opts.y, opts.z, opts.center);
-    const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = dag_idx });
-    return value.Value.initGeometry(geom_obj);
+    return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
 pub fn nativeCylinder(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -101,8 +100,7 @@ pub fn nativeCylinder(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value
     if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
 
     const dag_idx = try vm.dag_builder.addCylinder(opts.r, opts.h, opts.center);
-    const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = dag_idx });
-    return value.Value.initGeometry(geom_obj);
+    return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
 pub fn nativeSphere(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -113,8 +111,7 @@ pub fn nativeSphere(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
 
     const dag_idx = try vm.dag_builder.addSphere(opts.r);
-    const geom_obj = try vm.gc.allocateGeometry(.{ .symbolic = dag_idx });
-    return value.Value.initGeometry(geom_obj);
+    return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
 pub fn nativeSquare(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {

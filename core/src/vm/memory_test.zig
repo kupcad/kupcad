@@ -33,38 +33,6 @@ test "GC: Mark and Sweep reclaims unreferenced primitive objects" {
     try testing.expect(count_before > count_after);
 }
 
-test "ARC: ObjGeometry allocation and GC isolation" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    const initial_gc_count = countObjects(&vm.gc);
-
-    // 1. Add a symbolic node to DAG
-    const dag_idx = try vm.dag_builder.addCube(1.0, 1.0, 1.0, true);
-
-    // 2. Allocate Geometry via ARC (bypasses GC completely)
-    const geom_val = try vm.allocateGeometry(.{ .symbolic = dag_idx });
-
-    vm.push(geom_val);
-
-    // 3. Verify it was NOT added to the GC tracking list
-    try testing.expectEqual(initial_gc_count, countObjects(&vm.gc));
-    try testing.expect(geom_val.isGeometry());
-
-    const geom = geom_val.asGeometry();
-    // 1 ref from allocateGeometry, 1 ref from vm.push
-    try testing.expectEqual(@as(u32, 2), geom.ref_count);
-
-    // 4. Trigger a GC sweep to ensure it doesn't touch or corrupt the geometry
-    vm.gc.collectGarbage(&vm, false);
-
-    // 5. Clean up references
-    const popped_val = vm.pop();
-    vm.releaseValue(popped_val); // Drop the stack's reference
-    vm.releaseValue(geom_val); // Drop the initial allocation reference -> instantly frees!
-}
-
 test "GC: allocateRange correctly registers and sweeps" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

@@ -10,7 +10,6 @@ pub fn mapKeys(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyer
     defer _ = ctx.vm.pop();
     try new_arr.items.ensureTotalCapacity(ctx.vm.allocator, ctx.map.keys.items.len);
     for (ctx.map.keys.items) |k| {
-        ctx.vm.retainValue(k);
         new_arr.items.appendAssumeCapacity(k);
     }
     return value.Value.initObj(&new_arr.obj);
@@ -23,7 +22,6 @@ pub fn mapValues(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
     defer _ = ctx.vm.pop();
     try new_arr.items.ensureTotalCapacity(ctx.vm.allocator, ctx.map.values.items.len);
     for (ctx.map.values.items) |v| {
-        ctx.vm.retainValue(v);
         new_arr.items.appendAssumeCapacity(v);
     }
     return value.Value.initObj(&new_arr.obj);
@@ -38,8 +36,7 @@ pub fn mapHasKey(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
 pub fn mapDelete(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try common.unwrapMap(vm_opaque, arg_count, 1, args);
     if (ctx.vm.findMapKey(ctx.map, args[0])) |idx| {
-        const removed_key = ctx.map.keys.orderedRemove(idx);
-        ctx.vm.releaseValue(removed_key);
+        _ = ctx.map.keys.orderedRemove(idx);
         return ctx.map.values.orderedRemove(idx);
     }
     return value.Value.initNil();
@@ -87,8 +84,6 @@ pub fn mapMerge(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
 
     // Copy self
     for (ctx.map.keys.items, 0..) |k, i| {
-        ctx.vm.retainValue(k);
-        ctx.vm.retainValue(ctx.map.values.items[i]);
         try new_map.keys.append(ctx.vm.allocator, k);
         try new_map.values.append(ctx.vm.allocator, ctx.map.values.items[i]);
     }
@@ -97,12 +92,8 @@ pub fn mapMerge(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
     for (other_map.keys.items, 0..) |k, i| {
         const v = other_map.values.items[i];
         if (ctx.vm.findMapKey(new_map, k)) |existing_idx| {
-            ctx.vm.releaseValue(new_map.values.items[existing_idx]);
-            ctx.vm.retainValue(v);
             new_map.values.items[existing_idx] = v;
         } else {
-            ctx.vm.retainValue(k);
-            ctx.vm.retainValue(v);
             try new_map.keys.append(ctx.vm.allocator, k);
             try new_map.values.append(ctx.vm.allocator, v);
         }
@@ -123,8 +114,6 @@ pub fn mapSymbolizeKeys(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
             const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj())));
             new_k = try ctx.vm.allocateSymbol(str.chars);
         }
-        ctx.vm.retainValue(new_k);
-        ctx.vm.retainValue(v);
         try new_map.keys.append(ctx.vm.allocator, new_k);
         try new_map.values.append(ctx.vm.allocator, v);
     }
@@ -144,8 +133,6 @@ pub fn mapStringifyKeys(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
             const sym = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj())));
             new_k = try ctx.vm.allocateString(sym.chars);
         }
-        ctx.vm.retainValue(new_k);
-        ctx.vm.retainValue(v);
         try new_map.keys.append(ctx.vm.allocator, new_k);
         try new_map.values.append(ctx.vm.allocator, v);
     }

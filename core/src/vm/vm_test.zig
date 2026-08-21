@@ -8,7 +8,17 @@ const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const Document = @import("../core/document.zig").Document;
+const geom = @import("../kernel/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
+
+// --- Mock C++ Destructor for GC Tests ---
+var mock_destructor_called = false;
+var mock_last_destroyed_handle: ?geom.GeometryHandle = null;
+
+fn mockMeshDestructor(handle: geom.GeometryHandle) void {
+    mock_destructor_called = true;
+    mock_last_destroyed_handle = handle;
+}
 
 /// Runs a chunk and enforces strict stack equilibrium checks
 fn executeAndAssertStack(vm: *VM, chunk_ptr: *chunk.Chunk, expected_stack_top: usize) !value.Value {
@@ -109,9 +119,9 @@ test "VM: Execute native CAD function (cube) generates symbolic DAG node" {
     const returned_geom = vm.stack[0];
     try testing.expect(returned_geom.isGeometry());
 
-    const geom = returned_geom.asGeometry();
+    const geometry = returned_geom.asGeometry();
     // Verify it was appended to the DAG lazily, bypassing the C++ kernel
-    try testing.expectEqual(false, geom.isConcrete());
+    try testing.expectEqual(false, geometry.isConcrete());
     try testing.expect(vm.dag_builder.nodes.items.len > 0);
 }
 
@@ -2468,30 +2478,6 @@ test "VM Edge Case: Native C++ FFI failures are safely caught by rescue blocks" 
     try testing.expectEqual(.ok, result);
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
-}
-
-test "VM: ARC objects correctly track memory against the Sandbox limit" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-
-    // Verify initial state
-    try testing.expectEqual(@as(usize, 0), vm.gc.bytes_allocated);
-
-    // Allocate an ARC object and verify it counts towards the GC heap size
-    const geom_val = try vm.allocateGeometry(.{ .symbolic = 1 });
-
-    // FIX: Manual allocations belong to the tester, not the VM.
-    // We must manually release it to balance the initial ref_count = 1.
-    defer vm.releaseValue(geom_val);
-
-    try testing.expect(vm.gc.bytes_allocated > 0);
-
-    // Clamp the sandbox limit to exactly the current usage
-    vm.gc.max_memory_limit = vm.gc.bytes_allocated;
-
-    // Attempt to allocate another geometry. The Sandbox MUST block it.
-    const result = vm.allocateGeometry(.{ .symbolic = 2 });
-    try testing.expectError(error.OutOfMemory, result);
 }
 
 test "VM: Symbols are weak references and swept when unused" {
@@ -5223,4 +5209,82 @@ test "VM: Dynamic call stack growth supports deep recursion" {
 
     try testing.expectEqual(@as(usize, 1), vm.stack_top);
     try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+}
+
+test "VM GC: Geometry lifecycle triggers C++ destructor upon sweep" {
+    mock_destructor_called = false;
+    mock_last_destroyed_handle = null;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.host.mesh_destructor = mockMeshDestructor;
+
+    const test_ptr = @as(*anyopaque, @ptrFromInt(0xDEADBEEF));
+    const handle = geom.GeometryHandle{ .engine = .manifold, .ptr = test_ptr };
+
+    // Allocate mesh on VM heap via GC
+    const mesh_val = try vm.allocateGeometry(.{ .concrete = handle });
+
+    // 1. Prove it survives while rooted to the VM stack
+    vm.push(mesh_val);
+    vm.gc.collectGarbage(&vm, false); // <--- FIXED: false ensures marking happens!
+    try testing.expect(!mock_destructor_called);
+
+    // 2. Prove it dies when unrooted and swept
+    _ = vm.pop();
+    vm.gc.collectGarbage(&vm, false); // <--- FIXED
+
+    try testing.expect(mock_destructor_called);
+    try testing.expectEqual(.manifold, mock_last_destroyed_handle.?.engine);
+    try testing.expectEqual(test_ptr, mock_last_destroyed_handle.?.ptr);
+}
+
+test "VM GC: Workplanes successfully trace and keep their parent Geometry alive" {
+    mock_destructor_called = false;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.host.mesh_destructor = mockMeshDestructor;
+
+    const handle = geom.GeometryHandle{ .engine = .manifold, .ptr = @as(*anyopaque, @ptrFromInt(0x1234)) };
+    const parent_val = try vm.allocateGeometry(.{ .concrete = handle });
+
+    vm.push(parent_val); // <--- FIXED: Protect parent during child allocation
+    const wp_val = try vm.allocateWorkplane(parent_val.asGeometry(), .{ 0, 0, 0 }, .{ 0, 0, 1 });
+    _ = vm.pop();
+
+    // Push ONLY the workplane to the stack. The parent geometry is completely unrooted from the stack!
+    vm.push(wp_val);
+
+    // If `blackenObject` traces correctly, the Workplane will keep the parent alive.
+    vm.gc.collectGarbage(&vm, false); // <--- FIXED
+    try testing.expect(!mock_destructor_called); // Parent survived!
+
+    // Now pop the workplane, killing both.
+    _ = vm.pop();
+    vm.gc.collectGarbage(&vm, false); // <--- FIXED
+
+    try testing.expect(mock_destructor_called); // Parent swept!
+}
+
+test "VM GC: CAD object allocations respect Sandbox memory limits" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    vm.mute_errors = true; // <--- FIXED: Silence expected output
+
+    try testing.expectEqual(@as(usize, 0), vm.gc.bytes_allocated);
+
+    // Allocate an object and verify it counts towards the GC heap size
+    const geom_val = try vm.allocateGeometry(.{ .symbolic = 1 });
+    vm.push(geom_val); // Root it so it isn't swept during teardown until deinit
+
+    try testing.expect(vm.gc.bytes_allocated > 0);
+
+    // Clamp the sandbox limit to exactly the current usage
+    vm.gc.max_memory_limit = vm.gc.bytes_allocated;
+
+    // Attempt to allocate another geometry. The Sandbox MUST block it automatically via allocateObject.
+    const result = vm.allocateGeometry(.{ .symbolic = 2 });
+    try testing.expectError(error.OutOfMemory, result);
 }

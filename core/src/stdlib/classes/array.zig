@@ -11,7 +11,6 @@ pub fn arrayLength(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
 
 pub fn arrayPush(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try common.unwrapArray(vm_opaque, arg_count, 1, args);
-    ctx.vm.retainValue(args[0]);
     try ctx.arr.items.append(ctx.vm.allocator, args[0]);
     return ctx.receiver;
 }
@@ -36,7 +35,6 @@ pub fn arrayShift(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
 
 pub fn arrayUnshift(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try common.unwrapArray(vm_opaque, arg_count, 1, args);
-    ctx.vm.retainValue(args[0]);
     try ctx.arr.items.insert(ctx.vm.allocator, 0, args[0]);
     return ctx.receiver;
 }
@@ -60,7 +58,6 @@ pub fn arraySlice(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
     var idx: usize = 0;
     while (idx < length and start_idx + idx < ctx.arr.items.items.len) : (idx += 1) {
         const item = ctx.arr.items.items[start_idx + idx];
-        ctx.vm.retainValue(item);
         new_arr.items.appendAssumeCapacity(item);
     }
     return value.Value.initObj(&new_arr.obj);
@@ -119,7 +116,6 @@ pub fn arrayMap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
 
     for (ctx.arr.items.items) |item| {
         const mapped_val = try ctx.vm.callClosureSync(closure, &.{item});
-        ctx.vm.retainValue(mapped_val);
         // Ensure we haven't exceeded the pre-allocated capacity
         std.debug.assert(new_arr.items.items.len < new_arr.items.capacity);
         new_arr.items.appendAssumeCapacity(mapped_val);
@@ -175,7 +171,6 @@ pub fn arrayFilter(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
         const res = try ctx.vm.callClosureSync(closure, &.{item});
         const is_truthy = !res.isNil() and !(res.isBool() and !res.asBool());
         if (is_truthy) {
-            ctx.vm.retainValue(item);
             try new_arr.items.append(ctx.vm.allocator, item);
         }
     }
@@ -186,7 +181,6 @@ pub fn arrayFirst(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
     const ctx = try common.unwrapArray(vm_opaque, arg_count, 0, args);
     if (ctx.arr.items.items.len > 0) {
         const val = ctx.arr.items.items[0];
-        ctx.vm.retainValue(val); // Transfer +1 ownership to VM Stack
         return val;
     }
     return value.Value.initNil();
@@ -197,7 +191,6 @@ pub fn arrayLast(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
     const len = ctx.arr.items.items.len;
     if (len > 0) {
         const val = ctx.arr.items.items[len - 1];
-        ctx.vm.retainValue(val); // Transfer +1 ownership to VM Stack
         return val;
     }
     return value.Value.initNil();
@@ -223,11 +216,9 @@ pub fn arrayFlatten(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
         if (item.isObject() and item.asObj().obj_type == .array) {
             const inner_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", item.asObj())));
             for (inner_arr.items.items) |inner_item| {
-                ctx.vm.retainValue(inner_item);
                 try new_arr.items.append(ctx.vm.allocator, inner_item);
             }
         } else {
-            ctx.vm.retainValue(item);
             try new_arr.items.append(ctx.vm.allocator, item);
         }
     }
