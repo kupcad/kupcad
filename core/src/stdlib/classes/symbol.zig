@@ -3,19 +3,19 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 
-// Symbol to String
-pub fn symbolToS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapSymbol(vm_opaque, arg_count, 0, args);
-    return try ctx.vm.allocateString(ctx.sym.chars);
+/// Symbol#to_s
+pub fn symbolToS(vm: *VM, sym: *value.ObjSymbol) !value.Value {
+    return try vm.allocateString(sym.chars);
 }
 
-// Symbol to Symbol (Identity)
-pub fn symbolToSym(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapSymbol(vm_opaque, arg_count, 0, args);
-    return ctx.receiver;
+/// Symbol#to_sym (Identity)
+pub fn symbolToSym(vm: *VM, sym: *value.ObjSymbol) !value.Value {
+    _ = vm;
+    return value.Value.initObj(&sym.obj);
 }
 
+/// Symbol class method dispatch table
 pub const methods = [_]common.MethodDef{
-    .{ .name = "to_s", .func = symbolToS },
-    .{ .name = "to_sym", .func = symbolToSym },
+    .{ .name = "to_s", .func = common.wrapNative(symbolToS) },
+    .{ .name = "to_sym", .func = common.wrapNative(symbolToSym) },
 };

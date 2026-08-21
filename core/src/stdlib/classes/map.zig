@@ -1,153 +1,159 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
 
-pub fn mapKeys(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapMap(vm_opaque, arg_count, 0, args);
-    const new_arr = try ctx.vm.gc.allocateArray(ctx.vm);
-    ctx.vm.push(value.Value.initObj(&new_arr.obj));
-    defer _ = ctx.vm.pop();
-    try new_arr.items.ensureTotalCapacity(ctx.vm.allocator, ctx.map.keys.items.len);
-    for (ctx.map.keys.items) |k| {
+/// Map#keys
+pub fn mapKeys(vm: *VM, map: *value.ObjMap) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+
+    const new_arr = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&new_arr.obj));
+
+    try new_arr.items.ensureTotalCapacity(vm.allocator, map.keys.items.len);
+    for (map.keys.items) |k| {
         new_arr.items.appendAssumeCapacity(k);
     }
     return value.Value.initObj(&new_arr.obj);
 }
 
-pub fn mapValues(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapMap(vm_opaque, arg_count, 0, args);
-    const new_arr = try ctx.vm.gc.allocateArray(ctx.vm);
-    ctx.vm.push(value.Value.initObj(&new_arr.obj));
-    defer _ = ctx.vm.pop();
-    try new_arr.items.ensureTotalCapacity(ctx.vm.allocator, ctx.map.values.items.len);
-    for (ctx.map.values.items) |v| {
+/// Map#values
+pub fn mapValues(vm: *VM, map: *value.ObjMap) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+
+    const new_arr = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&new_arr.obj));
+
+    try new_arr.items.ensureTotalCapacity(vm.allocator, map.values.items.len);
+    for (map.values.items) |v| {
         new_arr.items.appendAssumeCapacity(v);
     }
     return value.Value.initObj(&new_arr.obj);
 }
 
-pub fn mapHasKey(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapMap(vm_opaque, arg_count, 1, args);
-    const found = ctx.vm.findMapKey(ctx.map, args[0]) != null;
+/// Map#has_key?(key)
+pub fn mapHasKey(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
+    const found = vm.findMapKey(map, key) != null;
     return value.Value.initBool(found);
 }
 
-pub fn mapDelete(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapMap(vm_opaque, arg_count, 1, args);
-    if (ctx.vm.findMapKey(ctx.map, args[0])) |idx| {
-        _ = ctx.map.keys.orderedRemove(idx);
-        return ctx.map.values.orderedRemove(idx);
+/// Map#delete(key)
+pub fn mapDelete(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
+    if (vm.findMapKey(map, key)) |idx| {
+        _ = map.keys.orderedRemove(idx);
+        return map.values.orderedRemove(idx);
     }
     return value.Value.initNil();
 }
 
-pub fn mapEach(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapMap(vm_opaque, arg_count, 1, args);
-    const closure_val = args[0];
-    if (!closure_val.isClosure()) return error.RuntimeError;
-    const closure = closure_val.asClosure();
-
-    for (ctx.map.keys.items, 0..) |k, i| {
-        const v = ctx.map.values.items[i];
-        _ = try ctx.vm.callClosureSync(closure, &.{ k, v });
+/// Map#each { |k, v| ... }
+pub fn mapEach(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure) !value.Value {
+    for (map.keys.items, 0..) |k, i| {
+        const v = map.values.items[i];
+        _ = try vm.callClosureSync(closure, &.{ k, v });
     }
-    return ctx.receiver;
+    return value.Value.initObj(&map.obj);
 }
 
-pub fn mapEmpty(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapMap(vm_opaque, arg_count, 0, args);
-    return value.Value.initBool(ctx.map.keys.items.len == 0);
+/// Map#empty?
+pub fn mapEmpty(vm: *VM, map: *value.ObjMap) !value.Value {
+    _ = vm;
+    return value.Value.initBool(map.keys.items.len == 0);
 }
 
-pub fn mapGet(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapMap(vm_opaque, arg_count, 2, args);
-    //Ensure the parallel arrays have not desynced
-    std.debug.assert(ctx.map.keys.items.len == ctx.map.values.items.len);
+/// Map#get(key, default)
+pub fn mapGet(vm: *VM, map: *value.ObjMap, key: value.Value, default_val: value.Value) !value.Value {
+    std.debug.assert(map.keys.items.len == map.values.items.len);
 
-    if (ctx.vm.findMapKey(ctx.map, args[0])) |idx| {
-        // Ensure the found index is safe for the values array
-        std.debug.assert(idx < ctx.map.values.items.len);
-        return ctx.map.values.items[idx];
+    if (vm.findMapKey(map, key)) |idx| {
+        std.debug.assert(idx < map.values.items.len);
+        return map.values.items[idx];
     }
-    return args[1]; // Return default value
+    return default_val;
 }
 
-pub fn mapMerge(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapMap(vm_opaque, arg_count, 1, args);
-    if (!args[0].isObject() or args[0].asObj().obj_type != .map) return error.RuntimeError;
-    const other_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[0].asObj())));
+/// Map#merge(other_map)
+pub fn mapMerge(vm: *VM, map: *value.ObjMap, other_map: *value.ObjMap) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
 
-    const new_map = try ctx.vm.gc.allocateMap(ctx.vm);
-    ctx.vm.push(value.Value.initObj(&new_map.obj));
-    defer _ = ctx.vm.pop();
+    const new_map = try vm.gc.allocateMap(vm);
+    vm.push(value.Value.initObj(&new_map.obj));
 
     // Copy self
-    for (ctx.map.keys.items, 0..) |k, i| {
-        try new_map.keys.append(ctx.vm.allocator, k);
-        try new_map.values.append(ctx.vm.allocator, ctx.map.values.items[i]);
+    for (map.keys.items, 0..) |k, i| {
+        try new_map.keys.append(vm.allocator, k);
+        try new_map.values.append(vm.allocator, map.values.items[i]);
     }
 
     // Merge other
     for (other_map.keys.items, 0..) |k, i| {
         const v = other_map.values.items[i];
-        if (ctx.vm.findMapKey(new_map, k)) |existing_idx| {
+        if (vm.findMapKey(new_map, k)) |existing_idx| {
             new_map.values.items[existing_idx] = v;
         } else {
-            try new_map.keys.append(ctx.vm.allocator, k);
-            try new_map.values.append(ctx.vm.allocator, v);
+            try new_map.keys.append(vm.allocator, k);
+            try new_map.values.append(vm.allocator, v);
         }
     }
     return value.Value.initObj(&new_map.obj);
 }
 
-pub fn mapSymbolizeKeys(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapMap(vm_opaque, arg_count, 0, args);
-    const new_map = try ctx.vm.gc.allocateMap(ctx.vm);
-    ctx.vm.push(value.Value.initObj(&new_map.obj));
-    defer _ = ctx.vm.pop();
+/// Map#symbolize_keys
+pub fn mapSymbolizeKeys(vm: *VM, map: *value.ObjMap) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
 
-    for (ctx.map.keys.items, 0..) |k, i| {
-        const v = ctx.map.values.items[i];
+    const new_map = try vm.gc.allocateMap(vm);
+    vm.push(value.Value.initObj(&new_map.obj));
+
+    for (map.keys.items, 0..) |k, i| {
+        const v = map.values.items[i];
         var new_k = k;
         if (k.isObject() and k.asObj().obj_type == .string) {
             const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj())));
-            new_k = try ctx.vm.allocateSymbol(str.chars);
+            new_k = try vm.allocateSymbol(str.chars);
         }
-        try new_map.keys.append(ctx.vm.allocator, new_k);
-        try new_map.values.append(ctx.vm.allocator, v);
+        try new_map.keys.append(vm.allocator, new_k);
+        try new_map.values.append(vm.allocator, v);
     }
     return value.Value.initObj(&new_map.obj);
 }
 
-pub fn mapStringifyKeys(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapMap(vm_opaque, arg_count, 0, args);
-    const new_map = try ctx.vm.gc.allocateMap(ctx.vm);
-    ctx.vm.push(value.Value.initObj(&new_map.obj));
-    defer _ = ctx.vm.pop();
+/// Map#stringify_keys
+pub fn mapStringifyKeys(vm: *VM, map: *value.ObjMap) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
 
-    for (ctx.map.keys.items, 0..) |k, i| {
-        const v = ctx.map.values.items[i];
+    const new_map = try vm.gc.allocateMap(vm);
+    vm.push(value.Value.initObj(&new_map.obj));
+
+    for (map.keys.items, 0..) |k, i| {
+        const v = map.values.items[i];
         var new_k = k;
         if (k.isObject() and k.asObj().obj_type == .symbol) {
             const sym = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj())));
-            new_k = try ctx.vm.allocateString(sym.chars);
+            new_k = try vm.allocateString(sym.chars);
         }
-        try new_map.keys.append(ctx.vm.allocator, new_k);
-        try new_map.values.append(ctx.vm.allocator, v);
+        try new_map.keys.append(vm.allocator, new_k);
+        try new_map.values.append(vm.allocator, v);
     }
     return value.Value.initObj(&new_map.obj);
 }
 
+/// Map class method dispatch table
 pub const methods = [_]common.MethodDef{
-    .{ .name = "keys", .func = mapKeys },
-    .{ .name = "values", .func = mapValues },
-    .{ .name = "has_key?", .func = mapHasKey },
-    .{ .name = "delete", .func = mapDelete },
-    .{ .name = "each", .func = mapEach },
-    .{ .name = "empty?", .func = mapEmpty },
-    .{ .name = "get", .func = mapGet },
-    .{ .name = "merge", .func = mapMerge },
-    .{ .name = "symbolize_keys", .func = mapSymbolizeKeys },
-    .{ .name = "stringify_keys", .func = mapStringifyKeys },
+    .{ .name = "keys", .func = common.wrapNative(mapKeys) },
+    .{ .name = "values", .func = common.wrapNative(mapValues) },
+    .{ .name = "has_key?", .func = common.wrapNative(mapHasKey) },
+    .{ .name = "delete", .func = common.wrapNative(mapDelete) },
+    .{ .name = "each", .func = common.wrapNative(mapEach) },
+    .{ .name = "empty?", .func = common.wrapNative(mapEmpty) },
+    .{ .name = "get", .func = common.wrapNative(mapGet) },
+    .{ .name = "merge", .func = common.wrapNative(mapMerge) },
+    .{ .name = "symbolize_keys", .func = common.wrapNative(mapSymbolizeKeys) },
+    .{ .name = "stringify_keys", .func = common.wrapNative(mapStringifyKeys) },
 };

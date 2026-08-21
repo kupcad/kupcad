@@ -2460,113 +2460,113 @@ test "VM: Fluent method chaining" {
     try testing.expectEqual(@as(f64, 30.0), result.asNumber());
 }
 
-// test "VM: Comprehensive Ruby-like language features integration" {
-//     var vm = try VM.init(testing.allocator, testing.io);
-//     defer vm.deinit();
-//     try registry.registerStandardLibrary(&vm);
+test "VM: Comprehensive Ruby-like language features integration" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
 
-//     const source =
-//         \\module MathHelpers
-//         \\  def square(x)
-//         \\    x * x
-//         \\  end
-//         \\end
-//         \\
-//         \\class Calculator
-//         \\  include MathHelpers
-//         \\
-//         \\  def initialize(offset)
-//         \\    @offset = offset
-//         \\    @@count = 42
-//         \\  end
-//         \\
-//         \\  def self.get_count
-//         \\    @@count
-//         \\  end
-//         \\
-//         \\  def compute(arr)
-//         \\    res = []
-//         \\    i = 0
-//         \\    while i < arr.length
-//         \\      val = arr[i]
-//         \\      processed = case val
-//         \\      when 1..5
-//         \\        self.square(val)
-//         \\      when 10
-//         \\        val * 2
-//         \\      else
-//         \\        -1
-//         \\      end
-//         \\      res.push(processed + @offset)
-//         \\      i += 1
-//         \\    end
-//         \\    res
-//         \\  end
-//         \\end
-//         \\
-//         \\class AdvancedCalculator < Calculator
-//         \\  def initialize(offset, multiplier)
-//         \\    super(offset)
-//         \\    @multiplier = multiplier
-//         \\  end
-//         \\
-//         \\  def compute(arr)
-//         \\    base_res = super(arr)
-//         \\    # Proves `@multiplier` is captured as an Upvalue inside the block!
-//         \\    base_res.map { |x| x * @multiplier }
-//         \\  end
-//         \\end
-//         \\
-//         \\calc = AdvancedCalculator.new(5, 2)
-//         \\# 2  -> (2^2 + 5) * 2  = 18
-//         \\# 10 -> (10*2 + 5) * 2 = 50
-//         \\# 42 -> (-1 + 5) * 2   = 8
-//         \\result = calc.compute([2, 10, 42])
-//         \\
-//         \\err_caught = false
-//         \\begin
-//         \\  raise(ArgumentError)
-//         \\rescue ArgumentError => e
-//         \\  err_caught = true
-//         \\end
-//         \\
-//         \\dict = { first: result[0], second: result[1] }
-//         \\a, *b, c = [*result, 100, 200]
-//         \\
-//         \\summary = "Count: #{Calculator.get_count}"
-//         \\
-//         \\[dict[:first], b.length(), c, err_caught, summary]
-//     ;
+    const source =
+        \\module MathHelpers
+        \\  def square(x)
+        \\    x * x
+        \\  end
+        \\end
+        \\
+        \\class Calculator
+        \\  include MathHelpers
+        \\
+        \\  def initialize(offset)
+        \\    @offset = offset
+        \\    @@count = 42
+        \\  end
+        \\
+        \\  def self.get_count
+        \\    @@count
+        \\  end
+        \\
+        \\  def compute(arr)
+        \\    res = []
+        \\    i = 0
+        \\    while i < arr.length
+        \\      val = arr[i]
+        \\      processed = case val
+        \\      when 1..5
+        \\        self.square(val)
+        \\      when 10
+        \\        val * 2
+        \\      else
+        \\        -1
+        \\      end
+        \\      res.push(processed + @offset)
+        \\      i += 1
+        \\    end
+        \\    res
+        \\  end
+        \\end
+        \\
+        \\class AdvancedCalculator < Calculator
+        \\  def initialize(offset, multiplier)
+        \\    super(offset)
+        \\    @multiplier = multiplier
+        \\  end
+        \\
+        \\  def compute(arr)
+        \\    base_res = super(arr)
+        \\    # Proves `@multiplier` is captured as an Upvalue inside the block!
+        \\    base_res.map { |x| x * @multiplier }
+        \\  end
+        \\end
+        \\
+        \\calc = AdvancedCalculator.new(5, 2)
+        \\# 2  -> (2^2 + 5) * 2  = 18
+        \\# 10 -> (10*2 + 5) * 2 = 50
+        \\# 42 -> (-1 + 5) * 2   = 8
+        \\result = calc.compute([2, 10, 42])
+        \\
+        \\err_caught = false
+        \\begin
+        \\  raise(ArgumentError)
+        \\rescue ArgumentError => e
+        \\  err_caught = true
+        \\end
+        \\
+        \\dict = { first: result[0], second: result[1] }
+        \\a, *b, c = [*result, 100, 200]
+        \\
+        \\summary = "Count: #{Calculator.get_count}"
+        \\
+        \\[dict[:first], b.length(), c, err_caught, summary]
+    ;
 
-//     var doc = try Document.parse(testing.allocator, source);
-//     defer doc.deinit();
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
 
-//     var out_chunk = chunk.Chunk.init();
-//     defer out_chunk.free(testing.allocator);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
 
-//     var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-//     defer comp.deinit();
-//     try comp.compile(doc.tree.root);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
 
-//     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-//     try testing.expect(arr_val.isArray());
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(arr_val.isArray());
 
-//     const arr_obj = arr_val.asArray();
-//     try testing.expectEqual(@as(usize, 5), arr_obj.items.items.len);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 5), arr_obj.items.items.len);
 
-//     // dict[:first] == 18
-//     try testing.expectEqual(@as(f64, 18.0), arr_obj.items.items[0].asNumber());
-//     // b.length() == 3 (the middle splat captured [50, 8, 100])
-//     try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[1].asNumber());
-//     // c == 200 (the tail end of the destructure)
-//     try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[2].asNumber());
-//     // err_caught == true
-//     try testing.expectEqual(true, arr_obj.items.items[3].asBool());
+    // dict[:first] == 18
+    try testing.expectEqual(@as(f64, 18.0), arr_obj.items.items[0].asNumber());
+    // b.length() == 3 (the middle splat captured [50, 8, 100])
+    try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[1].asNumber());
+    // c == 200 (the tail end of the destructure)
+    try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[2].asNumber());
+    // err_caught == true
+    try testing.expectEqual(true, arr_obj.items.items[3].asBool());
 
-//     // Interpolated summary == "Count: 42"
-//     const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[4].asObj())));
-//     try testing.expectEqualStrings("Count: 42", str_obj.chars);
-// }
+    // Interpolated summary == "Count: 42"
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[4].asObj())));
+    try testing.expectEqualStrings("Count: 42", str_obj.chars);
+}
 
 test "VM: Map indexing and compound assignment" {
     var vm = try VM.init(testing.allocator, testing.io);
@@ -4160,12 +4160,8 @@ test "VM: Block arguments gracefully pad with nil when missing" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
     // Should return [true, true] without reading garbage memory
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(true, arr_obj.items.items[0].asBool());
@@ -4196,12 +4192,8 @@ test "VM: Keyword arguments extract correctly regardless of passing order" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
     // Should reliably map to [10, 20]
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
@@ -4232,11 +4224,7 @@ test "VM: Block array destructuring safely pads missing elements with nil" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
 
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
@@ -4269,11 +4257,8 @@ test "VM: Block silently trims extraneous yielded arguments" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 99.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 99.0), result.asNumber());
 }
 
 test "Compiler: Block array destructuring rejects splats and defaults natively" {
@@ -4330,11 +4315,7 @@ test "VM: Ensure block executes on successful (non-raising) path without corrupt
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber()); // result of begin block
@@ -4368,11 +4349,7 @@ test "VM: Rescue handles multiple comma-separated exception types in one clause"
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[0].asNumber());
@@ -4400,11 +4377,8 @@ test "VM: Array indexing compound assignment (arr[idx] += val)" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 35.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 35.0), result.asNumber());
 }
 
 test "VM: Repeated block yields in loops maintain frame and stack equilibrium" {
@@ -4436,12 +4410,10 @@ test "VM: Repeated block yields in loops maintain frame and stack equilibrium" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
     // Sum of (0..99)*2 = 2 * (99*100/2) = 9900
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 9900.0), vm.stack[0].asNumber());
+    try testing.expectEqual(@as(f64, 9900.0), result.asNumber());
 }
 
 test "VM: Shorthand hash syntax evaluates in runtime scope" {
@@ -4465,11 +4437,7 @@ test "VM: Shorthand hash syntax evaluates in runtime scope" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber());
@@ -4506,11 +4474,8 @@ test "VM: Class re-opening preserves existing methods and field layout map" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 30.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 30.0), result.asNumber());
 }
 
 test "VM: Inline rescue modifier traps soft exceptions during assignment" {
@@ -4533,11 +4498,8 @@ test "VM: Inline rescue modifier traps soft exceptions during assignment" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 500.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 500.0), result.asNumber());
 }
 
 test "VM: Stabby lambdas compile and execute with default and keyword parameters" {
@@ -4559,11 +4521,7 @@ test "VM: Stabby lambdas compile and execute with default and keyword parameters
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
 
@@ -4602,11 +4560,8 @@ test "VM: Block parameter shadowing isolates outer local upvalues" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 100.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 100.0), result.asNumber());
 }
 
 test "VM: Safe navigation chaining on nil short-circuits without stack leak" {
@@ -4629,11 +4584,8 @@ test "VM: Safe navigation chaining on nil short-circuits without stack leak" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(true, vm.stack[0].asBool());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(true, result.asBool());
 }
 
 test "VM: GC sweep during dynamic map and array splat expansion" {
@@ -4659,11 +4611,7 @@ test "VM: GC sweep during dynamic map and array splat expansion" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[0].asNumber());
@@ -4693,11 +4641,7 @@ test "VM: GC module collect and bytes_allocated methods" {
 
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    const arr_val = vm.stack[0];
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(arr_val.isArray());
     const arr_obj = arr_val.asArray();
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
@@ -4822,11 +4766,8 @@ test "VM: Dynamic call stack growth supports deep recursion" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 42.0), result.asNumber());
 }
 
 test "VM GC: Geometry lifecycle triggers C++ destructor upon sweep" {

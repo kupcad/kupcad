@@ -1,124 +1,119 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
 
-pub fn stringLength(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 0, args);
-    // Safely count actual Unicode characters, fallback to raw byte length if invalid UTF-8
-    const len = std.unicode.utf8CountCodepoints(ctx.str.chars) catch ctx.str.chars.len;
+/// String#length / String#size
+pub fn stringLength(vm: *VM, str: *value.ObjString) !value.Value {
+    _ = vm;
+    const len = std.unicode.utf8CountCodepoints(str.chars) catch str.chars.len;
     return value.Value.initNumber(@floatFromInt(len));
 }
 
-pub fn stringUpcase(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 0, args);
-    const new_str = try ctx.vm.allocator.alloc(u8, ctx.str.chars.len);
-    errdefer ctx.vm.allocator.free(new_str); // Free ONLY if GC allocation fails
+/// String#upcase
+pub fn stringUpcase(vm: *VM, str: *value.ObjString) !value.Value {
+    const new_str = try vm.allocator.alloc(u8, str.chars.len);
+    errdefer vm.allocator.free(new_str);
 
-    for (ctx.str.chars, 0..) |c, i| new_str[i] = std.ascii.toUpper(c);
+    for (str.chars, 0..) |c, i| new_str[i] = std.ascii.toUpper(c);
 
-    return try ctx.vm.allocateStringTakeOwnership(new_str);
+    return try vm.allocateStringTakeOwnership(new_str);
 }
 
-pub fn stringDowncase(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 0, args);
-    const new_str = try ctx.vm.allocator.alloc(u8, ctx.str.chars.len);
-    errdefer ctx.vm.allocator.free(new_str);
+/// String#downcase
+pub fn stringDowncase(vm: *VM, str: *value.ObjString) !value.Value {
+    const new_str = try vm.allocator.alloc(u8, str.chars.len);
+    errdefer vm.allocator.free(new_str);
 
-    for (ctx.str.chars, 0..) |c, i| new_str[i] = std.ascii.toLower(c);
+    for (str.chars, 0..) |c, i| new_str[i] = std.ascii.toLower(c);
 
-    return try ctx.vm.allocateStringTakeOwnership(new_str);
+    return try vm.allocateStringTakeOwnership(new_str);
 }
 
-pub fn stringSplit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 1, args);
-    const delim_val = args[0];
-    if (!delim_val.isObject() or delim_val.asObj().obj_type != .string) return error.RuntimeError;
-    const delim_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", delim_val.asObj()))).chars;
+/// String#split(delim)
+pub fn stringSplit(vm: *VM, str: *value.ObjString, delim_obj: *value.ObjString) !value.Value {
+    const delim_str = delim_obj.chars;
 
-    const arr_obj = try ctx.vm.gc.allocateArray(ctx.vm);
-    ctx.vm.push(value.Value.initObj(&arr_obj.obj));
-    defer _ = ctx.vm.pop();
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
 
-    var iter = std.mem.splitSequence(u8, ctx.str.chars, delim_str);
+    const arr_obj = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&arr_obj.obj));
+
+    var iter = std.mem.splitSequence(u8, str.chars, delim_str);
     while (iter.next()) |part| {
-        const part_val = try ctx.vm.allocateString(part);
-        try arr_obj.items.append(ctx.vm.allocator, part_val);
+        const part_val = try vm.allocateString(part);
+        try arr_obj.items.append(vm.allocator, part_val);
     }
     return value.Value.initObj(&arr_obj.obj);
 }
 
-pub fn stringReplace(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 2, args);
-    const target_val = args[0];
-    const replace_val = args[1];
+/// String#replace(target, replacement)
+pub fn stringReplace(vm: *VM, str: *value.ObjString, target_obj: *value.ObjString, replace_obj: *value.ObjString) !value.Value {
+    const t_str = target_obj.chars;
+    const r_str = replace_obj.chars;
 
-    if (!target_val.isObject() or target_val.asObj().obj_type != .string) return error.RuntimeError;
-    if (!replace_val.isObject() or replace_val.asObj().obj_type != .string) return error.RuntimeError;
+    const replaced = try std.mem.replaceOwned(u8, vm.allocator, str.chars, t_str, r_str);
+    errdefer vm.allocator.free(replaced);
 
-    const t_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
-    const r_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", replace_val.asObj()))).chars;
-
-    const replaced = try std.mem.replaceOwned(u8, ctx.vm.allocator, ctx.str.chars, t_str, r_str);
-    errdefer ctx.vm.allocator.free(replaced);
-
-    return try ctx.vm.allocateStringTakeOwnership(replaced);
+    return try vm.allocateStringTakeOwnership(replaced);
 }
 
-pub fn stringToF(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 0, args);
-    const float_val = std.fmt.parseFloat(f64, ctx.str.chars) catch return value.Value.initNil();
+/// String#to_f
+pub fn stringToF(vm: *VM, str: *value.ObjString) !value.Value {
+    _ = vm;
+    const float_val = std.fmt.parseFloat(f64, str.chars) catch return value.Value.initNil();
     return value.Value.initNumber(float_val);
 }
 
-pub fn stringToI(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 0, args);
-    const int_val = std.fmt.parseInt(i64, ctx.str.chars, 10) catch return value.Value.initNil();
+/// String#to_i
+pub fn stringToI(vm: *VM, str: *value.ObjString) !value.Value {
+    _ = vm;
+    const int_val = std.fmt.parseInt(i64, str.chars, 10) catch return value.Value.initNil();
     return value.Value.initNumber(@floatFromInt(int_val));
 }
 
-pub fn stringTrim(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 0, args);
-    const trimmed = std.mem.trim(u8, ctx.str.chars, " \t\r\n");
-    return try ctx.vm.allocateString(trimmed);
+/// String#trim
+pub fn stringTrim(vm: *VM, str: *value.ObjString) !value.Value {
+    const trimmed = std.mem.trim(u8, str.chars, " \t\r\n");
+    return try vm.allocateString(trimmed);
 }
 
-pub fn stringStartsWith(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 1, args);
-    if (!args[0].isObject() or args[0].asObj().obj_type != .string) return error.RuntimeError;
-    const prefix = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", args[0].asObj()))).chars;
-    return value.Value.initBool(std.mem.startsWith(u8, ctx.str.chars, prefix));
+/// String#starts_with?(prefix)
+pub fn stringStartsWith(vm: *VM, str: *value.ObjString, prefix_obj: *value.ObjString) !value.Value {
+    _ = vm;
+    return value.Value.initBool(std.mem.startsWith(u8, str.chars, prefix_obj.chars));
 }
 
-pub fn stringEndsWith(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 1, args);
-    if (!args[0].isObject() or args[0].asObj().obj_type != .string) return error.RuntimeError;
-    const suffix = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", args[0].asObj()))).chars;
-    return value.Value.initBool(std.mem.endsWith(u8, ctx.str.chars, suffix));
+/// String#ends_with?(suffix)
+pub fn stringEndsWith(vm: *VM, str: *value.ObjString, suffix_obj: *value.ObjString) !value.Value {
+    _ = vm;
+    return value.Value.initBool(std.mem.endsWith(u8, str.chars, suffix_obj.chars));
 }
 
-// String to Symbol
-pub fn stringToSym(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 0, args);
-    return try ctx.vm.allocateSymbol(ctx.str.chars);
+/// String#to_sym
+pub fn stringToSym(vm: *VM, str: *value.ObjString) !value.Value {
+    return try vm.allocateSymbol(str.chars);
 }
 
-// String to String (Identity)
-pub fn stringToS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapString(vm_opaque, arg_count, 0, args);
-    return ctx.receiver;
+/// String#to_s (Identity)
+pub fn stringToS(vm: *VM, str: *value.ObjString) !value.Value {
+    _ = vm;
+    return value.Value.initObj(&str.obj);
 }
 
+/// String class method dispatch table
 pub const methods = [_]common.MethodDef{
-    .{ .name = "upcase", .func = stringUpcase },
-    .{ .name = "downcase", .func = stringDowncase },
-    .{ .name = "split", .func = stringSplit },
-    .{ .name = "replace", .func = stringReplace },
-    .{ .name = "to_f", .func = stringToF },
-    .{ .name = "to_i", .func = stringToI },
-    .{ .name = "trim", .func = stringTrim },
-    .{ .name = "starts_with?", .func = stringStartsWith },
-    .{ .name = "ends_with?", .func = stringEndsWith },
-    .{ .name = "to_sym", .func = stringToSym },
-    .{ .name = "to_s", .func = stringToS },
+    .{ .name = "upcase", .func = common.wrapNative(stringUpcase) },
+    .{ .name = "downcase", .func = common.wrapNative(stringDowncase) },
+    .{ .name = "split", .func = common.wrapNative(stringSplit) },
+    .{ .name = "replace", .func = common.wrapNative(stringReplace) },
+    .{ .name = "to_f", .func = common.wrapNative(stringToF) },
+    .{ .name = "to_i", .func = common.wrapNative(stringToI) },
+    .{ .name = "trim", .func = common.wrapNative(stringTrim) },
+    .{ .name = "starts_with?", .func = common.wrapNative(stringStartsWith) },
+    .{ .name = "ends_with?", .func = common.wrapNative(stringEndsWith) },
+    .{ .name = "to_sym", .func = common.wrapNative(stringToSym) },
+    .{ .name = "to_s", .func = common.wrapNative(stringToS) },
 };
