@@ -1971,6 +1971,9 @@ pub const Compiler = struct {
     }
 
     fn writeJumpOffset(self: *Compiler, target_index: usize, offset: usize) void {
+        // Prevent silent out-of-bounds overwrites in the bytecode array
+        std.debug.assert(target_index + 3 < self.current_chunk.code.items.len);
+
         self.current_chunk.code.items[target_index] = @intCast((offset >> 24) & 0xFF);
         self.current_chunk.code.items[target_index + 1] = @intCast((offset >> 16) & 0xFF);
         self.current_chunk.code.items[target_index + 2] = @intCast((offset >> 8) & 0xFF);

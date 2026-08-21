@@ -90,6 +90,9 @@ fn inner_build_stl(allocator: std.mem.Allocator, source: []const u8) ![]const u8
 // --- WASM Export Boundaries ---
 
 pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize) ?[*]const u8 {
+    // Never trust the JavaScript host to pass valid pointers
+    std.debug.assert(@intFromPtr(source_ptr) != 0);
+
     const source = source_ptr[0..source_len];
     if (inner_format(std.heap.wasm_allocator, source)) |res| {
         return res.ptr;

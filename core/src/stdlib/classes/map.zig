@@ -65,7 +65,12 @@ pub fn mapEmpty(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
 
 pub fn mapGet(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try common.unwrapMap(vm_opaque, arg_count, 2, args);
+    //Ensure the parallel arrays have not desynced
+    std.debug.assert(ctx.map.keys.items.len == ctx.map.values.items.len);
+
     if (ctx.vm.findMapKey(ctx.map, args[0])) |idx| {
+        // Ensure the found index is safe for the values array
+        std.debug.assert(idx < ctx.map.values.items.len);
         return ctx.map.values.items[idx];
     }
     return args[1]; // Return default value
