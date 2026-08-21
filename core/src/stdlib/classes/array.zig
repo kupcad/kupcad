@@ -9,10 +9,9 @@ pub fn arrayLength(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     return value.Value.initNumber(@floatFromInt(ctx.arr.items.items.len));
 }
 
-pub fn arrayPush(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const ctx = try common.unwrapArray(vm_opaque, arg_count, 1, args);
-    try ctx.arr.items.append(ctx.vm.allocator, args[0]);
-    return ctx.receiver;
+pub fn arrayPush(vm: *VM, arr: *value.ObjArray, val: value.Value) !value.Value {
+    try arr.items.append(vm.allocator, val);
+    return value.Value.initObj(&arr.obj);
 }
 
 pub fn arrayPop(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {

@@ -367,6 +367,14 @@ pub const GC = struct {
             .function => {
                 const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
                 if (func.name) |name| self.markObject(&name.obj);
+
+                // Mark all constants in the function's bytecode chunk
+                if (func.chunk) |c_ptr| {
+                    const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(c_ptr)));
+                    for (exec_chunk.constants.items) |val| {
+                        self.markValue(val);
+                    }
+                }
             },
             .module => {
                 const module_obj = @as(*value.ObjModule, @alignCast(@fieldParentPtr("obj", obj)));
