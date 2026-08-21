@@ -612,9 +612,9 @@ test "VM: Math module namespace and functions" {
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 5;
-    var result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(f64, std.math.pi), vm.stack[0].asNumber());
+
+    const final_value = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, std.math.pi), final_value.asNumber());
 
     // Clean up and prove Math.sin(0) = 0
     vm.stack_top = 0;
@@ -633,9 +633,8 @@ test "VM: Math module namespace and functions" {
     try out_chunk.write(testing.allocator, 1, 0); // 1 arg
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
-    result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-    try testing.expectEqual(@as(f64, 0.0), vm.stack[0].asNumber());
+    const result_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 0.0), result_val.asNumber());
 }
 
 test "VM: String Native Methods (split, replace)" {
@@ -661,10 +660,7 @@ test "VM: String Native Methods (split, replace)" {
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 5;
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    const arr = vm.stack[0];
+    const arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(arr.isObject() and arr.asObj().obj_type == .array);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr.asObj())));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
@@ -707,10 +703,8 @@ test "VM: Array and Map Native Methods (slice, keys)" {
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 6;
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
+    const slice_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    const slice_arr = vm.stack[0];
     try testing.expect(slice_arr.isObject() and slice_arr.asObj().obj_type == .array);
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", slice_arr.asObj())));
 
@@ -787,12 +781,10 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     try main_chunk.writeOp(testing.allocator, .op_return, 0);
     main_chunk.max_stack_slots = 5;
 
-    const result = vm.interpret(&main_chunk);
-    try testing.expectEqual(.ok, result);
+    const res = try executeAndAssertStack(&vm, &main_chunk, 1);
 
     // 21 * 2 = 42
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+    try testing.expectEqual(@as(f64, 42.0), res.asNumber());
 }
 
 test "Compiler: compiles block_given? and yield intrinsics natively" {
@@ -888,12 +880,8 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     const block_node = try b.block(&.{}, &.{ def_node, call_node }, 0, 0);
     try comp.compile(block_node);
 
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
     // The result should be the packed *args array: [2, 3, 4]
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-    const result_arr = vm.stack[0];
+    const result_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
 
     const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
