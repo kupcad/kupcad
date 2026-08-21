@@ -56,7 +56,7 @@ pub fn registerExceptions(vm: *VM) !void {
     const exc_name = try vm.allocateStringTakeOwnership(try vm.allocator.dupe(u8, "Exception"));
     vm.push(exc_name);
 
-    const exc_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @ptrCast(exc_name.asObj())), vm.object_class);
+    const exc_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", exc_name.asObj()))), vm.object_class);
 
     try vm.globals.put(vm.allocator, "Exception", value.Value.initObj(&exc_class.obj));
     _ = vm.pop();
@@ -74,7 +74,7 @@ pub fn registerExceptions(vm: *VM) !void {
     // StandardError < Exception
     const std_name = try vm.allocateStringTakeOwnership(try vm.allocator.dupe(u8, "StandardError"));
     vm.push(std_name);
-    const std_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @ptrCast(std_name.asObj())), exc_class);
+    const std_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", std_name.asObj()))), exc_class);
     try vm.globals.put(vm.allocator, "StandardError", value.Value.initObj(&std_class.obj));
     _ = vm.pop();
 
@@ -90,7 +90,7 @@ pub fn registerExceptions(vm: *VM) !void {
     for (error_types) |err_name| {
         const name_val = try vm.allocateStringTakeOwnership(try vm.allocator.dupe(u8, err_name));
         vm.push(name_val);
-        const err_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @ptrCast(name_val.asObj())), std_class);
+        const err_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))), std_class);
         try vm.globals.put(vm.allocator, err_name, value.Value.initObj(&err_class.obj));
         _ = vm.pop();
     }

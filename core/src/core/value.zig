@@ -34,13 +34,9 @@ pub const ObjType = enum(u8) {
 };
 
 /// The Base Header for ALL heap-allocated objects.
-/// Every complex object must start with this struct so the GC can trace it.
-/// Note: ObjGeometry uses this header to fit in the Value union,
-/// but explicitly leaves `next` as null so the GC ignores it.
 pub const Obj = struct {
     obj_type: ObjType,
     is_marked: bool,
-    next: ?*Obj, // Tracing GC header (ObjGeometry leaves this null)
 };
 
 /// A heap-allocated String Object.
@@ -228,8 +224,8 @@ pub const Value = packed struct {
     }
 
     pub inline fn initObj(obj: *Obj) Value {
-        // Embed the 48-bit pointer into the 52-bit mantissa space
-        return .{ .val = TAG_OBJ | @intFromPtr(obj) };
+        // Embed the pointer (32-bit in WASM, 48-bit on Desktop) into the 52-bit mantissa space
+        return .{ .val = TAG_OBJ | @as(u64, @intFromPtr(obj)) };
     }
 
     pub inline fn initGeometry(geom_obj: *ObjGeometry) Value {
@@ -280,7 +276,8 @@ pub const Value = packed struct {
         std.debug.assert(self.isObject());
         // Mask out the TAG_OBJ bits to reveal the raw memory pointer
         const ptr_val = self.val & ~TAG_OBJ;
-        return @ptrFromInt(ptr_val);
+        // Explicitly cast to `usize` so WASM32 safely accepts it
+        return @ptrFromInt(@as(usize, @intCast(ptr_val)));
     }
 
     // --- Sub-type Checkers (Convenience) ---

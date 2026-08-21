@@ -58,7 +58,6 @@ test "Value: NaN-tagging packs and unpacks Object pointers losslessly" {
     var dummy_obj = value.Obj{
         .obj_type = .string,
         .is_marked = false,
-        .next = null,
     };
 
     // Pack the pointer into the 8-byte Value
