@@ -78,18 +78,31 @@ pub const VM = struct {
     const STACK_GROW_FACTOR: usize = 2;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
-        const initial_stack = try allocator.alloc(value.Value, limits.INITIAL_STACK_CAPACITY);
+        // Pre-allocate a massive 64K stack (512KB of contiguous memory)
+        const initial_stack = try allocator.alloc(value.Value, 65536);
+
+        // Pre-allocate 4,096 frames (~128KB of contiguous memory)
+        var frames = std.ArrayListUnmanaged(CallFrame).empty;
+        try frames.ensureTotalCapacity(allocator, 4096);
+
+        // Pre-allocate rescue frames
+        var rescue_frames = std.ArrayListUnmanaged(RescueFrame).empty;
+        try rescue_frames.ensureTotalCapacity(allocator, 256);
 
         return .{
             .allocator = allocator,
             .io = io,
             .stack = initial_stack,
             .stack_top = 0,
-            .frames = .empty,
+            .frames = frames,
             .gc = memory.GC.init(allocator),
             .globals = .empty,
             .strings = .empty,
             .symbols = .empty,
+            .open_upvalues = null,
+            .rescue_frames = rescue_frames,
+            .param_registry = .{},
+            .host = .{},
             .dag_builder = dag.DAGBuilder.init(allocator),
             .mute_errors = false,
             .instruction_count = 0,

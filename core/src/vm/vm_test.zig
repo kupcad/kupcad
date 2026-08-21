@@ -63,14 +63,15 @@ test "VM: End-to-end compilation and execution of math expression" {
     try testing.expectEqual(@as(f64, -30.0), final_value.asNumber());
 }
 
-test "VM: Dynamic stack growth handles thousands of pushes without overflow" {
+test "VM: Dynamic stack growth handles pushes beyond initial 64K pre-allocation" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    const push_count: usize = 5000;
-    try vm.ensureStackCapacity(push_count);
+    // Push past the 65536 initial buffer size to prove ensureStackCapacity still reallocates!
+    const push_count: usize = 70_000;
 
+    // We don't call ensureStackCapacity here, we let the `push` method trigger it dynamically!
     for (0..push_count) |i| {
         vm.push(value.Value.initNumber(@floatFromInt(i)));
     }
