@@ -1,6 +1,7 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
 
 pub fn arrayLength(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -49,9 +50,11 @@ pub fn arraySlice(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
     const start_idx = @as(usize, @intFromFloat(start_val.asNumber()));
     const length = @as(usize, @intFromFloat(len_val.asNumber()));
 
+    var scope = HandleScope.init(ctx.vm);
+    defer scope.deinit(); // Bulletproof cleanup
+
     const new_arr = try ctx.vm.gc.allocateArray(ctx.vm);
     ctx.vm.push(value.Value.initObj(&new_arr.obj));
-    defer _ = ctx.vm.pop();
     try new_arr.items.ensureTotalCapacity(ctx.vm.allocator, length);
 
     var idx: usize = 0;
@@ -107,9 +110,11 @@ pub fn arrayMap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
 
     const closure = closure_val.asClosure();
 
+    var scope = HandleScope.init(ctx.vm);
+    defer scope.deinit(); // Bulletproof cleanup
+
     const new_arr = try ctx.vm.gc.allocateArray(ctx.vm);
     ctx.vm.push(value.Value.initObj(&new_arr.obj));
-    defer _ = ctx.vm.pop();
     try new_arr.items.ensureTotalCapacity(ctx.vm.allocator, ctx.arr.items.items.len);
 
     for (ctx.arr.items.items) |item| {
@@ -160,9 +165,11 @@ pub fn arrayFilter(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     if (!closure_val.isClosure()) return error.RuntimeError;
     const closure = closure_val.asClosure();
 
+    var scope = HandleScope.init(ctx.vm);
+    defer scope.deinit(); // Bulletproof cleanup
+
     const new_arr = try ctx.vm.gc.allocateArray(ctx.vm);
     ctx.vm.push(value.Value.initObj(&new_arr.obj));
-    defer _ = ctx.vm.pop();
 
     for (ctx.arr.items.items) |item| {
         const res = try ctx.vm.callClosureSync(closure, &.{item});
@@ -206,9 +213,11 @@ pub fn arrayContains(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value)
 
 pub fn arrayFlatten(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const ctx = try common.unwrapArray(vm_opaque, arg_count, 0, args);
+    var scope = HandleScope.init(ctx.vm);
+    defer scope.deinit(); // Bulletproof cleanup
+
     const new_arr = try ctx.vm.gc.allocateArray(ctx.vm);
     ctx.vm.push(value.Value.initObj(&new_arr.obj));
-    defer _ = ctx.vm.pop();
 
     for (ctx.arr.items.items) |item| {
         if (item.isObject() and item.asObj().obj_type == .array) {

@@ -70,8 +70,10 @@ pub const VM = struct {
     // safety for infinite loops
     instruction_count: usize,
     instruction_limit: usize,
-
+    // max call stack
     max_call_frames: usize = 100_000,
+    /// Set to true during tests to brutally expose unrooted allocations
+    zealous_gc: bool = false,
 
     const STACK_GROW_FACTOR: usize = 2;
 
@@ -225,6 +227,13 @@ pub const VM = struct {
                     self.runtimeError("Runtime Error: Execution limit exceeded (Infinite loop detected).\n", .{});
                     return .execution_limit_exceeded;
                 }
+            }
+
+            if (self.zealous_gc) {
+                // Run a full Mark-and-Sweep before executing the opcode.
+                // If ANY native method forgot to root a temporary object, it will be
+                // swept right now, and the next instruction will immediately crash.
+                self.gc.collectGarbage(self, false);
             }
 
             var frame = &self.frames.items[self.frames.items.len - 1];

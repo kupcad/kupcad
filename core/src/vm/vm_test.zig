@@ -10,6 +10,20 @@ const Compiler = @import("../compiler/compiler.zig").Compiler;
 const Document = @import("../core/document.zig").Document;
 const VM = @import("vm.zig").VM;
 
+/// Runs a chunk and enforces strict stack equilibrium checks
+fn executeAndAssertStack(vm: *VM, chunk_ptr: *chunk.Chunk, expected_stack_top: usize) !value.Value {
+    // Turn on the brutal GC mode for tests
+    vm.zealous_gc = true;
+
+    const result = vm.interpret(chunk_ptr);
+    try testing.expectEqual(.ok, result);
+
+    // Catch stack leaks immediately
+    try testing.expectEqual(expected_stack_top, vm.stack_top);
+
+    return if (vm.stack_top > 0) vm.stack[vm.stack_top - 1] else value.Value.initNil();
+}
+
 test "VM: End-to-end compilation and execution of math expression" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
