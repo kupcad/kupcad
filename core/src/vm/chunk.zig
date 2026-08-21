@@ -170,14 +170,31 @@ pub const Chunk = struct {
         return self.constants.items.len - 1; // Return usize
     }
 
-    /// O(log N) binary search could be used here, but linear is fine for error traces
+    /// O(log N) binary search for lightning-fast stack traces
     pub fn getOffset(self: *const Chunk, target_ip: usize) u32 {
-        var last_offset: u32 = 0;
-        for (self.debug_spans.items) |span| {
-            if (span.ip > target_ip) break;
-            last_offset = span.source_offset;
+        const spans = self.debug_spans.items;
+        if (spans.len == 0) return 0;
+
+        var left: usize = 0;
+        var right: usize = spans.len - 1;
+        var result_offset: u32 = 0;
+
+        while (left <= right) {
+            const mid = left + (right - left) / 2;
+            const span = spans[mid];
+
+            if (span.ip <= target_ip) {
+                // This span is valid, but there might be a closer one to the right
+                result_offset = span.source_offset;
+                left = mid + 1;
+            } else {
+                // This span is too far ahead, search the left half
+                if (mid == 0) break; // Prevent usize underflow
+                right = mid - 1;
+            }
         }
-        return last_offset;
+
+        return result_offset;
     }
 
     pub fn addInlineCache(self: *Chunk, allocator: std.mem.Allocator) !u16 {

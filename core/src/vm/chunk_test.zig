@@ -69,3 +69,34 @@ test "Chunk: DebugSpan RLE compression groups identical source offsets" {
     try testing.expectEqual(@as(u32, 10), c.getOffset(2)); // Still inside the first span
     try testing.expectEqual(@as(u32, 25), c.getOffset(3)); // Crossed into the second span
 }
+
+test "Chunk: getOffset binary search finds exact and floor matches" {
+    var c = chunk.Chunk.init();
+    defer c.free(testing.allocator);
+
+    // 1. Edge Case: Empty chunk should safely return 0
+    try testing.expectEqual(@as(u32, 0), c.getOffset(10));
+
+    // Manually populate debug_spans to test the binary search logic
+    try c.debug_spans.append(testing.allocator, .{ .ip = 0, .source_offset = 100 });
+    try c.debug_spans.append(testing.allocator, .{ .ip = 5, .source_offset = 110 });
+    try c.debug_spans.append(testing.allocator, .{ .ip = 10, .source_offset = 120 });
+    try c.debug_spans.append(testing.allocator, .{ .ip = 20, .source_offset = 130 });
+
+    // 2. Exact matches
+    try testing.expectEqual(@as(u32, 100), c.getOffset(0));
+    try testing.expectEqual(@as(u32, 110), c.getOffset(5));
+    try testing.expectEqual(@as(u32, 120), c.getOffset(10));
+    try testing.expectEqual(@as(u32, 130), c.getOffset(20));
+
+    // 3. Floor matches (in-between IPs)
+    // If the VM crashes at IP 3, it should trace back to the instruction that started at IP 0
+    try testing.expectEqual(@as(u32, 100), c.getOffset(3));
+    try testing.expectEqual(@as(u32, 110), c.getOffset(9));
+    try testing.expectEqual(@as(u32, 120), c.getOffset(19));
+
+    // 4. Past the end bounds
+    // If the VM looks for an IP past the end of the debug spans, it should yield the last known offset
+    try testing.expectEqual(@as(u32, 130), c.getOffset(50));
+    try testing.expectEqual(@as(u32, 130), c.getOffset(9999));
+}

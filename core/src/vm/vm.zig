@@ -1435,8 +1435,14 @@ pub const VM = struct {
         };
         switch (op) {
             .op_multiply => self.push(value.Value.initNumber(nums[0] * nums[1])),
-            .op_divide => self.push(value.Value.initNumber(nums[0] / nums[1])),
-            .op_modulo => self.push(value.Value.initNumber(@mod(nums[0], nums[1]))),
+            .op_divide => {
+                if (nums[1] == 0.0) return self.throwDynamicError("ZeroDivisionError: Division by zero.\n", .{});
+                self.push(value.Value.initNumber(nums[0] / nums[1]));
+            },
+            .op_modulo => {
+                if (nums[1] == 0.0) return self.throwDynamicError("ZeroDivisionError: Modulo by zero.\n", .{});
+                self.push(value.Value.initNumber(@mod(nums[0], nums[1])));
+            },
             .op_exponent => self.push(value.Value.initNumber(std.math.pow(f64, nums[0], nums[1]))),
             .op_less => self.push(value.Value.initBool(nums[0] < nums[1])),
             .op_greater => self.push(value.Value.initBool(nums[0] > nums[1])),
@@ -1739,6 +1745,10 @@ pub const VM = struct {
 
         // Shift any trailing arguments down to close the gap left by the packed arguments
         if (splat_size != 1) {
+            // Ensure we never slice past the VM's active stack top
+            std.debug.assert(start_idx + 1 + trailing_arity <= self.stack.len);
+            std.debug.assert(start_idx + splat_size + trailing_arity <= self.stack.len);
+
             const dest = self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity];
             const src = self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity];
             if (@intFromPtr(dest.ptr) > @intFromPtr(src.ptr)) {
@@ -1800,6 +1810,12 @@ pub const VM = struct {
     inline fn resolveArrayIndex(self: *VM, arr_len: usize, index_val: value.Value) !usize {
         _ = self;
         const num_idx = index_val.asNumber();
+
+        // Prevent floats like `1.5` or `NaN` from succeeding
+        if (std.math.isNan(num_idx) or std.math.trunc(num_idx) != num_idx) {
+            return error.RuntimeError;
+        }
+
         if (num_idx < 0) {
             const offset = @as(usize, @intFromFloat(-num_idx));
             if (offset == 0 or offset > arr_len) return error.RuntimeError;
@@ -1814,11 +1830,13 @@ pub const VM = struct {
     inline fn readOperand(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame, is_wide: bool) u16 {
         _ = self;
         if (is_wide) {
+            std.debug.assert(frame.ip + 2 <= exec_chunk.code.items.len); // Hardened check
             const high = @as(u16, exec_chunk.code.items[frame.ip]);
             const low = @as(u16, exec_chunk.code.items[frame.ip + 1]);
             frame.ip += 2;
             return (high << 8) | low;
         } else {
+            std.debug.assert(frame.ip + 1 <= exec_chunk.code.items.len); // Hardened check
             const idx = exec_chunk.code.items[frame.ip];
             frame.ip += 1;
             return idx;
@@ -1827,6 +1845,7 @@ pub const VM = struct {
 
     inline fn readJumpOffset(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) usize {
         _ = self;
+        std.debug.assert(frame.ip + 4 <= exec_chunk.code.items.len); // Hardened check
         const b3 = @as(usize, exec_chunk.code.items[frame.ip]);
         const b2 = @as(usize, exec_chunk.code.items[frame.ip + 1]);
         const b1 = @as(usize, exec_chunk.code.items[frame.ip + 2]);
@@ -2098,6 +2117,7 @@ pub const VM = struct {
 
     inline fn readInlineCache(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.InlineCache {
         _ = self;
+        std.debug.assert(frame.ip + 2 <= exec_chunk.code.items.len); // Hardened check
         const ic_high = @as(u16, exec_chunk.code.items[frame.ip]);
         const ic_low = @as(u16, exec_chunk.code.items[frame.ip + 1]);
         frame.ip += 2;
