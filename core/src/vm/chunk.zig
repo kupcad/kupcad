@@ -120,6 +120,12 @@ pub const OpCode = enum(u8) {
     op_return,
 };
 
+pub const InlineCache = struct {
+    class: ?*value.ObjClass = null,
+    offset: usize = 0,
+    cached_value: value.Value = value.Value.initNil(),
+};
+
 pub const DebugSpan = struct {
     ip: u32,
     source_offset: u32,
@@ -127,6 +133,7 @@ pub const DebugSpan = struct {
 
 pub const Chunk = struct {
     code: std.ArrayListUnmanaged(u8),
+    inline_caches: std.ArrayListUnmanaged(InlineCache),
     debug_spans: std.ArrayListUnmanaged(DebugSpan),
     constants: value.ValueArray,
     max_stack_slots: usize,
@@ -135,6 +142,7 @@ pub const Chunk = struct {
     pub fn init() Chunk {
         return .{
             .code = .empty,
+            .inline_caches = .empty,
             .debug_spans = .empty,
             .constants = .empty,
             .max_stack_slots = 0,
@@ -172,8 +180,16 @@ pub const Chunk = struct {
         return last_offset;
     }
 
+    pub fn addInlineCache(self: *Chunk, allocator: std.mem.Allocator) !u16 {
+        const idx = self.inline_caches.items.len;
+        if (idx > std.math.maxInt(u16)) return error.OutOfMemory;
+        try self.inline_caches.append(allocator, .{});
+        return @intCast(idx);
+    }
+
     pub fn free(self: *Chunk, allocator: std.mem.Allocator) void {
         self.code.deinit(allocator);
+        self.inline_caches.deinit(allocator);
         self.debug_spans.deinit(allocator);
         self.constants.deinit(allocator);
         self.* = init();

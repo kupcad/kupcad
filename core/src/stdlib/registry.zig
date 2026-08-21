@@ -62,7 +62,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // Set up Math module (as an instance of a pseudo-class to support property access)
     const math_class = try defineBuiltinClass(vm, "Math", null);
     const math_inst = try vm.gc.allocateInstance(vm, math_class);
-    try vm.setInstanceField(math_inst, "PI", value.Value.initNumber(std.math.pi));
+    try vm.setInstanceField(math_inst, "PI", value.Value.initNumber(std.math.pi), null);
     try vm.globals.put(vm.allocator, "Math", value.Value.initObj(&math_inst.obj));
 
     // Initialize the empty Global Parameters Map for CLI injection

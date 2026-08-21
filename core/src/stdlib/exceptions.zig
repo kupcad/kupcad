@@ -20,7 +20,7 @@ fn exceptionInit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
         msg = try vm.allocateString(instance.class.name.chars);
     }
 
-    try vm.setInstanceField(instance, "message", msg);
+    try vm.setInstanceField(instance, "message", msg, null);
     return receiver;
 }
 

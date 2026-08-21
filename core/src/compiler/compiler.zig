@@ -351,6 +351,7 @@ pub const Compiler = struct {
                         try self.emitOp(.op_dup); // Stack: [self, self]
                         const name_idx = try self.makeStringConstant(name_str);
                         try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+                        try self.emitInlineCacheIndex();
 
                         try self.compileNode(assign_payload.value);
                         switch (op) {
@@ -366,6 +367,7 @@ pub const Compiler = struct {
 
                     const name_idx = try self.makeStringConstant(name_str);
                     try self.emitOpWithOperand(.op_set_property, .op_set_property_wide, name_idx);
+                    try self.emitInlineCacheIndex();
                     return;
                 }
 
@@ -437,6 +439,7 @@ pub const Compiler = struct {
                 for (path[1..]) |segment_id| {
                     const seg_idx = try self.makeStringConstant(self.tree.getString(segment_id));
                     try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, seg_idx);
+                    try self.emitInlineCacheIndex();
                 }
             },
             .import_stmt => {
@@ -695,6 +698,7 @@ pub const Compiler = struct {
 
                     // Compound assignments must read properties via op_get_property, not op_invoke
                     try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+                    try self.emitInlineCacheIndex();
                     // Stack is now: [target, old_val]
 
                     try self.compileNode(pa.value); // Stack: [target, old_val, rhs_val]
@@ -713,6 +717,7 @@ pub const Compiler = struct {
 
                 // op_set_property consumes both target and new_val, then pushes new_val back
                 try self.emitOpWithOperand(.op_set_property, .op_set_property_wide, name_idx);
+                try self.emitInlineCacheIndex();
             },
             .defined_expr => {
                 const target_node = self.tree.getNode(node_idx).?;
@@ -803,6 +808,12 @@ pub const Compiler = struct {
     fn simulatePop(self: *Compiler, count: usize) void {
         std.debug.assert(self.current_stack_depth >= count);
         self.current_stack_depth -= count;
+    }
+
+    fn emitInlineCacheIndex(self: *Compiler) CompileError!void {
+        const ic_idx = self.current_chunk.addInlineCache(self.allocator) catch return error.OutOfMemory;
+        try self.emitByte(@intCast((ic_idx >> 8) & 0xff));
+        try self.emitByte(@intCast(ic_idx & 0xff));
     }
 
     fn emitByte(self: *Compiler, byte: u8) CompileError!void {
@@ -1615,6 +1626,9 @@ pub const Compiler = struct {
             const name_idx = try self.makeStringConstant(func_name);
             try self.emitOpWithOperand(.op_invoke, .op_invoke_wide, name_idx);
             try self.emitByte(@intCast(actual_arg_count));
+
+            try self.emitInlineCacheIndex();
+
             if (mc.is_safe) self.patchJump(safe_jump);
         }
 
@@ -1702,6 +1716,7 @@ pub const Compiler = struct {
             try self.emitPushSelf();
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+            try self.emitInlineCacheIndex();
         } else if (self.resolveLocal(name_id)) |local_slot| {
             try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, local_slot);
         } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {

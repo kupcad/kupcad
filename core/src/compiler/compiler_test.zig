@@ -892,6 +892,7 @@ test "Compiler: compiles compound property assignment (obj.x += 10)" {
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
@@ -903,19 +904,22 @@ test "Compiler: compiles compound property assignment (obj.x += 10)" {
 
     // Expected Bytecode:
     // 0: op_get_global ("obj")
-    // 2: op_dup                <-- Duplicates the target pointer to use for the setter later!
-    // 3: op_get_property ("x") <-- Consumes one of the target pointers to get current value
-    // 5: op_constant (10)
-    // 7: op_add
-    // 8: op_set_property ("x") <-- Consumes the duplicated target pointer and the new value
-    // 10: op_return
-
+    // 2: op_dup
+    // 3: op_get_property ("x")
+    // 5: IC High               <-- Inline Cache!
+    // 6: IC Low                <-- Inline Cache!
+    // 7: op_constant (10)
+    // 9: op_add
+    // 10: op_set_property ("x")
+    // 12: IC High              <-- Inline Cache!
+    // 13: IC Low               <-- Inline Cache!
+    // 14: op_return
     try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
     try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
     try testing.expectEqual(chunk.OpCode.op_get_property, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[3])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
-    try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
-    try testing.expectEqual(chunk.OpCode.op_set_property, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[8])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
+    try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[9])));
+    try testing.expectEqual(chunk.OpCode.op_set_property, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[10])));
 }
 
 test "Compiler: compiles compound index assignment (arr[1] *= 2)" {

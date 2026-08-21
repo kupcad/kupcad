@@ -317,22 +317,15 @@ pub const VM = struct {
                 },
                 .op_get_property, .op_get_property_wide => {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_property_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", exec_chunk.constants.items[name_idx].asObj()))).chars;
 
+                    const ic = self.readInlineCache(exec_chunk, frame);
                     const receiver = self.stack[self.stack_top - 1];
 
                     if (receiver.isInstance()) {
-                        const instance = receiver.asInstance();
-                        // Query the class layout for the O(1) array index
-                        if (instance.class.instance_layout.get(name_str)) |idx| {
-                            self.stack_top -= 1; // Pop receiver
-                            // Ensure the instance array actually has it initialized
-                            if (idx < instance.fields.items.len) {
-                                self.push(instance.fields.items[idx]);
-                            } else {
-                                self.push(value.Value.initNil());
-                            }
+                        self.stack_top -= 1; // Pop receiver
+                        if (self.getPropertyCached(receiver.asInstance(), name_str, ic)) |val| {
+                            self.push(val);
                         } else {
                             if (self.throwDynamicError("Runtime Error: Undefined property '{s}'.", .{name_str}) != .ok) return .runtime_error;
                             continue;
@@ -782,19 +775,16 @@ pub const VM = struct {
                 },
                 .op_set_property, .op_set_property_wide => {
                     const val = self.pop();
-
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_property_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", exec_chunk.constants.items[name_idx].asObj()))).chars;
 
+                    const ic = self.readInlineCache(exec_chunk, frame);
                     const receiver = self.pop();
 
                     if (receiver.isInstance()) {
-                        const instance = receiver.asInstance();
-                        self.setInstanceField(instance, name_str, val) catch return .runtime_error;
+                        self.setInstanceField(receiver.asInstance(), name_str, val, ic) catch return .runtime_error;
                         self.push(val);
                     } else {
-                        // Safely allocate the error, push it to the stack, and let the VM unwind to the rescue block
                         if (self.throwDynamicError("Runtime Error: Only instances have properties.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
@@ -1463,6 +1453,9 @@ pub const VM = struct {
         // Prevent usize underflow if stack is corrupted
         std.debug.assert(self.stack_top > arg_count);
 
+        // Read IC
+        const ic = self.readInlineCache(exec_chunk, frame);
+
         const method_name_val = exec_chunk.constants.items[method_name_idx];
         const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
 
@@ -1554,7 +1547,7 @@ pub const VM = struct {
                 if (self.findClassMethod(receiver.asClass(), query_name) != null) match = true;
                 if (!match and std.mem.eql(u8, query_name, "new")) match = true;
             } else if (class_obj) |c| {
-                if (self.findMethod(c, query_name) != null) match = true;
+                if (self.findMethodCached(c, query_name, ic) != null) match = true;
             }
 
             if (!match and receiver.isInstance()) {
@@ -1954,18 +1947,28 @@ pub const VM = struct {
         return self.valuesEqual(case_val, test_val);
     }
 
-    pub fn setInstanceField(self: *VM, instance: *value.ObjInstance, name: []const u8, val: value.Value) !void {
+    pub fn setInstanceField(self: *VM, instance: *value.ObjInstance, name: []const u8, val: value.Value, ic: ?*chunk.InlineCache) !void {
         var idx: usize = 0;
 
-        // Look up or create the field index on the shared Class layout
-        if (instance.class.instance_layout.get(name)) |existing_idx| {
-            idx = existing_idx;
-        } else {
-            idx = instance.class.instance_layout.count();
-            try instance.class.instance_layout.put(self.allocator, name, idx);
+        // Fast Path
+        if (ic != null and ic.?.class == instance.class) {
+            idx = ic.?.offset;
+        }
+        // Slow Path
+        else {
+            if (instance.class.instance_layout.get(name)) |existing_idx| {
+                idx = existing_idx;
+            } else {
+                idx = instance.class.instance_layout.count();
+                try instance.class.instance_layout.put(self.allocator, name, idx);
+            }
+            if (ic) |cache| {
+                cache.class = instance.class;
+                cache.offset = idx;
+            }
         }
 
-        // Ensure the instance's flat array is large enough, padding skipped indices with nil
+        // Ensure the instance's flat array is large enough
         if (idx >= instance.fields.items.len) {
             const old_len = instance.fields.items.len;
             try instance.fields.resize(self.allocator, idx + 1);
@@ -2016,7 +2019,7 @@ pub const VM = struct {
                     if (self.allocateString(msg)) |str_val| {
                         // Protect instance from GC during field assignment
                         self.push(value.Value.initObj(&inst.obj));
-                        self.setInstanceField(inst, "message", str_val) catch {};
+                        self.setInstanceField(inst, "message", str_val, null) catch {};
                         _ = self.pop();
 
                         self.push(value.Value.initObj(&inst.obj));
@@ -2071,5 +2074,54 @@ pub const VM = struct {
                 self.reportError("  at {s} (offset {d})\n", .{ func_name, source_offset });
             }
         }
+    }
+
+    // --- Inline Caching Helpers ---
+
+    inline fn readInlineCache(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.InlineCache {
+        _ = self;
+        const ic_high = @as(u16, exec_chunk.code.items[frame.ip]);
+        const ic_low = @as(u16, exec_chunk.code.items[frame.ip + 1]);
+        frame.ip += 2;
+        const ic_idx = (ic_high << 8) | ic_low;
+        return &exec_chunk.inline_caches.items[ic_idx];
+    }
+
+    inline fn getPropertyCached(self: *VM, instance: *value.ObjInstance, name_str: []const u8, ic: *chunk.InlineCache) ?value.Value {
+        _ = self;
+        var offset: usize = 0;
+
+        // Fast Path (O(1) Array Read)
+        if (ic.class == instance.class) {
+            offset = ic.offset;
+        }
+        // Slow Path (Hash Map Lookup)
+        else if (instance.class.instance_layout.get(name_str)) |idx| {
+            ic.class = instance.class;
+            ic.offset = idx;
+            offset = idx;
+        } else {
+            return null; // Undefined property
+        }
+
+        if (offset < instance.fields.items.len) {
+            return instance.fields.items[offset];
+        } else {
+            return value.Value.initNil();
+        }
+    }
+
+    inline fn findMethodCached(self: *VM, class: *value.ObjClass, name: []const u8, ic: *chunk.InlineCache) ?value.Value {
+        // Fast Path
+        if (ic.class == class) {
+            if (!ic.cached_value.isNil()) return ic.cached_value;
+        }
+        // Slow Path (Traverse inheritance hierarchy)
+        if (self.findMethod(class, name)) |method_val| {
+            ic.class = class;
+            ic.cached_value = method_val;
+            return method_val;
+        }
+        return null;
     }
 };

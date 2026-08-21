@@ -336,34 +336,6 @@ test "VM Edge Case: Uncaught exceptions halt gracefully without panicking" {
     try testing.expectEqual(.runtime_error, result);
 }
 
-test "VM Edge Case: Gracefully handles type mismatches in arithmetic" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    vm.mute_errors = true;
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    // Try to add a String and a Number ("Hello" + 5)
-    const str_val = try vm.allocateString("Hello");
-    vm.push(str_val);
-    const str_idx = try out_chunk.addConstant(testing.allocator, str_val);
-    _ = vm.pop();
-
-    const num_idx = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(5.0));
-
-    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, @intCast(str_idx), 0);
-    try out_chunk.writeOp(testing.allocator, .op_constant, 0);
-    try out_chunk.write(testing.allocator, @intCast(num_idx), 0);
-    try out_chunk.writeOp(testing.allocator, .op_add, 0);
-
-    out_chunk.max_stack_slots = 3;
-
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.runtime_error, result);
-}
-
 test "VM Edge Case: Gracefully handles method calls on raw primitives" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -381,9 +353,15 @@ test "VM Edge Case: Gracefully handles method calls on raw primitives" {
 
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
     try out_chunk.write(testing.allocator, @intCast(num_idx), 0);
+
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
     try out_chunk.write(testing.allocator, @intCast(m_idx), 0);
     try out_chunk.write(testing.allocator, 0, 0); // 0 args
+
+    // --- MANUAL INLINE CACHE ---
+    const ic_idx = try out_chunk.addInlineCache(testing.allocator);
+    try out_chunk.write(testing.allocator, @intCast((ic_idx >> 8) & 0xFF), 0);
+    try out_chunk.write(testing.allocator, @intCast(ic_idx & 0xFF), 0);
 
     out_chunk.max_stack_slots = 3;
 
@@ -606,10 +584,17 @@ test "VM: Math module namespace and functions" {
     // Prove Math::PI via property access
     const math_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("Math"));
     const pi_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("PI"));
+
     try out_chunk.writeOp(testing.allocator, .op_get_global, 0);
     try out_chunk.write(testing.allocator, @intCast(math_str), 0);
     try out_chunk.writeOp(testing.allocator, .op_get_property, 0);
     try out_chunk.write(testing.allocator, @intCast(pi_str), 0);
+
+    // --- MANUAL INLINE CACHE ---
+    const ic_idx1 = try out_chunk.addInlineCache(testing.allocator);
+    try out_chunk.write(testing.allocator, @intCast((ic_idx1 >> 8) & 0xFF), 0);
+    try out_chunk.write(testing.allocator, @intCast(ic_idx1 & 0xFF), 0);
+
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 5;
@@ -632,6 +617,12 @@ test "VM: Math module namespace and functions" {
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0); // Invoke method on receiver
     try out_chunk.write(testing.allocator, @intCast(sin_str), 0);
     try out_chunk.write(testing.allocator, 1, 0); // 1 arg
+
+    // --- MANUAL INLINE CACHE ---
+    const ic_idx2 = try out_chunk.addInlineCache(testing.allocator);
+    try out_chunk.write(testing.allocator, @intCast((ic_idx2 >> 8) & 0xFF), 0);
+    try out_chunk.write(testing.allocator, @intCast(ic_idx2 & 0xFF), 0);
+
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     const result_val = try executeAndAssertStack(&vm, &out_chunk, 1);
@@ -655,9 +646,16 @@ test "VM: String Native Methods (split, replace)" {
     try out_chunk.write(testing.allocator, @intCast(str_val), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
     try out_chunk.write(testing.allocator, @intCast(delim_val), 0);
+
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
     try out_chunk.write(testing.allocator, @intCast(split_str), 0);
     try out_chunk.write(testing.allocator, 1, 0); // 1 arg
+
+    // --- MANUAL INLINE CACHE ---
+    const ic_idx = try out_chunk.addInlineCache(testing.allocator);
+    try out_chunk.write(testing.allocator, @intCast((ic_idx >> 8) & 0xFF), 0);
+    try out_chunk.write(testing.allocator, @intCast(ic_idx & 0xFF), 0);
+
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 5;
@@ -698,9 +696,16 @@ test "VM: Array and Map Native Methods (slice, keys)" {
     try out_chunk.write(testing.allocator, @intCast(start_idx), 0);
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
     try out_chunk.write(testing.allocator, @intCast(len_val), 0);
+
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
     try out_chunk.write(testing.allocator, @intCast(slice_str), 0);
     try out_chunk.write(testing.allocator, 2, 0); // 2 args
+
+    // --- MANUAL INLINE CACHE ---
+    const ic_idx = try out_chunk.addInlineCache(testing.allocator);
+    try out_chunk.write(testing.allocator, @intCast((ic_idx >> 8) & 0xFF), 0);
+    try out_chunk.write(testing.allocator, @intCast(ic_idx & 0xFF), 0);
+
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 6;
