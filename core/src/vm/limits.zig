@@ -11,7 +11,6 @@ pub const MAX_HASH_ENTRIES: usize = MAX_CONSTANTS / 2; // 32_767
 
 // Runtime Execution Limits
 pub const INITIAL_STACK_CAPACITY: usize = 1024;
-pub const MAX_CALL_FRAMES: usize = 4096; // Safely expanded for deep recursive modeling!
 // Compile-Time Platform Detection:
 // WASM -> 100M Gas Cap to protect Web Worker UI threads
 // Native Desktop -> 0 (Unlimited gas for heavy local batch modeling)

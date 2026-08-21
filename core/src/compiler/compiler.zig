@@ -820,6 +820,11 @@ pub const Compiler = struct {
     }
 
     fn makeConstant(self: *Compiler, val: value.Value) CompileError!usize {
+        // Linear scan over constants to reuse existing matching values
+        for (self.current_chunk.constants.items, 0..) |existing, i| {
+            if (self.vm.valuesEqual(existing, val)) return i;
+        }
+
         const index = self.current_chunk.addConstant(self.allocator, val) catch return error.OutOfMemory;
         if (index > limits.MAX_CONSTANTS) return error.TooManyConstants;
         return index;
@@ -1111,11 +1116,11 @@ pub const Compiler = struct {
             if (self.tree.getNode(elem).?.tag == .splat_expr) has_splat = true;
         }
 
-        if (!has_splat) {
-            for (elements) |elem| try self.compileNode(elem);
+        // Fallback to Dynamic Build Mode if array contains splats OR exceeds 65,535 elements
+        const use_static_build = !has_splat and elements.len <= limits.MAX_CONSTANTS;
 
-            // Allow up to 65_535 elements in an array
-            if (elements.len > limits.MAX_CONSTANTS) return error.TooManyConstants;
+        if (use_static_build) {
+            for (elements) |elem| try self.compileNode(elem);
 
             if (elements.len <= limits.MAX_SHORT_CONSTANTS) {
                 try self.emitOp(.op_build_array);
@@ -1129,7 +1134,7 @@ pub const Compiler = struct {
             self.simulatePop(elements.len);
             self.simulatePush(1);
         } else {
-            // Dynamic Build Mode
+            // Dynamic Build Mode (Handles splats and point clouds/arrays exceeding 65,535 items)
             try self.emitOp(.op_build_array);
             try self.emitByte(0); // Create empty array
             self.simulatePush(1);

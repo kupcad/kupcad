@@ -71,6 +71,8 @@ pub const VM = struct {
     instruction_count: usize,
     instruction_limit: usize,
 
+    max_call_frames: usize = 100_000,
+
     const STACK_GROW_FACTOR: usize = 2;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
@@ -174,7 +176,8 @@ pub const VM = struct {
     pub fn interpret(self: *VM, execution_chunk: *chunk.Chunk) InterpretResult {
         self.instruction_count = 0; // Reset gas on fresh run
         self.frames.clearRetainingCapacity();
-        self.frames.ensureTotalCapacity(self.allocator, limits.MAX_CALL_FRAMES) catch return .runtime_error;
+        // Start small (64 initial frames) and let it grow dynamically
+        self.frames.ensureTotalCapacity(self.allocator, 64) catch return .runtime_error;
         self.stack_top = 0;
 
         const func = self.gc.allocateFunction(self) catch return .runtime_error;
@@ -377,6 +380,7 @@ pub const VM = struct {
                 },
                 .op_set_index => {
                     const val = self.pop();
+                    defer self.releaseValue(val);
                     const index = self.pop();
                     defer self.releaseValue(index);
                     const target = self.pop();
@@ -1266,10 +1270,11 @@ pub const VM = struct {
     }
 
     pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize, is_constructor: bool) !void {
-        if (self.frames.items.len >= limits.MAX_CALL_FRAMES) {
-            self.runtimeError("Runtime Error: Call stack overflow.\n", .{});
+        if (self.frames.items.len >= self.max_call_frames) {
+            self.runtimeError("Runtime Error: Call stack overflow (exceeded max frame depth of {d}).\n", .{self.max_call_frames});
             return error.RuntimeError;
         }
+        try self.frames.ensureUnusedCapacity(self.allocator, 1);
 
         var provided_args = arg_count;
         var has_block = false;
@@ -1365,10 +1370,11 @@ pub const VM = struct {
     }
 
     pub fn callClosureSync(self: *VM, closure: *value.ObjClosure, args: []const value.Value) !value.Value {
-        if (self.frames.items.len >= limits.MAX_CALL_FRAMES) {
-            self.runtimeError("Runtime Error: Call stack overflow.\n", .{});
+        if (self.frames.items.len >= self.max_call_frames) {
+            self.runtimeError("Runtime Error: Call stack overflow (exceeded max frame depth of {d}).\n", .{self.max_call_frames});
             return error.RuntimeError;
         }
+        try self.frames.ensureUnusedCapacity(self.allocator, 1);
 
         const target_depth = self.frames.items.len;
         var provided_args = args.len;
@@ -1942,6 +1948,7 @@ pub const VM = struct {
 
     inline fn executeThrow(self: *VM) InterpretResult {
         const err_val = self.pop();
+        defer self.releaseValue(err_val);
         if (self.rescue_frames.items.len == 0) {
             self.reportError("\n[Uncaught Exception] ", .{});
 

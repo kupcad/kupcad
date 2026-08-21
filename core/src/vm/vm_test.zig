@@ -5178,3 +5178,35 @@ test "VM ARC: Native Operator exceptions prevent double-free and leaks" {
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.ok, result);
 }
+
+test "VM: Dynamic call stack growth supports deep recursion" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Deep recursion (1,500 frames deep) exceeds the former 1,024 static frame limit
+    const source =
+        \\def count_down(n)
+        \\  if (n <= 0)
+        \\    return 42
+        \\  end
+        \\  count_down(n - 1)
+        \\end
+        \\count_down(1500)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    try testing.expectEqual(@as(f64, 42.0), vm.stack[0].asNumber());
+}

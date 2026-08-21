@@ -833,3 +833,42 @@ test "Compiler: Break outside of loop scope correctly emits CompileError" {
     const result = comp.compile(break_node);
     try testing.expectError(error.UnknownNode, result);
 }
+
+test "Compiler: Large array literals (> 65,535 items) fallback to dynamic build mode" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Create an array literal with 70,000 elements
+    const elem_count: usize = 70000;
+    var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
+    defer elements.deinit(testing.allocator);
+
+    const one = try b.number("1", 0);
+    for (0..elem_count) |_| {
+        try elements.append(testing.allocator, one);
+    }
+
+    const span = try b.addNodes(elements.items);
+    const arr_node = try b.arrayLiteral(span, 0, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // Must NOT throw error.TooManyConstants
+    try comp.compile(arr_node);
+
+    // Verify op_array_push was emitted for dynamic element insertion
+    var found_push = false;
+    for (out_chunk.code.items) |byte| {
+        if (byte == @intFromEnum(chunk.OpCode.op_array_push)) found_push = true;
+    }
+    try testing.expect(found_push);
+}
