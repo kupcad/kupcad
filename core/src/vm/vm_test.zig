@@ -4839,3 +4839,134 @@ test "VM GC: CAD object allocations respect Sandbox memory limits" {
     const result = vm.allocateGeometry(.{ .symbolic = 2 });
     try testing.expectError(error.OutOfMemory, result);
 }
+
+test "VM: Inline Caching correctly populates and accelerates property getters and setters" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // The loop ensures the first pass is a cache miss, and the second pass is a cache hit!
+    const source =
+        \\class Point
+        \\  def initialize(x)
+        \\    self.x = x
+        \\  end
+        \\end
+        \\p = Point.new(10)
+        \\
+        \\i = 0
+        \\while (i < 2)
+        \\  p.x = p.x + 5
+        \\  i = i + 1
+        \\end
+        \\p.x
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 20.0), result.asNumber());
+
+    // Assert that Inline Caches were actually populated by the VM during execution!
+    var populated_caches: usize = 0;
+    for (out_chunk.inline_caches.items) |ic| {
+        if (ic.class != null) {
+            populated_caches += 1;
+        }
+    }
+
+    // There should be active caches for `self.x = x`, `p.x` (get), and `p.x =` (set)
+    try testing.expect(populated_caches >= 2);
+}
+
+test "VM: Inline Caching correctly populates and accelerates method invocations" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class MathTool
+        \\  def calc(val)
+        \\    val * 2
+        \\  end
+        \\end
+        \\tool = MathTool.new()
+        \\
+        \\acc = 0
+        \\i = 0
+        \\while (i < 2)
+        \\  acc = acc + tool.calc(10)
+        \\  i = i + 1
+        \\end
+        \\acc
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 40.0), result.asNumber()); // 20 + 20
+
+    // Assert method invocation inline caches specifically cached the function pointers
+    var populated_method_caches: usize = 0;
+    for (out_chunk.inline_caches.items) |ic| {
+        if (ic.class != null and !ic.cached_value.isNil()) {
+            populated_method_caches += 1;
+        }
+    }
+
+    // `tool.calc` should have definitively cached the closure pointer
+    try testing.expect(populated_method_caches >= 1);
+}
+
+test "VM: Polymorphic inline cache correctly overwrites when receiver class changes" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // This proves that passing different classes to the same function `fetch`
+    // safely overwrites the inline cache without crashing or reading the wrong class layout.
+    const source =
+        \\class A
+        \\  def get_val() 10 end
+        \\end
+        \\class B
+        \\  def get_val() 20 end
+        \\end
+        \\
+        \\def fetch(obj)
+        \\  obj.get_val()
+        \\end
+        \\
+        \\[fetch(A.new()), fetch(B.new())]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    const arr_obj = result.asArray();
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
+}

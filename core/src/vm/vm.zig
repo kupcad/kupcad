@@ -1484,7 +1484,25 @@ pub const VM = struct {
         // Handle Property Access (Instances only)
         if (receiver.isInstance() and arg_count == 0) {
             const instance = receiver.asInstance();
+
+            // --- FAST PATH ---
+            if (ic.class == instance.class and ic.cached_value.isNil()) {
+                self.popAndRelease(1); // Pop receiver
+                if (ic.offset < instance.fields.items.len) {
+                    self.push(instance.fields.items[ic.offset]);
+                } else {
+                    self.push(value.Value.initNil());
+                }
+                return .ok;
+            }
+
+            // --- SLOW PATH ---
             if (instance.class.instance_layout.get(method_name_str)) |idx| {
+                // Populate the cache!
+                ic.class = instance.class;
+                ic.offset = idx;
+                ic.cached_value = value.Value.initNil(); // Mark as a property cache, not a method cache
+
                 self.popAndRelease(1); // Pop receiver
                 if (idx < instance.fields.items.len) {
                     self.push(instance.fields.items[idx]);
@@ -1591,7 +1609,7 @@ pub const VM = struct {
                 return .ok;
             }
         } else if (class_obj) |c| {
-            method_val = self.findMethod(c, method_name_str);
+            method_val = self.findMethodCached(c, method_name_str, ic);
         }
 
         // Dispatch Method if Found
