@@ -334,9 +334,7 @@ pub const VM = struct {
                     self.push(value.Value.initNumber(-a.asNumber()));
                 },
                 .op_not => {
-                    const val = self.pop();
-                    const is_falsey = val.isNil() or (val.isBool() and !val.asBool());
-                    self.push(value.Value.initBool(is_falsey));
+                    self.push(value.Value.initBool(isFalsey(self.pop())));
                 },
                 .op_equal => {
                     const b = self.pop();
@@ -350,10 +348,7 @@ pub const VM = struct {
                 },
 
                 .op_set_member, .op_set_member_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_member_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_set_member_wide);
                     const val = self.pop();
                     const receiver = self.stack[self.stack_top - 1]; // Peek at namespace (Module/Class)
 
@@ -370,14 +365,11 @@ pub const VM = struct {
                     self.push(val); // Push the namespace back to maintain stack equilibrium
                 },
                 .op_get_global, .op_get_global_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_global_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", name_val.asObj()));
-
-                    if (self.globals.get(str_obj.chars)) |val| {
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_get_global_wide);
+                    if (self.globals.get(name_str)) |val| {
                         self.push(val);
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Undefined variable '{s}'\n", .{str_obj.chars}) != .ok) return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Undefined variable '{s}'\n", .{name_str}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
@@ -590,12 +582,8 @@ pub const VM = struct {
                     frame.ip += offset;
                 },
                 .op_jump_if_false => {
-                    // Properly read 3-byte offset
                     const offset = self.readJumpOffset(exec_chunk, frame);
-                    // Falsey values in KupCAD are only `nil` and `false`
-                    const val = self.stack[self.stack_top - 1];
-                    const is_falsey = val.isNil() or (val.isBool() and !val.asBool());
-                    if (is_falsey) {
+                    if (isFalsey(self.stack[self.stack_top - 1])) {
                         frame.ip += offset;
                     }
                 },
@@ -769,12 +757,8 @@ pub const VM = struct {
                     }
                 },
                 .op_module, .op_module_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_module_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    // Removed `.chars` to pass the *ObjString pointer!
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
-
-                    const mod_obj = self.gc.allocateModule(self, name_str) catch return .runtime_error;
+                    const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, op == .op_module_wide);
+                    const mod_obj = self.gc.allocateModule(self, name_str_obj) catch return .runtime_error;
                     self.push(value.Value.initObj(&mod_obj.obj));
                 },
                 .op_mixin => {
@@ -789,12 +773,10 @@ pub const VM = struct {
                     class_obj.included_modules.append(self.allocator, module_val.asModule()) catch return .runtime_error;
                 },
                 .op_class, .op_class_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_class_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
+                    const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, op == .op_class_wide);
 
                     // RE-OPEN the class if it exists in globals!
-                    if (self.globals.get(name_str.chars)) |existing| {
+                    if (self.globals.get(name_str_obj.chars)) |existing| {
                         if (existing.isClass()) {
                             self.push(existing);
                             continue;
@@ -802,14 +784,11 @@ pub const VM = struct {
                     }
 
                     // Ensure new classes inherit from Object by default
-                    const class_obj = self.gc.allocateClass(self, name_str, self.object_class) catch return .runtime_error;
+                    const class_obj = self.gc.allocateClass(self, name_str_obj, self.object_class) catch return .runtime_error;
                     self.push(value.Value.initObj(&class_obj.obj));
                 },
                 .op_method, .op_method_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_method_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_method_wide);
                     const method = self.pop(); // The closure
                     const receiver_val = self.stack[self.stack_top - 1]; // Peek at class or module
 
@@ -820,17 +799,12 @@ pub const VM = struct {
                     } else return .runtime_error;
                 },
                 .op_define_global, .op_define_global_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_define_global_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_define_global_wide);
                     const val = self.pop();
-
                     self.globals.put(self.allocator, name_str, val) catch return .runtime_error;
                 },
                 .op_get_property, .op_get_property_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_property_wide);
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", exec_chunk.constants.items[name_idx].asObj()))).chars;
-
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_get_property_wide);
                     const ic = self.readInlineCache(exec_chunk, frame);
                     const receiver = self.stack[self.stack_top - 1];
 
@@ -871,9 +845,7 @@ pub const VM = struct {
                 },
                 .op_set_property, .op_set_property_wide => {
                     const val = self.pop();
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_property_wide);
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", exec_chunk.constants.items[name_idx].asObj()))).chars;
-
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_set_property_wide);
                     const ic = self.readInlineCache(exec_chunk, frame);
                     const receiver = self.pop();
 
@@ -999,10 +971,7 @@ pub const VM = struct {
                     self.push(value.Value.initBool(block_val.isClosure()));
                 },
                 .op_class_method, .op_class_method_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_class_method_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_class_method_wide);
                     const method = self.pop();
                     const receiver_val = self.stack[self.stack_top - 1]; // Peek at target
 
@@ -1016,10 +985,7 @@ pub const VM = struct {
                     }
                 },
                 .op_get_class_var, .op_get_class_var_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_class_var_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_get_class_var_wide);
                     const receiver = self.pop(); // Explicitly pop receiver from stack
 
                     const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
@@ -1049,10 +1015,7 @@ pub const VM = struct {
                     }
                 },
                 .op_set_class_var, .op_set_class_var_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_class_var_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_set_class_var_wide);
                     const receiver = self.pop(); // Pop explicit receiver
                     const val = self.pop(); // Pop RHS value
 
@@ -1112,10 +1075,7 @@ pub const VM = struct {
                     self.push(value.Value.initBool(match));
                 },
                 .op_defined, .op_defined_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_defined_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_defined_wide);
                     var is_def = false;
 
                     if (std.mem.startsWith(u8, name_str, "@@")) {
@@ -1597,7 +1557,8 @@ pub const VM = struct {
     }
 
     inline fn executeInvoke(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
-        const method_name_idx = self.readOperand(exec_chunk, frame, is_wide);
+        // Use new string operand reader
+        const method_name_str = self.readStringOperand(exec_chunk, frame, is_wide);
         const arg_count = exec_chunk.code.items[frame.ip];
         frame.ip += 1;
 
@@ -1607,34 +1568,12 @@ pub const VM = struct {
         // Read IC
         const ic = self.readInlineCache(exec_chunk, frame);
 
-        const method_name_val = exec_chunk.constants.items[method_name_idx];
-        const method_name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", method_name_val.asObj()))).chars;
-
         const base_slot = self.stack_top - 1 - arg_count;
         const receiver = self.stack[base_slot];
         const args_ptr = self.stack.ptr + base_slot + 1;
 
-        // Resolve Class of Receiver for Native Methods & Monkey-Patching
-        var class_obj: ?*value.ObjClass = null;
-        if (receiver.isInstance()) {
-            class_obj = receiver.asInstance().class;
-        } else if (receiver.isGeometry()) {
-            class_obj = self.geometry_class;
-        } else if (receiver.isCrossSection()) {
-            class_obj = self.cross_section_class;
-        } else if (receiver.isObject()) {
-            switch (receiver.asObj().obj_type) {
-                .string => class_obj = self.string_class,
-                .symbol => class_obj = self.symbol_class,
-                .array => class_obj = self.array_class,
-                .map => class_obj = self.map_class,
-                else => {},
-            }
-        } else if (receiver.isNumber()) {
-            class_obj = self.number_class;
-        } else if (receiver.isBool()) {
-            class_obj = self.boolean_class;
-        }
+        // Resolve Class of Receiver seamlessly
+        const class_obj: ?*value.ObjClass = self.getClass(receiver);
 
         // --- 1. METHOD LOOKUP (Takes precedence over raw property fields) ---
         var method_val: ?value.Value = null;
@@ -1918,6 +1857,49 @@ pub const VM = struct {
             if (idx >= arr_len) return error.RuntimeError;
             return idx;
         }
+    }
+
+    // --- Centralized Type & Operand Resolution Helpers ---
+
+    /// Unified Receiver Type-to-Class resolution used by executeInvoke and Native methods
+    pub inline fn getClass(self: *VM, receiver: value.Value) ?*value.ObjClass {
+        if (receiver.isInstance()) {
+            return receiver.asInstance().class;
+        } else if (receiver.isGeometry()) {
+            return self.geometry_class;
+        } else if (receiver.isCrossSection()) {
+            return self.cross_section_class;
+        } else if (receiver.isObject()) {
+            switch (receiver.asObj().obj_type) {
+                .string => return self.string_class,
+                .symbol => return self.symbol_class,
+                .array => return self.array_class,
+                .map => return self.map_class,
+                else => return null,
+            }
+        } else if (receiver.isNumber()) {
+            return self.number_class;
+        } else if (receiver.isBool()) {
+            return self.boolean_class;
+        }
+        return null;
+    }
+
+    /// Centralized Truthiness definition (Only nil and false are falsey)
+    pub inline fn isFalsey(val: value.Value) bool {
+        return val.isNil() or (val.isBool() and !val.asBool());
+    }
+
+    /// Extracts a String constant from the bytecode stream
+    inline fn readStringObjectOperand(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame, is_wide: bool) *value.ObjString {
+        const name_idx = self.readOperand(exec_chunk, frame, is_wide);
+        const name_val = exec_chunk.constants.items[name_idx];
+        return @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
+    }
+
+    /// Extracts a String character slice from the bytecode stream
+    inline fn readStringOperand(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame, is_wide: bool) []const u8 {
+        return self.readStringObjectOperand(exec_chunk, frame, is_wide).chars;
     }
 
     inline fn readOperand(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame, is_wide: bool) u16 {

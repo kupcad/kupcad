@@ -4,30 +4,6 @@ const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const common = @import("common.zig");
 
-// --- Helper: Resolves the backing Class of any Value ---
-fn resolveClass(vm: *VM, receiver: value.Value) ?*value.ObjClass {
-    if (receiver.isInstance()) {
-        return receiver.asInstance().class;
-    } else if (receiver.isGeometry()) {
-        return vm.geometry_class;
-    } else if (receiver.isCrossSection()) {
-        return vm.cross_section_class;
-    } else if (receiver.isObject()) {
-        return switch (receiver.asObj().obj_type) {
-            .string => vm.string_class,
-            .symbol => vm.symbol_class,
-            .array => vm.array_class,
-            .map => vm.map_class,
-            else => null,
-        };
-    } else if (receiver.isNumber()) {
-        return vm.number_class;
-    } else if (receiver.isBool()) {
-        return vm.boolean_class;
-    }
-    return null;
-}
-
 /// Object#is_a?(Class) -> Returns true if receiver is an instance of the class or its subclasses
 pub fn nativeIsA(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
@@ -48,7 +24,9 @@ pub fn nativeIsA(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
     }
 
     var match = false;
-    if (resolveClass(vm, receiver)) |start_class| {
+
+    // DRY: Use the centralized class resolver on the VM
+    if (vm.getClass(receiver)) |start_class| {
         match = VM.isSubclassOf(start_class, target_val.asClass());
     }
 
@@ -82,7 +60,7 @@ pub fn nativeRespondsTo(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     if (receiver.isClass()) {
         if (vm.findClassMethod(receiver.asClass(), query_name) != null) match = true;
         if (!match and std.mem.eql(u8, query_name, "new")) match = true;
-    } else if (resolveClass(vm, receiver)) |c| {
+    } else if (vm.getClass(receiver)) |c| {
         if (vm.findMethod(c, query_name) != null) match = true;
     }
 
