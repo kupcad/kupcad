@@ -1,7 +1,14 @@
 const std = @import("std");
 const api = @import("../api.zig");
 const ast_dumper = @import("../tools/dev/ast_dumper.zig");
+const profiler_mod = @import("../vm/profiler.zig");
 const fs = @import("fs.zig");
+const VM = @import("../vm/vm.zig").VM;
+const chunk = @import("../vm/chunk.zig");
+const Compiler = @import("../compiler/compiler.zig").Compiler;
+const registry = @import("../stdlib/registry.zig");
+const disassembler = @import("../tools/dev/disassembler.zig");
+const Lexer = @import("../frontend/kupcad/lexer.zig").Lexer;
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
 pub const DevError = error{
@@ -88,11 +95,6 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
     defer doc.deinit();
 
     // Setup compilation environment
-    const VM = @import("../vm/vm.zig").VM;
-    const chunk = @import("../vm/chunk.zig");
-    const Compiler = @import("../compiler/compiler.zig").Compiler;
-    const registry = @import("../stdlib/registry.zig");
-
     var vm = try VM.init(allocator, init.io);
     defer vm.deinit();
 
@@ -110,7 +112,7 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
     };
 
     // Disassemble
-    const disassembler = @import("../tools/dev/disassembler.zig");
+
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
 
@@ -136,8 +138,6 @@ fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
     const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
     defer allocator.free(source);
 
-    // Note: Defaulting to KupCAD lexer here. You could branch on file extension later for OpenSCAD!
-    const Lexer = @import("../frontend/kupcad/lexer.zig").Lexer;
     var lexer = Lexer.init(source, 0);
     const tokens = try lexer.lexAll(allocator);
     defer {
@@ -176,10 +176,13 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
         return error.MissingFilePath;
     };
 
+    // Load source code using central file utility
     const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
     defer allocator.free(source);
 
-    // 1. Benchmark Parsing
+    // ---------------------------------------------------------------
+    // 1. Benchmark Parsing Phase
+    // ---------------------------------------------------------------
     const start_parse = std.Io.Clock.now(.awake, init.io);
 
     var doc = api.Document.parse(allocator, source) catch |err| {
@@ -191,14 +194,15 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     const end_parse = std.Io.Clock.now(.awake, init.io);
     const parse_time = start_parse.durationTo(end_parse).toNanoseconds();
 
-    // 2. Benchmark Compilation
-    const VM = @import("../vm/vm.zig").VM;
-    const chunk = @import("../vm/chunk.zig");
-    const Compiler = @import("../compiler/compiler.zig").Compiler;
-    const registry = @import("../stdlib/registry.zig");
-
+    // ---------------------------------------------------------------
+    // 2. Benchmark Compilation Phase
+    // ---------------------------------------------------------------
     var vm = try VM.init(allocator, init.io);
     defer vm.deinit();
+
+    // Inject line index mapping for rich error backtraces
+    vm.line_index = &doc.line_index;
+
     try registry.registerStandardLibrary(&vm);
 
     var main_chunk = chunk.Chunk.init();
@@ -215,7 +219,13 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     const end_compile = std.Io.Clock.now(.awake, init.io);
     const compile_time = start_compile.durationTo(end_compile).toNanoseconds();
 
-    // 3. Benchmark Execution
+    // ---------------------------------------------------------------
+    // 3. Setup Tracing Profiler & Benchmark VM Execution Phase
+    // ---------------------------------------------------------------
+    var p = profiler_mod.Profiler.init(allocator, init.io);
+    defer p.deinit();
+    vm.profiler = &p;
+
     const start_exec = std.Io.Clock.now(.awake, init.io);
 
     const result = vm.interpret(&main_chunk);
@@ -223,7 +233,9 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     const end_exec = std.Io.Clock.now(.awake, init.io);
     const execute_time = start_exec.durationTo(end_exec).toNanoseconds();
 
-    // Format output
+    // ---------------------------------------------------------------
+    // 4. Output Summary Reports
+    // ---------------------------------------------------------------
     std.debug.print("\n=== KupCAD Benchmark: {s} ===\n", .{file_path});
     if (result != .ok) {
         std.debug.print("Execution Result: FAILED\n\n", .{});
@@ -231,11 +243,19 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
 
     const ns_per_ms: f64 = 1_000_000.0;
 
+    // High-level phase breakdown
     std.debug.print("Parse Time:   {d:>6.2} ms\n", .{@as(f64, @floatFromInt(parse_time)) / ns_per_ms});
     std.debug.print("Compile Time: {d:>6.2} ms\n", .{@as(f64, @floatFromInt(compile_time)) / ns_per_ms});
     std.debug.print("VM Exec Time: {d:>6.2} ms\n", .{@as(f64, @floatFromInt(execute_time)) / ns_per_ms});
     std.debug.print("---------------------------------\n", .{});
     std.debug.print("Total Time:   {d:>6.2} ms\n\n", .{@as(f64, @floatFromInt(parse_time + compile_time + execute_time)) / ns_per_ms});
+
+    // Detailed function-level tracing table
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buf);
+    const stdout = &stdout_writer.interface;
+    try p.dumpProfile(stdout);
+    try stdout.flush();
 }
 
 fn printUsage() void {

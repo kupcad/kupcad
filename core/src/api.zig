@@ -6,6 +6,7 @@ const Compiler = @import("compiler/compiler.zig").Compiler;
 const registry = @import("stdlib/registry.zig");
 const kernel = @import("kernel/kernel.zig");
 const extractor = @import("tools/doc/extractor.zig");
+const profiler_mod = @import("vm/profiler.zig");
 
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const Linter = @import("tools/lint/linter.zig").Linter;
@@ -52,6 +53,41 @@ pub fn checkCode(allocator: std.mem.Allocator, source: []const u8, config: Linte
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
     return checkDocument(allocator, &doc, config);
+}
+
+pub fn benchmarkScript(allocator: std.mem.Allocator, source: []const u8, io: std.Io) !void {
+    var doc = try Document.parse(allocator, source);
+    defer doc.deinit();
+
+    var vm = try VM.init(allocator, io);
+    defer vm.deinit();
+
+    // Inject LineIndex for readable backtraces
+    vm.line_index = &doc.line_index;
+
+    // --- INITIALIZE & ATTACH PROFILER ---
+    var p = try profiler_mod.Profiler.init(allocator, io);
+    defer p.deinit();
+    vm.profiler = &p;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(allocator);
+
+    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    // Execute the script
+    const result = vm.interpret(&out_chunk);
+
+    if (result != .ok) {
+        return error.RuntimeError;
+    }
+
+    // --- DUMP RESULTS TO TERMINAL ---
+    const stdout = std.io.getStdOut().writer();
+    try p.dumpProfile(stdout);
 }
 
 /// Scans a parsed document and extracts all parameter definitions and docstrings.

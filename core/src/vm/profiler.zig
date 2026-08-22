@@ -84,12 +84,12 @@ pub const Profiler = struct {
 
     /// Dumps the aggregated profile sorted by Self Time (Descending)
     pub fn dumpProfile(self: *Profiler, writer: anytype) !void {
-        var entries = std.ArrayList(ProfileStats).init(self.allocator);
-        defer entries.deinit();
+        var entries: std.ArrayListUnmanaged(ProfileStats) = .empty;
+        defer entries.deinit(self.allocator);
 
         var it = self.stats.iterator();
         while (it.next()) |entry| {
-            try entries.append(entry.value_ptr.*);
+            try entries.append(self.allocator, entry.value_ptr.*);
         }
 
         // Sort dynamically
@@ -103,11 +103,11 @@ pub const Profiler = struct {
 
         // Format CLI Table
         try writer.writeAll("\n=== Tracing Profile ===\n");
-        try writer.print("{[name]-30} | {[calls]-10} | {[total]-15} | {[self]-15}\n", .{
-            .name = "Function",
-            .calls = "Calls",
-            .total = "Total (ms)",
-            .self = "Self (ms)",
+        try writer.print("{s:<30} | {s:<10} | {s:<15} | {s:<15}\n", .{
+            "Function",
+            "Calls",
+            "Total (ms)",
+            "Self (ms)",
         });
         try writer.writeAll("-" ** 79 ++ "\n");
 
@@ -115,11 +115,11 @@ pub const Profiler = struct {
             const total_ms = @as(f64, @floatFromInt(stat.total_time_ns)) / 1_000_000.0;
             const self_ms = @as(f64, @floatFromInt(stat.self_time_ns)) / 1_000_000.0;
 
-            try writer.print("{[name]-30} | {[calls]-10} | {[total]-15.3} | {[self]-15.3}\n", .{
-                .name = stat.name,
-                .calls = stat.call_count,
-                .total = total_ms,
-                .self = self_ms,
+            try writer.print("{s:<30} | {d:<10} | {d:<15.3} | {d:<15.3}\n", .{
+                stat.name,
+                stat.call_count,
+                total_ms,
+                self_ms,
             });
         }
         try writer.writeAll("=======================\n");
