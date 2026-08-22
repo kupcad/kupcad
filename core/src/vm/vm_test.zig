@@ -5300,3 +5300,45 @@ test "VM/Compiler: Deeply nested closures correctly resolve and capture upvalues
 
     try testing.expectEqual(@as(f64, 60.0), result.asNumber());
 }
+
+test "VM: Gas limit perfectly triggers inside deeply nested loop contexts, preventing host hang" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // --- THIS LINE WAS MISSING ---
+    try registry.registerStandardLibrary(&vm);
+
+    // Set a strict gas limit
+    vm.instruction_limit = 100;
+    vm.mute_errors = true; // Don't pollute test logs
+
+    // Deeply nested infinite loop to test the bounds of the interpreter's safety constraints
+    const source =
+        \\def run_forever()
+        \\  [1].each do |x|
+        \\    while true
+        \\      x = x + 1
+        \\    end
+        \\  end
+        \\end
+        \\run_forever()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // The compiler will not hang because AST traversal is purely acyclic
+    try comp.compile(doc.tree.root);
+
+    // The VM will not hang because `runUntil` explicitly enforces the instruction_limit
+    // at the very top of the execution loop!
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.execution_limit_exceeded, result);
+}
