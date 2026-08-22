@@ -285,6 +285,17 @@ pub const Compiler = struct {
             .undef => {
                 try self.emitOp(.op_nil);
             },
+            .yield_stmt => {
+                const args = self.tree.getNodes(self.tree.nodeSpan(node));
+                for (args) |arg| {
+                    try self.compileNode(arg);
+                }
+                if (args.len > limits.MAX_ARGS) return error.TooManyConstants;
+                try self.emitOp(.op_yield);
+                try self.emitByte(@intCast(args.len));
+                self.simulatePop(args.len); // Yield consumes args
+                self.simulatePush(1); // Yield pushes block return value
+            },
             .identifier => {
                 // Ensure the Resolver properly mapped this node
                 std.debug.assert(@intFromEnum(node_idx) < self.symbols.len);

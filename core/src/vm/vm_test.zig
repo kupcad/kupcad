@@ -5305,7 +5305,6 @@ test "VM: Gas limit perfectly triggers inside deeply nested loop contexts, preve
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    // --- THIS LINE WAS MISSING ---
     try registry.registerStandardLibrary(&vm);
 
     // Set a strict gas limit
@@ -5340,5 +5339,39 @@ test "VM: Gas limit perfectly triggers inside deeply nested loop contexts, preve
     // at the very top of the execution loop!
     const result = vm.interpret(&out_chunk);
 
+    try testing.expectEqual(.execution_limit_exceeded, result);
+}
+
+test "VM: Gas limit triggers securely through native op_yield re-entrancy" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    vm.instruction_limit = 50;
+    vm.mute_errors = true;
+
+    const source =
+        \\def infinite_yielder
+        \\  yield
+        \\end
+        \\infinite_yielder do
+        \\  while true
+        \\    x = 1
+        \\  end
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.execution_limit_exceeded, result);
 }

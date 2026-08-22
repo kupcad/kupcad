@@ -317,10 +317,12 @@ pub const VM = struct {
                     self.setLocal(frame, (high << 8) | low, self.stack[self.stack_top - 1]);
                 },
                 .op_add, .op_subtract, .op_bitwise_and => {
-                    if (self.executeBinaryArithmetic(op) != .ok) return .runtime_error;
+                    const res = self.executeBinaryArithmetic(op);
+                    if (res != .ok) return res;
                 },
                 .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater => {
-                    if (self.executeNumericBinary(op) != .ok) return .runtime_error;
+                    const res = self.executeNumericBinary(op);
+                    if (res != .ok) return res;
                 },
                 .op_negate => {
                     const a = self.pop();
@@ -439,7 +441,8 @@ pub const VM = struct {
                     _ = self.rescue_frames.pop();
                 },
                 .op_throw => {
-                    if (self.executeThrow() != .ok) return .runtime_error;
+                    const res = self.executeThrow();
+                    if (res != .ok) return res;
                 },
                 .op_build_array, .op_build_array_wide => {
                     const item_count = self.readOperand(exec_chunk, frame, op == .op_build_array_wide);
@@ -479,7 +482,8 @@ pub const VM = struct {
                     self.push(map_val);
                 },
                 .op_build_range => {
-                    if (self.executeBuildRange(frame, exec_chunk) != .ok) return .runtime_error;
+                    const res = self.executeBuildRange(frame, exec_chunk);
+                    if (res != .ok) return res;
                 },
                 .op_is_nil => {
                     const val = self.pop();
@@ -829,16 +833,20 @@ pub const VM = struct {
                     sub_val.asClass().superclass = super_val.asClass();
                 },
                 .op_call => {
-                    if (self.executeCall(frame, exec_chunk) != .ok) return .runtime_error;
+                    const res = self.executeCall(frame, exec_chunk);
+                    if (res != .ok) return res;
                 },
                 .op_invoke, .op_invoke_wide => {
-                    if (self.executeInvoke(frame, exec_chunk, op == .op_invoke_wide) != .ok) return .runtime_error;
+                    const res = self.executeInvoke(frame, exec_chunk, op == .op_invoke_wide);
+                    if (res != .ok) return res;
                 },
                 .op_unpack_splat => {
-                    if (self.executeUnpackSplat(frame, exec_chunk) != .ok) return .runtime_error;
+                    const res = self.executeUnpackSplat(frame, exec_chunk);
+                    if (res != .ok) return res;
                 },
                 .op_pack_splat => {
-                    if (self.executePackSplat(frame, exec_chunk) != .ok) return .runtime_error;
+                    const res = self.executePackSplat(frame, exec_chunk);
+                    if (res != .ok) return res;
                 },
                 .op_super_invoke => {
                     const arg_count = exec_chunk.code.items[frame.ip];
@@ -893,7 +901,11 @@ pub const VM = struct {
                     const args_ptr = self.stack.ptr + self.stack_top - yield_arg_count;
                     const yield_args = args_ptr[0..yield_arg_count];
 
-                    const result = self.callClosureSync(block_closure, yield_args) catch return .runtime_error;
+                    // Safely propagate limits through native yields
+                    const result = self.callClosureSync(block_closure, yield_args) catch |err| {
+                        if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
+                        return .runtime_error;
+                    };
 
                     // Pop yielded args off stack
                     self.popAndRelease(yield_arg_count);
@@ -1388,6 +1400,7 @@ pub const VM = struct {
         const res = self.runUntil(target_depth);
 
         // --- SAFE RE-ENTRANT UNWINDING ---
+        if (res == .execution_limit_exceeded) return error.ExecutionLimitExceeded;
         if (res == .runtime_error) return error.FatalError;
         if (self.frames.items.len < target_depth) return error.Unwind; // A rescue block ate our frame
         if (res != .ok) return error.FatalError;
@@ -1928,6 +1941,7 @@ pub const VM = struct {
 
         const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
             if (self.profiler) |p| p.exitFrame() catch {};
+            if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
             if (err == error.Unwind) return .ok;
             if (err == error.FatalError) return .runtime_error;
             return self.throwDynamicError("Runtime Error: Native Execution Error", .{});
