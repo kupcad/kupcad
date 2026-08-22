@@ -332,7 +332,7 @@ const ResolverContext = struct {
                     _ = try self.resolver.declareLocal(binding.name);
                 }
             },
-            .class_stmt, .module_stmt => {
+            .class_stmt, .module_stmt, .singleton_class => {
                 try self.resolver.pushScope(true, false, node_idx);
             },
             .assignment => {
@@ -367,7 +367,7 @@ const ResolverContext = struct {
                 _ = self.resolver.active_method_blocks.remove(node_idx);
                 try self.resolver.popScope();
             },
-            .def_stmt, .lambda_expr, .class_stmt, .module_stmt => {
+            .def_stmt, .lambda_expr, .class_stmt, .module_stmt, .singleton_class => {
                 try self.resolver.popScope();
             },
             else => {},

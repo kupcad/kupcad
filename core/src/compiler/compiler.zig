@@ -334,6 +334,49 @@ pub const Compiler = struct {
                     try self.emitVariableLoad(name_id, sym);
                 }
             },
+            .singleton_class => {
+                const sc = self.tree.singletonClassPayload(node);
+                const target_node = self.tree.getNode(sc.target).?;
+
+                // If `self` is referenced at the root level of a class/module definition,
+                // the namespace object is already sitting at the top of the stack baseline!
+                if (target_node.tag == .self_expr and self.enclosing == null and self.active_namespaces > 0) {
+                    try self.emitOp(.op_dup);
+                } else {
+                    try self.compileNode(sc.target);
+                }
+
+                const body_node = self.tree.getNode(sc.body).?;
+                const block_payload = self.tree.block(body_node);
+                const stmts = self.tree.getNodes(block_payload.stmts);
+
+                for (stmts) |stmt_idx| {
+                    const stmt_node = self.tree.getNode(stmt_idx).?;
+                    if (stmt_node.tag == .def_stmt) {
+                        const ds = self.tree.defStmt(stmt_node);
+                        const method_name = self.tree.getString(ds.name);
+
+                        var final_name = method_name;
+                        if (std.mem.startsWith(u8, method_name, "self.")) {
+                            final_name = method_name[5..];
+                        }
+                        const m_name_idx = try self.makeStringConstant(final_name);
+                        const params = self.tree.getParams(ds.params);
+
+                        // Compile the method block
+                        try self.compileClosureBlock(params, ds.body, final_name, true);
+
+                        // Attach the method to the target currently sitting on the stack
+                        try self.emitOpWithOperand(.op_class_method, .op_class_method_wide, m_name_idx);
+                    } else {
+                        // Standard top-level statements inside the block
+                        try self.compileNode(stmt_idx);
+                        try self.emitOp(.op_pop);
+                    }
+                }
+
+                // Stack equilibrium: The target remains on the stack as the expression's return value
+            },
             .return_stmt => {
                 const ret_idx = self.tree.nodeIndex(node);
                 if (ret_idx != .none) {

@@ -76,6 +76,7 @@ pub const Tag = enum(u8) {
     def_stmt,
     class_stmt,
     module_stmt,
+    singleton_class,
     begin_stmt,
     return_stmt,
     yield_stmt,
@@ -305,6 +306,11 @@ pub const RescueModifier = struct {
     rescue_expr: NodeIndex,
 };
 
+pub const SingletonClass = struct {
+    target: NodeIndex,
+    body: NodeIndex,
+};
+
 // --- Tree Structure ---
 pub const Tree = struct {
     root: NodeIndex = .none,
@@ -426,6 +432,14 @@ pub const Tree = struct {
         return .{
             .start = self.extra_data.items[base],
             .end = self.extra_data.items[base + 1],
+        };
+    }
+
+    pub fn singletonClassPayload(self: *const Tree, node: *const Node) SingletonClass {
+        const base = node.data;
+        return .{
+            .target = @enumFromInt(self.extra_data.items[base]),
+            .body = @enumFromInt(self.extra_data.items[base + 1]),
         };
     }
 
@@ -1055,6 +1069,11 @@ pub const Builder = struct {
     pub fn rescueModifier(self: *Builder, expr: NodeIndex, rescue_expr: NodeIndex, main_token: u24) !NodeIndex {
         const data_idx = try self.addExtra(.{ expr, rescue_expr });
         return self.createNode(.rescue_modifier, main_token, data_idx);
+    }
+
+    pub fn singletonClass(self: *Builder, target: NodeIndex, body: NodeIndex, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ target, body });
+        return self.createNode(.singleton_class, main_token, data_idx);
     }
 
     pub fn hashLiteral(self: *Builder, entries: Span, main_token: u24) !NodeIndex {

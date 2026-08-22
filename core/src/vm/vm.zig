@@ -989,10 +989,16 @@ pub const VM = struct {
                     const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
 
                     const method = self.pop();
-                    const class_val = self.stack[self.stack_top - 1]; // Peek at class
-                    const class_obj = class_val.asClass();
+                    const receiver_val = self.stack[self.stack_top - 1]; // Peek at target
 
-                    class_obj.class_methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                    if (receiver_val.isClass()) {
+                        receiver_val.asClass().class_methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                    } else if (receiver_val.isModule()) {
+                        receiver_val.asModule().methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                    } else {
+                        if (self.throwDynamicError("Runtime Error: Can only define singleton methods on classes or modules.\n", .{}) != .ok) return .runtime_error;
+                        continue;
+                    }
                 },
                 .op_get_class_var, .op_get_class_var_wide => {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_class_var_wide);

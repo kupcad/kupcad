@@ -665,6 +665,17 @@ pub const Parser = struct {
 
     fn parseClassStatement(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.keyword_class);
+
+        // Singleton Class (class << self)
+        if (self.tag(0) == .less_less) {
+            self.advance();
+            const target = try self.parseExpression(.none);
+            self.skipIgnored();
+            const body = try self.parseBlock(&.{.keyword_end});
+            _ = try self.expect(.keyword_end);
+            return self.b.singletonClass(target, body, start_tok) catch ParseError.OutOfMemory;
+        }
+
         const name_node = try self.parseClassPath();
         var super_class: ast.NodeIndex = .none;
         if (self.tag(0) == .less) {

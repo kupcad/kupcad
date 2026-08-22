@@ -104,6 +104,11 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
             try walk(Context, ctx, tree, cs.super_class);
             try walk(Context, ctx, tree, cs.body);
         },
+        .singleton_class => {
+            const sc = tree.singletonClassPayload(node);
+            try walk(Context, ctx, tree, sc.target);
+            try walk(Context, ctx, tree, sc.body);
+        },
         .module_stmt => {
             const ms = tree.moduleStmt(node);
             for (tree.getParams(ms.params)) |param| try walk(Context, ctx, tree, param.default_value);

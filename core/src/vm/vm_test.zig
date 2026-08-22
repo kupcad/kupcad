@@ -6206,3 +6206,41 @@ test "VM: Modules accurately namespace nested classes and prevent global leaks" 
     try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(true, arr_obj.items.items[1].asBool()); // defined?(Gear) is nil
 }
+
+test "VM: Singleton Class blocks (class << self) define class methods seamlessly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class MathTools
+        \\  class << self
+        \\    def double(x)
+        \\      x * 2
+        \\    end
+        \\    def triple(x)
+        \\      x * 3
+        \\    end
+        \\  end
+        \\end
+        \\
+        \\[MathTools.double(10), MathTools.triple(10)]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
+}

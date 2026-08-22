@@ -74,7 +74,7 @@ pub const Formatter = struct {
     // Determines if a node is a definition that requires visual separation
     fn requiresBlankLineSeparation(node: *const ast.Node) bool {
         return switch (node.tag) {
-            .def_stmt, .class_stmt, .module_stmt => true,
+            .def_stmt, .class_stmt, .module_stmt, .singleton_class => true,
             else => false,
         };
     }
@@ -184,6 +184,7 @@ pub const Formatter = struct {
             .begin_stmt => try self.formatBeginStmt(tree, tree.beginStmt(node), node_line),
             .def_stmt => try self.formatDefStmt(tree, tree.defStmt(node), node_line),
             .class_stmt => try self.formatClassStmt(tree, tree.classStmt(node), node_line),
+            .singleton_class => try self.formatSingletonClass(tree, tree.singletonClassPayload(node), node_line),
             .module_stmt => try self.formatModuleStmt(tree, tree.moduleStmt(node), node_line),
             .lambda_expr => try self.formatLambda(tree, tree.lambdaExpr(node), node_line),
             .namespace_access => {
@@ -480,6 +481,13 @@ pub const Formatter = struct {
         }
         try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(tree, cls.body);
+    }
+
+    fn formatSingletonClass(self: *Formatter, tree: *const ast.Tree, sc: ast.SingletonClass, start_line: u32) Error!void {
+        try self.out.appendSlice(self.allocator, "class << ");
+        try self.formatNode(tree, sc.target);
+        try self.flushInlineComments(start_line);
+        try self.formatBodyWithEnd(tree, sc.body);
     }
 
     fn formatModuleStmt(self: *Formatter, tree: *const ast.Tree, m: ast.ModuleStmt, start_line: u32) Error!void {
