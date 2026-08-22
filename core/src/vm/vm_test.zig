@@ -5615,3 +5615,292 @@ test "VM Syntax: Return with multiple comma-separated values returns an Array" {
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
     try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[2].asNumber());
 }
+
+test "VM Syntax: Safe navigation (&.) on nil receiver short-circuits block execution" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // If safe navigation fails on block-receiving methods, the block will attempt
+    // to execute on nil or crash the VM stack.
+    const source =
+        \\item = nil
+        \\executed = false
+        \\res = item&.map do |x|
+        \\  executed = true
+        \\  x * 2
+        \\end
+        \\[res.nil?, executed]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    // res.nil? -> true (safe navigation returned nil)
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+    // executed -> false (block was completely bypassed)
+    try testing.expectEqual(false, arr_obj.items.items[1].asBool());
+}
+
+test "VM Syntax: Map compound index assignment (map[:key] += val)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\stats = { "score" => 100, :multiplier => 2 }
+        \\stats["score"] += 50
+        \\stats[:multiplier] *= 3
+        \\[stats["score"], stats[:multiplier]]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    // 100 + 50 = 150
+    try testing.expectEqual(@as(f64, 150.0), arr_obj.items.items[0].asNumber());
+    // 2 * 3 = 6
+    try testing.expectEqual(@as(f64, 6.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM Syntax: Multiple assignment handles array padding and trimming accurately" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\# 1. RHS array is too short -> pad missing variables with nil
+        \\x, y, z = [10]
+        \\
+        \\# 2. RHS array is too long -> trim excess elements
+        \\a, b = [100, 200, 300, 400]
+        \\
+        \\[x, y.nil?, z.nil?, a, b]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber()); // x = 10
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool()); // y = nil
+    try testing.expectEqual(true, arr_obj.items.items[2].asBool()); // z = nil
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[3].asNumber()); // a = 100
+    try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[4].asNumber()); // b = 200
+}
+
+test "VM Syntax: Module nested class declaration and scope resolution lookup" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\module CAD
+        \\  class Gear
+        \\    def self.teeth()
+        \\      32
+        \\    end
+        \\  end
+        \\end
+        \\CAD::Gear.teeth()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 32.0), result.asNumber());
+}
+
+test "VM Syntax: Subclasses inherit, share, and mutate parent class variables (@@var)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Component
+        \\  def register
+        \\    @@total_count = (defined?(@@total_count) ? @@total_count : 0) + 1
+        \\  end
+        \\  def self.count
+        \\    defined?(@@total_count) ? @@total_count : 0
+        \\  end
+        \\end
+        \\
+        \\class Bolt < Component
+        \\  def build
+        \\    self.register
+        \\  end
+        \\end
+        \\
+        \\b1 = Bolt.new
+        \\b1.build
+        \\b2 = Bolt.new
+        \\b2.build
+        \\[Component.count, Bolt.count]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    // Both parent Component and child Bolt reflect total_count == 2
+    try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM Syntax: Negative array index compound assignment (arr[-1] += val)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\arr = [10, 20, 30]
+        \\arr[-1] += 15
+        \\arr[-2] *= 2
+        \\[arr[0], arr[1], arr[2]]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 40.0), arr_obj.items.items[1].asNumber()); // 20 * 2
+    try testing.expectEqual(@as(f64, 45.0), arr_obj.items.items[2].asNumber()); // 30 + 15
+}
+
+test "VM Syntax: super call accurately forwards keyword arguments and blocks" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class BaseShape
+        \\  def render(scale:, &block)
+        \\    block(scale * 10)
+        \\  end
+        \\end
+        \\
+        \\class CustomShape < BaseShape
+        \\  def render(scale:, &block)
+        \\    super(scale: scale + 1, &block)
+        \\  end
+        \\end
+        \\
+        \\shape = CustomShape.new()
+        \\shape.render(scale: 2) do |val|
+        \\  val + 5
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    // scale: (2 + 1) * 10 = 30; block(30) -> 30 + 5 = 35
+    try testing.expectEqual(@as(f64, 35.0), result.asNumber());
+}
+
+test "VM CAD: Geometry processing inside functional array iterators (.map)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    vm.host.print_handler = null;
+
+    const source =
+        \\sizes = [10, 20, 30]
+        \\boxes = sizes.map do |s|
+        \\  cube(s)
+        \\end
+        \\vols = boxes.map do |b|
+        \\  b.volume
+        \\end
+        \\[vols[0], vols[1], vols[2]]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(f64, 1000.0), arr_obj.items.items[0].asNumber()); // 10^3
+    try testing.expectEqual(@as(f64, 8000.0), arr_obj.items.items[1].asNumber()); // 20^3
+    try testing.expectEqual(@as(f64, 27000.0), arr_obj.items.items[2].asNumber()); // 30^3
+}

@@ -1953,36 +1953,68 @@ pub const Compiler = struct {
         const args = self.tree.getNamedArgs(sc.args);
         var pos_count: usize = 0;
         var kw_count: usize = 0;
+        var block_arg: ?ast.NodeIndex = null;
 
+        // Positional Arguments & Block Arg Extraction
         for (args) |arg| {
-            if (arg.name == .none) {
+            if (arg.modifier != null and arg.modifier.? == .block) {
+                block_arg = arg.value;
+            } else if (arg.name == .none) {
                 try self.compileNode(arg.value);
                 pos_count += 1;
             }
         }
+
+        // Keyword Arguments
         for (args) |arg| {
-            if (arg.name != .none) {
-                const name_idx = try self.makeStringConstant(self.tree.getString(arg.name));
-                try self.emitOpWithOperand(.op_constant, .op_constant_wide, name_idx);
-                try self.compileNode(arg.value);
-                kw_count += 1;
+            if (arg.modifier == null or arg.modifier.? != .block) {
+                if (arg.name != .none) {
+                    const name_idx = try self.makeSymbolConstant(self.tree.getString(arg.name));
+                    try self.emitOpWithOperand(.op_constant, .op_constant_wide, name_idx);
+                    try self.compileNode(arg.value);
+                    kw_count += 1;
+                }
             }
         }
 
         if (kw_count > 0) {
-            try self.emitOp(.op_build_map);
-            try self.emitByte(@intCast(kw_count));
+            if (kw_count <= limits.MAX_SHORT_CONSTANTS) {
+                try self.emitOp(.op_build_map);
+                try self.emitByte(@intCast(kw_count));
+            } else {
+                try self.emitOp(.op_build_map_wide);
+                try self.emitByte(@intCast((kw_count >> 8) & 0xff));
+                try self.emitByte(@intCast(kw_count & 0xff));
+            }
+
             self.simulatePop(kw_count * 2);
             self.simulatePush(1);
 
             pos_count += 1;
         }
 
+        var actual_arg_count = pos_count;
+
+        // Block Argument (Always Pushed LAST)
+        if (block_arg) |b_node| {
+            try self.compileNode(b_node);
+            actual_arg_count += 1;
+        } else if (sc.block != .none) {
+            const block_node = self.tree.getNode(sc.block).?;
+            const block_payload = self.tree.block(block_node);
+            const lowered_params = try self.lowerBlockParams(block_payload.params);
+            defer self.allocator.free(lowered_params);
+            try self.compileClosureBlock(lowered_params, sc.block, null, false);
+            actual_arg_count += 1;
+        }
+
+        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
+
         try self.emitOp(.op_super_invoke);
-        try self.emitByte(@intCast(pos_count));
+        try self.emitByte(@intCast(actual_arg_count));
 
         // Pop the arguments + the implicit `self` receiver
-        self.simulatePop(pos_count + 1);
+        self.simulatePop(actual_arg_count + 1);
         self.simulatePush(1);
     }
 
