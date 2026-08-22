@@ -6,17 +6,17 @@ const common = @import("common.zig");
 
 /// Object#nil? -> Returns true if receiver is NilClass, false otherwise
 pub fn nativeNilQ(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm_opaque;
     _ = arg_count;
-    const receiver = (args - 1)[0];
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
     return value.Value.initBool(receiver.isNil());
 }
 
 /// Object#empty? -> Checks length of collections/strings or volume of 3D geometry
 pub fn nativeEmptyQ(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     _ = arg_count;
-    const self_val = (args - 1)[0];
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const self_val = vm.getReceiver(args);
 
     if (self_val.isNil()) return value.Value.initBool(true);
 
@@ -51,7 +51,7 @@ pub fn nativeEmptyQ(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
 /// Object#tap { |obj| ... } -> Yields receiver to block, discards block result, returns receiver
 pub fn nativeTap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = (args - 1)[0];
+    const receiver = vm.getReceiver(args);
 
     if (arg_count > 0 and args[arg_count - 1].isClosure()) {
         const block_closure = args[arg_count - 1].asClosure();
@@ -66,7 +66,7 @@ pub fn nativeTap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
 /// Object#into { |obj| ... } -> Yields receiver to block, returns block result
 pub fn nativeInto(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = (args - 1)[0];
+    const receiver = vm.getReceiver(args);
 
     if (arg_count > 0 and args[arg_count - 1].isClosure()) {
         const block_closure = args[arg_count - 1].asClosure();
@@ -79,9 +79,9 @@ pub fn nativeInto(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
 
 /// Object#dup / Object#clone -> Duplicates primitive or increments ARC on geometry
 pub fn nativeDup(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm_opaque;
     _ = arg_count;
-    const receiver = (args - 1)[0];
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
     return receiver;
 }
 

@@ -112,7 +112,7 @@ pub fn arrayMap(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !valu
 /// (Keeps NativeFn signature due to variable arity 1 or 2)
 pub fn arrayReduce(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = (args - 1)[0];
+    const receiver = vm.getReceiver(args);
 
     std.debug.assert(receiver.isObject() and receiver.asObj().obj_type == .array);
     const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", receiver.asObj())));

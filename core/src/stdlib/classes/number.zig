@@ -4,11 +4,10 @@ const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 
 pub fn numberRound(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm_opaque;
-
     if (arg_count > 1) return error.RuntimeError; // Takes 0 or 1 args
 
-    const receiver = (args - 1)[0];
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
     if (!receiver.isNumber()) return error.RuntimeError;
 
     const num = receiver.asNumber();
@@ -28,42 +27,47 @@ pub fn numberRound(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
 }
 
 pub fn numberCeil(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm_opaque;
     if (arg_count != 0) return error.RuntimeError;
-    const receiver = (args - 1)[0];
+
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
     if (!receiver.isNumber()) return error.RuntimeError;
     return value.Value.initNumber(@ceil(receiver.asNumber()));
 }
 
 pub fn numberFloor(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm_opaque;
     if (arg_count != 0) return error.RuntimeError;
-    const receiver = (args - 1)[0];
+
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
     if (!receiver.isNumber()) return error.RuntimeError;
     return value.Value.initNumber(@floor(receiver.asNumber()));
 }
 
 pub fn numberAbs(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm_opaque;
     if (arg_count != 0) return error.RuntimeError;
-    const receiver = (args - 1)[0];
+
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
     if (!receiver.isNumber()) return error.RuntimeError;
     return value.Value.initNumber(@abs(receiver.asNumber()));
 }
 
 pub fn numberToI(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm_opaque;
     if (arg_count != 0) return error.RuntimeError;
-    const receiver = (args - 1)[0];
+
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
     if (!receiver.isNumber()) return error.RuntimeError;
     // Truncates decimal portion
     return value.Value.initNumber(@trunc(receiver.asNumber()));
 }
 
 pub fn numberToF(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm_opaque;
     if (arg_count != 0) return error.RuntimeError;
-    const receiver = (args - 1)[0];
+
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
     // Number is already a float internally, just return it
     return receiver;
 }
@@ -71,8 +75,9 @@ pub fn numberToF(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
 // Number to String
 pub fn numberToS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     if (arg_count != 0) return error.RuntimeError;
+
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = (args - 1)[0];
+    const receiver = vm.getReceiver(args);
     if (!receiver.isNumber()) return error.RuntimeError;
 
     var buf: [64]u8 = undefined;

@@ -57,8 +57,8 @@ pub fn wrapNative(comptime func: anytype) value.NativeFn {
             if (arg_count != expected_args) return error.RuntimeError;
             const vm: *VM = @ptrCast(@alignCast(vm_opaque));
 
-            // Extract receiver from stack slot (args - 1)
-            const raw_receiver = (args - 1)[0];
+            // Extract receiver securely using the FFI Bounds Checker
+            const raw_receiver = vm.getReceiver(args);
 
             // Build parameter tuple dynamically at compile-time
             var call_args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
@@ -70,7 +70,6 @@ pub fn wrapNative(comptime func: anytype) value.NativeFn {
                 const raw_arg = args[idx];
                 call_args[idx + 2] = try unboxValue(ArgType, raw_arg);
             }
-
             return @call(.auto, func, call_args);
         }
     }.nativeWrapper;

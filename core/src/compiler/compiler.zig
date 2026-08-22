@@ -4,6 +4,7 @@ const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const limits = @import("../vm/limits.zig");
 const resolver = @import("../core/resolver.zig");
+const verifier = @import("../vm/verifier.zig");
 const VM = @import("../vm/vm.zig").VM;
 
 pub const CompileError = error{
@@ -13,6 +14,7 @@ pub const CompileError = error{
     TooManyLocals,
     UnsupportedScope,
     ProtectedSymbol,
+    CorruptedBytecode,
 };
 
 pub const Upvalue = struct {
@@ -221,6 +223,11 @@ pub const Compiler = struct {
         try self.emitOp(.op_return);
         self.current_chunk.max_stack_slots = self.max_stack_depth;
         self.current_chunk.local_count = @max(self.locals.items.len, self.max_local_slot + 1);
+
+        // Verify bytecode integrity before allowing execution
+        verifier.verifyChunk(self.current_chunk) catch {
+            return error.CorruptedBytecode; // Or create a dedicated CompilerError.CorruptedBytecode
+        };
     }
 
     fn compileNode(self: *Compiler, node_idx: ast.NodeIndex) CompileError!void {

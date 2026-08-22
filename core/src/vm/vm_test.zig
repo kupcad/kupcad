@@ -4970,3 +4970,22 @@ test "VM: Polymorphic inline cache correctly overwrites when receiver class chan
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
 }
+
+test "VM: FFI getReceiver safely extracts receiver and enforces pointer bounds" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // 1. Simulate the stack state right before a native call
+    vm.push(value.Value.initNumber(10.0)); // Receiver (base slot)
+    vm.push(value.Value.initNumber(20.0)); // Arg 1
+    vm.push(value.Value.initNumber(30.0)); // Arg 2
+
+    // 2. The native FFI boundary is handed a pointer starting at Arg 1
+    const args_ptr = vm.stack.ptr + 1;
+
+    // 3. Extract the receiver safely
+    const receiver = vm.getReceiver(args_ptr);
+
+    // 4. Verify it correctly stepped back 1 slot to grab the receiver
+    try testing.expectEqual(@as(f64, 10.0), receiver.asNumber());
+}

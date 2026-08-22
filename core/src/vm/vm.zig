@@ -2113,6 +2113,19 @@ pub const VM = struct {
         }
     }
 
+    // --- Safe FFI Pointer Extraction ---
+    pub inline fn getReceiver(self: *VM, args: [*]value.Value) value.Value {
+        const stack_start = @intFromPtr(self.stack.ptr);
+        const args_ptr = @intFromPtr(args);
+
+        // Ensure `args` points strictly inside our allocated VM stack,
+        // and is at least 1 slot above the bottom so `args - 1` can never underflow.
+        std.debug.assert(args_ptr > stack_start);
+        std.debug.assert(args_ptr <= @intFromPtr(self.stack.ptr + self.stack.len));
+
+        return (args - 1)[0];
+    }
+
     // --- Inline Caching Helpers ---
 
     inline fn readInlineCache(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.InlineCache {

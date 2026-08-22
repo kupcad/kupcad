@@ -62,5 +62,6 @@ test {
     _ = @import("vm/dag_evaluator_test.zig");
     _ = @import("vm/memory_test.zig");
     _ = @import("vm/host_test.zig");
+    _ = @import("vm/verifier_test.zig");
     _ = @import("vm/vm_test.zig");
 }

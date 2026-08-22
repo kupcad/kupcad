@@ -26,7 +26,7 @@ fn buildVec3(vm: *VM, x: f64, y: f64, z: f64) !value.Value {
 pub fn bboxSize(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = (args - 1)[0];
+    const receiver = vm.getReceiver(args);
 
     std.debug.assert(receiver.isInstance());
 
@@ -38,21 +38,21 @@ pub fn bboxSize(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
 pub fn bboxCenter(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const inst = (args - 1)[0].asInstance();
+    const inst = vm.getReceiver(args).asInstance();
     return buildVec3(vm, getField(inst, "center_x"), getField(inst, "center_y"), getField(inst, "center_z"));
 }
 
 pub fn bboxMin(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const inst = (args - 1)[0].asInstance();
+    const inst = vm.getReceiver(args).asInstance();
     return buildVec3(vm, getField(inst, "min_x"), getField(inst, "min_y"), getField(inst, "min_z"));
 }
 
 pub fn bboxMax(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const inst = (args - 1)[0].asInstance();
+    const inst = vm.getReceiver(args).asInstance();
     return buildVec3(vm, getField(inst, "max_x"), getField(inst, "max_y"), getField(inst, "max_z"));
 }
 
@@ -60,7 +60,7 @@ pub fn bboxMax(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyer
 pub fn bboxToS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const inst = (args - 1)[0].asInstance();
+    const inst = vm.getReceiver(args).asInstance();
 
     const min_x = getField(inst, "min_x");
     const min_y = getField(inst, "min_y");

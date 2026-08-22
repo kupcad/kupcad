@@ -5,8 +5,9 @@ const common = @import("common.zig");
 
 pub fn toS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     if (arg_count != 0) return error.RuntimeError;
+
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = (args - 1)[0];
+    const receiver = vm.getReceiver(args);
     if (!receiver.isBool()) return error.RuntimeError;
 
     const str = if (receiver.asBool()) "true" else "false";
@@ -14,9 +15,10 @@ pub fn toS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!
 }
 
 pub fn toNum(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm_opaque;
     if (arg_count != 0) return error.RuntimeError;
-    const receiver = (args - 1)[0];
+
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
     if (!receiver.isBool()) return error.RuntimeError;
 
     const num_val: f64 = if (receiver.asBool()) 1.0 else 0.0;
@@ -24,9 +26,10 @@ pub fn toNum(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerro
 }
 
 pub fn invert(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = vm_opaque;
     if (arg_count != 0) return error.RuntimeError;
-    const receiver = (args - 1)[0];
+
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
     if (!receiver.isBool()) return error.RuntimeError;
 
     return value.Value.initBool(!receiver.asBool());
