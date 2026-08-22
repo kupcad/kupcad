@@ -840,7 +840,8 @@ pub const VM = struct {
                         }
                     }
 
-                    const class_obj = self.gc.allocateClass(self, name_str, null) catch return .runtime_error;
+                    // Ensure new classes inherit from Object by default
+                    const class_obj = self.gc.allocateClass(self, name_str, self.object_class) catch return .runtime_error;
                     self.push(value.Value.initObj(&class_obj.obj));
                 },
                 .op_method, .op_method_wide => {
@@ -1286,7 +1287,7 @@ pub const VM = struct {
         }
     }
 
-    fn findMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {
+    pub fn findMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {
         _ = self;
         var current: ?*value.ObjClass = class;
         while (current) |c| {
@@ -1659,70 +1660,7 @@ pub const VM = struct {
             }
         }
 
-        // --- Global `is_a?` Interceptor ---
-        if (std.mem.eql(u8, method_name_str, "is_a?")) {
-            const has_block = arg_count > 0 and args_ptr[arg_count - 1].isClosure();
-            const pos_args = if (has_block) arg_count - 1 else arg_count;
-
-            if (pos_args != 1) {
-                self.runtimeError("Runtime Error: is_a? expects exactly 1 argument.\n", .{});
-                return .runtime_error;
-            }
-
-            const target_val = args_ptr[0];
-            if (!target_val.isClass()) {
-                self.runtimeError("Runtime Error: is_a? expects a Class as its argument.\n", .{});
-                return .runtime_error;
-            }
-
-            var match = false;
-            if (class_obj) |start_class| {
-                match = isSubclassOf(start_class, target_val.asClass());
-            }
-
-            self.popAndRelease(arg_count + 1);
-            self.push(value.Value.initBool(match));
-            return .ok;
-        }
-
-        if (std.mem.eql(u8, method_name_str, "responds_to?")) {
-            const has_block = arg_count > 0 and args_ptr[arg_count - 1].isClosure();
-            const pos_args = if (has_block) arg_count - 1 else arg_count;
-
-            if (pos_args != 1) {
-                self.runtimeError("Runtime Error: responds_to? expects exactly 1 argument.\n", .{});
-                return .runtime_error;
-            }
-
-            const target_val = args_ptr[0];
-            var query_name: []const u8 = "";
-
-            if (target_val.isObject() and target_val.asObj().obj_type == .symbol) {
-                query_name = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
-            } else if (target_val.isObject() and target_val.asObj().obj_type == .string) {
-                query_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
-            } else {
-                self.runtimeError("Runtime Error: responds_to? expects a Symbol or String.\n", .{});
-                return .runtime_error;
-            }
-
-            var match = false;
-            if (receiver.isClass()) {
-                if (self.findClassMethod(receiver.asClass(), query_name) != null) match = true;
-                if (!match and std.mem.eql(u8, query_name, "new")) match = true;
-            } else if (class_obj) |c| {
-                if (self.findMethodCached(c, query_name, ic) != null) match = true;
-            }
-
-            if (!match and receiver.isInstance()) {
-                if (receiver.asInstance().class.instance_layout.contains(query_name)) match = true;
-            }
-
-            self.popAndRelease(arg_count + 1);
-            self.push(value.Value.initBool(match));
-            return .ok;
-        }
-
+        // Method Lookup
         // Method Lookup
         var method_val: ?value.Value = null;
         var is_private_call = false;
@@ -1760,6 +1698,16 @@ pub const VM = struct {
                 const priv_name = std.fmt.bufPrint(&buf, "@private:{s}", .{method_name_str}) catch "";
                 method_val = self.findClassMethod(receiver.asClass(), priv_name);
                 if (method_val != null) is_private_call = true;
+            }
+
+            // Fallback to Object methods (so Class.responds_to? works)
+            if (method_val == null and self.object_class != null) {
+                method_val = self.findMethod(self.object_class.?, method_name_str);
+            }
+        } else if (receiver.isModule()) {
+            // Fallback to Object methods for modules
+            if (self.object_class != null) {
+                method_val = self.findMethod(self.object_class.?, method_name_str);
             }
         } else if (class_obj) |c| {
             method_val = self.findMethodCached(c, method_name_str, ic);
@@ -2215,7 +2163,7 @@ pub const VM = struct {
         return error.RuntimeError;
     }
 
-    fn findClassMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {
+    pub fn findClassMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {
         _ = self;
         var current: ?*value.ObjClass = class;
         while (current) |c| {
@@ -2225,7 +2173,7 @@ pub const VM = struct {
         return null;
     }
 
-    fn isSubclassOf(class: *value.ObjClass, superclass: *value.ObjClass) bool {
+    pub fn isSubclassOf(class: *value.ObjClass, superclass: *value.ObjClass) bool {
         var current: ?*value.ObjClass = class;
         while (current) |c| {
             if (c == superclass) return true;

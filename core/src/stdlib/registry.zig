@@ -33,9 +33,6 @@ pub fn registerStandardLibrary(vm: *VM) !void {
         try vm.defineNative(def.name, def.func);
     }
 
-    // Bootstrap Exception Hierarchy
-    try std_exceptions.registerExceptions(vm);
-
     // Object class
     vm.object_class = try defineBuiltinClass(vm, "Object", null);
 
@@ -43,6 +40,9 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     for (object_mod.methods) |def| {
         try bindNativeMethod(vm, vm.object_class.?, def.name, def.func);
     }
+
+    // Bootstrap Exception Hierarchy AFTER Object exists
+    try std_exceptions.registerExceptions(vm);
 
     // Bootstrap Primitive Classes for Monkey-Patching
     vm.array_class = try defineBuiltinClass(vm, "Array", vm.object_class);

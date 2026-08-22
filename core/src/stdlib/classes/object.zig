@@ -4,6 +4,96 @@ const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const common = @import("common.zig");
 
+// --- Helper: Resolves the backing Class of any Value ---
+fn resolveClass(vm: *VM, receiver: value.Value) ?*value.ObjClass {
+    if (receiver.isInstance()) {
+        return receiver.asInstance().class;
+    } else if (receiver.isGeometry()) {
+        return vm.geometry_class;
+    } else if (receiver.isCrossSection()) {
+        return vm.cross_section_class;
+    } else if (receiver.isObject()) {
+        return switch (receiver.asObj().obj_type) {
+            .string => vm.string_class,
+            .symbol => vm.symbol_class,
+            .array => vm.array_class,
+            .map => vm.map_class,
+            else => null,
+        };
+    } else if (receiver.isNumber()) {
+        return vm.number_class;
+    } else if (receiver.isBool()) {
+        return vm.boolean_class;
+    }
+    return null;
+}
+
+/// Object#is_a?(Class) -> Returns true if receiver is an instance of the class or its subclasses
+pub fn nativeIsA(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
+
+    const has_block = arg_count > 0 and args[arg_count - 1].isClosure();
+    const pos_args = if (has_block) arg_count - 1 else arg_count;
+
+    if (pos_args != 1) {
+        vm.runtimeError("Runtime Error: is_a? expects exactly 1 argument.\n", .{});
+        return error.RuntimeError;
+    }
+
+    const target_val = args[0];
+    if (!target_val.isClass()) {
+        vm.runtimeError("Runtime Error: is_a? expects a Class as its argument.\n", .{});
+        return error.RuntimeError;
+    }
+
+    var match = false;
+    if (resolveClass(vm, receiver)) |start_class| {
+        match = VM.isSubclassOf(start_class, target_val.asClass());
+    }
+
+    return value.Value.initBool(match);
+}
+
+/// Object#responds_to?(Symbol|String) -> Returns true if receiver can invoke the method
+pub fn nativeRespondsTo(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
+
+    const has_block = arg_count > 0 and args[arg_count - 1].isClosure();
+    const pos_args = if (has_block) arg_count - 1 else arg_count;
+
+    if (pos_args != 1) {
+        vm.runtimeError("Runtime Error: responds_to? expects exactly 1 argument.\n", .{});
+        return error.RuntimeError;
+    }
+
+    const target_val = args[0];
+    const query_name = if (target_val.isObject() and target_val.asObj().obj_type == .symbol)
+        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars
+    else if (target_val.isObject() and target_val.asObj().obj_type == .string)
+        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars
+    else {
+        vm.runtimeError("Runtime Error: responds_to? expects a Symbol or String.\n", .{});
+        return error.RuntimeError;
+    };
+
+    var match = false;
+    if (receiver.isClass()) {
+        if (vm.findClassMethod(receiver.asClass(), query_name) != null) match = true;
+        if (!match and std.mem.eql(u8, query_name, "new")) match = true;
+    } else if (resolveClass(vm, receiver)) |c| {
+        if (vm.findMethod(c, query_name) != null) match = true;
+    }
+
+    // Check if the query refers to an instance variable auto-getter (if implemented later)
+    if (!match and receiver.isInstance()) {
+        if (receiver.asInstance().class.instance_layout.contains(query_name)) match = true;
+    }
+
+    return value.Value.initBool(match);
+}
+
 /// Object#nil? -> Returns true if receiver is NilClass, false otherwise
 pub fn nativeNilQ(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
@@ -44,7 +134,6 @@ pub fn nativeEmptyQ(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
         const vol = kernel.volume(handle);
         return value.Value.initBool(vol == 0.0);
     }
-
     return value.Value.initBool(false);
 }
 
@@ -55,11 +144,9 @@ pub fn nativeTap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
 
     if (arg_count > 0 and args[arg_count - 1].isClosure()) {
         const block_closure = args[arg_count - 1].asClosure();
-
         // Execute block and capture its result
         _ = try vm.callClosureSync(block_closure, &.{receiver});
     }
-
     return receiver;
 }
 
@@ -73,7 +160,6 @@ pub fn nativeInto(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
         // Return the evaluated block's result directly (it already has the correct ref count)
         return try vm.callClosureSync(block_closure, &.{receiver});
     }
-
     return receiver;
 }
 
@@ -86,6 +172,8 @@ pub fn nativeDup(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
 }
 
 pub const methods = [_]common.MethodDef{
+    .{ .name = "is_a?", .func = nativeIsA },
+    .{ .name = "responds_to?", .func = nativeRespondsTo },
     .{ .name = "nil?", .func = nativeNilQ },
     .{ .name = "empty?", .func = nativeEmptyQ },
     .{ .name = "tap", .func = nativeTap },
