@@ -287,12 +287,12 @@ pub const Compiler = struct {
                 try self.emitConstant(value.Value.initNumber(val));
             },
             .string => {
-                const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
+                const str_content = self.tree.getString(self.tree.stringId(node));
                 const str_idx = try self.makeStringConstant(str_content);
                 try self.emitOpWithOperand(.op_constant, .op_constant_wide, str_idx);
             },
             .symbol => {
-                const sym_str = self.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
+                const sym_str = self.tree.getString(self.tree.stringId(node));
                 const sym_idx = try self.makeSymbolConstant(sym_str);
                 try self.emitOpWithOperand(.op_constant, .op_constant_wide, sym_idx);
             },
@@ -319,7 +319,7 @@ pub const Compiler = struct {
                 std.debug.assert(@intFromEnum(node_idx) < self.symbols.len);
 
                 const sym = self.symbols[@intFromEnum(node_idx)];
-                const name_id = @as(ast.StringId, @enumFromInt(node.data));
+                const name_id = self.tree.stringId(node);
                 const name_str = self.tree.getString(name_id);
 
                 const is_local = (self.resolveLocal(name_id) != null) or
@@ -816,8 +816,8 @@ pub const Compiler = struct {
             },
             .defined_expr => {
                 const target_node = self.tree.getNode(node_idx).?;
-                if (target_node.data != @intFromEnum(ast.StringId.none)) {
-                    const name_id = @as(ast.StringId, @enumFromInt(target_node.data));
+                if (self.tree.stringId(target_node) != .none) {
+                    const name_id = self.tree.stringId(target_node);
                     if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
                         try self.emitOp(.op_true); // Locals are statically known
                     } else {
@@ -860,7 +860,7 @@ pub const Compiler = struct {
 
                             // Re-use your existing destructuring engine
                             const lhs = ast.LhsExpr{
-                                .name = @as(ast.StringId, @enumFromInt(el_node.data)),
+                                .name = self.tree.stringId(el_node),
                                 .modifier = null,
                             };
                             try self.compileDestructure(lhs);
@@ -1377,7 +1377,7 @@ pub const Compiler = struct {
             for (entries) |entry| {
                 const key_node = self.tree.getNode(entry.key).?;
                 if (key_node.tag == .identifier) {
-                    const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data)));
+                    const str_content = self.tree.getString(self.tree.stringId(key_node));
                     const str_idx = try self.makeStringConstant(str_content);
                     try self.emitOpWithOperand(.op_constant, .op_constant_wide, str_idx);
                 } else {
@@ -1412,7 +1412,7 @@ pub const Compiler = struct {
                     try self.emitOp(.op_map_spread);
                 } else {
                     if (key_node.tag == .identifier) {
-                        const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(key_node.data)));
+                        const str_content = self.tree.getString(self.tree.stringId(key_node));
                         const str_val = try self.vm.allocateString(str_content);
                         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
                         self.vm.push(str_val);
@@ -1494,7 +1494,7 @@ pub const Compiler = struct {
                     if (c_node.tag == .number) {
                         raw_idx = try self.makeConstant(value.Value.initNumber(self.tree.number(c_node)));
                     } else if (c_node.tag == .string) {
-                        const str_content = self.tree.getString(@as(ast.StringId, @enumFromInt(c_node.data)));
+                        const str_content = self.tree.getString(self.tree.stringId(c_node));
                         raw_idx = try self.makeStringConstant(str_content);
                     }
 
@@ -1962,7 +1962,7 @@ pub const Compiler = struct {
 
         const cs = self.tree.classStmt(node);
         const name_node = self.tree.getNode(cs.name).?;
-        const name_id = @as(ast.StringId, @enumFromInt(name_node.data));
+        const name_id = self.tree.stringId(name_node);
         const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
         const name_str = self.tree.getString(name_id);
 
@@ -1984,10 +1984,10 @@ pub const Compiler = struct {
         const block_payload = self.tree.block(body_node);
         const stmts = self.tree.getNodes(block_payload.stmts);
 
-        // DRY: Compile entire class body natively!
+        // Compile entire class body natively!
         try self.compileNamespaceBody(stmts, false);
 
-        // DRY: Export Fully Qualified Name
+        // Export Fully Qualified Name
         try self.defineFullyQualifiedNamespace(name_str);
 
         const sym = self.symbols[@intFromEnum(node_idx)];
@@ -2220,7 +2220,7 @@ pub const Compiler = struct {
             switch (node.tag) {
                 .identifier => {
                     lowered[i] = .{
-                        .name = @as(ast.StringId, @enumFromInt(node.data)),
+                        .name = self.tree.stringId(node),
                         .default_value = .none,
                         .modifier = null,
                         .is_keyword = false,
@@ -2237,7 +2237,7 @@ pub const Compiler = struct {
                 },
                 .symbol => {
                     lowered[i] = .{
-                        .name = @as(ast.StringId, @enumFromInt(node.data)),
+                        .name = self.tree.stringId(node),
                         .default_value = .none,
                         .modifier = null,
                         .is_keyword = true,
@@ -2247,17 +2247,16 @@ pub const Compiler = struct {
                     const entries = self.tree.getHashEntries(self.tree.nodeSpan(node));
                     const key_node = self.tree.getNode(entries[0].key).?;
                     lowered[i] = .{
-                        .name = @as(ast.StringId, @enumFromInt(key_node.data)),
+                        .name = self.tree.stringId(key_node),
                         .default_value = entries[0].value,
                         .modifier = null,
                         .is_keyword = true,
                     };
                 },
                 .splat_expr => {
-                    // The data payload of a splat_expr is the inner NodeIndex
                     const inner_node = self.tree.getNode(@as(ast.NodeIndex, @enumFromInt(node.data))).?;
                     lowered[i] = .{
-                        .name = @as(ast.StringId, @enumFromInt(inner_node.data)),
+                        .name = self.tree.stringId(inner_node),
                         .default_value = .none,
                         .modifier = .splat,
                         .is_keyword = false,
@@ -2266,7 +2265,7 @@ pub const Compiler = struct {
                 .double_splat_expr => {
                     const inner_node = self.tree.getNode(@as(ast.NodeIndex, @enumFromInt(node.data))).?;
                     lowered[i] = .{
-                        .name = @as(ast.StringId, @enumFromInt(inner_node.data)),
+                        .name = self.tree.stringId(inner_node),
                         .default_value = .none,
                         .modifier = .double_splat,
                         .is_keyword = false,

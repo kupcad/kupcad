@@ -364,6 +364,12 @@ pub const Tree = struct {
         self.rescue_clauses.deinit(allocator);
     }
 
+    /// Safely extracts the StringId payload from a node
+    pub inline fn stringId(self: *const Tree, node: *const Node) StringId {
+        _ = self;
+        return @as(StringId, @enumFromInt(node.data));
+    }
+
     // --- Accessor Helpers ---
     pub fn getNode(self: *const Tree, index: NodeIndex) ?*const Node {
         if (index == .none) return null;
