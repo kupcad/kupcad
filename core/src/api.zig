@@ -59,13 +59,13 @@ pub fn benchmarkScript(allocator: std.mem.Allocator, source: []const u8, io: std
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
 
-    // Fail early on syntax/parse errors
     if (doc.diagnostics.len > 0) return error.ParseError;
 
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
 
     vm.line_index = &doc.line_index;
+    vm.mute_errors = true; // Mute VM stderr output during benchmarks and tests
 
     try registry.registerStandardLibrary(&vm);
 

@@ -71,3 +71,25 @@ test "API: benchmarkScript propagates errors on syntax failure" {
 
     try testing.expectError(error.ParseError, api.benchmarkScript(testing.allocator, invalid_source, testing.io, &out.writer));
 }
+
+test "API: benchmarkScript propagates error.RuntimeError on VM runtime failure" {
+    const runtime_err_source =
+        \\def bad_fn()
+        \\  undefined_var + 10
+        \\end
+        \\bad_fn()
+    ;
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+
+    try testing.expectError(error.RuntimeError, api.benchmarkScript(testing.allocator, runtime_err_source, testing.io, &out.writer));
+}
+
+test "API: benchmarkScript handles empty source code cleanly" {
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+
+    // Ensures zero-instruction scripts compile and profile without underflowing or panicking
+    try api.benchmarkScript(testing.allocator, "", testing.io, &out.writer);
+}
