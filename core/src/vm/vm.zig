@@ -66,6 +66,8 @@ pub const VM = struct {
     boolean_class: ?*value.ObjClass = null,
     bbox_class: ?*value.ObjClass = null,
     object_class: ?*value.ObjClass = null,
+    geometry_class: ?*value.ObjClass = null,
+    cross_section_class: ?*value.ObjClass = null,
 
     // safety for infinite loops
     instruction_count: usize,
@@ -1473,6 +1475,10 @@ pub const VM = struct {
         var class_obj: ?*value.ObjClass = null;
         if (receiver.isInstance()) {
             class_obj = receiver.asInstance().class;
+        } else if (receiver.isGeometry()) {
+            class_obj = self.geometry_class;
+        } else if (receiver.isCrossSection()) {
+            class_obj = self.cross_section_class;
         } else if (receiver.isObject()) {
             switch (receiver.asObj().obj_type) {
                 .string => class_obj = self.string_class,
@@ -1622,7 +1628,9 @@ pub const VM = struct {
         if (method_val) |m_val| {
             if (m_val.isNative()) {
                 const native_obj = m_val.asNative();
-                const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
+                const result = native_obj.function(self, arg_count, args_ptr) catch {
+                    return self.throwDynamicError("Runtime Error: Native Method Execution Error", .{});
+                };
                 self.popAndRelease(arg_count + 1);
 
                 // Absorb the native +1 reference directly

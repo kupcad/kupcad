@@ -4989,3 +4989,38 @@ test "VM: FFI getReceiver safely extracts receiver and enforces pointer bounds" 
     // 4. Verify it correctly stepped back 1 slot to grab the receiver
     try testing.expectEqual(@as(f64, 10.0), receiver.asNumber());
 }
+
+test "VM: Geometries and CrossSections are First-Class Objects (is_a? and responds_to?)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Prove that primitives are true classes and methods resolve instantly
+    const source =
+        \\[
+        \\  cube(10).is_a?(Geometry),
+        \\  square(10).is_a?(CrossSection),
+        \\  cube(10).responds_to?(:translate),
+        \\  square(10).responds_to?(:extrude),
+        \\  cube(10).is_a?(Object)
+        \\]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    // All 5 checks should definitively return true!
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[2].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[3].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[4].asBool());
+}

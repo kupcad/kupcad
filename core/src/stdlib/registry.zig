@@ -52,6 +52,14 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.symbol_class = try defineBuiltinClass(vm, "Symbol", vm.object_class);
     vm.boolean_class = try defineBuiltinClass(vm, "Boolean", vm.object_class);
     vm.bbox_class = try defineBuiltinClass(vm, "BoundingBox", vm.object_class);
+    vm.geometry_class = try defineBuiltinClass(vm, "Geometry", vm.object_class);
+    vm.cross_section_class = try defineBuiltinClass(vm, "CrossSection", vm.object_class);
+
+    // Bind CAD methods natively to the classes
+    for (manifest.mesh_methods) |def| {
+        try bindNativeMethod(vm, vm.geometry_class.?, def.name, def.func);
+        try bindNativeMethod(vm, vm.cross_section_class.?, def.name, def.func);
+    }
 
     // Set up GC module (as an instance of a pseudo-class)
     const gc_class = try defineBuiltinClass(vm, "GC", null);

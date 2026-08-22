@@ -54,7 +54,7 @@ pub const MeshMethodFn = *const fn (vm: *VM, receiver: value.Value, arg_count: u
 pub const MeshMethod = struct {
     name: []const u8,
     category: Category,
-    func: MeshMethodFn,
+    func: value.NativeFn,
 };
 
 pub const mesh_methods = [_]MeshMethod{
@@ -87,28 +87,11 @@ pub const method_map = std.StaticStringMap(MeshMethodFn).initComptime(blk: {
     break :blk kvs;
 });
 
-// The O(1) Dynamic Dispatcher
+// The O(1) Dynamic Dispatcher (Now acts only as a pure Host Fallback)
 pub fn cadInvokeHandler(vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (!receiver.isGeometry() and !receiver.isCrossSection()) {
-        vm.reportError("Runtime Error: Methods can only be called on Geometry/CrossSection objects.\n", .{});
-        return error.RuntimeError;
-    }
-
-    // Try CAD-specific mesh methods (translate, rotate, bbox, etc.)
-    if (method_map.get(method_name)) |method_func| {
-        return method_func(vm, receiver, arg_count, args);
-    }
-
-    // Fallback to Universal Object Protocol (tap, then, empty?, dup)
-    if (vm.object_class) |obj_cls| {
-        if (obj_cls.methods.get(method_name)) |method_val| {
-            if (method_val.isObject() and method_val.asObj().obj_type == .native) {
-                const native_obj = @as(*value.ObjNative, @alignCast(@fieldParentPtr("obj", method_val.asObj())));
-                return native_obj.function(vm, arg_count, args);
-            }
-        }
-    }
-
+    _ = arg_count;
+    _ = args;
+    _ = receiver;
     vm.reportError("Runtime Error: Unknown method '{s}'.\n", .{method_name});
     return error.RuntimeError;
 }
