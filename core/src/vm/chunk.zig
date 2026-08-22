@@ -46,6 +46,8 @@ pub const OpCode = enum(u8) {
     op_set_class_var_wide,
     op_module,
     op_module_wide,
+    op_set_member,
+    op_set_member_wide,
     op_mixin,
     op_method,
     op_method_wide,

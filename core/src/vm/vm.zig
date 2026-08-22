@@ -368,8 +368,6 @@ pub const VM = struct {
                         const mod = receiver.asModule();
                         if (mod.methods.get(name_str)) |val| {
                             self.push(val);
-                        } else if (self.globals.get(name_str)) |val| {
-                            self.push(val);
                         } else {
                             if (self.throwDynamicError("Runtime Error: Undefined module member '{s}'.", .{name_str}) != .ok) return .runtime_error;
                             continue;
@@ -381,8 +379,6 @@ pub const VM = struct {
                             self.push(val);
                         } else if (cls.class_fields.get(name_str)) |val| {
                             self.push(val);
-                        } else if (self.globals.get(name_str)) |val| {
-                            self.push(val);
                         } else {
                             if (self.throwDynamicError("Runtime Error: Undefined class member '{s}'.", .{name_str}) != .ok) return .runtime_error;
                             continue;
@@ -391,6 +387,26 @@ pub const VM = struct {
                         if (self.throwDynamicError("Runtime Error: Only instances, modules, and classes have properties.\n", .{}) != .ok) return .runtime_error;
                         continue;
                     }
+                },
+                .op_set_member, .op_set_member_wide => {
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_member_wide);
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+
+                    const val = self.pop();
+                    const receiver = self.stack[self.stack_top - 1]; // Peek at namespace (Module/Class)
+
+                    if (receiver.isModule()) {
+                        const mod = receiver.asModule();
+                        mod.methods.put(self.allocator, name_str, val) catch return .runtime_error;
+                    } else if (receiver.isClass()) {
+                        const cls = receiver.asClass();
+                        cls.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
+                    } else {
+                        if (self.throwDynamicError("Runtime Error: Cannot attach member to non-namespace.\n", .{}) != .ok) return .runtime_error;
+                        continue;
+                    }
+                    self.push(val); // Push the namespace back to maintain stack equilibrium
                 },
                 .op_get_global, .op_get_global_wide => {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_global_wide);

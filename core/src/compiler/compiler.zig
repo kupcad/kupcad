@@ -95,6 +95,7 @@ pub const Compiler = struct {
     enclosing: ?*Compiler = null,
     function: ?*value.ObjFunction = null,
     is_method: bool = false,
+    active_namespaces: usize = 0,
 
     upvalues: std.ArrayListUnmanaged(Upvalue) = .empty,
     locals: std.ArrayListUnmanaged(Local) = .empty,
@@ -1875,6 +1876,9 @@ pub const Compiler = struct {
     }
 
     fn compileClassStmt(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
+        self.active_namespaces += 1;
+        defer self.active_namespaces -= 1;
+
         const cs = self.tree.classStmt(node);
         const name_node = self.tree.getNode(cs.name).?;
         const name_id = @as(ast.StringId, @enumFromInt(name_node.data));
@@ -1924,11 +1928,16 @@ pub const Compiler = struct {
                         continue;
                     }
                 }
+            } else {
+                try self.compileNode(stmt_idx);
+                try self.emitOp(.op_pop);
             }
         }
 
         const sym = self.symbols[@intFromEnum(node_idx)];
-        if (sym.kind == .local and self.enclosing != null) {
+        if (self.active_namespaces > 1) {
+            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
+        } else if (sym.kind == .local and self.enclosing != null) {
             const slot = self.getNextLocalSlot();
             try self.addLocal(name_id, slot);
             try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
@@ -1939,6 +1948,9 @@ pub const Compiler = struct {
     }
 
     fn compileModuleStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
+        self.active_namespaces += 1;
+        defer self.active_namespaces -= 1;
+
         const ms = self.tree.moduleStmt(node);
         const name_str = self.tree.getString(ms.name);
         const name_idx = try self.makeStringConstant(name_str);
@@ -1964,8 +1976,12 @@ pub const Compiler = struct {
             }
         }
 
-        try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-        try self.emitOp(.op_nil);
+        if (self.active_namespaces > 1) {
+            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
+        } else {
+            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+            try self.emitOp(.op_nil);
+        }
     }
 
     fn compileSuperCall(self: *Compiler, node: *const ast.Node) CompileError!void {
@@ -2167,37 +2183,47 @@ pub const Compiler = struct {
     }
 
     /// Returns the net stack effect of an OpCode.
-    /// Returns `null` if the effect is dynamic (depends on the operand).
+    /// Returns `null` if the effect is dynamic (e.g., depends on call arity or operand length).
     fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
         return switch (op) {
             // --- Pushes 1 (Net: +1) ---
+            // These operations introduce a new value onto the top of the stack.
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_local_wide, .op_get_global, .op_get_global_wide, .op_constant, .op_constant_wide, .op_closure, .op_closure_wide, .op_get_upvalue, .op_dup, .op_import, .op_import_wide, .op_block_given, .op_defined, .op_defined_wide, .op_module, .op_module_wide, .op_extract_kwarg, .op_extract_kwarg_wide, .op_class, .op_class_wide => 1,
 
             // --- Pops 1 (Net: -1) ---
+            // These operations consume exactly one value from the stack without pushing anything back.
             .op_pop, .op_return, .op_close_upvalue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_switch_wide, .op_inherit, .op_class_method, .op_class_method_wide, .op_mixin, .op_method, .op_method_wide, .op_define_global, .op_define_global_wide, .op_bitwise_and, .op_break_block => -1,
 
             // --- Pops 2 (Net: -2) ---
+            // Consumes two values (e.g. key and value) without replacing them.
             .op_map_insert => -2,
 
             // --- Pops 2, Pushes 1 (Net: -1) ---
+            // Binary operations that consume a left and right operand, and yield a single result.
             .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_equal, .op_case_equal, .op_is_instance, .op_get_index, .op_set_property, .op_set_property_wide, .op_set_class_var, .op_set_class_var_wide => -1,
 
             // --- Pops 3, Pushes 1 (Net: -2) ---
+            // Consumes a target, an index, and a value, yielding the assigned value back.
             .op_set_index => -2,
 
             // --- Pops 1, Pushes 1 (Net: 0) ---
-            .op_negate, .op_not, .op_is_nil => 0,
+            // Unary modifiers that consume a value and replace it with a mutated version.
+            // op_set_member pops a class, peeks at the namespace, attaches it, and pushes the class back.
+            .op_negate, .op_not, .op_is_nil, .op_set_member, .op_set_member_wide => 0,
 
             // --- Pushes 2 (Net: +2) ---
+            // Duplicates the top two values on the stack.
             .op_dup_two => 2,
 
             // --- Doesn't pop or push (Net: 0) ---
+            // Pure side-effects or control flow jumps that leave the stack exactly as they found it.
             .op_set_local, .op_set_local_wide, .op_jump_if_not_nil, .op_jump_if_false, .op_jump_if_nil, .op_jump, .op_loop, .op_setup_rescue, .op_pop_rescue, .op_get_class_var, .op_get_class_var_wide, .op_set_upvalue => 0,
 
             // --- Dynamic Ops (Requires manual tracking) ---
-            .op_call, .op_invoke, .op_invoke_wide, .op_super_invoke, .op_build_array, .op_build_array_wide, .op_build_map, .op_build_map_wide, .op_unpack, .op_unpack_splat, .op_interpolate, .op_yield, .op_build_range, .op_pack_splat => null,
+            // These operations consume a variable number of arguments based on bytecode operands.
+            .op_call, .op_invoke, .op_invoke_wide, .op_super_invoke, .op_build_array, .op_build_array_wide, .op_build_map, .op_build_map_wide, .op_unpack, .op_unpack_splat, .op_pack_splat, .op_interpolate, .op_yield, .op_build_range => null,
 
-            else => 0, // Fallback for unsupported ops
+            else => 0, // Fallback for any implicitly balanced ops
         };
     }
 

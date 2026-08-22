@@ -29,13 +29,13 @@ pub fn verifyChunk(c: *const chunk.Chunk) VerifierError!void {
             },
 
             // 1-byte operand
-            .op_constant, .op_get_local, .op_set_local, .op_get_global, .op_define_global, .op_set_global, .op_build_array, .op_build_map, .op_build_range, .op_interpolate, .op_unpack, .op_call, .op_yield, .op_get_upvalue, .op_set_upvalue, .op_class, .op_module, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_super_invoke, .op_import => {
+            .op_constant, .op_get_local, .op_set_local, .op_get_global, .op_define_global, .op_set_global, .op_build_array, .op_build_map, .op_build_range, .op_interpolate, .op_unpack, .op_call, .op_yield, .op_get_upvalue, .op_set_upvalue, .op_class, .op_module, .op_set_member, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_super_invoke, .op_import => {
                 if (ip + 1 > len) return error.OutOfBoundsRead;
                 ip += 1;
             },
 
             // 2-byte operand
-            .op_constant_wide, .op_get_local_wide, .op_set_local_wide, .op_get_global_wide, .op_define_global_wide, .op_set_global_wide, .op_build_array_wide, .op_build_map_wide, .op_class_wide, .op_module_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide, .op_pack_splat, .op_unpack_splat, .op_extract_kwarg => {
+            .op_constant_wide, .op_get_local_wide, .op_set_local_wide, .op_get_global_wide, .op_define_global_wide, .op_set_global_wide, .op_build_array_wide, .op_build_map_wide, .op_class_wide, .op_module_wide, .op_set_member_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide, .op_pack_splat, .op_unpack_splat, .op_extract_kwarg => {
                 if (ip + 2 > len) return error.OutOfBoundsRead;
                 ip += 2;
             },

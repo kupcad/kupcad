@@ -6169,3 +6169,40 @@ test "VM: Implicit bare super forwards blocks and keyword arguments natively" {
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expectEqual(@as(f64, 25.0), result.asNumber());
 }
+
+test "VM: Modules accurately namespace nested classes and prevent global leaks" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\module Factory
+        \\  class Gear
+        \\    def self.size()
+        \\      42
+        \\    end
+        \\  end
+        \\end
+        \\
+        \\res1 = Factory::Gear.size()
+        \\res2 = defined?(Gear) # Should be nil because Gear didn't leak globally!
+        \\[res1, res2.nil?]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool()); // defined?(Gear) is nil
+}
