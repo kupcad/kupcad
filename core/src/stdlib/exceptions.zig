@@ -7,10 +7,11 @@ const value = @import("../core/value.zig");
 // Default initializer for Exception.new("message")
 fn exceptionInit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args); // Safely step back 1 slot to get the Receiver
+
+    // Use Phase 9 FFI boundaries
+    const receiver = vm.getReceiver(args);
 
     std.debug.assert(receiver.isInstance());
-
     const instance = receiver.asInstance();
 
     var msg = value.Value.initNil();
@@ -19,14 +20,20 @@ fn exceptionInit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
     } else {
         msg = try vm.allocateString(instance.class.name.chars);
     }
-
     try vm.setInstanceField(instance, "message", msg, null);
+
+    // --- EAGER BACKTRACE CAPTURE ---
+    if (vm.buildBacktrace()) |bt_arr| {
+        try vm.setInstanceField(instance, "backtrace", value.Value.initObj(&bt_arr.obj), null);
+    } else |_| {}
+
     return receiver;
 }
 
 // e.message()
 fn exceptionMessage(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
+
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     const receiver = vm.getReceiver(args); // Safely step back 1 slot to get the Receiver
     const instance = receiver.asInstance();
@@ -43,8 +50,19 @@ fn exceptionMessage(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
 // e.backtrace()
 fn exceptionBacktrace(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
-    _ = args;
+
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const receiver = vm.getReceiver(args);
+    const instance = receiver.asInstance();
+
+    // Pull the pre-calculated backtrace!
+    if (instance.class.instance_layout.get("backtrace")) |idx| {
+        if (idx < instance.fields.items.len) {
+            return instance.fields.items[idx];
+        }
+    }
+
+    // Fallback to empty array if something went wrong during capture
     const arr_obj = try vm.gc.allocateArray(vm);
     return value.Value.initObj(&arr_obj.obj);
 }

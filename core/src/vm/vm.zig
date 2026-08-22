@@ -832,7 +832,9 @@ pub const VM = struct {
                                 const native_obj = method_val.asNative();
                                 const args_ptr = self.stack.ptr + base_slot + 1;
 
-                                const result = native_obj.function(self, arg_count, args_ptr) catch {
+                                const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
+                                    if (err == error.Unwind) return .ok;
+                                    if (err == error.FatalError) return .runtime_error;
                                     return self.throwDynamicError("Runtime Error: Native Super Execution Error", .{});
                                 };
 
@@ -1350,7 +1352,11 @@ pub const VM = struct {
         });
 
         const res = self.runUntil(target_depth);
-        if (res != .ok) return error.RuntimeError;
+
+        // --- SAFE RE-ENTRANT UNWINDING ---
+        if (res == .runtime_error) return error.FatalError;
+        if (self.frames.items.len < target_depth) return error.Unwind; // A rescue block ate our frame
+        if (res != .ok) return error.FatalError;
 
         return self.pop();
     }
@@ -1628,7 +1634,9 @@ pub const VM = struct {
         if (method_val) |m_val| {
             if (m_val.isNative()) {
                 const native_obj = m_val.asNative();
-                const result = native_obj.function(self, arg_count, args_ptr) catch {
+                const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
+                    if (err == error.Unwind) return .ok;
+                    if (err == error.FatalError) return .runtime_error;
                     return self.throwDynamicError("Runtime Error: Native Method Execution Error", .{});
                 };
                 self.popAndRelease(arg_count + 1);
@@ -1873,7 +1881,9 @@ pub const VM = struct {
             const native_obj = callee.asNative();
             const args_ptr = self.stack.ptr + base_slot + 1;
 
-            const result = native_obj.function(self, arg_count, args_ptr) catch {
+            const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
+                if (err == error.Unwind) return .ok;
+                if (err == error.FatalError) return .runtime_error;
                 return self.throwDynamicError("Runtime Error: Native Execution Error", .{});
             };
 
@@ -1902,30 +1912,51 @@ pub const VM = struct {
     inline fn executeThrow(self: *VM) InterpretResult {
         const err_val = self.pop();
         if (self.rescue_frames.items.len == 0) {
-            self.reportError("\n[Uncaught Exception] ", .{});
-
+            // We removed the [Uncaught Exception] header!
             if (err_val.isObject() and err_val.asObj().obj_type == .string) {
                 const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", err_val.asObj()))).chars;
-                self.reportError("{s}\n", .{str});
+                self.reportError("\nRuntimeError: {s}\n", .{str});
+                self.printStacktrace();
             } else if (err_val.isInstance()) {
                 const inst = err_val.asInstance();
                 var printed = false;
-                // Dynamically fetch the message field for terminal output
+
+                // Format: ClassName: Message
                 if (inst.class.instance_layout.get("message")) |idx| {
                     if (idx < inst.fields.items.len) {
                         const msg_val = inst.fields.items[idx];
                         if (msg_val.isObject() and msg_val.asObj().obj_type == .string) {
                             const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj()))).chars;
-                            self.reportError("{s}: {s}\n", .{ inst.class.name.chars, str });
+                            self.reportError("\n{s}: {s}\n", .{ inst.class.name.chars, str });
                             printed = true;
                         }
                     }
                 }
-                if (!printed) self.reportError("{s}\n", .{inst.class.name.chars});
+                if (!printed) self.reportError("\n{s}\n", .{inst.class.name.chars});
+
+                // Print First-Class Backtrace seamlessly
+                var printed_bt = false;
+                if (inst.class.instance_layout.get("backtrace")) |bt_idx| {
+                    if (bt_idx < inst.fields.items.len) {
+                        const bt_val = inst.fields.items[bt_idx];
+                        if (bt_val.isObject() and bt_val.asObj().obj_type == .array) {
+                            const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", bt_val.asObj())));
+                            for (arr_obj.items.items) |frame_val| {
+                                if (frame_val.isObject() and frame_val.asObj().obj_type == .string) {
+                                    const frame_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", frame_val.asObj()))).chars;
+                                    self.reportError("{s}\n", .{frame_str});
+                                }
+                            }
+                            printed_bt = true;
+                        }
+                    }
+                }
+
+                if (!printed_bt) self.printStacktrace();
             } else {
-                self.reportError("Unknown error.\n", .{});
+                self.reportError("\nUnknown error.\n", .{});
+                self.printStacktrace();
             }
-            self.printStacktrace();
             return .runtime_error;
         }
 
@@ -2062,9 +2093,16 @@ pub const VM = struct {
             if (rt_class_val.isClass()) {
                 if (self.gc.allocateInstance(self, rt_class_val.asClass())) |inst| {
                     if (self.allocateString(msg)) |str_val| {
-                        // Protect instance from GC during field assignment
                         self.push(value.Value.initObj(&inst.obj));
                         self.setInstanceField(inst, "message", str_val, null) catch {};
+
+                        // --- EAGER BACKTRACE CAPTURE ---
+                        if (self.buildBacktrace()) |bt_arr| {
+                            self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
+                            self.setInstanceField(inst, "backtrace", value.Value.initObj(&bt_arr.obj), null) catch {};
+                            _ = self.pop();
+                        } else |_| {}
+
                         _ = self.pop();
 
                         self.push(value.Value.initObj(&inst.obj));
@@ -2091,7 +2129,7 @@ pub const VM = struct {
 
     pub fn reportError(self: *VM, comptime fmt: []const u8, args: anytype) void {
         if (!self.mute_errors) {
-            std.log.err(fmt, args);
+            std.debug.print(fmt, args);
         }
     }
 
@@ -2103,22 +2141,52 @@ pub const VM = struct {
             const frame = &self.frames.items[i];
             const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
 
-            // The actual instruction that failed is immediately prior to the IP
             const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
             const source_offset = exec_chunk.getOffset(instruction_ip);
-
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
 
-            // Format flawlessly using the injected LineIndex
             if (self.line_index) |li| {
                 const line = li.getLine(source_offset) + 1;
                 const col = li.getUtf8Column(source_offset) + 1;
-                self.reportError("  at {s} (line {d}, col {d})\n", .{ func_name, line, col });
+                self.reportError("    from script:{d}:{d}:in '{s}'\n", .{ line, col, func_name });
             } else {
-                // Safe fallback if LineIndex was stripped/omitted
-                self.reportError("  at {s} (offset {d})\n", .{ func_name, source_offset });
+                self.reportError("    from script:offset {d}:in '{s}'\n", .{ source_offset, func_name });
             }
         }
+    }
+
+    // --- First-Class Error Backtraces ---
+    pub fn buildBacktrace(self: *VM) !*value.ObjArray {
+        const arr_obj = try self.gc.allocateArray(self);
+        self.push(value.Value.initObj(&arr_obj.obj)); // Protect array from GC
+        defer _ = self.pop();
+
+        var i: usize = self.frames.items.len;
+        while (i > 0) {
+            i -= 1;
+            const frame = &self.frames.items[i];
+            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
+
+            const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
+            const source_offset = exec_chunk.getOffset(instruction_ip);
+            const func_name = if (frame.closure.function.name) |n| n.chars else "script";
+
+            var buf: [256]u8 = undefined;
+            var trace_str: []const u8 = "";
+
+            if (self.line_index) |li| {
+                const line = li.getLine(source_offset) + 1;
+                const col = li.getUtf8Column(source_offset) + 1;
+                trace_str = std.fmt.bufPrint(&buf, "    from script:{d}:{d}:in '{s}'", .{ line, col, func_name }) catch "    from unknown";
+            } else {
+                trace_str = std.fmt.bufPrint(&buf, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name }) catch "    from unknown";
+            }
+
+            const str_val = try self.allocateString(trace_str);
+            try arr_obj.items.append(self.allocator, str_val);
+        }
+
+        return arr_obj;
     }
 
     // --- Safe FFI Pointer Extraction ---

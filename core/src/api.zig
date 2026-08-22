@@ -67,6 +67,10 @@ pub fn buildStl(allocator: std.mem.Allocator, io: std.Io, source: []const u8, cl
 
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
+
+    // Inject the LineIndex so the VM can generate human-readable backtraces
+    vm.line_index = &doc.line_index;
+
     try registry.registerStandardLibrary(&vm);
 
     // Inject CLI Params into the Global Map

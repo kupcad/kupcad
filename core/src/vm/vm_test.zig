@@ -5024,3 +5024,59 @@ test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respon
     try testing.expectEqual(true, arr_obj.items.items[3].asBool());
     try testing.expectEqual(true, arr_obj.items.items[4].asBool());
 }
+
+test "VM: Exception objects capture first-class error backtraces" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def level_one()
+        \\  raise(ArgumentError.new("Bad parameter!"))
+        \\end
+        \\
+        \\def level_two()
+        \\  level_one()
+        \\end
+        \\
+        \\begin
+        \\  level_two()
+        \\rescue => e
+        \\  e.backtrace()
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    // Inject LineIndex so it uses the 'script:line:col' format instead of 'offset'
+    vm.line_index = &doc.line_index;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(result.isObject() and result.asObj().obj_type == .array);
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result.asObj())));
+
+    try testing.expect(arr_obj.items.items.len >= 3);
+
+    // Verify EXACT Ruby-style formatting
+    const frame1 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[0].asObj()))).chars;
+    try testing.expect(std.mem.startsWith(u8, frame1, "    from script:"));
+    try testing.expect(std.mem.indexOf(u8, frame1, "in 'level_one'") != null);
+
+    const frame2 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj()))).chars;
+    try testing.expect(std.mem.startsWith(u8, frame2, "    from script:"));
+    try testing.expect(std.mem.indexOf(u8, frame2, "in 'level_two'") != null);
+
+    const frame3 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()))).chars;
+    try testing.expect(std.mem.startsWith(u8, frame3, "    from script:"));
+    try testing.expect(std.mem.indexOf(u8, frame3, "in 'script'") != null);
+}
