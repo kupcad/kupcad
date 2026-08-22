@@ -120,8 +120,8 @@ test "Compiler: compiles compound assignment (x += 5)" {
     try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
     try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
     try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
-    try testing.expectEqual(chunk.OpCode.op_define_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
-    try testing.expectEqual(chunk.OpCode.op_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
+    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
+    try testing.expectEqual(chunk.OpCode.op_define_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
 }
 
 test "Compiler: compiles safe navigation method call (obj&.cut())" {

@@ -5375,3 +5375,243 @@ test "VM: Gas limit triggers securely through native op_yield re-entrancy" {
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.execution_limit_exceeded, result);
 }
+
+test "VM Syntax: Trailing statement modifiers (if, unless, while, until) execute correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\x = 10 if true
+        \\y = 20 unless false
+        \\c1 = 0
+        \\c1 += 1 while c1 < 5
+        \\c2 = 0
+        \\c2 += 1 until c2 == 5
+        \\[x, y, c1, c2]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[2].asNumber());
+    try testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[3].asNumber());
+}
+
+test "VM Syntax: Parenthesis-less method defs and command-syntax invocation" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def calculate a, b
+        \\  a * b
+        \\end
+        \\calculate 6, 7
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 42.0), result.asNumber());
+}
+
+test "VM Syntax: Case statement handles multiple comma-separated conditions per when clause" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def classify(val)
+        \\  case val
+        \\  when 1, 2, 3
+        \\    100
+        \\  when 4, 5
+        \\    200
+        \\  else
+        \\    300
+        \\  end
+        \\end
+        \\[classify(2), classify(5), classify(9)]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 300.0), arr_obj.items.items[2].asNumber());
+}
+
+test "VM Syntax: Chained assignments evaluate with right-associativity" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\a = b = c = 42
+        \\[a, b, c]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[2].asNumber());
+}
+
+test "VM Syntax: Percent word (%w) and symbol (%i) array literals compile to valid arrays" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\words = %w[gear shaft motor]
+        \\symbols = %i[r h d]
+        \\[words.length(), symbols[0] == :r]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool());
+}
+
+test "VM Syntax: Keyword logical operators (and, or, not) evaluate with proper precedence" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\res1 = true and false or not false
+        \\res2 = not true or false and true
+        \\[res1, res2]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+    try testing.expectEqual(false, arr_obj.items.items[1].asBool());
+}
+
+test "VM Syntax: Namespaced class declaration and scope resolution method invocation" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\module Hardware
+        \\  class Screw
+        \\    def self.build()
+        \\      42
+        \\    end
+        \\  end
+        \\end
+        \\Hardware::Screw.build()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 42.0), result.asNumber());
+}
+
+test "VM Syntax: Return with multiple comma-separated values returns an Array" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\def get_coords
+        \\  return 10, 20, 30
+        \\end
+        \\get_coords
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[2].asNumber());
+}

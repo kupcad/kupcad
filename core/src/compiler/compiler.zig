@@ -1787,9 +1787,9 @@ pub const Compiler = struct {
             if (self.enclosing == null) {
                 try self.script_globals.put(self.allocator, name_str, {});
             }
+            try self.emitOp(.op_dup);
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-            try self.emitOp(.op_nil);
         } else {
             const slot = self.getNextLocalSlot();
             try self.addLocal(name_id, slot);
@@ -1935,6 +1935,9 @@ pub const Compiler = struct {
                 const params = self.tree.getParams(ds.params);
                 try self.compileClosureBlock(params, ds.body, method_name, true);
                 try self.emitOpWithOperand(.op_method, .op_method_wide, m_name_idx);
+            } else {
+                try self.compileNode(stmt_idx);
+                try self.emitOp(.op_pop);
             }
         }
 

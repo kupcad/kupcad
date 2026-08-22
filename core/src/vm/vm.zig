@@ -362,8 +362,32 @@ pub const VM = struct {
                             if (self.throwDynamicError("Runtime Error: Undefined property '{s}'.", .{name_str}) != .ok) return .runtime_error;
                             continue;
                         }
+                    } else if (receiver.isModule()) {
+                        self.stack_top -= 1; // Pop receiver
+                        const mod = receiver.asModule();
+                        if (mod.methods.get(name_str)) |val| {
+                            self.push(val);
+                        } else if (self.globals.get(name_str)) |val| {
+                            self.push(val);
+                        } else {
+                            if (self.throwDynamicError("Runtime Error: Undefined module member '{s}'.", .{name_str}) != .ok) return .runtime_error;
+                            continue;
+                        }
+                    } else if (receiver.isClass()) {
+                        self.stack_top -= 1; // Pop receiver
+                        const cls = receiver.asClass();
+                        if (self.findClassMethod(cls, name_str)) |val| {
+                            self.push(val);
+                        } else if (cls.class_fields.get(name_str)) |val| {
+                            self.push(val);
+                        } else if (self.globals.get(name_str)) |val| {
+                            self.push(val);
+                        } else {
+                            if (self.throwDynamicError("Runtime Error: Undefined class member '{s}'.", .{name_str}) != .ok) return .runtime_error;
+                            continue;
+                        }
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Only instances have properties.\n", .{}) != .ok) return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Only instances, modules, and classes have properties.\n", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
