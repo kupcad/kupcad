@@ -4,23 +4,45 @@ const VM = @import("../vm/vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 
-fn parseVec3(arg_count: u8, args: [*]value.Value, default_val: f64) !struct { f64, f64, f64 } {
-    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
-    if (arg_count > 1 and !args[1].isNumber()) return error.RuntimeError;
-    if (arg_count > 2 and !args[2].isNumber()) return error.RuntimeError;
+fn parseVec3(args: []const value.Value, default_val: f64) !struct { f64, f64, f64 } {
+    var pos_count = args.len;
+    var kwargs: ?*value.ObjMap = null;
 
-    const x = if (arg_count > 0) args[0].asNumber() else default_val;
-    const y = if (arg_count > 1) args[1].asNumber() else default_val;
-    const z = if (arg_count > 2) args[2].asNumber() else default_val;
+    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+        kwargs = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+        pos_count -= 1;
+    }
 
+    if (pos_count > 0 and !args[0].isNumber()) return error.RuntimeError;
+    if (pos_count > 1 and !args[1].isNumber()) return error.RuntimeError;
+    if (pos_count > 2 and !args[2].isNumber()) return error.RuntimeError;
+
+    var x = if (pos_count > 0) args[0].asNumber() else default_val;
+    var y = if (pos_count > 1) args[1].asNumber() else default_val;
+    var z = if (pos_count > 2) args[2].asNumber() else default_val;
+
+    if (kwargs) |map| {
+        for (map.keys.items, 0..) |k, i| {
+            if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
+                const k_str = if (k.asObj().obj_type == .string)
+                    @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
+                else
+                    @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
+
+                const v = map.values.items[i];
+                if (v.isNumber()) {
+                    if (std.mem.eql(u8, k_str, "x")) x = v.asNumber();
+                    if (std.mem.eql(u8, k_str, "y")) y = v.asNumber();
+                    if (std.mem.eql(u8, k_str, "z")) z = v.asNumber();
+                }
+            }
+        }
+    }
     return .{ x, y, z };
 }
 
-pub fn meshRotate(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    const vec = try parseVec3(arg_count, args, 0.0);
-
+pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    const vec = try parseVec3(args, 0.0);
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -35,11 +57,8 @@ pub fn meshRotate(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
     return error.RuntimeError;
 }
 
-pub fn meshScale(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    const vec = try parseVec3(arg_count, args, 1.0);
-
+pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    const vec = try parseVec3(args, 1.0);
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -51,11 +70,8 @@ pub fn meshScale(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
     return error.RuntimeError;
 }
 
-pub fn meshTranslate(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    const vec = try parseVec3(arg_count, args, 0.0);
-
+pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    const vec = try parseVec3(args, 0.0);
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -67,36 +83,34 @@ pub fn meshTranslate(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value)
     return error.RuntimeError;
 }
 
-pub fn meshOnFace(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
+pub fn meshOnFace(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
     const handle = try vm.ensureConcrete(receiver);
     const geom_obj = receiver.asGeometry();
 
-    if (arg_count < 1 or (!args[0].isString() and !(args[0].isObject() and args[0].asObj().obj_type == .symbol))) return error.RuntimeError;
-
-    const direction_sym = if (args[0].isObject() and args[0].asObj().obj_type == .string)
-        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", args[0].asObj()))).chars
+    if (args.len == 0) return error.RuntimeError;
+    const dir_arg = args[0];
+    const dir_str = if (dir_arg.isObject() and dir_arg.asObj().obj_type == .symbol)
+        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", dir_arg.asObj()))).chars
+    else if (dir_arg.isObject() and dir_arg.asObj().obj_type == .string)
+        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", dir_arg.asObj()))).chars
     else
-        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", args[0].asObj()))).chars;
+        return error.RuntimeError;
 
     if (geom_obj.cached_topology == null) {
         geom_obj.cached_topology = try vm.allocator.create(value.TopologyCache);
         geom_obj.cached_topology.?.* = .{ .is_populated = true };
     }
+
     var filter = geom.FaceFilter.top;
-    if (std.mem.eql(u8, direction_sym, "bottom")) filter = .bottom;
+    if (std.mem.eql(u8, dir_str, "bottom")) filter = .bottom;
 
     _ = kernel.queryFaces(handle, filter);
     return try vm.allocateWorkplane(geom_obj, [3]f64{ 0, 0, 0 }, [3]f64{ 0, 0, 1 });
 }
 
-pub fn meshBBox(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    _ = arg_count;
-
-    std.debug.assert(receiver.isGeometry());
+pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
     const handle = try vm.ensureConcrete(receiver);
     const geom_obj = receiver.asGeometry();
 
@@ -112,6 +126,7 @@ pub fn meshBBox(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
             };
         }
     }
+
     const box = geom_obj.cached_bbox orelse return value.Value.initNil();
 
     const bbox_inst = try vm.gc.allocateInstance(vm, vm.bbox_class.?);
@@ -122,16 +137,12 @@ pub fn meshBBox(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
     const size_y = box.max_y - box.min_y;
     const size_z = box.max_z - box.min_z;
 
-    const center_x = box.min_x + (size_x / 2.0);
-    const center_y = box.min_y + (size_y / 2.0);
-    const center_z = box.min_z + (size_z / 2.0);
-
     try vm.setInstanceField(bbox_inst, "size_x", value.Value.initNumber(size_x), null);
     try vm.setInstanceField(bbox_inst, "size_y", value.Value.initNumber(size_y), null);
     try vm.setInstanceField(bbox_inst, "size_z", value.Value.initNumber(size_z), null);
-    try vm.setInstanceField(bbox_inst, "center_x", value.Value.initNumber(center_x), null);
-    try vm.setInstanceField(bbox_inst, "center_y", value.Value.initNumber(center_y), null);
-    try vm.setInstanceField(bbox_inst, "center_z", value.Value.initNumber(center_z), null);
+    try vm.setInstanceField(bbox_inst, "center_x", value.Value.initNumber(box.min_x + (size_x / 2.0)), null);
+    try vm.setInstanceField(bbox_inst, "center_y", value.Value.initNumber(box.min_y + (size_y / 2.0)), null);
+    try vm.setInstanceField(bbox_inst, "center_z", value.Value.initNumber(box.min_z + (size_z / 2.0)), null);
     try vm.setInstanceField(bbox_inst, "min_x", value.Value.initNumber(box.min_x), null);
     try vm.setInstanceField(bbox_inst, "min_y", value.Value.initNumber(box.min_y), null);
     try vm.setInstanceField(bbox_inst, "min_z", value.Value.initNumber(box.min_z), null);
@@ -142,92 +153,133 @@ pub fn meshBBox(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anye
     return value.Value.initObj(&bbox_inst.obj);
 }
 
-pub fn meshVolume(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    _ = arg_count;
+pub fn meshVolume(vm: *VM, receiver: value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
     const handle = try vm.ensureConcrete(receiver);
     return value.Value.initNumber(kernel.volume(handle));
 }
 
-pub fn meshSurfaceArea(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    _ = arg_count;
+pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
     const handle = try vm.ensureConcrete(receiver);
     return value.Value.initNumber(kernel.surfaceArea(handle));
 }
 
-pub fn meshExtrude(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
+pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return error.RuntimeError;
-    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
+    var height: f64 = 1.0;
+    var pos_count = args.len;
 
-    const height = if (arg_count > 0) args[0].asNumber() else 1.0;
+    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+        pos_count -= 1;
+        for (map.keys.items, 0..) |k, i| {
+            if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
+                const k_str = if (k.asObj().obj_type == .string) @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars else @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
+                if (std.mem.eql(u8, k_str, "h") and map.values.items[i].isNumber()) height = map.values.items[i].asNumber();
+            }
+        }
+    }
+
+    if (pos_count > 0) {
+        if (!args[0].isNumber()) return error.RuntimeError;
+        height = args[0].asNumber();
+    }
+
     const new_idx = try vm.dag_builder.addExtrude(receiver.asCrossSection().dag_idx, height, 0, 0.0, 1.0, 1.0);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-pub fn meshRevolve(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
+pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return error.RuntimeError;
-    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
+    var degrees: f64 = 360.0;
+    var pos_count = args.len;
 
-    const degrees = if (arg_count > 0) args[0].asNumber() else 360.0;
+    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+        pos_count -= 1;
+        for (map.keys.items, 0..) |k, i| {
+            if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
+                const k_str = if (k.asObj().obj_type == .string) @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars else @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
+                if (std.mem.eql(u8, k_str, "deg") and map.values.items[i].isNumber()) degrees = map.values.items[i].asNumber();
+            }
+        }
+    }
+
+    if (pos_count > 0) {
+        if (!args[0].isNumber()) return error.RuntimeError;
+        degrees = args[0].asNumber();
+    }
+
     const new_idx = try vm.dag_builder.addRevolve(receiver.asCrossSection().dag_idx, 0, degrees);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-pub fn meshHull(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    _ = arg_count;
+pub fn meshHull(vm: *VM, receiver: value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
     const new_idx = try vm.dag_builder.addHull(receiver.asGeometry().dag_idx);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-pub fn meshTrimByPlane(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (arg_count < 3) return error.RuntimeError;
+pub fn meshTrimByPlane(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (args.len < 3) return error.RuntimeError;
     if (!args[0].isNumber() or !args[1].isNumber() or !args[2].isNumber()) return error.RuntimeError;
-    if (arg_count > 3 and !args[3].isNumber()) return error.RuntimeError;
-
     const nx = args[0].asNumber();
     const ny = args[1].asNumber();
     const nz = args[2].asNumber();
-    const offset = if (arg_count > 3) args[3].asNumber() else 0.0;
+    if (args.len > 3 and !args[3].isNumber()) return error.RuntimeError;
+    const offset = if (args.len > 3) args[3].asNumber() else 0.0;
+
     const new_idx = try vm.dag_builder.addTrimByPlane(receiver.asGeometry().dag_idx, nx, ny, nz, offset);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-pub fn meshMinkowski(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (arg_count < 1 or !args[0].isGeometry()) return error.RuntimeError;
-    const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.asGeometry().dag_idx, args[0].asGeometry().dag_idx);
+pub fn meshMinkowski(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (args.len < 1 or !args[0].isGeometry()) return error.RuntimeError;
+    const other = args[0];
+    const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.asGeometry().dag_idx, other.asGeometry().dag_idx);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-pub fn meshOffset(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
+pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return error.RuntimeError;
-    if (arg_count > 0 and !args[0].isNumber()) return error.RuntimeError;
+    var delta: f64 = 1.0;
+    var pos_count = args.len;
+    var kwargs: ?*value.ObjMap = null;
 
-    const delta = if (arg_count > 0) args[0].asNumber() else 1.0;
+    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+        kwargs = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+        pos_count -= 1;
+    }
+
+    if (pos_count > 0) {
+        if (!args[0].isNumber()) return error.RuntimeError;
+        delta = args[0].asNumber();
+    }
+
+    if (kwargs) |map| {
+        for (map.keys.items, 0..) |k, i| {
+            if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
+                const k_str = if (k.asObj().obj_type == .string)
+                    @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
+                else
+                    @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
+
+                if (std.mem.eql(u8, k_str, "delta") and map.values.items[i].isNumber()) delta = map.values.items[i].asNumber();
+            }
+        }
+    }
+
     const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, delta, 1);
     return try vm.allocateCrossSection(new_idx);
 }
 
-pub fn meshTransform(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (arg_count < 1 or !args[0].isArray()) return error.RuntimeError;
-
+pub fn meshTransform(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (args.len < 1 or !args[0].isArray()) return error.RuntimeError;
     const arr = args[0].asArray().items.items;
+
     if (receiver.isGeometry()) {
         if (arr.len < 12) return error.RuntimeError;
         var mat: [12]f64 = undefined;
@@ -244,22 +296,21 @@ pub fn meshTransform(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value)
     return error.RuntimeError;
 }
 
-pub fn meshMinGap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (arg_count < 1 or !args[0].isGeometry()) return error.RuntimeError;
-    if (arg_count > 1 and !args[1].isNumber()) return error.RuntimeError;
+pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (args.len < 1 or !args[0].isGeometry()) return error.RuntimeError;
+    if (args.len > 1 and !args[1].isNumber()) return error.RuntimeError;
+    const search_length = if (args.len > 1) args[1].asNumber() else 100.0;
 
-    const search_length = if (arg_count > 1) args[1].asNumber() else 100.0;
-    const a_handle = try vm.ensureConcrete(receiver);
-    const b_handle = try vm.ensureConcrete(args[0]);
-    return value.Value.initNumber(kernel.minGap(a_handle, b_handle, search_length));
+    const handle = try vm.ensureConcrete(receiver);
+    const other_handle = try vm.ensureConcrete(args[0]);
+
+    return value.Value.initNumber(kernel.minGap(handle, other_handle, search_length));
 }
 
-pub fn meshContains(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (arg_count < 1 or !args[0].isArray()) return error.RuntimeError;
+pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (args.len < 1 or !args[0].isArray()) return error.RuntimeError;
     const pt_arr = args[0].asArray().items.items;
     if (pt_arr.len < 3) return error.RuntimeError;
     if (!pt_arr[0].isNumber() or !pt_arr[1].isNumber() or !pt_arr[2].isNumber()) return error.RuntimeError;
@@ -269,12 +320,13 @@ pub fn meshContains(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     return value.Value.initBool(inside);
 }
 
-pub fn meshRayCast(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (arg_count < 2 or !args[0].isArray() or !args[1].isArray()) return error.RuntimeError;
+pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (args.len < 2 or !args[0].isArray() or !args[1].isArray()) return error.RuntimeError;
+
     const o_arr = args[0].asArray().items.items;
     const e_arr = args[1].asArray().items.items;
+
     if (o_arr.len < 3 or e_arr.len < 3) return error.RuntimeError;
     if (!o_arr[0].isNumber() or !o_arr[1].isNumber() or !o_arr[2].isNumber()) return error.RuntimeError;
     if (!e_arr[0].isNumber() or !e_arr[1].isNumber() or !e_arr[2].isNumber()) return error.RuntimeError;
@@ -300,9 +352,9 @@ pub fn meshRayCast(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
 
         const pos_str = try vm.allocateString("position");
         vm.push(pos_str);
+
         const pos_arr = try vm.gc.allocateArray(vm);
         vm.push(value.Value.initObj(&pos_arr.obj));
-
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[0]));
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[1]));
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[2]));
@@ -314,5 +366,6 @@ pub fn meshRayCast(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
 
         try hit_arr_obj.items.append(vm.allocator, value.Value.initObj(&map_obj.obj));
     }
+
     return value.Value.initObj(&hit_arr_obj.obj);
 }

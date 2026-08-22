@@ -139,11 +139,7 @@ fn evaluateContextually(vm: *VM, input: []const u8, stdout: anytype) void {
     vm.shrinkStack(repl_base_slot);
 }
 
-pub fn nativeDebugger(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = arg_count;
-    _ = args;
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
+pub fn nativeDebugger(vm: *VM) !value.Value {
     const stdin = std.Io.File.stdin();
     const stdout = std.Io.File.stdout();
 

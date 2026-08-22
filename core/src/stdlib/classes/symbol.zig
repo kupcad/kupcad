@@ -16,6 +16,6 @@ pub fn symbolToSym(vm: *VM, sym: *value.ObjSymbol) !value.Value {
 
 /// Symbol class method dispatch table
 pub const methods = [_]common.MethodDef{
-    .{ .name = "to_s", .func = common.wrapNative(symbolToS) },
-    .{ .name = "to_sym", .func = common.wrapNative(symbolToSym) },
+    .{ .name = "to_s", .func = common.wrapMethod(symbolToS) },
+    .{ .name = "to_sym", .func = common.wrapMethod(symbolToSym) },
 };

@@ -105,15 +105,15 @@ pub fn stringToS(vm: *VM, str: *value.ObjString) !value.Value {
 
 /// String class method dispatch table
 pub const methods = [_]common.MethodDef{
-    .{ .name = "upcase", .func = common.wrapNative(stringUpcase) },
-    .{ .name = "downcase", .func = common.wrapNative(stringDowncase) },
-    .{ .name = "split", .func = common.wrapNative(stringSplit) },
-    .{ .name = "replace", .func = common.wrapNative(stringReplace) },
-    .{ .name = "to_f", .func = common.wrapNative(stringToF) },
-    .{ .name = "to_i", .func = common.wrapNative(stringToI) },
-    .{ .name = "trim", .func = common.wrapNative(stringTrim) },
-    .{ .name = "starts_with?", .func = common.wrapNative(stringStartsWith) },
-    .{ .name = "ends_with?", .func = common.wrapNative(stringEndsWith) },
-    .{ .name = "to_sym", .func = common.wrapNative(stringToSym) },
-    .{ .name = "to_s", .func = common.wrapNative(stringToS) },
+    .{ .name = "upcase", .func = common.wrapMethod(stringUpcase) },
+    .{ .name = "downcase", .func = common.wrapMethod(stringDowncase) },
+    .{ .name = "split", .func = common.wrapMethod(stringSplit) },
+    .{ .name = "replace", .func = common.wrapMethod(stringReplace) },
+    .{ .name = "to_f", .func = common.wrapMethod(stringToF) },
+    .{ .name = "to_i", .func = common.wrapMethod(stringToI) },
+    .{ .name = "trim", .func = common.wrapMethod(stringTrim) },
+    .{ .name = "starts_with?", .func = common.wrapMethod(stringStartsWith) },
+    .{ .name = "ends_with?", .func = common.wrapMethod(stringEndsWith) },
+    .{ .name = "to_sym", .func = common.wrapMethod(stringToSym) },
+    .{ .name = "to_s", .func = common.wrapMethod(stringToS) },
 };

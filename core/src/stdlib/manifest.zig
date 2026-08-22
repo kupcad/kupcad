@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("classes/common.zig");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const primitives = @import("primitives.zig");
@@ -31,17 +32,17 @@ pub const GlobalFunction = struct {
 
 pub const global_functions = [_]GlobalFunction{
     // debug methods
-    .{ .name = "puts", .func = io_mod.nativePuts, .category = .io },
-    .{ .name = "print", .func = io_mod.nativePrint, .category = .io },
-    .{ .name = "inspect", .func = io_mod.nativeInspect, .category = .io },
-    .{ .name = "debugger", .func = debug_mod.nativeDebugger, .category = .io },
+    .{ .name = "puts", .func = common.wrapGlobal(io_mod.nativePuts), .category = .io },
+    .{ .name = "print", .func = common.wrapGlobal(io_mod.nativePrint), .category = .io },
+    .{ .name = "inspect", .func = common.wrapGlobal(io_mod.nativeInspect), .category = .io },
+    .{ .name = "debugger", .func = common.wrapGlobal(debug_mod.nativeDebugger), .category = .io },
     .{ .name = "param", .func = params_mod.nativeParam, .category = .io },
-    .{ .name = "cube", .func = primitives.nativeCube, .category = .primitive_3d },
-    .{ .name = "cylinder", .func = primitives.nativeCylinder, .category = .primitive_3d },
-    .{ .name = "sphere", .func = primitives.nativeSphere, .category = .primitive_3d },
-    .{ .name = "square", .func = primitives.nativeSquare, .category = .primitive_2d },
-    .{ .name = "circle", .func = primitives.nativeCircle, .category = .primitive_2d },
-    .{ .name = "polygon", .func = primitives.nativePolygon, .category = .primitive_2d },
+    .{ .name = "cube", .func = common.wrapGlobal(primitives.nativeCube), .category = .primitive_3d },
+    .{ .name = "cylinder", .func = common.wrapGlobal(primitives.nativeCylinder), .category = .primitive_3d },
+    .{ .name = "sphere", .func = common.wrapGlobal(primitives.nativeSphere), .category = .primitive_3d },
+    .{ .name = "square", .func = common.wrapGlobal(primitives.nativeSquare), .category = .primitive_2d },
+    .{ .name = "circle", .func = common.wrapGlobal(primitives.nativeCircle), .category = .primitive_2d },
+    .{ .name = "polygon", .func = common.wrapGlobal(primitives.nativePolygon), .category = .primitive_2d },
     .{ .name = "import_stl", .func = stl.nativeImportStl, .category = .file_io },
     .{ .name = "export_stl", .func = stl.nativeExportStl, .category = .file_io },
     .{ .name = "import_step", .func = step.nativeImportStep, .category = .file_io },
@@ -58,23 +59,23 @@ pub const MeshMethod = struct {
 };
 
 pub const mesh_methods = [_]MeshMethod{
-    .{ .name = "translate", .category = .transform, .func = methods.meshTranslate },
-    .{ .name = "rotate", .category = .transform, .func = methods.meshRotate },
-    .{ .name = "scale", .category = .transform, .func = methods.meshScale },
-    .{ .name = "on_face", .category = .workplane_method, .func = methods.meshOnFace },
-    .{ .name = "bbox", .category = .inspection_method, .func = methods.meshBBox },
-    .{ .name = "volume", .category = .inspection_method, .func = methods.meshVolume },
-    .{ .name = "surface_area", .category = .inspection_method, .func = methods.meshSurfaceArea },
-    .{ .name = "extrude", .category = .transform, .func = methods.meshExtrude },
-    .{ .name = "revolve", .category = .transform, .func = methods.meshRevolve },
-    .{ .name = "hull", .category = .transform, .func = methods.meshHull },
-    .{ .name = "trim_by_plane", .category = .transform, .func = methods.meshTrimByPlane },
-    .{ .name = "minkowski", .category = .transform, .func = methods.meshMinkowski },
-    .{ .name = "offset", .category = .transform, .func = methods.meshOffset },
-    .{ .name = "transform", .category = .transform, .func = methods.meshTransform },
-    .{ .name = "min_gap", .category = .inspection_method, .func = methods.meshMinGap },
-    .{ .name = "contains?", .category = .inspection_method, .func = methods.meshContains },
-    .{ .name = "ray_cast", .category = .inspection_method, .func = methods.meshRayCast },
+    .{ .name = "translate", .category = .transform, .func = common.wrapMethod(methods.meshTranslate) },
+    .{ .name = "rotate", .category = .transform, .func = common.wrapMethod(methods.meshRotate) },
+    .{ .name = "scale", .category = .transform, .func = common.wrapMethod(methods.meshScale) },
+    .{ .name = "on_face", .category = .workplane_method, .func = common.wrapMethod(methods.meshOnFace) },
+    .{ .name = "bbox", .category = .inspection_method, .func = common.wrapMethod(methods.meshBBox) },
+    .{ .name = "volume", .category = .inspection_method, .func = common.wrapMethod(methods.meshVolume) },
+    .{ .name = "surface_area", .category = .inspection_method, .func = common.wrapMethod(methods.meshSurfaceArea) },
+    .{ .name = "extrude", .category = .transform, .func = common.wrapMethod(methods.meshExtrude) },
+    .{ .name = "revolve", .category = .transform, .func = common.wrapMethod(methods.meshRevolve) },
+    .{ .name = "hull", .category = .transform, .func = common.wrapMethod(methods.meshHull) },
+    .{ .name = "trim_by_plane", .category = .transform, .func = common.wrapMethod(methods.meshTrimByPlane) },
+    .{ .name = "minkowski", .category = .transform, .func = common.wrapMethod(methods.meshMinkowski) },
+    .{ .name = "offset", .category = .transform, .func = common.wrapMethod(methods.meshOffset) },
+    .{ .name = "transform", .category = .transform, .func = common.wrapMethod(methods.meshTransform) },
+    .{ .name = "min_gap", .category = .inspection_method, .func = common.wrapMethod(methods.meshMinGap) },
+    .{ .name = "contains?", .category = .inspection_method, .func = common.wrapMethod(methods.meshContains) },
+    .{ .name = "ray_cast", .category = .inspection_method, .func = common.wrapMethod(methods.meshRayCast) },
 };
 
 // Compile-time generated O(1) jump table

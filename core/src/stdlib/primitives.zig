@@ -3,7 +3,7 @@ const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 
 const ArgParseCtx = struct {
-    pos_count: u8,
+    pos_count: usize,
     kwargs: ?value.Value,
 };
 
@@ -17,7 +17,8 @@ const GeomOptions = struct {
     center: bool = false,
 };
 
-fn parseArgs(arg_count: u8, args: [*]value.Value) ArgParseCtx {
+fn parseArgs(args: []const value.Value) ArgParseCtx {
+    const arg_count = args.len;
     if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
         return .{ .pos_count = arg_count - 1, .kwargs = args[arg_count - 1] };
     }
@@ -26,13 +27,10 @@ fn parseArgs(arg_count: u8, args: [*]value.Value) ArgParseCtx {
 
 fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
     var opts = GeomOptions{};
-
     if (parsed.kwargs) |kw| {
         if (kw.isObject() and kw.asObj().obj_type == .map) {
             const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", kw.asObj())));
-
             for (map.keys.items, 0..) |k, i| {
-                // Ensure the key is a String or Symbol before trying to read it
                 if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
                     const k_str = if (k.asObj().obj_type == .string)
                         @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
@@ -40,7 +38,6 @@ fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
                         @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
 
                     const v = map.values.items[i];
-
                     if (std.mem.eql(u8, k_str, "size")) {
                         if (v.isNumber()) {
                             opts.x = v.asNumber();
@@ -68,13 +65,11 @@ fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
             }
         }
     }
-
     return opts;
 }
 
-pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const parsed = parseArgs(arg_count, args);
+pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
+    const parsed = parseArgs(args);
     var opts = extractGeomOptions(parsed);
 
     if (parsed.pos_count > 0 and args[0].isNumber()) {
@@ -90,9 +85,8 @@ pub fn nativeCube(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
-pub fn nativeCylinder(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const parsed = parseArgs(arg_count, args);
+pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
+    const parsed = parseArgs(args);
     var opts = extractGeomOptions(parsed);
 
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
@@ -103,9 +97,8 @@ pub fn nativeCylinder(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
-pub fn nativeSphere(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const parsed = parseArgs(arg_count, args);
+pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
+    const parsed = parseArgs(args);
     var opts = extractGeomOptions(parsed);
 
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
@@ -114,9 +107,8 @@ pub fn nativeSphere(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
-pub fn nativeSquare(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const parsed = parseArgs(arg_count, args);
+pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
+    const parsed = parseArgs(args);
     var opts = extractGeomOptions(parsed);
 
     if (parsed.pos_count > 0 and args[0].isNumber()) {
@@ -130,9 +122,8 @@ pub fn nativeSquare(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     return try vm.allocateCrossSection(dag_idx);
 }
 
-pub fn nativeCircle(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const parsed = parseArgs(arg_count, args);
+pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
+    const parsed = parseArgs(args);
     var opts = extractGeomOptions(parsed);
 
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
@@ -141,11 +132,10 @@ pub fn nativeCircle(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     return try vm.allocateCrossSection(dag_idx);
 }
 
-pub fn nativePolygon(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    if (arg_count < 1 or !args[0].isArray()) return error.RuntimeError;
-
+pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
+    if (args.len < 1 or !args[0].isArray()) return error.RuntimeError;
     const pt_arr = args[0].asArray().items.items;
+
     var pts = try vm.allocator.alloc([2]f64, pt_arr.len);
     defer vm.allocator.free(pts);
 

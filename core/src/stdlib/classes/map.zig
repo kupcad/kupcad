@@ -146,14 +146,14 @@ pub fn mapStringifyKeys(vm: *VM, map: *value.ObjMap) !value.Value {
 
 /// Map class method dispatch table
 pub const methods = [_]common.MethodDef{
-    .{ .name = "keys", .func = common.wrapNative(mapKeys) },
-    .{ .name = "values", .func = common.wrapNative(mapValues) },
-    .{ .name = "has_key?", .func = common.wrapNative(mapHasKey) },
-    .{ .name = "delete", .func = common.wrapNative(mapDelete) },
-    .{ .name = "each", .func = common.wrapNative(mapEach) },
-    .{ .name = "empty?", .func = common.wrapNative(mapEmpty) },
-    .{ .name = "get", .func = common.wrapNative(mapGet) },
-    .{ .name = "merge", .func = common.wrapNative(mapMerge) },
-    .{ .name = "symbolize_keys", .func = common.wrapNative(mapSymbolizeKeys) },
-    .{ .name = "stringify_keys", .func = common.wrapNative(mapStringifyKeys) },
+    .{ .name = "keys", .func = common.wrapMethod(mapKeys) },
+    .{ .name = "values", .func = common.wrapMethod(mapValues) },
+    .{ .name = "has_key?", .func = common.wrapMethod(mapHasKey) },
+    .{ .name = "delete", .func = common.wrapMethod(mapDelete) },
+    .{ .name = "each", .func = common.wrapMethod(mapEach) },
+    .{ .name = "empty?", .func = common.wrapMethod(mapEmpty) },
+    .{ .name = "get", .func = common.wrapMethod(mapGet) },
+    .{ .name = "merge", .func = common.wrapMethod(mapMerge) },
+    .{ .name = "symbolize_keys", .func = common.wrapMethod(mapSymbolizeKeys) },
+    .{ .name = "stringify_keys", .func = common.wrapMethod(mapStringifyKeys) },
 };

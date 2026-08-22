@@ -1,25 +1,16 @@
 const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
 const value = @import("../core/value.zig");
+const common = @import("classes/common.zig");
 
 // --- Native Methods ---
 
 // Default initializer for Exception.new("message")
-fn exceptionInit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
-    // Use Phase 9 FFI boundaries
-    const receiver = vm.getReceiver(args);
-
+pub fn exceptionInit(vm: *VM, receiver: value.Value, message_opt: ?value.Value) !value.Value {
     std.debug.assert(receiver.isInstance());
     const instance = receiver.asInstance();
 
-    var msg = value.Value.initNil();
-    if (arg_count > 0) {
-        msg = args[0]; // First argument
-    } else {
-        msg = try vm.allocateString(instance.class.name.chars);
-    }
+    const msg = message_opt orelse try vm.allocateString(instance.class.name.chars);
     try vm.setInstanceField(instance, "message", msg, null);
 
     // --- EAGER BACKTRACE CAPTURE ---
@@ -31,11 +22,7 @@ fn exceptionInit(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
 }
 
 // e.message()
-fn exceptionMessage(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = arg_count;
-
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args); // Safely step back 1 slot to get the Receiver
+pub fn exceptionMessage(vm: *VM, receiver: value.Value) !value.Value {
     const instance = receiver.asInstance();
 
     if (instance.class.instance_layout.get("message")) |idx| {
@@ -48,11 +35,7 @@ fn exceptionMessage(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
 }
 
 // e.backtrace()
-fn exceptionBacktrace(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = arg_count;
-
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
+pub fn exceptionBacktrace(vm: *VM, receiver: value.Value) !value.Value {
     const instance = receiver.asInstance();
 
     // Pull the pre-calculated backtrace!
@@ -79,14 +62,14 @@ pub fn registerExceptions(vm: *VM) !void {
     try vm.globals.put(vm.allocator, "Exception", value.Value.initObj(&exc_class.obj));
     _ = vm.pop();
 
-    const init_fn = try vm.gc.allocateNative(vm, exceptionInit);
+    const init_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionInit));
     try exc_class.methods.put(vm.allocator, "initialize", value.Value.initObj(&init_fn.obj));
 
-    const msg_fn = try vm.gc.allocateNative(vm, exceptionMessage);
+    const msg_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionMessage));
     try exc_class.methods.put(vm.allocator, "message", value.Value.initObj(&msg_fn.obj));
     try exc_class.methods.put(vm.allocator, "to_s", value.Value.initObj(&msg_fn.obj));
 
-    const bt_fn = try vm.gc.allocateNative(vm, exceptionBacktrace);
+    const bt_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionBacktrace));
     try exc_class.methods.put(vm.allocator, "backtrace", value.Value.initObj(&bt_fn.obj));
 
     // StandardError < Exception
