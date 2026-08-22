@@ -369,6 +369,7 @@ pub const Compiler = struct {
 
                 for (stmts) |stmt_idx| {
                     const stmt_node = self.tree.getNode(stmt_idx).?;
+
                     if (stmt_node.tag == .def_stmt) {
                         const ds = self.tree.defStmt(stmt_node);
                         const method_name = self.tree.getString(ds.name);
@@ -378,15 +379,8 @@ pub const Compiler = struct {
                             final_name = method_name[5..];
                         }
 
-                        // --- MANGLE PRIVATE METHODS ---
-                        // If the method is private, prefix it with '@private:'
-                        var mangled_name: []const u8 = final_name;
-                        if (ds.is_private) {
-                            mangled_name = try std.fmt.allocPrint(self.allocator, "@private:{s}", .{final_name});
-                        }
-                        defer if (ds.is_private) self.allocator.free(mangled_name);
-
-                        const m_name_idx = try self.makeStringConstant(mangled_name);
+                        // Generate constant name
+                        const m_name_idx = try self.makeMethodNameConstant(final_name, ds.is_private);
                         const params = self.tree.getParams(ds.params);
 
                         // Compile the method block
@@ -1003,6 +997,15 @@ pub const Compiler = struct {
         try self.emitByte(@intCast(jump & 0xff));
     }
 
+    fn makeMethodNameConstant(self: *Compiler, name: []const u8, is_private: bool) CompileError!usize {
+        if (is_private) {
+            var name_buf: [256]u8 = undefined;
+            const mangled_name = std.fmt.bufPrint(&name_buf, "@private:{s}", .{name}) catch return error.OutOfMemory;
+            return self.makeStringConstant(mangled_name);
+        }
+        return self.makeStringConstant(name);
+    }
+
     pub fn makeStringConstant(self: *Compiler, text: []const u8) CompileError!usize {
         const str_val = try self.vm.allocateString(text);
         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
@@ -1041,7 +1044,7 @@ pub const Compiler = struct {
 
         // Assign the method name so `super()` can dynamically look up the hierarchy
         if (func_name) |n| {
-            const str_val = try self.vm.allocateStringTakeOwnership(try self.allocator.dupe(u8, n));
+            const str_val = try self.vm.allocateString(n);
             func.name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
         }
 
@@ -2084,13 +2087,8 @@ pub const Compiler = struct {
                     final_name = method_name[5..];
                 }
 
-                var mangled_name: []const u8 = final_name;
-                if (ds.is_private) {
-                    mangled_name = try std.fmt.allocPrint(self.allocator, "@private:{s}", .{final_name});
-                }
-                defer if (ds.is_private) self.allocator.free(mangled_name);
-
-                const m_name_idx = try self.makeStringConstant(mangled_name);
+                // Generate constant name
+                const m_name_idx = try self.makeMethodNameConstant(final_name, ds.is_private);
                 const params = self.tree.getParams(ds.params);
 
                 try self.compileClosureBlock(params, ds.body, final_name, true);
@@ -2148,13 +2146,8 @@ pub const Compiler = struct {
                 const method_name = self.tree.getString(ds.name);
                 const params = self.tree.getParams(ds.params);
 
-                var mangled_name: []const u8 = method_name;
-                if (ds.is_private) {
-                    mangled_name = try std.fmt.allocPrint(self.allocator, "@private:{s}", .{method_name});
-                }
-                defer if (ds.is_private) self.allocator.free(mangled_name);
-
-                const final_name_idx = try self.makeStringConstant(mangled_name);
+                // DRY: Generate constant name
+                const final_name_idx = try self.makeMethodNameConstant(method_name, ds.is_private);
 
                 try self.compileClosureBlock(params, ds.body, method_name, true);
                 try self.emitOpWithOperand(.op_method, .op_method_wide, final_name_idx);

@@ -3,7 +3,7 @@ const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 
 pub fn emitAttrReader(comp: anytype, prop_name: []const u8, is_singleton: bool) !void {
-    const clean_name = std.mem.trimStart(u8, prop_name, "@");
+    const clean_name = std.mem.trimStart(u8, prop_name, ":@");
 
     const func = try comp.vm.gc.allocateFunction(comp.vm);
     func.arity = 0;
@@ -13,7 +13,7 @@ pub fn emitAttrReader(comp: anytype, prop_name: []const u8, is_singleton: bool) 
     child_chunk.* = chunk.Chunk.init();
     func.chunk = child_chunk;
 
-    const str_val = try comp.vm.allocateStringTakeOwnership(try comp.allocator.dupe(u8, clean_name));
+    const str_val = try comp.vm.allocateString(clean_name);
     func.name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
 
     var child_comp = @TypeOf(comp.*).init(comp.allocator, comp.tree, comp.symbols, comp.token_starts, child_chunk, comp.vm);
@@ -21,7 +21,7 @@ pub fn emitAttrReader(comp: anytype, prop_name: []const u8, is_singleton: bool) 
     child_comp.current_source_offset = comp.current_source_offset;
 
     try child_comp.addLocal(.none, 0); // Slot 0: self
-    try child_comp.addLocal(.none, 1); // Slot 1: implicit block
+    try child_comp.addLocal(.none, 1); // Slot 1: implicit block slot
     func.local_count = 2;
 
     // --- Generate Bytecode: def prop() @prop end ---
@@ -44,7 +44,7 @@ pub fn emitAttrReader(comp: anytype, prop_name: []const u8, is_singleton: bool) 
 }
 
 pub fn emitAttrWriter(comp: anytype, prop_name: []const u8, is_singleton: bool) !void {
-    const clean_name = std.mem.trimStart(u8, prop_name, "@");
+    const clean_name = std.mem.trimStart(u8, prop_name, ":@");
 
     const func = try comp.vm.gc.allocateFunction(comp.vm);
     func.arity = 1;
@@ -54,10 +54,11 @@ pub fn emitAttrWriter(comp: anytype, prop_name: []const u8, is_singleton: bool) 
     child_chunk.* = chunk.Chunk.init();
     func.chunk = child_chunk;
 
-    const setter_name = try std.fmt.allocPrint(comp.allocator, "{s}=", .{clean_name});
-    defer comp.allocator.free(setter_name);
+    // Fixed 256-byte stack buffer, explicitly casting NoSpaceLeft into OutOfMemory
+    var name_buf: [256]u8 = undefined;
+    const setter_name = std.fmt.bufPrint(&name_buf, "{s}=", .{clean_name}) catch return error.OutOfMemory;
 
-    const str_val = try comp.vm.allocateStringTakeOwnership(try comp.allocator.dupe(u8, setter_name));
+    const str_val = try comp.vm.allocateString(setter_name);
     func.name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
 
     var child_comp = @TypeOf(comp.*).init(comp.allocator, comp.tree, comp.symbols, comp.token_starts, child_chunk, comp.vm);
@@ -66,7 +67,7 @@ pub fn emitAttrWriter(comp: anytype, prop_name: []const u8, is_singleton: bool) 
 
     try child_comp.addLocal(.none, 0); // Slot 0: self
     try child_comp.addLocal(.none, 1); // Slot 1: val
-    try child_comp.addLocal(.none, 2); // Slot 2: implicit block
+    try child_comp.addLocal(.none, 2); // Slot 2: implicit block slot
     func.local_count = 3;
 
     // --- Generate Bytecode: def prop=(val) @prop = val end ---
