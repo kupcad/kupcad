@@ -6581,3 +6581,39 @@ test "VM: attr_accessor inside singleton class (class << self)" {
     const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
     try testing.expectEqualStrings("production", str_obj.chars);
 }
+
+test "VM Syntax: Phase 4A - Uninitialized instance variables gracefully return nil" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class Config
+        \\  def check
+        \\    # @color was never initialized!
+        \\    if @color
+        \\      @color
+        \\    else
+        \\      "default_blue"
+        \\    end
+        \\  end
+        \\end
+        \\
+        \\c = Config.new
+        \\c.check
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    try testing.expectEqualStrings("default_blue", str_obj.chars);
+}

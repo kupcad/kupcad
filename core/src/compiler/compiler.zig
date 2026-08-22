@@ -456,9 +456,12 @@ pub const Compiler = struct {
                 if (std.mem.startsWith(u8, name_str, "@") and !std.mem.startsWith(u8, name_str, "@@")) {
                     try self.emitPushSelf(); // Stack: [self]
 
+                    // Strip '@' at compile time
+                    const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
+
                     if (assign_payload.op) |op| {
                         try self.emitOp(.op_dup); // Stack: [self, self]
-                        const name_idx = try self.makeStringConstant(name_str);
+                        const name_idx = try self.makeStringConstant(clean_name);
                         try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
                         try self.emitInlineCacheIndex();
 
@@ -474,7 +477,7 @@ pub const Compiler = struct {
                         try self.compileNode(assign_payload.value); // Stack: [self, new_val]
                     }
 
-                    const name_idx = try self.makeStringConstant(name_str);
+                    const name_idx = try self.makeStringConstant(clean_name);
                     try self.emitOpWithOperand(.op_set_property, .op_set_property_wide, name_idx);
                     try self.emitInlineCacheIndex();
                     return;
@@ -1836,7 +1839,11 @@ pub const Compiler = struct {
             try self.emitOpWithOperand(.op_get_class_var, .op_get_class_var_wide, name_idx);
         } else if (std.mem.startsWith(u8, name_str, "@")) {
             try self.emitPushSelf();
-            const name_idx = try self.makeStringConstant(name_str);
+
+            // Strip '@' at compile time
+            const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
+            const name_idx = try self.makeStringConstant(clean_name);
+
             try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
             try self.emitInlineCacheIndex();
         } else if (self.resolveLocal(name_id)) |local_slot| {

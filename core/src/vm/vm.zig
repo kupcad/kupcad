@@ -839,8 +839,8 @@ pub const VM = struct {
                         if (self.getPropertyCached(receiver.asInstance(), name_str, ic)) |val| {
                             self.push(val);
                         } else {
-                            if (self.throwDynamicError("Runtime Error: Undefined property '{s}'.", .{name_str}) != .ok) return .runtime_error;
-                            continue;
+                            // Phase 4A FIX: Missing properties on instances evaluate to nil
+                            self.push(value.Value.initNil());
                         }
                     } else if (receiver.isModule()) {
                         self.stack_top -= 1; // Pop receiver
@@ -854,15 +854,9 @@ pub const VM = struct {
                     } else if (receiver.isClass()) {
                         self.stack_top -= 1; // Pop receiver
                         const cls = receiver.asClass();
-                        const clean_name = if (name_str.len > 0 and name_str[0] == '@' and (name_str.len == 1 or name_str[1] != '@'))
-                            name_str[1..]
-                        else
-                            name_str;
 
                         // Check class_fields first to prioritize stored values over accessor methods
-                        if (cls.class_fields.get(clean_name)) |val| {
-                            self.push(val);
-                        } else if (cls.class_fields.get(name_str)) |val| {
+                        if (cls.class_fields.get(name_str)) |val| {
                             self.push(val);
                         } else if (self.findClassMethod(cls, name_str)) |val| {
                             self.push(val);
@@ -888,12 +882,7 @@ pub const VM = struct {
                         self.push(val);
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        const clean_name = if (name_str.len > 0 and name_str[0] == '@' and (name_str.len == 1 or name_str[1] != '@'))
-                            name_str[1..]
-                        else
-                            name_str;
-
-                        cls.class_fields.put(self.allocator, clean_name, val) catch return .runtime_error;
+                        cls.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
                         self.push(val);
                     } else {
                         if (self.throwDynamicError("Runtime Error: Only instances and classes have properties.", .{}) != .ok) return .runtime_error;
@@ -2122,13 +2111,8 @@ pub const VM = struct {
         return self.valuesEqual(case_val, test_val);
     }
 
-    inline fn getPropertyCached(self: *VM, instance: *value.ObjInstance, raw_name_str: []const u8, ic: *chunk.InlineCache) ?value.Value {
+    inline fn getPropertyCached(self: *VM, instance: *value.ObjInstance, name_str: []const u8, ic: *chunk.InlineCache) ?value.Value {
         _ = self;
-        const name_str = if (raw_name_str.len > 0 and raw_name_str[0] == '@' and (raw_name_str.len == 1 or raw_name_str[1] != '@'))
-            raw_name_str[1..]
-        else
-            raw_name_str;
-
         var offset: usize = 0;
 
         // Fast Path (O(1) Array Read)
@@ -2141,7 +2125,8 @@ pub const VM = struct {
             ic.offset = idx;
             offset = idx;
         } else {
-            return null; // Undefined property
+            // Uninitialized instance variables gracefully return nil
+            return value.Value.initNil();
         }
 
         if (offset < instance.fields.items.len) {
@@ -2151,12 +2136,7 @@ pub const VM = struct {
         }
     }
 
-    pub fn setInstanceField(self: *VM, instance: *value.ObjInstance, raw_name: []const u8, val: value.Value, ic: ?*chunk.InlineCache) !void {
-        const name = if (raw_name.len > 0 and raw_name[0] == '@' and (raw_name.len == 1 or raw_name[1] != '@'))
-            raw_name[1..]
-        else
-            raw_name;
-
+    pub fn setInstanceField(self: *VM, instance: *value.ObjInstance, name: []const u8, val: value.Value, ic: ?*chunk.InlineCache) !void {
         var idx: usize = 0;
 
         // Fast Path
