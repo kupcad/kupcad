@@ -367,35 +367,8 @@ pub const Compiler = struct {
                 const block_payload = self.tree.block(body_node);
                 const stmts = self.tree.getNodes(block_payload.stmts);
 
-                for (stmts) |stmt_idx| {
-                    const stmt_node = self.tree.getNode(stmt_idx).?;
-
-                    if (stmt_node.tag == .def_stmt) {
-                        const ds = self.tree.defStmt(stmt_node);
-                        const method_name = self.tree.getString(ds.name);
-
-                        var final_name = method_name;
-                        if (std.mem.startsWith(u8, method_name, "self.")) {
-                            final_name = method_name[5..];
-                        }
-
-                        // Generate constant name
-                        const m_name_idx = try self.makeMethodNameConstant(final_name, ds.is_private);
-                        const params = self.tree.getParams(ds.params);
-
-                        // Compile the method block
-                        try self.compileClosureBlock(params, ds.body, final_name, true);
-
-                        // Attach the method to the target currently sitting on the stack
-                        try self.emitOpWithOperand(.op_class_method, .op_class_method_wide, m_name_idx);
-                    } else if (try self.handleMacroMethod(stmt_node, true)) { // Pass true for Singleton
-                        // Macro (like attr_accessor or include) was handled successfully
-                    } else {
-                        // Standard top-level statements inside the block
-                        try self.compileNode(stmt_idx);
-                        try self.emitOp(.op_pop);
-                    }
-                }
+                // Compile entire body as singleton methods
+                try self.compileNamespaceBody(stmts, true);
 
                 // Stack equilibrium: The target remains on the stack as the expression's return value
             },
@@ -1004,6 +977,90 @@ pub const Compiler = struct {
             return self.makeStringConstant(mangled_name);
         }
         return self.makeStringConstant(name);
+    }
+
+    /// DRY Helper: Unifies Positional and Keyword Argument compilation for Method and Super calls
+    fn compileCallArguments(self: *Compiler, args: []const ast.NamedArg) CompileError!usize {
+        var pos_count: usize = 0;
+        var kw_count: usize = 0;
+
+        // 1. Compile Positional Arguments
+        for (args) |arg| {
+            if (arg.name == .none and (arg.modifier == null or arg.modifier.? != .block)) {
+                try self.compileNode(arg.value);
+                pos_count += 1;
+            }
+        }
+
+        // 2. Compile Keyword Arguments
+        for (args) |arg| {
+            if (arg.name != .none and (arg.modifier == null or arg.modifier.? != .block)) {
+                const name_idx = try self.makeSymbolConstant(self.tree.getString(arg.name));
+                try self.emitOpWithOperand(.op_constant, .op_constant_wide, name_idx);
+                try self.compileNode(arg.value);
+                kw_count += 1;
+            }
+        }
+
+        // 3. Pack Keyword Arguments into a trailing Map
+        if (kw_count > 0) {
+            if (kw_count <= limits.MAX_SHORT_CONSTANTS) {
+                try self.emitOp(.op_build_map);
+                try self.emitByte(@intCast(kw_count));
+            } else {
+                try self.emitOp(.op_build_map_wide);
+                try self.emitByte(@intCast((kw_count >> 8) & 0xff));
+                try self.emitByte(@intCast(kw_count & 0xff));
+            }
+
+            self.simulatePop(kw_count * 2);
+            self.simulatePush(1);
+            pos_count += 1; // The Hash Map becomes the final trailing positional argument!
+        }
+
+        return pos_count;
+    }
+
+    /// Unifies Method, Macro, and Statement parsing for Classes, Modules, and Singleton blocks
+    fn compileNamespaceBody(self: *Compiler, stmts: []const ast.NodeIndex, is_singleton: bool) CompileError!void {
+        for (stmts) |stmt_idx| {
+            const stmt_node = self.tree.getNode(stmt_idx).?;
+            if (stmt_node.tag == .def_stmt) {
+                const ds = self.tree.defStmt(stmt_node);
+                const method_name = self.tree.getString(ds.name);
+
+                var is_class_method = ds.is_class_method or std.mem.startsWith(u8, method_name, "self.");
+                if (is_singleton) is_class_method = true; // In `class << self`, all methods are class methods
+
+                var final_name = method_name;
+                if (std.mem.startsWith(u8, method_name, "self.")) {
+                    final_name = method_name[5..];
+                }
+
+                const m_name_idx = try self.makeMethodNameConstant(final_name, ds.is_private);
+                const params = self.tree.getParams(ds.params);
+
+                try self.compileClosureBlock(params, ds.body, final_name, true);
+                try self.emitOpWithOperand(if (is_class_method) .op_class_method else .op_method, if (is_class_method) .op_class_method_wide else .op_method_wide, m_name_idx);
+            } else if (try self.handleMacroMethod(stmt_node, is_singleton)) {
+                // Macro handled successfully
+            } else {
+                try self.compileNode(stmt_idx);
+                try self.emitOp(.op_pop);
+            }
+        }
+    }
+
+    /// Emits the fully qualified alias for nested modules and classes
+    fn defineFullyQualifiedNamespace(self: *Compiler, short_name: []const u8) CompileError!void {
+        const fq_name = try self.buildFullyQualifiedPath(short_name, self.namespace_stack.items.len - 1);
+        defer self.allocator.free(fq_name);
+
+        if (!std.mem.eql(u8, fq_name, short_name)) {
+            const fq_name_idx = try self.makeStringConstant(fq_name);
+            try self.emitOp(.op_dup);
+            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
+        }
     }
 
     pub fn makeStringConstant(self: *Compiler, text: []const u8) CompileError!usize {
@@ -1637,154 +1694,6 @@ pub const Compiler = struct {
         }
     }
 
-    fn compileMethodCall(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const mc = self.tree.methodCall(node);
-        const func_name = self.tree.getString(mc.method_name);
-
-        // Fast-path: compile `obj.nil?` directly into op_is_nil
-        if (std.mem.eql(u8, func_name, "nil?") and mc.receiver != .none) {
-            try self.compileNode(mc.receiver);
-            try self.emitOp(.op_is_nil);
-            return;
-        }
-
-        // Intercept Compiler Intrinsics via O(1) lookup
-        if (compiler_intrinsics.get(func_name)) |intrinsic| {
-            switch (intrinsic) {
-                .raise_err => {
-                    const args = self.tree.getNamedArgs(mc.args);
-                    if (args.len > 0) try self.compileNode(args[0].value) else try self.emitOp(.op_nil);
-                    try self.emitOp(.op_throw);
-                    self.simulatePush(1); // Dead code equilibrium
-                    return;
-                },
-                .block_given_chk => {
-                    try self.emitOp(.op_block_given);
-                    return;
-                },
-                .yield_call => {
-                    const args = self.tree.getNamedArgs(mc.args);
-                    for (args) |arg| {
-                        if (arg.name != .none) return error.UnsupportedScope; // Kwargs to yield not yet supported
-                        try self.compileNode(arg.value);
-                    }
-                    if (args.len > limits.MAX_ARGS) return error.TooManyConstants;
-                    try self.emitOp(.op_yield);
-                    try self.emitByte(@intCast(args.len));
-                    self.simulatePop(args.len); // Yield consumes the args
-                    self.simulatePush(1); // Yield returns the block's result
-                    return;
-                },
-                .defined_chk => {
-                    const args = self.tree.getNamedArgs(mc.args);
-                    if (args.len > 0) {
-                        const target_node = self.tree.getNode(args[0].value).?;
-                        if (target_node.tag == .identifier) {
-                            const name_id = @as(ast.StringId, @enumFromInt(target_node.data));
-                            if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
-                                try self.emitOp(.op_true); // Locals are statically known
-                            } else {
-                                const name_str = self.tree.getString(name_id);
-                                const name_idx = try self.makeStringConstant(name_str);
-                                try self.emitOpWithOperand(.op_defined, .op_defined_wide, name_idx);
-                            }
-                        } else {
-                            try self.emitOp(.op_true); // Complex expressions evaluate to true
-                        }
-                    } else {
-                        try self.emitOp(.op_nil);
-                    }
-                    return;
-                },
-                .protected_symbol => {},
-            }
-        }
-
-        var safe_jump: usize = 0;
-
-        // Push Receiver/Target
-        if (mc.receiver == .none) {
-            try self.emitVariableLoad(mc.method_name, null);
-        } else {
-            try self.compileNode(mc.receiver);
-            if (mc.is_safe) safe_jump = try self.emitJump(.op_jump_if_nil);
-        }
-
-        // Push Arguments (Positional first, then Keyword Args packed as a Map)
-        const args = self.tree.getNamedArgs(mc.args);
-        var pos_count: usize = 0;
-        var kw_count: usize = 0;
-
-        for (args) |arg| {
-            if (arg.name == .none) {
-                try self.compileNode(arg.value);
-                pos_count += 1;
-            }
-        }
-
-        for (args) |arg| {
-            if (arg.name != .none) {
-                const name_idx = try self.makeSymbolConstant(self.tree.getString(arg.name));
-                try self.emitOpWithOperand(.op_constant, .op_constant_wide, name_idx);
-                try self.compileNode(arg.value);
-                kw_count += 1;
-            }
-        }
-
-        if (kw_count > 0) {
-            if (kw_count <= limits.MAX_SHORT_CONSTANTS) {
-                try self.emitOp(.op_build_map);
-                try self.emitByte(@intCast(kw_count));
-            } else {
-                try self.emitOp(.op_build_map_wide);
-                try self.emitByte(@intCast((kw_count >> 8) & 0xff));
-                try self.emitByte(@intCast(kw_count & 0xff));
-            }
-
-            self.simulatePop(kw_count * 2);
-            self.simulatePush(1);
-
-            pos_count += 1; // The Hash Map becomes the final trailing positional argument!
-        }
-
-        var actual_arg_count = pos_count;
-
-        // Push the Block as a Closure Argument!
-        if (mc.block != .none) {
-            const block_node = self.tree.getNode(mc.block).?;
-            const block_payload = self.tree.block(block_node);
-
-            // Lower the raw AST nodes into ast.Param structs
-            const lowered_params = try self.lowerBlockParams(block_payload.params);
-            defer self.allocator.free(lowered_params);
-
-            // Delegate to your unified closure compiler!
-            // It already handles *args, **kwargs, defaults, and arity padding.
-            try self.compileClosureBlock(lowered_params, mc.block, null, false);
-
-            actual_arg_count += 1;
-        }
-
-        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
-
-        // 4. Execute Invocation
-        if (mc.receiver == .none) {
-            try self.emitOp(.op_call);
-            try self.emitByte(@intCast(actual_arg_count));
-        } else {
-            const name_idx = try self.makeStringConstant(func_name);
-            try self.emitOpWithOperand(.op_invoke, .op_invoke_wide, name_idx);
-            try self.emitByte(@intCast(actual_arg_count));
-
-            try self.emitInlineCacheIndex();
-
-            if (mc.is_safe) self.patchJump(safe_jump);
-        }
-
-        self.simulatePop(actual_arg_count + 1); // Pops args + receiver
-        self.simulatePush(1); // Pushes the returned result
-    }
-
     fn compileBinaryOp(self: *Compiler, node: *const ast.Node) CompileError!void {
         const bin_expr = self.tree.binaryExpr(node);
 
@@ -2075,38 +1984,11 @@ pub const Compiler = struct {
         const block_payload = self.tree.block(body_node);
         const stmts = self.tree.getNodes(block_payload.stmts);
 
-        for (stmts) |stmt_idx| {
-            const stmt_node = self.tree.getNode(stmt_idx).?;
-            if (stmt_node.tag == .def_stmt) {
-                const ds = self.tree.defStmt(stmt_node);
-                const method_name = self.tree.getString(ds.name);
-                const is_class_method = ds.is_class_method or std.mem.startsWith(u8, method_name, "self.");
+        // DRY: Compile entire class body natively!
+        try self.compileNamespaceBody(stmts, false);
 
-                var final_name = method_name;
-                if (std.mem.startsWith(u8, method_name, "self.")) {
-                    final_name = method_name[5..];
-                }
-
-                // Generate constant name
-                const m_name_idx = try self.makeMethodNameConstant(final_name, ds.is_private);
-                const params = self.tree.getParams(ds.params);
-
-                try self.compileClosureBlock(params, ds.body, final_name, true);
-                try self.emitOpWithOperand(if (is_class_method) .op_class_method else .op_method, if (is_class_method) .op_class_method_wide else .op_method_wide, m_name_idx);
-            } else if (try self.handleMacroMethod(stmt_node, false)) {} else {
-                try self.compileNode(stmt_idx);
-                try self.emitOp(.op_pop);
-            }
-        }
-
-        const fq_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len - 1);
-        defer self.allocator.free(fq_name); // Free memory once chunk consumes it
-        const fq_name_idx = try self.makeStringConstant(fq_name);
-
-        if (!std.mem.eql(u8, fq_name, name_str)) {
-            try self.emitOp(.op_dup);
-            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
-        }
+        // DRY: Export Fully Qualified Name
+        try self.defineFullyQualifiedNamespace(name_str);
 
         const sym = self.symbols[@intFromEnum(node_idx)];
         if (self.active_namespaces > 1) {
@@ -2139,32 +2021,11 @@ pub const Compiler = struct {
         const block_payload = self.tree.block(body_node);
         const stmts = self.tree.getNodes(block_payload.stmts);
 
-        for (stmts) |stmt_idx| {
-            const stmt_node = self.tree.getNode(stmt_idx).?;
-            if (stmt_node.tag == .def_stmt) {
-                const ds = self.tree.defStmt(stmt_node);
-                const method_name = self.tree.getString(ds.name);
-                const params = self.tree.getParams(ds.params);
+        // Compile entire module body natively
+        try self.compileNamespaceBody(stmts, false);
 
-                // DRY: Generate constant name
-                const final_name_idx = try self.makeMethodNameConstant(method_name, ds.is_private);
-
-                try self.compileClosureBlock(params, ds.body, method_name, true);
-                try self.emitOpWithOperand(.op_method, .op_method_wide, final_name_idx);
-            } else if (try self.handleMacroMethod(stmt_node, false)) {} else {
-                try self.compileNode(stmt_idx);
-                try self.emitOp(.op_pop);
-            }
-        }
-
-        const fq_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len - 1);
-        defer self.allocator.free(fq_name); // Free memory once chunk consumes it
-        const fq_name_idx = try self.makeStringConstant(fq_name);
-
-        if (!std.mem.eql(u8, fq_name, name_str)) {
-            try self.emitOp(.op_dup);
-            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
-        }
+        // Export Fully Qualified Name
+        try self.defineFullyQualifiedNamespace(name_str);
 
         if (self.active_namespaces > 1) {
             try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
@@ -2172,6 +2033,113 @@ pub const Compiler = struct {
             try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
             try self.emitOp(.op_nil);
         }
+    }
+
+    fn compileMethodCall(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const mc = self.tree.methodCall(node);
+        const func_name = self.tree.getString(mc.method_name);
+
+        // Fast-path: compile `obj.nil?` directly into op_is_nil
+        if (std.mem.eql(u8, func_name, "nil?") and mc.receiver != .none) {
+            try self.compileNode(mc.receiver);
+            try self.emitOp(.op_is_nil);
+            return;
+        }
+
+        // Intercept Compiler Intrinsics via O(1) lookup
+        if (compiler_intrinsics.get(func_name)) |intrinsic| {
+            switch (intrinsic) {
+                .raise_err => {
+                    const args = self.tree.getNamedArgs(mc.args);
+                    if (args.len > 0) try self.compileNode(args[0].value) else try self.emitOp(.op_nil);
+                    try self.emitOp(.op_throw);
+                    self.simulatePush(1); // Dead code equilibrium
+                    return;
+                },
+                .block_given_chk => {
+                    try self.emitOp(.op_block_given);
+                    return;
+                },
+                .yield_call => {
+                    const args = self.tree.getNamedArgs(mc.args);
+                    for (args) |arg| {
+                        if (arg.name != .none) return error.UnsupportedScope; // Kwargs to yield not yet supported
+                        try self.compileNode(arg.value);
+                    }
+                    if (args.len > limits.MAX_ARGS) return error.TooManyConstants;
+                    try self.emitOp(.op_yield);
+                    try self.emitByte(@intCast(args.len));
+                    self.simulatePop(args.len); // Yield consumes the args
+                    self.simulatePush(1); // Yield returns the block's result
+                    return;
+                },
+                .defined_chk => {
+                    const args = self.tree.getNamedArgs(mc.args);
+                    if (args.len > 0) {
+                        const target_node = self.tree.getNode(args[0].value).?;
+                        if (target_node.tag == .identifier) {
+                            const name_id = @as(ast.StringId, @enumFromInt(target_node.data));
+                            if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
+                                try self.emitOp(.op_true); // Locals are statically known
+                            } else {
+                                const name_str = self.tree.getString(name_id);
+                                const name_idx = try self.makeStringConstant(name_str);
+                                try self.emitOpWithOperand(.op_defined, .op_defined_wide, name_idx);
+                            }
+                        } else {
+                            try self.emitOp(.op_true); // Complex expressions evaluate to true
+                        }
+                    } else {
+                        try self.emitOp(.op_nil);
+                    }
+                    return;
+                },
+                .protected_symbol => {},
+            }
+        }
+
+        var safe_jump: usize = 0;
+
+        // Push Receiver/Target
+        if (mc.receiver == .none) {
+            try self.emitVariableLoad(mc.method_name, null);
+        } else {
+            try self.compileNode(mc.receiver);
+            if (mc.is_safe) safe_jump = try self.emitJump(.op_jump_if_nil);
+        }
+
+        // Delegate Argument Packing
+        var actual_arg_count = try self.compileCallArguments(self.tree.getNamedArgs(mc.args));
+
+        // Push the Block as a Closure Argument
+        if (mc.block != .none) {
+            const block_node = self.tree.getNode(mc.block).?;
+            const block_payload = self.tree.block(block_node);
+            const lowered_params = try self.lowerBlockParams(block_payload.params);
+            defer self.allocator.free(lowered_params);
+
+            try self.compileClosureBlock(lowered_params, mc.block, null, false);
+            actual_arg_count += 1;
+        }
+
+        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
+
+        // 4. Execute Invocation
+        if (mc.receiver == .none) {
+            try self.emitOp(.op_call);
+            try self.emitByte(@intCast(actual_arg_count));
+        } else {
+            const name_idx = try self.makeStringConstant(func_name);
+            try self.emitOpWithOperand(.op_invoke, .op_invoke_wide, name_idx);
+            try self.emitByte(@intCast(actual_arg_count));
+
+            try self.emitInlineCacheIndex();
+
+            if (mc.is_safe) self.patchJump(safe_jump);
+        }
+
+        self.simulatePop(actual_arg_count + 1); // Pops args + receiver
+        self.simulatePush(1); // Pushes the returned result
     }
 
     fn compileSuperCall(self: *Compiler, node: *const ast.Node) CompileError!void {
@@ -2206,49 +2174,17 @@ pub const Compiler = struct {
             }
         } else {
             const args = self.tree.getNamedArgs(sc.args);
-            var pos_count: usize = 0;
-            var kw_count: usize = 0;
-            var block_arg: ?ast.NodeIndex = null;
 
-            // Positional Arguments & Block Arg Extraction
+            // Extract Block explicitly passed via reference (`&b`)
+            var block_arg: ?ast.NodeIndex = null;
             for (args) |arg| {
                 if (arg.modifier != null and arg.modifier.? == .block) {
                     block_arg = arg.value;
-                } else if (arg.name == .none) {
-                    try self.compileNode(arg.value);
-                    pos_count += 1;
                 }
             }
 
-            // Keyword Arguments
-            for (args) |arg| {
-                if (arg.modifier == null or arg.modifier.? != .block) {
-                    if (arg.name != .none) {
-                        const name_idx = try self.makeSymbolConstant(self.tree.getString(arg.name));
-                        try self.emitOpWithOperand(.op_constant, .op_constant_wide, name_idx);
-                        try self.compileNode(arg.value);
-                        kw_count += 1;
-                    }
-                }
-            }
-
-            if (kw_count > 0) {
-                if (kw_count <= limits.MAX_SHORT_CONSTANTS) {
-                    try self.emitOp(.op_build_map);
-                    try self.emitByte(@intCast(kw_count));
-                } else {
-                    try self.emitOp(.op_build_map_wide);
-                    try self.emitByte(@intCast((kw_count >> 8) & 0xff));
-                    try self.emitByte(@intCast(kw_count & 0xff));
-                }
-
-                self.simulatePop(kw_count * 2);
-                self.simulatePush(1);
-
-                pos_count += 1;
-            }
-
-            actual_arg_count = pos_count;
+            // DRY: Delegate Argument Packing!
+            actual_arg_count = try self.compileCallArguments(args);
 
             // Block Argument (Always Pushed LAST)
             if (block_arg) |b_node| {
