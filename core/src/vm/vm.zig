@@ -9,6 +9,7 @@ const kernel_mod = @import("../kernel/kernel.zig");
 const host_mod = @import("host.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
+const profiler_mod = @import("profiler.zig");
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const Brep = @import("../kernel/engines/brep/topology.zig").Brep;
 
@@ -44,6 +45,7 @@ pub const VM = struct {
 
     gc: memory.GC,
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
+    profiler: ?*profiler_mod.Profiler = null, // First-class tracing profiler
 
     globals: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
@@ -211,6 +213,9 @@ pub const VM = struct {
             .ip = 0,
             .base_slot = 0, // base_slot 0 is where our closure sits on the stack
         });
+
+        // --- PROFILER: Top-Level Script ---
+        if (self.profiler) |p| p.enterFrame("script") catch {};
 
         return self.run();
     }
@@ -673,6 +678,9 @@ pub const VM = struct {
                     }
                 },
                 .op_return => {
+                    // --- PROFILER: Stop Timer ---
+                    if (self.profiler) |p| p.exitFrame() catch {};
+
                     const result = self.pop();
 
                     self.closeUpvalues(&self.stack[frame.base_slot]);
@@ -829,18 +837,9 @@ pub const VM = struct {
                                 self.dispatchClosure(method_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
                                 continue;
                             } else if (method_val.isNative()) {
-                                const native_obj = method_val.asNative();
                                 const args_ptr = self.stack.ptr + base_slot + 1;
-
-                                const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
-                                    if (err == error.Unwind) return .ok;
-                                    if (err == error.FatalError) return .runtime_error;
-                                    return self.throwDynamicError("Runtime Error: Native Super Execution Error", .{});
-                                };
-
-                                self.popAndRelease(arg_count + 1);
-                                self.stack.ptr[self.stack_top] = result;
-                                self.stack_top += 1;
+                                const res = self.executeNative(method_val.asNative(), arg_count, args_ptr, method_name_str);
+                                if (res != .ok) return res;
                                 continue;
                             } else {
                                 if (self.throwDynamicError("Runtime Error: Superclass method '{s}' is not callable.\n", .{method_name_str}) != .ok) return .runtime_error;
@@ -1282,6 +1281,12 @@ pub const VM = struct {
             for (0..locals_to_pad) |_| self.push(value.Value.initNil());
         }
 
+        // --- PROFILER: Start Closure Timer ---
+        if (self.profiler) |p| {
+            const func_name = if (closure.function.name) |n| n.chars else "block";
+            p.enterFrame(func_name) catch {};
+        }
+
         try self.frames.append(self.allocator, .{
             .closure = closure,
             .ip = 0,
@@ -1343,6 +1348,12 @@ pub const VM = struct {
             const locals_to_pad = total_locals - current_frame_size;
             try self.ensureStackCapacity(self.stack_top + locals_to_pad);
             for (0..locals_to_pad) |_| self.push(value.Value.initNil());
+        }
+
+        // --- PROFILER: Start Sync Closure Timer ---
+        if (self.profiler) |p| {
+            const func_name = if (closure.function.name) |n| n.chars else "block";
+            p.enterFrame(func_name) catch {};
         }
 
         try self.frames.append(self.allocator, .{
@@ -1633,18 +1644,7 @@ pub const VM = struct {
         // Dispatch Method if Found
         if (method_val) |m_val| {
             if (m_val.isNative()) {
-                const native_obj = m_val.asNative();
-                const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
-                    if (err == error.Unwind) return .ok;
-                    if (err == error.FatalError) return .runtime_error;
-                    return self.throwDynamicError("Runtime Error: Native Method Execution Error", .{});
-                };
-                self.popAndRelease(arg_count + 1);
-
-                // Absorb the native +1 reference directly
-                self.stack.ptr[self.stack_top] = result;
-                self.stack_top += 1;
-                return .ok;
+                return self.executeNative(m_val.asNative(), arg_count, args_ptr, method_name_str);
             } else if (m_val.isClosure()) {
                 self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
                 return .ok;
@@ -1878,18 +1878,8 @@ pub const VM = struct {
         const callee = self.stack[base_slot];
 
         if (callee.isNative()) {
-            const native_obj = callee.asNative();
             const args_ptr = self.stack.ptr + base_slot + 1;
-
-            const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
-                if (err == error.Unwind) return .ok;
-                if (err == error.FatalError) return .runtime_error;
-                return self.throwDynamicError("Runtime Error: Native Execution Error", .{});
-            };
-
-            self.popAndRelease(arg_count + 1);
-            self.stack.ptr[self.stack_top] = result;
-            self.stack_top += 1;
+            return self.executeNative(callee.asNative(), arg_count, args_ptr, "native_call");
         } else if (callee.isClosure()) {
             self.dispatchClosure(callee.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
         } else if (callee.isClass()) {
@@ -1906,6 +1896,26 @@ pub const VM = struct {
         } else {
             return self.throwDynamicError("Runtime Error: Can only call functions and classes.", .{});
         }
+        return .ok;
+    }
+
+    inline fn executeNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, args_ptr: [*]value.Value, func_name: []const u8) InterpretResult {
+        // --- PROFILER: Native Enter ---
+        if (self.profiler) |p| p.enterFrame(func_name) catch {};
+
+        const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
+            if (self.profiler) |p| p.exitFrame() catch {};
+            if (err == error.Unwind) return .ok;
+            if (err == error.FatalError) return .runtime_error;
+            return self.throwDynamicError("Runtime Error: Native Execution Error", .{});
+        };
+
+        // --- PROFILER: Native Exit ---
+        if (self.profiler) |p| p.exitFrame() catch {};
+
+        self.popAndRelease(arg_count + 1);
+        self.stack.ptr[self.stack_top] = result;
+        self.stack_top += 1;
         return .ok;
     }
 
