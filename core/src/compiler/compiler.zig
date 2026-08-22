@@ -360,7 +360,16 @@ pub const Compiler = struct {
                         if (std.mem.startsWith(u8, method_name, "self.")) {
                             final_name = method_name[5..];
                         }
-                        const m_name_idx = try self.makeStringConstant(final_name);
+
+                        // --- MANGLE PRIVATE METHODS ---
+                        // If the method is private, prefix it with '@private:'
+                        var mangled_name: []const u8 = final_name;
+                        if (ds.is_private) {
+                            mangled_name = try std.fmt.allocPrint(self.allocator, "@private:{s}", .{final_name});
+                        }
+                        defer if (ds.is_private) self.allocator.free(mangled_name);
+
+                        const m_name_idx = try self.makeStringConstant(mangled_name);
                         const params = self.tree.getParams(ds.params);
 
                         // Compile the method block
@@ -1954,11 +1963,19 @@ pub const Compiler = struct {
                 if (std.mem.startsWith(u8, method_name, "self.")) {
                     final_name = method_name[5..];
                 }
-                const m_name_idx = try self.makeStringConstant(final_name);
 
+                // --- MANGLE PRIVATE METHODS ---
+                // Prefix the internal name with '@private:' so the VM knows it's restricted
+                var mangled_name: []const u8 = final_name;
+                if (ds.is_private) {
+                    mangled_name = try std.fmt.allocPrint(self.allocator, "@private:{s}", .{final_name});
+                }
+                defer if (ds.is_private) self.allocator.free(mangled_name);
+
+                const m_name_idx = try self.makeStringConstant(mangled_name);
                 const params = self.tree.getParams(ds.params);
-                try self.compileClosureBlock(params, ds.body, final_name, true);
 
+                try self.compileClosureBlock(params, ds.body, final_name, true);
                 try self.emitOpWithOperand(if (is_class_method) .op_class_method else .op_method, if (is_class_method) .op_class_method_wide else .op_method_wide, m_name_idx);
             } else if (stmt_node.tag == .method_call) {
                 const mc = self.tree.methodCall(stmt_node);
@@ -2009,10 +2026,19 @@ pub const Compiler = struct {
             if (stmt_node.tag == .def_stmt) {
                 const ds = self.tree.defStmt(stmt_node);
                 const method_name = self.tree.getString(ds.name);
-                const m_name_idx = try self.makeStringConstant(method_name);
                 const params = self.tree.getParams(ds.params);
+
+                // --- MANGLE PRIVATE METHODS ---
+                var mangled_name: []const u8 = method_name;
+                if (ds.is_private) {
+                    mangled_name = try std.fmt.allocPrint(self.allocator, "@private:{s}", .{method_name});
+                }
+                defer if (ds.is_private) self.allocator.free(mangled_name);
+
+                const final_name_idx = try self.makeStringConstant(mangled_name);
+
                 try self.compileClosureBlock(params, ds.body, method_name, true);
-                try self.emitOpWithOperand(.op_method, .op_method_wide, m_name_idx);
+                try self.emitOpWithOperand(.op_method, .op_method_wide, final_name_idx);
             } else {
                 try self.compileNode(stmt_idx);
                 try self.emitOp(.op_pop);

@@ -269,7 +269,19 @@ pub const Parser = struct {
             .keyword_unless => try self.parseIfOrUnless(true),
             .keyword_case => try self.parseCaseStatement(),
             .keyword_while, .keyword_until => try self.parseWhileStatement(),
-            .keyword_def => try self.parseDefStatement(),
+            .keyword_def => try self.parseDefStatement(false),
+            .keyword_private => {
+                self.advance();
+                if (self.tag(0) != .keyword_def) return ParseError.UnexpectedToken;
+
+                return try self.parseDefStatement(true);
+            },
+            .keyword_public => {
+                self.advance();
+                if (self.tag(0) != .keyword_def) return ParseError.UnexpectedToken;
+
+                return try self.parseDefStatement(false);
+            },
             .keyword_class => try self.parseClassStatement(),
             .keyword_module => try self.parseModuleStatement(),
             .keyword_return => try self.parseReturnStatement(),
@@ -587,8 +599,10 @@ pub const Parser = struct {
         return self.b.whileStmt(condition, body, is_until, start_tok) catch ParseError.OutOfMemory;
     }
 
-    fn parseDefStatement(self: *Parser) ParseError!ast.NodeIndex {
-        const start_tok = try self.expect(.keyword_def);
+    fn parseDefStatement(self: *Parser, is_private: bool) ParseError!ast.NodeIndex {
+        const start_tok = if (is_private) self.tok_idx - 1 else self.tok_idx;
+        _ = try self.expect(.keyword_def);
+
         var is_class_method = false;
         var name_idx: u24 = undefined;
         if (self.tag(0) == .keyword_self and self.tag(1) == .dot) {
@@ -603,6 +617,7 @@ pub const Parser = struct {
             name_idx = self.tok_idx;
             self.advance();
         }
+
         var params_span: ast.Span = .{ .start = 0, .end = 0 };
         if (self.tag(0) == .l_paren) {
             params_span = try self.parseParenParams();
@@ -617,16 +632,19 @@ pub const Parser = struct {
             }
             params_span = try self.b.addParams(self.scratch_params.items[s_len..]);
         }
+
         self.skipIgnored();
         const body_node = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
         const payload = try self.parseRescueAndEnsure();
         const end_tok = self.tok_idx;
         _ = try self.expect(.keyword_end);
         var final_body = body_node;
+
         if (payload.rescues.start != payload.rescues.end or payload.ensure_body != .none) {
             final_body = self.b.beginStmt(body_node, payload.rescues, payload.ensure_body, start_tok) catch return ParseError.OutOfMemory;
         }
-        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_idx)), params_span, final_body, is_class_method, end_tok, start_tok) catch ParseError.OutOfMemory;
+
+        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_idx)), params_span, final_body, is_class_method, end_tok, is_private, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseModuleStatement(self: *Parser) ParseError!ast.NodeIndex {

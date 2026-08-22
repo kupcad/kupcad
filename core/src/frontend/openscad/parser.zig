@@ -726,7 +726,7 @@ pub const Parser = struct {
             break :blk b;
         } else try self.parseStatement();
         const end_tok = self.tok_idx;
-        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), params, body, false, end_tok, start_tok) catch ParseError.OutOfMemory;
+        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), params, body, false, end_tok, false, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseFunctionDecl(self: *Parser) ParseError!ast.NodeIndex {
@@ -742,7 +742,7 @@ pub const Parser = struct {
             self.advance();
         }
         const end_tok = self.tok_idx;
-        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), params, body_expr, false, end_tok, start_tok) catch ParseError.OutOfMemory;
+        return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_tok)), params, body_expr, false, end_tok, false, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseIfStatement(self: *Parser) ParseError!ast.NodeIndex {

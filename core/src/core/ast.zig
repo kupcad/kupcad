@@ -258,6 +258,7 @@ pub const DefStmt = struct {
     body: NodeIndex,
     is_class_method: bool = false,
     end_token: u32 = 0,
+    is_private: bool = false,
 };
 
 pub const ClassStmt = struct {
@@ -604,6 +605,7 @@ pub const Tree = struct {
             .body = @enumFromInt(self.extra_data.items[base + 3]),
             .is_class_method = self.extra_data.items[base + 4] != 0,
             .end_token = self.extra_data.items[base + 5],
+            .is_private = self.extra_data.items[base + 6] != 0,
         };
     }
 
@@ -1026,8 +1028,8 @@ pub const Builder = struct {
         return self.createNode(.case_stmt, main_token, data_idx);
     }
 
-    pub fn defStmt(self: *Builder, name: StringId, params: Span, body: NodeIndex, is_class_method: bool, end_token: u32, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ name, params, body, is_class_method, end_token });
+    pub fn defStmt(self: *Builder, name: StringId, params: Span, body: NodeIndex, is_class_method: bool, end_token: u32, is_private: bool, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ name, params, body, is_class_method, end_token, is_private });
         return self.createNode(.def_stmt, main_token, data_idx);
     }
 

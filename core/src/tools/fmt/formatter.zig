@@ -448,7 +448,11 @@ pub const Formatter = struct {
     }
 
     fn formatDefStmt(self: *Formatter, tree: *const ast.Tree, def: ast.DefStmt, start_line: u32) Error!void {
+        if (def.is_private) {
+            try self.out.appendSlice(self.allocator, "private ");
+        }
         try self.out.appendSlice(self.allocator, "def ");
+
         if (def.is_class_method) try self.out.appendSlice(self.allocator, "self.");
         try self.out.appendSlice(self.allocator, tree.getString(def.name));
 

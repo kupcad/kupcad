@@ -918,13 +918,20 @@ pub const VM = struct {
                             return self.throwDynamicError("Runtime Error: No superclass exists for receiver.\n", .{});
                         };
 
-                        if (self.findMethod(superclass, method_name_str)) |method_val| {
-                            if (method_val.isClosure()) {
-                                self.dispatchClosure(method_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
+                        var method_val = self.findMethod(superclass, method_name_str);
+                        if (method_val == null) {
+                            var buf: [256]u8 = undefined;
+                            const priv_name = std.fmt.bufPrint(&buf, "@private:{s}", .{method_name_str}) catch "";
+                            method_val = self.findMethod(superclass, priv_name);
+                        }
+
+                        if (method_val) |m_val| {
+                            if (m_val.isClosure()) {
+                                self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
                                 continue;
-                            } else if (method_val.isNative()) {
+                            } else if (m_val.isNative()) {
                                 const args_ptr = self.stack.ptr + base_slot + 1;
-                                const res = self.executeNative(method_val.asNative(), arg_count, args_ptr, method_name_str);
+                                const res = self.executeNative(m_val.asNative(), arg_count, args_ptr, method_name_str);
                                 if (res != .ok) return res;
                                 continue;
                             } else {
@@ -1718,6 +1725,8 @@ pub const VM = struct {
 
         // Method Lookup
         var method_val: ?value.Value = null;
+        var is_private_call = false;
+
         if (receiver.isClass()) {
             method_val = self.findClassMethod(receiver.asClass(), method_name_str);
 
@@ -1746,9 +1755,29 @@ pub const VM = struct {
                     return self.throwDynamicError("Runtime Error: Expected 0 args for default constructor.\n", .{});
                 }
                 return .ok;
+            } else if (method_val == null) {
+                var buf: [256]u8 = undefined;
+                const priv_name = std.fmt.bufPrint(&buf, "@private:{s}", .{method_name_str}) catch "";
+                method_val = self.findClassMethod(receiver.asClass(), priv_name);
+                if (method_val != null) is_private_call = true;
             }
         } else if (class_obj) |c| {
             method_val = self.findMethodCached(c, method_name_str, ic);
+            if (method_val == null) {
+                var buf: [256]u8 = undefined;
+                const priv_name = std.fmt.bufPrint(&buf, "@private:{s}", .{method_name_str}) catch "";
+                method_val = self.findMethod(c, priv_name);
+                if (method_val != null) is_private_call = true;
+            }
+        }
+
+        // --- ENFORCE VISIBILITY ---
+        // If the method resolved to a mangled private method, the receiver MUST be the current `self`
+        if (is_private_call) {
+            const current_self = self.stack[frame.base_slot];
+            if (!self.valuesEqual(receiver, current_self)) {
+                return self.throwDynamicError("NoMethodError: private method '{s}' called.\n", .{method_name_str});
+            }
         }
 
         // Dispatch Method if Found

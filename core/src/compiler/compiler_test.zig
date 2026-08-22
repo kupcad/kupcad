@@ -615,7 +615,7 @@ test "Compiler: Protects core globals from function redefinition" {
     const func_name = try b.intern("param");
     const params_span = try b.addParams(&.{});
     const body = try b.createNode(.undef, 0, 0);
-    const def_node = try b.defStmt(func_name, params_span, body, false, 0, 0);
+    const def_node = try b.defStmt(func_name, params_span, body, false, 0, false, 0);
 
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);

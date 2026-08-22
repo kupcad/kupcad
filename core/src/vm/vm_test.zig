@@ -848,7 +848,7 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
 
     // Use the exact StringId so the compiler resolves local slot 2 accurately
     const body = try b.createNode(.identifier, 0, @intFromEnum(args_id));
-    const def_node = try b.defStmt(func_name, params_span, body, false, 0, 0);
+    const def_node = try b.defStmt(func_name, params_span, body, false, 0, false, 0);
 
     // 2. AST: func(1, 2, 3, 4)
     const call_name = try b.intern("func");
@@ -1011,7 +1011,7 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     const kwarg_node = try b.createNode(.identifier, 0, @intFromEnum(kwargs_id));
     const ret_arr_span = try b.addNodes(&.{ arg_node, kwarg_node });
     const body = try b.arrayLiteral(ret_arr_span, 0, 0);
-    const def_node = try b.defStmt(func_name, params_span, body, false, 0, 0);
+    const def_node = try b.defStmt(func_name, params_span, body, false, 0, false, 0);
 
     // 2. AST: test_splat(10, 20, 30, x: 100)
     const call_name = try b.intern("test_splat");
@@ -1155,7 +1155,7 @@ test "VM: Named Keyword Arguments with default values" {
     const ret_arr_span = try b.addNodes(&.{ w_node, h_node });
     const body = try b.arrayLiteral(ret_arr_span, 0, 0);
 
-    const def_node = try b.defStmt(func_name, params_span, body, false, 0, 0);
+    const def_node = try b.defStmt(func_name, params_span, body, false, 0, false, 0);
 
     // 2. AST: build_box(width: 50)
     const call_name = try b.intern("build_box");
@@ -6243,4 +6243,68 @@ test "VM: Singleton Class blocks (class << self) define class methods seamlessly
 
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: Private inline modifiers encapsulate methods correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class SecretData
+        \\  def access
+        \\    self.get_secret
+        \\  end
+        \\
+        \\  private def get_secret
+        \\    42
+        \\  end
+        \\end
+        \\
+        \\obj = SecretData.new
+        \\obj.access
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Calling via the public method should work securely!
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 42.0), result.asNumber());
+}
+
+test "VM: Direct external access to private methods throws runtime error" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true; // Prevent test console clutter
+
+    const source =
+        \\class SecretData
+        \\  private def get_secret
+        \\    42
+        \\  end
+        \\end
+        \\obj = SecretData.new
+        \\obj.get_secret
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Calling the private method externally must violently fail
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
 }

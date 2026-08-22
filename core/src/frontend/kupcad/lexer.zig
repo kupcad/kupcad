@@ -49,6 +49,8 @@ pub const Tag = enum {
     keyword_ensure,
     keyword_export,
     keyword_with,
+    keyword_private,
+    keyword_public,
     equal_equal,
     bang_equal,
     less_equal,
@@ -141,6 +143,8 @@ pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "ensure", .keyword_ensure },
     .{ "export", .keyword_export },
     .{ "with", .keyword_with },
+    .{ "private", .keyword_private },
+    .{ "public", .keyword_public },
 });
 
 inline fn isIdentStart(c: u8) bool {
