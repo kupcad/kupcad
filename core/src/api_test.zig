@@ -45,3 +45,29 @@ test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
     try testing.expect(found_unused_var);
     try testing.expect(found_unused_flow);
 }
+
+test "API: benchmarkScript completes successfully on valid code" {
+    const source =
+        \\def calculate_val(a)
+        \\  a * 3.0
+        \\end
+        \\
+        \\c = cube(5.0)
+        \\val = calculate_val(2.0)
+        \\c.translate(val, 0.0, 0.0)
+    ;
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+
+    try api.benchmarkScript(testing.allocator, source, testing.io, &out.writer);
+}
+
+test "API: benchmarkScript propagates errors on syntax failure" {
+    const invalid_source = "def broken_syntax(";
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+
+    try testing.expectError(error.ParseError, api.benchmarkScript(testing.allocator, invalid_source, testing.io, &out.writer));
+}

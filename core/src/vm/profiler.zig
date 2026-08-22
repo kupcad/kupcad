@@ -50,24 +50,24 @@ pub const Profiler = struct {
 
         if (self.timer_stack.items.len == 0) return;
 
-        // Fail-proof manual pop that works across all Zig versions
         const last_idx = self.timer_stack.items.len - 1;
         const frame = self.timer_stack.items[last_idx];
         self.timer_stack.shrinkRetainingCapacity(last_idx);
 
-        // Calculate raw elapsed time safely in u64
-        const duration = frame.start_time.durationTo(end);
-        const elapsed = @as(u64, @intCast(duration.toNanoseconds()));
+        // Calculate raw elapsed time safely in u64 (clamping negative durations to 0)
+        const duration_ns = frame.start_time.durationTo(end).toNanoseconds();
+        const elapsed = @as(u64, @intCast(@max(0, duration_ns)));
 
-        // Self time is the total time MINUS any time spent waiting for children
-        const self_time = elapsed - frame.child_time;
+        // Self time is total time MINUS child time.
+        // Clamped to 0 to prevent underflow if clock measurement overhead causes child_time > elapsed.
+        const self_time = if (elapsed >= frame.child_time) elapsed - frame.child_time else 0;
 
         // If this frame had a parent, add our elapsed time to its child_time tally
         if (self.timer_stack.items.len > 0) {
             self.timer_stack.items[self.timer_stack.items.len - 1].child_time += elapsed;
         }
 
-        // Upsert the stats into the hash map
+        // Upsert stats into the hash map
         const gop = try self.stats.getOrPut(self.allocator, frame.name);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{

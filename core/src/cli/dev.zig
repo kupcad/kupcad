@@ -254,7 +254,8 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     var stdout_buf: [4096]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buf);
     const stdout = &stdout_writer.interface;
-    try p.dumpProfile(stdout);
+
+    try api.benchmarkScript(allocator, source, init.io, stdout);
     try stdout.flush();
 }
 

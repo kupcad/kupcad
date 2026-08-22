@@ -55,18 +55,21 @@ pub fn checkCode(allocator: std.mem.Allocator, source: []const u8, config: Linte
     return checkDocument(allocator, &doc, config);
 }
 
-pub fn benchmarkScript(allocator: std.mem.Allocator, source: []const u8, io: std.Io) !void {
+pub fn benchmarkScript(allocator: std.mem.Allocator, source: []const u8, io: std.Io, writer: anytype) !void {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
+
+    // Fail early on syntax/parse errors
+    if (doc.diagnostics.len > 0) return error.ParseError;
 
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
 
-    // Inject LineIndex for readable backtraces
     vm.line_index = &doc.line_index;
 
-    // --- INITIALIZE & ATTACH PROFILER ---
-    var p = try profiler_mod.Profiler.init(allocator, io);
+    try registry.registerStandardLibrary(&vm);
+
+    var p = profiler_mod.Profiler.init(allocator, io);
     defer p.deinit();
     vm.profiler = &p;
 
@@ -78,16 +81,12 @@ pub fn benchmarkScript(allocator: std.mem.Allocator, source: []const u8, io: std
 
     try comp.compile(doc.tree.root);
 
-    // Execute the script
     const result = vm.interpret(&out_chunk);
-
     if (result != .ok) {
         return error.RuntimeError;
     }
 
-    // --- DUMP RESULTS TO TERMINAL ---
-    const stdout = std.io.getStdOut().writer();
-    try p.dumpProfile(stdout);
+    try p.dumpProfile(writer);
 }
 
 /// Scans a parsed document and extracts all parameter definitions and docstrings.
