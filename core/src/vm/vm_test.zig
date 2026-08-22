@@ -6617,3 +6617,43 @@ test "VM Syntax: Phase 4A - Uninitialized instance variables gracefully return n
     const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
     try testing.expectEqualStrings("default_blue", str_obj.chars);
 }
+
+test "VM: Lexical Constant Resolution Hierarchies" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\GLOBAL_VAL = 100
+        \\module Hardware
+        \\  ROOT_VAL = 200
+        \\  class Fastener
+        \\    def get_scoped
+        \\      ROOT_VAL
+        \\    end
+        \\
+        \\     def get_global
+        \\      GLOBAL_VAL
+        \\    end
+        \\  end
+        \\end
+        \\
+        \\f = Hardware::Fastener.new
+        \\[f.get_scoped, f.get_global]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[1].asNumber());
+}

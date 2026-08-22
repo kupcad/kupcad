@@ -97,6 +97,8 @@ pub const Compiler = struct {
     function: ?*value.ObjFunction = null,
     is_method: bool = false,
     active_namespaces: usize = 0,
+    // Lexical Scope tracking
+    namespace_stack: std.ArrayListUnmanaged(ast.StringId) = .empty,
 
     upvalues: std.ArrayListUnmanaged(Upvalue) = .empty,
     locals: std.ArrayListUnmanaged(Local) = .empty,
@@ -128,6 +130,7 @@ pub const Compiler = struct {
             .enclosing = null,
             .function = null,
             .is_method = false,
+            .namespace_stack = .empty,
             .upvalues = .empty,
             .locals = .empty,
             .loops = .empty,
@@ -146,9 +149,22 @@ pub const Compiler = struct {
             loop.exit_jumps.deinit(self.allocator);
         }
         self.loops.deinit(self.allocator);
+        self.namespace_stack.deinit(self.allocator);
     }
 
     // --- Lexical Scope Resolvers ---
+
+    fn buildFullyQualifiedPath(self: *Compiler, target: []const u8, depth: usize) CompileError![]const u8 {
+        var buf = std.ArrayListUnmanaged(u8).empty;
+        defer buf.deinit(self.allocator);
+
+        for (self.namespace_stack.items[0..depth]) |ns_id| {
+            try buf.appendSlice(self.allocator, self.tree.getString(ns_id));
+            try buf.appendSlice(self.allocator, "::");
+        }
+        try buf.appendSlice(self.allocator, target);
+        return try self.allocator.dupe(u8, buf.items);
+    }
 
     pub fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u16) CompileError!void {
         // Allow anonymous padding slots (.none) to bypass deduplication ---
@@ -1073,12 +1089,17 @@ pub const Compiler = struct {
             .enclosing = self,
             .function = func,
             .is_method = is_method,
+            .active_namespaces = self.active_namespaces,
+            .namespace_stack = try self.namespace_stack.clone(self.allocator), // Inherit lexical scope dynamically
             .upvalues = .empty,
             .locals = .empty,
             .loops = .empty,
             .current_stack_depth = 0,
             .max_stack_depth = 0,
             .current_source_offset = self.current_source_offset,
+            .max_local_slot = 0,
+            .seeded_locals = &.{},
+            .seeded_slot_offset = 0,
         };
         defer child_compiler.deinit();
 
@@ -1833,17 +1854,52 @@ pub const Compiler = struct {
         _ = sym;
         const name_str = self.tree.getString(name_id);
 
+        // Lexical Constant Resolution
+        if (std.ascii.isUpper(name_str[0])) {
+            if (self.namespace_stack.items.len > 0) {
+                var end_jumps = std.ArrayListUnmanaged(usize).empty;
+                defer end_jumps.deinit(self.allocator);
+
+                var i: usize = self.namespace_stack.items.len;
+                while (i > 0) {
+                    const fq_name = try self.buildFullyQualifiedPath(name_str, i);
+                    defer self.allocator.free(fq_name); // Free memory once chunk consumes it
+                    const fq_idx = try self.makeStringConstant(fq_name);
+
+                    try self.emitOpWithOperand(.op_defined, .op_defined_wide, fq_idx);
+                    const skip_jump = try self.emitJump(.op_jump_if_false);
+                    try self.emitOp(.op_pop); // pop true
+
+                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, fq_idx);
+                    try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
+
+                    self.patchJump(skip_jump);
+                    try self.emitOp(.op_pop); // pop false
+                    i -= 1;
+                }
+
+                // Fallback to absolute global
+                const global_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, global_idx);
+
+                for (end_jumps.items) |jmp| {
+                    self.patchJump(jmp);
+                }
+            } else {
+                const name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+            }
+            return;
+        }
+
         if (std.mem.startsWith(u8, name_str, "@@")) {
             try self.emitPushSelf();
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_get_class_var, .op_get_class_var_wide, name_idx);
         } else if (std.mem.startsWith(u8, name_str, "@")) {
             try self.emitPushSelf();
-
-            // Strip '@' at compile time
             const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
             const name_idx = try self.makeStringConstant(clean_name);
-
             try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
             try self.emitInlineCacheIndex();
         } else if (self.resolveLocal(name_id)) |local_slot| {
@@ -1859,6 +1915,24 @@ pub const Compiler = struct {
 
     fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ResolvedSymbol) CompileError!void {
         const name_str = self.tree.getString(name_id);
+
+        // Constant Flattening
+        if (std.ascii.isUpper(name_str[0])) {
+            const fq_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len);
+            defer self.allocator.free(fq_name); // Free memory once chunk consumes it
+            const fq_name_idx = try self.makeStringConstant(fq_name);
+
+            try self.emitOp(.op_dup);
+            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
+
+            // Also define the short name if we are at root
+            if (self.namespace_stack.items.len == 0) {
+                try self.emitOp(.op_dup);
+                const short_name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, short_name_idx);
+            }
+            return;
+        }
 
         if (std.mem.startsWith(u8, name_str, "@@")) {
             try self.emitPushSelf();
@@ -1984,6 +2058,9 @@ pub const Compiler = struct {
             return error.ProtectedSymbol;
         }
 
+        try self.namespace_stack.append(self.allocator, name_id);
+        defer _ = self.namespace_stack.pop();
+
         try self.emitOpWithOperand(.op_class, .op_class_wide, name_idx);
 
         if (cs.super_class != .none) {
@@ -2007,8 +2084,6 @@ pub const Compiler = struct {
                     final_name = method_name[5..];
                 }
 
-                // --- MANGLE PRIVATE METHODS ---
-                // Prefix the internal name with '@private:' so the VM knows it's restricted
                 var mangled_name: []const u8 = final_name;
                 if (ds.is_private) {
                     mangled_name = try std.fmt.allocPrint(self.allocator, "@private:{s}", .{final_name});
@@ -2020,12 +2095,19 @@ pub const Compiler = struct {
 
                 try self.compileClosureBlock(params, ds.body, final_name, true);
                 try self.emitOpWithOperand(if (is_class_method) .op_class_method else .op_method, if (is_class_method) .op_class_method_wide else .op_method_wide, m_name_idx);
-            } else if (try self.handleMacroMethod(stmt_node, false)) {
-                // Macro (like attr_accessor or include) was handled successfully
-            } else {
+            } else if (try self.handleMacroMethod(stmt_node, false)) {} else {
                 try self.compileNode(stmt_idx);
                 try self.emitOp(.op_pop);
             }
+        }
+
+        const fq_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len - 1);
+        defer self.allocator.free(fq_name); // Free memory once chunk consumes it
+        const fq_name_idx = try self.makeStringConstant(fq_name);
+
+        if (!std.mem.eql(u8, fq_name, name_str)) {
+            try self.emitOp(.op_dup);
+            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
         }
 
         const sym = self.symbols[@intFromEnum(node_idx)];
@@ -2046,8 +2128,12 @@ pub const Compiler = struct {
         defer self.active_namespaces -= 1;
 
         const ms = self.tree.moduleStmt(node);
-        const name_str = self.tree.getString(ms.name);
+        const name_id = ms.name;
+        const name_str = self.tree.getString(name_id);
         const name_idx = try self.makeStringConstant(name_str);
+
+        try self.namespace_stack.append(self.allocator, name_id);
+        defer _ = self.namespace_stack.pop();
 
         try self.emitOpWithOperand(.op_module, .op_module_wide, name_idx);
 
@@ -2062,7 +2148,6 @@ pub const Compiler = struct {
                 const method_name = self.tree.getString(ds.name);
                 const params = self.tree.getParams(ds.params);
 
-                // --- MANGLE PRIVATE METHODS ---
                 var mangled_name: []const u8 = method_name;
                 if (ds.is_private) {
                     mangled_name = try std.fmt.allocPrint(self.allocator, "@private:{s}", .{method_name});
@@ -2073,12 +2158,19 @@ pub const Compiler = struct {
 
                 try self.compileClosureBlock(params, ds.body, method_name, true);
                 try self.emitOpWithOperand(.op_method, .op_method_wide, final_name_idx);
-            } else if (try self.handleMacroMethod(stmt_node, false)) {
-                // Macro (like attr_accessor or include) was handled successfully
-            } else {
+            } else if (try self.handleMacroMethod(stmt_node, false)) {} else {
                 try self.compileNode(stmt_idx);
                 try self.emitOp(.op_pop);
             }
+        }
+
+        const fq_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len - 1);
+        defer self.allocator.free(fq_name); // Free memory once chunk consumes it
+        const fq_name_idx = try self.makeStringConstant(fq_name);
+
+        if (!std.mem.eql(u8, fq_name, name_str)) {
+            try self.emitOp(.op_dup);
+            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
         }
 
         if (self.active_namespaces > 1) {
