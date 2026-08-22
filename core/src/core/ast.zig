@@ -205,6 +205,7 @@ pub const MethodCall = struct {
 pub const SuperCall = struct {
     args: Span, // Span of NamedArg
     block: NodeIndex = .none,
+    implicit_args: bool = false,
 };
 
 pub const LambdaExpr = struct {
@@ -513,6 +514,7 @@ pub const Tree = struct {
         return .{
             .args = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
             .block = @enumFromInt(self.extra_data.items[base + 2]),
+            .implicit_args = self.extra_data.items[base + 3] != 0,
         };
     }
 
@@ -970,8 +972,8 @@ pub const Builder = struct {
         return self.createNode(.method_call, main_token, data_idx);
     }
 
-    pub fn superCall(self: *Builder, args: Span, block_idx: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ args, block_idx });
+    pub fn superCall(self: *Builder, args: Span, block_idx: NodeIndex, implicit_args: bool, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ args, block_idx, implicit_args });
         return self.createNode(.super_call, main_token, data_idx);
     }
 

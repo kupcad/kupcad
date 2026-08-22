@@ -6096,3 +6096,76 @@ test "VM Syntax: next statement inside block skips iteration and returns value t
     try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[2].asNumber());
     try testing.expectEqual(@as(f64, 40.0), arr_obj.items.items[3].asNumber());
 }
+
+test "VM: Condition-less case statements execute as sequential boolean checks" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\x = 10
+        \\y = 20
+        \\res = case
+        \\when x == 100
+        \\  "first"
+        \\when y == 20
+        \\  "second"
+        \\else
+        \\  "fallback"
+        \\end
+        \\res
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    try testing.expectEqualStrings("second", str_obj.chars);
+}
+
+test "VM: Implicit bare super forwards blocks and keyword arguments natively" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Bare `super` in Child#run should capture both `scale: 2` and the `do ... end` block natively!
+    const source =
+        \\class BaseShape
+        \\  def run(scale:, &block)
+        \\    block(scale * 10)
+        \\  end
+        \\end
+        \\
+        \\class ChildShape < BaseShape
+        \\  def run(scale:, &block)
+        \\    super
+        \\  end
+        \\end
+        \\
+        \\ChildShape.new().run(scale: 2) do |val|
+        \\  val + 5
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 25.0), result.asNumber());
+}

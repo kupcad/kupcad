@@ -680,17 +680,27 @@ pub const Parser = struct {
 
     fn parseSuper(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.keyword_super);
+        var implicit_args = false;
+        var args_span: ast.Span = try self.b.addNamedArgs(&.{});
+        var block_node: ast.NodeIndex = .none;
+
         if (self.tag(0) == .l_paren) {
-            const args = try self.parseParenArgs();
-            var block_node: ast.NodeIndex = .none;
+            args_span = try self.parseParenArgs();
             if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) block_node = try self.parseBlockClosure();
-            return self.b.superCall(args, block_node, start_tok) catch ParseError.OutOfMemory;
+        } else if (self.isCommandCallStart()) {
+            if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) {
+                implicit_args = true;
+                block_node = try self.parseBlockClosure();
+            } else {
+                const cmd = try self.parseCommandArgsAndBlock();
+                args_span = cmd.args;
+                block_node = cmd.block orelse .none;
+            }
+        } else {
+            implicit_args = true;
         }
-        if (self.isCommandCallStart()) {
-            const cmd = try self.parseCommandArgsAndBlock();
-            return self.b.superCall(cmd.args, cmd.block orelse .none, start_tok) catch ParseError.OutOfMemory;
-        }
-        return self.b.superCall(try self.b.addNamedArgs(&.{}), .none, start_tok) catch ParseError.OutOfMemory;
+
+        return self.b.superCall(args_span, block_node, implicit_args, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseCallOnExpr(self: *Parser, receiver_expr: ast.NodeIndex) ParseError!ast.NodeIndex {

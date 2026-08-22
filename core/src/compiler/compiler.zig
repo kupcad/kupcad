@@ -1293,21 +1293,25 @@ pub const Compiler = struct {
         const cs = self.tree.caseStmt(node);
         const saved_depth = self.current_stack_depth;
         const branches = self.tree.getWhenBranches(cs.when_branches);
+        const has_cond = cs.condition != .none;
 
         // --- Heuristic: Can we use a Fast Jump Table? ---
-        var can_use_jump_table = true;
+        var can_use_jump_table = has_cond;
         var total_conditions: u16 = 0;
-        for (branches) |branch| {
-            const conds = self.tree.getNodes(branch.conditions);
-            for (conds) |cond_idx| {
-                const c_node = self.tree.getNode(cond_idx).?;
-                if (c_node.tag != .number and c_node.tag != .string) {
-                    can_use_jump_table = false;
-                    break;
+
+        if (can_use_jump_table) {
+            for (branches) |branch| {
+                const conds = self.tree.getNodes(branch.conditions);
+                for (conds) |cond_idx| {
+                    const c_node = self.tree.getNode(cond_idx).?;
+                    if (c_node.tag != .number and c_node.tag != .string) {
+                        can_use_jump_table = false;
+                        break;
+                    }
+                    total_conditions += 1;
                 }
-                total_conditions += 1;
+                if (!can_use_jump_table) break;
             }
-            if (!can_use_jump_table) break;
         }
 
         if (can_use_jump_table and total_conditions > 0) {
@@ -1339,11 +1343,9 @@ pub const Compiler = struct {
                 const body_jump_target = self.current_chunk.code.items.len;
                 const conds = self.tree.getNodes(branch.conditions);
 
-                // --- ADD THIS LINE ---
-                // Reset for each branch because op_switch pops the test value, returning us to baseline
                 self.current_stack_depth = saved_depth;
 
-                // Backpatch table entries (Step by 6)
+                // Backpatch table entries
                 for (conds) |cond_node_idx| {
                     const c_node = self.tree.getNode(cond_node_idx).?;
                     const table_idx = table_start_offset + (condition_idx * 6);
@@ -1373,7 +1375,6 @@ pub const Compiler = struct {
             const d_offset = default_target - (default_jump_offset + 4);
             self.writeJumpOffset(default_jump_offset, d_offset);
 
-            // --- ADD THIS LINE BEFORE FAST PATH ELSE ---
             self.current_stack_depth = saved_depth;
 
             if (cs.else_branch != .none) {
@@ -1388,7 +1389,9 @@ pub const Compiler = struct {
             self.current_stack_depth = saved_depth + 1;
         } else {
             // ====== LINEAR FALLBACK PATH ======
-            try self.compileNode(cs.condition);
+            if (has_cond) {
+                try self.compileNode(cs.condition);
+            }
 
             var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
             defer end_jumps.deinit(self.allocator);
@@ -1396,31 +1399,41 @@ pub const Compiler = struct {
             for (branches) |branch| {
                 const conds = self.tree.getNodes(branch.conditions);
                 for (conds) |cond_idx| {
-                    // --- ADD THIS LINE ---
-                    self.current_stack_depth = saved_depth + 1; // Condition is on stack
+                    if (has_cond) {
+                        self.current_stack_depth = saved_depth + 1; // Condition is on stack
+                        try self.emitOp(.op_dup);
+                        try self.compileNode(cond_idx);
+                        try self.emitOp(.op_case_equal);
+                    } else {
+                        self.current_stack_depth = saved_depth;
+                        try self.compileNode(cond_idx);
+                    }
 
-                    try self.emitOp(.op_dup);
-                    try self.compileNode(cond_idx);
-                    try self.emitOp(.op_case_equal);
                     const skip_jump = try self.emitJump(.op_jump_if_false);
-                    try self.emitOp(.op_pop);
-                    try self.emitOp(.op_pop);
+                    try self.emitOp(.op_pop); // pop false
+                    if (has_cond) try self.emitOp(.op_pop); // pop cond
 
                     try self.compileNode(branch.body);
                     try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
 
-                    // --- ADD THIS LINE BEFORE PATCH JUMP ---
-                    self.current_stack_depth = saved_depth + 2; // Jump lands here with false + cond on stack
+                    if (has_cond) {
+                        self.current_stack_depth = saved_depth + 2; // Jump lands here with false + cond on stack
+                    } else {
+                        self.current_stack_depth = saved_depth + 1; // Jump lands here with false
+                    }
 
                     self.patchJump(skip_jump);
                     try self.emitOp(.op_pop); // pop false
                 }
             }
 
-            // --- ADD THIS LINE BEFORE LINEAR ELSE ---
-            self.current_stack_depth = saved_depth + 1; // Condition is on stack
+            if (has_cond) {
+                self.current_stack_depth = saved_depth + 1; // Condition is on stack
+                try self.emitOp(.op_pop);
+            } else {
+                self.current_stack_depth = saved_depth;
+            }
 
-            try self.emitOp(.op_pop);
             if (cs.else_branch != .none) {
                 try self.compileNode(cs.else_branch);
             } else {
@@ -1960,62 +1973,89 @@ pub const Compiler = struct {
         try self.emitOp(.op_get_local);
         try self.emitByte(0); // push `self`
 
-        const args = self.tree.getNamedArgs(sc.args);
-        var pos_count: usize = 0;
-        var kw_count: usize = 0;
-        var block_arg: ?ast.NodeIndex = null;
+        var actual_arg_count: usize = 0;
 
-        // Positional Arguments & Block Arg Extraction
-        for (args) |arg| {
-            if (arg.modifier != null and arg.modifier.? == .block) {
-                block_arg = arg.value;
-            } else if (arg.name == .none) {
-                try self.compileNode(arg.value);
-                pos_count += 1;
+        if (sc.implicit_args) {
+            const func = self.function orelse return error.UnknownNode;
+            const arity = func.arity;
+
+            // Push positional arguments AND the kwarg map (located inside the standard arity length)
+            for (0..arity) |i| {
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
             }
-        }
+            actual_arg_count = arity;
 
-        // Keyword Arguments
-        for (args) |arg| {
-            if (arg.modifier == null or arg.modifier.? != .block) {
-                if (arg.name != .none) {
-                    const name_idx = try self.makeSymbolConstant(self.tree.getString(arg.name));
-                    try self.emitOpWithOperand(.op_constant, .op_constant_wide, name_idx);
+            if (sc.block == .none) {
+                // Forward the parent's block!
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(arity + 1));
+                actual_arg_count += 1;
+            } else {
+                // Compile explicitly passed block overriding the implicit one
+                const block_node = self.tree.getNode(sc.block).?;
+                const block_payload = self.tree.block(block_node);
+                const lowered_params = try self.lowerBlockParams(block_payload.params);
+                defer self.allocator.free(lowered_params);
+                try self.compileClosureBlock(lowered_params, sc.block, null, false);
+                actual_arg_count += 1;
+            }
+        } else {
+            const args = self.tree.getNamedArgs(sc.args);
+            var pos_count: usize = 0;
+            var kw_count: usize = 0;
+            var block_arg: ?ast.NodeIndex = null;
+
+            // Positional Arguments & Block Arg Extraction
+            for (args) |arg| {
+                if (arg.modifier != null and arg.modifier.? == .block) {
+                    block_arg = arg.value;
+                } else if (arg.name == .none) {
                     try self.compileNode(arg.value);
-                    kw_count += 1;
+                    pos_count += 1;
                 }
             }
-        }
 
-        if (kw_count > 0) {
-            if (kw_count <= limits.MAX_SHORT_CONSTANTS) {
-                try self.emitOp(.op_build_map);
-                try self.emitByte(@intCast(kw_count));
-            } else {
-                try self.emitOp(.op_build_map_wide);
-                try self.emitByte(@intCast((kw_count >> 8) & 0xff));
-                try self.emitByte(@intCast(kw_count & 0xff));
+            // Keyword Arguments
+            for (args) |arg| {
+                if (arg.modifier == null or arg.modifier.? != .block) {
+                    if (arg.name != .none) {
+                        const name_idx = try self.makeSymbolConstant(self.tree.getString(arg.name));
+                        try self.emitOpWithOperand(.op_constant, .op_constant_wide, name_idx);
+                        try self.compileNode(arg.value);
+                        kw_count += 1;
+                    }
+                }
             }
 
-            self.simulatePop(kw_count * 2);
-            self.simulatePush(1);
+            if (kw_count > 0) {
+                if (kw_count <= limits.MAX_SHORT_CONSTANTS) {
+                    try self.emitOp(.op_build_map);
+                    try self.emitByte(@intCast(kw_count));
+                } else {
+                    try self.emitOp(.op_build_map_wide);
+                    try self.emitByte(@intCast((kw_count >> 8) & 0xff));
+                    try self.emitByte(@intCast(kw_count & 0xff));
+                }
 
-            pos_count += 1;
-        }
+                self.simulatePop(kw_count * 2);
+                self.simulatePush(1);
 
-        var actual_arg_count = pos_count;
+                pos_count += 1;
+            }
 
-        // Block Argument (Always Pushed LAST)
-        if (block_arg) |b_node| {
-            try self.compileNode(b_node);
-            actual_arg_count += 1;
-        } else if (sc.block != .none) {
-            const block_node = self.tree.getNode(sc.block).?;
-            const block_payload = self.tree.block(block_node);
-            const lowered_params = try self.lowerBlockParams(block_payload.params);
-            defer self.allocator.free(lowered_params);
-            try self.compileClosureBlock(lowered_params, sc.block, null, false);
-            actual_arg_count += 1;
+            actual_arg_count = pos_count;
+
+            // Block Argument (Always Pushed LAST)
+            if (block_arg) |b_node| {
+                try self.compileNode(b_node);
+                actual_arg_count += 1;
+            } else if (sc.block != .none) {
+                const block_node = self.tree.getNode(sc.block).?;
+                const block_payload = self.tree.block(block_node);
+                const lowered_params = try self.lowerBlockParams(block_payload.params);
+                defer self.allocator.free(lowered_params);
+                try self.compileClosureBlock(lowered_params, sc.block, null, false);
+                actual_arg_count += 1;
+            }
         }
 
         if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
