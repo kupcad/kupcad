@@ -6309,7 +6309,7 @@ test "VM: Direct external access to private methods throws runtime error" {
     try testing.expectEqual(.runtime_error, result);
 }
 
-test "VM Syntax: Phase 3 - attr_accessor, attr_reader, attr_writer macro expansion" {
+test "VM: attr_accessor, attr_reader, attr_writer macro expansion" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -6352,4 +6352,232 @@ test "VM Syntax: Phase 3 - attr_accessor, attr_reader, attr_writer macro expansi
     try testing.expectEqualStrings("Leon", @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[0].asObj()))).chars);
     try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
     try testing.expectEqualStrings("shh", @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()))).chars);
+}
+
+test "VM: Private method called on different instance of same class fails" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+
+    const source =
+        \\class Account
+        \\  def initialize(bal) @bal = bal end
+        \\  def compare(other)
+        \\    other.balance # Calling private method on another instance!
+        \\  end
+        \\  private def balance() @bal end
+        \\end
+        \\a = Account.new(100)
+        \\b = Account.new(200)
+        \\a.compare(b)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
+}
+
+test "VM: Private class methods encapsulated on class object" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class Vault
+        \\  def self.open
+        \\    self.internal_key
+        \\  end
+        \\  private def self.internal_key
+        \\    999
+        \\  end
+        \\end
+        \\Vault.open
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 999.0), result.asNumber());
+}
+
+test "VM: Direct external call to private class method throws error" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+
+    const source =
+        \\class Vault
+        \\  private def self.internal_key
+        \\    999
+        \\  end
+        \\end
+        \\Vault.internal_key
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
+}
+
+test "VM: Subclass inherits and executes parent private method via self" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class Parent
+        \\  private def secret() 100 end
+        \\  def compute() self.secret() + 1 end
+        \\end
+        \\class Child < Parent
+        \\  def child_compute() self.secret() + 5 end
+        \\end
+        \\c = Child.new()
+        \\[c.compute(), c.child_compute()]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(f64, 101.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 105.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: attr_accessor multiple attributes and compound assignment" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class Box3D
+        \\  attr_accessor :width, :height, :depth
+        \\  def initialize(w, h, d)
+        \\    @width = w
+        \\    @height = h
+        \\    @depth = d
+        \\  end
+        \\end
+        \\b = Box3D.new(10, 20, 30)
+        \\b.width += 5
+        \\b.height *= 2
+        \\b.depth -= 10
+        \\[b.width, b.height, b.depth]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(f64, 15.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 40.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[2].asNumber());
+}
+
+test "VM: attr_accessor defined in included module" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\module Positionable
+        \\  attr_accessor :x, :y
+        \\end
+        \\class Node
+        \\  include Positionable
+        \\  def initialize
+        \\    @x = 0
+        \\    @y = 0
+        \\  end
+        \\end
+        \\n = Node.new
+        \\n.x = 10
+        \\n.y = 25
+        \\[n.x, n.y]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 25.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: attr_accessor inside singleton class (class << self)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class AppConfig
+        \\  class << self
+        \\    attr_accessor :mode
+        \\  end
+        \\end
+        \\AppConfig.mode = "production"
+        \\AppConfig.mode
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    try testing.expectEqualStrings("production", str_obj.chars);
 }

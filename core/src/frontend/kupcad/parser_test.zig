@@ -3300,3 +3300,55 @@ test "KupCAD Parser: Block with default positional parameters" {
     try testing.expectEqualStrings("x", tree.getString(assign0.name));
     try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(assign0.value)));
 }
+
+test "KupCAD Parser: Inline visibility modifiers (private def / public def)" {
+    const source =
+        \\class Guard
+        \\  public def open() true end
+        \\  private def secret() 123 end
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const class_stmt_idx = try pt.parser.parseStatement();
+    const class_stmt = pt.getNode(class_stmt_idx);
+    const cs = tree.classStmt(class_stmt);
+
+    const class_body = pt.getNode(cs.body);
+    const stmts = tree.getNodes(tree.block(class_body).stmts);
+
+    const pub_def = tree.defStmt(pt.getNode(stmts[0]));
+    try testing.expectEqual(false, pub_def.is_private);
+    try testing.expectEqualStrings("open", tree.getString(pub_def.name));
+
+    const priv_def = tree.defStmt(pt.getNode(stmts[1]));
+    try testing.expectEqual(true, priv_def.is_private);
+    try testing.expectEqualStrings("secret", tree.getString(priv_def.name));
+}
+
+test "KupCAD Parser: Attribute accessors AST parsing" {
+    const source =
+        \\class Widget
+        \\  attr_accessor :width, :height
+        \\  attr_reader "label"
+        \\  attr_writer :color
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    try testing.expectEqual(ast.Tag.class_stmt, stmt.tag);
+
+    const cs = tree.classStmt(stmt);
+    const body_node = pt.getNode(cs.body);
+    const stmts = tree.getNodes(tree.block(body_node).stmts);
+
+    try testing.expectEqual(@as(usize, 3), stmts.len);
+    try testing.expectEqual(ast.Tag.method_call, pt.getNode(stmts[0]).tag);
+    try testing.expectEqualStrings("attr_accessor", tree.getString(tree.methodCall(pt.getNode(stmts[0])).method_name));
+}

@@ -439,3 +439,79 @@ test "Lexer: parses quoted symbols" {
         test_utils.t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Visibility modifiers (private and public keywords)" {
+    try expectTokens(
+        \\class ProtectedVault
+        \\  public def open_door
+        \\    true
+        \\  end
+        \\
+        \\  private def secret_code
+        \\    42
+        \\  end
+        \\end
+    , &.{
+        t(.keyword_class, "class"),     t(.constant, "ProtectedVault"), t(.newline, "\n"),
+        t(.keyword_public, "public"),   t(.keyword_def, "def"),         t(.ident, "open_door"),
+        t(.newline, "\n"),              t(.keyword_true, "true"),       t(.newline, "\n"),
+        t(.keyword_end, "end"),         t(.newline, "\n"),              t(.newline, "\n"),
+        t(.keyword_private, "private"), t(.keyword_def, "def"),         t(.ident, "secret_code"),
+        t(.newline, "\n"),              t(.number, "42"),               t(.newline, "\n"),
+        t(.keyword_end, "end"),         t(.newline, "\n"),              t(.keyword_end, "end"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Attribute accessors (attr_accessor, attr_reader, attr_writer)" {
+    try expectTokens(
+        \\class Part
+        \\  attr_accessor :width, :height
+        \\  attr_reader :depth
+        \\  attr_writer :color
+        \\end
+    , &.{
+        t(.keyword_class, "class"), t(.constant, "Part"), t(.newline, "\n"),
+        t(.ident, "attr_accessor"), t(.symbol, "width"),  t(.comma, ","),
+        t(.symbol, "height"),       t(.newline, "\n"),    t(.ident, "attr_reader"),
+        t(.symbol, "depth"),        t(.newline, "\n"),    t(.ident, "attr_writer"),
+        t(.symbol, "color"),        t(.newline, "\n"),    t(.keyword_end, "end"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Singleton class declaration (class << self)" {
+    try expectTokens(
+        \\class MathTools
+        \\  class << self
+        \\    private def internal_helper
+        \\      10
+        \\    end
+        \\  end
+        \\end
+    , &.{
+        t(.keyword_class, "class"),   t(.constant, "MathTools"),      t(.newline, "\n"),
+        t(.keyword_class, "class"),   t(.less_less, "<<"),            t(.keyword_self, "self"),
+        t(.newline, "\n"),            t(.keyword_private, "private"), t(.keyword_def, "def"),
+        t(.ident, "internal_helper"), t(.newline, "\n"),              t(.number, "10"),
+        t(.newline, "\n"),            t(.keyword_end, "end"),         t(.newline, "\n"),
+        t(.keyword_end, "end"),       t(.newline, "\n"),              t(.keyword_end, "end"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Private class methods (private def self.method)" {
+    try expectTokens(
+        \\class Factory
+        \\  private def self.build_internal
+        \\    nil
+        \\  end
+        \\end
+    , &.{
+        t(.keyword_class, "class"),     t(.constant, "Factory"),     t(.newline, "\n"),
+        t(.keyword_private, "private"), t(.keyword_def, "def"),      t(.keyword_self, "self"),
+        t(.dot, "."),                   t(.ident, "build_internal"), t(.newline, "\n"),
+        t(.keyword_nil, "nil"),         t(.newline, "\n"),           t(.keyword_end, "end"),
+        t(.newline, "\n"),              t(.keyword_end, "end"),      t(.eof, ""),
+    });
+}

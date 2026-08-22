@@ -348,46 +348,7 @@ pub const VM = struct {
                     const test_val = self.pop();
                     self.push(value.Value.initBool(self.valuesCaseEqual(case_val, test_val)));
                 },
-                .op_get_property, .op_get_property_wide => {
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_property_wide);
-                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", exec_chunk.constants.items[name_idx].asObj()))).chars;
 
-                    const ic = self.readInlineCache(exec_chunk, frame);
-                    const receiver = self.stack[self.stack_top - 1];
-
-                    if (receiver.isInstance()) {
-                        self.stack_top -= 1; // Pop receiver
-                        if (self.getPropertyCached(receiver.asInstance(), name_str, ic)) |val| {
-                            self.push(val);
-                        } else {
-                            if (self.throwDynamicError("Runtime Error: Undefined property '{s}'.", .{name_str}) != .ok) return .runtime_error;
-                            continue;
-                        }
-                    } else if (receiver.isModule()) {
-                        self.stack_top -= 1; // Pop receiver
-                        const mod = receiver.asModule();
-                        if (mod.methods.get(name_str)) |val| {
-                            self.push(val);
-                        } else {
-                            if (self.throwDynamicError("Runtime Error: Undefined module member '{s}'.", .{name_str}) != .ok) return .runtime_error;
-                            continue;
-                        }
-                    } else if (receiver.isClass()) {
-                        self.stack_top -= 1; // Pop receiver
-                        const cls = receiver.asClass();
-                        if (self.findClassMethod(cls, name_str)) |val| {
-                            self.push(val);
-                        } else if (cls.class_fields.get(name_str)) |val| {
-                            self.push(val);
-                        } else {
-                            if (self.throwDynamicError("Runtime Error: Undefined class member '{s}'.", .{name_str}) != .ok) return .runtime_error;
-                            continue;
-                        }
-                    } else {
-                        if (self.throwDynamicError("Runtime Error: Only instances, modules, and classes have properties.\n", .{}) != .ok) return .runtime_error;
-                        continue;
-                    }
-                },
                 .op_set_member, .op_set_member_wide => {
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_member_wide);
                     const name_val = exec_chunk.constants.items[name_idx];
@@ -866,6 +827,54 @@ pub const VM = struct {
 
                     self.globals.put(self.allocator, name_str, val) catch return .runtime_error;
                 },
+                .op_get_property, .op_get_property_wide => {
+                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_get_property_wide);
+                    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", exec_chunk.constants.items[name_idx].asObj()))).chars;
+
+                    const ic = self.readInlineCache(exec_chunk, frame);
+                    const receiver = self.stack[self.stack_top - 1];
+
+                    if (receiver.isInstance()) {
+                        self.stack_top -= 1; // Pop receiver
+                        if (self.getPropertyCached(receiver.asInstance(), name_str, ic)) |val| {
+                            self.push(val);
+                        } else {
+                            if (self.throwDynamicError("Runtime Error: Undefined property '{s}'.", .{name_str}) != .ok) return .runtime_error;
+                            continue;
+                        }
+                    } else if (receiver.isModule()) {
+                        self.stack_top -= 1; // Pop receiver
+                        const mod = receiver.asModule();
+                        if (mod.methods.get(name_str)) |val| {
+                            self.push(val);
+                        } else {
+                            if (self.throwDynamicError("Runtime Error: Undefined module member '{s}'.", .{name_str}) != .ok) return .runtime_error;
+                            continue;
+                        }
+                    } else if (receiver.isClass()) {
+                        self.stack_top -= 1; // Pop receiver
+                        const cls = receiver.asClass();
+                        const clean_name = if (name_str.len > 0 and name_str[0] == '@' and (name_str.len == 1 or name_str[1] != '@'))
+                            name_str[1..]
+                        else
+                            name_str;
+
+                        // Check class_fields first to prioritize stored values over accessor methods
+                        if (cls.class_fields.get(clean_name)) |val| {
+                            self.push(val);
+                        } else if (cls.class_fields.get(name_str)) |val| {
+                            self.push(val);
+                        } else if (self.findClassMethod(cls, name_str)) |val| {
+                            self.push(val);
+                        } else {
+                            if (self.throwDynamicError("Runtime Error: Undefined class member '{s}'.", .{name_str}) != .ok) return .runtime_error;
+                            continue;
+                        }
+                    } else {
+                        if (self.throwDynamicError("Runtime Error: Only instances, modules, and classes have properties.\n", .{}) != .ok) return .runtime_error;
+                        continue;
+                    }
+                },
                 .op_set_property, .op_set_property_wide => {
                     const val = self.pop();
                     const name_idx = self.readOperand(exec_chunk, frame, op == .op_set_property_wide);
@@ -877,8 +886,17 @@ pub const VM = struct {
                     if (receiver.isInstance()) {
                         self.setInstanceField(receiver.asInstance(), name_str, val, ic) catch return .runtime_error;
                         self.push(val);
+                    } else if (receiver.isClass()) {
+                        const cls = receiver.asClass();
+                        const clean_name = if (name_str.len > 0 and name_str[0] == '@' and (name_str.len == 1 or name_str[1] != '@'))
+                            name_str[1..]
+                        else
+                            name_str;
+
+                        cls.class_fields.put(self.allocator, clean_name, val) catch return .runtime_error;
+                        self.push(val);
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Only instances have properties.", .{}) != .ok) return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Only instances and classes have properties.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
