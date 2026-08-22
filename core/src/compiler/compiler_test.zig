@@ -1012,3 +1012,47 @@ test "Compiler: compiles export statement natively yielding nil" {
 
     try testing.expectEqual(chunk.OpCode.op_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
 }
+
+test "Compiler: Local variable names are exported to chunk metadata for REPL introspection" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\def test_func(width, height)
+        \\  area = width * height
+        \\end
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    // Scan constants to find the compiled `test_func` closure chunk
+    var child_chunk: ?*chunk.Chunk = null;
+    for (out_chunk.constants.items) |c_val| {
+        if (c_val.isObject() and c_val.asObj().obj_type == .function) {
+            const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", c_val.asObj())));
+            if (func.name != null and std.mem.eql(u8, func.name.?.chars, "test_func")) {
+                child_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(func.chunk.?)));
+                break;
+            }
+        }
+    }
+
+    try testing.expect(child_chunk != null);
+    const locals = child_chunk.?.local_names.items;
+
+    // Verify exactly how the compiler maps parameters and locals to stack memory slots
+    try testing.expect(locals.len >= 5);
+    try testing.expectEqualStrings("<anonymous>", locals[0]); // Slot 0: The closure itself
+    try testing.expectEqualStrings("width", locals[1]); // Slot 1: Positional Param 1
+    try testing.expectEqualStrings("height", locals[2]); // Slot 2: Positional Param 2
+    try testing.expectEqualStrings("<anonymous>", locals[3]); // Slot 3: Implicit Block `&b`
+    try testing.expectEqualStrings("area", locals[4]); // Slot 4: Inner Local Variable
+}

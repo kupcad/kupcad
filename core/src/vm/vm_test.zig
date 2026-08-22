@@ -5080,3 +5080,223 @@ test "VM: Exception objects capture first-class error backtraces" {
     try testing.expect(std.mem.startsWith(u8, frame3, "    from script:"));
     try testing.expect(std.mem.indexOf(u8, frame3, "in 'script'") != null);
 }
+
+test "VM: step_mode safely pauses execution across line boundaries" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\x = 10
+        \\y = 20
+        \\x + y
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    // Line index is required for step boundaries
+    vm.line_index = &doc.line_index;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Manual execution setup (bypassing vm.interpret to control stepping)
+    vm.frames.ensureTotalCapacity(vm.allocator, 64) catch unreachable;
+
+    const func = vm.gc.allocateFunction(&vm) catch unreachable;
+    func.chunk = &out_chunk;
+    func.owns_chunk = false;
+    func.local_count = out_chunk.local_count;
+
+    const closure = vm.gc.allocateClosure(&vm, func) catch unreachable;
+    vm.push(value.Value.initObj(&closure.obj));
+
+    if (func.local_count > 1) {
+        for (0..func.local_count - 1) |_| vm.push(value.Value.initNil());
+    }
+
+    vm.frames.appendAssumeCapacity(.{ .closure = closure, .ip = 0, .base_slot = 0 });
+
+    // --- ENABLE DEBUGGER ---
+    vm.step_mode = true;
+
+    // Run Line 1: `x = 10`
+    var res = vm.run();
+    try testing.expectEqual(.paused, res);
+
+    // Run Line 2: `y = 20`
+    res = vm.run();
+    try testing.expectEqual(.paused, res);
+
+    // Run Line 3: `x + y` and exit
+    vm.step_mode = false; // Disable to let it finish
+    res = vm.run();
+    try testing.expectEqual(.ok, res);
+
+    // Verify the math resolved perfectly after resuming
+    try testing.expectEqual(@as(f64, 30.0), vm.stack[vm.stack_top - 1].asNumber());
+}
+
+test "VM/Compiler: Resolves pre-existing VM globals as variables, preventing false op_call(0)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: x * 5
+    const x_id = try b.intern("x");
+    const x_node = try b.createNode(.identifier, 0, @intFromEnum(x_id));
+    const five = try b.number("5", 0);
+    const mul_node = try b.binary(.multiply, x_node, five, 0);
+
+    // --- NEW: Provide a mock symbols array ---
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(mul_node) + 1);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // 1. INJECT global 'x' into the live VM memory
+    try vm.globals.put(testing.allocator, "x", value.Value.initNumber(100.0));
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(mul_node);
+
+    // 2. Verify Bytecode: It should NOT emit op_call(0).
+    // It should securely fetch 'x' via op_get_global.
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_multiply, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+
+    // 3. Verify Execution: 100 * 5 = 500
+    const res = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 500.0), res.asNumber());
+}
+
+test "VM/Compiler: Seeded REPL locals correctly resolve to offset stack slots" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: y + 5
+    const y_id = try b.intern("y");
+    const y_node = try b.createNode(.identifier, 0, @intFromEnum(y_id));
+    const five = try b.number("5", 0);
+    const add_node = try b.binary(.add, y_node, five, 0);
+
+    // --- NEW: Provide a mock symbols array ---
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(add_node) + 1);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // 1. SEED 'y' at offset 1 (simulating slot 1 in the paused caller frame)
+    const seeded = [_][]const u8{"y"};
+    comp.seedLocals(&seeded, 1);
+
+    try comp.compile(add_node);
+
+    // 2. Verify it securely targeted the caller's stack slot without using globals
+    try testing.expectEqual(chunk.OpCode.op_get_local, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(@as(u8, 1), out_chunk.code.items[1]); // Successfully pointed to Slot 1
+}
+
+test "VM/Compiler: Assignments in a seeded context dynamically allocate new slots via getNextLocalSlot" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: z = 42
+    const z_id = try b.intern("z");
+    const val = try b.number("42", 0);
+    const assign_node = try b.assignment(z_id, null, val, 0);
+
+    // Trick the compiler into treating `z` as a local, as if we were inside a block scope.
+    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    defer symbols.deinit(testing.allocator);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(assign_node) + 1);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // --- Create a real, distinct parent compiler to prevent circular recursion! ---
+    var parent_chunk = chunk.Chunk.init();
+    defer parent_chunk.free(testing.allocator);
+    var parent_comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &parent_chunk, &vm);
+    defer parent_comp.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // Link safely
+    comp.enclosing = &parent_comp;
+
+    // 1. Seed 2 variables at offset 1 -> meaning slots 1 and 2 are occupied.
+    const seeded = [_][]const u8{ "a", "b" };
+    comp.seedLocals(&seeded, 1);
+
+    try comp.compile(assign_node);
+
+    // 2. Verify it emitted op_set_local starting at slot 3!
+    try testing.expectEqual(chunk.OpCode.op_set_local, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(@as(u8, 3), out_chunk.code.items[3]); // Safely bypassed slots 1 and 2
+}
+
+test "VM/Compiler: Deeply nested closures correctly resolve and capture upvalues without recursion limits" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // 3 levels of nested scopes!
+    // level3 needs to capture 'b' from level2 (1 step up)
+    // AND capture 'a' from level1 (2 steps up, requiring recursive upvalue chaining).
+    const source =
+        \\def level1(a)
+        \\  def level2(b)
+        \\    def level3(c)
+        \\      a + b + c
+        \\    end
+        \\    level3(30)
+        \\  end
+        \\  level2(20)
+        \\end
+        \\level1(10)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // If there was an infinite loop vulnerability in resolveUpvalue, it would hang right here.
+    try comp.compile(doc.tree.root);
+
+    // Run the compiled script. 10 + 20 + 30 = 60.
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expectEqual(@as(f64, 60.0), result.asNumber());
+}

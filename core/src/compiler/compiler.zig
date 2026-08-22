@@ -104,6 +104,9 @@ pub const Compiler = struct {
     max_stack_depth: usize = 0,
     max_local_slot: usize = 0,
 
+    seeded_locals: []const []const u8 = &.{},
+    seeded_slot_offset: u16 = 0,
+
     pub fn init(
         allocator: std.mem.Allocator,
         tree: *const ast.Tree,
@@ -155,14 +158,32 @@ pub const Compiler = struct {
         if (self.locals.items.len >= limits.MAX_LOCALS) return error.TooManyLocals;
         try self.locals.append(self.allocator, .{ .name_id = name_id, .slot = slot });
         if (slot > self.max_local_slot) self.max_local_slot = slot;
+
+        // --- DEBUGGER METADATA: Track local names ---
+        const name_str = if (name_id != .none) self.tree.getString(name_id) else "<anonymous>";
+
+        // Pad the array dynamically since block parameters can be registered out-of-order
+        while (self.current_chunk.local_names.items.len <= slot) {
+            try self.current_chunk.local_names.append(self.allocator, "<anonymous>");
+        }
+        self.current_chunk.local_names.items[slot] = name_str;
     }
 
     fn resolveLocal(self: *Compiler, name_id: ast.StringId) ?u16 {
+        const target_str = self.tree.getString(name_id);
         var i: usize = self.locals.items.len;
         while (i > 0) {
             i -= 1;
-            if (self.locals.items[i].name_id == name_id) return self.locals.items[i].slot;
+            const loc = self.locals.items[i];
+            if (loc.name_id != .none) {
+                if (std.mem.eql(u8, self.tree.getString(loc.name_id), target_str)) return loc.slot;
+            }
         }
+
+        for (self.seeded_locals, 0..) |seeded_name, idx| {
+            if (std.mem.eql(u8, seeded_name, target_str)) return @intCast(idx + self.seeded_slot_offset);
+        }
+
         return null;
     }
 
@@ -277,12 +298,16 @@ pub const Compiler = struct {
                 const is_upvalue = (try self.resolveUpvalue(name_id)) != null;
                 const is_script_global = self.isScriptGlobal(name_id);
 
+                // --- REPL FIX: Check the VM's active runtime memory! ---
+                const is_vm_global = self.vm.globals.contains(name_str);
+
                 const is_special_or_const = name_str.len == 0 or
                     std.mem.startsWith(u8, name_str, "@") or
                     std.mem.startsWith(u8, name_str, "$") or
                     std.ascii.isUpper(name_str[0]);
 
-                const is_variable = is_local or is_upvalue or is_script_global or is_special_or_const;
+                // If it exists in the VM already, treat it as a variable, not a function call
+                const is_variable = is_local or is_upvalue or is_script_global or is_special_or_const or is_vm_global;
 
                 if (!is_variable) {
                     // Bare identifier that is not a known variable or constant:
@@ -393,7 +418,7 @@ pub const Compiler = struct {
                     !self.isScriptGlobal(name_id);
 
                 if (is_new_local) {
-                    const slot = @as(u16, @intCast(self.locals.items.len));
+                    const slot = self.getNextLocalSlot();
                     try self.addLocal(name_id, slot);
                 }
 
@@ -502,7 +527,7 @@ pub const Compiler = struct {
                         try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
                         try self.emitOp(.op_nil);
                     } else {
-                        const slot = @as(u16, @intCast(self.locals.items.len));
+                        const slot = self.getNextLocalSlot();
                         try self.addLocal(def_name_id, slot);
                         try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
                     }
@@ -1112,7 +1137,7 @@ pub const Compiler = struct {
                 const name_idx = try self.makeStringConstant(name_str);
                 try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
             } else {
-                const slot = @as(u16, @intCast(self.locals.items.len));
+                const slot = self.getNextLocalSlot();
                 try self.addLocal(name_id, slot);
                 try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, self.locals.items.len - 1);
                 try self.emitOp(.op_pop);
@@ -1755,7 +1780,7 @@ pub const Compiler = struct {
             try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
             try self.emitOp(.op_nil);
         } else {
-            const slot = @as(u16, @intCast(self.locals.items.len));
+            const slot = self.getNextLocalSlot();
             try self.addLocal(name_id, slot);
             try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
         }
@@ -1774,7 +1799,7 @@ pub const Compiler = struct {
                     self.resolveLocal(name_id) == null and
                     (try self.resolveUpvalue(name_id)) == null)
                 {
-                    const slot = @as(u16, @intCast(self.locals.items.len));
+                    const slot = self.getNextLocalSlot();
                     try self.addLocal(name_id, slot);
                 }
             }
@@ -1870,7 +1895,7 @@ pub const Compiler = struct {
 
         const sym = self.symbols[@intFromEnum(node_idx)];
         if (sym.kind == .local and self.enclosing != null) {
-            const slot = @as(u16, @intCast(self.locals.items.len));
+            const slot = self.getNextLocalSlot();
             try self.addLocal(name_id, slot);
             try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
         } else {
@@ -2078,5 +2103,17 @@ pub const Compiler = struct {
 
             else => 0, // Fallback for unsupported ops
         };
+    }
+
+    pub fn seedLocals(self: *Compiler, names: []const []const u8, offset: u16) void {
+        self.seeded_locals = names;
+        self.seeded_slot_offset = offset;
+        if (names.len > 0) {
+            self.max_local_slot = @intCast(names.len + offset - 1);
+        }
+    }
+
+    pub fn getNextLocalSlot(self: *Compiler) u16 {
+        return @as(u16, @intCast(self.locals.items.len + self.seeded_locals.len + self.seeded_slot_offset));
     }
 };

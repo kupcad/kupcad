@@ -20,6 +20,7 @@ pub const InterpretResult = enum {
     compile_error,
     runtime_error,
     execution_limit_exceeded,
+    paused,
 };
 
 pub const CallFrame = struct {
@@ -58,6 +59,7 @@ pub const VM = struct {
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
     mute_errors: bool = false,
+    step_mode: bool = false,
 
     // std classes
     string_class: ?*value.ObjClass = null,
@@ -220,11 +222,13 @@ pub const VM = struct {
         return self.run();
     }
 
-    fn run(self: *VM) InterpretResult {
+    pub fn run(self: *VM) InterpretResult {
         return self.runUntil(0);
     }
 
-    fn runUntil(self: *VM, target_depth: usize) InterpretResult {
+    pub fn runUntil(self: *VM, target_depth: usize) InterpretResult {
+        var previous_line: ?u32 = null; // Track line boundary
+
         while (self.frames.items.len > target_depth) {
 
             // Gas Check
@@ -245,6 +249,25 @@ pub const VM = struct {
 
             var frame = &self.frames.items[self.frames.items.len - 1];
             const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
+
+            // --- DEBUGGER: Step Mechanics ---
+            if (self.step_mode) {
+                if (self.line_index) |li| {
+                    const current_offset = exec_chunk.getOffset(frame.ip);
+                    const current_line = li.getLine(current_offset);
+
+                    if (previous_line) |prev| {
+                        if (current_line != prev) {
+                            // We crossed a line boundary! Yield to the REPL.
+                            return .paused;
+                        }
+                    } else {
+                        // Initialize tracking on the first instruction of this step
+                        previous_line = current_line;
+                    }
+                }
+            }
+
             // Prevent runaway instruction pointer
             std.debug.assert(frame.ip < exec_chunk.code.items.len);
 

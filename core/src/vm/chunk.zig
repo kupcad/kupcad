@@ -138,6 +138,7 @@ pub const Chunk = struct {
     constants: value.ValueArray,
     max_stack_slots: usize,
     local_count: usize,
+    local_names: std.ArrayListUnmanaged([]const u8), // For REPL introspection
 
     pub fn init() Chunk {
         return .{
@@ -147,6 +148,7 @@ pub const Chunk = struct {
             .constants = .empty,
             .max_stack_slots = 0,
             .local_count = 0,
+            .local_names = .empty,
         };
     }
 
@@ -200,6 +202,7 @@ pub const Chunk = struct {
     pub fn addInlineCache(self: *Chunk, allocator: std.mem.Allocator) !u16 {
         const idx = self.inline_caches.items.len;
         if (idx > std.math.maxInt(u16)) return error.OutOfMemory;
+        
         try self.inline_caches.append(allocator, .{});
         return @intCast(idx);
     }
@@ -209,6 +212,7 @@ pub const Chunk = struct {
         self.inline_caches.deinit(allocator);
         self.debug_spans.deinit(allocator);
         self.constants.deinit(allocator);
+        self.local_names.deinit(allocator);
         self.* = init();
     }
 };
