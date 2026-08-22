@@ -6178,13 +6178,13 @@ test "VM: Modules accurately namespace nested classes and prevent global leaks" 
     const source =
         \\module Factory
         \\  class Gear
-        \\    def self.size()
+        \\    def self.size
         \\      42
         \\    end
         \\  end
         \\end
         \\
-        \\res1 = Factory::Gear.size()
+        \\res1 = Factory::Gear.size
         \\res2 = defined?(Gear) # Should be nil because Gear didn't leak globally!
         \\[res1, res2.nil?]
     ;
