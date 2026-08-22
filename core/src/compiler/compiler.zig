@@ -156,14 +156,16 @@ pub const Compiler = struct {
 
     fn buildFullyQualifiedPath(self: *Compiler, target: []const u8, depth: usize) CompileError![]const u8 {
         var buf = std.ArrayListUnmanaged(u8).empty;
-        defer buf.deinit(self.allocator);
+        errdefer buf.deinit(self.allocator);
 
         for (self.namespace_stack.items[0..depth]) |ns_id| {
             try buf.appendSlice(self.allocator, self.tree.getString(ns_id));
             try buf.appendSlice(self.allocator, "::");
         }
         try buf.appendSlice(self.allocator, target);
-        return try self.allocator.dupe(u8, buf.items);
+
+        // Return the owned slice directly to prevent duping leaks
+        return try buf.toOwnedSlice(self.allocator);
     }
 
     pub fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u16) CompileError!void {
@@ -1766,7 +1768,7 @@ pub const Compiler = struct {
         _ = sym;
         const name_str = self.tree.getString(name_id);
 
-        // Lexical Constant Resolution
+        // --- Lexical Constant Resolution ---
         if (std.ascii.isUpper(name_str[0])) {
             if (self.namespace_stack.items.len > 0) {
                 var end_jumps = std.ArrayListUnmanaged(usize).empty;
@@ -1776,6 +1778,7 @@ pub const Compiler = struct {
                 while (i > 0) {
                     const fq_name = try self.buildFullyQualifiedPath(name_str, i);
                     defer self.allocator.free(fq_name); // Free memory once chunk consumes it
+
                     const fq_idx = try self.makeStringConstant(fq_name);
 
                     try self.emitOpWithOperand(.op_defined, .op_defined_wide, fq_idx);
@@ -1828,7 +1831,7 @@ pub const Compiler = struct {
     fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ResolvedSymbol) CompileError!void {
         const name_str = self.tree.getString(name_id);
 
-        // Constant Flattening
+        // --- Constant Flattening ---
         if (std.ascii.isUpper(name_str[0])) {
             const fq_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len);
             defer self.allocator.free(fq_name); // Free memory once chunk consumes it

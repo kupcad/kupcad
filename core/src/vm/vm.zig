@@ -1140,13 +1140,26 @@ pub const VM = struct {
 
     // --- Allocators ---
     pub fn allocateString(self: *VM, chars: []const u8) !value.Value {
-        const str_obj = try self.gc.allocateString(self, chars);
-        return value.Value.initObj(&str_obj.obj);
+        if (self.strings.get(chars)) |existing| {
+            return value.Value.initObj(&existing.obj);
+        }
+
+        // We must duplicate because the passed slice is likely a temporary stack buffer or constant
+        const heap_chars = try self.allocator.dupe(u8, chars);
+        return try self.allocateStringTakeOwnership(heap_chars);
     }
 
     pub fn allocateStringTakeOwnership(self: *VM, chars: []u8) !value.Value {
+        // Use gc.takeString so the exact slice is adopted and not duped again!
+        // This stops the memory leak immediately.
         const str_obj = try self.gc.takeString(self, chars);
-        return value.Value.initObj(&str_obj.obj);
+
+        // Ensure it is protected from immediate GC
+        const str_val = value.Value.initObj(&str_obj.obj);
+        self.push(str_val);
+        // (gc.takeString safely handles map insertion)
+        _ = self.pop();
+        return str_val;
     }
 
     pub fn allocateSymbol(self: *VM, chars: []const u8) !value.Value {
