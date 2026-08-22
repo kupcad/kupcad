@@ -1015,20 +1015,24 @@ pub const Parser = struct {
                 left = try self.b.number(self.tokens.lexeme(self.source, start_tok), start_tok);
             },
             .string => {
+                const str_tok = self.tok_idx;
                 self.advance();
-                self.skipIgnored();
+
+                // Only skip comments on the same line to avoid swallowing newlines after string literals!
+                self.skipComments();
+
                 if (self.tag(0) == .string) {
                     var buf: std.ArrayListUnmanaged(u8) = .empty;
                     defer buf.deinit(self.allocator);
-                    try buf.appendSlice(self.allocator, self.tokens.lexeme(self.source, start_tok));
+                    try buf.appendSlice(self.allocator, self.tokens.lexeme(self.source, str_tok));
                     while (self.tag(0) == .string) {
                         try buf.appendSlice(self.allocator, self.lexeme(0));
                         self.advance();
-                        self.skipIgnored();
+                        self.skipComments();
                     }
-                    left = try self.b.stringNode(buf.items, start_tok);
+                    left = try self.b.stringNode(buf.items, str_tok);
                 } else {
-                    left = try self.b.stringNode(self.tokens.lexeme(self.source, start_tok), start_tok);
+                    left = try self.b.stringNode(self.tokens.lexeme(self.source, str_tok), str_tok);
                 }
             },
             .symbol => {

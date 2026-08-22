@@ -6308,3 +6308,48 @@ test "VM: Direct external access to private methods throws runtime error" {
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.runtime_error, result);
 }
+
+test "VM Syntax: Phase 3 - attr_accessor, attr_reader, attr_writer macro expansion" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class Person
+        \\  attr_accessor :name
+        \\  attr_reader :age
+        \\  attr_writer :secret
+        \\
+        \\  def initialize(name, age)
+        \\    @name = name
+        \\    @age = age
+        \\  end
+        \\
+        \\  def update_secret(s)
+        \\    self.secret = s # Hits the attr_writer seamlessly
+        \\    @secret
+        \\  end
+        \\end
+        \\
+        \\p = Person.new("Leo", 30)
+        \\p.name = "Leon"
+        \\[p.name, p.age, p.update_secret("shh")]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqualStrings("Leon", @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[0].asObj()))).chars);
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqualStrings("shh", @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()))).chars);
+}

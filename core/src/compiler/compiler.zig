@@ -1,4 +1,5 @@
 const std = @import("std");
+const macros = @import("macros.zig");
 const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
@@ -149,7 +150,7 @@ pub const Compiler = struct {
 
     // --- Lexical Scope Resolvers ---
 
-    fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u16) CompileError!void {
+    pub fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u16) CompileError!void {
         // Allow anonymous padding slots (.none) to bypass deduplication ---
         if (name_id != .none) {
             for (self.locals.items) |loc| {
@@ -377,6 +378,8 @@ pub const Compiler = struct {
 
                         // Attach the method to the target currently sitting on the stack
                         try self.emitOpWithOperand(.op_class_method, .op_class_method_wide, m_name_idx);
+                    } else if (try self.handleMacroMethod(stmt_node, true)) { // Pass true for Singleton
+                        // Macro (like attr_accessor or include) was handled successfully
                     } else {
                         // Standard top-level statements inside the block
                         try self.compileNode(stmt_idx);
@@ -916,7 +919,7 @@ pub const Compiler = struct {
         self.current_stack_depth -= count;
     }
 
-    fn emitInlineCacheIndex(self: *Compiler) CompileError!void {
+    pub fn emitInlineCacheIndex(self: *Compiler) CompileError!void {
         const ic_idx = self.current_chunk.addInlineCache(self.allocator) catch return error.OutOfMemory;
         try self.emitByte(@intCast((ic_idx >> 8) & 0xff));
         try self.emitByte(@intCast(ic_idx & 0xff));
@@ -926,7 +929,7 @@ pub const Compiler = struct {
         self.current_chunk.write(self.allocator, byte, self.current_source_offset) catch return error.OutOfMemory;
     }
 
-    fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
+    pub fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
         try self.emitByte(@intFromEnum(op));
 
         // Automatically apply static stack effects
@@ -939,7 +942,7 @@ pub const Compiler = struct {
         }
     }
 
-    fn makeConstant(self: *Compiler, val: value.Value) CompileError!usize {
+    pub fn makeConstant(self: *Compiler, val: value.Value) CompileError!usize {
         // Linear scan over constants to reuse existing matching values
         for (self.current_chunk.constants.items, 0..) |existing, i| {
             if (self.vm.valuesEqual(existing, val)) return i;
@@ -981,7 +984,7 @@ pub const Compiler = struct {
         try self.emitByte(@intCast(jump & 0xff));
     }
 
-    fn makeStringConstant(self: *Compiler, text: []const u8) CompileError!usize {
+    pub fn makeStringConstant(self: *Compiler, text: []const u8) CompileError!usize {
         const str_val = try self.vm.allocateString(text);
         self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
         self.vm.push(str_val);
@@ -999,7 +1002,7 @@ pub const Compiler = struct {
         return idx;
     }
 
-    fn emitOpWithOperand(self: *Compiler, short_op: chunk.OpCode, wide_op: chunk.OpCode, operand: usize) CompileError!void {
+    pub fn emitOpWithOperand(self: *Compiler, short_op: chunk.OpCode, wide_op: chunk.OpCode, operand: usize) CompileError!void {
         if (short_op == .op_get_local or short_op == .op_set_local) {
             if (operand > self.max_local_slot) self.max_local_slot = operand;
         }
@@ -1927,6 +1930,39 @@ pub const Compiler = struct {
         try self.emitOp(.op_nil);
     }
 
+    fn handleMacroMethod(self: *Compiler, stmt_node: *const ast.Node, is_singleton: bool) CompileError!bool {
+        if (stmt_node.tag != .method_call) return false;
+        const mc = self.tree.methodCall(stmt_node);
+        const func_name = self.tree.getString(mc.method_name);
+
+        if (std.mem.eql(u8, func_name, "include") and mc.receiver == .none) {
+            const args = self.tree.getNamedArgs(mc.args);
+            if (args.len == 1) {
+                try self.compileNode(args[0].value);
+                try self.emitOp(.op_mixin);
+                return true;
+            }
+        } else if ((std.mem.eql(u8, func_name, "attr_accessor") or std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_writer")) and mc.receiver == .none) {
+            const args = self.tree.getNamedArgs(mc.args);
+            for (args) |arg| {
+                const arg_node = self.tree.getNode(arg.value).?;
+                if (arg_node.tag == .symbol or arg_node.tag == .string) {
+                    const name_str = self.tree.getString(@as(ast.StringId, @enumFromInt(arg_node.data)));
+                    if (std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_accessor")) {
+                        try macros.emitAttrReader(self, name_str, is_singleton);
+                    }
+                    if (std.mem.eql(u8, func_name, "attr_writer") or std.mem.eql(u8, func_name, "attr_accessor")) {
+                        try macros.emitAttrWriter(self, name_str, is_singleton);
+                    }
+                } else {
+                    return error.UnknownNode;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
     fn compileClassStmt(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
         self.active_namespaces += 1;
         defer self.active_namespaces -= 1;
@@ -1977,17 +2013,8 @@ pub const Compiler = struct {
 
                 try self.compileClosureBlock(params, ds.body, final_name, true);
                 try self.emitOpWithOperand(if (is_class_method) .op_class_method else .op_method, if (is_class_method) .op_class_method_wide else .op_method_wide, m_name_idx);
-            } else if (stmt_node.tag == .method_call) {
-                const mc = self.tree.methodCall(stmt_node);
-                const func_name = self.tree.getString(mc.method_name);
-                if (std.mem.eql(u8, func_name, "include") and mc.receiver == .none) {
-                    const args = self.tree.getNamedArgs(mc.args);
-                    if (args.len == 1) {
-                        try self.compileNode(args[0].value);
-                        try self.emitOp(.op_mixin);
-                        continue;
-                    }
-                }
+            } else if (try self.handleMacroMethod(stmt_node, false)) {
+                // Macro (like attr_accessor or include) was handled successfully
             } else {
                 try self.compileNode(stmt_idx);
                 try self.emitOp(.op_pop);
@@ -2039,6 +2066,8 @@ pub const Compiler = struct {
 
                 try self.compileClosureBlock(params, ds.body, method_name, true);
                 try self.emitOpWithOperand(.op_method, .op_method_wide, final_name_idx);
+            } else if (try self.handleMacroMethod(stmt_node, false)) {
+                // Macro (like attr_accessor or include) was handled successfully
             } else {
                 try self.compileNode(stmt_idx);
                 try self.emitOp(.op_pop);

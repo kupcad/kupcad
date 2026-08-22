@@ -88,7 +88,11 @@ pub fn nativeRespondsTo(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
 
     // Check if the query refers to an instance variable auto-getter (if implemented later)
     if (!match and receiver.isInstance()) {
-        if (receiver.asInstance().class.instance_layout.contains(query_name)) match = true;
+        const clean_name = if (query_name.len > 0 and query_name[0] == '@' and (query_name.len == 1 or query_name[1] != '@'))
+            query_name[1..]
+        else
+            query_name;
+        if (receiver.asInstance().class.instance_layout.contains(clean_name)) match = true;
     }
 
     return value.Value.initBool(match);

@@ -923,7 +923,8 @@ pub const Builder = struct {
     }
 
     pub fn symbolNode(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
-        const str_id = try self.intern(lexeme_str);
+        const clean_str = if (lexeme_str.len > 0 and lexeme_str[0] == ':') lexeme_str[1..] else lexeme_str;
+        const str_id = try self.intern(clean_str);
         return self.createNode(.symbol, main_token, @intFromEnum(str_id));
     }
 

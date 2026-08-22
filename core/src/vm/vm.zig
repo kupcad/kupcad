@@ -1126,10 +1126,11 @@ pub const VM = struct {
                             }
                         }
                     } else if (std.mem.startsWith(u8, name_str, "@")) {
-                        // Instance Variable Check: Grab `self` and check the layout map
+                        // Instance Variable Check: Strip `@` and check layout map
                         const self_val = self.getLocal(frame, 0);
                         if (self_val.isInstance()) {
-                            is_def = self_val.asInstance().class.instance_layout.contains(name_str);
+                            const clean_name = name_str[1..];
+                            is_def = self_val.asInstance().class.instance_layout.contains(clean_name);
                         }
                     } else {
                         // Global / Native Check
@@ -1628,40 +1629,7 @@ pub const VM = struct {
             class_obj = self.boolean_class;
         }
 
-        // Handle Property Access (Instances only)
-        if (receiver.isInstance() and arg_count == 0) {
-            const instance = receiver.asInstance();
-
-            // --- FAST PATH ---
-            if (ic.class == instance.class and ic.cached_value.isNil()) {
-                self.popAndRelease(1); // Pop receiver
-                if (ic.offset < instance.fields.items.len) {
-                    self.push(instance.fields.items[ic.offset]);
-                } else {
-                    self.push(value.Value.initNil());
-                }
-                return .ok;
-            }
-
-            // --- SLOW PATH ---
-            if (instance.class.instance_layout.get(method_name_str)) |idx| {
-                // Populate the cache!
-                ic.class = instance.class;
-                ic.offset = idx;
-                ic.cached_value = value.Value.initNil(); // Mark as a property cache, not a method cache
-
-                self.popAndRelease(1); // Pop receiver
-                if (idx < instance.fields.items.len) {
-                    self.push(instance.fields.items[idx]);
-                } else {
-                    self.push(value.Value.initNil());
-                }
-                return .ok;
-            }
-        }
-
-        // Method Lookup
-        // Method Lookup
+        // --- 1. METHOD LOOKUP (Takes precedence over raw property fields) ---
         var method_val: ?value.Value = null;
         var is_private_call = false;
 
@@ -1679,11 +1647,9 @@ pub const VM = struct {
                         return .ok;
                     } else if (init_method.isNative()) {
                         const native_obj = init_method.asNative();
-                        // We just use the `args_ptr` that is already defined at the top of executeInvoke
                         _ = native_obj.function(self, arg_count, args_ptr) catch {
                             return self.throwDynamicError("Runtime Error: Native Constructor Error", .{});
                         };
-                        // Pop the arguments, leaving the newly initialized instance safely at base_slot
                         self.popAndRelease(arg_count);
                         return .ok;
                     }
@@ -1720,7 +1686,6 @@ pub const VM = struct {
         }
 
         // --- ENFORCE VISIBILITY ---
-        // If the method resolved to a mangled private method, the receiver MUST be the current `self`
         if (is_private_call) {
             const current_self = self.stack[frame.base_slot];
             if (!self.valuesEqual(receiver, current_self)) {
@@ -1738,7 +1703,25 @@ pub const VM = struct {
             }
         }
 
-        // FALLBACK: NATIVE C++ KERNEL METHODS (Geometry)
+        // --- 2. PROPERTY FALLBACK (Instances only when no method matches) ---
+        if (receiver.isInstance() and arg_count == 0) {
+            const instance = receiver.asInstance();
+
+            if (instance.class.instance_layout.get(method_name_str)) |idx| {
+                ic.class = instance.class;
+                ic.offset = idx;
+
+                self.popAndRelease(1); // Pop receiver
+                if (idx < instance.fields.items.len) {
+                    self.push(instance.fields.items[idx]);
+                } else {
+                    self.push(value.Value.initNil());
+                }
+                return .ok;
+            }
+        }
+
+        // --- 3. FALLBACK: NATIVE C++ KERNEL METHODS (Geometry) ---
         if (self.host.invoke_handler) |handler| {
             const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch {
                 return self.throwDynamicError("Runtime Error: CAD Kernel / Method Error", .{});
@@ -2121,7 +2104,41 @@ pub const VM = struct {
         return self.valuesEqual(case_val, test_val);
     }
 
-    pub fn setInstanceField(self: *VM, instance: *value.ObjInstance, name: []const u8, val: value.Value, ic: ?*chunk.InlineCache) !void {
+    inline fn getPropertyCached(self: *VM, instance: *value.ObjInstance, raw_name_str: []const u8, ic: *chunk.InlineCache) ?value.Value {
+        _ = self;
+        const name_str = if (raw_name_str.len > 0 and raw_name_str[0] == '@' and (raw_name_str.len == 1 or raw_name_str[1] != '@'))
+            raw_name_str[1..]
+        else
+            raw_name_str;
+
+        var offset: usize = 0;
+
+        // Fast Path (O(1) Array Read)
+        if (ic.class == instance.class) {
+            offset = ic.offset;
+        }
+        // Slow Path (Hash Map Lookup)
+        else if (instance.class.instance_layout.get(name_str)) |idx| {
+            ic.class = instance.class;
+            ic.offset = idx;
+            offset = idx;
+        } else {
+            return null; // Undefined property
+        }
+
+        if (offset < instance.fields.items.len) {
+            return instance.fields.items[offset];
+        } else {
+            return value.Value.initNil();
+        }
+    }
+
+    pub fn setInstanceField(self: *VM, instance: *value.ObjInstance, raw_name: []const u8, val: value.Value, ic: ?*chunk.InlineCache) !void {
+        const name = if (raw_name.len > 0 and raw_name[0] == '@' and (raw_name.len == 1 or raw_name[1] != '@'))
+            raw_name[1..]
+        else
+            raw_name;
+
         var idx: usize = 0;
 
         // Fast Path
@@ -2310,30 +2327,6 @@ pub const VM = struct {
         frame.ip += 2;
         const ic_idx = (ic_high << 8) | ic_low;
         return &exec_chunk.inline_caches.items[ic_idx];
-    }
-
-    inline fn getPropertyCached(self: *VM, instance: *value.ObjInstance, name_str: []const u8, ic: *chunk.InlineCache) ?value.Value {
-        _ = self;
-        var offset: usize = 0;
-
-        // Fast Path (O(1) Array Read)
-        if (ic.class == instance.class) {
-            offset = ic.offset;
-        }
-        // Slow Path (Hash Map Lookup)
-        else if (instance.class.instance_layout.get(name_str)) |idx| {
-            ic.class = instance.class;
-            ic.offset = idx;
-            offset = idx;
-        } else {
-            return null; // Undefined property
-        }
-
-        if (offset < instance.fields.items.len) {
-            return instance.fields.items[offset];
-        } else {
-            return value.Value.initNil();
-        }
     }
 
     inline fn findMethodCached(self: *VM, class: *value.ObjClass, name: []const u8, ic: *chunk.InlineCache) ?value.Value {
