@@ -343,22 +343,6 @@ pub const Compiler = struct {
                 try self.emitOp(.op_return);
                 self.simulatePush(1); // Equilibrium for dead code
             },
-            .break_stmt => {
-                const break_idx = self.tree.nodeIndex(node);
-                if (break_idx != .none) {
-                    try self.compileNode(break_idx);
-                } else {
-                    try self.emitOp(.op_nil);
-                }
-                if (self.loops.items.len == 0) return error.UnknownNode;
-                const cur_loop = &self.loops.items[self.loops.items.len - 1];
-
-                // Add + 1 to account for the break payload on the stack
-                if (self.current_stack_depth > cur_loop.depth + 1) return error.UnsupportedScope;
-
-                const jump = try self.emitJump(.op_jump);
-                try cur_loop.exit_jumps.append(self.allocator, jump);
-            },
             .next_stmt => {
                 const next_idx = self.tree.nodeIndex(node);
                 if (next_idx != .none) {
@@ -366,15 +350,41 @@ pub const Compiler = struct {
                 } else {
                     try self.emitOp(.op_nil);
                 }
-                try self.emitOp(.op_pop);
-                if (self.loops.items.len == 0) return error.UnknownNode;
-                const cur_loop = &self.loops.items[self.loops.items.len - 1];
+                if (self.loops.items.len > 0) {
+                    try self.emitOp(.op_pop);
+                    const cur_loop = &self.loops.items[self.loops.items.len - 1];
 
-                // Prevent stack leaks from skipping inside expressions
-                if (self.current_stack_depth > cur_loop.depth) return error.UnsupportedScope;
+                    if (self.current_stack_depth > cur_loop.depth) return error.UnsupportedScope;
 
-                try self.emitLoop(cur_loop.start);
-                self.simulatePush(1); // Equilibrium for dead code
+                    try self.emitLoop(cur_loop.start);
+                    self.simulatePush(1);
+                } else if (self.enclosing != null or self.function != null) {
+                    try self.emitOp(.op_return);
+                    self.simulatePush(1);
+                } else {
+                    return error.UnknownNode;
+                }
+            },
+            .break_stmt => {
+                const break_idx = self.tree.nodeIndex(node);
+                if (break_idx != .none) {
+                    try self.compileNode(break_idx);
+                } else {
+                    try self.emitOp(.op_nil);
+                }
+                if (self.loops.items.len > 0) {
+                    const cur_loop = &self.loops.items[self.loops.items.len - 1];
+
+                    if (self.current_stack_depth > cur_loop.depth + 1) return error.UnsupportedScope;
+
+                    const jump = try self.emitJump(.op_jump);
+                    try cur_loop.exit_jumps.append(self.allocator, jump);
+                } else if (self.enclosing != null or self.function != null) {
+                    try self.emitOp(.op_break_block);
+                    self.simulatePush(1);
+                } else {
+                    return error.UnknownNode;
+                }
             },
             .assignment => {
                 const assign_payload = self.tree.assignment(node);
@@ -2124,7 +2134,7 @@ pub const Compiler = struct {
             .op_nil, .op_true, .op_false, .op_get_local, .op_get_local_wide, .op_get_global, .op_get_global_wide, .op_constant, .op_constant_wide, .op_closure, .op_closure_wide, .op_get_upvalue, .op_dup, .op_import, .op_import_wide, .op_block_given, .op_defined, .op_defined_wide, .op_module, .op_module_wide, .op_extract_kwarg, .op_extract_kwarg_wide, .op_class, .op_class_wide => 1,
 
             // --- Pops 1 (Net: -1) ---
-            .op_pop, .op_return, .op_close_upvalue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_switch_wide, .op_inherit, .op_class_method, .op_class_method_wide, .op_mixin, .op_method, .op_method_wide, .op_define_global, .op_define_global_wide, .op_bitwise_and => -1,
+            .op_pop, .op_return, .op_close_upvalue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_switch_wide, .op_inherit, .op_class_method, .op_class_method_wide, .op_mixin, .op_method, .op_method_wide, .op_define_global, .op_define_global_wide, .op_bitwise_and, .op_break_block => -1,
 
             // --- Pops 2 (Net: -2) ---
             .op_map_insert => -2,

@@ -17,6 +17,7 @@ pub const Host = host_mod.Host;
 
 pub const InterpretResult = enum {
     ok,
+    block_break,
     compile_error,
     runtime_error,
     execution_limit_exceeded,
@@ -467,6 +468,20 @@ pub const VM = struct {
                 .op_throw => {
                     const res = self.executeThrow();
                     if (res != .ok) return res;
+                },
+                .op_break_block => {
+                    const break_val = self.pop();
+
+                    self.closeUpvalues(&self.stack[frame.base_slot]);
+                    self.shrinkStack(frame.base_slot);
+                    std.debug.assert(self.frames.items.len > 0);
+
+                    _ = self.frames.pop();
+
+                    self.stack.ptr[self.stack_top] = break_val;
+                    self.stack_top += 1;
+
+                    return .block_break;
                 },
                 .op_build_array, .op_build_array_wide => {
                     const item_count = self.readOperand(exec_chunk, frame, op == .op_build_array_wide);
@@ -928,6 +943,18 @@ pub const VM = struct {
                     // Safely propagate limits through native yields
                     const result = self.callClosureSync(block_closure, yield_args) catch |err| {
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
+                        if (err == error.BlockBreak) {
+                            self.popAndRelease(yield_arg_count);
+                            const break_val = self.pop();
+                            self.closeUpvalues(&self.stack[frame.base_slot]);
+                            self.shrinkStack(frame.base_slot);
+                            std.debug.assert(self.frames.items.len > 0);
+                            _ = self.frames.pop();
+                            self.stack.ptr[self.stack_top] = break_val;
+                            self.stack_top += 1;
+                            if (self.frames.items.len == target_depth) return .ok;
+                            continue;
+                        }
                         return .runtime_error;
                     };
 
@@ -1425,6 +1452,7 @@ pub const VM = struct {
 
         // --- SAFE RE-ENTRANT UNWINDING ---
         if (res == .execution_limit_exceeded) return error.ExecutionLimitExceeded;
+        if (res == .block_break) return error.BlockBreak;
         if (res == .runtime_error) return error.FatalError;
         if (self.frames.items.len < target_depth) return error.Unwind; // A rescue block ate our frame
         if (res != .ok) return error.FatalError;

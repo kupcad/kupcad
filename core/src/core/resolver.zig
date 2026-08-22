@@ -30,7 +30,8 @@ const Scope = struct {
     upvalues: std.ArrayListUnmanaged(UpvalueCapture) = .empty,
 
     next_slot: u24 = 0,
-    is_closure: bool,
+    is_closure: bool = false,
+    is_block: bool = false,
     saved_loop_depth: usize = 0,
 
     pub fn deinit(self: *Scope, allocator: std.mem.Allocator) void {
@@ -49,6 +50,7 @@ pub const Resolver = struct {
 
     // The side-table storing the finalized capture array for every closure node
     closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const UpvalueCapture) = .empty,
+    active_method_blocks: std.AutoHashMapUnmanaged(ast.NodeIndex, void) = .empty,
 
     scopes: std.ArrayListUnmanaged(Scope) = .empty,
     diagnostics: *errors.Diagnostics,
@@ -64,12 +66,17 @@ pub const Resolver = struct {
             .token_starts = token_starts,
             .token_lengths = token_lengths,
             .symbols = symbols,
+            .closure_captures = .empty,
+            .active_method_blocks = .empty,
+            .scopes = .empty,
             .diagnostics = diagnostics,
             .loop_depth = 0,
         };
     }
 
     pub fn deinit(self: *Resolver) void {
+        self.active_method_blocks.deinit(self.allocator);
+
         for (self.scopes.items) |*scope| {
             scope.deinit(self.allocator);
         }
@@ -86,7 +93,7 @@ pub const Resolver = struct {
 
     pub fn resolve(self: *Resolver, root: ast.NodeIndex) !void {
         if (root == .none) return;
-        try self.pushScope(true, .none);
+        try self.pushScope(true, false, .none);
 
         var ctx = ResolverContext{ .resolver = self };
         try visitor.walk(ResolverContext, &ctx, self.tree, root);
@@ -94,7 +101,7 @@ pub const Resolver = struct {
         try self.popScope();
     }
 
-    pub fn pushScope(self: *Resolver, is_closure: bool, node: ast.NodeIndex) !void {
+    pub fn pushScope(self: *Resolver, is_closure: bool, is_block: bool, node: ast.NodeIndex) !void {
         var start_slot: u24 = 0;
         const current_loop_depth = self.loop_depth;
 
@@ -109,6 +116,7 @@ pub const Resolver = struct {
         try self.scopes.append(self.allocator, .{
             .node = node,
             .is_closure = is_closure,
+            .is_block = is_block,
             .next_slot = start_slot,
             .saved_loop_depth = current_loop_depth,
         });
@@ -241,16 +249,57 @@ const ResolverContext = struct {
             .while_stmt => {
                 self.resolver.loop_depth += 1;
             },
-            .break_stmt, .next_stmt => {
-                if (self.resolver.loop_depth == 0) {
-                    const stmt_name = if (node.tag == .break_stmt) "break" else "next";
+            .break_stmt => {
+                var is_valid = self.resolver.loop_depth > 0;
+                if (!is_valid) {
+                    var i = self.resolver.scopes.items.len;
+                    while (i > 0) {
+                        i -= 1;
+                        const scope = self.resolver.scopes.items[i];
+                        if (scope.is_block) {
+                            is_valid = true;
+                            break;
+                        }
+                        if (scope.is_closure) break;
+                    }
+                }
+                if (!is_valid) {
                     const offset = self.resolver.token_starts[node.main_token];
                     const length = self.resolver.token_lengths[node.main_token];
-                    self.resolver.diagnostics.add(.{ .offset = offset, .length = length, .file_id = 0 }, "Cannot use '{s}' outside of a loop", .{stmt_name});
+                    self.resolver.diagnostics.add(.{ .offset = offset, .length = length, .file_id = 0 }, "Cannot use 'break' outside of a loop", .{});
+                }
+            },
+            .next_stmt => {
+                var is_valid = self.resolver.loop_depth > 0;
+                if (!is_valid) {
+                    var i = self.resolver.scopes.items.len;
+                    while (i > 0) {
+                        i -= 1;
+                        const scope = self.resolver.scopes.items[i];
+                        if (scope.is_block or (scope.is_closure and scope.node != .none)) {
+                            const scope_node = tree.getNode(scope.node);
+                            if (scope.is_block or (scope_node != null and (scope_node.?.tag == .def_stmt or scope_node.?.tag == .lambda_expr))) {
+                                is_valid = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!is_valid) {
+                    const offset = self.resolver.token_starts[node.main_token];
+                    const length = self.resolver.token_lengths[node.main_token];
+                    self.resolver.diagnostics.add(.{ .offset = offset, .length = length, .file_id = 0 }, "Cannot use 'next' outside of a loop", .{});
+                }
+            },
+            .method_call => {
+                const mc = tree.methodCall(node);
+                if (mc.block != .none) {
+                    try self.resolver.active_method_blocks.put(self.resolver.allocator, mc.block, {});
                 }
             },
             .block => {
-                try self.resolver.pushScope(false, .none);
+                const is_mb = self.resolver.active_method_blocks.contains(node_idx);
+                try self.resolver.pushScope(false, is_mb, node_idx);
                 const b = tree.block(node);
                 for (tree.getNodes(b.params)) |param_idx| {
                     const param_node = tree.getNode(param_idx).?;
@@ -262,21 +311,21 @@ const ResolverContext = struct {
                 }
             },
             .def_stmt => {
-                try self.resolver.pushScope(true, node_idx);
+                try self.resolver.pushScope(true, false, node_idx);
                 const ds = tree.defStmt(node);
                 for (tree.getParams(ds.params)) |param| {
                     _ = try self.resolver.declareLocal(param.name);
                 }
             },
             .lambda_expr => {
-                try self.resolver.pushScope(true, node_idx);
+                try self.resolver.pushScope(true, false, node_idx);
                 const le = tree.lambdaExpr(node);
                 for (tree.getParams(le.params)) |param| {
                     _ = try self.resolver.declareLocal(param.name);
                 }
             },
             .for_stmt => {
-                try self.resolver.pushScope(false, .none);
+                try self.resolver.pushScope(false, false, .none);
                 self.resolver.loop_depth += 1;
                 const fs = tree.forStmt(node);
                 for (tree.getForBindings(fs.bindings)) |binding| {
@@ -284,7 +333,7 @@ const ResolverContext = struct {
                 }
             },
             .class_stmt, .module_stmt => {
-                try self.resolver.pushScope(true, node_idx);
+                try self.resolver.pushScope(true, false, node_idx);
             },
             .assignment => {
                 const assign = tree.assignment(node);
@@ -314,7 +363,11 @@ const ResolverContext = struct {
                 self.resolver.loop_depth -= 1;
                 try self.resolver.popScope();
             },
-            .block, .def_stmt, .lambda_expr, .class_stmt, .module_stmt => {
+            .block => {
+                _ = self.resolver.active_method_blocks.remove(node_idx);
+                try self.resolver.popScope();
+            },
+            .def_stmt, .lambda_expr, .class_stmt, .module_stmt => {
                 try self.resolver.popScope();
             },
             else => {},

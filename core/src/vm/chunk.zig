@@ -101,6 +101,7 @@ pub const OpCode = enum(u8) {
     op_switch,
     op_switch_wide,
     op_loop,
+    op_break_block,
 
     // Exception Handling
     op_setup_rescue,
@@ -202,7 +203,7 @@ pub const Chunk = struct {
     pub fn addInlineCache(self: *Chunk, allocator: std.mem.Allocator) !u16 {
         const idx = self.inline_caches.items.len;
         if (idx > std.math.maxInt(u16)) return error.OutOfMemory;
-        
+
         try self.inline_caches.append(allocator, .{});
         return @intCast(idx);
     }

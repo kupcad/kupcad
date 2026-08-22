@@ -86,7 +86,10 @@ pub fn arrayJoin(vm: *VM, arr: *value.ObjArray, delim_obj: *value.ObjString) !va
 /// Array#each { |x| ... }
 pub fn arrayEach(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !value.Value {
     for (arr.items.items) |item| {
-        _ = try vm.callClosureSync(closure, &.{item});
+        _ = vm.callClosureSync(closure, &.{item}) catch |err| {
+            if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
+            return err;
+        };
     }
     return value.Value.initObj(&arr.obj);
 }
@@ -95,14 +98,14 @@ pub fn arrayEach(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !val
 pub fn arrayMap(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-
     const new_arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&new_arr.obj));
     try new_arr.items.ensureTotalCapacity(vm.allocator, arr.items.items.len);
-
     for (arr.items.items) |item| {
-        const mapped_val = try vm.callClosureSync(closure, &.{item});
-        std.debug.assert(new_arr.items.items.len < new_arr.items.capacity);
+        const mapped_val = vm.callClosureSync(closure, &.{item}) catch |err| {
+            if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
+            return err;
+        };
         new_arr.items.appendAssumeCapacity(mapped_val);
     }
     return value.Value.initObj(&new_arr.obj);
