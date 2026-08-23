@@ -10,7 +10,8 @@ pub fn nativeImportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     }
 
     const filename = args[0].asString();
-    std.log.info("Mocking STEP import for file: {s}...", .{filename});
+    // Add .chars to extract the raw []const u8
+    std.log.info("Mocking STEP import for file: {s}...", .{filename.chars});
 
     // Allocate an empty stub B-Rep GeometryHandle in the VM ARC manager
     const mock_handle = @as(*anyopaque, @ptrFromInt(0xDEADBEEF));
@@ -29,7 +30,8 @@ pub fn nativeExportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     }
 
     const filename = args[0].asString();
-    std.log.info("Mocking STEP export to file: {s}...", .{filename});
+    // Add .chars to extract the raw []const u8
+    std.log.info("Mocking STEP export to file: {s}...", .{filename.chars});
 
     // Force JIT materialization to guarantee physical C++ geometry exists
     _ = try vm.ensureConcrete(args[1]);

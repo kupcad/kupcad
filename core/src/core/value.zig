@@ -260,6 +260,18 @@ pub const Value = packed struct {
         return (self.val & TAG_OBJ) == TAG_OBJ;
     }
 
+    pub inline fn isMap(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .map;
+    }
+
+    pub inline fn isRange(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .range;
+    }
+
+    pub inline fn isBrep(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .brep;
+    }
+
     // --- Data Extractors ---
 
     pub inline fn asNumber(self: Value) f64 {
@@ -340,20 +352,28 @@ pub const Value = packed struct {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
     pub inline fn asArray(self: Value) *ObjArray {
+        std.debug.assert(self.isArray());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
     pub inline fn asMap(self: Value) *ObjMap {
+        std.debug.assert(self.isMap());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
-
-    // Safely unwrap String and Symbol objects directly to their inner char slices
-    pub inline fn asString(self: Value) []const u8 {
+    pub inline fn asString(self: Value) *ObjString {
         std.debug.assert(self.isString());
-        return @as(*ObjString, @alignCast(@fieldParentPtr("obj", self.asObj()))).chars;
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
-    pub inline fn asSymbol(self: Value) []const u8 {
+    pub inline fn asSymbol(self: Value) *ObjSymbol {
         std.debug.assert(self.isObject() and self.asObj().obj_type == .symbol);
-        return @as(*ObjSymbol, @alignCast(@fieldParentPtr("obj", self.asObj()))).chars;
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+    pub inline fn asRange(self: Value) *ObjRange {
+        std.debug.assert(self.isRange());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+    pub inline fn asBrep(self: Value) *ObjBrep {
+        std.debug.assert(self.isBrep());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
     // --- Operations & Equality ---

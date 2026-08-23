@@ -57,7 +57,8 @@ pub fn nativeExportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
     const path_str = args[0].asString();
     const handle = try vm.ensureConcrete(args[1]);
 
-    try writeStl(vm, handle, path_str);
+    // Use .chars to extract the raw []const u8 slice from the ObjString
+    try writeStl(vm, handle, path_str.chars);
 
     return value.Value.initNil();
 }

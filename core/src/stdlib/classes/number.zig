@@ -3,20 +3,10 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 
-pub fn numberRound(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (arg_count > 1) return error.RuntimeError; // Takes 0 or 1 args
-
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (!receiver.isNumber()) return error.RuntimeError;
-
+pub fn numberRound(vm: *VM, receiver: value.Value, decimals_opt: ?f64) !value.Value {
+    _ = vm;
     const num = receiver.asNumber();
-    var decimals: f64 = 0.0;
-
-    if (arg_count == 1) {
-        if (!args[0].isNumber()) return error.RuntimeError;
-        decimals = args[0].asNumber();
-    }
+    const decimals = decimals_opt orelse 0.0;
 
     if (decimals == 0.0) {
         return value.Value.initNumber(@round(num));
@@ -26,71 +16,43 @@ pub fn numberRound(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     }
 }
 
-pub fn numberCeil(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (arg_count != 0) return error.RuntimeError;
-
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (!receiver.isNumber()) return error.RuntimeError;
+pub fn numberCeil(vm: *VM, receiver: value.Value) !value.Value {
+    _ = vm;
     return value.Value.initNumber(@ceil(receiver.asNumber()));
 }
 
-pub fn numberFloor(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (arg_count != 0) return error.RuntimeError;
-
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (!receiver.isNumber()) return error.RuntimeError;
+pub fn numberFloor(vm: *VM, receiver: value.Value) !value.Value {
+    _ = vm;
     return value.Value.initNumber(@floor(receiver.asNumber()));
 }
 
-pub fn numberAbs(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (arg_count != 0) return error.RuntimeError;
-
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (!receiver.isNumber()) return error.RuntimeError;
+pub fn numberAbs(vm: *VM, receiver: value.Value) !value.Value {
+    _ = vm;
     return value.Value.initNumber(@abs(receiver.asNumber()));
 }
 
-pub fn numberToI(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (arg_count != 0) return error.RuntimeError;
-
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (!receiver.isNumber()) return error.RuntimeError;
-    // Truncates decimal portion
+pub fn numberToI(vm: *VM, receiver: value.Value) !value.Value {
+    _ = vm;
     return value.Value.initNumber(@trunc(receiver.asNumber()));
 }
 
-pub fn numberToF(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (arg_count != 0) return error.RuntimeError;
-
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    // Number is already a float internally, just return it
+pub fn numberToF(vm: *VM, receiver: value.Value) !value.Value {
+    _ = vm;
     return receiver;
 }
 
-// Number to String
-pub fn numberToS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (arg_count != 0) return error.RuntimeError;
-
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    if (!receiver.isNumber()) return error.RuntimeError;
-
+pub fn numberToS(vm: *VM, receiver: value.Value) !value.Value {
     var buf: [64]u8 = undefined;
     const str = try std.fmt.bufPrint(&buf, "{d}", .{receiver.asNumber()});
     return try vm.allocateString(str);
 }
 
 pub const methods = [_]common.MethodDef{
-    .{ .name = "to_s", .func = numberToS },
-    .{ .name = "to_i", .func = numberToI },
-    .{ .name = "to_f", .func = numberToF },
-    .{ .name = "round", .func = numberRound },
-    .{ .name = "ceil", .func = numberCeil },
-    .{ .name = "floor", .func = numberFloor },
-    .{ .name = "abs", .func = numberAbs },
+    .{ .name = "to_s", .func = common.wrapMethod(numberToS) },
+    .{ .name = "to_i", .func = common.wrapMethod(numberToI) },
+    .{ .name = "to_f", .func = common.wrapMethod(numberToF) },
+    .{ .name = "round", .func = common.wrapMethod(numberRound) },
+    .{ .name = "ceil", .func = common.wrapMethod(numberCeil) },
+    .{ .name = "floor", .func = common.wrapMethod(numberFloor) },
+    .{ .name = "abs", .func = common.wrapMethod(numberAbs) },
 };
