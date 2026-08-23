@@ -7164,3 +7164,35 @@ test "VM: Polygon with multiple paths uses Even-Odd cutout routing" {
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result.isCrossSection());
 }
+
+test "VM Phase 3: Project handles cut kwargs and slice extracts 2D cross sections" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Test standard project (shadow)
+    const src1 = "cube(10).project()";
+    var doc1 = try Document.parse(testing.allocator, src1);
+    defer doc1.deinit();
+    var chunk1 = chunk.Chunk.init();
+    defer chunk1.free(testing.allocator);
+    var comp1 = Compiler.init(testing.allocator, &doc1.tree, doc1.symbols, doc1.tokens.starts, &chunk1, &vm);
+    defer comp1.deinit();
+    try comp1.compile(doc1.tree.root);
+    const res1 = try executeAndAssertStack(&vm, &chunk1, 1);
+    try testing.expect(res1.isCrossSection());
+
+    vm.stack_top = 0; // Reset stack
+
+    // Test project(cut: true)
+    const src2 = "cube(10).project(cut: true)";
+    var doc2 = try Document.parse(testing.allocator, src2);
+    defer doc2.deinit();
+    var chunk2 = chunk.Chunk.init();
+    defer chunk2.free(testing.allocator);
+    var comp2 = Compiler.init(testing.allocator, &doc2.tree, doc2.symbols, doc2.tokens.starts, &chunk2, &vm);
+    defer comp2.deinit();
+    try comp2.compile(doc2.tree.root);
+    const res2 = try executeAndAssertStack(&vm, &chunk2, 1);
+    try testing.expect(res2.isCrossSection());
+}
