@@ -18,6 +18,8 @@ const GeomOptions = struct {
     center: bool = false,
 };
 
+// --- Helpers ---
+
 fn parseArgs(args: []const value.Value) ArgParseCtx {
     const arg_count = args.len;
     if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
@@ -69,6 +71,24 @@ fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
     return opts;
 }
 
+/// Ensures a value is strictly greater than zero (e.g., lengths, widths, radiuses).
+fn requirePositive(vm: *VM, val: f64, name: []const u8) !void {
+    if (val <= 0.0) {
+        vm.reportError("ValueError: '{s}' must be strictly greater than zero, got {d}.\n", .{ name, val });
+        return error.RuntimeError;
+    }
+}
+
+/// Ensures a value is zero or greater (e.g., corner radiuses, chamfers).
+fn requireNonNegative(vm: *VM, val: f64, name: []const u8) !void {
+    if (val < 0.0) {
+        vm.reportError("ValueError: '{s}' cannot be negative, got {d}.\n", .{ name, val });
+        return error.RuntimeError;
+    }
+}
+
+// --- Methods ---
+
 pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
     var opts = extractGeomOptions(parsed);
@@ -82,6 +102,11 @@ pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
     if (parsed.pos_count > 2 and args[2].isNumber()) opts.z = args[2].asNumber();
     if (parsed.pos_count > 3 and args[3].isBool()) opts.center = args[3].asBool();
 
+    // Validate
+    try requirePositive(vm, opts.x, "x");
+    try requirePositive(vm, opts.y, "y");
+    try requirePositive(vm, opts.z, "z");
+
     const dag_idx = try vm.dag_builder.addCube(opts.x, opts.y, opts.z, opts.center);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
@@ -94,6 +119,10 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     if (parsed.pos_count > 1 and args[1].isNumber()) opts.h = args[1].asNumber();
     if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
 
+    // Validate
+    try requirePositive(vm, opts.r, "radius");
+    try requirePositive(vm, opts.h, "height");
+
     const dag_idx = try vm.dag_builder.addCylinder(opts.r, opts.h, opts.center);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
@@ -103,6 +132,9 @@ pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
     var opts = extractGeomOptions(parsed);
 
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
+
+    // Validate
+    try requirePositive(vm, opts.r, "radius");
 
     const dag_idx = try vm.dag_builder.addSphere(opts.r);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
@@ -119,6 +151,10 @@ pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
     if (parsed.pos_count > 1 and args[1].isNumber()) opts.y = args[1].asNumber();
     if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
 
+    // Validate
+    try requirePositive(vm, opts.x, "x");
+    try requirePositive(vm, opts.y, "y");
+
     const dag_idx = try vm.dag_builder.addSquare(opts.x, opts.y, opts.center);
     return try vm.allocateCrossSection(dag_idx);
 }
@@ -128,6 +164,10 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
     var opts = extractGeomOptions(parsed);
 
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
+
+    // Validate
+    try requirePositive(vm, opts.r, "radius");
+    try requireNonNegative(vm, @as(f64, @floatFromInt(opts.segments)), "segments");
 
     const dag_idx = try vm.dag_builder.addCircle(opts.r, opts.segments);
     return try vm.allocateCrossSection(dag_idx);
@@ -219,6 +259,10 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
             }
         }
     }
+
+    // Validate
+    try requirePositive(vm, size, "size");
+    try requirePositive(vm, tolerance, "tolerance");
 
     // Load Font
     const face = text_mod.getFaceByName(font_name) catch {
