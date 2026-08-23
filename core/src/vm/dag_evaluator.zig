@@ -20,6 +20,10 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
             const p = vm.dag_builder.getSpherePayload(node);
             return kernel.sphere(p.radius) orelse return error.RuntimeError;
         },
+        .polyhedron_op => {
+            const p = vm.dag_builder.getPolyhedronPayload(node);
+            return kernel.polyhedron(vm.allocator, p.pts, p.faces) orelse return error.RuntimeError;
+        },
         .union_op, .difference_op, .intersection_op => {
             const payload = vm.dag_builder.getBinaryPayload(node);
             const left_handle = try evaluateDAG(vm, payload.left);

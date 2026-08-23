@@ -57,6 +57,12 @@ fn circleImpl(radius: f64, segments: i32) ?geom.CrossSectionHandle {
     _ = segments;
     return null;
 }
+fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
+    _ = allocator;
+    _ = pts;
+    _ = faces;
+    return null;
+}
 fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
     _ = cs;
     _ = height;
@@ -203,6 +209,7 @@ pub const driver = kernel.GeometryKernel{
 
     .squareFn = squareImpl,
     .circleFn = circleImpl,
+    .polyhedronFn = polyhedronImpl,
     .extrudeFn = extrudeImpl,
     .revolveFn = revolveImpl,
     .sliceFn = sliceImpl,

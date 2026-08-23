@@ -30,6 +30,10 @@ pub inline fn polygon(allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSe
     return manifold_driver.polygonFn(allocator, pts);
 }
 
+pub inline fn polyhedron(allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
+    return manifold_driver.polyhedronFn(allocator, points, faces);
+}
+
 // --- Top-Level Static Dispatchers ---
 pub inline fn translate(handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
     switch (handle.engine) {
@@ -67,18 +71,21 @@ pub inline fn boolean(a: geom.GeometryHandle, b: geom.GeometryHandle, op: Boolea
         .brep_native => return brep_driver.booleanFn(a, b, op),
     }
 }
+
 pub inline fn extrude(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
     switch (cs.engine) {
         .manifold => return manifold_driver.extrudeFn(cs, height, slices, twist_degrees, scale_x, scale_y),
         .brep_native => return brep_driver.extrudeFn(cs, height, slices, twist_degrees, scale_x, scale_y),
     }
 }
+
 pub inline fn revolve(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
     switch (cs.engine) {
         .manifold => return manifold_driver.revolveFn(cs, segments, revolve_degrees),
         .brep_native => return brep_driver.revolveFn(cs, segments, revolve_degrees),
     }
 }
+
 pub inline fn offset(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
     switch (cs.engine) {
         .manifold => return manifold_driver.offsetFn(cs, delta, join_type),
@@ -214,6 +221,7 @@ pub const GeometryKernel = struct {
     transformMatrixFn: *const fn (a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle,
     squareFn: *const fn (x: f64, y: f64, center: bool) ?geom.CrossSectionHandle,
     circleFn: *const fn (radius: f64, circular_segments: i32) ?geom.CrossSectionHandle,
+    polyhedronFn: *const fn (allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle,
     offsetFn: *const fn (cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle,
     crossSectionTransformFn: *const fn (cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle,
     extrudeFn: *const fn (cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle,

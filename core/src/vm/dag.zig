@@ -9,6 +9,7 @@ pub const DAGTag = enum(u8) {
     union_op,
     difference_op,
     intersection_op,
+    polyhedron_op,
     translate,
     rotate,
     scale,
@@ -54,6 +55,8 @@ pub const DAGBuilder = struct {
     nodes: std.ArrayListUnmanaged(DAGNode) = .empty,
     extra_data: std.ArrayListUnmanaged(u32) = .empty,
     numbers: std.ArrayListUnmanaged(f64) = .empty,
+    poly_points: std.ArrayListUnmanaged([3]f64) = .empty,
+    poly_faces: std.ArrayListUnmanaged([3]u32) = .empty,
 
     pub fn init(child_allocator: std.mem.Allocator) DAGBuilder {
         return .{ .arena = std.heap.ArenaAllocator.init(child_allocator) };
@@ -68,6 +71,7 @@ pub const DAGBuilder = struct {
     }
 
     // --- Adders ---
+
     pub fn addBinary(self: *DAGBuilder, tag: DAGTag, left: DAGNodeIndex, right: DAGNodeIndex) !DAGNodeIndex {
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
@@ -131,6 +135,27 @@ pub const DAGBuilder = struct {
         try self.numbers.appendSlice(alloc, &.{ x, y, z });
         const node_idx: u32 = @intCast(self.nodes.items.len);
         try self.nodes.append(alloc, .{ .tag = tag, .flags = 0, .data = extra_idx });
+        return node_idx;
+    }
+
+    pub fn addPolyhedron(self: *DAGBuilder, pts: []const [3]f64, faces: []const [3]u32) !DAGNodeIndex {
+        const alloc = self.allocator();
+
+        const pts_start = @as(u32, @intCast(self.poly_points.items.len));
+        try self.poly_points.appendSlice(alloc, pts);
+
+        const faces_start = @as(u32, @intCast(self.poly_faces.items.len));
+        try self.poly_faces.appendSlice(alloc, faces);
+
+        // Store the slice offsets in `extra_data`
+        const data_offset = @as(u32, @intCast(self.extra_data.items.len));
+        try self.extra_data.append(alloc, pts_start);
+        try self.extra_data.append(alloc, @intCast(pts.len));
+        try self.extra_data.append(alloc, faces_start);
+        try self.extra_data.append(alloc, @intCast(faces.len));
+
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{ .tag = .polyhedron_op, .flags = 0, .data = data_offset });
         return node_idx;
     }
 
@@ -246,6 +271,20 @@ pub const DAGBuilder = struct {
         return node_idx;
     }
 
+    pub fn addPolygon(self: *DAGBuilder, pts: [][2]f64) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        for (pts) |pt| {
+            try self.numbers.append(alloc, pt[0]);
+            try self.numbers.append(alloc, pt[1]);
+        }
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+        try self.extra_data.appendSlice(alloc, &.{ num_idx, @intCast(pts.len) });
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{ .tag = .polygon, .flags = 0, .data = extra_idx });
+        return node_idx;
+    }
+
     // --- Unpackers for JIT Materialization ---
     pub inline fn getBinaryPayload(self: *const DAGBuilder, node: DAGNode) BinaryPayload {
         return .{ .left = self.extra_data.items[node.data], .right = self.extra_data.items[node.data + 1] };
@@ -322,6 +361,17 @@ pub const DAGBuilder = struct {
         };
     }
 
+    pub inline fn getPolyhedronPayload(self: *const DAGBuilder, node: DAGNode) struct { pts: []const [3]f64, faces: []const [3]u32 } {
+        const pts_start = self.extra_data.items[node.data];
+        const pts_len = self.extra_data.items[node.data + 1];
+        const faces_start = self.extra_data.items[node.data + 2];
+        const faces_len = self.extra_data.items[node.data + 3];
+        return .{
+            .pts = self.poly_points.items[pts_start .. pts_start + pts_len],
+            .faces = self.poly_faces.items[faces_start .. faces_start + faces_len],
+        };
+    }
+
     pub inline fn getRevolvePayload(self: *const DAGBuilder, node: DAGNode) RevolvePayload {
         const target = self.extra_data.items[node.data];
         const num_idx = self.extra_data.items[node.data + 1];
@@ -330,19 +380,5 @@ pub const DAGBuilder = struct {
             .segments = @as(i32, @intFromFloat(self.numbers.items[num_idx])),
             .degrees = self.numbers.items[num_idx + 1],
         };
-    }
-
-    pub fn addPolygon(self: *DAGBuilder, pts: [][2]f64) !DAGNodeIndex {
-        const alloc = self.allocator();
-        const num_idx: u32 = @intCast(self.numbers.items.len);
-        for (pts) |pt| {
-            try self.numbers.append(alloc, pt[0]);
-            try self.numbers.append(alloc, pt[1]);
-        }
-        const extra_idx: u32 = @intCast(self.extra_data.items.len);
-        try self.extra_data.appendSlice(alloc, &.{ num_idx, @intCast(pts.len) });
-        const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .polygon, .flags = 0, .data = extra_idx });
-        return node_idx;
     }
 };

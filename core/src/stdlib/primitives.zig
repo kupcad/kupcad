@@ -149,3 +149,37 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     const dag_idx = try vm.dag_builder.addPolygon(pts);
     return try vm.allocateCrossSection(dag_idx);
 }
+
+pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
+    if (args.len < 2 or !args[0].isArray() or !args[1].isArray()) {
+        vm.reportError("ArgumentError: polyhedron expects points Array and faces Array.\n", .{});
+        return error.RuntimeError;
+    }
+    const pts_val = args[0].asArray().items.items;
+    const faces_val = args[1].asArray().items.items;
+
+    // Unbox Points
+    var pts = try vm.allocator.alloc([3]f64, pts_val.len);
+    defer vm.allocator.free(pts);
+    for (pts_val, 0..) |p, i| {
+        if (!p.isArray()) return error.RuntimeError;
+        const p_arr = p.asArray().items.items;
+        pts[i][0] = if (p_arr.len > 0 and p_arr[0].isNumber()) p_arr[0].asNumber() else 0.0;
+        pts[i][1] = if (p_arr.len > 1 and p_arr[1].isNumber()) p_arr[1].asNumber() else 0.0;
+        pts[i][2] = if (p_arr.len > 2 and p_arr[2].isNumber()) p_arr[2].asNumber() else 0.0;
+    }
+
+    // Unbox Faces (Enforcing Triangles for MVP)
+    var faces = try vm.allocator.alloc([3]u32, faces_val.len);
+    defer vm.allocator.free(faces);
+    for (faces_val, 0..) |f, i| {
+        if (!f.isArray()) return error.RuntimeError;
+        const f_arr = f.asArray().items.items;
+        faces[i][0] = if (f_arr.len > 0 and f_arr[0].isNumber()) @intFromFloat(f_arr[0].asNumber()) else 0;
+        faces[i][1] = if (f_arr.len > 1 and f_arr[1].isNumber()) @intFromFloat(f_arr[1].asNumber()) else 0;
+        faces[i][2] = if (f_arr.len > 2 and f_arr[2].isNumber()) @intFromFloat(f_arr[2].asNumber()) else 0;
+    }
+
+    const dag_idx = try vm.dag_builder.addPolyhedron(pts, faces);
+    return try vm.allocateGeometry(.{ .symbolic = dag_idx });
+}

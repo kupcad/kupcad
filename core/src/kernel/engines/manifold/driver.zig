@@ -150,6 +150,29 @@ fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.Cros
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn polyhedronImpl(allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
+    // Flatten and convert f64 points to f32 for Manifold MeshGL
+    var vert_props = allocator.alloc(f32, points.len * 3) catch return null;
+    defer allocator.free(vert_props);
+    for (points, 0..) |p, i| {
+        vert_props[i * 3 + 0] = @floatCast(p[0]);
+        vert_props[i * 3 + 1] = @floatCast(p[1]);
+        vert_props[i * 3 + 2] = @floatCast(p[2]);
+    }
+
+    // Flatten u32 faces
+    var tri_verts = allocator.alloc(u32, faces.len * 3) catch return null;
+    defer allocator.free(tri_verts);
+    for (faces, 0..) |f, i| {
+        tri_verts[i * 3 + 0] = f[0];
+        tri_verts[i * 3 + 1] = f[1];
+        tri_verts[i * 3 + 2] = f[2];
+    }
+
+    const ptr = manifold.polyhedron(vert_props, tri_verts) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
     std.debug.assert(cs.engine == .manifold);
     if (@intFromPtr(cs.ptr) == 0) return null;
@@ -308,6 +331,7 @@ pub const driver = kernel.GeometryKernel{
     .scaleFn = scaleImpl,
     .squareFn = squareImpl,
     .circleFn = circleImpl,
+    .polyhedronFn = polyhedronImpl,
     .extrudeFn = extrudeImpl,
     .revolveFn = revolveImpl,
     .sliceFn = sliceImpl,

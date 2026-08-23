@@ -6849,3 +6849,35 @@ test "VM: Fluent CSG method chaining on 2D cross sections" {
     try testing.expectEqual(.ok, res);
     try testing.expect(vm.stack[0].isCrossSection());
 }
+
+test "VM: polyhedron generates custom 3D mesh from multidimensional arrays" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // A script defining a simple tetrahedron (pyramid)
+    const source =
+        \\pts = [[0,0,0], [10,0,0], [0,10,0], [0,0,10]]
+        \\faces = [[0,1,2], [0,2,3], [0,3,1], [1,3,2]]
+        \\polyhedron(pts, faces)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // Verify it yielded a valid Geometry object
+    try testing.expect(result.isGeometry());
+
+    // Verify the data was stored securely in the DAG Builder arrays
+    try testing.expectEqual(@as(usize, 4), vm.dag_builder.poly_points.items.len);
+    try testing.expectEqual(@as(usize, 4), vm.dag_builder.poly_faces.items.len);
+}

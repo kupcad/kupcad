@@ -85,12 +85,14 @@ extern fn manifold_volume(m: ?*ManifoldObj) f64;
 extern fn manifold_surface_area(m: ?*ManifoldObj) f64;
 extern fn manifold_genus(m: ?*ManifoldObj) c_int;
 
+extern fn manifold_meshgl(mem: ?*ManifoldMeshGL, vert_props: [*]const f32, num_verts: usize, num_prop: usize, tri_verts: [*]const u32, num_tris: usize) ?*ManifoldMeshGL;
 extern fn manifold_get_meshgl(mem: ?*ManifoldMeshGL, m: ?*ManifoldObj) ?*ManifoldMeshGL;
 extern fn manifold_meshgl_num_prop(m: ?*ManifoldMeshGL) usize;
 extern fn manifold_meshgl_vert_properties_length(m: ?*ManifoldMeshGL) usize;
 extern fn manifold_meshgl_tri_length(m: ?*ManifoldMeshGL) usize;
 extern fn manifold_meshgl_vert_properties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32;
 extern fn manifold_meshgl_tri_verts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32;
+extern fn manifold_of_meshgl(mem: ?*ManifoldObj, mesh: ?*ManifoldMeshGL) ?*ManifoldObj;
 
 extern fn manifold_alloc_ray_hit_vec() ?*ManifoldRayHitVec;
 extern fn manifold_delete_ray_hit_vec(v: ?*ManifoldRayHitVec) void;
@@ -164,6 +166,15 @@ pub fn square(x: f64, y: f64, center: bool) ?*ManifoldCrossSection {
 
 pub fn circle(radius: f64, segments: i32) ?*ManifoldCrossSection {
     return manifold_cross_section_circle(manifold_alloc_cross_section(), radius, @intCast(segments));
+}
+
+pub fn polyhedron(vert_props: []const f32, tri_verts: []const u32) ?*ManifoldObj {
+    const mesh_mem = manifold_alloc_meshgl();
+    defer manifold_delete_meshgl(mesh_mem);
+
+    // num_prop = 3 (x, y, z)
+    const mesh = manifold_meshgl(mesh_mem, vert_props.ptr, vert_props.len / 3, 3, tri_verts.ptr, tri_verts.len / 3);
+    return manifold_of_meshgl(manifold_alloc_manifold(), mesh);
 }
 
 pub fn transform(obj: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj {
