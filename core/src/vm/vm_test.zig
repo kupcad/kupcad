@@ -7110,3 +7110,57 @@ test "VM: Cylinder with round_r generates revolved 3D solid" {
     // Ensure the revolved profile resulted in a valid 3D volume
     try testing.expect(kernel.volume(handle) > 0.0);
 }
+
+test "VM: Resize calculates bbox and scales geometry automatically" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Initial 10x10x10 cube resized to 50x20x(auto scaled to 50 based on X)
+    const source = "cube(10).resize([50, 20, 0], auto: true)";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isGeometry());
+
+    const handle = try vm.ensureConcrete(result);
+    const bbox = kernel.boundingBox(handle) orelse return error.MissingBBox;
+
+    // Check if the scale properly hit the targets!
+    try testing.expectApproxEqAbs(50.0, bbox.max[0] - bbox.min[0], 0.001); // X = 50
+    try testing.expectApproxEqAbs(20.0, bbox.max[1] - bbox.min[1], 0.001); // Y = 20
+    try testing.expectApproxEqAbs(50.0, bbox.max[2] - bbox.min[2], 0.001); // Z = auto scaled based on X
+}
+
+test "VM: Polygon with multiple paths uses Even-Odd cutout routing" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // A large square with a smaller square hole cut out of the middle
+    const source =
+        \\points = [[0,0], [10,0], [10,10], [0,10], [2,2], [8,2], [8,8], [2,8]]
+        \\paths = [[0,1,2,3], [4,5,6,7]]
+        \\polygon(points, paths: paths)
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isCrossSection());
+}

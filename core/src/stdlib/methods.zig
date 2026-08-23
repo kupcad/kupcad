@@ -356,6 +356,65 @@ pub fn meshTransform(vm: *VM, receiver: value.Value, args: []const value.Value) 
     return error.RuntimeError;
 }
 
+pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
+
+    var target_x: f64 = 0.0;
+    var target_y: f64 = 0.0;
+    var target_z: f64 = 0.0;
+    var auto: bool = false;
+
+    if (args.len > 0 and args[0].isArray()) {
+        const arr = args[0].asArray().items.items;
+        if (arr.len > 0 and arr[0].isNumber()) target_x = arr[0].asNumber();
+        if (arr.len > 1 and arr[1].isNumber()) target_y = arr[1].asNumber();
+        if (arr.len > 2 and arr[2].isNumber()) target_z = arr[2].asNumber();
+    } else {
+        vm.reportError("ArgumentError: resize() requires an array of target dimensions [x, y, z].\n", .{});
+        return error.RuntimeError;
+    }
+
+    if (args.len > 1 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+        if (vm.findMapKeyByString(map, "auto")) |idx| {
+            if (map.values.items[idx].isBool()) auto = map.values.items[idx].asBool();
+        }
+    }
+
+    // Force Manifold evaluation to get the exact Bounding Box
+    const handle = try vm.ensureConcrete(receiver);
+    const bbox = kernel.boundingBox(handle) orelse return error.RuntimeError;
+
+    const cur_x = bbox.max[0] - bbox.min[0];
+    const cur_y = bbox.max[1] - bbox.min[1];
+    const cur_z = bbox.max[2] - bbox.min[2];
+
+    // Calculate required scale multipliers
+    var sx: f64 = if (cur_x > 0.0 and target_x > 0.0) target_x / cur_x else 1.0;
+    var sy: f64 = if (cur_y > 0.0 and target_y > 0.0) target_y / cur_y else 1.0;
+    var sz: f64 = if (cur_z > 0.0 and target_z > 0.0) target_z / cur_z else 1.0;
+
+    // Apply auto-scaling for axes specified as 0.0
+    if (auto) {
+        var auto_scale: f64 = 1.0;
+
+        if (target_x > 0.0) {
+            auto_scale = sx;
+        } else if (target_y > 0.0) {
+            auto_scale = sy;
+        } else if (target_z > 0.0) {
+            auto_scale = sz;
+        }
+
+        if (target_x <= 0.0) sx = auto_scale;
+        if (target_y <= 0.0) sy = auto_scale;
+        if (target_z <= 0.0) sz = auto_scale;
+    }
+
+    const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, sx, sy, sz);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
 pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 1 or !args[0].isGeometry()) return error.RuntimeError;

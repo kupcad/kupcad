@@ -292,16 +292,66 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
 pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     if (args.len < 1 or !args[0].isArray()) return error.RuntimeError;
     const pt_arr = args[0].asArray().items.items;
-    var pts = try vm.allocator.alloc([2]f64, pt_arr.len);
-    defer vm.allocator.free(pts);
-    for (pt_arr, 0..) |val, i| {
-        if (!val.isArray()) return error.RuntimeError;
-        const inner = val.asArray().items.items;
-        pts[i][0] = if (inner.len > 0 and inner[0].isNumber()) inner[0].asNumber() else 0.0;
-        pts[i][1] = if (inner.len > 1 and inner[1].isNumber()) inner[1].asNumber() else 0.0;
+
+    var paths_arr: ?[]value.Value = null;
+    if (args.len > 1) {
+        // Parse `paths` from kwargs or positional argument
+        if (args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+            if (vm.findMapKeyByString(map, "paths")) |idx| {
+                if (map.values.items[idx].isArray()) {
+                    paths_arr = map.values.items[idx].asArray().items.items;
+                }
+            }
+        } else if (args[1].isArray()) {
+            paths_arr = args[1].asArray().items.items;
+        }
     }
-    const dag_idx = try vm.dag_builder.addPolygon(pts);
-    return try vm.allocateCrossSection(dag_idx);
+
+    if (paths_arr) |paths| {
+        // Build Multi-Contour Polygon (Supports Holes via Even-Odd rule)
+        var contours = try vm.allocator.alloc([]const [2]f64, paths.len);
+        defer {
+            for (contours) |c| vm.allocator.free(c);
+            vm.allocator.free(contours);
+        }
+
+        for (paths, 0..) |path_val, c_idx| {
+            if (!path_val.isArray()) return error.RuntimeError;
+            const indices = path_val.asArray().items.items;
+            var contour = try vm.allocator.alloc([2]f64, indices.len);
+
+            for (indices, 0..) |idx_val, p_idx| {
+                if (!idx_val.isNumber()) return error.RuntimeError;
+                const pt_idx = @as(usize, @intFromFloat(idx_val.asNumber()));
+                if (pt_idx >= pt_arr.len) return error.RuntimeError;
+
+                const pt_val = pt_arr[pt_idx];
+                if (!pt_val.isArray()) return error.RuntimeError;
+                const inner = pt_val.asArray().items.items;
+
+                contour[p_idx][0] = if (inner.len > 0 and inner[0].isNumber()) inner[0].asNumber() else 0.0;
+                contour[p_idx][1] = if (inner.len > 1 and inner[1].isNumber()) inner[1].asNumber() else 0.0;
+            }
+            contours[c_idx] = contour;
+        }
+        const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours);
+        return try vm.allocateCrossSection(dag_idx);
+    } else {
+        // Standard Single-Contour Polygon
+        var pts = try vm.allocator.alloc([2]f64, pt_arr.len);
+        defer vm.allocator.free(pts);
+
+        for (pt_arr, 0..) |val, i| {
+            if (!val.isArray()) return error.RuntimeError;
+            const inner = val.asArray().items.items;
+            pts[i][0] = if (inner.len > 0 and inner[0].isNumber()) inner[0].asNumber() else 0.0;
+            pts[i][1] = if (inner.len > 1 and inner[1].isNumber()) inner[1].asNumber() else 0.0;
+        }
+
+        const dag_idx = try vm.dag_builder.addPolygon(pts);
+        return try vm.allocateCrossSection(dag_idx);
+    }
 }
 
 pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {

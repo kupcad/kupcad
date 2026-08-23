@@ -67,6 +67,7 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "translate", .category = .transform, .func = common.wrapMethod(methods.meshTranslate) },
     .{ .name = "rotate", .category = .transform, .func = common.wrapMethod(methods.meshRotate) },
     .{ .name = "scale", .category = .transform, .func = common.wrapMethod(methods.meshScale) },
+    .{ .name = "resize", .category = .transform, .func = common.wrapMethod(methods.meshResize) },
     .{ .name = "on_face", .category = .workplane_method, .func = common.wrapMethod(methods.meshOnFace) },
     .{ .name = "bbox", .category = .inspection_method, .func = common.wrapMethod(methods.meshBBox) },
     .{ .name = "volume", .category = .inspection_method, .func = common.wrapMethod(methods.meshVolume) },
