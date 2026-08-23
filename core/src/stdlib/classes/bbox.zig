@@ -3,6 +3,15 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 
+fn getSafeInstance(vm: *VM, args: [*]value.Value) !*value.ObjInstance {
+    const receiver = vm.getReceiver(args);
+    if (!receiver.isInstance()) {
+        vm.reportError("TypeError: Expected BoundingBox instance.\n", .{});
+        return error.RuntimeError;
+    }
+    return receiver.asInstance();
+}
+
 inline fn getField(inst: *value.ObjInstance, name: []const u8) f64 {
     if (inst.class.instance_layout.get(name)) |idx| {
         if (idx < inst.fields.items.len and inst.fields.items[idx].isNumber()) {
@@ -26,19 +35,22 @@ fn buildVec3(vm: *VM, x: f64, y: f64, z: f64) !value.Value {
 pub fn bboxSize(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
 
-    std.debug.assert(receiver.isInstance());
+    // Use the safe unboxer instead of std.debug.assert
+    const inst = try getSafeInstance(vm, args);
 
-    const inst = receiver.asInstance();
+    // Sanity check: Size should never be negative
+    const sx = @max(0.0, getField(inst, "size_x"));
+    const sy = @max(0.0, getField(inst, "size_y"));
+    const sz = @max(0.0, getField(inst, "size_z"));
 
-    return buildVec3(vm, getField(inst, "size_x"), getField(inst, "size_y"), getField(inst, "size_z"));
+    return buildVec3(vm, sx, sy, sz);
 }
 
 pub fn bboxCenter(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const inst = vm.getReceiver(args).asInstance();
+    const inst = try getSafeInstance(vm, args);
     return buildVec3(vm, getField(inst, "center_x"), getField(inst, "center_y"), getField(inst, "center_z"));
 }
 
