@@ -1974,7 +1974,7 @@ pub const Compiler = struct {
             for (args) |arg| {
                 const arg_node = self.tree.getNode(arg.value).?;
                 if (arg_node.tag == .symbol or arg_node.tag == .string) {
-                    const name_str = self.tree.getString(@as(ast.StringId, @enumFromInt(arg_node.data)));
+                    const name_str = self.tree.getString(self.tree.stringId(arg_node));
                     if (std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_accessor")) {
                         try macros.emitAttrReader(self, name_str, is_singleton);
                     }
@@ -2112,7 +2112,7 @@ pub const Compiler = struct {
                     if (args.len > 0) {
                         const target_node = self.tree.getNode(args[0].value).?;
                         if (target_node.tag == .identifier) {
-                            const name_id = @as(ast.StringId, @enumFromInt(target_node.data));
+                            const name_id = self.tree.stringId(target_node);
                             if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
                                 try self.emitOp(.op_true); // Locals are statically known
                             } else {
@@ -2288,7 +2288,7 @@ pub const Compiler = struct {
                     };
                 },
                 .splat_expr => {
-                    const inner_node = self.tree.getNode(@as(ast.NodeIndex, @enumFromInt(node.data))).?;
+                    const inner_node = self.tree.getNode(self.tree.nodeIndex(node)).?;
                     lowered[i] = .{
                         .name = self.tree.stringId(inner_node),
                         .default_value = .none,
@@ -2297,7 +2297,7 @@ pub const Compiler = struct {
                     };
                 },
                 .double_splat_expr => {
-                    const inner_node = self.tree.getNode(@as(ast.NodeIndex, @enumFromInt(node.data))).?;
+                    const inner_node = self.tree.getNode(self.tree.nodeIndex(node)).?;
                     lowered[i] = .{
                         .name = self.tree.stringId(inner_node),
                         .default_value = .none,
