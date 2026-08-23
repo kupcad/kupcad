@@ -14,7 +14,7 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
         },
         .cylinder => {
             const p = vm.dag_builder.getCylinderPayload(node);
-            return kernel.cylinder(p.radius, p.height, p.center) orelse return error.RuntimeError;
+            return kernel.cylinder(p.radius, p.height, p.center, p.segments) orelse return error.RuntimeError;
         },
         .sphere => {
             const p = vm.dag_builder.getSpherePayload(node);

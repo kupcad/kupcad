@@ -257,10 +257,19 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-pub fn meshHull(vm: *VM, receiver: value.Value) !value.Value {
+pub fn meshHull(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
-    const new_idx = try vm.dag_builder.addHull(receiver.asGeometry().dag_idx);
-    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    var current_idx = receiver.asGeometry().dag_idx;
+
+    // Union all passed shapes before computing the convex hull
+    for (args) |arg| {
+        if (arg.isGeometry()) {
+            current_idx = try vm.dag_builder.addBinary(.union_op, current_idx, arg.asGeometry().dag_idx);
+        }
+    }
+
+    const hull_idx = try vm.dag_builder.addHull(current_idx);
+    return try vm.allocateGeometry(.{ .symbolic = hull_idx });
 }
 
 pub fn meshTrimByPlane(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {

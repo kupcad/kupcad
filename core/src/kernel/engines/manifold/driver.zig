@@ -10,8 +10,8 @@ fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
-fn cylinderImpl(radius: f64, height: f64, center: bool) ?geom.GeometryHandle {
-    const ptr = manifold.cylinder(radius, height, center) orelse return null;
+fn cylinderImpl(radius: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
+    const ptr = manifold.cylinder(radius, height, center, segments) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 

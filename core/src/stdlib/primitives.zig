@@ -123,7 +123,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     try requirePositive(vm, opts.r, "radius");
     try requirePositive(vm, opts.h, "height");
 
-    const dag_idx = try vm.dag_builder.addCylinder(opts.r, opts.h, opts.center);
+    const dag_idx = try vm.dag_builder.addCylinder(opts.r, opts.h, opts.center, opts.segments);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
