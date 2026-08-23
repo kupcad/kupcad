@@ -89,7 +89,7 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
 
 /// Compiles and evaluates a KupCAD script, returning the binary buffer for the requested format.
 /// Supports formats: "stl", "glb", "gltf".
-/// The caller owns the returned slice and must free it.
+/// The caller owns the returned slice and must free it
 pub fn buildModel(
     allocator: std.mem.Allocator,
     io: std.Io,
