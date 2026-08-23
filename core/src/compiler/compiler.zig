@@ -1317,28 +1317,16 @@ pub const Compiler = struct {
     fn compileDestructure(self: *Compiler, target: anytype) CompileError!void {
         // Assign the unpacked value currently on top of the stack to the target identifier
         if (target.name != .none) {
-            const name_id = target.name;
+            // Provide a dummy symbol. The classification engine will figure out if it's a
+            // constant, class variable, existing local, upvalue, or global automatically!
+            const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
 
-            if (self.resolveLocal(name_id)) |local_slot| {
-                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, local_slot);
-                try self.emitOp(.op_pop);
-            } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-                try self.emitOp(.op_set_upvalue);
-                try self.emitByte(upvalue_slot);
-                try self.emitOp(.op_pop);
-            } else if (self.enclosing == null or self.isScriptGlobal(name_id)) {
-                const name_str = self.tree.getString(name_id);
-                if (self.enclosing == null) {
-                    try self.script_globals.put(self.allocator, name_str, {});
-                }
-                const name_idx = try self.makeStringConstant(name_str);
-                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-            } else {
-                const slot = self.getNextLocalSlot();
-                try self.addLocal(name_id, slot);
-                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, self.locals.items.len - 1);
-                try self.emitOp(.op_pop);
-            }
+            try self.emitVariableStore(target.name, dummy_sym);
+
+            // `emitVariableStore` is designed for standard assignments, so it ALWAYS leaves
+            // the assigned value on the stack. Destructuring expects to consume the value
+            // to move to the next array element, so we must pop it unconditionally here.
+            try self.emitOp(.op_pop);
         } else {
             // Unhandled pattern or skipped element (e.g., `_`): pop to maintain stack equilibrium
             try self.emitOp(.op_pop);
