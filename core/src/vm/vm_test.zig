@@ -6962,3 +6962,80 @@ test "VM: Extruded text has mathematically correct bounding box and mass propert
     // The extrusion depth (Z-axis) MUST be exactly 7.5mm
     try testing.expectApproxEqAbs(7.5, dz, 0.0001);
 }
+
+test "VM: Tapered cylinder with r1 and r2 generates valid solid" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source = "cylinder(r1: 5.0, r2: 2.0, h: 10.0)";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const handle = try vm.ensureConcrete(result);
+    try testing.expect(kernel.volume(handle) > 0.0);
+}
+
+test "VM: Extrude with center: true positions geometry symmetrically along Z" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source = "square(10.0).extrude(10.0, center: true)";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const handle = try vm.ensureConcrete(result);
+
+    const bbox = kernel.boundingBox(handle) orelse return error.MissingBBox;
+    // With height = 10 and center: true, min_z must be -5.0 and max_z must be 5.0
+    try testing.expectApproxEqAbs(-5.0, bbox.min[2], 0.001);
+    try testing.expectApproxEqAbs(5.0, bbox.max[2], 0.001);
+}
+
+test "VM: Text alignment with halign and valign centers bounding box" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\t = text("ABC", size: 10.0, halign: :center, valign: :center)
+        \\t.extrude(2.0)
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const handle = try vm.ensureConcrete(result);
+
+    const bbox = kernel.boundingBox(handle) orelse return error.MissingBBox;
+    const center_x = (bbox.min[0] + bbox.max[0]) / 2.0;
+    const center_y = (bbox.min[1] + bbox.max[1]) / 2.0;
+
+    // Centered text alignment should place its X and Y midpoint near 0.0
+    try testing.expectApproxEqAbs(0.0, center_x, 0.1);
+    try testing.expectApproxEqAbs(0.0, center_y, 0.1);
+}

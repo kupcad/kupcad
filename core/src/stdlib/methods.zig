@@ -209,7 +209,9 @@ pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
 
 pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return error.RuntimeError;
+
     var height: f64 = 1.0;
+    var center: bool = false;
     var pos_count = args.len;
 
     if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
@@ -219,6 +221,7 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
             if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
                 const k_str = if (k.asObj().obj_type == .string) @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars else @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
                 if (std.mem.eql(u8, k_str, "h") and map.values.items[i].isNumber()) height = map.values.items[i].asNumber();
+                if (std.mem.eql(u8, k_str, "center") and map.values.items[i].isBool()) center = map.values.items[i].asBool();
             }
         }
     }
@@ -228,7 +231,13 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
         height = args[0].asNumber();
     }
 
-    const new_idx = try vm.dag_builder.addExtrude(receiver.asCrossSection().dag_idx, height, 0, 0.0, 1.0, 1.0);
+    var new_idx = try vm.dag_builder.addExtrude(receiver.asCrossSection().dag_idx, height, 0, 0.0, 1.0, 1.0);
+
+    // Auto-translate to center!
+    if (center) {
+        new_idx = try vm.dag_builder.addTranslate(new_idx, 0.0, 0.0, -height / 2.0);
+    }
+
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
@@ -261,7 +270,7 @@ pub fn meshHull(vm: *VM, receiver: value.Value, args: []const value.Value) !valu
     if (!receiver.isGeometry()) return error.RuntimeError;
     var current_idx = receiver.asGeometry().dag_idx;
 
-    // Union all passed shapes before computing the convex hull
+    // Union all passed target shapes before computing the convex hull
     for (args) |arg| {
         if (arg.isGeometry()) {
             current_idx = try vm.dag_builder.addBinary(.union_op, current_idx, arg.asGeometry().dag_idx);

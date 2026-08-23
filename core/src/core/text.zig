@@ -17,6 +17,9 @@ pub const FontKey = enum {
     }
 };
 
+pub const HAlign = enum { left, center, right };
+pub const VAlign = enum { baseline, bottom, center, top };
+
 pub const TextPolygons = struct {
     // A list of closed contours. Each contour is an array of [2]f64 points.
     contours: std.ArrayListUnmanaged(std.ArrayListUnmanaged([2]f64)),
@@ -144,6 +147,8 @@ pub fn extractText(
     text_str: []const u8,
     size_mm: f64,
     tolerance: f64,
+    halign: HAlign,
+    valign: VAlign,
 ) !TextPolygons {
     var polygons = TextPolygons{ .contours = .empty };
     errdefer polygons.deinit(allocator);
@@ -173,14 +178,12 @@ pub fn extractText(
         },
     };
 
-    // Safely coerce the allocator argument depending on how tatfi was configured at compile-time
     const GpaType = @typeInfo(@TypeOf(tatfi.Face.glyph_hor_advance)).@"fn".params[1].type.?;
     const gpa_val: GpaType = if (GpaType == void) {} else allocator;
 
     var iter = std.unicode.Utf8Iterator{ .bytes = text_str, .i = 0 };
     while (iter.nextCodepoint()) |cp| {
         if (face.glyph_index(cp)) |glyph_id| {
-
             // Extract outlines and route to flattener
             _ = face.outline_glyph(gpa_val, glyph_id, builder);
             try ctx.flushContour();
@@ -188,6 +191,51 @@ pub fn extractText(
             // Advance cursor for next letter
             if (face.glyph_hor_advance(gpa_val, glyph_id)) |adv| {
                 ctx.cursor_x += @as(f64, @floatFromInt(adv)) * scale;
+            }
+        }
+    }
+
+    // --- PHASE 1: Text Alignment Post-Shift ---
+    if (halign != .left or valign != .baseline) {
+        var min_x: f64 = std.math.inf(f64);
+        var max_x: f64 = -std.math.inf(f64);
+        var min_y: f64 = std.math.inf(f64);
+        var max_y: f64 = -std.math.inf(f64);
+
+        // 1. Calculate physical bounding box
+        for (polygons.contours.items) |c| {
+            for (c.items) |pt| {
+                if (pt[0] < min_x) min_x = pt[0];
+                if (pt[0] > max_x) max_x = pt[0];
+                if (pt[1] < min_y) min_y = pt[1];
+                if (pt[1] > max_y) max_y = pt[1];
+            }
+        }
+
+        // 2. Apply offsets if text isn't empty
+        if (min_x <= max_x) {
+            var dx: f64 = 0.0;
+            var dy: f64 = 0.0;
+
+            switch (halign) {
+                .left => dx = 0.0, // Standard typography baseline start
+                .center => dx = -(min_x + max_x) / 2.0,
+                .right => dx = -max_x,
+            }
+            switch (valign) {
+                .baseline => dy = 0.0, // Standard typography Y=0
+                .bottom => dy = -min_y,
+                .center => dy = -(min_y + max_y) / 2.0,
+                .top => dy = -max_y,
+            }
+
+            if (dx != 0.0 or dy != 0.0) {
+                for (polygons.contours.items) |*c| {
+                    for (c.items) |*pt| {
+                        pt.*[0] += dx;
+                        pt.*[1] += dy;
+                    }
+                }
             }
         }
     }

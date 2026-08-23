@@ -118,8 +118,8 @@ pub fn cube(x: f64, y: f64, z: f64, center: bool) ?*ManifoldObj {
     return manifold_cube(manifold_alloc_manifold(), x, y, z, if (center) 1 else 0);
 }
 
-pub fn cylinder(radius: f64, height: f64, center: bool, segments: i32) ?*ManifoldObj {
-    return manifold_cylinder(manifold_alloc_manifold(), height, radius, radius, @intCast(segments), if (center) 1 else 0);
+pub fn cylinder(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?*ManifoldObj {
+    return manifold_cylinder(manifold_alloc_manifold(), height, r1, r2, @intCast(segments), if (center) 1 else 0);
 }
 
 pub fn sphere(radius: f64) ?*ManifoldObj {

@@ -13,6 +13,8 @@ const GeomOptions = struct {
     y: f64 = 1.0,
     z: f64 = 1.0,
     r: f64 = 1.0,
+    r1: ?f64 = null,
+    r2: ?f64 = null,
     h: f64 = 1.0,
     segments: i32 = 0,
     center: bool = false,
@@ -59,6 +61,14 @@ fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
                         if (v.isNumber()) opts.r = v.asNumber() / 2.0;
                     } else if (std.mem.eql(u8, k_str, "h")) {
                         if (v.isNumber()) opts.h = v.asNumber();
+                    } else if (std.mem.eql(u8, k_str, "r1")) {
+                        if (v.isNumber()) opts.r1 = v.asNumber();
+                    } else if (std.mem.eql(u8, k_str, "r2")) {
+                        if (v.isNumber()) opts.r2 = v.asNumber();
+                    } else if (std.mem.eql(u8, k_str, "d1")) {
+                        if (v.isNumber()) opts.r1 = v.asNumber() / 2.0;
+                    } else if (std.mem.eql(u8, k_str, "d2")) {
+                        if (v.isNumber()) opts.r2 = v.asNumber() / 2.0;
                     } else if (std.mem.eql(u8, k_str, "segments")) {
                         if (v.isNumber()) opts.segments = @intFromFloat(v.asNumber());
                     } else if (std.mem.eql(u8, k_str, "center")) {
@@ -119,11 +129,14 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     if (parsed.pos_count > 1 and args[1].isNumber()) opts.h = args[1].asNumber();
     if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
 
-    // Validate
-    try requirePositive(vm, opts.r, "radius");
+    const r1 = opts.r1 orelse opts.r;
+    const r2 = opts.r2 orelse opts.r;
+
+    try requirePositive(vm, r1, "radius 1");
+    try requirePositive(vm, r2, "radius 2");
     try requirePositive(vm, opts.h, "height");
 
-    const dag_idx = try vm.dag_builder.addCylinder(opts.r, opts.h, opts.center, opts.segments);
+    const dag_idx = try vm.dag_builder.addCylinder(r1, r2, opts.h, opts.center, opts.segments);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
@@ -237,11 +250,13 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     var size: f64 = 10.0; // 10mm tall
     var font_name: []const u8 = "sans";
     var tolerance: f64 = 0.1;
+    var halign: text_mod.HAlign = .left;
+    var valign: text_mod.VAlign = .baseline;
 
     // Positional override for size: text("Hello", 20)
     if (parsed.pos_count > 1 and args[1].isNumber()) size = args[1].asNumber();
 
-    // Keyword overrides: text("Hello", size: 20, font: :mono, tolerance: 0.05)
+    // Keyword overrides: text("Hello", size: 20, font: :mono, tolerance: 0.05, halign: :center, valign: :center)
     if (parsed.kwargs) |kw| {
         if (kw.isObject() and kw.asObj().obj_type == .map) {
             const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", kw.asObj())));
@@ -257,6 +272,19 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
             if (vm.findMapKeyByString(map, "tolerance")) |idx| {
                 if (map.values.items[idx].isNumber()) tolerance = map.values.items[idx].asNumber();
             }
+            if (vm.findMapKeyByString(map, "halign")) |idx| {
+                const h_val = map.values.items[idx];
+                const h_str = if (h_val.isString()) h_val.asString().chars else if (h_val.isSymbol()) h_val.asSymbol().chars else "";
+                if (std.mem.eql(u8, h_str, "center")) halign = .center;
+                if (std.mem.eql(u8, h_str, "right")) halign = .right;
+            }
+            if (vm.findMapKeyByString(map, "valign")) |idx| {
+                const v_val = map.values.items[idx];
+                const v_str = if (v_val.isString()) v_val.asString().chars else if (v_val.isSymbol()) v_val.asSymbol().chars else "";
+                if (std.mem.eql(u8, v_str, "center")) valign = .center;
+                if (std.mem.eql(u8, v_str, "top")) valign = .top;
+                if (std.mem.eql(u8, v_str, "bottom")) valign = .bottom;
+            }
         }
     }
 
@@ -271,7 +299,7 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     };
 
     // Extract Polygons
-    var polygons = text_mod.extractText(vm.allocator, &face, text_str, size, tolerance) catch {
+    var polygons = text_mod.extractText(vm.allocator, &face, text_str, size, tolerance, halign, valign) catch {
         vm.reportError("RuntimeError: Failed to extract text contours.\n", .{});
         return error.RuntimeError;
     };

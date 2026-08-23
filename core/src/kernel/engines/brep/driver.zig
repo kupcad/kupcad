@@ -9,8 +9,9 @@ fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     _ = center;
     return null;
 }
-fn cylinderImpl(radius: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
-    _ = radius;
+fn cylinderImpl(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
+    _ = r1;
+    _ = r2;
     _ = height;
     _ = center;
     _ = segments;

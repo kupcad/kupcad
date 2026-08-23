@@ -14,8 +14,8 @@ pub const BooleanOp = enum {
 pub inline fn cube(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     return manifold_driver.cubeFn(x, y, z, center);
 }
-pub inline fn cylinder(radius: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
-    return manifold_driver.cylinderFn(radius, height, center, segments);
+pub inline fn cylinder(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
+    return manifold_driver.cylinderFn(r1, r2, height, center, segments);
 }
 pub inline fn sphere(radius: f64) ?geom.GeometryHandle {
     return manifold_driver.sphereFn(radius);
@@ -214,7 +214,7 @@ pub inline fn destructCrossSection(handle: geom.CrossSectionHandle) void {
 // Keep the internal v-table struct definition intact for the drivers
 pub const GeometryKernel = struct {
     cubeFn: *const fn (x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle,
-    cylinderFn: *const fn (radius: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle,
+    cylinderFn: *const fn (r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle,
     sphereFn: *const fn (radius: f64) ?geom.GeometryHandle,
     booleanFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle,
     translateFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,

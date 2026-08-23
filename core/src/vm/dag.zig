@@ -92,10 +92,10 @@ pub const DAGBuilder = struct {
         return node_idx;
     }
 
-    pub fn addCylinder(self: *DAGBuilder, radius: f64, height: f64, center: bool, segments: i32) !DAGNodeIndex {
+    pub fn addCylinder(self: *DAGBuilder, r1: f64, r2: f64, height: f64, center: bool, segments: i32) !DAGNodeIndex {
         const alloc = self.allocator();
         const num_idx: u32 = @intCast(self.numbers.items.len);
-        try self.numbers.appendSlice(alloc, &.{ radius, height, @as(f64, @floatFromInt(segments)) });
+        try self.numbers.appendSlice(alloc, &.{ r1, r2, height, @as(f64, @floatFromInt(segments)) });
         const node_idx: u32 = @intCast(self.nodes.items.len);
         try self.nodes.append(alloc, .{ .tag = .cylinder, .flags = if (center) 1 else 0, .data = num_idx });
         return node_idx;
@@ -317,12 +317,13 @@ pub const DAGBuilder = struct {
     pub inline fn getCubeDimensions(self: *const DAGBuilder, node: DAGNode) struct { x: f64, y: f64, z: f64, center: bool } {
         return .{ .x = self.numbers.items[node.data], .y = self.numbers.items[node.data + 1], .z = self.numbers.items[node.data + 2], .center = (node.flags & 1) != 0 };
     }
-    pub inline fn getCylinderPayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64, height: f64, center: bool, segments: i32 } {
+    pub inline fn getCylinderPayload(self: *const DAGBuilder, node: DAGNode) struct { r1: f64, r2: f64, height: f64, center: bool, segments: i32 } {
         return .{
-            .radius = self.numbers.items[node.data],
-            .height = self.numbers.items[node.data + 1],
+            .r1 = self.numbers.items[node.data],
+            .r2 = self.numbers.items[node.data + 1],
+            .height = self.numbers.items[node.data + 2],
             .center = (node.flags & 1) != 0,
-            .segments = @intFromFloat(self.numbers.items[node.data + 2]),
+            .segments = @intFromFloat(self.numbers.items[node.data + 3]),
         };
     }
     pub inline fn getSpherePayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64 } {
