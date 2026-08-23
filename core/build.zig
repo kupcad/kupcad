@@ -77,6 +77,10 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // --- Add tatfi dependency ---
+    const tatfi_dep = b.dependency("tatfi", .{});
+    const tatfi_mod = tatfi_dep.module("tatfi");
+
     // Detect if target is WASM
     const is_wasm = target.result.cpu.arch == .wasm32;
     const is_macos = target.result.os.tag == .macos;
@@ -126,6 +130,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
         .link_libcpp = true,
+        .imports = &.{
+            .{ .name = "tatfi", .module = tatfi_mod },
+        },
     });
 
     mod.addIncludePath(b.path("vendor/Clipper2/CPP/Clipper2Lib/include"));
@@ -175,11 +182,10 @@ pub fn build(b: *std.Build) void {
             }),
         });
 
-        wasm.root_module.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
-
         wasm.entry = .disabled;
         wasm.wasi_exec_model = .reactor;
         wasm.rdynamic = true;
+
         // all mem must be aligned in 65536 bytes (64Kb)
         wasm.initial_memory = 134217728;
         wasm.max_memory = 4294967296;
@@ -200,8 +206,7 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
-        wasm_test.root_module.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
-
+        // all mem must be aligned in 65536 bytes (64Kb)
         wasm_test.initial_memory = 134217728;
         wasm_test.max_memory = 4294967296;
         wasm_test.stack_size = 67108864;
@@ -229,7 +234,6 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
-        exe.root_module.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
         b.installArtifact(exe);
 
         const lib = b.addLibrary(.{
@@ -244,7 +248,6 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
-        lib.root_module.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
         b.installArtifact(lib);
 
         const run_step = b.step("run", "Run the app");
@@ -269,15 +272,17 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&run_mod_tests.step);
         test_step.dependOn(&run_exe_tests.step);
 
-        const gen_grammar_exe = b.addExecutable(.{ .name = "gen_grammar", .root_module = b.createModule(.{
-            .root_source_file = b.path("src/gen_grammar.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "kupcad", .module = mod },
-            },
-        }) });
-        gen_grammar_exe.root_module.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
+        const gen_grammar_exe = b.addExecutable(.{
+            .name = "gen_grammar",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/gen_grammar.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "kupcad", .module = mod },
+                },
+            }),
+        });
 
         const run_gen_grammar = b.addRunArtifact(gen_grammar_exe);
         run_gen_grammar.addArg("../packages/vscode/syntaxes/kupcad.tmLanguage.json");

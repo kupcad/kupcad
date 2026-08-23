@@ -66,7 +66,8 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
         var buf: [1024]u8 = undefined;
         const bytes_read = stdin.readStreaming(vm.io, &.{&buf}) catch return null;
         if (bytes_read == 0) return null;
-        return try vm.allocator.dupe(u8, std.mem.trimRight(u8, buf[0..bytes_read], "\r\n"));
+
+        return try vm.allocator.dupe(u8, std.mem.trimEnd(u8, buf[0..bytes_read], "\r\n"));
     }
 
     const posix = std.posix;
