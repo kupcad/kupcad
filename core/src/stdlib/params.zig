@@ -182,5 +182,5 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
         });
     }
 
-    return value.Value.initNil();
+    return injected_val;
 }
