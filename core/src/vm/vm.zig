@@ -1293,25 +1293,11 @@ pub const VM = struct {
         return null;
     }
 
-    pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize, is_constructor: bool) !void {
-        if (self.frames.items.len >= self.max_call_frames) {
-            self.runtimeError("Runtime Error: Call stack overflow (exceeded max frame depth of {d}).\n", .{self.max_call_frames});
-            return error.RuntimeError;
-        }
-        try self.frames.ensureUnusedCapacity(self.allocator, 1);
-
-        var provided_args = arg_count;
-        var has_block = false;
-
-        if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
-            has_block = true;
-            provided_args -= 1;
-        }
-
-        const block_val = if (has_block) self.pop() else null;
+    inline fn padClosureFrame(self: *VM, closure: *value.ObjClosure, provided_args_in: usize, base_slot: usize, block_val_opt: ?value.Value) !void {
+        var provided_args = provided_args_in;
         const expected_args = closure.function.arity;
 
-        // Pad missing arguments so we strictly match `expected_args`
+        // Pad missing arguments or trim excess
         if (provided_args < expected_args) {
             const missing = expected_args - provided_args;
             try self.ensureStackCapacity(self.stack_top + missing);
@@ -1319,7 +1305,7 @@ pub const VM = struct {
             // Trailing Map Heuristic for skipped Positional Defaults
             if (provided_args > 0) {
                 const last_arg = self.stack[self.stack_top - 1];
-                if (last_arg.isObject() and last_arg.asObj().obj_type == .map) {
+                if (last_arg.isMap()) {
                     const map_val = self.pop();
                     for (0..missing) |_| self.push(value.Value.initNil());
                     self.push(map_val); // Shift the kwargs map to the end
@@ -1354,6 +1340,9 @@ pub const VM = struct {
             }
 
             if (splat_size != 1 and trailing_arity > 0) {
+                std.debug.assert(start_idx + 1 + trailing_arity <= self.stack.len);
+                std.debug.assert(start_idx + splat_size + trailing_arity <= self.stack.len);
+
                 const dest = self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity];
                 const src = self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity];
                 if (@intFromPtr(dest.ptr) > @intFromPtr(src.ptr)) {
@@ -1368,8 +1357,8 @@ pub const VM = struct {
         }
 
         // Restore the implicit block slot
-        if (has_block) {
-            self.push(block_val.?);
+        if (block_val_opt) |block_val| {
+            self.push(block_val);
         } else {
             try self.ensureStackCapacity(self.stack_top + 1);
             self.push(value.Value.initNil());
@@ -1383,8 +1372,27 @@ pub const VM = struct {
             try self.ensureStackCapacity(self.stack_top + locals_to_pad);
             for (0..locals_to_pad) |_| self.push(value.Value.initNil());
         }
+    }
 
-        // --- PROFILER: Start Closure Timer ---
+    pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize, is_constructor: bool) !void {
+        if (self.frames.items.len >= self.max_call_frames) {
+            self.runtimeError("Runtime Error: Call stack overflow (exceeded max frame depth of {d}).\n", .{self.max_call_frames});
+            return error.RuntimeError;
+        }
+        try self.frames.ensureUnusedCapacity(self.allocator, 1);
+
+        var provided_args = arg_count;
+        var block_val: ?value.Value = null;
+
+        // Extract the explicit block if one was passed in the invocation
+        if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
+            block_val = self.pop();
+            provided_args -= 1;
+        }
+
+        // Execute unified padding logic
+        try self.padClosureFrame(closure, provided_args, base_slot, block_val);
+
         if (self.profiler) |p| {
             const func_name = if (closure.function.name) |n| n.chars else "block";
             p.enterFrame(func_name) catch {};
@@ -1406,7 +1414,7 @@ pub const VM = struct {
         try self.frames.ensureUnusedCapacity(self.allocator, 1);
 
         const target_depth = self.frames.items.len;
-        var provided_args = args.len;
+        const provided_args = args.len;
         const expected_args = closure.function.arity;
 
         // Ensure stack capacity for closure, args, padded nils, and the implicit null block
@@ -1419,41 +1427,9 @@ pub const VM = struct {
 
         for (args) |arg| self.push(arg);
 
-        if (provided_args < expected_args) {
-            const missing = expected_args - provided_args;
+        // Native/C++ sync calls don't explicitly push block values, so pass null
+        try self.padClosureFrame(closure, provided_args, base_slot, null);
 
-            // --- Trailing Map Heuristic for C++ Synchronous Calls ---
-            if (provided_args > 0) {
-                const last_arg = self.stack[self.stack_top - 1];
-                if (last_arg.isObject() and last_arg.asObj().obj_type == .map) {
-                    const map_val = self.pop();
-                    for (0..missing) |_| self.push(value.Value.initNil());
-                    self.push(map_val); // Shift the kwargs map to the end
-                } else {
-                    for (0..missing) |_| self.push(value.Value.initNil());
-                }
-            } else {
-                for (0..missing) |_| self.push(value.Value.initNil());
-            }
-        } else if (provided_args > expected_args and closure.function.splat_pos == null) {
-            const excess = provided_args - expected_args;
-            self.popAndRelease(excess);
-            provided_args = expected_args;
-        }
-
-        // Pad the implicit empty block
-        self.push(value.Value.initNil());
-
-        const total_locals = closure.function.local_count;
-        const current_frame_size = self.stack_top - base_slot;
-
-        if (total_locals > current_frame_size) {
-            const locals_to_pad = total_locals - current_frame_size;
-            try self.ensureStackCapacity(self.stack_top + locals_to_pad);
-            for (0..locals_to_pad) |_| self.push(value.Value.initNil());
-        }
-
-        // --- PROFILER: Start Sync Closure Timer ---
         if (self.profiler) |p| {
             const func_name = if (closure.function.name) |n| n.chars else "block";
             p.enterFrame(func_name) catch {};

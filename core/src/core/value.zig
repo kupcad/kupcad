@@ -370,10 +370,12 @@ pub const Value = packed struct {
     pub inline fn asFunction(self: Value) *ObjFunction {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
+
     pub inline fn asRange(self: Value) *ObjRange {
         std.debug.assert(self.isRange());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
+
     pub inline fn asBrep(self: Value) *ObjBrep {
         std.debug.assert(self.isBrep());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
