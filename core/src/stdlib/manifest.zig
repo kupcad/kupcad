@@ -59,6 +59,9 @@ pub const MeshMethod = struct {
 };
 
 pub const mesh_methods = [_]MeshMethod{
+    .{ .name = "union", .category = .csg_operator, .func = common.wrapMethod(methods.meshUnion) },
+    .{ .name = "difference", .category = .csg_operator, .func = common.wrapMethod(methods.meshDifference) },
+    .{ .name = "intersection", .category = .csg_operator, .func = common.wrapMethod(methods.meshIntersection) },
     .{ .name = "translate", .category = .transform, .func = common.wrapMethod(methods.meshTranslate) },
     .{ .name = "rotate", .category = .transform, .func = common.wrapMethod(methods.meshRotate) },
     .{ .name = "scale", .category = .transform, .func = common.wrapMethod(methods.meshScale) },

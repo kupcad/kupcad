@@ -6794,3 +6794,58 @@ test "VM: Profiler traces scripts, closures, and native calls seamlessly" {
     // Ensure the runtime Unwind was graceful and didn't leave dangling timer frames
     try testing.expectEqual(@as(usize, 0), profiler.timer_stack.items.len);
 }
+
+test "VM: Fluent CSG method chaining on 3D geometry" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // script: cube(10).union(sphere(5)).difference(cylinder(r: 2, h: 20))
+    const source =
+        \\c = cube(10)
+        \\s = sphere(5)
+        \\cyl = cylinder(r: 2, h: 20)
+        \\c.union(s).difference(cyl)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+    try testing.expect(vm.stack[0].isGeometry());
+}
+
+test "VM: Fluent CSG method chaining on 2D cross sections" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // script: square(10).intersection(circle(6))
+    const source =
+        \\sq = square(10)
+        \\circ = circle(6)
+        \\sq.intersection(circ)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+    try testing.expect(vm.stack[0].isCrossSection());
+}
