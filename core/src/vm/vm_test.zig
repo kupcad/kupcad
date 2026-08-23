@@ -8,6 +8,7 @@ const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const Document = @import("../core/document.zig").Document;
+const Profiler = @import("profiler.zig").Profiler;
 const geom = @import("../kernel/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
 
@@ -6738,4 +6739,58 @@ test "VM: Destructuring assignments route correctly to Class Variables via emitV
 
     // 100 * 50 = 5000
     try testing.expectEqual(@as(f64, 5000.0), result.asNumber());
+}
+
+test "VM: Profiler traces scripts, closures, and native calls seamlessly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Register standard library so `Math.sin` is available natively
+    try registry.registerStandardLibrary(&vm);
+
+    // Initialize and attach the profiler using the Io-aware signature
+    var profiler = Profiler.init(testing.allocator, testing.io);
+    defer profiler.deinit();
+    vm.profiler = &profiler;
+
+    // A script designed to trigger all 3 profiler paths:
+    // 1. "script" (Top-level VM interpretation)
+    // 2. "math_heavy" (User-defined closure dispatch)
+    // 3. "sin" (Native C++ / standard library FFI execution)
+    const source =
+        \\def math_heavy(iters)
+        \\  Math.sin(iters)
+        \\end
+        \\
+        \\math_heavy(5)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Execute with profiler actively tracing
+    const result = vm.interpret(&out_chunk);
+
+    // Ensure execution succeeded
+    try testing.expectEqual(.ok, result);
+
+    // Validate that all three function scopes were intercepted and recorded
+    try testing.expect(profiler.stats.contains("script"));
+    try testing.expect(profiler.stats.contains("math_heavy"));
+    try testing.expect(profiler.stats.contains("sin"));
+
+    // Verify execution metrics were collected
+    const math_stats = profiler.stats.get("math_heavy").?;
+    try testing.expect(math_stats.call_count == 1);
+    try testing.expect(math_stats.total_time_ns >= math_stats.self_time_ns);
+
+    // Ensure the runtime Unwind was graceful and didn't leave dangling timer frames
+    try testing.expectEqual(@as(usize, 0), profiler.timer_stack.items.len);
 }

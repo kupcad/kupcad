@@ -1,11 +1,172 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const value = @import("../core/value.zig");
 const chunk = @import("../vm/chunk.zig");
 const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const VM = @import("../vm/vm.zig").VM;
 
-fn printLocals(vm: *VM, stdout: anytype) void {
+// --- Data-Oriented History Buffer ---
+const History = struct {
+    chars: std.ArrayListUnmanaged(u8) = .empty,
+    line_starts: std.ArrayListUnmanaged(usize) = .empty,
+
+    pub fn push(self: *History, alloc: std.mem.Allocator, line: []const u8) !void {
+        if (line.len == 0) return;
+
+        if (self.line_starts.items.len > 0) {
+            const last_start = self.line_starts.items[self.line_starts.items.len - 1];
+            const last_line = self.chars.items[last_start..];
+            if (std.mem.eql(u8, last_line, line)) return;
+        }
+
+        try self.line_starts.append(alloc, self.chars.items.len);
+        try self.chars.appendSlice(alloc, line);
+    }
+
+    pub fn get(self: *const History, index: usize) []const u8 {
+        const start = self.line_starts.items[index];
+        const end = if (index + 1 < self.line_starts.items.len)
+            self.line_starts.items[index + 1]
+        else
+            self.chars.items.len;
+        return self.chars.items[start..end];
+    }
+
+    pub fn count(self: *const History) usize {
+        return self.line_starts.items.len;
+    }
+
+    pub fn deinit(self: *History, alloc: std.mem.Allocator) void {
+        self.chars.deinit(alloc);
+        self.line_starts.deinit(alloc);
+    }
+};
+
+// --- Raw Terminal Line Editor ---
+fn refreshLine(vm: *VM, stdout: std.Io.File, prompt: []const u8, buf: []const u8, cursor: usize) !void {
+    stdout.writeStreamingAll(vm.io, "\r\x1b[2K") catch {}; // Clear line
+    stdout.writeStreamingAll(vm.io, prompt) catch {};
+    stdout.writeStreamingAll(vm.io, buf) catch {};
+
+    if (buf.len > cursor) {
+        var ansi_buf: [32]u8 = undefined;
+        if (std.fmt.bufPrint(&ansi_buf, "\x1b[{d}D", .{buf.len - cursor})) |msg| {
+            stdout.writeStreamingAll(vm.io, msg) catch {};
+        } else |_| {}
+    }
+}
+
+fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
+    const stdin = std.Io.File.stdin();
+    const stdout = std.Io.File.stdout();
+
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
+        stdout.writeStreamingAll(vm.io, prompt) catch {};
+        var buf: [1024]u8 = undefined;
+        const bytes_read = stdin.readStreaming(vm.io, &.{&buf}) catch return null;
+        if (bytes_read == 0) return null;
+        return try vm.allocator.dupe(u8, std.mem.trimRight(u8, buf[0..bytes_read], "\r\n"));
+    }
+
+    const posix = std.posix;
+    const stdin_fd = posix.STDIN_FILENO;
+
+    // Enable Raw Terminal Mode using Zig 0.16 strongly-typed flags
+    const orig_termios_opt = posix.tcgetattr(stdin_fd) catch null;
+    if (orig_termios_opt) |orig| {
+        var raw = orig;
+        raw.lflag.ICANON = false;
+        raw.lflag.ECHO = false;
+        posix.tcsetattr(stdin_fd, .FLUSH, raw) catch {};
+    }
+    defer {
+        if (orig_termios_opt) |orig| {
+            posix.tcsetattr(stdin_fd, .FLUSH, orig) catch {};
+        }
+    }
+
+    var buf: [1024]u8 = undefined;
+    var len: usize = 0;
+    var cursor: usize = 0;
+    var hist_idx: usize = history.count();
+
+    try refreshLine(vm, stdout, prompt, buf[0..len], cursor);
+
+    while (true) {
+        var b_buf: [1]u8 = undefined;
+        const n = stdin.readStreaming(vm.io, &.{&b_buf}) catch return null;
+        if (n == 0) return null;
+        const c = b_buf[0];
+
+        if (c == '\n' or c == '\r') {
+            stdout.writeStreamingAll(vm.io, "\n") catch {};
+            return try vm.allocator.dupe(u8, buf[0..len]);
+        } else if (c == 3 or c == 4) { // Ctrl+C or Ctrl+D
+            stdout.writeStreamingAll(vm.io, "\n") catch {};
+            return null;
+        } else if (c == 127 or c == 8) { // Backspace
+            if (cursor > 0) {
+                std.mem.copyForwards(u8, buf[cursor - 1 .. len - 1], buf[cursor..len]);
+                len -= 1;
+                cursor -= 1;
+                try refreshLine(vm, stdout, prompt, buf[0..len], cursor);
+            }
+        } else if (c == 27) { // ANSI Escape sequence parsing
+            var seq1: [1]u8 = undefined;
+            if ((stdin.readStreaming(vm.io, &.{&seq1}) catch 0) == 1 and seq1[0] == '[') {
+                var seq2: [1]u8 = undefined;
+                if ((stdin.readStreaming(vm.io, &.{&seq2}) catch 0) == 1) {
+                    if (seq2[0] == 'A') { // Up Arrow
+                        if (hist_idx > 0) {
+                            hist_idx -= 1;
+                            const h = history.get(hist_idx);
+                            @memcpy(buf[0..h.len], h);
+                            len = h.len;
+                            cursor = h.len;
+                            try refreshLine(vm, stdout, prompt, buf[0..len], cursor);
+                        }
+                    } else if (seq2[0] == 'B') { // Down Arrow
+                        if (hist_idx < history.count()) {
+                            hist_idx += 1;
+                            if (hist_idx == history.count()) {
+                                len = 0;
+                                cursor = 0;
+                            } else {
+                                const h = history.get(hist_idx);
+                                @memcpy(buf[0..h.len], h);
+                                len = h.len;
+                                cursor = h.len;
+                            }
+                            try refreshLine(vm, stdout, prompt, buf[0..len], cursor);
+                        }
+                    } else if (seq2[0] == 'C') { // Right Arrow
+                        if (cursor < len) {
+                            cursor += 1;
+                            try refreshLine(vm, stdout, prompt, buf[0..len], cursor);
+                        }
+                    } else if (seq2[0] == 'D') { // Left Arrow
+                        if (cursor > 0) {
+                            cursor -= 1;
+                            try refreshLine(vm, stdout, prompt, buf[0..len], cursor);
+                        }
+                    }
+                }
+            }
+        } else if (c >= 32 and c < 127) { // Standard printable characters
+            if (len < buf.len) {
+                std.mem.copyBackwards(u8, buf[cursor + 1 .. len + 1], buf[cursor..len]);
+                buf[cursor] = c;
+                len += 1;
+                cursor += 1;
+                try refreshLine(vm, stdout, prompt, buf[0..len], cursor);
+            }
+        }
+    }
+}
+
+fn printLocals(vm: *VM) void {
+    const stdout = std.Io.File.stdout();
     var out: std.Io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
     out.writer.writeAll("--- Locals ---\n") catch {};
@@ -16,7 +177,6 @@ fn printLocals(vm: *VM, stdout: anytype) void {
             const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(c_ptr)));
             const locals = exec_chunk.local_names.items;
             for (locals, 0..) |name, i| {
-                // Hide padding slots and anonymous variables from the user
                 if (std.mem.eql(u8, name, "<anonymous>")) continue;
                 const slot = frame.base_slot + i;
                 if (slot < vm.stack_top) {
@@ -31,7 +191,8 @@ fn printLocals(vm: *VM, stdout: anytype) void {
     stdout.writeStreamingAll(vm.io, out.written()) catch {};
 }
 
-fn printStack(vm: *VM, stdout: anytype) void {
+fn printStack(vm: *VM) void {
+    const stdout = std.Io.File.stdout();
     var out: std.Io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
     out.writer.writeAll("--- VM Stack ---\n") catch {};
@@ -46,7 +207,8 @@ fn printStack(vm: *VM, stdout: anytype) void {
     stdout.writeStreamingAll(vm.io, out.written()) catch {};
 }
 
-fn printGlobals(vm: *VM, stdout: anytype) void {
+fn printGlobals(vm: *VM) void {
+    const stdout = std.Io.File.stdout();
     var out: std.Io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
     out.writer.writeAll("--- User Globals ---\n") catch {};
@@ -54,11 +216,7 @@ fn printGlobals(vm: *VM, stdout: anytype) void {
     var it = vm.globals.iterator();
     while (it.next()) |entry| {
         const val = entry.value_ptr.*;
-
-        // Filter out the standard library to reduce noise
         if (val.isNative() or val.isClass() or val.isModule()) continue;
-
-        // Hide standard library singletons
         if (std.mem.eql(u8, entry.key_ptr.*, "GC") or std.mem.eql(u8, entry.key_ptr.*, "Math")) continue;
 
         out.writer.print("{s}: ", .{entry.key_ptr.*}) catch {};
@@ -69,7 +227,8 @@ fn printGlobals(vm: *VM, stdout: anytype) void {
     stdout.writeStreamingAll(vm.io, out.written()) catch {};
 }
 
-fn evaluateContextually(vm: *VM, input: []const u8, stdout: anytype) void {
+fn evaluateContextually(vm: *VM, input: []const u8) void {
+    const stdout = std.Io.File.stdout();
     var doc = Document.parse(vm.allocator, input) catch {
         stdout.writeStreamingAll(vm.io, "Parse error.\n") catch {};
         return;
@@ -87,7 +246,6 @@ fn evaluateContextually(vm: *VM, input: []const u8, stdout: anytype) void {
     var comp = Compiler.init(vm.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &eval_chunk, vm);
     defer comp.deinit();
 
-    // 1. Resolve Caller's State
     const caller_frame = &vm.frames.items[vm.frames.items.len - 1];
     var caller_locals: []const []const u8 = &.{};
     if (caller_frame.closure.function.chunk) |c_ptr| {
@@ -95,7 +253,6 @@ fn evaluateContextually(vm: *VM, input: []const u8, stdout: anytype) void {
         caller_locals = caller_chunk.local_names.items;
     }
 
-    // 2. Seed Compiler (Offset 1 because slot 0 is reserved for the REPL closure)
     comp.seedLocals(caller_locals, 1);
     comp.compile(doc.tree.root) catch |err| {
         var err_buf: [128]u8 = undefined;
@@ -104,7 +261,6 @@ fn evaluateContextually(vm: *VM, input: []const u8, stdout: anytype) void {
         return;
     };
 
-    // 3. Execution Setup
     const func = vm.gc.allocateFunction(vm) catch return;
     func.chunk = &eval_chunk;
     func.owns_chunk = false;
@@ -116,7 +272,6 @@ fn evaluateContextually(vm: *VM, input: []const u8, stdout: anytype) void {
 
     vm.push(value.Value.initObj(&closure.obj));
 
-    // 4. COPY IN: Copy caller's locals into the new REPL frame
     for (0..caller_locals.len) |i| {
         if (caller_frame.base_slot + i < repl_base_slot) {
             vm.push(vm.stack[caller_frame.base_slot + i]);
@@ -125,7 +280,6 @@ fn evaluateContextually(vm: *VM, input: []const u8, stdout: anytype) void {
         }
     }
 
-    // 5. Pad any new locals the REPL declared
     const copied_slots = caller_locals.len + 1;
     if (func.local_count > copied_slots) {
         const padding = func.local_count - copied_slots;
@@ -133,14 +287,12 @@ fn evaluateContextually(vm: *VM, input: []const u8, stdout: anytype) void {
         for (0..padding) |_| vm.push(value.Value.initNil());
     }
 
-    // 6. Execute REPL
     vm.frames.append(vm.allocator, .{
         .closure = closure,
         .ip = 0,
         .base_slot = repl_base_slot,
     }) catch return;
 
-    // Disable step mode temporarily inside REPL eval to prevent infinite recursion
     const saved_step = vm.step_mode;
     vm.step_mode = false;
     const res = vm.runUntil(target_depth);
@@ -149,7 +301,6 @@ fn evaluateContextually(vm: *VM, input: []const u8, stdout: anytype) void {
     if (res == .ok) {
         const result_val = vm.pop();
 
-        // 7. COPY OUT: Sync mutated locals back to the caller!
         for (0..caller_locals.len) |i| {
             if (caller_frame.base_slot + i < repl_base_slot) {
                 vm.stack[caller_frame.base_slot + i] = vm.stack[repl_base_slot + 1 + i];
@@ -165,18 +316,15 @@ fn evaluateContextually(vm: *VM, input: []const u8, stdout: anytype) void {
         stdout.writeStreamingAll(vm.io, "Evaluation failed.\n") catch {};
     }
 
-    // 8. Clean up REPL frame memory footprint
     vm.shrinkStack(repl_base_slot);
 }
 
 pub fn debuggerLoop(vm: *VM) void {
-    const stdin = std.Io.File.stdin();
     const stdout = std.Io.File.stdout();
 
     stdout.writeStreamingAll(vm.io, "\n===   KupCAD Debugger ===\n") catch {};
     stdout.writeStreamingAll(vm.io, "Commands: .step, .continue, .locals, .stack, .globals, .help\n") catch {};
 
-    // Print current line context
     if (vm.frames.items.len > 0) {
         const frame = &vm.frames.items[vm.frames.items.len - 1];
         if (frame.closure.function.chunk) |chunk_ptr| {
@@ -194,48 +342,51 @@ pub fn debuggerLoop(vm: *VM) void {
         }
     }
 
-    var buf: [1024]u8 = undefined;
+    var history = History{};
+    defer history.deinit(vm.allocator);
+
     while (true) {
-        stdout.writeStreamingAll(vm.io, "(dbg) > ") catch {};
-        const bytes_read = stdin.readStreaming(vm.io, &.{&buf}) catch |err| {
+        const input_opt = readLine(vm, "(dbg) > ", &history) catch |err| {
             std.log.err("Debugger input error: {}", .{err});
             break;
         };
-        if (bytes_read == 0) break; // EOF (Ctrl+D)
 
-        const input = std.mem.trim(u8, buf[0..bytes_read], " \r\n\t");
-        if (input.len == 0) continue;
+        if (input_opt == null) break;
 
-        // --- COMMAND ROUTER ---
-        if (std.mem.eql(u8, input, ".c") or std.mem.eql(u8, input, ".continue")) {
+        const input = input_opt.?;
+        defer vm.allocator.free(input);
+
+        const trimmed = std.mem.trim(u8, input, " \r\n\t");
+        if (trimmed.len == 0) continue;
+
+        history.push(vm.allocator, trimmed) catch {};
+
+        if (std.mem.eql(u8, trimmed, ".c") or std.mem.eql(u8, trimmed, ".continue")) {
             stdout.writeStreamingAll(vm.io, "Resuming execution...\n\n") catch {};
             vm.step_mode = false;
             break;
-        } else if (std.mem.eql(u8, input, ".s") or std.mem.eql(u8, input, ".step")) {
+        } else if (std.mem.eql(u8, trimmed, ".s") or std.mem.eql(u8, trimmed, ".step")) {
             vm.step_mode = true;
             break;
-        } else if (std.mem.eql(u8, input, ".q") or std.mem.eql(u8, input, ".exit") or std.mem.eql(u8, input, ".quit")) {
+        } else if (std.mem.eql(u8, trimmed, ".q") or std.mem.eql(u8, trimmed, ".exit") or std.mem.eql(u8, trimmed, ".quit")) {
             stdout.writeStreamingAll(vm.io, "Exiting KupCAD...\n") catch {};
             std.process.exit(0);
-        } else if (std.mem.eql(u8, input, ".l") or std.mem.eql(u8, input, ".locals")) {
-            printLocals(vm, stdout);
-        } else if (std.mem.eql(u8, input, ".st") or std.mem.eql(u8, input, ".stack")) {
-            printStack(vm, stdout);
-        } else if (std.mem.eql(u8, input, ".g") or std.mem.eql(u8, input, ".globals")) {
-            printGlobals(vm, stdout);
-        } else if (std.mem.eql(u8, input, ".h") or std.mem.eql(u8, input, ".help")) {
-            stdout.writeStreamingAll(vm.io, "Commands:\n  .s, .step      Step to next line\n  .c, .continue  Resume execution\n  .l, .locals    Print local variables\n  .st, .stack    Print VM stack\n  .g, .globals   Print global variables\n  .q, .exit      Quit program\n  <expr>         Evaluate KupCAD expression (e.g. 'c', 'width * 2')\n") catch {};
+        } else if (std.mem.eql(u8, trimmed, ".l") or std.mem.eql(u8, trimmed, ".locals")) {
+            printLocals(vm);
+        } else if (std.mem.eql(u8, trimmed, ".st") or std.mem.eql(u8, trimmed, ".stack")) {
+            printStack(vm);
+        } else if (std.mem.eql(u8, trimmed, ".g") or std.mem.eql(u8, trimmed, ".globals")) {
+            printGlobals(vm);
+        } else if (std.mem.eql(u8, trimmed, ".h") or std.mem.eql(u8, trimmed, ".help")) {
+            stdout.writeStreamingAll(vm.io, "Commands:\n  .s, .step      Step to next line\n  .c, .continue  Resume execution\n  .l, .locals    Print local variables\n  .st, .stack    Print VM stack\n  .g, .globals   Print User Globals\n  .q, .exit      Quit program\n  <expr>         Evaluate expression (e.g. 'c', 'width * 2')\n") catch {};
         } else {
-            // Evaluate standard script variables and expressions!
-            evaluateContextually(vm, input, stdout);
+            evaluateContextually(vm, trimmed);
         }
     }
 }
 
 pub fn nativeDebugger(vm: *VM) !value.Value {
-    // Lazy-bind the step handler so the VM calls this loop automatically on line boundaries
     vm.debugger_step_handler = debuggerLoop;
-
     debuggerLoop(vm);
     return value.Value.initNil();
 }
