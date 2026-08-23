@@ -159,24 +159,40 @@ test "VM: Closure invocation pads missing arguments with nil natively" {
     try testing.expect(vm.stack[0].isNil());
 }
 
-test "WASM Interop: build_stl_wasm evaluates geometry, anchors Manifold, and returns binary STL" {
+test "WASM Interop: build_model_wasm evaluates geometry and exports requested formats" {
     // A simple script that generates a standard cube
     const src = "cube(10)";
+    const stl_fmt = "stl";
+    const glb_fmt = "glb";
 
-    var out_len: usize = 0;
-    const res_ptr = wasm.build_stl_wasm(src.ptr, src.len, &out_len);
+    // Test STL export via WASM
+    var stl_len: usize = 0;
+    const stl_ptr = wasm.build_model_wasm(src.ptr, src.len, stl_fmt.ptr, stl_fmt.len, &stl_len);
 
     // The build should successfully yield a pointer to memory
-    try testing.expect(res_ptr != null);
+    try testing.expect(stl_ptr != null);
 
     // An STL file must have an 80 byte header + 4 byte count + triangles.
     // A cube has exactly 12 triangles (50 bytes each), so size = 84 + (12 * 50) = 684 bytes
-    try testing.expectEqual(@as(usize, 684), out_len);
+    try testing.expectEqual(@as(usize, 684), stl_len);
 
-    const stl_bytes = res_ptr.?[0..out_len];
+    const stl_bytes = stl_ptr.?[0..stl_len];
     const tri_count = std.mem.readInt(u32, stl_bytes[80..84], .little);
     try testing.expectEqual(@as(u32, 12), tri_count);
 
     // Ensure we don't leak memory in the test environment
-    wasm.wasm_free(@constCast(res_ptr.?), out_len);
+    wasm.wasm_free(@constCast(stl_ptr.?), stl_len);
+
+    // Test GLB export via WASM
+    var glb_len: usize = 0;
+    const glb_ptr = wasm.build_model_wasm(src.ptr, src.len, glb_fmt.ptr, glb_fmt.len, &glb_len);
+
+    try testing.expect(glb_ptr != null);
+    try testing.expect(glb_len > 20);
+
+    const glb_bytes = glb_ptr.?[0..glb_len];
+    const magic = std.mem.readInt(u32, glb_bytes[0..4], .little);
+    try testing.expectEqual(@as(u32, 0x46546C67), magic); // "glTF"
+
+    wasm.wasm_free(@constCast(glb_ptr.?), glb_len);
 }

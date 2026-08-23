@@ -83,8 +83,8 @@ fn inner_extract_params(allocator: std.mem.Allocator, source: []const u8) ![]con
     return try out.toOwnedSlice();
 }
 
-fn inner_build_stl(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
-    return try api.buildStl(allocator, undefined, source, null);
+fn inner_build_model(allocator: std.mem.Allocator, source: []const u8, format: []const u8) ![]const u8 {
+    return try api.buildModel(allocator, undefined, source, format, null);
 }
 
 // --- WASM Export Boundaries ---
@@ -127,17 +127,27 @@ pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize) ?[*]co
     }
 }
 
-/// Builds an STL from a KupCAD script.
-/// Returns a pointer to the STL bytes, and populates `out_len`.
+/// Builds a 3D model from a KupCAD script in the specified format ("stl", "glb", "gltf").
+/// Returns a pointer to the model bytes, and populates `out_len`.
 /// The caller MUST free the pointer using `wasm_free(ptr, out_len)`.
-pub export fn build_stl_wasm(source_ptr: [*]const u8, source_len: usize, out_len: *usize) ?[*]const u8 {
+pub export fn build_model_wasm(
+    source_ptr: [*]const u8,
+    source_len: usize,
+    format_ptr: [*]const u8,
+    format_len: usize,
+    out_len: *usize,
+) ?[*]const u8 {
     const source = source_ptr[0..source_len];
-    if (inner_build_stl(std.heap.wasm_allocator, source)) |res| {
+    const format = format_ptr[0..format_len];
+
+    if (inner_build_model(std.heap.wasm_allocator, source, format)) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |err| {
         if (err == error.SyntaxError) {
             last_error_msg = "Syntax Error\x00".ptr;
+        } else if (err == error.UnsupportedFormat) {
+            last_error_msg = "Unsupported Format\x00".ptr;
         } else {
             last_error_msg = "Build Error\x00".ptr;
         }

@@ -167,7 +167,7 @@
       "name": "keyword.control.kupcad"
     },
     "builtins": {
-      "match": "(?<![\\\\w])(puts|print|inspect|debugger|param|import_stl|export_stl|import_step|export_step)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(puts|print|inspect|debugger|param|import_stl|export_stl|import_step|export_step|export_gltf)(?![\\\\w?!])",
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {
@@ -183,7 +183,7 @@
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\\\w])(translate|rotate|scale|extrude|revolve|hull|trim_by_plane|minkowski|offset|transform)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|mirror|extrude|revolve|hull|trim_by_plane|minkowski|offset|transform|material)(?![\\\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {

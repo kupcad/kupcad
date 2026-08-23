@@ -89,7 +89,7 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
 
 /// Compiles and evaluates a KupCAD script, returning the binary buffer for the requested format.
 /// Supports formats: "stl", "glb", "gltf".
-/// The caller owns the returned slice and must free it
+/// The caller owns the returned slice and must free it.
 pub fn buildModel(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -143,11 +143,6 @@ pub fn buildModel(
     } else {
         return error.UnsupportedFormat;
     }
-}
-
-/// Convenience wrapper for backward compatibility.
-pub fn buildStl(allocator: std.mem.Allocator, io: std.Io, source: []const u8, cli_params: ?std.StringHashMap(f64)) ![]const u8 {
-    return buildModel(allocator, io, source, "stl", cli_params);
 }
 
 /// Safely frees an array of LinterDiagnostics and their inner allocated strings.

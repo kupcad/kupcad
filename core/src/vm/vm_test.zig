@@ -7312,3 +7312,50 @@ test "VM: Export GLTF generates valid .glb file with extensions" {
     const magic = std.mem.readInt(u32, header_bytes[0..4], .little);
     try testing.expectEqual(@as(u32, 0x46546C67), magic); // "glTF"
 }
+
+test "STL Importer: imports exported binary STL and evaluates valid volume" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const test_path = "import_test.stl";
+
+    // Export a 10x10x10 cube (Volume = 1000)
+    const export_source = "export_stl(\"import_test.stl\", cube(10))";
+    var doc_export = try Document.parse(testing.allocator, export_source);
+    defer doc_export.deinit();
+
+    var chunk_export = chunk.Chunk.init();
+    defer chunk_export.free(testing.allocator);
+
+    var comp_export = Compiler.init(testing.allocator, &doc_export.tree, doc_export.symbols, doc_export.tokens.starts, &chunk_export, &vm);
+    defer comp_export.deinit();
+    try comp_export.compile(doc_export.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &chunk_export, 1);
+
+    // Clean up file on exit
+    defer {
+        const cwd = std.Io.Dir.cwd();
+        cwd.deleteFile(testing.io, test_path) catch {};
+    }
+
+    // Now import the STL and check its volume
+    const import_source =
+        \\imported = import_stl("import_test.stl")
+        \\imported.volume()
+    ;
+    var doc_import = try Document.parse(testing.allocator, import_source);
+    defer doc_import.deinit();
+
+    var chunk_import = chunk.Chunk.init();
+    defer chunk_import.free(testing.allocator);
+
+    var comp_import = Compiler.init(testing.allocator, &doc_import.tree, doc_import.symbols, doc_import.tokens.starts, &chunk_import, &vm);
+    defer comp_import.deinit();
+    try comp_import.compile(doc_import.tree.root);
+
+    const vol_val = try executeAndAssertStack(&vm, &chunk_import, 1);
+    try testing.expect(vol_val.isNumber());
+    try testing.expectApproxEqAbs(1000.0, vol_val.asNumber(), 0.01);
+}
