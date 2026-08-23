@@ -367,6 +367,9 @@ pub const Value = packed struct {
         std.debug.assert(self.isObject() and self.asObj().obj_type == .symbol);
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
+    pub inline fn asFunction(self: Value) *ObjFunction {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
     pub inline fn asRange(self: Value) *ObjRange {
         std.debug.assert(self.isRange());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));

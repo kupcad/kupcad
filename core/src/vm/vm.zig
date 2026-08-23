@@ -378,7 +378,7 @@ pub const VM = struct {
                     const target = self.pop();
 
                     if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
-                        const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
+                        const arr = target.asArray();
                         if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
                             self.push(arr.items.items[idx]);
                         } else |_| {
@@ -386,7 +386,7 @@ pub const VM = struct {
                             continue;
                         }
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
-                        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
+                        const map = target.asMap();
                         if (self.findMapKey(map, index)) |i| {
                             self.push(map.values.items[i]);
                         } else {
@@ -403,7 +403,7 @@ pub const VM = struct {
                     const target = self.pop();
 
                     if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
-                        const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target.asObj())));
+                        const arr = target.asArray();
                         if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
                             arr.items.items[idx] = val;
                             self.push(val);
@@ -412,7 +412,7 @@ pub const VM = struct {
                             continue;
                         }
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
-                        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target.asObj())));
+                        const map = target.asMap();
 
                         self.mapSet(map, index, val) catch return .runtime_error;
                         self.push(val);
@@ -533,16 +533,16 @@ pub const VM = struct {
                 .op_array_push => {
                     const val = self.pop();
                     const arr_val = self.stack[self.stack_top - 1];
-                    const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+                    const arr = arr_val.asArray();
                     arr.items.append(self.allocator, val) catch return .runtime_error;
                 },
                 .op_array_spread => {
                     const source_val = self.pop();
                     const target_val = self.stack[self.stack_top - 1];
-                    const target_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", target_val.asObj())));
+                    const target_arr = target_val.asArray();
 
                     if (source_val.isObject() and source_val.asObj().obj_type == .array) {
-                        const source_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", source_val.asObj())));
+                        const source_arr = source_val.asArray();
                         for (source_arr.items.items) |item| {
                             target_arr.items.append(self.allocator, item) catch return .runtime_error;
                         }
@@ -555,17 +555,17 @@ pub const VM = struct {
                     const val = self.pop();
                     const key = self.pop();
                     const map_val = self.stack[self.stack_top - 1];
-                    const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", map_val.asObj())));
+                    const map = map_val.asMap();
 
                     self.mapSet(map, key, val) catch return .runtime_error;
                 },
                 .op_map_spread => {
                     const source_val = self.pop();
                     const target_val = self.stack[self.stack_top - 1];
-                    const target_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", target_val.asObj())));
+                    const target_map = target_val.asMap();
 
                     if (source_val.isObject() and source_val.asObj().obj_type == .map) {
-                        const source_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", source_val.asObj())));
+                        const source_map = source_val.asMap();
                         for (source_map.keys.items, 0..) |key, i| {
                             const val = source_map.values.items[i];
 
@@ -624,7 +624,7 @@ pub const VM = struct {
                     const path_val = exec_chunk.constants.items[path_idx];
 
                     if (self.host.import_handler) |handler| {
-                        const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", path_val.asObj())));
+                        const str_obj = path_val.asString();
                         const module_obj = handler(self, str_obj.chars) catch return .runtime_error;
                         self.push(module_obj);
                     } else {
@@ -683,7 +683,7 @@ pub const VM = struct {
                 .op_closure, .op_closure_wide => {
                     const func_idx = self.readOperand(exec_chunk, frame, op == .op_closure_wide);
                     const func_val = exec_chunk.constants.items[func_idx];
-                    const func_obj = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", func_val.asObj())));
+                    const func_obj = func_val.asFunction();
 
                     const closure = self.gc.allocateClosure(self, func_obj) catch return .runtime_error;
                     const closure_val = value.Value.initObj(&closure.obj);
@@ -739,7 +739,7 @@ pub const VM = struct {
                     const val = self.pop();
 
                     if (val.isObject() and val.asObj().obj_type == .array) {
-                        const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", val.asObj())));
+                        const arr = val.asArray();
                         for (0..count) |i| {
                             // If the array doesn't have enough items, pad with nil
                             if (i < arr.items.items.len) {
@@ -1114,7 +1114,7 @@ pub const VM = struct {
                         const map_val = self.stack[frame.base_slot + map_slot];
                         if (map_val.isObject() and map_val.asObj().obj_type == .map) {
                             const name_val = exec_chunk.constants.items[name_idx];
-                            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", map_val.asObj())));
+                            const map = map_val.asMap();
 
                             // Use findMapKey natively
                             if (self.findMapKey(map, name_val)) |i| {
@@ -1278,6 +1278,16 @@ pub const VM = struct {
                 if (mod.methods.get(name)) |method| return method;
             }
 
+            current = c.superclass;
+        }
+        return null;
+    }
+
+    pub fn findClassMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {
+        _ = self;
+        var current: ?*value.ObjClass = class;
+        while (current) |c| {
+            if (c.class_methods.get(name)) |method| return method;
             current = c.superclass;
         }
         return null;
@@ -1504,8 +1514,8 @@ pub const VM = struct {
             self.push(value.Value.initNumber(res));
             return .ok;
         } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .string and b_val.asObj().obj_type == .string) {
-            const a_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", a_val.asObj()))).chars;
-            const b_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", b_val.asObj()))).chars;
+            const a_str = a_val.asString().chars;
+            const b_str = b_val.asString().chars;
 
             // Allocates a brand new slice on the heap.
             const merged = std.fmt.allocPrint(self.allocator, "{s}{s}", .{ a_str, b_str }) catch return .runtime_error;
@@ -1516,8 +1526,8 @@ pub const VM = struct {
             self.push(str_val);
             return .ok;
         } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .array and b_val.asObj().obj_type == .array) {
-            const a_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", a_val.asObj())));
-            const b_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", b_val.asObj())));
+            const a_arr = a_val.asArray();
+            const b_arr = b_val.asArray();
             const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
             const new_val = value.Value.initObj(&new_arr.obj);
             new_arr.items.ensureTotalCapacity(self.allocator, a_arr.items.items.len + b_arr.items.items.len) catch return .runtime_error;
@@ -1570,16 +1580,19 @@ pub const VM = struct {
         const arg_count = exec_chunk.code.items[frame.ip];
         frame.ip += 1;
 
+        // Prevent usize underflow if stack is corrupted
         std.debug.assert(self.stack_top > arg_count);
 
+        // Read IC
         const ic = self.readInlineCache(exec_chunk, frame);
         const base_slot = self.stack_top - 1 - arg_count;
         const receiver = self.stack[base_slot];
         const args_ptr = self.stack.ptr + base_slot + 1;
 
+        // Resolve Class of Receiver seamlessly
         const class_obj: ?*value.ObjClass = self.getClass(receiver);
 
-        // --- 1. METHOD LOOKUP ---
+        // --- 1. METHOD LOOKUP (DRY) ---
         var method_val: ?value.Value = null;
         var is_private_call = false;
 
@@ -1587,7 +1600,7 @@ pub const VM = struct {
             if (std.mem.eql(u8, method_name_str, "new")) {
                 const class_to_instantiate = receiver.asClass();
                 const instance = self.gc.allocateInstance(self, class_to_instantiate) catch return .runtime_error;
-                self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj);
+                self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
 
                 if (self.findMethod(class_to_instantiate, "initialize")) |init_method| {
                     if (init_method.isClosure()) {
@@ -1613,6 +1626,7 @@ pub const VM = struct {
             // Fallback to Object methods (so Class.responds_to? works)
             if (method_val == null and self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_str);
         } else if (receiver.isModule()) {
+            // Fallback to Object methods for modules
             if (self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_str);
         } else if (class_obj) |c| {
             const resolved = self.findMethodWithPrivacy(c, method_name_str, ic);
@@ -1638,7 +1652,7 @@ pub const VM = struct {
             }
         }
 
-        // --- 2. PROPERTY FALLBACK ---
+        // --- 2. PROPERTY FALLBACK (Instances only when no method matches) ---
         if (receiver.isInstance() and arg_count == 0) {
             const instance = receiver.asInstance();
             if (instance.class.instance_layout.get(method_name_str)) |idx| {
@@ -1662,6 +1676,8 @@ pub const VM = struct {
             };
 
             self.popAndRelease(arg_count + 1);
+
+            // Absorb the native +1 reference directly
             self.stack.ptr[self.stack_top] = result;
             self.stack_top += 1;
             return .ok;
@@ -1678,7 +1694,7 @@ pub const VM = struct {
         const val = self.pop();
 
         if (val.isObject() and val.asObj().obj_type == .array) {
-            const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", val.asObj())));
+            const arr = val.asArray();
             const total = arr.items.items.len;
 
             for (0..pre_count) |i| {
@@ -1797,8 +1813,8 @@ pub const VM = struct {
             const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
             self.push(value.Value.initObj(&range_obj.obj));
         } else if (start_val.isObject() and start_val.asObj().obj_type == .string and end_val.isObject() and end_val.asObj().obj_type == .string) {
-            const s_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", start_val.asObj()))).chars;
-            const e_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", end_val.asObj()))).chars;
+            const s_str = start_val.asString().chars;
+            const e_str = end_val.asString().chars;
 
             if (s_str.len == 1 and e_str.len == 1) {
                 const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
@@ -1879,7 +1895,7 @@ pub const VM = struct {
     inline fn readStringObjectOperand(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame, is_wide: bool) *value.ObjString {
         const name_idx = self.readOperand(exec_chunk, frame, is_wide);
         const name_val = exec_chunk.constants.items[name_idx];
-        return @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
+        return name_val.asString();
     }
 
     /// Extracts a String character slice from the bytecode stream
@@ -1969,7 +1985,7 @@ pub const VM = struct {
         if (self.rescue_frames.items.len == 0) {
             // We removed the [Uncaught Exception] header!
             if (err_val.isObject() and err_val.asObj().obj_type == .string) {
-                const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", err_val.asObj()))).chars;
+                const str = err_val.asString().chars;
                 self.reportError("\nRuntimeError: {s}\n", .{str});
                 self.printStacktrace();
             } else if (err_val.isInstance()) {
@@ -1981,7 +1997,7 @@ pub const VM = struct {
                     if (idx < inst.fields.items.len) {
                         const msg_val = inst.fields.items[idx];
                         if (msg_val.isObject() and msg_val.asObj().obj_type == .string) {
-                            const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj()))).chars;
+                            const str = msg_val.asString().chars;
                             self.reportError("\n{s}: {s}\n", .{ inst.class.name.chars, str });
                             printed = true;
                         }
@@ -1995,10 +2011,10 @@ pub const VM = struct {
                     if (bt_idx < inst.fields.items.len) {
                         const bt_val = inst.fields.items[bt_idx];
                         if (bt_val.isObject() and bt_val.asObj().obj_type == .array) {
-                            const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", bt_val.asObj())));
+                            const arr_obj = bt_val.asArray();
                             for (arr_obj.items.items) |frame_val| {
                                 if (frame_val.isObject() and frame_val.asObj().obj_type == .string) {
-                                    const frame_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", frame_val.asObj()))).chars;
+                                    const frame_str = frame_val.asString().chars;
                                     self.reportError("{s}\n", .{frame_str});
                                 }
                             }
@@ -2035,10 +2051,10 @@ pub const VM = struct {
         for (map.keys.items, 0..) |k, i| {
             if (k.isObject()) {
                 if (k.asObj().obj_type == .string) {
-                    const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj())));
+                    const str = k.asString();
                     if (std.mem.eql(u8, str.chars, search_str)) return i;
                 } else if (k.asObj().obj_type == .symbol) {
-                    const sym = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj())));
+                    const sym = k.asSymbol();
                     if (std.mem.eql(u8, sym.chars, search_str)) return i;
                 }
             }
@@ -2064,7 +2080,7 @@ pub const VM = struct {
             }
             return false;
         } else if (case_val.isObject() and case_val.asObj().obj_type == .range) {
-            const range = @as(*value.ObjRange, @alignCast(@fieldParentPtr("obj", case_val.asObj())));
+            const range = case_val.asRange();
             if (!test_val.isNumber()) return false;
             const n = test_val.asNumber();
             if (range.is_exclusive) {
@@ -2143,16 +2159,6 @@ pub const VM = struct {
         }
 
         return error.RuntimeError;
-    }
-
-    pub fn findClassMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {
-        _ = self;
-        var current: ?*value.ObjClass = class;
-        while (current) |c| {
-            if (c.class_methods.get(name)) |method| return method;
-            current = c.superclass;
-        }
-        return null;
     }
 
     pub fn findMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: []const u8, ic: ?*chunk.InlineCache) struct { method: ?value.Value, is_private: bool } {
