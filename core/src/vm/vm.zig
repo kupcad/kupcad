@@ -48,6 +48,7 @@ pub const VM = struct {
     gc: memory.GC,
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
     profiler: ?*profiler_mod.Profiler = null, // First-class tracing profiler
+    debugger_step_handler: ?*const fn (vm: *VM) void = null,
 
     globals: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
@@ -107,6 +108,10 @@ pub const VM = struct {
             .strings = .empty,
             .symbols = .empty,
             .open_upvalues = null,
+            .profiler = null,
+            .line_index = null,
+            .debugger_step_handler = null,
+            .step_mode = false,
             .rescue_frames = rescue_frames,
             .param_registry = .{},
             .host = .{},
@@ -259,8 +264,14 @@ pub const VM = struct {
 
                     if (previous_line) |prev| {
                         if (current_line != prev) {
-                            // We crossed a line boundary! Yield to the REPL.
-                            return .paused;
+                            // We crossed a line boundary! Invoke the REPL.
+                            if (self.debugger_step_handler) |handler| {
+                                handler(self);
+                                // After debugger returns, update tracking so it doesn't loop forever on the same line
+                                previous_line = current_line;
+                            } else {
+                                return .paused;
+                            }
                         }
                     } else {
                         // Initialize tracking on the first instruction of this step

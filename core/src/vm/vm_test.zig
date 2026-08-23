@@ -20,6 +20,13 @@ fn mockMeshDestructor(handle: geom.GeometryHandle) void {
     mock_last_destroyed_handle = handle;
 }
 
+// --- Mock Debugger Step Handler ---
+var mock_step_count: usize = 0;
+fn mockStepHandler(vm: *VM) void {
+    _ = vm;
+    mock_step_count += 1;
+}
+
 /// Runs a chunk and enforces strict stack equilibrium checks
 fn executeAndAssertStack(vm: *VM, chunk_ptr: *chunk.Chunk, expected_stack_top: usize) !value.Value {
     // Turn on the brutal GC mode for tests
@@ -6656,4 +6663,79 @@ test "VM: Lexical Constant Resolution Hierarchies" {
 
     try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM Debugger: step_mode triggers callback exactly on line boundaries" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Bind the mock debugger handler and enable stepping
+    vm.debugger_step_handler = mockStepHandler;
+    vm.step_mode = true;
+    mock_step_count = 0;
+
+    // A 3-line script should cross a line boundary exactly twice after the first instruction starts
+    const source =
+        \\x = 10
+        \\y = 20
+        \\z = x + y
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    // The line_index MUST be injected for step_mode to work!
+    vm.line_index = &doc.line_index;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Interpret the script
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    // Line 1 -> Line 2 (Step 1)
+    // Line 2 -> Line 3 (Step 2)
+    try testing.expectEqual(@as(usize, 2), mock_step_count);
+}
+
+test "VM: Destructuring assignments route correctly to Class Variables via emitVariableStore" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Because of our Phase 6 destructuring refactor, unpacking an array directly into
+    // `@@` class variables should now securely route to the class fields map!
+    const source =
+        \\class Config
+        \\  def init()
+        \\    @@width, @@height = [100, 50]
+        \\  end
+        \\  def area()
+        \\    @@width * @@height
+        \\  end
+        \\end
+        \\
+        \\c = Config.new()
+        \\c.init()
+        \\c.area()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // 100 * 50 = 5000
+    try testing.expectEqual(@as(f64, 5000.0), result.asNumber());
 }
