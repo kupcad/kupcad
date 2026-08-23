@@ -30,6 +30,7 @@ pub const DAGTag = enum(u8) {
     offset,
     cs_transform,
     polygon,
+    polygons_even_odd,
 };
 
 /// Exactly 8 bytes for optimal L1 cache line density (8 nodes per 64B line)
@@ -156,6 +157,30 @@ pub const DAGBuilder = struct {
 
         const node_idx: u32 = @intCast(self.nodes.items.len);
         try self.nodes.append(alloc, .{ .tag = .polyhedron_op, .flags = 0, .data = data_offset });
+        return node_idx;
+    }
+
+    pub fn addPolygonsEvenOdd(self: *DAGBuilder, contours: []const []const [2]f64) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const data_offset = @as(u32, @intCast(self.extra_data.items.len));
+
+        // Store the total number of contours
+        try self.extra_data.append(alloc, @intCast(contours.len));
+
+        for (contours) |contour| {
+            const pts_start = @as(u32, @intCast(self.numbers.items.len));
+            // Flatten [2]f64 into f64
+            for (contour) |pt| {
+                try self.numbers.append(alloc, pt[0]);
+                try self.numbers.append(alloc, pt[1]);
+            }
+            // Store [start_idx, length] for each contour
+            try self.extra_data.append(alloc, pts_start);
+            try self.extra_data.append(alloc, @intCast(contour.len));
+        }
+
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{ .tag = .polygons_even_odd, .flags = 0, .data = data_offset });
         return node_idx;
     }
 

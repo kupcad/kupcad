@@ -38,6 +38,25 @@ fn polygonImpl(allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHa
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn polygonsEvenOddImpl(allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
+    // Convert [2]f64 contours to ManifoldVec2 contours
+    var m_contours = allocator.alloc([]manifold.ManifoldVec2, contours.len) catch return null;
+    defer {
+        for (m_contours) |c| allocator.free(c);
+        allocator.free(m_contours);
+    }
+
+    for (contours, 0..) |contour, i| {
+        var m_pts = allocator.alloc(manifold.ManifoldVec2, contour.len) catch return null;
+        for (contour, 0..) |p, j| m_pts[j] = .{ .x = p[0], .y = p[1] };
+        m_contours[i] = m_pts;
+    }
+
+    // Call the high-level wrapper
+    const ptr = manifold.crossSectionEvenOddPolygons(allocator, m_contours) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 // --- 3D CSG Booleans & Operations ---
 
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
@@ -332,6 +351,7 @@ pub const driver = kernel.GeometryKernel{
     .squareFn = squareImpl,
     .circleFn = circleImpl,
     .polyhedronFn = polyhedronImpl,
+    .polygonsEvenOddFn = polygonsEvenOddImpl,
     .extrudeFn = extrudeImpl,
     .revolveFn = revolveImpl,
     .sliceFn = sliceImpl,

@@ -107,6 +107,9 @@ extern fn manifold_alloc_simple_polygon() ?*ManifoldSimplePolygon;
 extern fn manifold_delete_simple_polygon(p: ?*ManifoldSimplePolygon) void;
 extern fn manifold_cross_section_of_simple_polygon(mem: ?*ManifoldCrossSection, p: ?*ManifoldSimplePolygon) ?*ManifoldCrossSection;
 
+extern fn manifold_polygons(mem: ?*ManifoldPolygons, ps: [*]?*ManifoldSimplePolygon, length: usize) ?*ManifoldPolygons;
+extern fn manifold_cross_section_even_odd_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
+
 // ==========================================
 // Zig Idiomatic Wrappers
 // ==========================================
@@ -175,6 +178,28 @@ pub fn polyhedron(vert_props: []const f32, tri_verts: []const u32) ?*ManifoldObj
     // num_prop = 3 (x, y, z)
     const mesh = manifold_meshgl(mesh_mem, vert_props.ptr, vert_props.len / 3, 3, tri_verts.ptr, tri_verts.len / 3);
     return manifold_of_meshgl(manifold_alloc_manifold(), mesh);
+}
+
+pub fn crossSectionEvenOddPolygons(allocator: std.mem.Allocator, contours: []const []const ManifoldVec2) ?*ManifoldCrossSection {
+    var simple_polys = allocator.alloc(?*ManifoldSimplePolygon, contours.len) catch return null;
+    defer allocator.free(simple_polys);
+
+    // Convert each slice of ManifoldVec2 into a ManifoldSimplePolygon
+    for (contours, 0..) |contour, i| {
+        simple_polys[i] = manifold_simple_polygon(manifold_alloc_simple_polygon(), contour.ptr, contour.len);
+    }
+
+    // Ensure all simple polygons are cleaned up after constructing the composite polygon
+    defer {
+        for (simple_polys) |sp| manifold_delete_simple_polygon(sp);
+    }
+
+    // Build the composite polygon array
+    const m_polys = manifold_polygons(manifold_alloc_polygons(), simple_polys.ptr, simple_polys.len);
+    defer manifold_delete_polygons(m_polys);
+
+    // Apply the Even-Odd winding rule to resolve holes
+    return manifold_cross_section_even_odd_polygons(manifold_alloc_cross_section(), m_polys);
 }
 
 pub fn transform(obj: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj {

@@ -145,6 +145,29 @@ pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geo
             }
             return kernel.polygon(vm.allocator, pts) orelse return error.RuntimeError;
         },
+        .polygons_even_odd => {
+            const num_contours = vm.dag_builder.extra_data.items[node.data];
+            var contours = try vm.allocator.alloc([][2]f64, num_contours);
+            defer {
+                for (contours) |c| vm.allocator.free(c);
+                vm.allocator.free(contours);
+            }
+
+            for (0..num_contours) |i| {
+                // Read the start and length offsets we saved
+                const pts_start = vm.dag_builder.extra_data.items[node.data + 1 + (i * 2)];
+                const pts_len = vm.dag_builder.extra_data.items[node.data + 1 + (i * 2) + 1];
+
+                var pts = try vm.allocator.alloc([2]f64, pts_len);
+                for (0..pts_len) |pt_idx| {
+                    pts[pt_idx][0] = vm.dag_builder.numbers.items[pts_start + (pt_idx * 2)];
+                    pts[pt_idx][1] = vm.dag_builder.numbers.items[pts_start + (pt_idx * 2) + 1];
+                }
+                contours[i] = pts;
+            }
+
+            return kernel.polygonsEvenOdd(vm.allocator, contours) orelse return error.RuntimeError;
+        },
         .cs_union_op, .cs_difference_op, .cs_intersection_op => {
             const payload = vm.dag_builder.getBinaryPayload(node);
             const left_handle = try evaluateCrossSectionDAG(vm, payload.left);

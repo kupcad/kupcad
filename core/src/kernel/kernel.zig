@@ -29,9 +29,11 @@ pub inline fn circle(radius: f64, segments: i32) ?geom.CrossSectionHandle {
 pub inline fn polygon(allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle {
     return manifold_driver.polygonFn(allocator, pts);
 }
-
 pub inline fn polyhedron(allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
     return manifold_driver.polyhedronFn(allocator, points, faces);
+}
+pub inline fn polygonsEvenOdd(allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
+    return manifold_driver.polygonsEvenOddFn(allocator, contours);
 }
 
 // --- Top-Level Static Dispatchers ---
@@ -234,6 +236,7 @@ pub const GeometryKernel = struct {
     trimByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?geom.GeometryHandle,
     splitByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair,
     crossSectionBooleanFn: *const fn (a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle,
+    polygonsEvenOddFn: *const fn (allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle,
     genusFn: *const fn (a: geom.GeometryHandle) i32,
     polygonFn: *const fn (allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle,
     destructCrossSectionFn: *const fn (handle: geom.CrossSectionHandle) void,
