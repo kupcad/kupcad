@@ -178,6 +178,7 @@ pub fn build(b: *std.Build) void {
                 .link_libcpp = true,
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
+                    .{ .name = "tatfi", .module = tatfi_mod },
                 },
             }),
         });
@@ -203,6 +204,7 @@ pub fn build(b: *std.Build) void {
                 .link_libcpp = true,
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
+                    .{ .name = "tatfi", .module = tatfi_mod },
                 },
             }),
         });
@@ -231,6 +233,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "lsp", .module = lsp_kit.module("lsp") },
+                    .{ .name = "tatfi", .module = tatfi_mod },
                 },
             }),
         });
@@ -245,6 +248,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
+                    .{ .name = "tatfi", .module = tatfi_mod },
                 },
             }),
         });
@@ -280,6 +284,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
+                    .{ .name = "tatfi", .module = tatfi_mod },
                 },
             }),
         });

@@ -6881,3 +6881,84 @@ test "VM: polyhedron generates custom 3D mesh from multidimensional arrays" {
     try testing.expectEqual(@as(usize, 4), vm.dag_builder.poly_points.items.len);
     try testing.expectEqual(@as(usize, 4), vm.dag_builder.poly_faces.items.len);
 }
+
+test "VM: text() primitive generates a valid 2D CrossSection" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Script to generate a stencil text object, then extrude it to 3D
+    const source =
+        \\t = text("KupCAD", size: 15, font: :stencil)
+        \\t.extrude(5)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // 1. Evaluate the script
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // 2. Ensure it yielded geometry
+    try testing.expect(result.isGeometry());
+
+    // 3. Ensure we can physically materialize it (DAG Evaluates successfully)
+    const handle = try vm.ensureConcrete(result);
+
+    // 4. Assert it is a valid, solid volume
+    const vol = kernel.volume(handle);
+    try testing.expect(vol > 0.0);
+}
+
+test "VM: Extruded text has mathematically correct bounding box and mass properties" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Create a 10mm high "CAD" text and extrude it by exactly 7.5mm
+    const source =
+        \\txt = text("CAD", size: 10.0, font: :sans)
+        \\txt.extrude(7.5)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const handle = try vm.ensureConcrete(result);
+
+    // 1. Check Volume (Must be solid, > 0)
+    const vol = kernel.volume(handle);
+    try testing.expect(vol > 50.0);
+
+    // 2. Check Bounding Box (Unwrap the optional and use struct fields)
+    const bbox = kernel.boundingBox(handle) orelse return error.MissingBBox;
+
+    // Assuming BoundingBox has `min` and `max` arrays of [3]f64
+    const dx = bbox.max[0] - bbox.min[0]; // max_x - min_x
+    const dy = bbox.max[1] - bbox.min[1]; // max_y - min_y
+    const dz = bbox.max[2] - bbox.min[2]; // max_z - min_z
+
+    // The text "CAD" should be wider than it is tall
+    try testing.expect(dx > dy);
+
+    // The height of the text (Y-axis) should be roughly 10mm (the size parameter)
+    try testing.expect(dy > 5.0 and dy < 15.0);
+
+    // The extrusion depth (Z-axis) MUST be exactly 7.5mm
+    try testing.expectApproxEqAbs(7.5, dz, 0.0001);
+}

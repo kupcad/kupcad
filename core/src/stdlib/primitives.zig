@@ -1,6 +1,7 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
+const text_mod = @import("../core/text.zig");
 
 const ArgParseCtx = struct {
     pos_count: usize,
@@ -182,4 +183,64 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
 
     const dag_idx = try vm.dag_builder.addPolyhedron(pts, faces);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
+}
+
+pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
+    const parsed = parseArgs(args);
+    if (parsed.pos_count == 0 or !args[0].isString()) {
+        vm.reportError("ArgumentError: text() expects a String as its first argument.\n", .{});
+        return error.RuntimeError;
+    }
+    const text_str = args[0].asString().chars;
+
+    // Default configuration
+    var size: f64 = 10.0; // 10mm tall
+    var font_name: []const u8 = "sans";
+    var tolerance: f64 = 0.1;
+
+    // Positional override for size: text("Hello", 20)
+    if (parsed.pos_count > 1 and args[1].isNumber()) size = args[1].asNumber();
+
+    // Keyword overrides: text("Hello", size: 20, font: :mono, tolerance: 0.05)
+    if (parsed.kwargs) |kw| {
+        if (kw.isObject() and kw.asObj().obj_type == .map) {
+            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", kw.asObj())));
+
+            if (vm.findMapKeyByString(map, "size")) |idx| {
+                if (map.values.items[idx].isNumber()) size = map.values.items[idx].asNumber();
+            }
+            if (vm.findMapKeyByString(map, "font")) |idx| {
+                const f_val = map.values.items[idx];
+                if (f_val.isString()) font_name = f_val.asString().chars;
+                if (f_val.isSymbol()) font_name = f_val.asSymbol().chars;
+            }
+            if (vm.findMapKeyByString(map, "tolerance")) |idx| {
+                if (map.values.items[idx].isNumber()) tolerance = map.values.items[idx].asNumber();
+            }
+        }
+    }
+
+    // Load Font
+    const face = text_mod.getFaceByName(font_name) catch {
+        vm.reportError("RuntimeError: Failed to load font '{s}'.\n", .{font_name});
+        return error.RuntimeError;
+    };
+
+    // Extract Polygons
+    var polygons = text_mod.extractText(vm.allocator, &face, text_str, size, tolerance) catch {
+        vm.reportError("RuntimeError: Failed to extract text contours.\n", .{});
+        return error.RuntimeError;
+    };
+    defer polygons.deinit(vm.allocator);
+
+    // Convert the extracted contours to the format expected by the kernel
+    var contours = try vm.allocator.alloc([]const [2]f64, polygons.contours.items.len);
+    defer vm.allocator.free(contours);
+    for (polygons.contours.items, 0..) |c, i| {
+        contours[i] = c.items;
+    }
+
+    // Build the DAG Node
+    const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours);
+    return try vm.allocateCrossSection(dag_idx);
 }

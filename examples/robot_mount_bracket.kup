@@ -1,6 +1,6 @@
 # examples/robot_mount_bracket.kup
 # Parametric Robot Mount Bracket showcasing 2D/3D CSG,
-# 2D Offsets, 3D Minkowski sums, Plane Trimming, and Spatial Queries.
+# 2D Offsets, 3D Minkowski sums, Plane Trimming, Text, and Spatial Queries.
 
 # --- 1. Custom 2D Polygon & 2D Affine Matrix Transformation ---
 raw_pts = [ [0.0, 0.0], [40.0, 0.0], [30.0, 25.0], [10.0, 25.0] ]
@@ -45,7 +45,23 @@ standoffs.each do |pt|
   main_assembly = main_assembly + boss
 end
 
-# --- 5. Spatial Queries & Inspection Engine ---
+# --- 5. Custom Polyhedron ---
+# Add a custom triangular pyramid to the side of the bracket
+pts = [[0,0,0], [10,0,0], [5,10,0], [5,5,10]]
+faces = [[0,1,2], [0,2,3], [0,3,1], [1,3,2]]
+pyr = polyhedron(pts, faces).translate(-5.0, -10.0, 0.0)
+
+main_assembly = main_assembly + pyr
+
+# --- 6. 2D Text & Extrusion Embossing ---
+# Subtract the KupCAD logo into the top surface of the bracket
+# Uses :stencil font to avoid floating islands in the 'P', 'A', and 'D'
+txt = text("KupCAD", size: 6, font: :stencil)
+txt_3d = txt.extrude(3.0).translate(6.0, 8.0, 16.0)
+
+main_assembly = main_assembly - txt_3d
+
+# --- 7. Spatial Queries & Inspection Engine ---
 puts("--- Spatial Inspection Diagnostics ---")
 
 # 1. Point Containment Check
@@ -69,7 +85,7 @@ if ray_hits.length > 0
 end
 
 puts("Final Mass Properties:")
-inspect("Volume:", main_assembly.volume.round(2))
-inspect("Bounding Box:", main_assembly.bbox)
+inspect("Volume:", main_assembly.volume().round(2))
+inspect("Bounding Box:", main_assembly.bbox())
 
 main_assembly

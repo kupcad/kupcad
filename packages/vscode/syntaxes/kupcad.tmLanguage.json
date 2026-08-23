@@ -163,7 +163,7 @@
       }
     },
     "keywords": {
-      "match": "(?<![\\\\w.])(if|or|do|end|not|def|nil|and|next|with|from|true|else|self|when|case|then|super|until|break|while|yield|elsif|false|class|begin|return|module|unless|rescue|ensure|export|import)(?![\\\\w?!])",
+      "match": "(?<![\\\\w.])(if|or|do|end|not|def|nil|and|next|with|from|true|else|self|when|case|then|super|until|break|while|yield|elsif|false|class|begin|return|module|unless|rescue|ensure|export|import|public|private)(?![\\\\w?!])",
       "name": "keyword.control.kupcad"
     },
     "builtins": {
@@ -171,15 +171,15 @@
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {
-      "match": "(?<![\\\\w])(nil?|empty?|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reduce|first|last|contains?|flatten|max|min|sum|keys|values|has_key?|delete|each|empty?|get|merge|symbolize_keys|stringify_keys|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|to_s|to_i|to_f|round|ceil|floor|abs|to_s|to_sym|to_s|inspect|to_i|to_f|invert|sin|cos|tan|asin|acos|atan2|sqrt|abs|round|ceil|floor|deg2rad|rad2deg|min|max|collect|bytes_allocated)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(is_a?|responds_to?|nil?|empty?|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reduce|first|last|contains?|flatten|max|min|sum|keys|values|has_key?|delete|each|empty?|get|merge|symbolize_keys|stringify_keys|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|to_s|to_i|to_f|round|ceil|floor|abs|to_s|to_sym|to_s|inspect|to_i|to_f|invert|sin|cos|tan|asin|acos|atan2|sqrt|abs|round|ceil|floor|deg2rad|rad2deg|min|max|collect|bytes_allocated)(?![\\\\w?!])",
       "name": "support.function.core.kupcad"
     },
     "primitives_3d": {
-      "match": "(?<![\\\\w])(cube|cylinder|sphere)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(cube|cylinder|sphere|polyhedron)(?![\\\\w?!])",
       "name": "support.class.primitive.3d.kupcad"
     },
     "primitives_2d": {
-      "match": "(?<![\\\\w])(square|circle|polygon)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(square|circle|polygon|text)(?![\\\\w?!])",
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
@@ -187,7 +187,7 @@
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {
-      "match": "(?<![\\\\w])(dummy_csg_op)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(union|difference|intersection)(?![\\\\w?!])",
       "name": "support.function.csg.kupcad"
     },
     "workplanes": {

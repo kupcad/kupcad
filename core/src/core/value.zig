@@ -272,28 +272,6 @@ pub const Value = packed struct {
         return self.isObject() and self.asObj().obj_type == .brep;
     }
 
-    // --- Data Extractors ---
-
-    pub inline fn asNumber(self: Value) f64 {
-        std.debug.assert(self.isNumber());
-        return @bitCast(self.val);
-    }
-
-    pub inline fn asBool(self: Value) bool {
-        std.debug.assert(self.isBool());
-        return self.val == VAL_TRUE;
-    }
-
-    pub inline fn asObj(self: Value) *Obj {
-        std.debug.assert(self.isObject());
-        // Mask out the TAG_OBJ bits to reveal the raw memory pointer
-        const ptr_val = self.val & ~TAG_OBJ;
-        // Explicitly cast to `usize` so WASM32 safely accepts it
-        return @ptrFromInt(@as(usize, @intCast(ptr_val)));
-    }
-
-    // --- Sub-type Checkers (Convenience) ---
-
     pub inline fn isGeometry(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .geometry;
     }
@@ -324,8 +302,29 @@ pub const Value = packed struct {
     pub inline fn isString(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .string;
     }
+    pub inline fn isSymbol(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .symbol;
+    }
 
-    // --- Sub-type Extractors ---
+    // --- Data Extractors ---
+
+    pub inline fn asNumber(self: Value) f64 {
+        std.debug.assert(self.isNumber());
+        return @bitCast(self.val);
+    }
+
+    pub inline fn asBool(self: Value) bool {
+        std.debug.assert(self.isBool());
+        return self.val == VAL_TRUE;
+    }
+
+    pub inline fn asObj(self: Value) *Obj {
+        std.debug.assert(self.isObject());
+        // Mask out the TAG_OBJ bits to reveal the raw memory pointer
+        const ptr_val = self.val & ~TAG_OBJ;
+        // Explicitly cast to `usize` so WASM32 safely accepts it
+        return @ptrFromInt(@as(usize, @intCast(ptr_val)));
+    }
 
     pub inline fn asGeometry(self: Value) *ObjGeometry {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
