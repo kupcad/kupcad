@@ -34,6 +34,21 @@ pub const LoopState = struct {
     exit_jumps: std.ArrayListUnmanaged(usize) = .empty,
 };
 
+const VarType = enum {
+    constant,
+    class_var,
+    instance_var,
+    local,
+    upvalue,
+    global,
+    new_local,
+};
+
+const ResolvedVar = struct {
+    kind: VarType,
+    index: usize = 0,
+};
+
 const Intrinsic = enum {
     raise_err,
     block_given_chk,
@@ -153,6 +168,25 @@ pub const Compiler = struct {
     }
 
     // --- Lexical Scope Resolvers ---
+
+    fn classifyVariable(self: *Compiler, name_id: ast.StringId, sym_opt: ?resolver.ResolvedSymbol) CompileError!ResolvedVar {
+        const name_str = self.tree.getString(name_id);
+        if (std.ascii.isUpper(name_str[0])) return .{ .kind = .constant };
+        if (std.mem.startsWith(u8, name_str, "@@")) return .{ .kind = .class_var };
+        if (std.mem.startsWith(u8, name_str, "@")) return .{ .kind = .instance_var };
+
+        if (self.resolveLocal(name_id)) |slot| return .{ .kind = .local, .index = slot };
+        if (try self.resolveUpvalue(name_id)) |upv_slot| return .{ .kind = .upvalue, .index = upv_slot };
+
+        if (sym_opt) |sym| {
+            if (sym.kind == .global or self.enclosing == null or self.isScriptGlobal(name_id)) {
+                return .{ .kind = .global };
+            }
+            return .{ .kind = .new_local };
+        }
+
+        return .{ .kind = .global };
+    }
 
     fn buildFullyQualifiedPath(self: *Compiler, target: []const u8, depth: usize) CompileError![]const u8 {
         var buf = std.ArrayListUnmanaged(u8).empty;
@@ -981,7 +1015,7 @@ pub const Compiler = struct {
         return self.makeStringConstant(name);
     }
 
-    /// DRY Helper: Unifies Positional and Keyword Argument compilation for Method and Super calls
+    /// Unifies Positional and Keyword Argument compilation for Method and Super calls
     fn compileCallArguments(self: *Compiler, args: []const ast.NamedArg) CompileError!usize {
         var pos_count: usize = 0;
         var kw_count: usize = 0;
@@ -1765,110 +1799,119 @@ pub const Compiler = struct {
     }
 
     fn emitVariableLoad(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!void {
-        _ = sym;
         const name_str = self.tree.getString(name_id);
+        const classification = try self.classifyVariable(name_id, sym);
 
-        // --- Lexical Constant Resolution ---
-        if (std.ascii.isUpper(name_str[0])) {
-            if (self.namespace_stack.items.len > 0) {
-                var end_jumps = std.ArrayListUnmanaged(usize).empty;
-                defer end_jumps.deinit(self.allocator);
+        switch (classification.kind) {
+            .constant => {
+                if (self.namespace_stack.items.len > 0) {
+                    var end_jumps = std.ArrayListUnmanaged(usize).empty;
+                    defer end_jumps.deinit(self.allocator);
 
-                var i: usize = self.namespace_stack.items.len;
-                while (i > 0) {
-                    const fq_name = try self.buildFullyQualifiedPath(name_str, i);
-                    defer self.allocator.free(fq_name); // Free memory once chunk consumes it
+                    var i: usize = self.namespace_stack.items.len;
+                    while (i > 0) {
+                        const fq_name = try self.buildFullyQualifiedPath(name_str, i);
+                        defer self.allocator.free(fq_name);
 
-                    const fq_idx = try self.makeStringConstant(fq_name);
+                        const fq_idx = try self.makeStringConstant(fq_name);
 
-                    try self.emitOpWithOperand(.op_defined, .op_defined_wide, fq_idx);
-                    const skip_jump = try self.emitJump(.op_jump_if_false);
-                    try self.emitOp(.op_pop); // pop true
+                        try self.emitOpWithOperand(.op_defined, .op_defined_wide, fq_idx);
+                        const skip_jump = try self.emitJump(.op_jump_if_false);
+                        try self.emitOp(.op_pop); // pop true
 
-                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, fq_idx);
-                    try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
+                        try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, fq_idx);
+                        try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
 
-                    self.patchJump(skip_jump);
-                    try self.emitOp(.op_pop); // pop false
-                    i -= 1;
+                        self.patchJump(skip_jump);
+                        try self.emitOp(.op_pop); // pop false
+                        i -= 1;
+                    }
+
+                    const global_idx = try self.makeStringConstant(name_str);
+                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, global_idx);
+
+                    for (end_jumps.items) |jmp| self.patchJump(jmp);
+                } else {
+                    const name_idx = try self.makeStringConstant(name_str);
+                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
                 }
-
-                // Fallback to absolute global
-                const global_idx = try self.makeStringConstant(name_str);
-                try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, global_idx);
-
-                for (end_jumps.items) |jmp| {
-                    self.patchJump(jmp);
-                }
-            } else {
+            },
+            .class_var => {
+                try self.emitPushSelf();
+                const name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_get_class_var, .op_get_class_var_wide, name_idx);
+            },
+            .instance_var => {
+                try self.emitPushSelf();
+                const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
+                const name_idx = try self.makeStringConstant(clean_name);
+                try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+                try self.emitInlineCacheIndex();
+            },
+            .local => {
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, classification.index);
+            },
+            .upvalue => {
+                try self.emitOp(.op_get_upvalue);
+                try self.emitByte(@intCast(classification.index));
+            },
+            .global, .new_local => {
                 const name_idx = try self.makeStringConstant(name_str);
                 try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
-            }
-            return;
-        }
-
-        if (std.mem.startsWith(u8, name_str, "@@")) {
-            try self.emitPushSelf();
-            const name_idx = try self.makeStringConstant(name_str);
-            try self.emitOpWithOperand(.op_get_class_var, .op_get_class_var_wide, name_idx);
-        } else if (std.mem.startsWith(u8, name_str, "@")) {
-            try self.emitPushSelf();
-            const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
-            const name_idx = try self.makeStringConstant(clean_name);
-            try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
-            try self.emitInlineCacheIndex();
-        } else if (self.resolveLocal(name_id)) |local_slot| {
-            try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, local_slot);
-        } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-            try self.emitOp(.op_get_upvalue);
-            try self.emitByte(upvalue_slot);
-        } else {
-            const name_idx = try self.makeStringConstant(name_str);
-            try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+            },
         }
     }
 
     fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ResolvedSymbol) CompileError!void {
         const name_str = self.tree.getString(name_id);
+        const classification = try self.classifyVariable(name_id, sym);
 
-        // --- Constant Flattening ---
-        if (std.ascii.isUpper(name_str[0])) {
-            const fq_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len);
-            defer self.allocator.free(fq_name); // Free memory once chunk consumes it
-            const fq_name_idx = try self.makeStringConstant(fq_name);
+        switch (classification.kind) {
+            .constant => {
+                const fq_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len);
+                defer self.allocator.free(fq_name);
+                const fq_name_idx = try self.makeStringConstant(fq_name);
 
-            try self.emitOp(.op_dup);
-            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
-
-            // Also define the short name if we are at root
-            if (self.namespace_stack.items.len == 0) {
                 try self.emitOp(.op_dup);
-                const short_name_idx = try self.makeStringConstant(name_str);
-                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, short_name_idx);
-            }
-            return;
-        }
+                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
 
-        if (std.mem.startsWith(u8, name_str, "@@")) {
-            try self.emitPushSelf();
-            const name_idx = try self.makeStringConstant(name_str);
-            try self.emitOpWithOperand(.op_set_class_var, .op_set_class_var_wide, name_idx);
-        } else if (self.resolveLocal(name_id)) |local_slot| {
-            try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, local_slot);
-        } else if (try self.resolveUpvalue(name_id)) |upvalue_slot| {
-            try self.emitOp(.op_set_upvalue);
-            try self.emitByte(upvalue_slot);
-        } else if (sym.kind == .global or self.enclosing == null or self.isScriptGlobal(name_id)) {
-            if (self.enclosing == null) {
-                try self.script_globals.put(self.allocator, name_str, {});
-            }
-            try self.emitOp(.op_dup);
-            const name_idx = try self.makeStringConstant(name_str);
-            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-        } else {
-            const slot = self.getNextLocalSlot();
-            try self.addLocal(name_id, slot);
-            try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
+                if (self.namespace_stack.items.len == 0) {
+                    try self.emitOp(.op_dup);
+                    const short_name_idx = try self.makeStringConstant(name_str);
+                    try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, short_name_idx);
+                }
+            },
+            .class_var => {
+                try self.emitPushSelf();
+                const name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_set_class_var, .op_set_class_var_wide, name_idx);
+            },
+            .instance_var => {
+                // Instance variables are primarily handled in the Assignment AST node directly
+                // because they require a Stack Swap (`emitPushSelf` -> evaluate RHS -> Assign).
+                // Reaching this branch means we fell through a destructuring assignment or rescue variable mapping.
+                unreachable;
+            },
+            .local => {
+                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, classification.index);
+            },
+            .upvalue => {
+                try self.emitOp(.op_set_upvalue);
+                try self.emitByte(@intCast(classification.index));
+            },
+            .global => {
+                if (self.enclosing == null) {
+                    try self.script_globals.put(self.allocator, name_str, {});
+                }
+                try self.emitOp(.op_dup);
+                const name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+            },
+            .new_local => {
+                const slot = self.getNextLocalSlot();
+                try self.addLocal(name_id, @intCast(slot));
+                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
+            },
         }
     }
 
@@ -2186,7 +2229,7 @@ pub const Compiler = struct {
                 }
             }
 
-            // DRY: Delegate Argument Packing!
+            // Delegate Argument Packing
             actual_arg_count = try self.compileCallArguments(args);
 
             // Block Argument (Always Pushed LAST)

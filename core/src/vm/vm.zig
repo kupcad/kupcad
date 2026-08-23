@@ -898,14 +898,10 @@ pub const VM = struct {
                             return self.throwDynamicError("Runtime Error: No superclass exists for receiver.\n", .{});
                         };
 
-                        var method_val = self.findMethod(superclass, method_name_str);
-                        if (method_val == null) {
-                            var buf: [256]u8 = undefined;
-                            const priv_name = std.fmt.bufPrint(&buf, "@private:{s}", .{method_name_str}) catch "";
-                            method_val = self.findMethod(superclass, priv_name);
-                        }
+                        // Use new Privacy Resolution Helper
+                        const resolved = self.findMethodWithPrivacy(superclass, method_name_str, null);
 
-                        if (method_val) |m_val| {
+                        if (resolved.method) |m_val| {
                             if (m_val.isClosure()) {
                                 self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
                                 continue;
@@ -1570,35 +1566,28 @@ pub const VM = struct {
     }
 
     inline fn executeInvoke(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
-        // Use new string operand reader
         const method_name_str = self.readStringOperand(exec_chunk, frame, is_wide);
         const arg_count = exec_chunk.code.items[frame.ip];
         frame.ip += 1;
 
-        // Prevent usize underflow if stack is corrupted
         std.debug.assert(self.stack_top > arg_count);
 
-        // Read IC
         const ic = self.readInlineCache(exec_chunk, frame);
-
         const base_slot = self.stack_top - 1 - arg_count;
         const receiver = self.stack[base_slot];
         const args_ptr = self.stack.ptr + base_slot + 1;
 
-        // Resolve Class of Receiver seamlessly
         const class_obj: ?*value.ObjClass = self.getClass(receiver);
 
-        // --- 1. METHOD LOOKUP (Takes precedence over raw property fields) ---
+        // --- 1. METHOD LOOKUP ---
         var method_val: ?value.Value = null;
         var is_private_call = false;
 
         if (receiver.isClass()) {
-            method_val = self.findClassMethod(receiver.asClass(), method_name_str);
-
-            if (method_val == null and std.mem.eql(u8, method_name_str, "new")) {
+            if (std.mem.eql(u8, method_name_str, "new")) {
                 const class_to_instantiate = receiver.asClass();
                 const instance = self.gc.allocateInstance(self, class_to_instantiate) catch return .runtime_error;
-                self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
+                self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj);
 
                 if (self.findMethod(class_to_instantiate, "initialize")) |init_method| {
                     if (init_method.isClosure()) {
@@ -1613,35 +1602,22 @@ pub const VM = struct {
                         return .ok;
                     }
                 }
-
-                if (arg_count > 0) {
-                    return self.throwDynamicError("Runtime Error: Expected 0 args for default constructor.\n", .{});
-                }
+                if (arg_count > 0) return self.throwDynamicError("Runtime Error: Expected 0 args for default constructor.\n", .{});
                 return .ok;
-            } else if (method_val == null) {
-                var buf: [256]u8 = undefined;
-                const priv_name = std.fmt.bufPrint(&buf, "@private:{s}", .{method_name_str}) catch "";
-                method_val = self.findClassMethod(receiver.asClass(), priv_name);
-                if (method_val != null) is_private_call = true;
             }
+
+            const resolved = self.findClassMethodWithPrivacy(receiver.asClass(), method_name_str);
+            method_val = resolved.method;
+            is_private_call = resolved.is_private;
 
             // Fallback to Object methods (so Class.responds_to? works)
-            if (method_val == null and self.object_class != null) {
-                method_val = self.findMethod(self.object_class.?, method_name_str);
-            }
+            if (method_val == null and self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_str);
         } else if (receiver.isModule()) {
-            // Fallback to Object methods for modules
-            if (self.object_class != null) {
-                method_val = self.findMethod(self.object_class.?, method_name_str);
-            }
+            if (self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_str);
         } else if (class_obj) |c| {
-            method_val = self.findMethodCached(c, method_name_str, ic);
-            if (method_val == null) {
-                var buf: [256]u8 = undefined;
-                const priv_name = std.fmt.bufPrint(&buf, "@private:{s}", .{method_name_str}) catch "";
-                method_val = self.findMethod(c, priv_name);
-                if (method_val != null) is_private_call = true;
-            }
+            const resolved = self.findMethodWithPrivacy(c, method_name_str, ic);
+            method_val = resolved.method;
+            is_private_call = resolved.is_private;
         }
 
         // --- ENFORCE VISIBILITY ---
@@ -1662,10 +1638,9 @@ pub const VM = struct {
             }
         }
 
-        // --- 2. PROPERTY FALLBACK (Instances only when no method matches) ---
+        // --- 2. PROPERTY FALLBACK ---
         if (receiver.isInstance() and arg_count == 0) {
             const instance = receiver.asInstance();
-
             if (instance.class.instance_layout.get(method_name_str)) |idx| {
                 ic.class = instance.class;
                 ic.offset = idx;
@@ -1687,14 +1662,11 @@ pub const VM = struct {
             };
 
             self.popAndRelease(arg_count + 1);
-
-            // Absorb the native +1 reference directly
             self.stack.ptr[self.stack_top] = result;
             self.stack_top += 1;
             return .ok;
         } else {
-            self.runtimeError("Runtime Error: No invoke handler registered for method '{s}'.\n", .{method_name_str});
-            return .runtime_error;
+            return self.throwDynamicError("Runtime Error: No invoke handler registered for method '{s}'.\n", .{method_name_str});
         }
     }
 
@@ -2181,6 +2153,29 @@ pub const VM = struct {
             current = c.superclass;
         }
         return null;
+    }
+
+    pub fn findMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: []const u8, ic: ?*chunk.InlineCache) struct { method: ?value.Value, is_private: bool } {
+        const method_val = if (ic) |cache| self.findMethodCached(class, name, cache) else self.findMethod(class, name);
+        if (method_val) |m| return .{ .method = m, .is_private = false };
+
+        var buf: [256]u8 = undefined;
+        if (std.fmt.bufPrint(&buf, "@private:{s}", .{name})) |priv_name| {
+            if (self.findMethod(class, priv_name)) |m| return .{ .method = m, .is_private = true };
+        } else |_| {}
+
+        return .{ .method = null, .is_private = false };
+    }
+
+    pub fn findClassMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: []const u8) struct { method: ?value.Value, is_private: bool } {
+        if (self.findClassMethod(class, name)) |m| return .{ .method = m, .is_private = false };
+
+        var buf: [256]u8 = undefined;
+        if (std.fmt.bufPrint(&buf, "@private:{s}", .{name})) |priv_name| {
+            if (self.findClassMethod(class, priv_name)) |m| return .{ .method = m, .is_private = true };
+        } else |_| {}
+
+        return .{ .method = null, .is_private = false };
     }
 
     pub fn isSubclassOf(class: *value.ObjClass, superclass: *value.ObjClass) bool {

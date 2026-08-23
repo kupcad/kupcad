@@ -2941,7 +2941,7 @@ test "VM Edge Case: CSG operations across mixed 2D/3D types throw runtime error"
     try comp.compile(doc.tree.root);
     const result = vm.interpret(&out_chunk);
 
-    // Our DRY'd cadBinaryHandler should instantly block this as a type mismatch
+    // cadBinaryHandler should instantly block this as a type mismatch
     try testing.expectEqual(.runtime_error, result);
 }
 

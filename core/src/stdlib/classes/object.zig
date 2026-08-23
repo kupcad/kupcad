@@ -25,7 +25,7 @@ pub fn nativeIsA(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
 
     var match = false;
 
-    // DRY: Use the centralized class resolver on the VM
+    // Use the centralized class resolver on the VM
     if (vm.getClass(receiver)) |start_class| {
         match = VM.isSubclassOf(start_class, target_val.asClass());
     }
@@ -57,14 +57,17 @@ pub fn nativeRespondsTo(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     };
 
     var match = false;
+
+    // Unified Resolution
     if (receiver.isClass()) {
-        if (vm.findClassMethod(receiver.asClass(), query_name) != null) match = true;
+        const resolved = vm.findClassMethodWithPrivacy(receiver.asClass(), query_name);
+        if (resolved.method != null) match = true;
         if (!match and std.mem.eql(u8, query_name, "new")) match = true;
     } else if (vm.getClass(receiver)) |c| {
-        if (vm.findMethod(c, query_name) != null) match = true;
+        const resolved = vm.findMethodWithPrivacy(c, query_name, null);
+        if (resolved.method != null) match = true;
     }
 
-    // Check if the query refers to an instance variable auto-getter (if implemented later)
     if (!match and receiver.isInstance()) {
         const clean_name = if (query_name.len > 0 and query_name[0] == '@' and (query_name.len == 1 or query_name[1] != '@'))
             query_name[1..]
