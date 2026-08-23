@@ -17,6 +17,7 @@ test {
 
     // Core
     _ = @import("core/ast_test.zig");
+    _ = @import("core/bezier_test.zig");
     _ = @import("core/constant_folder_test.zig");
     _ = @import("core/document_test.zig");
     _ = @import("core/line_index_test.zig");
