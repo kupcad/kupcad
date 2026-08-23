@@ -205,6 +205,12 @@ fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
     _ = handle;
 }
 
+fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
+    _ = a;
+    _ = material_id;
+    return null;
+}
+
 pub const driver = kernel.GeometryKernel{
     .cubeFn = cubeImpl,
     .cylinderFn = cylinderImpl,
@@ -245,4 +251,6 @@ pub const driver = kernel.GeometryKernel{
 
     .destructFn = destructImpl,
     .destructCrossSectionFn = destructCrossSectionImpl,
+
+    .setMaterialFn = setMaterialImpl,
 };

@@ -73,6 +73,12 @@ pub inline fn boolean(a: geom.GeometryHandle, b: geom.GeometryHandle, op: Boolea
         .brep_native => return brep_driver.booleanFn(a, b, op),
     }
 }
+pub inline fn setMaterial(handle: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
+    switch (handle.engine) {
+        .manifold => return manifold_driver.setMaterialFn(handle, material_id),
+        .brep_native => return brep_driver.setMaterialFn(handle, material_id),
+    }
+}
 
 pub inline fn extrude(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
     switch (cs.engine) {
@@ -237,6 +243,7 @@ pub const GeometryKernel = struct {
     splitByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair,
     crossSectionBooleanFn: *const fn (a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle,
     polygonsEvenOddFn: *const fn (allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle,
+    setMaterialFn: *const fn (a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle,
     genusFn: *const fn (a: geom.GeometryHandle) i32,
     polygonFn: *const fn (allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle,
     destructCrossSectionFn: *const fn (handle: geom.CrossSectionHandle) void,

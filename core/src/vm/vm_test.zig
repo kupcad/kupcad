@@ -6590,7 +6590,7 @@ test "VM: attr_accessor inside singleton class (class << self)" {
     try testing.expectEqualStrings("production", str_obj.chars);
 }
 
-test "VM Syntax: Phase 4A - Uninitialized instance variables gracefully return nil" {
+test "VM Syntax:A - Uninitialized instance variables gracefully return nil" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -7195,4 +7195,120 @@ test "VM Phase 3: Project handles cut kwargs and slice extracts 2D cross section
     try comp2.compile(doc2.tree.root);
     const res2 = try executeAndAssertStack(&vm, &chunk2, 1);
     try testing.expect(res2.isCrossSection());
+}
+
+test "VM: Material DSL registers properties and injects ID into mesh property channel" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source = "cube(10).material(color: \"#FF0000\", roughness: 0.2, metallic: 0.8, transmission: 0.5)";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isGeometry());
+
+    // 1. Verify material definition was saved in VM registry
+    try testing.expectEqual(@as(usize, 1), vm.materials.items.len);
+    const mat = vm.materials.items[0];
+    try testing.expectEqualStrings("#FF0000", mat.color_hex);
+    try testing.expectApproxEqAbs(0.2, mat.roughness, 0.001);
+    try testing.expectApproxEqAbs(0.8, mat.metallic, 0.001);
+    try testing.expectApproxEqAbs(0.5, mat.transmission, 0.001);
+
+    // 2. Evaluate mesh and check vertex property channel 4
+    const handle = try vm.ensureConcrete(result);
+    const mesh = kernel.getMesh(testing.allocator, handle) orelse return error.MissingMesh;
+    defer testing.allocator.free(mesh.vert_props);
+    defer testing.allocator.free(mesh.tri_verts);
+
+    try testing.expect(mesh.num_prop >= 4);
+
+    // Check first vertex: channel 4 must equal Material ID 0
+    const mat_id: u32 = @intFromFloat(mesh.vert_props[3]);
+    try testing.expectEqual(@as(u32, 0), mat_id);
+}
+
+test "VM: CSG Booleans preserve face material IDs across cuts" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\red_box = cube(10).material(color: "#FF0000")
+        \\green_box = cube(10).translate(5, 0, 0).material(color: "#00FF00")
+        \\red_box - green_box
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const handle = try vm.ensureConcrete(result);
+
+    const mesh = kernel.getMesh(testing.allocator, handle) orelse return error.MissingMesh;
+    defer testing.allocator.free(mesh.vert_props);
+    defer testing.allocator.free(mesh.tri_verts);
+
+    try testing.expectEqual(@as(usize, 2), vm.materials.items.len);
+
+    var found_mat0 = false;
+    var found_mat1 = false;
+
+    var v: usize = 0;
+    while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
+        const id: u32 = @intFromFloat(mesh.vert_props[v + 3]);
+        if (id == 0) found_mat0 = true;
+        if (id == 1) found_mat1 = true;
+    }
+
+    try testing.expect(found_mat0);
+    try testing.expect(found_mat1);
+}
+
+test "VM: Export GLTF generates valid .glb file with extensions" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const test_path = "test_output.glb";
+
+    const source = "export_gltf(\"test_output.glb\", sphere(5).material(color: \"#0000FF\", transmission: 0.9))";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    const cwd = std.Io.Dir.cwd();
+    const file = try cwd.openFile(vm.io, test_path, .{});
+    defer file.close(vm.io);
+    defer cwd.deleteFile(vm.io, test_path) catch {};
+
+    var header_bytes: [24]u8 = undefined;
+    const bytes_read = try file.readStreaming(vm.io, &.{&header_bytes});
+    try testing.expect(bytes_read >= 12);
+
+    const magic = std.mem.readInt(u32, header_bytes[0..4], .little);
+    try testing.expectEqual(@as(u32, 0x46546C67), magic); // "glTF"
 }

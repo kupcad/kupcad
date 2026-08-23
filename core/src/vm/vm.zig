@@ -38,6 +38,14 @@ pub const RescueFrame = struct {
     upvalue_ptr: ?*value.ObjUpvalue,
 };
 
+pub const MaterialDef = struct {
+    color_hex: []const u8 = "#FFFFFF",
+    alpha: f64 = 1.0,
+    roughness: f64 = 0.5,
+    metallic: f64 = 0.0,
+    transmission: f64 = 0.0,
+};
+
 pub const VM = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -57,6 +65,8 @@ pub const VM = struct {
     open_upvalues: ?*value.ObjUpvalue = null,
     rescue_frames: std.ArrayListUnmanaged(RescueFrame) = .empty,
     param_registry: parameters.ParamList = .{},
+
+    materials: std.ArrayListUnmanaged(MaterialDef) = .empty,
 
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
@@ -115,6 +125,7 @@ pub const VM = struct {
             .rescue_frames = rescue_frames,
             .param_registry = .{},
             .host = .{},
+            .materials = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
             .mute_errors = false,
             .instruction_count = 0,
@@ -135,6 +146,7 @@ pub const VM = struct {
         self.frames.deinit(self.allocator);
         self.rescue_frames.deinit(self.allocator);
         self.param_registry.deinit(self.allocator);
+        self.materials.deinit(self.allocator);
         self.gc.deinit();
     }
 

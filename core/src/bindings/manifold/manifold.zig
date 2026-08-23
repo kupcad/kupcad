@@ -103,12 +103,13 @@ extern fn manifold_min_gap(m: ?*ManifoldObj, other: ?*ManifoldObj, searchLength:
 extern fn manifold_winding_number(m: ?*ManifoldObj, x: f64, y: f64, z: f64) c_int;
 
 extern fn manifold_simple_polygon(mem: ?*ManifoldSimplePolygon, ps: [*]const ManifoldVec2, length: usize) ?*ManifoldSimplePolygon;
+extern fn manifold_polygons(mem: ?*ManifoldPolygons, ps: [*]?*ManifoldSimplePolygon, length: usize) ?*ManifoldPolygons;
 extern fn manifold_alloc_simple_polygon() ?*ManifoldSimplePolygon;
 extern fn manifold_delete_simple_polygon(p: ?*ManifoldSimplePolygon) void;
 extern fn manifold_cross_section_of_simple_polygon(mem: ?*ManifoldCrossSection, p: ?*ManifoldSimplePolygon) ?*ManifoldCrossSection;
-
-extern fn manifold_polygons(mem: ?*ManifoldPolygons, ps: [*]?*ManifoldSimplePolygon, length: usize) ?*ManifoldPolygons;
 extern fn manifold_cross_section_even_odd_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
+
+extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumProp: c_int, propFunc: *const fn ([*]f64, ManifoldVec3, [*]const f64, ?*anyopaque) callconv(.c) void, ctx: ?*anyopaque) ?*ManifoldObj;
 
 // ==========================================
 // Zig Idiomatic Wrappers
@@ -200,6 +201,15 @@ pub fn crossSectionEvenOddPolygons(allocator: std.mem.Allocator, contours: []con
 
     // Apply the Even-Odd winding rule to resolve holes
     return manifold_cross_section_even_odd_polygons(manifold_alloc_cross_section(), m_polys);
+}
+
+pub fn setProperties(
+    obj: ?*ManifoldObj,
+    num_prop: i32,
+    prop_func: *const fn ([*]f64, ManifoldVec3, [*]const f64, ?*anyopaque) callconv(.c) void,
+    ctx: ?*anyopaque,
+) ?*ManifoldObj {
+    return manifold_set_properties(manifold_alloc_manifold(), obj, @intCast(num_prop), prop_func, ctx);
 }
 
 pub fn transform(obj: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj {

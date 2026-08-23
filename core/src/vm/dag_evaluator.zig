@@ -93,6 +93,11 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
             std.mem.copyForwards(f64, &mat, vm.dag_builder.numbers.items[p.num_idx .. p.num_idx + 12]);
             return kernel.transformMatrix(target, mat) orelse return error.RuntimeError;
         },
+        .set_material => {
+            const p = vm.dag_builder.getMaterialPayload(node);
+            const target = try evaluateDAG(vm, p.target);
+            return kernel.setMaterial(target, p.material_id) orelse return error.RuntimeError;
+        },
         else => {
             vm.reportError("Runtime Error: Expected 3D Geometry node in DAG.\n", .{});
             return error.RuntimeError;

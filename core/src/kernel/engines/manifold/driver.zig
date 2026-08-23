@@ -3,6 +3,13 @@ const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
 const manifold = @import("../../../bindings/manifold/manifold.zig");
 
+fn materialPropFunc(new_prop: [*]f64, pos: manifold.ManifoldVec3, old_prop: [*]const f64, ctx: ?*anyopaque) callconv(.c) void {
+    _ = pos;
+    _ = old_prop;
+    const mat_id: u32 = @intCast(@intFromPtr(ctx));
+    new_prop[0] = @floatFromInt(mat_id);
+}
+
 // --- Primitives Generation ---
 
 fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
@@ -338,6 +345,18 @@ fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
     }
 }
 
+// materials
+
+fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold);
+    if (@intFromPtr(a.ptr) == 0) return null;
+
+    // Pass the integer ID cleanly through the C-FFI opaque pointer
+    const ctx: ?*anyopaque = @ptrFromInt(@as(usize, material_id));
+    const ptr = manifold.setProperties(@ptrCast(@alignCast(a.ptr)), 1, materialPropFunc, ctx) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 // --- Static Dispatch Table ---
 
 pub const driver = kernel.GeometryKernel{
@@ -375,6 +394,7 @@ pub const driver = kernel.GeometryKernel{
     .minGapFn = minGapImpl,
     .rayCastFn = rayCastImpl,
     .polygonFn = polygonImpl,
+    .setMaterialFn = setMaterialImpl,
     .destructFn = destructImpl,
     .destructCrossSectionFn = destructCrossSectionImpl,
 };

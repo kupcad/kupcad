@@ -31,6 +31,7 @@ pub const DAGTag = enum(u8) {
     cs_transform,
     polygon,
     polygons_even_odd,
+    set_material,
 };
 
 /// Exactly 8 bytes for optimal L1 cache line density (8 nodes per 64B line)
@@ -181,6 +182,15 @@ pub const DAGBuilder = struct {
 
         const node_idx: u32 = @intCast(self.nodes.items.len);
         try self.nodes.append(alloc, .{ .tag = .polygons_even_odd, .flags = 0, .data = data_offset });
+        return node_idx;
+    }
+
+    pub fn addSetMaterial(self: *DAGBuilder, target: DAGNodeIndex, material_id: u32) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+        try self.extra_data.appendSlice(alloc, &.{ target, material_id });
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{ .tag = .set_material, .flags = 0, .data = extra_idx });
         return node_idx;
     }
 
@@ -410,6 +420,13 @@ pub const DAGBuilder = struct {
             .target = target,
             .segments = @as(i32, @intFromFloat(self.numbers.items[num_idx])),
             .degrees = self.numbers.items[num_idx + 1],
+        };
+    }
+
+    pub inline fn getMaterialPayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex, material_id: u32 } {
+        return .{
+            .target = self.extra_data.items[node.data],
+            .material_id = self.extra_data.items[node.data + 1],
         };
     }
 };

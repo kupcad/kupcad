@@ -4,47 +4,44 @@ const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 
-// Extracted reusable STL writer!
-pub fn writeStl(vm: *VM, handle: geom.GeometryHandle, path_str: []const u8) anyerror!void {
-    const mesh = kernel.getMesh(vm.allocator, handle) orelse return error.RuntimeError;
-    defer {
-        vm.allocator.free(mesh.vert_props);
-        vm.allocator.free(mesh.tri_verts);
-    }
+/// Generates an STL binary buffer in memory.
+pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ![]const u8 {
+    const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
+    defer allocator.free(mesh.vert_props);
+    defer allocator.free(mesh.tri_verts);
 
-    var out: std.Io.Writer.Allocating = .init(vm.allocator);
-    defer out.deinit();
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(allocator);
 
-    const header = [_]u8{0} ** 80;
-    try out.writer.writeAll(&header);
-
-    const num_tris: u32 = @intCast(mesh.tri_verts.len / 3);
-    try out.writer.writeInt(u32, num_tris, .little);
+    // STL Header (80 bytes)
+    try out.appendNTimes(allocator, 0, 80);
+    // Triangle Count (4 bytes)
+    const tri_count: u32 = @intCast(mesh.tri_verts.len / 3);
+    try out.appendSlice(allocator, std.mem.asBytes(&tri_count));
 
     var i: usize = 0;
     while (i < mesh.tri_verts.len) : (i += 3) {
-        try out.writer.writeInt(u32, @as(u32, @bitCast(@as(f32, 0.0))), .little);
-        try out.writer.writeInt(u32, @as(u32, @bitCast(@as(f32, 0.0))), .little);
-        try out.writer.writeInt(u32, @as(u32, @bitCast(@as(f32, 0.0))), .little);
+        // Normal vector (dummy 0.0, 0.0, 0.0)
+        const zero: f32 = 0.0;
+        try out.appendSlice(allocator, std.mem.asBytes(&zero));
+        try out.appendSlice(allocator, std.mem.asBytes(&zero));
+        try out.appendSlice(allocator, std.mem.asBytes(&zero));
 
+        // 3 Vertices (x, y, z floats)
         for (0..3) |v| {
             const idx = mesh.tri_verts[i + v];
-            const px = mesh.vert_props[idx * mesh.num_prop + 0];
-            const py = mesh.vert_props[idx * mesh.num_prop + 1];
-            const pz = mesh.vert_props[idx * mesh.num_prop + 2];
-
-            try out.writer.writeInt(u32, @as(u32, @bitCast(px)), .little);
-            try out.writer.writeInt(u32, @as(u32, @bitCast(py)), .little);
-            try out.writer.writeInt(u32, @as(u32, @bitCast(pz)), .little);
+            const v_idx = idx * mesh.num_prop;
+            try out.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v_idx]));
+            try out.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v_idx + 1]));
+            try out.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v_idx + 2]));
         }
-        try out.writer.writeInt(u16, 0, .little);
+
+        // Attribute byte count (2 bytes)
+        const attr_count: u16 = 0;
+        try out.appendSlice(allocator, std.mem.asBytes(&attr_count));
     }
 
-    const cwd = std.Io.Dir.cwd();
-    try cwd.writeFile(vm.io, .{
-        .sub_path = path_str,
-        .data = out.written(),
-    });
+    return try out.toOwnedSlice(allocator);
 }
 
 pub fn nativeExportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -54,11 +51,17 @@ pub fn nativeExportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
     if (!args[0].isString()) return error.RuntimeError;
     if (!args[1].isGeometry()) return error.RuntimeError;
 
-    const path_str = args[0].asString();
+    const path_str = args[0].asString().chars;
     const handle = try vm.ensureConcrete(args[1]);
 
-    // Use .chars to extract the raw []const u8 slice from the ObjString
-    try writeStl(vm, handle, path_str.chars);
+    const stl_bytes = try buildStlBuffer(vm.allocator, handle);
+    defer vm.allocator.free(stl_bytes);
+
+    const cwd = std.Io.Dir.cwd();
+    try cwd.writeFile(vm.io, .{
+        .sub_path = path_str,
+        .data = stl_bytes,
+    });
 
     return value.Value.initNil();
 }
@@ -67,5 +70,5 @@ pub fn nativeImportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
     _ = vm_opaque;
     _ = arg_count;
     _ = args;
-    return error.RuntimeError; // Implemented later
+    return error.RuntimeError; // MVP stub
 }

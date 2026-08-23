@@ -66,15 +66,13 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer allocator.free(source);
 
     // Compile, Inject, and Evaluate
-    // (Note: api.buildStl currently explicitly exports STL binary data.
-    // When we plug in STEP/OBJ exporters, we'll route it based on the `format` variable!)
-    const output_bytes = api.buildStl(allocator, init.io, source, cli_params) catch |err| {
+    const output_bytes = api.buildModel(allocator, init.io, source, format, cli_params) catch |err| {
         std.debug.print("Build failed: {}\n", .{err});
         return;
     };
     defer allocator.free(output_bytes);
 
-    // 5. Export File
+    // Export File
     const cwd = std.Io.Dir.cwd();
     try cwd.writeFile(init.io, .{
         .sub_path = final_output,

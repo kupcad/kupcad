@@ -5,6 +5,7 @@ const VM = @import("../vm/vm.zig").VM;
 const primitives = @import("primitives.zig");
 const step = @import("../exporters/3d/step.zig");
 const stl = @import("../exporters/3d/stl.zig");
+const gltf = @import("../exporters/3d/gltf.zig");
 const dag = @import("../vm/dag.zig");
 const io_mod = @import("io.zig");
 const chunk = @import("../vm/chunk.zig");
@@ -49,6 +50,7 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "export_stl", .func = stl.nativeExportStl, .category = .file_io },
     .{ .name = "import_step", .func = step.nativeImportStep, .category = .file_io },
     .{ .name = "export_step", .func = step.nativeExportStep, .category = .file_io },
+    .{ .name = "export_gltf", .func = gltf.nativeExportGltf, .category = .file_io },
 };
 
 // Strongly typed function pointer for Mesh methods
@@ -85,6 +87,7 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "min_gap", .category = .inspection_method, .func = common.wrapMethod(methods.meshMinGap) },
     .{ .name = "contains?", .category = .inspection_method, .func = common.wrapMethod(methods.meshContains) },
     .{ .name = "ray_cast", .category = .inspection_method, .func = common.wrapMethod(methods.meshRayCast) },
+    .{ .name = "material", .category = .transform, .func = common.wrapMethod(methods.meshMaterial) },
 };
 
 // Compile-time generated O(1) jump table
