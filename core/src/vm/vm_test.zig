@@ -2221,7 +2221,7 @@ test "VM Edge Case: Native C++ FFI failures are safely caught by rescue blocks" 
     vm.mute_errors = true; // Prevent the error string from cluttering test output
 
     // Attempt to translate a geometry using an invalid String instead of a Number.
-    // In Phase 2, this caused a fatal process panic. Now it should gracefully throw to rescue!
+    // In, this caused a fatal process panic. Now it should gracefully throw to rescue!
     const source =
         \\begin
         \\  c = cube(10)
@@ -7038,4 +7038,75 @@ test "VM: Text alignment with halign and valign centers bounding box" {
     // Centered text alignment should place its X and Y midpoint near 0.0
     try testing.expectApproxEqAbs(0.0, center_x, 0.1);
     try testing.expectApproxEqAbs(0.0, center_y, 0.1);
+}
+
+test "VM: Square with round_r generates valid 2D cross-section" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 10x10 square with 2mm rounded corners
+    const source = "square(10.0, round_r: 2.0)";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isCrossSection());
+}
+
+test "VM: Cube with chamfer generates extruded 3D solid" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 10x10x10 cube with 1mm chamfered edges
+    const source = "cube(size: 10.0, chamfer: 1.0)";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isGeometry());
+
+    const handle = try vm.ensureConcrete(result);
+    // Ensure the extruded chamfered polygon resulted in a valid 3D volume
+    try testing.expect(kernel.volume(handle) > 0.0);
+}
+
+test "VM: Cylinder with round_r generates revolved 3D solid" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Cylinder with 5mm radius, 10mm height, and 1mm rounded caps
+    const source = "cylinder(r: 5.0, h: 10.0, round_r: 1.0)";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isGeometry());
+
+    const handle = try vm.ensureConcrete(result);
+    // Ensure the revolved profile resulted in a valid 3D volume
+    try testing.expect(kernel.volume(handle) > 0.0);
 }

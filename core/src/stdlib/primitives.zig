@@ -16,6 +16,8 @@ const GeomOptions = struct {
     r1: ?f64 = null,
     r2: ?f64 = null,
     h: f64 = 1.0,
+    round_r: ?f64 = null,
+    chamfer: ?f64 = null,
     segments: i32 = 0,
     center: bool = false,
 };
@@ -69,6 +71,10 @@ fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
                         if (v.isNumber()) opts.r1 = v.asNumber() / 2.0;
                     } else if (std.mem.eql(u8, k_str, "d2")) {
                         if (v.isNumber()) opts.r2 = v.asNumber() / 2.0;
+                    } else if (std.mem.eql(u8, k_str, "round_r")) {
+                        if (v.isNumber()) opts.round_r = v.asNumber();
+                    } else if (std.mem.eql(u8, k_str, "chamfer")) {
+                        if (v.isNumber()) opts.chamfer = v.asNumber();
                     } else if (std.mem.eql(u8, k_str, "segments")) {
                         if (v.isNumber()) opts.segments = @intFromFloat(v.asNumber());
                     } else if (std.mem.eql(u8, k_str, "center")) {
@@ -81,7 +87,6 @@ fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
     return opts;
 }
 
-/// Ensures a value is strictly greater than zero (e.g., lengths, widths, radiuses).
 fn requirePositive(vm: *VM, val: f64, name: []const u8) !void {
     if (val <= 0.0) {
         vm.reportError("ValueError: '{s}' must be strictly greater than zero, got {d}.\n", .{ name, val });
@@ -89,7 +94,6 @@ fn requirePositive(vm: *VM, val: f64, name: []const u8) !void {
     }
 }
 
-/// Ensures a value is zero or greater (e.g., corner radiuses, chamfers).
 fn requireNonNegative(vm: *VM, val: f64, name: []const u8) !void {
     if (val < 0.0) {
         vm.reportError("ValueError: '{s}' cannot be negative, got {d}.\n", .{ name, val });
@@ -97,7 +101,79 @@ fn requireNonNegative(vm: *VM, val: f64, name: []const u8) !void {
     }
 }
 
+// --- Filleting Math Helpers ---
+
+/// Generates points along a circular arc and pushes them to the polygon list
+fn pushArc(allocator: std.mem.Allocator, pts: *std.ArrayListUnmanaged([2]f64), cx: f64, cy: f64, r: f64, start_ang: f64, end_ang: f64, segments: usize) !void {
+    const step = (end_ang - start_ang) / @as(f64, @floatFromInt(segments));
+    for (0..segments + 1) |i| {
+        const ang = start_ang + @as(f64, @floatFromInt(i)) * step;
+        try pts.append(allocator, .{ cx + r * @cos(ang), cy + r * @sin(ang) });
+    }
+}
+
+/// Helper to generate a 2D rounded or chamfered rectangle
+fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfer: ?f64, segs: i32) !u32 {
+    var pts = std.ArrayListUnmanaged([2]f64).empty;
+    defer pts.deinit(vm.allocator);
+
+    const hw = x / 2.0;
+    const hh = y / 2.0;
+    const cx = if (center) 0.0 else hw;
+    const cy = if (center) 0.0 else hh;
+
+    if (round_r) |r| {
+        const safe_r = @min(r, @min(hw, hh));
+        // Calculate segments per 90-degree arc (minimum 4, or inherited from user's global segments)
+        const arc_segs = if (segs > 0) @max(4, @as(usize, @intCast(segs)) / 4) else 8;
+
+        // Build corners Counter-Clockwise
+        try pushArc(vm.allocator, &pts, cx + hw - safe_r, cy - hh + safe_r, safe_r, -std.math.pi / 2.0, 0.0, arc_segs); // Bottom-Right
+        try pushArc(vm.allocator, &pts, cx + hw - safe_r, cy + hh - safe_r, safe_r, 0.0, std.math.pi / 2.0, arc_segs); // Top-Right
+        try pushArc(vm.allocator, &pts, cx - hw + safe_r, cy + hh - safe_r, safe_r, std.math.pi / 2.0, std.math.pi, arc_segs); // Top-Left
+        try pushArc(vm.allocator, &pts, cx - hw + safe_r, cy - hh + safe_r, safe_r, std.math.pi, std.math.pi * 1.5, arc_segs); // Bottom-Left
+    } else if (chamfer) |c| {
+        const safe_c = @min(c, @min(hw, hh));
+        try pts.appendSlice(vm.allocator, &.{
+            .{ cx + hw - safe_c, cy - hh },
+            .{ cx + hw, cy - hh + safe_c },
+            .{ cx + hw, cy + hh - safe_c },
+            .{ cx + hw - safe_c, cy + hh },
+            .{ cx - hw + safe_c, cy + hh },
+            .{ cx - hw, cy + hh - safe_c },
+            .{ cx - hw, cy - hh + safe_c },
+            .{ cx - hw + safe_c, cy - hh },
+        });
+    }
+
+    return vm.dag_builder.addPolygon(pts.items);
+}
+
 // --- Methods ---
+
+pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
+    const parsed = parseArgs(args);
+    var opts = extractGeomOptions(parsed);
+
+    if (parsed.pos_count > 0 and args[0].isNumber()) {
+        opts.x = args[0].asNumber();
+        opts.y = opts.x;
+    }
+    if (parsed.pos_count > 1 and args[1].isNumber()) opts.y = args[1].asNumber();
+    if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
+
+    try requirePositive(vm, opts.x, "x");
+    try requirePositive(vm, opts.y, "y");
+
+    var dag_idx: u32 = 0;
+    if (opts.round_r != null or opts.chamfer != null) {
+        dag_idx = try buildRoundedRect(vm, opts.x, opts.y, opts.center, opts.round_r, opts.chamfer, opts.segments);
+    } else {
+        dag_idx = try vm.dag_builder.addSquare(opts.x, opts.y, opts.center);
+    }
+
+    return try vm.allocateCrossSection(dag_idx);
+}
 
 pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
@@ -112,12 +188,26 @@ pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
     if (parsed.pos_count > 2 and args[2].isNumber()) opts.z = args[2].asNumber();
     if (parsed.pos_count > 3 and args[3].isBool()) opts.center = args[3].asBool();
 
-    // Validate
     try requirePositive(vm, opts.x, "x");
     try requirePositive(vm, opts.y, "y");
     try requirePositive(vm, opts.z, "z");
 
-    const dag_idx = try vm.dag_builder.addCube(opts.x, opts.y, opts.z, opts.center);
+    var dag_idx: u32 = 0;
+    if (opts.round_r != null or opts.chamfer != null) {
+        // Build a rounded 2D cross-section and manually extrude it
+        const cs_idx = try buildRoundedRect(vm, opts.x, opts.y, true, opts.round_r, opts.chamfer, opts.segments);
+        dag_idx = try vm.dag_builder.addExtrude(cs_idx, opts.z, 0, 0.0, 1.0, 1.0);
+
+        // Manually apply proper positioning
+        if (opts.center) {
+            dag_idx = try vm.dag_builder.addTranslate(dag_idx, 0.0, 0.0, -opts.z / 2.0);
+        } else {
+            dag_idx = try vm.dag_builder.addTranslate(dag_idx, opts.x / 2.0, opts.y / 2.0, 0.0);
+        }
+    } else {
+        dag_idx = try vm.dag_builder.addCube(opts.x, opts.y, opts.z, opts.center);
+    }
+
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
@@ -136,52 +226,65 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     try requirePositive(vm, r2, "radius 2");
     try requirePositive(vm, opts.h, "height");
 
-    const dag_idx = try vm.dag_builder.addCylinder(r1, r2, opts.h, opts.center, opts.segments);
+    var dag_idx: u32 = 0;
+    if (opts.round_r != null or opts.chamfer != null) {
+        // Draw the right-half cross section using CCW winding (Bottom to Top)
+        var pts = std.ArrayListUnmanaged([2]f64).empty;
+        defer pts.deinit(vm.allocator);
+
+        const y_min = if (opts.center) -opts.h / 2.0 else 0.0;
+        const y_max = if (opts.center) opts.h / 2.0 else opts.h;
+
+        // Bottom center axis
+        try pts.append(vm.allocator, .{ 0.0, y_min });
+
+        if (opts.round_r) |rr| {
+            const arc_segs = if (opts.segments > 0) @max(4, @as(usize, @intCast(opts.segments)) / 4) else 8;
+            const safe_r1 = @min(rr, @min(r1, opts.h / 2.0));
+            const safe_r2 = @min(rr, @min(r2, opts.h / 2.0));
+
+            // Bottom Right Corner (sweep from -90 deg to 0)
+            try pushArc(vm.allocator, &pts, r1 - safe_r1, y_min + safe_r1, safe_r1, -std.math.pi / 2.0, 0.0, arc_segs);
+            // Top Right Corner (sweep from 0 to 90 deg)
+            try pushArc(vm.allocator, &pts, r2 - safe_r2, y_max - safe_r2, safe_r2, 0.0, std.math.pi / 2.0, arc_segs);
+        } else if (opts.chamfer) |c| {
+            const safe_c1 = @min(c, @min(r1, opts.h / 2.0));
+            const safe_c2 = @min(c, @min(r2, opts.h / 2.0));
+            try pts.appendSlice(vm.allocator, &.{
+                .{ r1 - safe_c1, y_min },
+                .{ r1, y_min + safe_c1 },
+                .{ r2, y_max - safe_c2 },
+                .{ r2 - safe_c2, y_max },
+            });
+        }
+
+        // Top center axis
+        try pts.append(vm.allocator, .{ 0.0, y_max });
+
+        const cs_idx = try vm.dag_builder.addPolygon(pts.items);
+        dag_idx = try vm.dag_builder.addRevolve(cs_idx, opts.segments, 360.0);
+    } else {
+        dag_idx = try vm.dag_builder.addCylinder(r1, r2, opts.h, opts.center, opts.segments);
+    }
+
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
 pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
     var opts = extractGeomOptions(parsed);
-
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
-
-    // Validate
     try requirePositive(vm, opts.r, "radius");
-
     const dag_idx = try vm.dag_builder.addSphere(opts.r);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
-}
-
-pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
-
-    if (parsed.pos_count > 0 and args[0].isNumber()) {
-        opts.x = args[0].asNumber();
-        opts.y = opts.x;
-    }
-    if (parsed.pos_count > 1 and args[1].isNumber()) opts.y = args[1].asNumber();
-    if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
-
-    // Validate
-    try requirePositive(vm, opts.x, "x");
-    try requirePositive(vm, opts.y, "y");
-
-    const dag_idx = try vm.dag_builder.addSquare(opts.x, opts.y, opts.center);
-    return try vm.allocateCrossSection(dag_idx);
 }
 
 pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
     var opts = extractGeomOptions(parsed);
-
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
-
-    // Validate
     try requirePositive(vm, opts.r, "radius");
     try requireNonNegative(vm, @as(f64, @floatFromInt(opts.segments)), "segments");
-
     const dag_idx = try vm.dag_builder.addCircle(opts.r, opts.segments);
     return try vm.allocateCrossSection(dag_idx);
 }
@@ -189,17 +292,14 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
 pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     if (args.len < 1 or !args[0].isArray()) return error.RuntimeError;
     const pt_arr = args[0].asArray().items.items;
-
     var pts = try vm.allocator.alloc([2]f64, pt_arr.len);
     defer vm.allocator.free(pts);
-
     for (pt_arr, 0..) |val, i| {
         if (!val.isArray()) return error.RuntimeError;
         const inner = val.asArray().items.items;
         pts[i][0] = if (inner.len > 0 and inner[0].isNumber()) inner[0].asNumber() else 0.0;
         pts[i][1] = if (inner.len > 1 and inner[1].isNumber()) inner[1].asNumber() else 0.0;
     }
-
     const dag_idx = try vm.dag_builder.addPolygon(pts);
     return try vm.allocateCrossSection(dag_idx);
 }
@@ -212,7 +312,6 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     const pts_val = args[0].asArray().items.items;
     const faces_val = args[1].asArray().items.items;
 
-    // Unbox Points
     var pts = try vm.allocator.alloc([3]f64, pts_val.len);
     defer vm.allocator.free(pts);
     for (pts_val, 0..) |p, i| {
@@ -223,7 +322,6 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
         pts[i][2] = if (p_arr.len > 2 and p_arr[2].isNumber()) p_arr[2].asNumber() else 0.0;
     }
 
-    // Unbox Faces (Enforcing Triangles for MVP)
     var faces = try vm.allocator.alloc([3]u32, faces_val.len);
     defer vm.allocator.free(faces);
     for (faces_val, 0..) |f, i| {
@@ -246,17 +344,14 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     }
     const text_str = args[0].asString().chars;
 
-    // Default configuration
-    var size: f64 = 10.0; // 10mm tall
+    var size: f64 = 10.0;
     var font_name: []const u8 = "sans";
     var tolerance: f64 = 0.1;
     var halign: text_mod.HAlign = .left;
     var valign: text_mod.VAlign = .baseline;
 
-    // Positional override for size: text("Hello", 20)
     if (parsed.pos_count > 1 and args[1].isNumber()) size = args[1].asNumber();
 
-    // Keyword overrides: text("Hello", size: 20, font: :mono, tolerance: 0.05, halign: :center, valign: :center)
     if (parsed.kwargs) |kw| {
         if (kw.isObject() and kw.asObj().obj_type == .map) {
             const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", kw.asObj())));
@@ -288,31 +383,26 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
         }
     }
 
-    // Validate
     try requirePositive(vm, size, "size");
     try requirePositive(vm, tolerance, "tolerance");
 
-    // Load Font
     const face = text_mod.getFaceByName(font_name) catch {
         vm.reportError("RuntimeError: Failed to load font '{s}'.\n", .{font_name});
         return error.RuntimeError;
     };
 
-    // Extract Polygons
     var polygons = text_mod.extractText(vm.allocator, &face, text_str, size, tolerance, halign, valign) catch {
         vm.reportError("RuntimeError: Failed to extract text contours.\n", .{});
         return error.RuntimeError;
     };
     defer polygons.deinit(vm.allocator);
 
-    // Convert the extracted contours to the format expected by the kernel
     var contours = try vm.allocator.alloc([]const [2]f64, polygons.contours.items.len);
     defer vm.allocator.free(contours);
     for (polygons.contours.items, 0..) |c, i| {
         contours[i] = c.items;
     }
 
-    // Build the DAG Node
     const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours);
     return try vm.allocateCrossSection(dag_idx);
 }
