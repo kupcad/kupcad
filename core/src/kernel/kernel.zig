@@ -119,9 +119,6 @@ pub inline fn volume(handle: geom.GeometryHandle) f64 {
 pub inline fn surfaceArea(handle: geom.GeometryHandle) f64 {
     return dispatch("surfaceAreaFn", handle, .{});
 }
-pub inline fn queryFaces(handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
-    return dispatch("queryFacesFn", handle, .{filter});
-}
 pub inline fn containsPoint(handle: geom.GeometryHandle, pt: [3]f64) bool {
     return dispatch("containsPointFn", handle, .{pt});
 }
@@ -135,6 +132,12 @@ pub inline fn destructCrossSection(handle: geom.CrossSectionHandle) void {
     dispatch("destructCrossSectionFn", handle, .{});
 }
 
+pub inline fn queryFaces(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
+    switch (handle.engine) {
+        .manifold => return manifold_driver.queryFacesFn(allocator, handle, direction, tolerance),
+        .brep_native => return brep_driver.queryFacesFn(allocator, handle, direction, tolerance),
+    }
+}
 // Allocator is ordered first in these signatures, so we dispatch them manually to preserve standard ordering
 pub inline fn rayCast(alloc: std.mem.Allocator, handle: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
     switch (handle.engine) {
@@ -179,7 +182,7 @@ pub const GeometryKernel = struct {
     genusFn: *const fn (a: geom.GeometryHandle) i32,
     polygonFn: *const fn (allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle,
     boundingBoxFn: *const fn (handle: geom.GeometryHandle) ?geom.BoundingBox,
-    queryFacesFn: *const fn (handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray,
+    queryFacesFn: *const fn (allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle,
     volumeFn: *const fn (handle: geom.GeometryHandle) f64,
     surfaceAreaFn: *const fn (handle: geom.GeometryHandle) f64,
     getMeshFn: *const fn (allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh,

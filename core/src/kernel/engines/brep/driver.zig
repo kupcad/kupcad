@@ -145,9 +145,13 @@ fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
     _ = handle;
     return null;
 }
-fn queryFacesImpl(handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
+fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
+    _ = allocator;
     _ = handle;
-    _ = filter;
+    _ = direction;
+    _ = tolerance;
+    // MVP: B-Rep implementation pending.
+    // Future: Iterate TopoDS_Face, downcast to Geom_Plane, evaluate normal vs direction.
     return null;
 }
 fn volumeImpl(handle: geom.GeometryHandle) f64 {

@@ -433,7 +433,6 @@ pub const Value = packed struct {
         return self.isNil() or (self.isBool() and !self.asBool());
     }
 
-    /// Safely stringifies values recursively using the new Zig 0.16 Io.Writer interface.
     pub fn stringify(self: Value, is_inspect: bool, writer: *std.Io.Writer) !void {
         if (self.isNumber()) {
             try writer.print("{d}", .{self.asNumber()});

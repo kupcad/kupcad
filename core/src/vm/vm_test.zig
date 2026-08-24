@@ -7550,3 +7550,94 @@ test "VM: Block modifiers ghost do and highlight do apply to inner CSG" {
     try testing.expectEqual(@as(usize, 1), vm.display_list.items.len);
     try testing.expectEqual(.ghost, vm.materials.items[0].role);
 }
+
+test "VM CAD: on_face safely evaluates DAG and resolves directional vectors via Manifold feature recognition" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Mute print_handler during unit tests
+    vm.host.print_handler = null;
+
+    // We construct a 10x10x10 cube, centered.
+    // - The :top face should resolve via [0, 0, 1]
+    // - The [1.0, 0.0, 0.0] array should resolve exactly to the right face
+    const source =
+        \\c = cube(size: 10.0, center: true)
+        \\
+        \\# Test Symbol shortcut resolution
+        \\wp_top = c.on_face(:top)
+        \\
+        \\# Test raw vector resolution
+        \\wp_right = c.on_face([1.0, 0.0, 0.0])
+        \\
+        \\[!wp_top.nil?, !wp_right.nil?]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(arr_val.isArray());
+
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+
+    // Prove that both calls successfully evaluated the DAG, ran the scratch-arena DOD loop,
+    // and successfully allocated valid Workplane instances (not nil).
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool());
+}
+
+test "VM CAD Edge Case: on_face gracefully throws RuntimeError on missing faces and unwinds stack safely" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Mute errors to prevent test console clutter[cite: 10]
+    vm.mute_errors = true;
+
+    // 1. Vector [1, 1, 1] on a standard cube will not match any single face normal.
+    // 2. Symbol :invalid_dir is not a valid predefined shortcut.
+    // Both should safely abort the native execution, throw an error, and be caught by the rescue block.[cite: 10]
+    const source =
+        \\begin
+        \\  c = cube(10)
+        \\  c.on_face([1.0, 1.0, 1.0])
+        \\rescue => e1
+        \\  begin
+        \\    c.on_face(:invalid_dir)
+        \\  rescue => e2
+        \\    [1, 1]
+        \\  end
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len); //[cite: 10]
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // The rescue blocks should safely consume the kernel errors and return our [1, 1] array[cite: 10]
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1); //[cite: 10]
+    try testing.expect(arr_val.isArray());
+
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[1].asNumber());
+}

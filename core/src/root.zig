@@ -36,6 +36,9 @@ test {
     _ = @import("frontend/openscad/lexer_test.zig");
     _ = @import("frontend/openscad/parser_test.zig");
 
+    // Kernels
+    _ = @import("kernel/engines/manifold/driver_test.zig");
+
     // CLI & Config Tests
     _ = @import("cli/config_test.zig");
     _ = @import("cli/options_test.zig");

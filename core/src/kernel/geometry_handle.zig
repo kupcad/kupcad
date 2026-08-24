@@ -26,25 +26,10 @@ pub const BoundingBox = struct {
     max: [3]f64,
 };
 
-pub const FaceFilter = enum {
-    top,
-    bottom,
-    front,
-    back,
-    left,
-    right,
-    custom,
-};
-
 pub const FaceHandle = struct {
     index: u32,
     normal: [3]f64,
     centroid: [3]f64,
-};
-
-pub const FaceArray = struct {
-    ptr: [*]FaceHandle,
-    len: usize,
 };
 
 pub const Mesh = struct {

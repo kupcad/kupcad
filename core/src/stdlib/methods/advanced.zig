@@ -99,25 +99,58 @@ pub fn meshProject(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Va
 }
 
 pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !value.Value {
-    // Note: ensureConcrete handles evaluating the DAG, so we pass it a Value wrapper
     const handle = try vm.ensureConcrete(value.Value.initGeometry(receiver));
 
-    const dir_str = if (dir_arg.isObject() and dir_arg.asObj().obj_type == .symbol)
-        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", dir_arg.asObj()))).chars
-    else if (dir_arg.isObject() and dir_arg.asObj().obj_type == .string)
-        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", dir_arg.asObj()))).chars
-    else
+    var direction = [3]f64{ 0, 0, 1 };
+
+    if (dir_arg.isArray()) {
+        const arr = dir_arg.asArray().items.items;
+        if (arr.len >= 3 and arr[0].isNumber() and arr[1].isNumber() and arr[2].isNumber()) {
+            direction = .{ arr[0].asNumber(), arr[1].asNumber(), arr[2].asNumber() };
+        } else {
+            vm.reportError("RuntimeError: Direction array must contain at least 3 numbers [x, y, z].\n", .{});
+            return error.RuntimeError;
+        }
+    } else if (dir_arg.isObject() and (dir_arg.asObj().obj_type == .symbol or dir_arg.asObj().obj_type == .string)) {
+        const dir_str = if (dir_arg.asObj().obj_type == .symbol)
+            @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", dir_arg.asObj()))).chars
+        else
+            @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", dir_arg.asObj()))).chars;
+
+        if (std.mem.eql(u8, dir_str, "top")) {
+            direction = .{ 0, 0, 1 };
+        } else if (std.mem.eql(u8, dir_str, "bottom")) {
+            direction = .{ 0, 0, -1 };
+        } else if (std.mem.eql(u8, dir_str, "front")) {
+            direction = .{ 0, -1, 0 };
+        } else if (std.mem.eql(u8, dir_str, "back")) {
+            direction = .{ 0, 1, 0 };
+        } else if (std.mem.eql(u8, dir_str, "left")) {
+            direction = .{ -1, 0, 0 };
+        } else if (std.mem.eql(u8, dir_str, "right")) {
+            direction = .{ 1, 0, 0 };
+        } else {
+            vm.reportError("RuntimeError: Unknown face direction '{s}'.\n", .{dir_str});
+            return error.RuntimeError;
+        }
+    } else {
+        vm.reportError("RuntimeError: on_face expects a direction Array or Symbol.\n", .{});
         return error.RuntimeError;
+    }
 
     if (receiver.cached_topology == null) {
         receiver.cached_topology = try vm.allocator.create(value.TopologyCache);
         receiver.cached_topology.?.* = .{ .is_populated = true };
     }
 
-    var filter = geom.FaceFilter.top;
-    if (std.mem.eql(u8, dir_str, "bottom")) filter = .bottom;
+    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
 
-    _ = kernel.queryFaces(handle, filter);
+    const faces = kernel.queryFaces(vm.scratch_arena.allocator(), handle, direction, active_config.tolerance) orelse {
+        vm.reportError("RuntimeError: Could not find a coplanar face matching the requested direction.\n", .{});
+        return error.RuntimeError;
+    };
 
-    return try vm.allocateWorkplane(receiver, [3]f64{ 0, 0, 0 }, [3]f64{ 0, 0, 1 });
+    if (faces.len == 0) return error.RuntimeError;
+
+    return try vm.allocateWorkplane(receiver, faces[0].centroid, faces[0].normal);
 }
