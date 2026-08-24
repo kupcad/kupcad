@@ -21,36 +21,11 @@ pub const CompileError = error{
     CorruptedBytecode,
 };
 
-pub const Upvalue = struct {
-    index: u16,
-    is_local: bool,
-};
-
-pub const Local = struct {
-    name_id: ast.StringId,
-    slot: u16,
-};
-
-pub const LoopState = struct {
-    start: usize,
-    depth: usize,
-    exit_jumps: std.ArrayListUnmanaged(usize) = .empty,
-};
-
-const VarType = enum {
-    constant,
-    class_var,
-    instance_var,
-    local,
-    upvalue,
-    global,
-    new_local,
-};
-
-const ResolvedVar = struct {
-    kind: VarType,
-    index: usize = 0,
-};
+pub const Upvalue = scope_mod.Upvalue;
+pub const Local = scope_mod.Local;
+pub const LoopState = scope_mod.LoopState;
+const VarType = scope_mod.VarType;
+const ResolvedVar = scope_mod.ResolvedVar;
 
 const Intrinsic = enum {
     raise_err,
@@ -1919,7 +1894,7 @@ pub const Compiler = struct {
         var pos_count: usize = 0;
         var kw_count: usize = 0;
 
-        // 1. Compile Positional Arguments
+        // Compile Positional Arguments
         for (args) |arg| {
             if (arg.name == .none and (arg.modifier == null or arg.modifier.? != .block)) {
                 try self.compileNode(arg.value);
@@ -1927,7 +1902,7 @@ pub const Compiler = struct {
             }
         }
 
-        // 2. Compile Keyword Arguments
+        // Compile Keyword Arguments
         for (args) |arg| {
             if (arg.name != .none and (arg.modifier == null or arg.modifier.? != .block)) {
                 const name_idx = try self.makeSymbolConstant(self.tree.getString(arg.name));
@@ -1937,7 +1912,7 @@ pub const Compiler = struct {
             }
         }
 
-        // 3. Pack Keyword Arguments into a trailing Map
+        // Pack Keyword Arguments into a trailing Map
         if (kw_count > 0) {
             if (kw_count <= limits.MAX_SHORT_CONSTANTS) {
                 try self.emitOp(.op_build_map);
