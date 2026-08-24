@@ -1,5 +1,6 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
+const util = @import("methods/util.zig");
 const VM = @import("../vm/vm.zig").VM;
 const text_mod = @import("../core/text.zig");
 
@@ -37,54 +38,26 @@ fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
     if (parsed.kwargs) |kw| {
         if (kw.isObject() and kw.asObj().obj_type == .map) {
             const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", kw.asObj())));
-            // Updated to iterate ArrayHashMap
-            var it = map.map.iterator();
-            while (it.next()) |entry| {
-                const k = entry.key_ptr.*;
-                if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
-                    const k_str = if (k.asObj().obj_type == .string)
-                        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
-                    else
-                        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
 
-                    const v = entry.value_ptr.*;
+            // ⚡ O(1) Comptime parsing destroys the boilerplate!
+            opts = util.parseKwargs(GeomOptions, map);
 
-                    if (std.mem.eql(u8, k_str, "size")) {
-                        if (v.isNumber()) {
-                            opts.x = v.asNumber();
-                            opts.y = opts.x;
-                            opts.z = opts.x;
-                        }
-                    } else if (std.mem.eql(u8, k_str, "x")) {
-                        if (v.isNumber()) opts.x = v.asNumber();
-                    } else if (std.mem.eql(u8, k_str, "y")) {
-                        if (v.isNumber()) opts.y = v.asNumber();
-                    } else if (std.mem.eql(u8, k_str, "z")) {
-                        if (v.isNumber()) opts.z = v.asNumber();
-                    } else if (std.mem.eql(u8, k_str, "r")) {
-                        if (v.isNumber()) opts.r = v.asNumber();
-                    } else if (std.mem.eql(u8, k_str, "d")) {
-                        if (v.isNumber()) opts.r = v.asNumber() / 2.0;
-                    } else if (std.mem.eql(u8, k_str, "h")) {
-                        if (v.isNumber()) opts.h = v.asNumber();
-                    } else if (std.mem.eql(u8, k_str, "r1")) {
-                        if (v.isNumber()) opts.r1 = v.asNumber();
-                    } else if (std.mem.eql(u8, k_str, "r2")) {
-                        if (v.isNumber()) opts.r2 = v.asNumber();
-                    } else if (std.mem.eql(u8, k_str, "d1")) {
-                        if (v.isNumber()) opts.r1 = v.asNumber() / 2.0;
-                    } else if (std.mem.eql(u8, k_str, "d2")) {
-                        if (v.isNumber()) opts.r2 = v.asNumber() / 2.0;
-                    } else if (std.mem.eql(u8, k_str, "round_r")) {
-                        if (v.isNumber()) opts.round_r = v.asNumber();
-                    } else if (std.mem.eql(u8, k_str, "chamfer")) {
-                        if (v.isNumber()) opts.chamfer = v.asNumber();
-                    } else if (std.mem.eql(u8, k_str, "segments")) {
-                        if (v.isNumber()) opts.segments = @intFromFloat(v.asNumber());
-                    } else if (std.mem.eql(u8, k_str, "center")) {
-                        if (v.isBool()) opts.center = v.asBool();
-                    }
+            // Handle domain-specific aliases quickly
+            if (util.getKey(map, "size")) |v| {
+                if (v.isNumber()) {
+                    opts.x = v.asNumber();
+                    opts.y = opts.x;
+                    opts.z = opts.x;
                 }
+            }
+            if (util.getKey(map, "d")) |v| {
+                if (v.isNumber()) opts.r = v.asNumber() / 2.0;
+            }
+            if (util.getKey(map, "d1")) |v| {
+                if (v.isNumber()) opts.r1 = v.asNumber() / 2.0;
+            }
+            if (util.getKey(map, "d2")) |v| {
+                if (v.isNumber()) opts.r2 = v.asNumber() / 2.0;
             }
         }
     }

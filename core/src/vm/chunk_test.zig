@@ -19,7 +19,7 @@ test "Chunk: add constants to pool" {
     try testing.expectEqual(@as(f64, 42.5), c.constants.items[0].asNumber());
 }
 
-test "Chunk: handles Phase 1-5 advanced opcodes" {
+test "Chunk: handles advanced opcodes" {
     var c = chunk.Chunk.init();
     defer c.free(testing.allocator);
 

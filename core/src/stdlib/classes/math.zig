@@ -3,7 +3,7 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 
-// --- Phase 2: Math Macros ---
+// --- Math Macros ---
 fn wrapMath1(comptime func: anytype) value.NativeFn {
     return struct {
         fn wrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {

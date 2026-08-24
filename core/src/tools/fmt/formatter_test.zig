@@ -7,7 +7,7 @@ const parser_mod = @import("../../frontend/kupcad/parser.zig");
 const Formatter = @import("formatter.zig").Formatter;
 const FormatterConfig = @import("config.zig").Config;
 
-/// Completely local wrapper that uses our strict Phase 2 & 3 structures for isolated testing
+/// Completely local wrapper that uses our strict structures for isolated testing
 fn formatCodeLocal(allocator: std.mem.Allocator, source: []const u8, config: FormatterConfig) ![]const u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();

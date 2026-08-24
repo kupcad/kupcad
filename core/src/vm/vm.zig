@@ -539,9 +539,10 @@ pub const VM = struct {
                     const count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
 
-                    var out: std.Io.Writer.Allocating = .init(self.allocator);
+                    // --- Scratch Arena Interop ---
+                    const scratch_alloc = self.scratch_arena.allocator();
+                    var out: std.Io.Writer.Allocating = .init(scratch_alloc);
 
-                    // The string fragments were pushed in order; slice them off the top
                     const start_idx = self.stack_top - count;
                     for (self.stack[start_idx..self.stack_top]) |val| {
                         val.stringify(false, &out.writer) catch {
@@ -550,17 +551,8 @@ pub const VM = struct {
                         };
                     }
 
-                    const merged_bytes = self.allocator.dupe(u8, out.written()) catch {
-                        out.deinit();
-                        return .runtime_error;
-                    };
-                    out.deinit(); // Clean up the writer explicitly
-
-                    // The critical memory leak patch
-                    errdefer self.allocator.free(merged_bytes);
-
-                    // Pass ownership to the VM
-                    const merged_str = self.allocateStringTakeOwnership(merged_bytes) catch return .runtime_error;
+                    // Pass scratch output to the GC string intern table
+                    const merged_str = self.allocateString(out.written()) catch return .runtime_error;
 
                     // Pop and release all original stack fragments
                     for (0..count) |_| {
@@ -1628,11 +1620,12 @@ pub const VM = struct {
             const a_str = a_val.asString().chars;
             const b_str = b_val.asString().chars;
 
-            // Allocates a brand new slice on the heap.
-            const merged = std.fmt.allocPrint(self.allocator, "{s}{s}", .{ a_str, b_str }) catch return .runtime_error;
+            // --- DOD: Scratch Arena String Building ---
+            const scratch_alloc = self.scratch_arena.allocator();
+            const merged = std.fmt.allocPrint(scratch_alloc, "{s}{s}", .{ a_str, b_str }) catch return .runtime_error;
 
-            // Pass ownership directly to the VM! No double-duping!
-            const str_val = self.allocateStringTakeOwnership(merged) catch return .runtime_error;
+            // allocateString seamlessly handles checking the intern table, OR precisely allocating on the GC heap
+            const str_val = self.allocateString(merged) catch return .runtime_error;
 
             self.push(str_val);
             return .ok;
