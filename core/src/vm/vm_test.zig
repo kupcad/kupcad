@@ -7163,7 +7163,7 @@ test "VM: Polygon with multiple paths uses Even-Odd cutout routing" {
     try testing.expect(result.isCrossSection());
 }
 
-test "VM Phase 3: Project handles cut kwargs and slice extracts 2D cross sections" {
+test "VM: Project handles cut kwargs and slice extracts 2D cross sections" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);

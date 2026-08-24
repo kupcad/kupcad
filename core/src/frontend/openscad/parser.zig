@@ -33,7 +33,7 @@ pub const Parser = struct {
     b: ast.Builder,
     diagnostics: Diagnostics,
 
-    // --- Phase 3: Zero-Waste Scratch Buffers ---
+    // --- Zero-Waste Scratch Buffers ---
     scratch_nodes: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
     scratch_named_args: std.ArrayListUnmanaged(ast.NamedArg) = .empty,
     scratch_params: std.ArrayListUnmanaged(ast.Param) = .empty,

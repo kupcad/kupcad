@@ -305,6 +305,7 @@ pub const Compiler = struct {
         };
     }
 
+    // --- The Lean Routing Table ---
     fn compileNode(self: *Compiler, node_idx: ast.NodeIndex) CompileError!void {
         if (node_idx == .none) return;
 
@@ -318,6 +319,7 @@ pub const Compiler = struct {
         }
 
         switch (node.tag) {
+            // Primitives
             .number => {
                 const val = self.tree.number(node);
                 try self.emitConstant(value.Value.initNumber(val));
@@ -336,587 +338,44 @@ pub const Compiler = struct {
                 const val = self.tree.boolean(node);
                 if (val) try self.emitOp(.op_true) else try self.emitOp(.op_false);
             },
-            .undef => {
-                try self.emitOp(.op_nil);
-            },
-            .yield_stmt => {
-                const args = self.tree.getNodes(self.tree.nodeSpan(node));
-                for (args) |arg| {
-                    try self.compileNode(arg);
-                }
-                if (args.len > limits.MAX_ARGS) return error.TooManyConstants;
-                try self.emitOp(.op_yield);
-                try self.emitByte(@intCast(args.len));
-                self.simulatePop(args.len); // Yield consumes args
-                self.simulatePush(1); // Yield pushes block return value
-            },
-            .identifier => {
-                // Ensure the Resolver properly mapped this node
-                std.debug.assert(@intFromEnum(node_idx) < self.symbols.len);
+            .undef => try self.emitOp(.op_nil),
 
-                const sym = self.symbols[@intFromEnum(node_idx)];
-                const name_id = self.tree.stringId(node);
-                const name_str = self.tree.getString(name_id);
-
-                const is_local = (self.resolveLocal(name_id) != null) or
-                    (sym.kind == .local);
-                const is_upvalue = (try self.resolveUpvalue(name_id)) != null;
-                const is_script_global = self.isScriptGlobal(name_id);
-
-                // --- REPL FIX: Check the VM's active runtime memory! ---
-                const is_vm_global = self.vm.globals.contains(name_str);
-
-                const is_special_or_const = name_str.len == 0 or
-                    std.mem.startsWith(u8, name_str, "@") or
-                    std.mem.startsWith(u8, name_str, "$") or
-                    std.ascii.isUpper(name_str[0]);
-
-                // If it exists in the VM already, treat it as a variable, not a function call
-                const is_variable = is_local or is_upvalue or is_script_global or is_special_or_const or is_vm_global;
-
-                if (!is_variable) {
-                    // Bare identifier that is not a known variable or constant:
-                    // In Ruby/KupCAD, this is a 0-argument function/method invocation!
-                    const name_idx = try self.makeStringConstant(name_str);
-                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
-                    try self.emitOp(.op_call);
-                    try self.emitByte(0); // 0 arguments
-                    self.simulatePop(1); // Consumes function pointer
-                    self.simulatePush(1); // Pushes function return value
-                } else {
-                    try self.emitVariableLoad(name_id, sym);
-                }
-            },
-            .singleton_class => {
-                const sc = self.tree.singletonClassPayload(node);
-                const target_node = self.tree.getNode(sc.target).?;
-
-                // If `self` is referenced at the root level of a class/module definition,
-                // the namespace object is already sitting at the top of the stack baseline!
-                if (target_node.tag == .self_expr and self.enclosing == null and self.active_namespaces > 0) {
-                    try self.emitOp(.op_dup);
-                } else {
-                    try self.compileNode(sc.target);
-                }
-
-                const body_node = self.tree.getNode(sc.body).?;
-                const block_payload = self.tree.block(body_node);
-                const stmts = self.tree.getNodes(block_payload.stmts);
-
-                // Compile entire body as singleton methods
-                try self.compileNamespaceBody(stmts, true);
-
-                // Stack equilibrium: The target remains on the stack as the expression's return value
-            },
-            .return_stmt => {
-                const ret_idx = self.tree.nodeIndex(node);
-                if (ret_idx != .none) {
-                    try self.compileNode(ret_idx);
-                } else {
-                    try self.emitOp(.op_nil);
-                }
-                try self.emitOp(.op_return);
-                self.simulatePush(1); // Equilibrium for dead code
-            },
-            .next_stmt => {
-                const next_idx = self.tree.nodeIndex(node);
-                if (next_idx != .none) {
-                    try self.compileNode(next_idx);
-                } else {
-                    try self.emitOp(.op_nil);
-                }
-                if (self.loops.items.len > 0) {
-                    try self.emitOp(.op_pop);
-                    const cur_loop = &self.loops.items[self.loops.items.len - 1];
-
-                    if (self.current_stack_depth > cur_loop.depth) return error.UnsupportedScope;
-
-                    try self.emitLoop(cur_loop.start);
-                    self.simulatePush(1);
-                } else if (self.enclosing != null or self.function != null) {
-                    try self.emitOp(.op_return);
-                    self.simulatePush(1);
-                } else {
-                    return error.UnknownNode;
-                }
-            },
-            .break_stmt => {
-                const break_idx = self.tree.nodeIndex(node);
-                if (break_idx != .none) {
-                    try self.compileNode(break_idx);
-                } else {
-                    try self.emitOp(.op_nil);
-                }
-                if (self.loops.items.len > 0) {
-                    const cur_loop = &self.loops.items[self.loops.items.len - 1];
-
-                    if (self.current_stack_depth > cur_loop.depth + 1) return error.UnsupportedScope;
-
-                    const jump = try self.emitJump(.op_jump);
-                    try cur_loop.exit_jumps.append(self.allocator, jump);
-                } else if (self.enclosing != null or self.function != null) {
-                    try self.emitOp(.op_break_block);
-                    self.simulatePush(1);
-                } else {
-                    return error.UnknownNode;
-                }
-            },
-            .assignment => {
-                const assign_payload = self.tree.assignment(node);
-                const sym = self.symbols[@intFromEnum(node_idx)];
-                const name_id = assign_payload.name;
-                const name_str = self.tree.getString(name_id);
-
-                if (compiler_intrinsics.has(name_str)) {
-                    return error.ProtectedSymbol;
-                }
-
-                // Intercept Instance Variables (@x) securely
-                if (std.mem.startsWith(u8, name_str, "@") and !std.mem.startsWith(u8, name_str, "@@")) {
-                    try self.emitPushSelf(); // Stack: [self]
-
-                    // Strip '@' at compile time
-                    const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
-
-                    if (assign_payload.op) |op| {
-                        try self.emitOp(.op_dup); // Stack: [self, self]
-                        const name_idx = try self.makeStringConstant(clean_name);
-                        try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
-                        try self.emitInlineCacheIndex();
-
-                        try self.compileNode(assign_payload.value);
-                        switch (op) {
-                            .add => try self.emitOp(.op_add),
-                            .subtract => try self.emitOp(.op_subtract),
-                            .multiply => try self.emitOp(.op_multiply),
-                            .divide => try self.emitOp(.op_divide),
-                            else => return error.UnknownNode,
-                        }
-                    } else {
-                        try self.compileNode(assign_payload.value); // Stack: [self, new_val]
-                    }
-
-                    const name_idx = try self.makeStringConstant(clean_name);
-                    try self.emitOpWithOperand(.op_set_property, .op_set_property_wide, name_idx);
-                    try self.emitInlineCacheIndex();
-                    return;
-                }
-
-                // Check if the variable exists locally or in an upvalue FIRST
-                const local_slot = self.resolveLocal(name_id);
-                const upval_slot = try self.resolveUpvalue(name_id);
-
-                // If it doesn't exist locally/upvalue, and we're at the top-level, it's a global.
-                // Otherwise, if it's a new local declaration inside a block:
-                const is_new_local = self.enclosing != null and
-                    sym.kind == .local and
-                    !std.mem.startsWith(u8, name_str, "@@") and
-                    !std.mem.startsWith(u8, name_str, "@") and
-                    local_slot == null and
-                    upval_slot == null and
-                    !self.isScriptGlobal(name_id);
-
-                if (is_new_local) {
-                    const slot = self.getNextLocalSlot();
-                    try self.addLocal(name_id, slot);
-                }
-
-                // Evaluate RHS (with Compound Operator getters if necessary)
-                if (assign_payload.op) |op| {
-                    try self.emitVariableLoad(name_id, sym);
-                    try self.compileNode(assign_payload.value);
-                    switch (op) {
-                        .add => try self.emitOp(.op_add),
-                        .subtract => try self.emitOp(.op_subtract),
-                        .multiply => try self.emitOp(.op_multiply),
-                        .divide => try self.emitOp(.op_divide),
-                        else => return error.UnknownNode,
-                    }
-                } else {
-                    try self.compileNode(assign_payload.value);
-                }
-
-                // Set the Target Variable
-                try self.emitVariableStore(name_id, sym);
-            },
-            .rescue_modifier => {
-                const rm = self.tree.rescueModifier(node);
-                const rescue_jump = try self.emitJump(.op_setup_rescue);
-                try self.compileNode(rm.expr);
-                try self.emitOp(.op_pop_rescue);
-                const end_jump = try self.emitJump(.op_jump);
-
-                self.patchJump(rescue_jump);
-
-                // `op_setup_rescue` jumps here with the error value pushed to the stack
-                self.current_stack_depth = expected_entry_depth + 1;
-
-                try self.emitOp(.op_pop); // Discard error value
-                try self.compileNode(rm.rescue_expr);
-                self.patchJump(end_jump);
-            },
-            .namespace_access => {
-                const path = self.tree.getStringLists(self.tree.nodeSpan(node));
-                if (path.len == 0) {
-                    try self.emitOp(.op_nil);
-                    return;
-                }
-
-                // Get the root of the namespace
-                const root_idx = try self.makeStringConstant(self.tree.getString(path[0]));
-                try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, root_idx);
-
-                // Chain property accesses for the rest of the namespace path
-                for (path[1..]) |segment_id| {
-                    const seg_idx = try self.makeStringConstant(self.tree.getString(segment_id));
-                    try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, seg_idx);
-                    try self.emitInlineCacheIndex();
-                }
-            },
-            .import_stmt => {
-                const is_stmt = self.tree.importStmt(node);
-                const path_str = self.tree.getString(is_stmt.path);
-
-                const path_val = try self.vm.allocateString(path_str);
-                self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                self.vm.push(path_val);
-                const path_idx = try self.makeConstant(path_val);
-                _ = self.vm.pop();
-
-                try self.emitOpWithOperand(.op_import, .op_import_wide, path_idx);
-
-                // MVP: Standard import for side-effects. Ignore returned module.
-                // Destructuring explicit symbols will be implemented in future phases.
-                try self.emitOp(.op_pop);
-                try self.emitOp(.op_nil);
-            },
-            .export_stmt => {
-                // MVP: Yields nil. Real exporting requires writing to the VM's active export Map.
-                try self.emitOp(.op_nil);
-            },
-            .def_stmt, .lambda_expr => {
-                var params: []const ast.Param = &.{};
-                var body_node: ast.NodeIndex = .none;
-                var def_name_id: ast.StringId = .none;
-
-                if (node.tag == .def_stmt) {
-                    const ds = self.tree.defStmt(node);
-                    params = self.tree.getParams(ds.params);
-                    body_node = ds.body;
-                    def_name_id = ds.name;
-                } else {
-                    const ls = self.tree.lambdaExpr(node);
-                    params = self.tree.getParams(ls.params);
-                    body_node = ls.body;
-                }
-
-                const is_method = (node.tag == .def_stmt);
-                const name_str = if (def_name_id != .none) self.tree.getString(def_name_id) else null;
-                try self.compileClosureBlock(params, body_node, name_str, is_method);
-
-                if (node.tag == .def_stmt) {
-                    const sym = self.symbols[@intFromEnum(node_idx)];
-                    if (self.enclosing == null or sym.kind == .global) {
-                        const def_name_str = self.tree.getString(def_name_id);
-                        if (compiler_intrinsics.has(def_name_str)) {
-                            return error.ProtectedSymbol;
-                        }
-
-                        const name_idx = try self.makeStringConstant(self.tree.getString(def_name_id));
-                        try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-                        try self.emitOp(.op_nil);
-                    } else {
-                        const slot = self.getNextLocalSlot();
-                        try self.addLocal(def_name_id, slot);
-                        try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
-                    }
-                }
-            },
-            .index_access => {
-                const ia = self.tree.indexAccess(node);
-                try self.compileNode(ia.target);
-                try self.compileNode(ia.index);
-                try self.emitOp(.op_get_index);
-            },
-            .index_assignment => {
-                const ia = self.tree.indexAssignment(node);
-
-                try self.compileNode(ia.target);
-                try self.compileNode(ia.index);
-
-                if (ia.op) |op| {
-                    // Stack is currently: [target, index]
-
-                    // Duplicate BOTH so we can fetch the current value without losing the target/index pointers for the setter
-                    try self.emitOp(.op_dup_two);
-                    // Stack is now: [target, index, target, index]
-
-                    try self.emitOp(.op_get_index);
-                    // Stack is now: [target, index, current_val]
-
-                    try self.compileNode(ia.value);
-                    // Stack is now: [target, index, current_val, rhs_val]
-
-                    switch (op) {
-                        .add => try self.emitOp(.op_add),
-                        .subtract => try self.emitOp(.op_subtract),
-                        .multiply => try self.emitOp(.op_multiply),
-                        .divide => try self.emitOp(.op_divide),
-                        else => return error.UnknownNode,
-                    }
-                    // Stack is now: [target, index, new_val]
-                } else {
-                    try self.compileNode(ia.value); // Stack: [target, index, new_val]
-                }
-
-                // op_set_index consumes [target, index, new_val] and pushes [new_val] back
-                try self.emitOp(.op_set_index);
-            },
-            .unary_op => {
-                const un_expr = self.tree.unaryExpr(node);
-                try self.compileNode(un_expr.operand);
-                switch (un_expr.op) {
-                    .negate => try self.emitOp(.op_negate),
-                    .not => try self.emitOp(.op_not),
-                    else => return error.UnknownNode,
-                }
-            },
+            // Extracted Node Handlers
+            .identifier => try self.compileIdentifier(node, node_idx),
+            .singleton_class => try self.compileSingletonClass(node),
+            .yield_stmt => try self.compileYieldStmt(node),
+            .return_stmt => try self.compileReturnStmt(node),
+            .next_stmt => try self.compileNextStmt(node),
+            .break_stmt => try self.compileBreakStmt(node),
+            .assignment => try self.compileAssignment(node, node_idx),
+            .rescue_modifier => try self.compileRescueModifier(node, expected_entry_depth),
+            .namespace_access => try self.compileNamespaceAccess(node),
+            .import_stmt => try self.compileImportStmt(node),
+            .export_stmt => try self.compileExportStmt(node),
+            .def_stmt, .lambda_expr => try self.compileDefStmt(node, node_idx),
+            .index_access => try self.compileIndexAccess(node),
+            .index_assignment => try self.compileIndexAssignment(node),
+            .unary_op => try self.compileUnaryOp(node),
             .binary_op => try self.compileBinaryOp(node),
             .array_literal => try self.compileArrayLiteral(node),
             .hash_literal => try self.compileHashLiteral(node),
-            .case_stmt => try self.compileCaseStmt(node),
-            .begin_stmt => try self.compileBeginStmt(node),
+            .case_stmt => try self.compileCaseStmt(node, expected_entry_depth),
+            .begin_stmt => try self.compileBeginStmt(node, expected_entry_depth),
             .method_call => try self.compileMethodCall(node),
-            .if_stmt => {
-                const if_payload = self.tree.ifStmt(node);
-                try self.compileNode(if_payload.condition);
-                if (if_payload.is_unless) try self.emitOp(.op_not);
-
-                const then_jump = try self.emitJump(.op_jump_if_false);
-                try self.emitOp(.op_pop); // pop cond for true branch
-
-                try self.compileNode(if_payload.then_branch);
-
-                // Force sync before branch jump
-                self.current_stack_depth = expected_entry_depth + 1;
-                const else_jump = try self.emitJump(.op_jump);
-
-                self.patchJump(then_jump);
-
-                // False branch: VM stack still has the condition on it
-                self.current_stack_depth = expected_entry_depth + 1;
-
-                try self.emitOp(.op_pop); // pop cond for false branch
-
-                if (if_payload.else_branch != .none) {
-                    try self.compileNode(if_payload.else_branch);
-                } else {
-                    try self.emitOp(.op_nil);
-                }
-
-                self.patchJump(else_jump);
-                // Guarantee perfectly balanced exit
-                self.current_stack_depth = expected_entry_depth + 1;
-            },
-            .self_expr => {
-                try self.emitPushSelf();
-            },
-            .while_stmt => {
-                const while_payload = self.tree.whileStmt(node);
-                const loop_start = self.current_chunk.code.items.len;
-
-                // Push loop state WITH stack depth
-                try self.loops.append(self.allocator, .{
-                    .start = loop_start,
-                    .depth = self.current_stack_depth,
-                });
-
-                try self.compileNode(while_payload.condition);
-                if (while_payload.is_until) try self.emitOp(.op_not);
-
-                const exit_jump = try self.emitJump(.op_jump_if_false);
-                try self.emitOp(.op_pop); // Clean up condition
-
-                try self.compileNode(while_payload.body);
-
-                // Force sync before loop jump
-                self.current_stack_depth = expected_entry_depth + 1;
-                try self.emitOp(.op_pop); // Pop the body's yielded result
-
-                try self.emitLoop(loop_start);
-
-                self.patchJump(exit_jump);
-
-                // VM stack still has the condition on it when it jumps here!
-                self.current_stack_depth = expected_entry_depth + 1;
-
-                try self.emitOp(.op_pop);
-                try self.emitOp(.op_nil); // Natural exit yields nil
-
-                // Pop loop state and safely patch all 'break' jump addresses
-                var cur_loop = self.loops.pop().?;
-                defer cur_loop.exit_jumps.deinit(self.allocator);
-                for (cur_loop.exit_jumps.items) |jmp| {
-                    self.patchJump(jmp);
-                }
-
-                // Guarantee perfectly balanced exit
-                self.current_stack_depth = expected_entry_depth + 1;
-            },
-            .ternary_op => {
-                const ternary = self.tree.ternaryExpr(node);
-                try self.compileNode(ternary.condition);
-                const then_jump = try self.emitJump(.op_jump_if_false);
-                try self.emitOp(.op_pop); // pop condition if true
-                try self.compileNode(ternary.then_branch);
-                const else_jump = try self.emitJump(.op_jump);
-
-                self.patchJump(then_jump);
-
-                // False branch: VM stack still has the condition on it!
-                self.current_stack_depth = expected_entry_depth + 1;
-
-                try self.emitOp(.op_pop); // pop condition if false
-                try self.compileNode(ternary.else_branch);
-                self.patchJump(else_jump);
-            },
-            .range => {
-                const r = self.tree.range(node);
-                try self.compileNode(r.start);
-                try self.compileNode(r.end);
-
-                if (r.step != .none) {
-                    try self.compileNode(r.step);
-                } else {
-                    try self.emitConstant(value.Value.initNumber(1.0)); // Default step
-                }
-
-                try self.emitOp(.op_build_range);
-                try self.emitByte(if (r.is_exclusive) 1 else 0);
-
-                self.simulatePop(3); // Pops start, end, step
-                self.simulatePush(1); // Pushes ObjRange
-            },
-            .interpolated_string => {
-                const parts = self.tree.getNodes(self.tree.nodeSpan(node));
-                for (parts) |part| {
-                    try self.compileNode(part);
-                }
-
-                if (parts.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
-
-                try self.emitOp(.op_interpolate);
-                try self.emitByte(@intCast(parts.len));
-
-                self.simulatePop(parts.len);
-                self.simulatePush(1); // Pushes the final merged String
-            },
+            .if_stmt => try self.compileIfStmt(node, expected_entry_depth),
+            .self_expr => try self.emitPushSelf(),
+            .while_stmt => try self.compileWhileStmt(node, expected_entry_depth),
+            .ternary_op => try self.compileTernaryOp(node, expected_entry_depth),
+            .range => try self.compileRange(node),
+            .interpolated_string => try self.compileInterpolatedString(node),
             .multiple_assignment => try self.compileMultipleAssignment(node),
             .class_stmt => try self.compileClassStmt(node, node_idx),
             .module_stmt => try self.compileModuleStmt(node),
             .super_call => try self.compileSuperCall(node),
-            .property_assignment => {
-                const pa = self.tree.propertyAssignment(node);
-                const prop_name = self.tree.getString(pa.property);
+            .property_assignment => try self.compilePropertyAssignment(node),
+            .defined_expr => try self.compileDefinedExpr(node),
+            .block => try self.compileBlock(node),
 
-                const name_idx = try self.makeStringConstant(prop_name);
-
-                try self.compileNode(pa.target); // Stack: [target]
-
-                if (pa.op) |op| {
-                    // Duplicate the pointer instead of re-evaluating the AST
-                    try self.emitOp(.op_dup); // Stack: [target, target]
-
-                    // Compound assignments must read properties via op_get_property, not op_invoke
-                    try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
-                    try self.emitInlineCacheIndex();
-                    // Stack is now: [target, old_val]
-
-                    try self.compileNode(pa.value); // Stack: [target, old_val, rhs_val]
-
-                    switch (op) {
-                        .add => try self.emitOp(.op_add),
-                        .subtract => try self.emitOp(.op_subtract),
-                        .multiply => try self.emitOp(.op_multiply),
-                        .divide => try self.emitOp(.op_divide),
-                        else => return error.UnknownNode,
-                    }
-                    // Stack is now: [target, new_val]
-                } else {
-                    try self.compileNode(pa.value); // Stack: [target, new_val]
-                }
-
-                // op_set_property consumes both target and new_val, then pushes new_val back
-                try self.emitOpWithOperand(.op_set_property, .op_set_property_wide, name_idx);
-                try self.emitInlineCacheIndex();
-            },
-            .defined_expr => {
-                const target_node = self.tree.getNode(node_idx).?;
-                if (self.tree.stringId(target_node) != .none) {
-                    const name_id = self.tree.stringId(target_node);
-                    if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
-                        try self.emitOp(.op_true); // Locals are statically known
-                    } else {
-                        const name_str = self.tree.getString(name_id);
-                        const name_idx = try self.makeStringConstant(name_str);
-                        try self.emitOpWithOperand(.op_defined, .op_defined_wide, name_idx);
-                    }
-                } else {
-                    try self.emitOp(.op_true);
-                }
-            },
-            .block => {
-                const block_payload = self.tree.block(node);
-                const stmts = self.tree.getNodes(block_payload.stmts);
-
-                // Unpack destructured block arguments
-                const param_nodes = self.tree.getNodes(block_payload.params);
-                for (param_nodes, 0..) |p_idx, i| {
-                    const p_node = self.tree.getNode(p_idx).?;
-                    if (p_node.tag == .array_literal) {
-                        // The tuple is sitting in local slot (i + 1) because slot 0 is the closure itself
-                        try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
-
-                        const elements = self.tree.getNodes(self.tree.nodeSpan(p_node));
-                        try self.emitOp(.op_unpack);
-                        try self.emitByte(@intCast(elements.len));
-                        self.simulatePop(1);
-                        self.simulatePush(elements.len);
-
-                        // Unpack in reverse order to match the stack
-                        var el_i: usize = elements.len;
-                        while (el_i > 0) {
-                            el_i -= 1;
-                            const el_node = self.tree.getNode(elements[el_i]).?;
-
-                            // Safe Guard against unsupported nested destructuring
-                            if (el_node.tag != .identifier) {
-                                return error.UnknownNode;
-                            }
-
-                            // Re-use your existing destructuring engine
-                            const lhs = ast.LhsExpr{
-                                .name = self.tree.stringId(el_node),
-                                .modifier = null,
-                            };
-                            try self.compileDestructure(lhs);
-                        }
-                    }
-                }
-
-                if (stmts.len == 0) {
-                    try self.emitOp(.op_nil);
-                } else {
-                    for (stmts, 0..) |stmt_idx, i| {
-                        try self.compileNode(stmt_idx);
-
-                        // Unconditionally pop every statement except the last one!
-                        if (i < stmts.len - 1) {
-                            try self.emitOp(.op_pop);
-                        }
-                    }
-                }
-            },
             else => {
                 try self.emitOp(.op_nil); // Push dummy value for unknown AST nodes
             },
@@ -928,6 +387,1587 @@ pub const Compiler = struct {
             std.debug.assert(self.current_stack_depth == expected_entry_depth + 1);
         }
     }
+
+    // --- AST Node Compilers ---
+
+    fn compileIdentifier(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
+        // Ensure the Resolver properly mapped this node
+        std.debug.assert(@intFromEnum(node_idx) < self.symbols.len);
+
+        const sym = self.symbols[@intFromEnum(node_idx)];
+        const name_id = self.tree.stringId(node);
+        const name_str = self.tree.getString(name_id);
+
+        const is_local = (self.resolveLocal(name_id) != null) or
+            (sym.kind == .local);
+        const is_upvalue = (try self.resolveUpvalue(name_id)) != null;
+        const is_script_global = self.isScriptGlobal(name_id);
+
+        // Check the VM's active runtime memory fir REPL
+        const is_vm_global = self.vm.globals.contains(name_str);
+
+        const is_special_or_const = name_str.len == 0 or
+            std.mem.startsWith(u8, name_str, "@") or
+            std.mem.startsWith(u8, name_str, "$") or
+            std.ascii.isUpper(name_str[0]);
+
+        // If it exists in the VM already, treat it as a variable, not a function call
+        const is_variable = is_local or is_upvalue or is_script_global or is_special_or_const or is_vm_global;
+
+        if (!is_variable) {
+            // Bare identifier that is not a known variable or constant:
+            // In Ruby/KupCAD, this is a 0-argument function/method invocation!
+            const name_idx = try self.makeStringConstant(name_str);
+            try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+            try self.emitOp(.op_call);
+            try self.emitByte(0); // 0 arguments
+            self.simulatePop(1); // Consumes function pointer
+            self.simulatePush(1); // Pushes function return value
+        } else {
+            try self.emitVariableLoad(name_id, sym);
+        }
+    }
+
+    fn compileSingletonClass(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const sc = self.tree.singletonClassPayload(node);
+        const target_node = self.tree.getNode(sc.target).?;
+
+        // If `self` is referenced at the root level of a class/module definition,
+        // the namespace object is already sitting at the top of the stack baseline!
+        if (target_node.tag == .self_expr and self.enclosing == null and self.active_namespaces > 0) {
+            try self.emitOp(.op_dup);
+        } else {
+            try self.compileNode(sc.target);
+        }
+
+        const body_node = self.tree.getNode(sc.body).?;
+        const block_payload = self.tree.block(body_node);
+        const stmts = self.tree.getNodes(block_payload.stmts);
+
+        // Compile entire body as singleton methods
+        try self.compileNamespaceBody(stmts, true);
+
+        // Stack equilibrium: The target remains on the stack as the expression's return value
+    }
+
+    fn compileYieldStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const args = self.tree.getNodes(self.tree.nodeSpan(node));
+        for (args) |arg| {
+            try self.compileNode(arg);
+        }
+        if (args.len > limits.MAX_ARGS) return error.TooManyConstants;
+        try self.emitOp(.op_yield);
+        try self.emitByte(@intCast(args.len));
+        self.simulatePop(args.len); // Yield consumes args
+        self.simulatePush(1); // Yield pushes block return value
+    }
+
+    fn compileReturnStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const ret_idx = self.tree.nodeIndex(node);
+        if (ret_idx != .none) {
+            try self.compileNode(ret_idx);
+        } else {
+            try self.emitOp(.op_nil);
+        }
+        try self.emitOp(.op_return);
+        self.simulatePush(1); // Equilibrium for dead code
+    }
+
+    fn compileNextStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const next_idx = self.tree.nodeIndex(node);
+        if (next_idx != .none) {
+            try self.compileNode(next_idx);
+        } else {
+            try self.emitOp(.op_nil);
+        }
+        if (self.loops.items.len > 0) {
+            try self.emitOp(.op_pop);
+            const cur_loop = &self.loops.items[self.loops.items.len - 1];
+
+            if (self.current_stack_depth > cur_loop.depth) return error.UnsupportedScope;
+
+            try self.emitLoop(cur_loop.start);
+            self.simulatePush(1);
+        } else if (self.enclosing != null or self.function != null) {
+            try self.emitOp(.op_return);
+            self.simulatePush(1);
+        } else {
+            return error.UnknownNode;
+        }
+    }
+
+    fn compileBreakStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const break_idx = self.tree.nodeIndex(node);
+        if (break_idx != .none) {
+            try self.compileNode(break_idx);
+        } else {
+            try self.emitOp(.op_nil);
+        }
+        if (self.loops.items.len > 0) {
+            const cur_loop = &self.loops.items[self.loops.items.len - 1];
+
+            if (self.current_stack_depth > cur_loop.depth + 1) return error.UnsupportedScope;
+
+            const jump = try self.emitJump(.op_jump);
+            try cur_loop.exit_jumps.append(self.allocator, jump);
+        } else if (self.enclosing != null or self.function != null) {
+            try self.emitOp(.op_break_block);
+            self.simulatePush(1);
+        } else {
+            return error.UnknownNode;
+        }
+    }
+
+    fn compileAssignment(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
+        const assign_payload = self.tree.assignment(node);
+        const sym = self.symbols[@intFromEnum(node_idx)];
+        const name_id = assign_payload.name;
+        const name_str = self.tree.getString(name_id);
+
+        if (compiler_intrinsics.has(name_str)) {
+            return error.ProtectedSymbol;
+        }
+
+        // Intercept Instance Variables (@x) securely
+        if (std.mem.startsWith(u8, name_str, "@") and !std.mem.startsWith(u8, name_str, "@@")) {
+            try self.emitPushSelf(); // Stack: [self]
+
+            // Strip '@' at compile time
+            const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
+
+            if (assign_payload.op) |op| {
+                try self.emitOp(.op_dup); // Stack: [self, self]
+                const name_idx = try self.makeStringConstant(clean_name);
+                try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+                try self.emitInlineCacheIndex();
+
+                try self.compileNode(assign_payload.value);
+                switch (op) {
+                    .add => try self.emitOp(.op_add),
+                    .subtract => try self.emitOp(.op_subtract),
+                    .multiply => try self.emitOp(.op_multiply),
+                    .divide => try self.emitOp(.op_divide),
+                    else => return error.UnknownNode,
+                }
+            } else {
+                try self.compileNode(assign_payload.value); // Stack: [self, new_val]
+            }
+
+            const name_idx = try self.makeStringConstant(clean_name);
+            try self.emitOpWithOperand(.op_set_property, .op_set_property_wide, name_idx);
+            try self.emitInlineCacheIndex();
+            return;
+        }
+
+        // Check if the variable exists locally or in an upvalue FIRST
+        const local_slot = self.resolveLocal(name_id);
+        const upval_slot = try self.resolveUpvalue(name_id);
+
+        // If it doesn't exist locally/upvalue, and we're at the top-level, it's a global.
+        // Otherwise, if it's a new local declaration inside a block:
+        const is_new_local = self.enclosing != null and
+            sym.kind == .local and
+            !std.mem.startsWith(u8, name_str, "@@") and
+            !std.mem.startsWith(u8, name_str, "@") and
+            local_slot == null and
+            upval_slot == null and
+            !self.isScriptGlobal(name_id);
+
+        if (is_new_local) {
+            const slot = self.getNextLocalSlot();
+            try self.addLocal(name_id, slot);
+        }
+
+        // Evaluate RHS (with Compound Operator getters if necessary)
+        if (assign_payload.op) |op| {
+            try self.emitVariableLoad(name_id, sym);
+            try self.compileNode(assign_payload.value);
+            switch (op) {
+                .add => try self.emitOp(.op_add),
+                .subtract => try self.emitOp(.op_subtract),
+                .multiply => try self.emitOp(.op_multiply),
+                .divide => try self.emitOp(.op_divide),
+                else => return error.UnknownNode,
+            }
+        } else {
+            try self.compileNode(assign_payload.value);
+        }
+
+        // Set the Target Variable
+        try self.emitVariableStore(name_id, sym);
+    }
+
+    fn compileRescueModifier(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
+        const rm = self.tree.rescueModifier(node);
+        const rescue_jump = try self.emitJump(.op_setup_rescue);
+        try self.compileNode(rm.expr);
+        try self.emitOp(.op_pop_rescue);
+        const end_jump = try self.emitJump(.op_jump);
+
+        self.patchJump(rescue_jump);
+
+        // `op_setup_rescue` jumps here with the error value pushed to the stack
+        self.current_stack_depth = expected_entry_depth + 1;
+
+        try self.emitOp(.op_pop); // Discard error value
+        try self.compileNode(rm.rescue_expr);
+        self.patchJump(end_jump);
+    }
+
+    fn compileNamespaceAccess(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const path = self.tree.getStringLists(self.tree.nodeSpan(node));
+        if (path.len == 0) {
+            try self.emitOp(.op_nil);
+            return;
+        }
+
+        // Get the root of the namespace
+        const root_idx = try self.makeStringConstant(self.tree.getString(path[0]));
+        try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, root_idx);
+
+        // Chain property accesses for the rest of the namespace path
+        for (path[1..]) |segment_id| {
+            const seg_idx = try self.makeStringConstant(self.tree.getString(segment_id));
+            try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, seg_idx);
+            try self.emitInlineCacheIndex();
+        }
+    }
+
+    fn compileImportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const is_stmt = self.tree.importStmt(node);
+        const path_str = self.tree.getString(is_stmt.path);
+
+        const path_val = try self.vm.allocateString(path_str);
+        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+        self.vm.push(path_val);
+        const path_idx = try self.makeConstant(path_val);
+        _ = self.vm.pop();
+
+        try self.emitOpWithOperand(.op_import, .op_import_wide, path_idx);
+
+        // MVP: Standard import for side-effects. Ignore returned module.
+        // Destructuring explicit symbols will be implemented in future phases.
+        try self.emitOp(.op_pop);
+        try self.emitOp(.op_nil);
+    }
+
+    fn compileExportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
+        _ = node;
+        // MVP: Yields nil. Real exporting requires writing to the VM's active export Map.
+        try self.emitOp(.op_nil);
+    }
+
+    fn compileDefStmt(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
+        var params: []const ast.Param = &.{};
+        var body_node: ast.NodeIndex = .none;
+        var def_name_id: ast.StringId = .none;
+
+        if (node.tag == .def_stmt) {
+            const ds = self.tree.defStmt(node);
+            params = self.tree.getParams(ds.params);
+            body_node = ds.body;
+            def_name_id = ds.name;
+        } else {
+            const ls = self.tree.lambdaExpr(node);
+            params = self.tree.getParams(ls.params);
+            body_node = ls.body;
+        }
+
+        const is_method = (node.tag == .def_stmt);
+        const name_str = if (def_name_id != .none) self.tree.getString(def_name_id) else null;
+        try self.compileClosureBlock(params, body_node, name_str, is_method);
+
+        if (node.tag == .def_stmt) {
+            const sym = self.symbols[@intFromEnum(node_idx)];
+            if (self.enclosing == null or sym.kind == .global) {
+                const def_name_str = self.tree.getString(def_name_id);
+                if (compiler_intrinsics.has(def_name_str)) {
+                    return error.ProtectedSymbol;
+                }
+
+                const name_idx = try self.makeStringConstant(self.tree.getString(def_name_id));
+                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+                try self.emitOp(.op_nil);
+            } else {
+                const slot = self.getNextLocalSlot();
+                try self.addLocal(def_name_id, slot);
+                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
+            }
+        }
+    }
+
+    fn compileIndexAccess(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const ia = self.tree.indexAccess(node);
+        try self.compileNode(ia.target);
+        try self.compileNode(ia.index);
+        try self.emitOp(.op_get_index);
+    }
+
+    fn compileIndexAssignment(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const ia = self.tree.indexAssignment(node);
+
+        try self.compileNode(ia.target);
+        try self.compileNode(ia.index);
+
+        if (ia.op) |op| {
+            // Stack is currently: [target, index]
+
+            // Duplicate BOTH so we can fetch the current value without losing the target/index pointers for the setter
+            try self.emitOp(.op_dup_two);
+            // Stack is now: [target, index, target, index]
+
+            try self.emitOp(.op_get_index);
+            // Stack is now: [target, index, current_val]
+
+            try self.compileNode(ia.value);
+            // Stack is now: [target, index, current_val, rhs_val]
+
+            switch (op) {
+                .add => try self.emitOp(.op_add),
+                .subtract => try self.emitOp(.op_subtract),
+                .multiply => try self.emitOp(.op_multiply),
+                .divide => try self.emitOp(.op_divide),
+                else => return error.UnknownNode,
+            }
+            // Stack is now: [target, index, new_val]
+        } else {
+            try self.compileNode(ia.value); // Stack: [target, index, new_val]
+        }
+
+        // op_set_index consumes [target, index, new_val] and pushes [new_val] back
+        try self.emitOp(.op_set_index);
+    }
+
+    fn compileUnaryOp(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const un_expr = self.tree.unaryExpr(node);
+        try self.compileNode(un_expr.operand);
+        switch (un_expr.op) {
+            .negate => try self.emitOp(.op_negate),
+            .not => try self.emitOp(.op_not),
+            else => return error.UnknownNode,
+        }
+    }
+
+    fn compileBinaryOp(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const bin_expr = self.tree.binaryExpr(node);
+
+        // Handle Short-Circuiting Logical Operators BEFORE compiling the right side!
+        if (bin_expr.op == .logical_and) {
+            try self.compileNode(bin_expr.left);
+            const end_jump = try self.emitJump(.op_jump_if_false);
+            try self.emitOp(.op_pop); // pop the true left value
+            try self.compileNode(bin_expr.right);
+            self.patchJump(end_jump);
+            return;
+        } else if (bin_expr.op == .logical_or) {
+            try self.compileNode(bin_expr.left);
+            const else_jump = try self.emitJump(.op_jump_if_false);
+            const end_jump = try self.emitJump(.op_jump); // If true, skip right side
+            self.patchJump(else_jump); // If false, land here
+            try self.emitOp(.op_pop); // pop the false left value
+            try self.compileNode(bin_expr.right);
+            self.patchJump(end_jump); // True branch lands here
+            return;
+        }
+
+        // Standard Binary Operators
+        try self.compileNode(bin_expr.left);
+        try self.compileNode(bin_expr.right);
+
+        switch (bin_expr.op) {
+            .add => try self.emitOp(.op_add),
+            .subtract => try self.emitOp(.op_subtract),
+            .multiply => try self.emitOp(.op_multiply),
+            .divide => try self.emitOp(.op_divide),
+            .modulo => try self.emitOp(.op_modulo),
+            .exponent => try self.emitOp(.op_exponent),
+            .equal => try self.emitOp(.op_equal),
+            .not_equal => {
+                try self.emitOp(.op_equal);
+                try self.emitOp(.op_not);
+            },
+            .less => try self.emitOp(.op_less),
+            .greater => try self.emitOp(.op_greater),
+            .less_equal => {
+                try self.emitOp(.op_greater);
+                try self.emitOp(.op_not);
+            },
+            .greater_equal => {
+                try self.emitOp(.op_less);
+                try self.emitOp(.op_not);
+            },
+            .bitwise_and => try self.emitOp(.op_bitwise_and),
+            else => return error.UnknownNode,
+        }
+    }
+
+    fn compileArrayLiteral(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const elements = self.tree.getNodes(self.tree.nodeSpan(node));
+        if (elements.len == 0) {
+            try self.emitOp(.op_build_array);
+            try self.emitByte(0);
+            self.simulatePush(1);
+            return;
+        }
+
+        var has_splat = false;
+        for (elements) |elem| {
+            if (self.tree.getNode(elem).?.tag == .splat_expr) has_splat = true;
+        }
+
+        // Fallback to Dynamic Build Mode if array contains splats OR exceeds 65,535 elements
+        const use_static_build = !has_splat and elements.len <= limits.MAX_CONSTANTS;
+
+        if (use_static_build) {
+            for (elements) |elem| try self.compileNode(elem);
+
+            if (elements.len <= limits.MAX_SHORT_CONSTANTS) {
+                try self.emitOp(.op_build_array);
+                try self.emitByte(@intCast(elements.len));
+            } else {
+                try self.emitOp(.op_build_array_wide);
+                try self.emitByte(@intCast((elements.len >> 8) & 0xff));
+                try self.emitByte(@intCast(elements.len & 0xff));
+            }
+
+            self.simulatePop(elements.len);
+            self.simulatePush(1);
+        } else {
+            // Dynamic Build Mode (Handles splats and point clouds/arrays exceeding 65,535 items)
+            try self.emitOp(.op_build_array);
+            try self.emitByte(0); // Create empty array
+            self.simulatePush(1);
+
+            for (elements) |elem| {
+                const el_node = self.tree.getNode(elem).?;
+                if (el_node.tag == .splat_expr) {
+                    try self.compileNode(self.tree.nodeIndex(el_node));
+                    try self.emitOp(.op_array_spread);
+                } else {
+                    try self.compileNode(elem);
+                    try self.emitOp(.op_array_push);
+                }
+            }
+        }
+    }
+
+    fn compileHashLiteral(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const entries = self.tree.getHashEntries(self.tree.nodeSpan(node));
+        if (entries.len == 0) {
+            try self.emitOp(.op_build_map);
+            try self.emitByte(0);
+            self.simulatePush(1);
+            return;
+        }
+
+        var has_splat = false;
+        for (entries) |entry| {
+            if (self.tree.getNode(entry.key).?.tag == .double_splat_expr) has_splat = true;
+        }
+
+        if (!has_splat) {
+            for (entries) |entry| {
+                const key_node = self.tree.getNode(entry.key).?;
+                if (key_node.tag == .identifier) {
+                    const str_content = self.tree.getString(self.tree.stringId(key_node));
+                    const str_idx = try self.makeStringConstant(str_content);
+                    try self.emitOpWithOperand(.op_constant, .op_constant_wide, str_idx);
+                } else {
+                    try self.compileNode(entry.key);
+                }
+                try self.compileNode(entry.value);
+            }
+
+            if (entries.len > limits.MAX_HASH_ENTRIES) return error.TooManyConstants;
+
+            if (entries.len <= limits.MAX_SHORT_CONSTANTS) {
+                try self.emitOp(.op_build_map);
+                try self.emitByte(@intCast(entries.len));
+            } else {
+                try self.emitOp(.op_build_map_wide);
+                try self.emitByte(@intCast((entries.len >> 8) & 0xff));
+                try self.emitByte(@intCast(entries.len & 0xff));
+            }
+
+            self.simulatePop(entries.len * 2);
+            self.simulatePush(1);
+        } else {
+            // Dynamic Build Mode
+            try self.emitOp(.op_build_map);
+            try self.emitByte(0);
+            self.simulatePush(1);
+
+            for (entries) |entry| {
+                const key_node = self.tree.getNode(entry.key).?;
+                if (key_node.tag == .double_splat_expr) {
+                    try self.compileNode(self.tree.nodeIndex(key_node));
+                    try self.emitOp(.op_map_spread);
+                } else {
+                    if (key_node.tag == .identifier) {
+                        const str_content = self.tree.getString(self.tree.stringId(key_node));
+                        const str_val = try self.vm.allocateString(str_content);
+                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+                        self.vm.push(str_val);
+                        const str_idx = try self.makeConstant(str_val);
+                        _ = self.vm.pop();
+                        try self.emitOpWithOperand(.op_constant, .op_constant_wide, str_idx);
+                    } else {
+                        try self.compileNode(entry.key);
+                    }
+                    try self.compileNode(entry.value);
+                    try self.emitOp(.op_map_insert);
+                }
+            }
+        }
+    }
+
+    fn compileCaseStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
+        _ = expected_entry_depth; // Ignore warning
+        const cs = self.tree.caseStmt(node);
+        const saved_depth = self.current_stack_depth;
+        const branches = self.tree.getWhenBranches(cs.when_branches);
+        const has_cond = cs.condition != .none;
+
+        // --- Heuristic: Can we use a Fast Jump Table? ---
+        var can_use_jump_table = has_cond;
+        var total_conditions: u16 = 0;
+
+        if (can_use_jump_table) {
+            for (branches) |branch| {
+                const conds = self.tree.getNodes(branch.conditions);
+                for (conds) |cond_idx| {
+                    const c_node = self.tree.getNode(cond_idx).?;
+                    if (c_node.tag != .number and c_node.tag != .string) {
+                        can_use_jump_table = false;
+                        break;
+                    }
+                    total_conditions += 1;
+                }
+                if (!can_use_jump_table) break;
+            }
+        }
+
+        if (can_use_jump_table and total_conditions > 0) {
+            // ====== FAST PATH: OP_SWITCH ======
+            try self.compileNode(cs.condition);
+            try self.emitOpWithOperand(.op_switch, .op_switch_wide, total_conditions);
+
+            // Pre-allocate the jump table in bytecode (6 bytes per entry)
+            const table_start_offset = self.current_chunk.code.items.len;
+            for (0..total_conditions) |_| {
+                try self.emitByte(0); // const_high
+                try self.emitByte(0); // const_low
+                try self.emitByte(0xFF); // jump b3
+                try self.emitByte(0xFF); // jump b2
+                try self.emitByte(0xFF); // jump b1
+                try self.emitByte(0xFF); // jump b0
+            }
+            const default_jump_offset = self.current_chunk.code.items.len;
+            try self.emitByte(0xFF); // default b3
+            try self.emitByte(0xFF); // default b2
+            try self.emitByte(0xFF); // default b1
+            try self.emitByte(0xFF); // default b0
+
+            var condition_idx: usize = 0;
+            var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+            defer end_jumps.deinit(self.allocator);
+
+            for (branches) |branch| {
+                const body_jump_target = self.current_chunk.code.items.len;
+                const conds = self.tree.getNodes(branch.conditions);
+
+                self.current_stack_depth = saved_depth;
+
+                // Backpatch table entries
+                for (conds) |cond_node_idx| {
+                    const c_node = self.tree.getNode(cond_node_idx).?;
+                    const table_idx = table_start_offset + (condition_idx * 6);
+
+                    var raw_idx: usize = 0;
+                    if (c_node.tag == .number) {
+                        raw_idx = try self.makeConstant(value.Value.initNumber(self.tree.number(c_node)));
+                    } else if (c_node.tag == .string) {
+                        const str_content = self.tree.getString(self.tree.stringId(c_node));
+                        raw_idx = try self.makeStringConstant(str_content);
+                    }
+
+                    self.current_chunk.code.items[table_idx] = @intCast((raw_idx >> 8) & 0xFF);
+                    self.current_chunk.code.items[table_idx + 1] = @intCast(raw_idx & 0xFF);
+
+                    const offset = body_jump_target - (default_jump_offset + 4);
+                    self.writeJumpOffset(table_idx + 2, offset);
+                    condition_idx += 1;
+                }
+
+                try self.compileNode(branch.body);
+                try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
+            }
+
+            // Backpatch Default Branch
+            const default_target = self.current_chunk.code.items.len;
+            const d_offset = default_target - (default_jump_offset + 4);
+            self.writeJumpOffset(default_jump_offset, d_offset);
+
+            self.current_stack_depth = saved_depth;
+
+            if (cs.else_branch != .none) {
+                try self.compileNode(cs.else_branch);
+            } else {
+                try self.emitOp(.op_nil);
+            }
+
+            for (end_jumps.items) |jmp| {
+                self.patchJump(jmp);
+            }
+            self.current_stack_depth = saved_depth + 1;
+        } else {
+            // ====== LINEAR FALLBACK PATH ======
+            if (has_cond) {
+                try self.compileNode(cs.condition);
+            }
+
+            var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+            defer end_jumps.deinit(self.allocator);
+
+            for (branches) |branch| {
+                const conds = self.tree.getNodes(branch.conditions);
+                for (conds) |cond_idx| {
+                    if (has_cond) {
+                        self.current_stack_depth = saved_depth + 1; // Condition is on stack
+                        try self.emitOp(.op_dup);
+                        try self.compileNode(cond_idx);
+                        try self.emitOp(.op_case_equal);
+                    } else {
+                        self.current_stack_depth = saved_depth;
+                        try self.compileNode(cond_idx);
+                    }
+
+                    const skip_jump = try self.emitJump(.op_jump_if_false);
+                    try self.emitOp(.op_pop); // pop false
+                    if (has_cond) try self.emitOp(.op_pop); // pop cond
+
+                    try self.compileNode(branch.body);
+                    try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
+
+                    if (has_cond) {
+                        self.current_stack_depth = saved_depth + 2; // Jump lands here with false + cond on stack
+                    } else {
+                        self.current_stack_depth = saved_depth + 1; // Jump lands here with false
+                    }
+
+                    self.patchJump(skip_jump);
+                    try self.emitOp(.op_pop); // pop false
+                }
+            }
+
+            if (has_cond) {
+                self.current_stack_depth = saved_depth + 1; // Condition is on stack
+                try self.emitOp(.op_pop);
+            } else {
+                self.current_stack_depth = saved_depth;
+            }
+
+            if (cs.else_branch != .none) {
+                try self.compileNode(cs.else_branch);
+            } else {
+                try self.emitOp(.op_nil);
+            }
+
+            for (end_jumps.items) |jmp| {
+                self.patchJump(jmp);
+            }
+            self.current_stack_depth = saved_depth + 1;
+        }
+    }
+
+    fn compileBeginStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
+        _ = expected_entry_depth; // Ignore warning
+        const bs = self.tree.beginStmt(node);
+        const saved_depth = self.current_stack_depth;
+
+        const rescues = self.tree.getRescueClauses(bs.rescues);
+        var rescue_jump: usize = 0;
+
+        if (rescues.len > 0) {
+            rescue_jump = try self.emitJump(.op_setup_rescue);
+        }
+
+        try self.compileNode(bs.body);
+
+        if (rescues.len > 0) {
+            try self.emitOp(.op_pop_rescue);
+        }
+
+        const end_jump = try self.emitJump(.op_jump);
+
+        if (rescues.len > 0) {
+            self.patchJump(rescue_jump);
+            // Reset compiler stack depth to the begin block's entry depth
+            self.current_stack_depth = saved_depth;
+
+            self.simulatePush(1); // Simulator: op_throw pushed the error value on the stack
+            const error_depth = self.current_stack_depth; // Save the stack depth!
+            var rescue_end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+            defer rescue_end_jumps.deinit(self.allocator);
+
+            var next_rescue_jump: ?usize = null;
+
+            for (rescues) |rescue| {
+                self.current_stack_depth = error_depth; // Reset for each rescue block
+                if (next_rescue_jump) |jmp| {
+                    self.patchJump(jmp);
+                }
+                next_rescue_jump = null;
+
+                const errors = self.tree.getStringLists(rescue.errors);
+                var match_jumps: std.ArrayListUnmanaged(usize) = .empty;
+                defer match_jumps.deinit(self.allocator);
+
+                if (errors.len > 0) {
+                    for (errors) |err_id| {
+                        self.current_stack_depth = error_depth; // Reset for each type check
+                        const name_idx = try self.makeStringConstant(self.tree.getString(err_id));
+                        try self.emitOp(.op_dup); // Copy error payload
+                        try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+                        try self.emitOp(.op_is_instance);
+
+                        const skip_jump = try self.emitJump(.op_jump_if_false);
+                        try self.emitOp(.op_pop); // Discard True
+
+                        try match_jumps.append(self.allocator, try self.emitJump(.op_jump));
+
+                        self.current_stack_depth = error_depth + 1; // False branch has error + false
+                        self.patchJump(skip_jump);
+                        try self.emitOp(.op_pop); // Discard False
+                    }
+                    // If no error type matched, jump to the next rescue block
+                    next_rescue_jump = try self.emitJump(.op_jump);
+                }
+
+                // --- MATCHED ROUTE ---
+                self.current_stack_depth = error_depth; // Jump lands here with error on top
+                for (match_jumps.items) |jmp| {
+                    self.patchJump(jmp);
+                }
+
+                const var_str = self.tree.getString(rescue.variable);
+                if (var_str.len > 0) {
+                    const name_id = rescue.variable;
+                    const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
+                    try self.emitVariableStore(name_id, dummy_sym);
+                }
+
+                // Always pop the temporary error value off the expression stack!
+                try self.emitOp(.op_pop);
+
+                try self.compileNode(rescue.body);
+
+                try rescue_end_jumps.append(self.allocator, try self.emitJump(.op_jump));
+            }
+
+            // If it fell through ALL rescue blocks without matching, re-throw it!
+            if (next_rescue_jump) |jmp| {
+                self.current_stack_depth = error_depth;
+                self.patchJump(jmp);
+                try self.emitOp(.op_throw); // op_throw inherently calls simulatePop(1)
+                self.simulatePush(1); // Dead code equilibrium instead of double-popping!
+            }
+
+            // Patch all successful rescue block ends to arrive here
+            for (rescue_end_jumps.items) |jmp| {
+                self.patchJump(jmp);
+            }
+            self.current_stack_depth = error_depth; // The block successfully yields 1 value (error_depth is depth + 1)
+        }
+
+        self.patchJump(end_jump);
+
+        if (bs.ensure_body != .none) {
+            try self.compileNode(bs.ensure_body);
+            try self.emitOp(.op_pop); // discard ensure block output
+        }
+    }
+
+    fn compileMethodCall(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const mc = self.tree.methodCall(node);
+        const func_name = self.tree.getString(mc.method_name);
+
+        // Fast-path: compile `obj.nil?` directly into op_is_nil
+        if (std.mem.eql(u8, func_name, "nil?") and mc.receiver != .none) {
+            try self.compileNode(mc.receiver);
+            try self.emitOp(.op_is_nil);
+            return;
+        }
+
+        // Intercept Compiler Intrinsics via O(1) lookup
+        if (compiler_intrinsics.get(func_name)) |intrinsic| {
+            switch (intrinsic) {
+                .raise_err => {
+                    const args = self.tree.getNamedArgs(mc.args);
+                    if (args.len > 0) try self.compileNode(args[0].value) else try self.emitOp(.op_nil);
+                    try self.emitOp(.op_throw);
+                    self.simulatePush(1); // Dead code equilibrium
+                    return;
+                },
+                .block_given_chk => {
+                    try self.emitOp(.op_block_given);
+                    return;
+                },
+                .yield_call => {
+                    const args = self.tree.getNamedArgs(mc.args);
+                    for (args) |arg| {
+                        if (arg.name != .none) return error.UnsupportedScope; // Kwargs to yield not yet supported
+                        try self.compileNode(arg.value);
+                    }
+                    if (args.len > limits.MAX_ARGS) return error.TooManyConstants;
+                    try self.emitOp(.op_yield);
+                    try self.emitByte(@intCast(args.len));
+                    self.simulatePop(args.len); // Yield consumes the args
+                    self.simulatePush(1); // Yield returns the block's result
+                    return;
+                },
+                .defined_chk => {
+                    const args = self.tree.getNamedArgs(mc.args);
+                    if (args.len > 0) {
+                        const target_node = self.tree.getNode(args[0].value).?;
+                        if (target_node.tag == .identifier) {
+                            const name_id = self.tree.stringId(target_node);
+                            if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
+                                try self.emitOp(.op_true); // Locals are statically known
+                            } else {
+                                const name_str = self.tree.getString(name_id);
+                                const name_idx = try self.makeStringConstant(name_str);
+                                try self.emitOpWithOperand(.op_defined, .op_defined_wide, name_idx);
+                            }
+                        } else {
+                            try self.emitOp(.op_true); // Complex expressions evaluate to true
+                        }
+                    } else {
+                        try self.emitOp(.op_nil);
+                    }
+                    return;
+                },
+                .protected_symbol => {},
+            }
+        }
+
+        var safe_jump: usize = 0;
+
+        // Push Receiver/Target
+        if (mc.receiver == .none) {
+            try self.emitVariableLoad(mc.method_name, null);
+        } else {
+            try self.compileNode(mc.receiver);
+            if (mc.is_safe) safe_jump = try self.emitJump(.op_jump_if_nil);
+        }
+
+        // Delegate Argument Packing
+        var actual_arg_count = try self.compileCallArguments(self.tree.getNamedArgs(mc.args));
+
+        // Push the Block as a Closure Argument
+        if (mc.block != .none) {
+            const block_node = self.tree.getNode(mc.block).?;
+            const block_payload = self.tree.block(block_node);
+            const lowered_params = try self.lowerBlockParams(block_payload.params);
+            defer self.allocator.free(lowered_params);
+
+            try self.compileClosureBlock(lowered_params, mc.block, null, false);
+            actual_arg_count += 1;
+        }
+
+        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
+
+        // 4. Execute Invocation
+        if (mc.receiver == .none) {
+            try self.emitOp(.op_call);
+            try self.emitByte(@intCast(actual_arg_count));
+        } else {
+            const name_idx = try self.makeStringConstant(func_name);
+            try self.emitOpWithOperand(.op_invoke, .op_invoke_wide, name_idx);
+            try self.emitByte(@intCast(actual_arg_count));
+
+            try self.emitInlineCacheIndex();
+
+            if (mc.is_safe) self.patchJump(safe_jump);
+        }
+
+        self.simulatePop(actual_arg_count + 1); // Pops args + receiver
+        self.simulatePush(1); // Pushes the returned result
+    }
+
+    fn compileMultipleAssignment(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const ma = self.tree.multipleAssignment(node);
+        const lhs = self.tree.getLhsExprs(ma.lhs);
+
+        for (lhs) |l| {
+            if (l.name != .none) {
+                const name_id = l.name;
+                const name_str = self.tree.getString(name_id);
+                if (!std.mem.startsWith(u8, name_str, "@@") and
+                    !std.mem.startsWith(u8, name_str, "@") and
+                    self.resolveLocal(name_id) == null and
+                    (try self.resolveUpvalue(name_id)) == null)
+                {
+                    const slot = self.getNextLocalSlot();
+                    try self.addLocal(name_id, slot);
+                }
+            }
+        }
+
+        try self.compileNode(ma.value);
+
+        var splat_idx: ?usize = null;
+        for (lhs, 0..) |l, i| {
+            if (l.modifier != null and l.modifier.? == .splat) {
+                splat_idx = i;
+                break;
+            }
+        }
+
+        if (splat_idx) |s_idx| {
+            const pre_count = s_idx;
+            const post_count = lhs.len - 1 - s_idx;
+            if (pre_count > limits.MAX_SHORT_CONSTANTS or post_count > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
+            try self.emitOp(.op_unpack_splat);
+            try self.emitByte(@intCast(pre_count));
+            try self.emitByte(@intCast(post_count));
+            self.simulatePop(1);
+            self.simulatePush(lhs.len);
+        } else {
+            if (lhs.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
+            try self.emitOp(.op_unpack);
+            try self.emitByte(@intCast(lhs.len));
+            self.simulatePop(1);
+            self.simulatePush(lhs.len);
+        }
+
+        var i: usize = lhs.len;
+        while (i > 0) {
+            i -= 1;
+            try self.compileDestructure(lhs[i]);
+        }
+        try self.emitOp(.op_nil);
+    }
+
+    fn compileClassStmt(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
+        self.active_namespaces += 1;
+        defer self.active_namespaces -= 1;
+
+        const cs = self.tree.classStmt(node);
+        const name_node = self.tree.getNode(cs.name).?;
+        const name_id = self.tree.stringId(name_node);
+        const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
+        const name_str = self.tree.getString(name_id);
+
+        if (compiler_intrinsics.has(name_str)) {
+            return error.ProtectedSymbol;
+        }
+
+        try self.namespace_stack.append(self.allocator, name_id);
+        defer _ = self.namespace_stack.pop();
+
+        try self.emitOpWithOperand(.op_class, .op_class_wide, name_idx);
+
+        if (cs.super_class != .none) {
+            try self.compileNode(cs.super_class);
+            try self.emitOp(.op_inherit);
+        }
+
+        const body_node = self.tree.getNode(cs.body).?;
+        const block_payload = self.tree.block(body_node);
+        const stmts = self.tree.getNodes(block_payload.stmts);
+
+        // Compile entire class body natively!
+        try self.compileNamespaceBody(stmts, false);
+
+        // Export Fully Qualified Name
+        try self.defineFullyQualifiedNamespace(name_str);
+
+        const sym = self.symbols[@intFromEnum(node_idx)];
+        if (self.active_namespaces > 1) {
+            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
+        } else if (sym.kind == .local and self.enclosing != null) {
+            const slot = self.getNextLocalSlot();
+            try self.addLocal(name_id, slot);
+            try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
+        } else {
+            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+            try self.emitOp(.op_nil);
+        }
+    }
+
+    fn compileModuleStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
+        self.active_namespaces += 1;
+        defer self.active_namespaces -= 1;
+
+        const ms = self.tree.moduleStmt(node);
+        const name_id = ms.name;
+        const name_str = self.tree.getString(name_id);
+        const name_idx = try self.makeStringConstant(name_str);
+
+        try self.namespace_stack.append(self.allocator, name_id);
+        defer _ = self.namespace_stack.pop();
+
+        try self.emitOpWithOperand(.op_module, .op_module_wide, name_idx);
+
+        const body_node = self.tree.getNode(ms.body).?;
+        const block_payload = self.tree.block(body_node);
+        const stmts = self.tree.getNodes(block_payload.stmts);
+
+        // Compile entire module body natively
+        try self.compileNamespaceBody(stmts, false);
+
+        // Export Fully Qualified Name
+        try self.defineFullyQualifiedNamespace(name_str);
+
+        if (self.active_namespaces > 1) {
+            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
+        } else {
+            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+            try self.emitOp(.op_nil);
+        }
+    }
+
+    fn compileSuperCall(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const sc = self.tree.superCall(node);
+        try self.emitOp(.op_get_local);
+        try self.emitByte(0); // push `self`
+
+        var actual_arg_count: usize = 0;
+
+        if (sc.implicit_args) {
+            const func = self.function orelse return error.UnknownNode;
+            const arity = func.arity;
+
+            // Push positional arguments AND the kwarg map (located inside the standard arity length)
+            for (0..arity) |i| {
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
+            }
+            actual_arg_count = arity;
+
+            if (sc.block == .none) {
+                // Forward the parent's block!
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(arity + 1));
+                actual_arg_count += 1;
+            } else {
+                // Compile explicitly passed block overriding the implicit one
+                const block_node = self.tree.getNode(sc.block).?;
+                const block_payload = self.tree.block(block_node);
+                const lowered_params = try self.lowerBlockParams(block_payload.params);
+                defer self.allocator.free(lowered_params);
+                try self.compileClosureBlock(lowered_params, sc.block, null, false);
+                actual_arg_count += 1;
+            }
+        } else {
+            const args = self.tree.getNamedArgs(sc.args);
+
+            // Extract Block explicitly passed via reference (`&b`)
+            var block_arg: ?ast.NodeIndex = null;
+            for (args) |arg| {
+                if (arg.modifier != null and arg.modifier.? == .block) {
+                    block_arg = arg.value;
+                }
+            }
+
+            // Delegate Argument Packing
+            actual_arg_count = try self.compileCallArguments(args);
+
+            // Block Argument (Always Pushed LAST)
+            if (block_arg) |b_node| {
+                try self.compileNode(b_node);
+                actual_arg_count += 1;
+            } else if (sc.block != .none) {
+                const block_node = self.tree.getNode(sc.block).?;
+                const block_payload = self.tree.block(block_node);
+                const lowered_params = try self.lowerBlockParams(block_payload.params);
+                defer self.allocator.free(lowered_params);
+                try self.compileClosureBlock(lowered_params, sc.block, null, false);
+                actual_arg_count += 1;
+            }
+        }
+
+        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
+
+        try self.emitOp(.op_super_invoke);
+        try self.emitByte(@intCast(actual_arg_count));
+
+        // Pop the arguments + the implicit `self` receiver
+        self.simulatePop(actual_arg_count + 1);
+        self.simulatePush(1);
+    }
+
+    fn lowerBlockParams(self: *Compiler, param_span: ast.Span) CompileError![]const ast.Param {
+        const param_nodes = self.tree.getNodes(param_span);
+        var lowered = try self.allocator.alloc(ast.Param, param_nodes.len);
+
+        for (param_nodes, 0..) |node_idx, i| {
+            const node = self.tree.getNode(node_idx) orelse return error.UnknownNode;
+
+            switch (node.tag) {
+                .identifier => {
+                    lowered[i] = .{
+                        .name = self.tree.stringId(node),
+                        .default_value = .none,
+                        .modifier = null,
+                        .is_keyword = false,
+                    };
+                },
+                .assignment => {
+                    const assign = self.tree.assignment(node);
+                    lowered[i] = .{
+                        .name = assign.name,
+                        .default_value = assign.value,
+                        .modifier = null,
+                        .is_keyword = false,
+                    };
+                },
+                .symbol => {
+                    lowered[i] = .{
+                        .name = self.tree.stringId(node),
+                        .default_value = .none,
+                        .modifier = null,
+                        .is_keyword = true,
+                    };
+                },
+                .hash_literal => {
+                    const entries = self.tree.getHashEntries(self.tree.nodeSpan(node));
+                    const key_node = self.tree.getNode(entries[0].key).?;
+                    lowered[i] = .{
+                        .name = self.tree.stringId(key_node),
+                        .default_value = entries[0].value,
+                        .modifier = null,
+                        .is_keyword = true,
+                    };
+                },
+                .splat_expr => {
+                    const inner_node = self.tree.getNode(self.tree.nodeIndex(node)).?;
+                    lowered[i] = .{
+                        .name = self.tree.stringId(inner_node),
+                        .default_value = .none,
+                        .modifier = .splat,
+                        .is_keyword = false,
+                    };
+                },
+                .double_splat_expr => {
+                    const inner_node = self.tree.getNode(self.tree.nodeIndex(node)).?;
+                    lowered[i] = .{
+                        .name = self.tree.stringId(inner_node),
+                        .default_value = .none,
+                        .modifier = .double_splat,
+                        .is_keyword = false,
+                    };
+                },
+                .array_literal => {
+                    // This represents destructuring like |(x, y)|
+                    lowered[i] = .{
+                        .name = .none, // Anonymous parameter
+                        .default_value = .none,
+                        .modifier = null,
+                        .is_keyword = false,
+                    };
+                },
+                else => return error.UnknownNode,
+            }
+        }
+        return lowered;
+    }
+
+    fn compileIfStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
+        const if_payload = self.tree.ifStmt(node);
+        try self.compileNode(if_payload.condition);
+        if (if_payload.is_unless) try self.emitOp(.op_not);
+
+        const then_jump = try self.emitJump(.op_jump_if_false);
+        try self.emitOp(.op_pop); // pop cond for true branch
+
+        try self.compileNode(if_payload.then_branch);
+
+        // Force sync before branch jump
+        self.current_stack_depth = expected_entry_depth + 1;
+        const else_jump = try self.emitJump(.op_jump);
+
+        self.patchJump(then_jump);
+
+        // False branch: VM stack still has the condition on it
+        self.current_stack_depth = expected_entry_depth + 1;
+
+        try self.emitOp(.op_pop); // pop cond for false branch
+
+        if (if_payload.else_branch != .none) {
+            try self.compileNode(if_payload.else_branch);
+        } else {
+            try self.emitOp(.op_nil);
+        }
+
+        self.patchJump(else_jump);
+        // Guarantee perfectly balanced exit
+        self.current_stack_depth = expected_entry_depth + 1;
+    }
+
+    fn compileWhileStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
+        const while_payload = self.tree.whileStmt(node);
+        const loop_start = self.current_chunk.code.items.len;
+
+        // Push loop state WITH stack depth
+        try self.loops.append(self.allocator, .{
+            .start = loop_start,
+            .depth = self.current_stack_depth,
+        });
+
+        try self.compileNode(while_payload.condition);
+        if (while_payload.is_until) try self.emitOp(.op_not);
+
+        const exit_jump = try self.emitJump(.op_jump_if_false);
+        try self.emitOp(.op_pop); // Clean up condition
+
+        try self.compileNode(while_payload.body);
+
+        // Force sync before loop jump
+        self.current_stack_depth = expected_entry_depth + 1;
+        try self.emitOp(.op_pop); // Pop the body's yielded result
+
+        try self.emitLoop(loop_start);
+
+        self.patchJump(exit_jump);
+
+        // VM stack still has the condition on it when it jumps here!
+        self.current_stack_depth = expected_entry_depth + 1;
+
+        try self.emitOp(.op_pop);
+        try self.emitOp(.op_nil); // Natural exit yields nil
+
+        // Pop loop state and safely patch all 'break' jump addresses
+        var cur_loop = self.loops.pop().?;
+        defer cur_loop.exit_jumps.deinit(self.allocator);
+        for (cur_loop.exit_jumps.items) |jmp| {
+            self.patchJump(jmp);
+        }
+
+        // Guarantee perfectly balanced exit
+        self.current_stack_depth = expected_entry_depth + 1;
+    }
+
+    fn compileTernaryOp(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
+        const ternary = self.tree.ternaryExpr(node);
+        try self.compileNode(ternary.condition);
+        const then_jump = try self.emitJump(.op_jump_if_false);
+        try self.emitOp(.op_pop); // pop condition if true
+        try self.compileNode(ternary.then_branch);
+        const else_jump = try self.emitJump(.op_jump);
+
+        self.patchJump(then_jump);
+
+        // False branch: VM stack still has the condition on it!
+        self.current_stack_depth = expected_entry_depth + 1;
+
+        try self.emitOp(.op_pop); // pop condition if false
+        try self.compileNode(ternary.else_branch);
+        self.patchJump(else_jump);
+    }
+
+    fn compileRange(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const r = self.tree.range(node);
+        try self.compileNode(r.start);
+        try self.compileNode(r.end);
+
+        if (r.step != .none) {
+            try self.compileNode(r.step);
+        } else {
+            try self.emitConstant(value.Value.initNumber(1.0)); // Default step
+        }
+
+        try self.emitOp(.op_build_range);
+        try self.emitByte(if (r.is_exclusive) 1 else 0);
+
+        self.simulatePop(3); // Pops start, end, step
+        self.simulatePush(1); // Pushes ObjRange
+    }
+
+    fn compileInterpolatedString(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const parts = self.tree.getNodes(self.tree.nodeSpan(node));
+        for (parts) |part| {
+            try self.compileNode(part);
+        }
+
+        if (parts.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
+
+        try self.emitOp(.op_interpolate);
+        try self.emitByte(@intCast(parts.len));
+
+        self.simulatePop(parts.len);
+        self.simulatePush(1); // Pushes the final merged String
+    }
+
+    fn compilePropertyAssignment(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const pa = self.tree.propertyAssignment(node);
+        const prop_name = self.tree.getString(pa.property);
+
+        const name_idx = try self.makeStringConstant(prop_name);
+
+        try self.compileNode(pa.target); // Stack: [target]
+
+        if (pa.op) |op| {
+            // Duplicate the pointer instead of re-evaluating the AST
+            try self.emitOp(.op_dup); // Stack: [target, target]
+
+            // Compound assignments must read properties via op_get_property, not op_invoke
+            try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+            try self.emitInlineCacheIndex();
+            // Stack is now: [target, old_val]
+
+            try self.compileNode(pa.value); // Stack: [target, old_val, rhs_val]
+
+            switch (op) {
+                .add => try self.emitOp(.op_add),
+                .subtract => try self.emitOp(.op_subtract),
+                .multiply => try self.emitOp(.op_multiply),
+                .divide => try self.emitOp(.op_divide),
+                else => return error.UnknownNode,
+            }
+            // Stack is now: [target, new_val]
+        } else {
+            try self.compileNode(pa.value); // Stack: [target, new_val]
+        }
+
+        // op_set_property consumes both target and new_val, then pushes new_val back
+        try self.emitOpWithOperand(.op_set_property, .op_set_property_wide, name_idx);
+        try self.emitInlineCacheIndex();
+    }
+
+    fn compileDefinedExpr(self: *Compiler, node: *const ast.Node) CompileError!void {
+        if (self.tree.stringId(node) != .none) {
+            const name_id = self.tree.stringId(node);
+            if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
+                try self.emitOp(.op_true); // Locals are statically known
+            } else {
+                const name_str = self.tree.getString(name_id);
+                const name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_defined, .op_defined_wide, name_idx);
+            }
+        } else {
+            try self.emitOp(.op_true);
+        }
+    }
+
+    fn compileBlock(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const block_payload = self.tree.block(node);
+        const stmts = self.tree.getNodes(block_payload.stmts);
+
+        // Unpack destructured block arguments
+        const param_nodes = self.tree.getNodes(block_payload.params);
+        for (param_nodes, 0..) |p_idx, i| {
+            const p_node = self.tree.getNode(p_idx).?;
+            if (p_node.tag == .array_literal) {
+                // The tuple is sitting in local slot (i + 1) because slot 0 is the closure itself
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
+
+                const elements = self.tree.getNodes(self.tree.nodeSpan(p_node));
+                try self.emitOp(.op_unpack);
+                try self.emitByte(@intCast(elements.len));
+                self.simulatePop(1);
+                self.simulatePush(elements.len);
+
+                // Unpack in reverse order to match the stack
+                var el_i: usize = elements.len;
+                while (el_i > 0) {
+                    el_i -= 1;
+                    const el_node = self.tree.getNode(elements[el_i]).?;
+
+                    // Safe Guard against unsupported nested destructuring
+                    if (el_node.tag != .identifier) {
+                        return error.UnknownNode;
+                    }
+
+                    // Re-use your existing destructuring engine
+                    const lhs = ast.LhsExpr{
+                        .name = self.tree.stringId(el_node),
+                        .modifier = null,
+                    };
+                    try self.compileDestructure(lhs);
+                }
+            }
+        }
+
+        if (stmts.len == 0) {
+            try self.emitOp(.op_nil);
+        } else {
+            for (stmts, 0..) |stmt_idx, i| {
+                try self.compileNode(stmt_idx);
+
+                // Unconditionally pop every statement except the last one!
+                if (i < stmts.len - 1) {
+                    try self.emitOp(.op_pop);
+                }
+            }
+        }
+    }
+
+    fn emitPushSelf(self: *Compiler) CompileError!void {
+        if (self.is_method or self.enclosing == null) {
+            try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+        } else {
+            // We are in a block. Capture the parent method's `self`
+            if (try self.resolveSelfUpvalue()) |upv_idx| {
+                try self.emitOp(.op_get_upvalue);
+                try self.emitByte(upv_idx);
+            } else {
+                // Fallback (shouldn't happen in valid code)
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+            }
+        }
+    }
+
+    fn emitVariableLoad(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!void {
+        const name_str = self.tree.getString(name_id);
+        const classification = try self.classifyVariable(name_id, sym);
+
+        switch (classification.kind) {
+            .constant => {
+                if (self.namespace_stack.items.len > 0) {
+                    var end_jumps = std.ArrayListUnmanaged(usize).empty;
+                    defer end_jumps.deinit(self.allocator);
+
+                    var i: usize = self.namespace_stack.items.len;
+                    while (i > 0) {
+                        const fq_name = try self.buildFullyQualifiedPath(name_str, i);
+                        defer self.allocator.free(fq_name);
+
+                        const fq_idx = try self.makeStringConstant(fq_name);
+
+                        try self.emitOpWithOperand(.op_defined, .op_defined_wide, fq_idx);
+                        const skip_jump = try self.emitJump(.op_jump_if_false);
+                        try self.emitOp(.op_pop); // pop true
+
+                        try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, fq_idx);
+                        try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
+
+                        self.patchJump(skip_jump);
+                        try self.emitOp(.op_pop); // pop false
+                        i -= 1;
+                    }
+
+                    const global_idx = try self.makeStringConstant(name_str);
+                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, global_idx);
+
+                    for (end_jumps.items) |jmp| self.patchJump(jmp);
+                } else {
+                    const name_idx = try self.makeStringConstant(name_str);
+                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+                }
+            },
+            .class_var => {
+                try self.emitPushSelf();
+                const name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_get_class_var, .op_get_class_var_wide, name_idx);
+            },
+            .instance_var => {
+                try self.emitPushSelf();
+                const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
+                const name_idx = try self.makeStringConstant(clean_name);
+                try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+                try self.emitInlineCacheIndex();
+            },
+            .local => {
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, classification.index);
+            },
+            .upvalue => {
+                try self.emitOp(.op_get_upvalue);
+                try self.emitByte(@intCast(classification.index));
+            },
+            .global, .new_local => {
+                const name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+            },
+        }
+    }
+
+    fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ResolvedSymbol) CompileError!void {
+        const name_str = self.tree.getString(name_id);
+        const classification = try self.classifyVariable(name_id, sym);
+
+        switch (classification.kind) {
+            .constant => {
+                const fq_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len);
+                defer self.allocator.free(fq_name);
+                const fq_name_idx = try self.makeStringConstant(fq_name);
+
+                try self.emitOp(.op_dup);
+                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
+
+                if (self.namespace_stack.items.len == 0) {
+                    try self.emitOp(.op_dup);
+                    const short_name_idx = try self.makeStringConstant(name_str);
+                    try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, short_name_idx);
+                }
+            },
+            .class_var => {
+                try self.emitPushSelf();
+                const name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_set_class_var, .op_set_class_var_wide, name_idx);
+            },
+            .instance_var => {
+                // Instance variables are primarily handled in the Assignment AST node directly
+                // because they require a Stack Swap (`emitPushSelf` -> evaluate RHS -> Assign).
+                // Reaching this branch means we fell through a destructuring assignment or rescue variable mapping.
+                unreachable;
+            },
+            .local => {
+                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, classification.index);
+            },
+            .upvalue => {
+                try self.emitOp(.op_set_upvalue);
+                try self.emitByte(@intCast(classification.index));
+            },
+            .global => {
+                if (self.enclosing == null) {
+                    try self.script_globals.put(self.allocator, name_str, {});
+                }
+                try self.emitOp(.op_dup);
+                const name_idx = try self.makeStringConstant(name_str);
+                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+            },
+            .new_local => {
+                const slot = self.getNextLocalSlot();
+                try self.addLocal(name_id, @intCast(slot));
+                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
+            },
+        }
+    }
+
+    fn handleMacroMethod(self: *Compiler, stmt_node: *const ast.Node, is_singleton: bool) CompileError!bool {
+        if (stmt_node.tag != .method_call) return false;
+        const mc = self.tree.methodCall(stmt_node);
+        const func_name = self.tree.getString(mc.method_name);
+
+        if (std.mem.eql(u8, func_name, "include") and mc.receiver == .none) {
+            const args = self.tree.getNamedArgs(mc.args);
+            if (args.len == 1) {
+                try self.compileNode(args[0].value);
+                try self.emitOp(.op_mixin);
+                return true;
+            }
+        } else if ((std.mem.eql(u8, func_name, "attr_accessor") or std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_writer")) and mc.receiver == .none) {
+            const args = self.tree.getNamedArgs(mc.args);
+            for (args) |arg| {
+                const arg_node = self.tree.getNode(arg.value).?;
+                if (arg_node.tag == .symbol or arg_node.tag == .string) {
+                    const name_str = self.tree.getString(self.tree.stringId(arg_node));
+                    if (std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_accessor")) {
+                        try macros.emitAttrReader(self, name_str, is_singleton);
+                    }
+                    if (std.mem.eql(u8, func_name, "attr_writer") or std.mem.eql(u8, func_name, "attr_accessor")) {
+                        try macros.emitAttrWriter(self, name_str, is_singleton);
+                    }
+                } else {
+                    return error.UnknownNode;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // --- Utility Methods ---
 
     fn simulatePush(self: *Compiler, count: usize) void {
         self.current_stack_depth += count;
@@ -1132,6 +2172,25 @@ pub const Compiler = struct {
         }
     }
 
+    fn compileDestructure(self: *Compiler, target: anytype) CompileError!void {
+        // Assign the unpacked value currently on top of the stack to the target identifier
+        if (target.name != .none) {
+            // Provide a dummy symbol. The classification engine will figure out if it's a
+            // constant, class variable, existing local, upvalue, or global automatically!
+            const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
+
+            try self.emitVariableStore(target.name, dummy_sym);
+
+            // `emitVariableStore` is designed for standard assignments, so it ALWAYS leaves
+            // the assigned value on the stack. Destructuring expects to consume the value
+            // to move to the next array element, so we must pop it unconditionally here.
+            try self.emitOp(.op_pop);
+        } else {
+            // Unhandled pattern or skipped element (e.g., `_`): pop to maintain stack equilibrium
+            try self.emitOp(.op_pop);
+        }
+    }
+
     fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex, func_name: ?[]const u8, is_method: bool) CompileError!void {
         const func = try self.vm.gc.allocateFunction(self.vm);
 
@@ -1312,1012 +2371,6 @@ pub const Compiler = struct {
             try self.emitByte(@intCast((upv.index >> 8) & 0xff));
             try self.emitByte(@intCast(upv.index & 0xff));
         }
-    }
-
-    fn compileDestructure(self: *Compiler, target: anytype) CompileError!void {
-        // Assign the unpacked value currently on top of the stack to the target identifier
-        if (target.name != .none) {
-            // Provide a dummy symbol. The classification engine will figure out if it's a
-            // constant, class variable, existing local, upvalue, or global automatically!
-            const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
-
-            try self.emitVariableStore(target.name, dummy_sym);
-
-            // `emitVariableStore` is designed for standard assignments, so it ALWAYS leaves
-            // the assigned value on the stack. Destructuring expects to consume the value
-            // to move to the next array element, so we must pop it unconditionally here.
-            try self.emitOp(.op_pop);
-        } else {
-            // Unhandled pattern or skipped element (e.g., `_`): pop to maintain stack equilibrium
-            try self.emitOp(.op_pop);
-        }
-    }
-
-    fn compileArrayLiteral(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const elements = self.tree.getNodes(self.tree.nodeSpan(node));
-        if (elements.len == 0) {
-            try self.emitOp(.op_build_array);
-            try self.emitByte(0);
-            self.simulatePush(1);
-            return;
-        }
-
-        var has_splat = false;
-        for (elements) |elem| {
-            if (self.tree.getNode(elem).?.tag == .splat_expr) has_splat = true;
-        }
-
-        // Fallback to Dynamic Build Mode if array contains splats OR exceeds 65,535 elements
-        const use_static_build = !has_splat and elements.len <= limits.MAX_CONSTANTS;
-
-        if (use_static_build) {
-            for (elements) |elem| try self.compileNode(elem);
-
-            if (elements.len <= limits.MAX_SHORT_CONSTANTS) {
-                try self.emitOp(.op_build_array);
-                try self.emitByte(@intCast(elements.len));
-            } else {
-                try self.emitOp(.op_build_array_wide);
-                try self.emitByte(@intCast((elements.len >> 8) & 0xff));
-                try self.emitByte(@intCast(elements.len & 0xff));
-            }
-
-            self.simulatePop(elements.len);
-            self.simulatePush(1);
-        } else {
-            // Dynamic Build Mode (Handles splats and point clouds/arrays exceeding 65,535 items)
-            try self.emitOp(.op_build_array);
-            try self.emitByte(0); // Create empty array
-            self.simulatePush(1);
-
-            for (elements) |elem| {
-                const el_node = self.tree.getNode(elem).?;
-                if (el_node.tag == .splat_expr) {
-                    try self.compileNode(self.tree.nodeIndex(el_node));
-                    try self.emitOp(.op_array_spread);
-                } else {
-                    try self.compileNode(elem);
-                    try self.emitOp(.op_array_push);
-                }
-            }
-        }
-    }
-
-    fn compileHashLiteral(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const entries = self.tree.getHashEntries(self.tree.nodeSpan(node));
-        if (entries.len == 0) {
-            try self.emitOp(.op_build_map);
-            try self.emitByte(0);
-            self.simulatePush(1);
-            return;
-        }
-
-        var has_splat = false;
-        for (entries) |entry| {
-            if (self.tree.getNode(entry.key).?.tag == .double_splat_expr) has_splat = true;
-        }
-
-        if (!has_splat) {
-            for (entries) |entry| {
-                const key_node = self.tree.getNode(entry.key).?;
-                if (key_node.tag == .identifier) {
-                    const str_content = self.tree.getString(self.tree.stringId(key_node));
-                    const str_idx = try self.makeStringConstant(str_content);
-                    try self.emitOpWithOperand(.op_constant, .op_constant_wide, str_idx);
-                } else {
-                    try self.compileNode(entry.key);
-                }
-                try self.compileNode(entry.value);
-            }
-
-            if (entries.len > limits.MAX_HASH_ENTRIES) return error.TooManyConstants;
-
-            if (entries.len <= limits.MAX_SHORT_CONSTANTS) {
-                try self.emitOp(.op_build_map);
-                try self.emitByte(@intCast(entries.len));
-            } else {
-                try self.emitOp(.op_build_map_wide);
-                try self.emitByte(@intCast((entries.len >> 8) & 0xff));
-                try self.emitByte(@intCast(entries.len & 0xff));
-            }
-
-            self.simulatePop(entries.len * 2);
-            self.simulatePush(1);
-        } else {
-            // Dynamic Build Mode
-            try self.emitOp(.op_build_map);
-            try self.emitByte(0);
-            self.simulatePush(1);
-
-            for (entries) |entry| {
-                const key_node = self.tree.getNode(entry.key).?;
-                if (key_node.tag == .double_splat_expr) {
-                    try self.compileNode(self.tree.nodeIndex(key_node));
-                    try self.emitOp(.op_map_spread);
-                } else {
-                    if (key_node.tag == .identifier) {
-                        const str_content = self.tree.getString(self.tree.stringId(key_node));
-                        const str_val = try self.vm.allocateString(str_content);
-                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                        self.vm.push(str_val);
-                        const str_idx = try self.makeConstant(str_val);
-                        _ = self.vm.pop();
-                        try self.emitOpWithOperand(.op_constant, .op_constant_wide, str_idx);
-                    } else {
-                        try self.compileNode(entry.key);
-                    }
-                    try self.compileNode(entry.value);
-                    try self.emitOp(.op_map_insert);
-                }
-            }
-        }
-    }
-
-    fn compileCaseStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const cs = self.tree.caseStmt(node);
-        const saved_depth = self.current_stack_depth;
-        const branches = self.tree.getWhenBranches(cs.when_branches);
-        const has_cond = cs.condition != .none;
-
-        // --- Heuristic: Can we use a Fast Jump Table? ---
-        var can_use_jump_table = has_cond;
-        var total_conditions: u16 = 0;
-
-        if (can_use_jump_table) {
-            for (branches) |branch| {
-                const conds = self.tree.getNodes(branch.conditions);
-                for (conds) |cond_idx| {
-                    const c_node = self.tree.getNode(cond_idx).?;
-                    if (c_node.tag != .number and c_node.tag != .string) {
-                        can_use_jump_table = false;
-                        break;
-                    }
-                    total_conditions += 1;
-                }
-                if (!can_use_jump_table) break;
-            }
-        }
-
-        if (can_use_jump_table and total_conditions > 0) {
-            // ====== FAST PATH: OP_SWITCH ======
-            try self.compileNode(cs.condition);
-            try self.emitOpWithOperand(.op_switch, .op_switch_wide, total_conditions);
-
-            // Pre-allocate the jump table in bytecode (6 bytes per entry)
-            const table_start_offset = self.current_chunk.code.items.len;
-            for (0..total_conditions) |_| {
-                try self.emitByte(0); // const_high
-                try self.emitByte(0); // const_low
-                try self.emitByte(0xFF); // jump b3
-                try self.emitByte(0xFF); // jump b2
-                try self.emitByte(0xFF); // jump b1
-                try self.emitByte(0xFF); // jump b0
-            }
-            const default_jump_offset = self.current_chunk.code.items.len;
-            try self.emitByte(0xFF); // default b3
-            try self.emitByte(0xFF); // default b2
-            try self.emitByte(0xFF); // default b1
-            try self.emitByte(0xFF); // default b0
-
-            var condition_idx: usize = 0;
-            var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
-            defer end_jumps.deinit(self.allocator);
-
-            for (branches) |branch| {
-                const body_jump_target = self.current_chunk.code.items.len;
-                const conds = self.tree.getNodes(branch.conditions);
-
-                self.current_stack_depth = saved_depth;
-
-                // Backpatch table entries
-                for (conds) |cond_node_idx| {
-                    const c_node = self.tree.getNode(cond_node_idx).?;
-                    const table_idx = table_start_offset + (condition_idx * 6);
-
-                    var raw_idx: usize = 0;
-                    if (c_node.tag == .number) {
-                        raw_idx = try self.makeConstant(value.Value.initNumber(self.tree.number(c_node)));
-                    } else if (c_node.tag == .string) {
-                        const str_content = self.tree.getString(self.tree.stringId(c_node));
-                        raw_idx = try self.makeStringConstant(str_content);
-                    }
-
-                    self.current_chunk.code.items[table_idx] = @intCast((raw_idx >> 8) & 0xFF);
-                    self.current_chunk.code.items[table_idx + 1] = @intCast(raw_idx & 0xFF);
-
-                    const offset = body_jump_target - (default_jump_offset + 4);
-                    self.writeJumpOffset(table_idx + 2, offset);
-                    condition_idx += 1;
-                }
-
-                try self.compileNode(branch.body);
-                try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
-            }
-
-            // Backpatch Default Branch
-            const default_target = self.current_chunk.code.items.len;
-            const d_offset = default_target - (default_jump_offset + 4);
-            self.writeJumpOffset(default_jump_offset, d_offset);
-
-            self.current_stack_depth = saved_depth;
-
-            if (cs.else_branch != .none) {
-                try self.compileNode(cs.else_branch);
-            } else {
-                try self.emitOp(.op_nil);
-            }
-
-            for (end_jumps.items) |jmp| {
-                self.patchJump(jmp);
-            }
-            self.current_stack_depth = saved_depth + 1;
-        } else {
-            // ====== LINEAR FALLBACK PATH ======
-            if (has_cond) {
-                try self.compileNode(cs.condition);
-            }
-
-            var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
-            defer end_jumps.deinit(self.allocator);
-
-            for (branches) |branch| {
-                const conds = self.tree.getNodes(branch.conditions);
-                for (conds) |cond_idx| {
-                    if (has_cond) {
-                        self.current_stack_depth = saved_depth + 1; // Condition is on stack
-                        try self.emitOp(.op_dup);
-                        try self.compileNode(cond_idx);
-                        try self.emitOp(.op_case_equal);
-                    } else {
-                        self.current_stack_depth = saved_depth;
-                        try self.compileNode(cond_idx);
-                    }
-
-                    const skip_jump = try self.emitJump(.op_jump_if_false);
-                    try self.emitOp(.op_pop); // pop false
-                    if (has_cond) try self.emitOp(.op_pop); // pop cond
-
-                    try self.compileNode(branch.body);
-                    try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
-
-                    if (has_cond) {
-                        self.current_stack_depth = saved_depth + 2; // Jump lands here with false + cond on stack
-                    } else {
-                        self.current_stack_depth = saved_depth + 1; // Jump lands here with false
-                    }
-
-                    self.patchJump(skip_jump);
-                    try self.emitOp(.op_pop); // pop false
-                }
-            }
-
-            if (has_cond) {
-                self.current_stack_depth = saved_depth + 1; // Condition is on stack
-                try self.emitOp(.op_pop);
-            } else {
-                self.current_stack_depth = saved_depth;
-            }
-
-            if (cs.else_branch != .none) {
-                try self.compileNode(cs.else_branch);
-            } else {
-                try self.emitOp(.op_nil);
-            }
-
-            for (end_jumps.items) |jmp| {
-                self.patchJump(jmp);
-            }
-            self.current_stack_depth = saved_depth + 1;
-        }
-    }
-
-    fn compileBeginStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const bs = self.tree.beginStmt(node);
-        const saved_depth = self.current_stack_depth;
-
-        const rescues = self.tree.getRescueClauses(bs.rescues);
-        var rescue_jump: usize = 0;
-
-        if (rescues.len > 0) {
-            rescue_jump = try self.emitJump(.op_setup_rescue);
-        }
-
-        try self.compileNode(bs.body);
-
-        if (rescues.len > 0) {
-            try self.emitOp(.op_pop_rescue);
-        }
-
-        const end_jump = try self.emitJump(.op_jump);
-
-        if (rescues.len > 0) {
-            self.patchJump(rescue_jump);
-            // Reset compiler stack depth to the begin block's entry depth
-            self.current_stack_depth = saved_depth;
-
-            self.simulatePush(1); // Simulator: op_throw pushed the error value on the stack
-            const error_depth = self.current_stack_depth; // Save the stack depth!
-            var rescue_end_jumps: std.ArrayListUnmanaged(usize) = .empty;
-            defer rescue_end_jumps.deinit(self.allocator);
-
-            var next_rescue_jump: ?usize = null;
-
-            for (rescues) |rescue| {
-                self.current_stack_depth = error_depth; // Reset for each rescue block
-                if (next_rescue_jump) |jmp| {
-                    self.patchJump(jmp);
-                }
-                next_rescue_jump = null;
-
-                const errors = self.tree.getStringLists(rescue.errors);
-                var match_jumps: std.ArrayListUnmanaged(usize) = .empty;
-                defer match_jumps.deinit(self.allocator);
-
-                if (errors.len > 0) {
-                    for (errors) |err_id| {
-                        self.current_stack_depth = error_depth; // Reset for each type check
-                        const name_idx = try self.makeStringConstant(self.tree.getString(err_id));
-                        try self.emitOp(.op_dup); // Copy error payload
-                        try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
-                        try self.emitOp(.op_is_instance);
-
-                        const skip_jump = try self.emitJump(.op_jump_if_false);
-                        try self.emitOp(.op_pop); // Discard True
-
-                        try match_jumps.append(self.allocator, try self.emitJump(.op_jump));
-
-                        self.current_stack_depth = error_depth + 1; // False branch has error + false
-                        self.patchJump(skip_jump);
-                        try self.emitOp(.op_pop); // Discard False
-                    }
-                    // If no error type matched, jump to the next rescue block
-                    next_rescue_jump = try self.emitJump(.op_jump);
-                }
-
-                // --- MATCHED ROUTE ---
-                self.current_stack_depth = error_depth; // Jump lands here with error on top
-                for (match_jumps.items) |jmp| {
-                    self.patchJump(jmp);
-                }
-
-                const var_str = self.tree.getString(rescue.variable);
-                if (var_str.len > 0) {
-                    const name_id = rescue.variable;
-                    const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
-                    try self.emitVariableStore(name_id, dummy_sym);
-                }
-
-                // Always pop the temporary error value off the expression stack!
-                try self.emitOp(.op_pop);
-
-                try self.compileNode(rescue.body);
-
-                try rescue_end_jumps.append(self.allocator, try self.emitJump(.op_jump));
-            }
-
-            // If it fell through ALL rescue blocks without matching, re-throw it!
-            if (next_rescue_jump) |jmp| {
-                self.current_stack_depth = error_depth;
-                self.patchJump(jmp);
-                try self.emitOp(.op_throw); // op_throw inherently calls simulatePop(1)
-                self.simulatePush(1); // Dead code equilibrium instead of double-popping!
-            }
-
-            // Patch all successful rescue block ends to arrive here
-            for (rescue_end_jumps.items) |jmp| {
-                self.patchJump(jmp);
-            }
-            self.current_stack_depth = error_depth; // The block successfully yields 1 value (error_depth is depth + 1)
-        }
-
-        self.patchJump(end_jump);
-
-        if (bs.ensure_body != .none) {
-            try self.compileNode(bs.ensure_body);
-            try self.emitOp(.op_pop); // discard ensure block output
-        }
-    }
-
-    fn compileBinaryOp(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const bin_expr = self.tree.binaryExpr(node);
-
-        // Handle Short-Circuiting Logical Operators BEFORE compiling the right side!
-        if (bin_expr.op == .logical_and) {
-            try self.compileNode(bin_expr.left);
-            const end_jump = try self.emitJump(.op_jump_if_false);
-            try self.emitOp(.op_pop); // pop the true left value
-            try self.compileNode(bin_expr.right);
-            self.patchJump(end_jump);
-            return;
-        } else if (bin_expr.op == .logical_or) {
-            try self.compileNode(bin_expr.left);
-            const else_jump = try self.emitJump(.op_jump_if_false);
-            const end_jump = try self.emitJump(.op_jump); // If true, skip right side
-            self.patchJump(else_jump); // If false, land here
-            try self.emitOp(.op_pop); // pop the false left value
-            try self.compileNode(bin_expr.right);
-            self.patchJump(end_jump); // True branch lands here
-            return;
-        }
-
-        // Standard Binary Operators
-        try self.compileNode(bin_expr.left);
-        try self.compileNode(bin_expr.right);
-
-        switch (bin_expr.op) {
-            .add => try self.emitOp(.op_add),
-            .subtract => try self.emitOp(.op_subtract),
-            .multiply => try self.emitOp(.op_multiply),
-            .divide => try self.emitOp(.op_divide),
-            .modulo => try self.emitOp(.op_modulo),
-            .exponent => try self.emitOp(.op_exponent),
-            .equal => try self.emitOp(.op_equal),
-            .not_equal => {
-                try self.emitOp(.op_equal);
-                try self.emitOp(.op_not);
-            },
-            .less => try self.emitOp(.op_less),
-            .greater => try self.emitOp(.op_greater),
-            .less_equal => {
-                try self.emitOp(.op_greater);
-                try self.emitOp(.op_not);
-            },
-            .greater_equal => {
-                try self.emitOp(.op_less);
-                try self.emitOp(.op_not);
-            },
-            .bitwise_and => try self.emitOp(.op_bitwise_and),
-            else => return error.UnknownNode,
-        }
-    }
-
-    fn emitPushSelf(self: *Compiler) CompileError!void {
-        if (self.is_method or self.enclosing == null) {
-            try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
-        } else {
-            // We are in a block. Capture the parent method's `self`
-            if (try self.resolveSelfUpvalue()) |upv_idx| {
-                try self.emitOp(.op_get_upvalue);
-                try self.emitByte(upv_idx);
-            } else {
-                // Fallback (shouldn't happen in valid code)
-                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
-            }
-        }
-    }
-
-    fn emitVariableLoad(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!void {
-        const name_str = self.tree.getString(name_id);
-        const classification = try self.classifyVariable(name_id, sym);
-
-        switch (classification.kind) {
-            .constant => {
-                if (self.namespace_stack.items.len > 0) {
-                    var end_jumps = std.ArrayListUnmanaged(usize).empty;
-                    defer end_jumps.deinit(self.allocator);
-
-                    var i: usize = self.namespace_stack.items.len;
-                    while (i > 0) {
-                        const fq_name = try self.buildFullyQualifiedPath(name_str, i);
-                        defer self.allocator.free(fq_name);
-
-                        const fq_idx = try self.makeStringConstant(fq_name);
-
-                        try self.emitOpWithOperand(.op_defined, .op_defined_wide, fq_idx);
-                        const skip_jump = try self.emitJump(.op_jump_if_false);
-                        try self.emitOp(.op_pop); // pop true
-
-                        try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, fq_idx);
-                        try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
-
-                        self.patchJump(skip_jump);
-                        try self.emitOp(.op_pop); // pop false
-                        i -= 1;
-                    }
-
-                    const global_idx = try self.makeStringConstant(name_str);
-                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, global_idx);
-
-                    for (end_jumps.items) |jmp| self.patchJump(jmp);
-                } else {
-                    const name_idx = try self.makeStringConstant(name_str);
-                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
-                }
-            },
-            .class_var => {
-                try self.emitPushSelf();
-                const name_idx = try self.makeStringConstant(name_str);
-                try self.emitOpWithOperand(.op_get_class_var, .op_get_class_var_wide, name_idx);
-            },
-            .instance_var => {
-                try self.emitPushSelf();
-                const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
-                const name_idx = try self.makeStringConstant(clean_name);
-                try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
-                try self.emitInlineCacheIndex();
-            },
-            .local => {
-                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, classification.index);
-            },
-            .upvalue => {
-                try self.emitOp(.op_get_upvalue);
-                try self.emitByte(@intCast(classification.index));
-            },
-            .global, .new_local => {
-                const name_idx = try self.makeStringConstant(name_str);
-                try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
-            },
-        }
-    }
-
-    fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ResolvedSymbol) CompileError!void {
-        const name_str = self.tree.getString(name_id);
-        const classification = try self.classifyVariable(name_id, sym);
-
-        switch (classification.kind) {
-            .constant => {
-                const fq_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len);
-                defer self.allocator.free(fq_name);
-                const fq_name_idx = try self.makeStringConstant(fq_name);
-
-                try self.emitOp(.op_dup);
-                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
-
-                if (self.namespace_stack.items.len == 0) {
-                    try self.emitOp(.op_dup);
-                    const short_name_idx = try self.makeStringConstant(name_str);
-                    try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, short_name_idx);
-                }
-            },
-            .class_var => {
-                try self.emitPushSelf();
-                const name_idx = try self.makeStringConstant(name_str);
-                try self.emitOpWithOperand(.op_set_class_var, .op_set_class_var_wide, name_idx);
-            },
-            .instance_var => {
-                // Instance variables are primarily handled in the Assignment AST node directly
-                // because they require a Stack Swap (`emitPushSelf` -> evaluate RHS -> Assign).
-                // Reaching this branch means we fell through a destructuring assignment or rescue variable mapping.
-                unreachable;
-            },
-            .local => {
-                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, classification.index);
-            },
-            .upvalue => {
-                try self.emitOp(.op_set_upvalue);
-                try self.emitByte(@intCast(classification.index));
-            },
-            .global => {
-                if (self.enclosing == null) {
-                    try self.script_globals.put(self.allocator, name_str, {});
-                }
-                try self.emitOp(.op_dup);
-                const name_idx = try self.makeStringConstant(name_str);
-                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-            },
-            .new_local => {
-                const slot = self.getNextLocalSlot();
-                try self.addLocal(name_id, @intCast(slot));
-                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
-            },
-        }
-    }
-
-    fn compileMultipleAssignment(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const ma = self.tree.multipleAssignment(node);
-        const lhs = self.tree.getLhsExprs(ma.lhs);
-
-        for (lhs) |l| {
-            if (l.name != .none) {
-                const name_id = l.name;
-                const name_str = self.tree.getString(name_id);
-                if (!std.mem.startsWith(u8, name_str, "@@") and
-                    !std.mem.startsWith(u8, name_str, "@") and
-                    self.resolveLocal(name_id) == null and
-                    (try self.resolveUpvalue(name_id)) == null)
-                {
-                    const slot = self.getNextLocalSlot();
-                    try self.addLocal(name_id, slot);
-                }
-            }
-        }
-
-        try self.compileNode(ma.value);
-
-        var splat_idx: ?usize = null;
-        for (lhs, 0..) |l, i| {
-            if (l.modifier != null and l.modifier.? == .splat) {
-                splat_idx = i;
-                break;
-            }
-        }
-
-        if (splat_idx) |s_idx| {
-            const pre_count = s_idx;
-            const post_count = lhs.len - 1 - s_idx;
-            if (pre_count > limits.MAX_SHORT_CONSTANTS or post_count > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
-            try self.emitOp(.op_unpack_splat);
-            try self.emitByte(@intCast(pre_count));
-            try self.emitByte(@intCast(post_count));
-            self.simulatePop(1);
-            self.simulatePush(lhs.len);
-        } else {
-            if (lhs.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
-            try self.emitOp(.op_unpack);
-            try self.emitByte(@intCast(lhs.len));
-            self.simulatePop(1);
-            self.simulatePush(lhs.len);
-        }
-
-        var i: usize = lhs.len;
-        while (i > 0) {
-            i -= 1;
-            try self.compileDestructure(lhs[i]);
-        }
-        try self.emitOp(.op_nil);
-    }
-
-    fn handleMacroMethod(self: *Compiler, stmt_node: *const ast.Node, is_singleton: bool) CompileError!bool {
-        if (stmt_node.tag != .method_call) return false;
-        const mc = self.tree.methodCall(stmt_node);
-        const func_name = self.tree.getString(mc.method_name);
-
-        if (std.mem.eql(u8, func_name, "include") and mc.receiver == .none) {
-            const args = self.tree.getNamedArgs(mc.args);
-            if (args.len == 1) {
-                try self.compileNode(args[0].value);
-                try self.emitOp(.op_mixin);
-                return true;
-            }
-        } else if ((std.mem.eql(u8, func_name, "attr_accessor") or std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_writer")) and mc.receiver == .none) {
-            const args = self.tree.getNamedArgs(mc.args);
-            for (args) |arg| {
-                const arg_node = self.tree.getNode(arg.value).?;
-                if (arg_node.tag == .symbol or arg_node.tag == .string) {
-                    const name_str = self.tree.getString(self.tree.stringId(arg_node));
-                    if (std.mem.eql(u8, func_name, "attr_reader") or std.mem.eql(u8, func_name, "attr_accessor")) {
-                        try macros.emitAttrReader(self, name_str, is_singleton);
-                    }
-                    if (std.mem.eql(u8, func_name, "attr_writer") or std.mem.eql(u8, func_name, "attr_accessor")) {
-                        try macros.emitAttrWriter(self, name_str, is_singleton);
-                    }
-                } else {
-                    return error.UnknownNode;
-                }
-            }
-            return true;
-        }
-        return false;
-    }
-
-    fn compileClassStmt(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
-        self.active_namespaces += 1;
-        defer self.active_namespaces -= 1;
-
-        const cs = self.tree.classStmt(node);
-        const name_node = self.tree.getNode(cs.name).?;
-        const name_id = self.tree.stringId(name_node);
-        const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
-        const name_str = self.tree.getString(name_id);
-
-        if (compiler_intrinsics.has(name_str)) {
-            return error.ProtectedSymbol;
-        }
-
-        try self.namespace_stack.append(self.allocator, name_id);
-        defer _ = self.namespace_stack.pop();
-
-        try self.emitOpWithOperand(.op_class, .op_class_wide, name_idx);
-
-        if (cs.super_class != .none) {
-            try self.compileNode(cs.super_class);
-            try self.emitOp(.op_inherit);
-        }
-
-        const body_node = self.tree.getNode(cs.body).?;
-        const block_payload = self.tree.block(body_node);
-        const stmts = self.tree.getNodes(block_payload.stmts);
-
-        // Compile entire class body natively!
-        try self.compileNamespaceBody(stmts, false);
-
-        // Export Fully Qualified Name
-        try self.defineFullyQualifiedNamespace(name_str);
-
-        const sym = self.symbols[@intFromEnum(node_idx)];
-        if (self.active_namespaces > 1) {
-            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
-        } else if (sym.kind == .local and self.enclosing != null) {
-            const slot = self.getNextLocalSlot();
-            try self.addLocal(name_id, slot);
-            try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
-        } else {
-            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-            try self.emitOp(.op_nil);
-        }
-    }
-
-    fn compileModuleStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
-        self.active_namespaces += 1;
-        defer self.active_namespaces -= 1;
-
-        const ms = self.tree.moduleStmt(node);
-        const name_id = ms.name;
-        const name_str = self.tree.getString(name_id);
-        const name_idx = try self.makeStringConstant(name_str);
-
-        try self.namespace_stack.append(self.allocator, name_id);
-        defer _ = self.namespace_stack.pop();
-
-        try self.emitOpWithOperand(.op_module, .op_module_wide, name_idx);
-
-        const body_node = self.tree.getNode(ms.body).?;
-        const block_payload = self.tree.block(body_node);
-        const stmts = self.tree.getNodes(block_payload.stmts);
-
-        // Compile entire module body natively
-        try self.compileNamespaceBody(stmts, false);
-
-        // Export Fully Qualified Name
-        try self.defineFullyQualifiedNamespace(name_str);
-
-        if (self.active_namespaces > 1) {
-            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
-        } else {
-            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-            try self.emitOp(.op_nil);
-        }
-    }
-
-    fn compileMethodCall(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const mc = self.tree.methodCall(node);
-        const func_name = self.tree.getString(mc.method_name);
-
-        // Fast-path: compile `obj.nil?` directly into op_is_nil
-        if (std.mem.eql(u8, func_name, "nil?") and mc.receiver != .none) {
-            try self.compileNode(mc.receiver);
-            try self.emitOp(.op_is_nil);
-            return;
-        }
-
-        // Intercept Compiler Intrinsics via O(1) lookup
-        if (compiler_intrinsics.get(func_name)) |intrinsic| {
-            switch (intrinsic) {
-                .raise_err => {
-                    const args = self.tree.getNamedArgs(mc.args);
-                    if (args.len > 0) try self.compileNode(args[0].value) else try self.emitOp(.op_nil);
-                    try self.emitOp(.op_throw);
-                    self.simulatePush(1); // Dead code equilibrium
-                    return;
-                },
-                .block_given_chk => {
-                    try self.emitOp(.op_block_given);
-                    return;
-                },
-                .yield_call => {
-                    const args = self.tree.getNamedArgs(mc.args);
-                    for (args) |arg| {
-                        if (arg.name != .none) return error.UnsupportedScope; // Kwargs to yield not yet supported
-                        try self.compileNode(arg.value);
-                    }
-                    if (args.len > limits.MAX_ARGS) return error.TooManyConstants;
-                    try self.emitOp(.op_yield);
-                    try self.emitByte(@intCast(args.len));
-                    self.simulatePop(args.len); // Yield consumes the args
-                    self.simulatePush(1); // Yield returns the block's result
-                    return;
-                },
-                .defined_chk => {
-                    const args = self.tree.getNamedArgs(mc.args);
-                    if (args.len > 0) {
-                        const target_node = self.tree.getNode(args[0].value).?;
-                        if (target_node.tag == .identifier) {
-                            const name_id = self.tree.stringId(target_node);
-                            if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
-                                try self.emitOp(.op_true); // Locals are statically known
-                            } else {
-                                const name_str = self.tree.getString(name_id);
-                                const name_idx = try self.makeStringConstant(name_str);
-                                try self.emitOpWithOperand(.op_defined, .op_defined_wide, name_idx);
-                            }
-                        } else {
-                            try self.emitOp(.op_true); // Complex expressions evaluate to true
-                        }
-                    } else {
-                        try self.emitOp(.op_nil);
-                    }
-                    return;
-                },
-                .protected_symbol => {},
-            }
-        }
-
-        var safe_jump: usize = 0;
-
-        // Push Receiver/Target
-        if (mc.receiver == .none) {
-            try self.emitVariableLoad(mc.method_name, null);
-        } else {
-            try self.compileNode(mc.receiver);
-            if (mc.is_safe) safe_jump = try self.emitJump(.op_jump_if_nil);
-        }
-
-        // Delegate Argument Packing
-        var actual_arg_count = try self.compileCallArguments(self.tree.getNamedArgs(mc.args));
-
-        // Push the Block as a Closure Argument
-        if (mc.block != .none) {
-            const block_node = self.tree.getNode(mc.block).?;
-            const block_payload = self.tree.block(block_node);
-            const lowered_params = try self.lowerBlockParams(block_payload.params);
-            defer self.allocator.free(lowered_params);
-
-            try self.compileClosureBlock(lowered_params, mc.block, null, false);
-            actual_arg_count += 1;
-        }
-
-        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
-
-        // 4. Execute Invocation
-        if (mc.receiver == .none) {
-            try self.emitOp(.op_call);
-            try self.emitByte(@intCast(actual_arg_count));
-        } else {
-            const name_idx = try self.makeStringConstant(func_name);
-            try self.emitOpWithOperand(.op_invoke, .op_invoke_wide, name_idx);
-            try self.emitByte(@intCast(actual_arg_count));
-
-            try self.emitInlineCacheIndex();
-
-            if (mc.is_safe) self.patchJump(safe_jump);
-        }
-
-        self.simulatePop(actual_arg_count + 1); // Pops args + receiver
-        self.simulatePush(1); // Pushes the returned result
-    }
-
-    fn compileSuperCall(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const sc = self.tree.superCall(node);
-        try self.emitOp(.op_get_local);
-        try self.emitByte(0); // push `self`
-
-        var actual_arg_count: usize = 0;
-
-        if (sc.implicit_args) {
-            const func = self.function orelse return error.UnknownNode;
-            const arity = func.arity;
-
-            // Push positional arguments AND the kwarg map (located inside the standard arity length)
-            for (0..arity) |i| {
-                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
-            }
-            actual_arg_count = arity;
-
-            if (sc.block == .none) {
-                // Forward the parent's block!
-                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(arity + 1));
-                actual_arg_count += 1;
-            } else {
-                // Compile explicitly passed block overriding the implicit one
-                const block_node = self.tree.getNode(sc.block).?;
-                const block_payload = self.tree.block(block_node);
-                const lowered_params = try self.lowerBlockParams(block_payload.params);
-                defer self.allocator.free(lowered_params);
-                try self.compileClosureBlock(lowered_params, sc.block, null, false);
-                actual_arg_count += 1;
-            }
-        } else {
-            const args = self.tree.getNamedArgs(sc.args);
-
-            // Extract Block explicitly passed via reference (`&b`)
-            var block_arg: ?ast.NodeIndex = null;
-            for (args) |arg| {
-                if (arg.modifier != null and arg.modifier.? == .block) {
-                    block_arg = arg.value;
-                }
-            }
-
-            // Delegate Argument Packing
-            actual_arg_count = try self.compileCallArguments(args);
-
-            // Block Argument (Always Pushed LAST)
-            if (block_arg) |b_node| {
-                try self.compileNode(b_node);
-                actual_arg_count += 1;
-            } else if (sc.block != .none) {
-                const block_node = self.tree.getNode(sc.block).?;
-                const block_payload = self.tree.block(block_node);
-                const lowered_params = try self.lowerBlockParams(block_payload.params);
-                defer self.allocator.free(lowered_params);
-                try self.compileClosureBlock(lowered_params, sc.block, null, false);
-                actual_arg_count += 1;
-            }
-        }
-
-        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
-
-        try self.emitOp(.op_super_invoke);
-        try self.emitByte(@intCast(actual_arg_count));
-
-        // Pop the arguments + the implicit `self` receiver
-        self.simulatePop(actual_arg_count + 1);
-        self.simulatePush(1);
-    }
-
-    fn lowerBlockParams(self: *Compiler, param_span: ast.Span) CompileError![]const ast.Param {
-        const param_nodes = self.tree.getNodes(param_span);
-        var lowered = try self.allocator.alloc(ast.Param, param_nodes.len);
-
-        for (param_nodes, 0..) |node_idx, i| {
-            const node = self.tree.getNode(node_idx) orelse return error.UnknownNode;
-
-            switch (node.tag) {
-                .identifier => {
-                    lowered[i] = .{
-                        .name = self.tree.stringId(node),
-                        .default_value = .none,
-                        .modifier = null,
-                        .is_keyword = false,
-                    };
-                },
-                .assignment => {
-                    const assign = self.tree.assignment(node);
-                    lowered[i] = .{
-                        .name = assign.name,
-                        .default_value = assign.value,
-                        .modifier = null,
-                        .is_keyword = false,
-                    };
-                },
-                .symbol => {
-                    lowered[i] = .{
-                        .name = self.tree.stringId(node),
-                        .default_value = .none,
-                        .modifier = null,
-                        .is_keyword = true,
-                    };
-                },
-                .hash_literal => {
-                    const entries = self.tree.getHashEntries(self.tree.nodeSpan(node));
-                    const key_node = self.tree.getNode(entries[0].key).?;
-                    lowered[i] = .{
-                        .name = self.tree.stringId(key_node),
-                        .default_value = entries[0].value,
-                        .modifier = null,
-                        .is_keyword = true,
-                    };
-                },
-                .splat_expr => {
-                    const inner_node = self.tree.getNode(self.tree.nodeIndex(node)).?;
-                    lowered[i] = .{
-                        .name = self.tree.stringId(inner_node),
-                        .default_value = .none,
-                        .modifier = .splat,
-                        .is_keyword = false,
-                    };
-                },
-                .double_splat_expr => {
-                    const inner_node = self.tree.getNode(self.tree.nodeIndex(node)).?;
-                    lowered[i] = .{
-                        .name = self.tree.stringId(inner_node),
-                        .default_value = .none,
-                        .modifier = .double_splat,
-                        .is_keyword = false,
-                    };
-                },
-                .array_literal => {
-                    // This represents destructuring like |(x, y)|
-                    lowered[i] = .{
-                        .name = .none, // Anonymous parameter
-                        .default_value = .none,
-                        .modifier = null,
-                        .is_keyword = false,
-                    };
-                },
-                else => return error.UnknownNode,
-            }
-        }
-        return lowered;
     }
 
     fn writeJumpOffset(self: *Compiler, target_index: usize, offset: usize) void {

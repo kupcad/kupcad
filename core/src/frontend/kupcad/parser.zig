@@ -47,7 +47,7 @@ pub const Parser = struct {
     comments: std.ArrayListUnmanaged(common_token.Comment) = .empty,
     in_block_params: bool = false,
 
-    // --- Phase 3: Zero-Waste Scratch Buffers ---
+    // --- Zero-Waste Scratch Buffers ---
     scratch_nodes: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
     scratch_named_args: std.ArrayListUnmanaged(ast.NamedArg) = .empty,
     scratch_params: std.ArrayListUnmanaged(ast.Param) = .empty,
