@@ -7357,3 +7357,41 @@ test "STL Importer: imports exported binary STL and evaluates valid volume" {
     try testing.expect(vol_val.isNumber());
     try testing.expectApproxEqAbs(1000.0, vol_val.asNumber(), 0.01);
 }
+
+test "VM: Advanced and Variadic Math methods evaluate correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\[
+        \\  Math.min(10, 5, 20),
+        \\  Math.max(10, 5, 20),
+        \\  Math.clamp(15, 0, 10),
+        \\  Math.lerp(0, 10, 0.5),
+        \\  Math.hypot(3, 4),
+        \\  Math.sign(-42)
+        \\]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = result.asArray();
+
+    try testing.expectEqual(@as(usize, 6), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[2].asNumber());
+    try testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[3].asNumber());
+    try testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[4].asNumber());
+    try testing.expectEqual(@as(f64, -1.0), arr_obj.items.items[5].asNumber());
+}

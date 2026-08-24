@@ -79,6 +79,55 @@ pub fn mathAtan2(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
     return value.Value.initNumber(std.math.atan2(args[0].asNumber(), args[1].asNumber()));
 }
 
+// --- CAD-Specific Math Helpers ---
+
+pub fn mathClamp(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    if (arg_count < 3 or !args[0].isNumber() or !args[1].isNumber() or !args[2].isNumber()) {
+        vm.reportError("RuntimeError: Math.clamp expects (value, min, max).\n", .{});
+        return error.RuntimeError;
+    }
+    const val = args[0].asNumber();
+    const min_val = args[1].asNumber();
+    const max_val = args[2].asNumber();
+    return value.Value.initNumber(std.math.clamp(val, min_val, max_val));
+}
+
+pub fn mathLerp(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    if (arg_count < 3 or !args[0].isNumber() or !args[1].isNumber() or !args[2].isNumber()) {
+        vm.reportError("RuntimeError: Math.lerp expects (start, end, t).\n", .{});
+        return error.RuntimeError;
+    }
+    const a = args[0].asNumber();
+    const b = args[1].asNumber();
+    const t = args[2].asNumber();
+    // Standard lerp formula: a + (b - a) * t
+    return value.Value.initNumber(a + (b - a) * t);
+}
+
+pub fn mathHypot(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    if (arg_count < 2 or !args[0].isNumber() or !args[1].isNumber()) {
+        vm.reportError("RuntimeError: Math.hypot expects (x, y).\n", .{});
+        return error.RuntimeError;
+    }
+    const x = args[0].asNumber();
+    const y = args[1].asNumber();
+    return value.Value.initNumber(std.math.hypot(x, y));
+}
+
+pub fn mathSign(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    if (arg_count < 1 or !args[0].isNumber()) {
+        vm.reportError("RuntimeError: Math.sign expects a number.\n", .{});
+        return error.RuntimeError;
+    }
+    const val = args[0].asNumber();
+    const res: f64 = if (val > 0.0) 1.0 else if (val < 0.0) -1.0 else 0.0;
+    return value.Value.initNumber(res);
+}
+
 pub const methods = [_]common.MethodDef{
     .{ .name = "sin", .func = wrapMath1(std.math.sin) },
     .{ .name = "cos", .func = wrapMath1(std.math.cos) },
@@ -95,4 +144,8 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "rad2deg", .func = wrapMath1(mathRad2Deg) },
     .{ .name = "min", .func = mathMin },
     .{ .name = "max", .func = mathMax },
+    .{ .name = "clamp", .func = mathClamp },
+    .{ .name = "lerp", .func = mathLerp },
+    .{ .name = "hypot", .func = mathHypot },
+    .{ .name = "sign", .func = mathSign },
 };
