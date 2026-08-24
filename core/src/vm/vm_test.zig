@@ -7395,3 +7395,45 @@ test "VM: Advanced and Variadic Math methods evaluate correctly" {
     try testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[4].asNumber());
     try testing.expectEqual(@as(f64, -1.0), arr_obj.items.items[5].asNumber());
 }
+
+test "VM: Parameter registry uses O(1) lookup and respects validation limits" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Test script:
+    // 1. Define a parameter with a default value and validation limits.
+    // 2. Read the parameter inside a loop 10 times to hammer the O(1) cache.
+    // 3. Return the accumulated sum.
+    const source =
+        \\ p = param(:feedrate, default: 15.0, validate: { min: 1.0, max: 100.0 })
+        \\ sum = 0
+        \\ i = 0
+        \\ while (i < 10)
+        \\   sum = sum + param(:feedrate)
+        \\   i = i + 1
+        \\ end
+        \\ sum
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // 15.0 * 10 iterations = 150.0
+    try testing.expect(result.isNumber());
+    try testing.expectEqual(@as(f64, 150.0), result.asNumber());
+
+    // Verify it was correctly recorded in the VM's native registry
+    try testing.expectEqual(@as(usize, 1), vm.param_registry.items(.name).len);
+    try testing.expectEqual(@as(f64, 1.0), vm.param_registry.items(.min_val)[0]);
+    try testing.expectEqual(@as(f64, 100.0), vm.param_registry.items(.max_val)[0]);
+}
