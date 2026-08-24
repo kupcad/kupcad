@@ -73,6 +73,11 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     try vm.setInstanceField(math_inst, "PI", value.Value.initNumber(std.math.pi), null);
     try vm.globals.put(vm.allocator, "Math", value.Value.initObj(&math_inst.obj));
 
+    // Set up CAD settings module (as a pseudo-class)
+    const cad_module = try defineBuiltinClass(vm, "CAD", null);
+    const cad_inst = try vm.gc.allocateInstance(vm, cad_module);
+    try vm.globals.put(vm.allocator, "CAD", value.Value.initObj(&cad_inst.obj));
+
     // Initialize the empty Global Parameters Map for CLI injection
     const params_map = try vm.gc.allocateMap(vm);
     try vm.globals.put(vm.allocator, "params", value.Value.initObj(&params_map.obj));

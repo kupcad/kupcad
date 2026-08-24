@@ -33,16 +33,14 @@ fn parseArgs(args: []const value.Value) ArgParseCtx {
     return .{ .pos_count = arg_count, .kwargs = null };
 }
 
-fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
+fn extractGeomOptions(vm: *VM, parsed: ArgParseCtx) GeomOptions {
     var opts = GeomOptions{};
+
     if (parsed.kwargs) |kw| {
         if (kw.isObject() and kw.asObj().obj_type == .map) {
-            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", kw.asObj())));
-
-            // ⚡ O(1) Comptime parsing destroys the boilerplate!
+            const map = kw.asMap();
             opts = util.parseKwargs(GeomOptions, map);
 
-            // Handle domain-specific aliases quickly
             if (util.getKey(map, "size")) |v| {
                 if (v.isNumber()) {
                     opts.x = v.asNumber();
@@ -61,6 +59,13 @@ fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
             }
         }
     }
+
+    // Inherit VM Config Defaults
+    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
+    if (opts.segments == 0 and active_config.segments > 0) {
+        opts.segments = active_config.segments;
+    }
+
     return opts;
 }
 
@@ -130,7 +135,7 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
 // --- Methods ---
 pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = extractGeomOptions(vm, parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) {
         opts.x = args[0].asNumber();
         opts.y = opts.x;
@@ -152,7 +157,7 @@ pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = extractGeomOptions(vm, parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) {
         opts.x = args[0].asNumber();
         opts.y = opts.x;
@@ -185,7 +190,7 @@ pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = extractGeomOptions(vm, parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
     if (parsed.pos_count > 1 and args[1].isNumber()) opts.h = args[1].asNumber();
     if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
@@ -242,7 +247,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = extractGeomOptions(vm, parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
     try requirePositive(vm, opts.r, "radius");
     const dag_idx = try vm.dag_builder.addSphere(opts.r);
@@ -251,7 +256,7 @@ pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = extractGeomOptions(vm, parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
     try requirePositive(vm, opts.r, "radius");
     try requireNonNegative(vm, @as(f64, @floatFromInt(opts.segments)), "segments");

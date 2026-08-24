@@ -7437,3 +7437,43 @@ test "VM: Parameter registry uses O(1) lookup and respects validation limits" {
     try testing.expectEqual(@as(f64, 1.0), vm.param_registry.items(.min_val)[0]);
     try testing.expectEqual(@as(f64, 100.0), vm.param_registry.items(.max_val)[0]);
 }
+
+test "VM: CAD.with_config safely applies and pops engine settings block-scoped" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Set global config to 16 segments
+    // 2. Set scoped config to 64 segments and B-Rep engine
+    // 3. Verify it resets back to 16 after the block
+    const source =
+        \\CAD.config(segments: 16)
+        \\conf1 = CAD.current_config
+        \\
+        \\conf2 = nil
+        \\CAD.with_config(segments: 64, engine: :brep) do
+        \\  conf2 = CAD.current_config
+        \\end
+        \\
+        \\conf3 = CAD.current_config
+        \\[conf1[:segments], conf2[:segments], conf3[:segments], conf2[:engine]]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr = result.asArray().items.items;
+
+    try testing.expectEqual(@as(f64, 16.0), arr[0].asNumber()); // Original
+    try testing.expectEqual(@as(f64, 64.0), arr[1].asNumber()); // Block Scoped
+    try testing.expectEqual(@as(f64, 16.0), arr[2].asNumber()); // Restored
+    try testing.expectEqualStrings("brep", arr[3].asSymbol().chars); // Engine Swapped!
+}

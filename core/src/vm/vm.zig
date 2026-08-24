@@ -11,7 +11,7 @@ const geom = @import("../kernel/geometry_handle.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const profiler_mod = @import("profiler.zig");
 const LineIndex = @import("../core/line_index.zig").LineIndex;
-const Brep = @import("../kernel/engines/brep/topology.zig").Brep;
+const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
 pub const Host = host_mod.Host;
 
@@ -92,6 +92,8 @@ pub const VM = struct {
     static_false: ?*value.ObjString = null,
     static_nil: ?*value.ObjString = null,
 
+    config_stack: std.ArrayListUnmanaged(EngineConfig) = .empty,
+
     // safety for infinite loops
     instruction_count: usize,
     instruction_limit: usize,
@@ -103,6 +105,9 @@ pub const VM = struct {
     const STACK_GROW_FACTOR: usize = 2;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
+        var config_stack = std.ArrayListUnmanaged(EngineConfig).empty;
+        try config_stack.append(allocator, .{});
+
         // Pre-allocate a massive 64K stack (512KB of contiguous memory)
         const initial_stack = try allocator.alloc(value.Value, 65536);
 
@@ -126,6 +131,7 @@ pub const VM = struct {
             .symbols = .empty,
             .open_upvalues = null,
             .profiler = null,
+            .config_stack = config_stack,
             .line_index = null,
             .debugger_step_handler = null,
             .step_mode = false,
@@ -166,6 +172,7 @@ pub const VM = struct {
         self.rescue_frames.deinit(self.allocator);
         self.param_registry.deinit(self.allocator);
         self.param_lookup.deinit(self.allocator);
+        self.config_stack.deinit(self.allocator);
         self.materials.deinit(self.allocator);
         self.scratch_arena.deinit();
         self.gc.deinit();

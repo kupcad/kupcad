@@ -11,6 +11,7 @@ const boolean_class = @import("classes/boolean.zig");
 const bbox_class = @import("classes/bbox.zig");
 const gc_class = @import("classes/gc.zig");
 const math_class = @import("classes/math.zig");
+const cad_class = @import("classes/cad.zig");
 
 fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
     const native_obj = try vm.gc.allocateNative(vm, func);
@@ -47,5 +48,9 @@ pub fn registerCoreClasses(vm: *VM) !void {
     if (vm.globals.get("Math")) |v| {
         const math_cls = v.asInstance().class;
         for (math_class.methods) |def| try bindNativeMethod(vm, math_cls, def.name, def.func);
+    }
+    if (vm.globals.get("CAD")) |v| {
+        const cad_cls = v.asInstance().class;
+        for (cad_class.methods) |def| try bindNativeMethod(vm, cad_cls, def.name, def.func);
     }
 }
