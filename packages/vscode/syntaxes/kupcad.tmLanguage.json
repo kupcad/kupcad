@@ -183,7 +183,7 @@
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|mirror|extrude|revolve|hull|trim_by_plane|minkowski|offset|transform|material|highlight|ghost)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|mirror|simplify|extrude|revolve|hull|trim_by_plane|minkowski|offset|transform|material|highlight|ghost)(?![\\\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {
