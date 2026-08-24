@@ -3,96 +3,73 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 
-pub fn mathSin(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(std.math.sin(x));
+// Math Macros
+fn wrapMath1(comptime func: anytype) value.NativeFn {
+    return struct {
+        fn wrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+            const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+            if (arg_count < 1 or !args[0].isNumber()) {
+                vm.reportError("RuntimeError: Math function expects a number.\n", .{});
+                return error.RuntimeError;
+            }
+            return value.Value.initNumber(@call(.auto, func, .{args[0].asNumber()}));
+        }
+    }.wrapper;
 }
-pub fn mathCos(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(std.math.cos(x));
+
+fn wrapMath2(comptime func: anytype) value.NativeFn {
+    return struct {
+        fn wrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+            const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+            if (arg_count < 2 or !args[0].isNumber() or !args[1].isNumber()) {
+                vm.reportError("RuntimeError: Math function expects two numbers.\n", .{});
+                return error.RuntimeError;
+            }
+            return value.Value.initNumber(@call(.auto, func, .{ args[0].asNumber(), args[1].asNumber() }));
+        }
+    }.wrapper;
 }
-pub fn mathTan(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(std.math.tan(x));
+
+// Builtins must be explicitly wrapped to pass their function pointers
+fn mathMin(a: f64, b: f64) f64 {
+    return @min(a, b);
 }
-pub fn mathSqrt(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(std.math.sqrt(x));
+fn mathMax(a: f64, b: f64) f64 {
+    return @max(a, b);
 }
-pub fn mathAbs(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(@abs(x));
+fn mathAbs(x: f64) f64 {
+    return @abs(x);
 }
-pub fn mathAsin(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(std.math.asin(x));
+fn mathRound(x: f64) f64 {
+    return @round(x);
 }
-pub fn mathAcos(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(std.math.acos(x));
+fn mathCeil(x: f64) f64 {
+    return @ceil(x);
 }
-pub fn mathAtan2(vm: *VM, receiver: value.Value, y: f64, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(std.math.atan2(y, x));
+fn mathFloor(x: f64) f64 {
+    return @floor(x);
 }
-pub fn mathRound(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(@round(x));
+fn mathDeg2Rad(x: f64) f64 {
+    return x * std.math.pi / 180.0;
 }
-pub fn mathCeil(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(@ceil(x));
-}
-pub fn mathFloor(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(@floor(x));
-}
-pub fn mathDeg2Rad(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(x * std.math.pi / 180.0);
-}
-pub fn mathRad2Deg(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(x * 180.0 / std.math.pi);
-}
-pub fn mathMin(vm: *VM, receiver: value.Value, a: f64, b: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(@min(a, b));
-}
-pub fn mathMax(vm: *VM, receiver: value.Value, a: f64, b: f64) !value.Value {
-    _ = vm;
-    _ = receiver;
-    return value.Value.initNumber(@max(a, b));
+fn mathRad2Deg(x: f64) f64 {
+    return x * 180.0 / std.math.pi;
 }
 
 pub const methods = [_]common.MethodDef{
-    .{ .name = "sin", .func = common.wrapMethod(mathSin) },
-    .{ .name = "cos", .func = common.wrapMethod(mathCos) },
-    .{ .name = "tan", .func = common.wrapMethod(mathTan) },
-    .{ .name = "asin", .func = common.wrapMethod(mathAsin) },
-    .{ .name = "acos", .func = common.wrapMethod(mathAcos) },
-    .{ .name = "atan2", .func = common.wrapMethod(mathAtan2) },
-    .{ .name = "sqrt", .func = common.wrapMethod(mathSqrt) },
-    .{ .name = "abs", .func = common.wrapMethod(mathAbs) },
-    .{ .name = "round", .func = common.wrapMethod(mathRound) },
-    .{ .name = "ceil", .func = common.wrapMethod(mathCeil) },
-    .{ .name = "floor", .func = common.wrapMethod(mathFloor) },
-    .{ .name = "deg2rad", .func = common.wrapMethod(mathDeg2Rad) },
-    .{ .name = "rad2deg", .func = common.wrapMethod(mathRad2Deg) },
-    .{ .name = "min", .func = common.wrapMethod(mathMin) },
-    .{ .name = "max", .func = common.wrapMethod(mathMax) },
+    .{ .name = "sin", .func = wrapMath1(std.math.sin) },
+    .{ .name = "cos", .func = wrapMath1(std.math.cos) },
+    .{ .name = "tan", .func = wrapMath1(std.math.tan) },
+    .{ .name = "asin", .func = wrapMath1(std.math.asin) },
+    .{ .name = "acos", .func = wrapMath1(std.math.acos) },
+    .{ .name = "atan2", .func = wrapMath2(std.math.atan2) },
+    .{ .name = "sqrt", .func = wrapMath1(std.math.sqrt) },
+    .{ .name = "abs", .func = wrapMath1(mathAbs) },
+    .{ .name = "round", .func = wrapMath1(mathRound) },
+    .{ .name = "ceil", .func = wrapMath1(mathCeil) },
+    .{ .name = "floor", .func = wrapMath1(mathFloor) },
+    .{ .name = "deg2rad", .func = wrapMath1(mathDeg2Rad) },
+    .{ .name = "rad2deg", .func = wrapMath1(mathRad2Deg) },
+    .{ .name = "min", .func = wrapMath2(mathMin) },
+    .{ .name = "max", .func = wrapMath2(mathMax) },
 };

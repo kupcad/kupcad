@@ -1,6 +1,5 @@
 const std = @import("std");
 const geom = @import("geometry_handle.zig");
-
 const manifold_driver = @import("engines/manifold/driver.zig").driver;
 const brep_driver = @import("engines/brep/driver.zig").driver;
 
@@ -9,6 +8,23 @@ pub const BooleanOp = enum {
     difference_op,
     intersection_op,
 };
+
+// --- Comptime Kernel Dispatcher ---
+// Helper to safely extract the return type from either a function or a function pointer in Zig 0.16+
+fn ReturnType(comptime T: type) type {
+    switch (@typeInfo(T)) {
+        .pointer => |ptr| return ReturnType(ptr.child),
+        .@"fn" => |func| return func.return_type.?,
+        else => @compileError("Expected function or function pointer"),
+    }
+}
+
+inline fn dispatch(comptime fn_name: []const u8, handle: anytype, args: anytype) ReturnType(@TypeOf(@field(manifold_driver, fn_name))) {
+    switch (handle.engine) {
+        .manifold => return @call(.auto, @field(manifold_driver, fn_name), .{handle} ++ args),
+        .brep_native => return @call(.auto, @field(brep_driver, fn_name), .{handle} ++ args),
+    }
+}
 
 // --- Creation Dispatchers (Default to Manifold for interactive VM evaluation) ---
 pub inline fn cube(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
@@ -38,160 +54,88 @@ pub inline fn polygonsEvenOdd(allocator: std.mem.Allocator, contours: []const []
 
 // --- Top-Level Static Dispatchers ---
 pub inline fn translate(handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.translateFn(handle, x, y, z),
-        .brep_native => return brep_driver.translateFn(handle, x, y, z),
-    }
+    return dispatch("translateFn", handle, .{ x, y, z });
 }
 pub inline fn rotate(handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.rotateFn(handle, x, y, z),
-        .brep_native => return brep_driver.rotateFn(handle, x, y, z),
-    }
+    return dispatch("rotateFn", handle, .{ x, y, z });
 }
 pub inline fn scale(handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.scaleFn(handle, x, y, z),
-        .brep_native => return brep_driver.scaleFn(handle, x, y, z),
-    }
+    return dispatch("scaleFn", handle, .{ x, y, z });
 }
 pub inline fn mirror(handle: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.mirrorFn(handle, nx, ny, nz),
-        .brep_native => return brep_driver.mirrorFn(handle, nx, ny, nz),
-    }
+    return dispatch("mirrorFn", handle, .{ nx, ny, nz });
 }
 pub inline fn transformMatrix(handle: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.transformMatrixFn(handle, mat),
-        .brep_native => return brep_driver.transformMatrixFn(handle, mat),
-    }
+    return dispatch("transformMatrixFn", handle, .{mat});
 }
 pub inline fn boolean(a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle {
-    switch (a.engine) {
-        .manifold => return manifold_driver.booleanFn(a, b, op),
-        .brep_native => return brep_driver.booleanFn(a, b, op),
-    }
+    return dispatch("booleanFn", a, .{ b, op });
 }
 pub inline fn setMaterial(handle: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.setMaterialFn(handle, material_id),
-        .brep_native => return brep_driver.setMaterialFn(handle, material_id),
-    }
+    return dispatch("setMaterialFn", handle, .{material_id});
 }
-
 pub inline fn extrude(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
-    switch (cs.engine) {
-        .manifold => return manifold_driver.extrudeFn(cs, height, slices, twist_degrees, scale_x, scale_y),
-        .brep_native => return brep_driver.extrudeFn(cs, height, slices, twist_degrees, scale_x, scale_y),
-    }
+    return dispatch("extrudeFn", cs, .{ height, slices, twist_degrees, scale_x, scale_y });
 }
-
 pub inline fn revolve(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
-    switch (cs.engine) {
-        .manifold => return manifold_driver.revolveFn(cs, segments, revolve_degrees),
-        .brep_native => return brep_driver.revolveFn(cs, segments, revolve_degrees),
-    }
+    return dispatch("revolveFn", cs, .{ segments, revolve_degrees });
 }
-
 pub inline fn offset(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
-    switch (cs.engine) {
-        .manifold => return manifold_driver.offsetFn(cs, delta, join_type),
-        .brep_native => return brep_driver.offsetFn(cs, delta, join_type),
-    }
+    return dispatch("offsetFn", cs, .{ delta, join_type });
 }
 pub inline fn crossSectionBoolean(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle {
-    switch (a.engine) {
-        .manifold => return manifold_driver.crossSectionBooleanFn(a, b, op),
-        .brep_native => return brep_driver.crossSectionBooleanFn(a, b, op),
-    }
+    return dispatch("crossSectionBooleanFn", a, .{ b, op });
 }
 pub inline fn crossSectionTransform(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
-    switch (cs.engine) {
-        .manifold => return manifold_driver.crossSectionTransformFn(cs, mat),
-        .brep_native => return brep_driver.crossSectionTransformFn(cs, mat),
-    }
+    return dispatch("crossSectionTransformFn", cs, .{mat});
 }
 pub inline fn hull(handle: geom.GeometryHandle) ?geom.GeometryHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.hullFn(handle),
-        .brep_native => return brep_driver.hullFn(handle),
-    }
+    return dispatch("hullFn", handle, .{});
 }
 pub inline fn minkowski(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
-    switch (a.engine) {
-        .manifold => return manifold_driver.minkowskiFn(a, b),
-        .brep_native => return brep_driver.minkowskiFn(a, b),
-    }
+    return dispatch("minkowskiFn", a, .{b});
 }
 pub inline fn trimByPlane(handle: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?geom.GeometryHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.trimByPlaneFn(handle, nx, ny, nz, offset_dist),
-        .brep_native => return brep_driver.trimByPlaneFn(handle, nx, ny, nz, offset_dist),
-    }
+    return dispatch("trimByPlaneFn", handle, .{ nx, ny, nz, offset_dist });
 }
 pub inline fn splitByPlane(handle: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.splitByPlaneFn(handle, nx, ny, nz, offset_dist),
-        .brep_native => return brep_driver.splitByPlaneFn(handle, nx, ny, nz, offset_dist),
-    }
+    return dispatch("splitByPlaneFn", handle, .{ nx, ny, nz, offset_dist });
 }
 pub inline fn slice(handle: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.sliceFn(handle, height),
-        .brep_native => return brep_driver.sliceFn(handle, height),
-    }
+    return dispatch("sliceFn", handle, .{height});
 }
 pub inline fn project(handle: geom.GeometryHandle) ?geom.CrossSectionHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.projectFn(handle),
-        .brep_native => return brep_driver.projectFn(handle),
-    }
+    return dispatch("projectFn", handle, .{});
 }
 pub inline fn genus(handle: geom.GeometryHandle) i32 {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.genusFn(handle),
-        .brep_native => return brep_driver.genusFn(handle),
-    }
+    return dispatch("genusFn", handle, .{});
 }
 pub inline fn boundingBox(handle: geom.GeometryHandle) ?geom.BoundingBox {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.boundingBoxFn(handle),
-        .brep_native => return brep_driver.boundingBoxFn(handle),
-    }
+    return dispatch("boundingBoxFn", handle, .{});
 }
 pub inline fn volume(handle: geom.GeometryHandle) f64 {
-    std.debug.assert(@intFromPtr(handle.ptr) != 0);
-
-    switch (handle.engine) {
-        .manifold => return manifold_driver.volumeFn(handle),
-        .brep_native => return brep_driver.volumeFn(handle),
-    }
+    return dispatch("volumeFn", handle, .{});
 }
 pub inline fn surfaceArea(handle: geom.GeometryHandle) f64 {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.surfaceAreaFn(handle),
-        .brep_native => return brep_driver.surfaceAreaFn(handle),
-    }
+    return dispatch("surfaceAreaFn", handle, .{});
 }
 pub inline fn queryFaces(handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.queryFacesFn(handle, filter),
-        .brep_native => return brep_driver.queryFacesFn(handle, filter),
-    }
+    return dispatch("queryFacesFn", handle, .{filter});
 }
 pub inline fn containsPoint(handle: geom.GeometryHandle, pt: [3]f64) bool {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.containsPointFn(handle, pt),
-        .brep_native => return brep_driver.containsPointFn(handle, pt),
-    }
+    return dispatch("containsPointFn", handle, .{pt});
 }
 pub inline fn minGap(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
-    switch (a.engine) {
-        .manifold => return manifold_driver.minGapFn(a, b, sl),
-        .brep_native => return brep_driver.minGapFn(a, b, sl),
-    }
+    return dispatch("minGapFn", a, .{ b, sl });
 }
+pub fn destruct(handle: geom.GeometryHandle) void {
+    dispatch("destructFn", handle, .{});
+}
+pub inline fn destructCrossSection(handle: geom.CrossSectionHandle) void {
+    dispatch("destructCrossSectionFn", handle, .{});
+}
+
+// Allocator is ordered first in these signatures, so we dispatch them manually to preserve standard ordering
 pub inline fn rayCast(alloc: std.mem.Allocator, handle: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
     switch (handle.engine) {
         .manifold => return manifold_driver.rayCastFn(alloc, handle, o, e),
@@ -202,18 +146,6 @@ pub inline fn getMesh(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
     switch (handle.engine) {
         .manifold => return manifold_driver.getMeshFn(allocator, handle),
         .brep_native => return brep_driver.getMeshFn(allocator, handle),
-    }
-}
-pub fn destruct(handle: geom.GeometryHandle) void {
-    switch (handle.engine) {
-        .manifold => manifold_driver.destructFn(handle),
-        .brep_native => brep_driver.destructFn(handle),
-    }
-}
-pub inline fn destructCrossSection(handle: geom.CrossSectionHandle) void {
-    switch (handle.engine) {
-        .manifold => manifold_driver.destructCrossSectionFn(handle),
-        .brep_native => brep_driver.destructCrossSectionFn(handle),
     }
 }
 
@@ -246,7 +178,6 @@ pub const GeometryKernel = struct {
     setMaterialFn: *const fn (a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle,
     genusFn: *const fn (a: geom.GeometryHandle) i32,
     polygonFn: *const fn (allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle,
-    destructCrossSectionFn: *const fn (handle: geom.CrossSectionHandle) void,
     boundingBoxFn: *const fn (handle: geom.GeometryHandle) ?geom.BoundingBox,
     queryFacesFn: *const fn (handle: geom.GeometryHandle, filter: geom.FaceFilter) ?geom.FaceArray,
     volumeFn: *const fn (handle: geom.GeometryHandle) f64,
@@ -256,4 +187,5 @@ pub const GeometryKernel = struct {
     minGapFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, search_length: f64) f64,
     rayCastFn: *const fn (allocator: std.mem.Allocator, a: geom.GeometryHandle, origin: [3]f64, end: [3]f64) ?[]geom.RayHit,
     destructFn: *const fn (handle: geom.GeometryHandle) void,
+    destructCrossSectionFn: *const fn (handle: geom.CrossSectionHandle) void,
 };

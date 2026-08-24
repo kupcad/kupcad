@@ -465,7 +465,7 @@ pub const GC = struct {
         }
     }
 
-    // --- Phase 2: DOD Segmented Sweep ---
+    // --- DOD Segmented Sweep ---
 
     fn sweepList(self: *GC, vm: *VM, comptime T: type, list: *std.ArrayListUnmanaged(*T)) void {
         var i: usize = 0;

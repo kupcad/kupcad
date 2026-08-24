@@ -15,32 +15,48 @@ pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
     if (T == value.Value) return val;
     if (T == f64) return if (val.isNumber()) val.asNumber() else error.RuntimeError;
     if (T == bool) return if (val.isBool()) val.asBool() else error.RuntimeError;
+
     if (T == *value.ObjString) return if (val.isObject() and val.asObj().obj_type == .string)
         @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", val.asObj())))
     else
         error.RuntimeError;
+
     if (T == *value.ObjSymbol) return if (val.isObject() and val.asObj().obj_type == .symbol)
         @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", val.asObj())))
     else
         error.RuntimeError;
+
     if (T == *value.ObjArray) return if (val.isObject() and val.asObj().obj_type == .array)
         @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", val.asObj())))
     else
         error.RuntimeError;
+
     if (T == *value.ObjMap) return if (val.isObject() and val.asObj().obj_type == .map)
         @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", val.asObj())))
     else
         error.RuntimeError;
+
     if (T == *value.ObjClosure) return if (val.isClosure())
         val.asClosure()
     else
         error.RuntimeError;
+
     if (T == *value.ObjInstance) return if (val.isInstance())
         val.asInstance()
     else
         error.RuntimeError;
 
-    // Auto-Evaluate DAG for CAD functions
+    // --- Strongly Typed Geometry Pointers for DAG Continuity ---
+    if (T == *value.ObjGeometry) {
+        if (!val.isGeometry()) return error.RuntimeError;
+        return val.asGeometry();
+    }
+    if (T == *value.ObjCrossSection) {
+        if (!val.isCrossSection()) return error.RuntimeError;
+        return val.asCrossSection();
+    }
+
+    // Auto-Evaluate DAG for raw CAD kernel functions
     if (T == geom.GeometryHandle) {
         if (!val.isGeometry()) return error.RuntimeError;
         return try vm.ensureConcrete(val);
@@ -51,7 +67,6 @@ pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
     }
 
     switch (@typeInfo(T)) {
-        // Use lowercase .optional
         .optional => |opt_info| {
             if (val.isNil()) return null;
             return try unboxValue(opt_info.child, val, vm);
@@ -66,6 +81,7 @@ pub fn wrapMethod(comptime func: anytype) value.NativeFn {
     // Escape `fn` using @"fn" syntax
     const fn_info = @typeInfo(@TypeOf(func)).@"fn";
     const params = fn_info.params;
+
     if (params.len < 2) {
         @compileError("Native method function must take at least (vm: *VM, receiver: ReceiverType)");
     }
@@ -74,6 +90,7 @@ pub fn wrapMethod(comptime func: anytype) value.NativeFn {
         fn nativeWrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
             const vm: *VM = @ptrCast(@alignCast(vm_opaque));
             var call_args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
+
             call_args[0] = vm;
             call_args[1] = try unboxValue(params[1].type.?, vm.getReceiver(args), vm);
 
@@ -83,7 +100,6 @@ pub fn wrapMethod(comptime func: anytype) value.NativeFn {
                 if (ParamType == []const value.Value) {
                     call_args[i] = args[arg_idx..arg_count];
                     arg_idx = arg_count;
-                    // Use lowercase .optional
                 } else if (@typeInfo(ParamType) == .optional) {
                     if (arg_idx < arg_count) {
                         call_args[i] = try unboxValue(ParamType, args[arg_idx], vm);
@@ -100,14 +116,17 @@ pub fn wrapMethod(comptime func: anytype) value.NativeFn {
                     arg_idx += 1;
                 }
             }
+
             return @call(.auto, func, call_args);
         }
     }.nativeWrapper;
 }
 
 pub fn wrapGlobal(comptime func: anytype) value.NativeFn {
+    // Escape `fn` using @"fn" syntax
     const fn_info = @typeInfo(@TypeOf(func)).@"fn";
     const params = fn_info.params;
+
     if (params.len < 1) {
         @compileError("Native global function must take at least (vm: *VM)");
     }
@@ -124,7 +143,6 @@ pub fn wrapGlobal(comptime func: anytype) value.NativeFn {
                 if (ParamType == []const value.Value) {
                     call_args[i] = args[arg_idx..arg_count];
                     arg_idx = arg_count;
-                    // Use lowercase .optional
                 } else if (@typeInfo(ParamType) == .optional) {
                     if (arg_idx < arg_count) {
                         call_args[i] = try unboxValue(ParamType, args[arg_idx], vm);
