@@ -28,6 +28,7 @@ pub const ObjType = enum(u8) {
     instance,
     bound_method,
     range,
+    bbox,
     cross_section,
     geometry,
     workplane,
@@ -55,10 +56,25 @@ pub const ObjArray = struct {
     items: std.ArrayListUnmanaged(Value),
 };
 
+/// Defines the Hashing and Equality rules for O(1) Map lookups
+pub const ValueContext = struct {
+    pub fn hash(self: ValueContext, key: Value) u32 {
+        _ = self;
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(std.mem.asBytes(&key.val));
+        return @truncate(hasher.final());
+    }
+
+    pub fn eql(self: ValueContext, a: Value, b: Value, b_index: usize) bool {
+        _ = self;
+        _ = b_index;
+        return a.isEqual(b);
+    }
+};
+
 pub const ObjMap = struct {
     obj: Obj,
-    keys: std.ArrayListUnmanaged(Value),
-    values: std.ArrayListUnmanaged(Value),
+    map: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
 };
 
 pub const ObjFunction = struct {
@@ -192,6 +208,12 @@ pub const ObjBrep = struct {
     data: *topology.Brep, // Pointer to the pure Zig B-Rep data
 };
 
+pub const ObjBBox = struct {
+    obj: Obj,
+    min: [3]f64,
+    max: [3]f64,
+};
+
 // --- NaN Tagging Constants ---
 const QNAN: u64 = 0x7FFC000000000000;
 const SIGN_BIT: u64 = 0x8000000000000000;
@@ -305,6 +327,9 @@ pub const Value = packed struct {
     pub inline fn isSymbol(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .symbol;
     }
+    pub inline fn isBBox(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .bbox;
+    }
 
     // --- Data Extractors ---
 
@@ -380,6 +405,11 @@ pub const Value = packed struct {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
+    pub inline fn asBBox(self: Value) *ObjBBox {
+        std.debug.assert(self.isBBox());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
     // --- Operations & Equality ---
 
     pub inline fn isEqual(self: Value, other: Value) bool {
@@ -402,6 +432,7 @@ pub const Value = packed struct {
     pub inline fn isFalsey(self: Value) bool {
         return self.isNil() or (self.isBool() and !self.asBool());
     }
+
     /// Safely stringifies values recursively using the new Zig 0.16 Io.Writer interface.
     pub fn stringify(self: Value, is_inspect: bool, writer: *std.Io.Writer) !void {
         if (self.isNumber()) {
@@ -437,11 +468,13 @@ pub const Value = packed struct {
                 .map => {
                     const map = @as(*ObjMap, @alignCast(@fieldParentPtr("obj", obj)));
                     try writer.writeAll("{");
-                    for (map.keys.items, 0..) |key, i| {
+                    const keys = map.map.keys();
+                    const values = map.map.values();
+                    for (keys, 0..) |key, i| {
                         if (i > 0) try writer.writeAll(", ");
                         try key.stringify(true, writer);
                         try writer.writeAll(": ");
-                        try map.values.items[i].stringify(true, writer);
+                        try values[i].stringify(true, writer);
                     }
                     try writer.writeAll("}");
                 },
@@ -467,6 +500,10 @@ pub const Value = packed struct {
                     try writer.print("<CrossSection DAG:{d}>", .{cs.dag_idx});
                 },
                 .workplane => try writer.writeAll("<Workplane>"),
+                .bbox => {
+                    const bx = @as(*ObjBBox, @alignCast(@fieldParentPtr("obj", obj)));
+                    try writer.print("BoundingBox(min: [{d}, {d}, {d}], max: [{d}, {d}, {d}])", .{ bx.min[0], bx.min[1], bx.min[2], bx.max[0], bx.max[1], bx.max[2] });
+                },
                 else => try writer.writeAll("<Object>"),
             }
         }

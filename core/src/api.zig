@@ -115,8 +115,8 @@ pub fn buildModel(
             const sym_key = try vm.allocateSymbol(entry.key_ptr.*);
             vm.push(sym_key);
             defer _ = vm.pop();
-            try map_obj.keys.append(vm.allocator, sym_key);
-            try map_obj.values.append(vm.allocator, value.Value.initNumber(entry.value_ptr.*));
+            // O(1) Hash Map Insertion
+            try map_obj.map.put(vm.allocator, sym_key, value.Value.initNumber(entry.value_ptr.*));
         }
     }
 

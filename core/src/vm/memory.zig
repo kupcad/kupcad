@@ -26,6 +26,7 @@ pub const GC = struct {
     natives: std.ArrayListUnmanaged(*value.ObjNative) = .empty,
     ranges: std.ArrayListUnmanaged(*value.ObjRange) = .empty,
     breps: std.ArrayListUnmanaged(*value.ObjBrep) = .empty,
+    bboxes: std.ArrayListUnmanaged(*value.ObjBBox) = .empty,
 
     geometries: std.ArrayListUnmanaged(*value.ObjGeometry) = .empty,
     cross_sections: std.ArrayListUnmanaged(*value.ObjCrossSection) = .empty,
@@ -67,6 +68,7 @@ pub const GC = struct {
         self.natives.deinit(self.allocator);
         self.ranges.deinit(self.allocator);
         self.breps.deinit(self.allocator);
+        self.bboxes.deinit(self.allocator);
         self.geometries.deinit(self.allocator);
         self.cross_sections.deinit(self.allocator);
         self.workplanes.deinit(self.allocator);
@@ -112,6 +114,13 @@ pub const GC = struct {
 
     // --- Allocators ---
 
+    pub fn allocateBBox(self: *GC, vm: *VM, min_x: f64, min_y: f64, min_z: f64, max_x: f64, max_y: f64, max_z: f64) !*value.ObjBBox {
+        const ptr = try self.allocateObject(vm, value.ObjBBox, &self.bboxes, .bbox);
+        ptr.min = .{ min_x, min_y, min_z };
+        ptr.max = .{ max_x, max_y, max_z };
+        return ptr;
+    }
+
     pub fn allocateArray(self: *GC, vm: *VM) !*value.ObjArray {
         const ptr = try self.allocateObject(vm, value.ObjArray, &self.arrays, .array);
         ptr.items = .empty;
@@ -120,8 +129,7 @@ pub const GC = struct {
 
     pub fn allocateMap(self: *GC, vm: *VM) !*value.ObjMap {
         const ptr = try self.allocateObject(vm, value.ObjMap, &self.maps, .map);
-        ptr.keys = .empty;
-        ptr.values = .empty;
+        ptr.map = .empty;
         return ptr;
     }
 
@@ -334,6 +342,11 @@ pub const GC = struct {
             self.markValue(val);
         }
 
+        // --- Phase 1 Fix: Protect static interned strings! ---
+        if (vm.static_true) |s| self.markObject(&s.obj);
+        if (vm.static_false) |s| self.markObject(&s.obj);
+        if (vm.static_nil) |s| self.markObject(&s.obj);
+
         for (vm.frames.items) |frame| {
             self.markObject(&frame.closure.obj);
         }
@@ -391,8 +404,8 @@ pub const GC = struct {
             },
             .map => {
                 const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", obj)));
-                for (map.keys.items) |k| self.markValue(k);
-                for (map.values.items) |v| self.markValue(v);
+                for (map.map.keys()) |k| self.markValue(k);
+                for (map.map.values()) |v| self.markValue(v);
             },
             .closure => {
                 const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
@@ -496,6 +509,7 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjNative, &self.natives);
         self.sweepList(vm, value.ObjRange, &self.ranges);
         self.sweepList(vm, value.ObjBrep, &self.breps);
+        self.sweepList(vm, value.ObjBBox, &self.bboxes);
 
         self.sweepList(vm, value.ObjGeometry, &self.geometries);
         self.sweepList(vm, value.ObjCrossSection, &self.cross_sections);
@@ -547,8 +561,7 @@ pub const GC = struct {
             },
             .map => {
                 const map_obj: *value.ObjMap = @alignCast(@fieldParentPtr("obj", obj));
-                map_obj.keys.deinit(self.allocator);
-                map_obj.values.deinit(self.allocator);
+                map_obj.map.deinit(self.allocator);
                 self.destroyObject(value.ObjMap, map_obj);
             },
             .instance => {
@@ -591,6 +604,7 @@ pub const GC = struct {
             },
             .bound_method => self.destroyObject(value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj))),
             .range => self.destroyObject(value.ObjRange, @alignCast(@fieldParentPtr("obj", obj))),
+            .bbox => self.destroyObject(value.ObjBBox, @alignCast(@fieldParentPtr("obj", obj))),
             .brep => {
                 const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));
                 brep_obj.data.deinit();

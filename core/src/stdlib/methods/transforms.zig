@@ -58,7 +58,6 @@ pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 pub fn meshTransform(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (args.len < 1 or !args[0].isArray()) return error.RuntimeError;
     const arr = args[0].asArray().items.items;
-
     if (receiver.isGeometry()) {
         if (arr.len < 12) return error.RuntimeError;
         var mat: [12]f64 = undefined;
@@ -77,7 +76,6 @@ pub fn meshTransform(vm: *VM, receiver: value.Value, args: []const value.Value) 
 
 pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
-
     var target_x: f64 = 0.0;
     var target_y: f64 = 0.0;
     var target_z: f64 = 0.0;
@@ -96,14 +94,12 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     if (args.len > 1 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
         if (vm.findMapKeyByString(map, "auto")) |idx| {
-            if (map.values.items[idx].isBool()) auto = map.values.items[idx].asBool();
+            if (map.map.values()[idx].isBool()) auto = map.map.values()[idx].asBool();
         }
     }
 
-    // Force Manifold evaluation to get the exact Bounding Box
     const handle = try vm.ensureConcrete(receiver);
     const bbox = kernel.boundingBox(handle) orelse return error.RuntimeError;
-
     const cur_x = bbox.max[0] - bbox.min[0];
     const cur_y = bbox.max[1] - bbox.min[1];
     const cur_z = bbox.max[2] - bbox.min[2];
@@ -123,7 +119,6 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         } else if (target_z > 0.0) {
             auto_scale = sz;
         }
-
         if (target_x <= 0.0) sx = auto_scale;
         if (target_y <= 0.0) sy = auto_scale;
         if (target_z <= 0.0) sz = auto_scale;

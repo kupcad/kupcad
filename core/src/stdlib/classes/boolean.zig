@@ -4,8 +4,9 @@ const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 
 pub fn toS(vm: *VM, receiver: value.Value) !value.Value {
-    const str = if (receiver.asBool()) "true" else "false";
-    return try vm.allocateString(str);
+    // Return the VM's static interned strings to avoid O(N) heap allocations
+    const str_ptr = if (receiver.asBool()) vm.static_true.? else vm.static_false.?;
+    return value.Value.initObj(&str_ptr.obj);
 }
 
 pub fn toNum(vm: *VM, receiver: value.Value) !value.Value {

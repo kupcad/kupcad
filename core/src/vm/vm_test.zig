@@ -1073,7 +1073,7 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     // kwargs == {"x" => 100}
     const packed_kwargs = arr_obj.items.items[1];
     const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", packed_kwargs.asObj())));
-    try testing.expectEqual(@as(usize, 1), map_obj.keys.items.len);
+    try testing.expectEqual(@as(usize, 1), map_obj.map.count());
 }
 
 test "VM: Explicit block capturing (&block) and first-class invocation" {
@@ -1627,16 +1627,13 @@ test "VM: JIT materialization cascades through DAG and ARC safely cleans up" {
 
     // Execute the script
     const bbox_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    try testing.expect(bbox_val.isInstance());
-    const bbox_inst = bbox_val.asInstance();
 
-    // BoundingBox now has 16 dynamically assigned fields
-    try testing.expectEqual(@as(u32, 12), bbox_inst.class.instance_layout.count());
+    // Verify it is a Native BBox
+    try testing.expect(bbox_val.isBBox());
+    const bbox_inst = bbox_val.asBBox();
 
-    // When the test scope ends, `defer vm.deinit()` will clear the VM stack.
-    // This will drop the ARC ref_count of the `part` geometry to 0.
-    // The GC will immediately route the pointer to `host.mesh_destructor`, safely freeing the C++ Manifold memory.
-    // If ANY memory is leaked across the FFI boundary, Zig's testing allocator will fail the test right here!
+    // Verify it actually extracted volume correctly
+    try testing.expect(bbox_inst.max[0] > bbox_inst.min[0]);
 }
 
 test "VM: Primitives support flexible keyword arguments and shortcuts" {
@@ -1889,10 +1886,10 @@ test "VM: Minkowski sums and 2D Offsets evaluate correctly" {
     try testing.expect(arr_val.isArray());
     const arr_obj = arr_val.asArray();
 
-    // 1. Minkowski BBox map checks
-    const bbox_inst = arr_obj.items.items[0].asInstance();
-    try testing.expect(bbox_inst.class.instance_layout.contains("min_x"));
-    try testing.expect(bbox_inst.class.instance_layout.contains("max_y"));
+    // 1. Minkowski Native BBox check
+    const bbox_inst = arr_obj.items.items[0].asBBox();
+    try testing.expect(bbox_inst.min[0] < 0.0);
+    try testing.expect(bbox_inst.max[1] > 0.0);
 
     // 2. Offset volume check (~1925.6)
     const vol = arr_obj.items.items[1].asNumber();
@@ -1934,19 +1931,15 @@ test "VM: Affine transformations via multmatrix evaluate correctly" {
     try testing.expect(arr_val.isArray());
     const arr_obj = arr_val.asArray();
 
-    // Check 3D Transform
-    const c_bbox = arr_obj.items.items[0].asInstance();
-    const c_min_x_idx = c_bbox.class.instance_layout.get("min_x").?;
-    const c_min_y_idx = c_bbox.class.instance_layout.get("min_y").?;
-    try testing.expectEqual(@as(f64, 0.0), c_bbox.fields.items[c_min_x_idx].asNumber()); // -5 + 5
-    try testing.expectEqual(@as(f64, 5.0), c_bbox.fields.items[c_min_y_idx].asNumber()); // -5 + 10
+    // Check 3D Transform natively
+    const c_bbox = arr_obj.items.items[0].asBBox();
+    try testing.expectEqual(@as(f64, 0.0), c_bbox.min[0]); // -5 + 5
+    try testing.expectEqual(@as(f64, 5.0), c_bbox.min[1]); // -5 + 10
 
-    // Check 2D Transform
-    const sq_bbox = arr_obj.items.items[1].asInstance();
-    const sq_min_x_idx = sq_bbox.class.instance_layout.get("min_x").?;
-    const sq_min_y_idx = sq_bbox.class.instance_layout.get("min_y").?;
-    try testing.expectEqual(@as(f64, -3.0), sq_bbox.fields.items[sq_min_x_idx].asNumber()); // -5 + 2
-    try testing.expectEqual(@as(f64, -1.0), sq_bbox.fields.items[sq_min_y_idx].asNumber()); // -5 + 4
+    // Check 2D Transform natively
+    const sq_bbox = arr_obj.items.items[1].asBBox();
+    try testing.expectEqual(@as(f64, -3.0), sq_bbox.min[0]); // -5 + 2
+    try testing.expectEqual(@as(f64, -1.0), sq_bbox.min[1]); // -5 + 4
 }
 
 test "VM: Spatial Queries (min_gap, contains?, ray_cast) evaluate safely" {
@@ -3629,8 +3622,8 @@ test "VM: CLI parameter injection overrides default script parameter values" {
     vm.push(sym_key);
     defer _ = vm.pop();
 
-    try map_obj.keys.append(vm.allocator, sym_key);
-    try map_obj.values.append(vm.allocator, value.Value.initNumber(85.0));
+    // Replace map_obj.keys.append and map_obj.values.append with a single put!
+    try map_obj.map.put(vm.allocator, sym_key, value.Value.initNumber(85.0));
 
     // Script declares default: 50, but CLI injection should replace it with 85
     const source =
@@ -4837,11 +4830,14 @@ test "VM GC: CAD object allocations respect Sandbox memory limits" {
     defer vm.deinit();
     vm.mute_errors = true;
 
-    try testing.expectEqual(@as(usize, 0), vm.gc.bytes_allocated);
+    // Capture the static 84-byte initialization memory
+    const baseline_mem = vm.gc.bytes_allocated;
+
+    try testing.expectEqual(baseline_mem, vm.gc.bytes_allocated);
     const geom_val = try vm.allocateGeometry(.{ .symbolic = 1 });
     vm.push(geom_val);
 
-    try testing.expect(vm.gc.bytes_allocated > 0);
+    try testing.expect(vm.gc.bytes_allocated > baseline_mem);
     vm.gc.max_memory_limit = vm.gc.bytes_allocated;
 
     const result = vm.allocateGeometry(.{ .symbolic = 2 });
@@ -6035,7 +6031,9 @@ test "VM CAD: Workplane projection and extruded feature chaining via on_face" {
     try comp.compile(doc.tree.root);
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    try testing.expect(result.isInstance());
+
+    // Assert it returned a native BBox struct
+    try testing.expect(result.isBBox());
 }
 
 test "VM Syntax: break statement inside block unwinds iterator and yields value directly" {

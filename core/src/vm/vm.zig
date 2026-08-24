@@ -85,6 +85,12 @@ pub const VM = struct {
     geometry_class: ?*value.ObjClass = null,
     cross_section_class: ?*value.ObjClass = null,
 
+    // DOD Memory Fields
+    scratch_arena: std.heap.ArenaAllocator,
+    static_true: ?*value.ObjString = null,
+    static_false: ?*value.ObjString = null,
+    static_nil: ?*value.ObjString = null,
+
     // safety for infinite loops
     instruction_count: usize,
     instruction_limit: usize,
@@ -107,7 +113,7 @@ pub const VM = struct {
         var rescue_frames = std.ArrayListUnmanaged(RescueFrame).empty;
         try rescue_frames.ensureTotalCapacity(allocator, 256);
 
-        return .{
+        var vm = VM{
             .allocator = allocator,
             .io = io,
             .stack = initial_stack,
@@ -128,9 +134,20 @@ pub const VM = struct {
             .materials = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
             .mute_errors = false,
+            .scratch_arena = std.heap.ArenaAllocator.init(allocator),
+            .static_true = null,
+            .static_false = null,
+            .static_nil = null,
             .instruction_count = 0,
             .instruction_limit = limits.DEFAULT_INSTRUCTION_LIMIT,
         };
+
+        // preallocate true, false and nil strings
+        vm.static_true = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", (try vm.allocateString("true")).asObj())));
+        vm.static_false = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", (try vm.allocateString("false")).asObj())));
+        vm.static_nil = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", (try vm.allocateString("nil")).asObj())));
+
+        return vm;
     }
 
     pub fn deinit(self: *VM) void {
@@ -147,6 +164,7 @@ pub const VM = struct {
         self.rescue_frames.deinit(self.allocator);
         self.param_registry.deinit(self.allocator);
         self.materials.deinit(self.allocator);
+        self.scratch_arena.deinit();
         self.gc.deinit();
     }
 
@@ -179,12 +197,7 @@ pub const VM = struct {
     }
 
     pub fn mapSet(self: *VM, map: *value.ObjMap, key: value.Value, val: value.Value) !void {
-        if (self.findMapKey(map, key)) |idx| {
-            map.values.items[idx] = val;
-        } else {
-            try map.keys.append(self.allocator, key);
-            try map.values.append(self.allocator, val);
-        }
+        try map.map.put(self.allocator, key, val);
     }
 
     pub fn ensureStackCapacity(self: *VM, required_capacity: usize) !void {
@@ -410,8 +423,8 @@ pub const VM = struct {
                         }
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = target.asMap();
-                        if (self.findMapKey(map, index)) |i| {
-                            self.push(map.values.items[i]);
+                        if (map.map.get(index)) |val| {
+                            self.push(val);
                         } else {
                             self.push(value.Value.initNil());
                         }
@@ -498,8 +511,7 @@ pub const VM = struct {
                     const map_val = value.Value.initObj(&map_obj.obj);
 
                     // Pre-allocate for performance
-                    map_obj.keys.ensureTotalCapacity(self.allocator, pair_count) catch return .runtime_error;
-                    map_obj.values.ensureTotalCapacity(self.allocator, pair_count) catch return .runtime_error;
+                    map_obj.map.ensureTotalCapacity(self.allocator, pair_count) catch return .runtime_error;
 
                     const start_idx = self.stack_top - (pair_count * 2);
                     var i: usize = 0;
@@ -589,10 +601,10 @@ pub const VM = struct {
 
                     if (source_val.isObject() and source_val.asObj().obj_type == .map) {
                         const source_map = source_val.asMap();
-                        for (source_map.keys.items, 0..) |key, i| {
-                            const val = source_map.values.items[i];
-
-                            self.mapSet(target_map, key, val) catch return .runtime_error;
+                        const keys = source_map.map.keys();
+                        const values = source_map.map.values();
+                        for (keys, 0..) |key, i| {
+                            self.mapSet(target_map, key, values[i]) catch return .runtime_error;
                         }
                     } else {
                         if (self.throwDynamicError("Runtime Error: Can only spread maps into maps.\n", .{}) != .ok) return .runtime_error;
@@ -1139,9 +1151,9 @@ pub const VM = struct {
                             const name_val = exec_chunk.constants.items[name_idx];
                             const map = map_val.asMap();
 
-                            // Use findMapKey natively
-                            if (self.findMapKey(map, name_val)) |i| {
-                                extracted = map.values.items[i];
+                            // Native O(1) Hash Map extraction
+                            if (map.map.get(name_val)) |v| {
+                                extracted = v;
                             }
                         }
                     }
@@ -1154,6 +1166,9 @@ pub const VM = struct {
                 },
             }
         }
+
+        // Reset the scratch arena but keep the memory mapped to prevent OS thrashing
+        _ = self.scratch_arena.reset(.retain_capacity);
         return .ok;
     }
 
@@ -1494,8 +1509,23 @@ pub const VM = struct {
     }
 
     pub fn findMapKey(self: *VM, map: *value.ObjMap, key: value.Value) ?usize {
-        for (map.keys.items, 0..) |k, i| {
-            if (self.valuesEqual(k, key)) return i;
+        _ = self;
+        return map.map.getIndex(key);
+    }
+
+    pub fn findMapKeyByString(self: *VM, map: *value.ObjMap, search_str: []const u8) ?usize {
+        _ = self; // Included for future-proofing or if VM context is needed later
+        const keys = map.map.keys();
+        for (keys, 0..) |k, i| {
+            if (k.isObject()) {
+                if (k.asObj().obj_type == .string) {
+                    const str = k.asString();
+                    if (std.mem.eql(u8, str.chars, search_str)) return i;
+                } else if (k.asObj().obj_type == .symbol) {
+                    const sym = k.asSymbol();
+                    if (std.mem.eql(u8, sym.chars, search_str)) return i;
+                }
+            }
         }
         return null;
     }
@@ -1875,6 +1905,7 @@ pub const VM = struct {
                 .symbol => return self.symbol_class,
                 .array => return self.array_class,
                 .map => return self.map_class,
+                .bbox => return self.bbox_class,
                 else => return null,
             }
         } else if (receiver.isNumber()) {
@@ -2042,23 +2073,6 @@ pub const VM = struct {
         self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
 
         return .ok;
-    }
-
-    /// Zero-allocation lookup for String and Symbol map keys
-    pub fn findMapKeyByString(self: *VM, map: *value.ObjMap, search_str: []const u8) ?usize {
-        _ = self; // Included for future-proofing or if VM context is needed later
-        for (map.keys.items, 0..) |k, i| {
-            if (k.isObject()) {
-                if (k.asObj().obj_type == .string) {
-                    const str = k.asString();
-                    if (std.mem.eql(u8, str.chars, search_str)) return i;
-                } else if (k.asObj().obj_type == .symbol) {
-                    const sym = k.asSymbol();
-                    if (std.mem.eql(u8, sym.chars, search_str)) return i;
-                }
-            }
-        }
-        return null;
     }
 
     pub fn valuesCaseEqual(self: *VM, case_val: value.Value, test_val: value.Value) bool {

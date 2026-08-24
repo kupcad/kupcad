@@ -16,14 +16,16 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
     }
 
     const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
-    for (map.keys.items, 0..) |k, i| {
+    var it = map.map.iterator();
+    while (it.next()) |entry| {
+        const k = entry.key_ptr.*;
         if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
             const k_str = if (k.asObj().obj_type == .string)
                 @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
             else
                 @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
 
-            const v = map.values.items[i];
+            const v = entry.value_ptr.*;
             if (std.mem.eql(u8, k_str, "color") and v.isString()) mat_def.color_hex = v.asString().chars;
             if (std.mem.eql(u8, k_str, "color") and v.isSymbol()) mat_def.color_hex = v.asSymbol().chars;
             if (std.mem.eql(u8, k_str, "alpha") and v.isNumber()) mat_def.alpha = v.asNumber();

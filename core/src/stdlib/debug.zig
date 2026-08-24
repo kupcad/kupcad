@@ -6,7 +6,9 @@ const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const VM = @import("../vm/vm.zig").VM;
 
-// --- Data-Oriented History Buffer ---
+const MAX_HISTORY = 100;
+
+// DOD History Buffer
 const History = struct {
     chars: std.ArrayListUnmanaged(u8) = .empty,
     line_starts: std.ArrayListUnmanaged(usize) = .empty,
@@ -18,6 +20,19 @@ const History = struct {
             const last_start = self.line_starts.items[self.line_starts.items.len - 1];
             const last_line = self.chars.items[last_start..];
             if (std.mem.eql(u8, last_line, line)) return;
+        }
+
+        // Cap History Array to prevent Memory Leaks
+        if (self.line_starts.items.len >= MAX_HISTORY) {
+            const first_start = self.line_starts.items[0];
+            const second_start = self.line_starts.items[1];
+            const diff = second_start - first_start;
+
+            // Shift characters and remove oldest entry
+            self.chars.replaceRange(alloc, 0, diff, &[_]u8{}) catch {};
+            _ = self.line_starts.orderedRemove(0);
+
+            for (self.line_starts.items) |*s| s.* -= diff;
         }
 
         try self.line_starts.append(alloc, self.chars.items.len);

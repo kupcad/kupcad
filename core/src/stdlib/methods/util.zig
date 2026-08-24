@@ -20,14 +20,16 @@ pub fn parseVec3(args: []const value.Value, default_val: f64) !struct { f64, f64
     var z = if (pos_count > 2) args[2].asNumber() else default_val;
 
     if (kwargs) |map| {
-        for (map.keys.items, 0..) |k, i| {
+        var it = map.map.iterator();
+        while (it.next()) |entry| {
+            const k = entry.key_ptr.*;
             if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
                 const k_str = if (k.asObj().obj_type == .string)
                     @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
                 else
                     @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
 
-                const v = map.values.items[i];
+                const v = entry.value_ptr.*;
                 if (v.isNumber()) {
                     if (std.mem.eql(u8, k_str, "x")) x = v.asNumber();
                     if (std.mem.eql(u8, k_str, "y")) y = v.asNumber();

@@ -16,14 +16,16 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
         pos_count -= 1;
-        for (map.keys.items, 0..) |k, i| {
+        var it = map.map.iterator();
+        while (it.next()) |entry| {
+            const k = entry.key_ptr.*;
             if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
                 const k_str = if (k.asObj().obj_type == .string)
                     @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
                 else
                     @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
 
-                const v = map.values.items[i];
+                const v = entry.value_ptr.*;
                 if (std.mem.eql(u8, k_str, "h") and v.isNumber()) height = v.asNumber();
                 if (std.mem.eql(u8, k_str, "slices") and v.isNumber()) slices = @intFromFloat(v.asNumber());
                 if (std.mem.eql(u8, k_str, "twist") and v.isNumber()) twist = v.asNumber();
@@ -61,14 +63,16 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
         pos_count -= 1;
-        for (map.keys.items, 0..) |k, i| {
+        var it = map.map.iterator();
+        while (it.next()) |entry| {
+            const k = entry.key_ptr.*;
             if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
                 const k_str = if (k.asObj().obj_type == .string)
                     @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
                 else
                     @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
 
-                if (std.mem.eql(u8, k_str, "deg") and map.values.items[i].isNumber()) degrees = map.values.items[i].asNumber();
+                if (std.mem.eql(u8, k_str, "deg") and entry.value_ptr.*.isNumber()) degrees = entry.value_ptr.*.asNumber();
             }
         }
     }

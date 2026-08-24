@@ -23,27 +23,8 @@ pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
 
     const box = geom_obj.cached_bbox orelse return value.Value.initNil();
 
-    const bbox_inst = try vm.gc.allocateInstance(vm, vm.bbox_class.?);
-    vm.push(value.Value.initObj(&bbox_inst.obj));
-    defer _ = vm.pop();
-
-    const size_x = box.max_x - box.min_x;
-    const size_y = box.max_y - box.min_y;
-    const size_z = box.max_z - box.min_z;
-
-    try vm.setInstanceField(bbox_inst, "size_x", value.Value.initNumber(size_x), null);
-    try vm.setInstanceField(bbox_inst, "size_y", value.Value.initNumber(size_y), null);
-    try vm.setInstanceField(bbox_inst, "size_z", value.Value.initNumber(size_z), null);
-    try vm.setInstanceField(bbox_inst, "center_x", value.Value.initNumber(box.min_x + (size_x / 2.0)), null);
-    try vm.setInstanceField(bbox_inst, "center_y", value.Value.initNumber(box.min_y + (size_y / 2.0)), null);
-    try vm.setInstanceField(bbox_inst, "center_z", value.Value.initNumber(box.min_z + (size_z / 2.0)), null);
-    try vm.setInstanceField(bbox_inst, "min_x", value.Value.initNumber(box.min_x), null);
-    try vm.setInstanceField(bbox_inst, "min_y", value.Value.initNumber(box.min_y), null);
-    try vm.setInstanceField(bbox_inst, "min_z", value.Value.initNumber(box.min_z), null);
-    try vm.setInstanceField(bbox_inst, "max_x", value.Value.initNumber(box.max_x), null);
-    try vm.setInstanceField(bbox_inst, "max_y", value.Value.initNumber(box.max_y), null);
-    try vm.setInstanceField(bbox_inst, "max_z", value.Value.initNumber(box.max_z), null);
-
+    // Allocate native struct instead of heavy hash-map dictionary instance
+    const bbox_inst = try vm.gc.allocateBBox(vm, box.min_x, box.min_y, box.min_z, box.max_x, box.max_y, box.max_z);
     return value.Value.initObj(&bbox_inst.obj);
 }
 
@@ -63,18 +44,15 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 1 or !args[0].isGeometry()) return error.RuntimeError;
     if (args.len > 1 and !args[1].isNumber()) return error.RuntimeError;
-
     const search_length = if (args.len > 1) args[1].asNumber() else 100.0;
     const handle = try vm.ensureConcrete(receiver);
     const other_handle = try vm.ensureConcrete(args[0]);
-
     return value.Value.initNumber(kernel.minGap(handle, other_handle, search_length));
 }
 
 pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 1 or !args[0].isArray()) return error.RuntimeError;
-
     const pt_arr = args[0].asArray().items.items;
     if (pt_arr.len < 3) return error.RuntimeError;
     if (!pt_arr[0].isNumber() or !pt_arr[1].isNumber() or !pt_arr[2].isNumber()) return error.RuntimeError;
@@ -87,49 +65,42 @@ pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !
 pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 2 or !args[0].isArray() or !args[1].isArray()) return error.RuntimeError;
-
     const o_arr = args[0].asArray().items.items;
     const e_arr = args[1].asArray().items.items;
-
     if (o_arr.len < 3 or e_arr.len < 3) return error.RuntimeError;
     if (!o_arr[0].isNumber() or !o_arr[1].isNumber() or !o_arr[2].isNumber()) return error.RuntimeError;
     if (!e_arr[0].isNumber() or !e_arr[1].isNumber() or !e_arr[2].isNumber()) return error.RuntimeError;
 
     const handle = try vm.ensureConcrete(receiver);
-    const hits = kernel.rayCast(vm.allocator, handle, .{ o_arr[0].asNumber(), o_arr[1].asNumber(), o_arr[2].asNumber() }, .{ e_arr[0].asNumber(), e_arr[1].asNumber(), e_arr[2].asNumber() }) orelse return value.Value.initNil();
-    defer vm.allocator.free(hits);
+    const hits = kernel.rayCast(vm.scratch_arena.allocator(), handle, .{ o_arr[0].asNumber(), o_arr[1].asNumber(), o_arr[2].asNumber() }, .{ e_arr[0].asNumber(), e_arr[1].asNumber(), e_arr[2].asNumber() }) orelse return value.Value.initNil();
+    // No need to free `hits`, scratch arena cleans it up!
 
     const hit_arr_obj = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&hit_arr_obj.obj)); // Root hit array
+    vm.push(value.Value.initObj(&hit_arr_obj.obj));
     defer _ = vm.pop();
 
     for (hits) |hit| {
         const map_obj = try vm.gc.allocateMap(vm);
-        vm.push(value.Value.initObj(&map_obj.obj)); // Root map
+        vm.push(value.Value.initObj(&map_obj.obj));
         defer _ = vm.pop();
 
         const d_str = try vm.allocateString("distance");
         vm.push(d_str);
-        try map_obj.keys.append(vm.allocator, d_str);
-        try map_obj.values.append(vm.allocator, value.Value.initNumber(hit.distance));
+        try map_obj.map.put(vm.allocator, d_str, value.Value.initNumber(hit.distance));
         _ = vm.pop();
 
         const pos_str = try vm.allocateString("position");
         vm.push(pos_str);
-
         const pos_arr = try vm.gc.allocateArray(vm);
         vm.push(value.Value.initObj(&pos_arr.obj));
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[0]));
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[1]));
         try pos_arr.items.append(vm.allocator, value.Value.initNumber(hit.position[2]));
-
-        try map_obj.keys.append(vm.allocator, pos_str);
-        try map_obj.values.append(vm.allocator, value.Value.initObj(&pos_arr.obj));
+        try map_obj.map.put(vm.allocator, pos_str, value.Value.initObj(&pos_arr.obj));
         _ = vm.pop();
         _ = vm.pop();
 
         try hit_arr_obj.items.append(vm.allocator, value.Value.initObj(&map_obj.obj));
     }
-
     return value.Value.initObj(&hit_arr_obj.obj);
 }

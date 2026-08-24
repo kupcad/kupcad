@@ -108,7 +108,7 @@ pub fn nativeEmptyQ(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
             },
             .map => {
                 const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", obj)));
-                return value.Value.initBool(map.keys.items.len == 0);
+                return value.Value.initBool(map.map.count() == 0);
             },
             else => {},
         }

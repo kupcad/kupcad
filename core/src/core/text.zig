@@ -195,7 +195,7 @@ pub fn extractText(
         }
     }
 
-    // --- PHASE 1: Text Alignment Post-Shift ---
+    // --- Text Alignment Post-Shift ---
     if (halign != .left or valign != .baseline) {
         var min_x: f64 = std.math.inf(f64);
         var max_x: f64 = -std.math.inf(f64);

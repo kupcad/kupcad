@@ -53,7 +53,7 @@ test "GC: allocateRange correctly registers and sweeps" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    const count_before = countObjects(&vm.gc);
+    const count_before = countObjects(&vm.gc); // Should equal 3
 
     // Allocate a new range primitive
     const range = try vm.gc.allocateRange(&vm, 1.0, 10.0, 1.0, false);
@@ -80,13 +80,13 @@ test "GC: Basic sweep of unrooted objects" {
     _ = try vm.gc.allocateString(&vm, "unrooted1");
     _ = try vm.gc.allocateArray(&vm);
 
-    // We allocated 2 objects
-    try testing.expectEqual(@as(usize, 2), countObjects(&vm.gc));
+    // We allocated 5 objects
+    try testing.expectEqual(@as(usize, 5), countObjects(&vm.gc));
 
     vm.gc.collectGarbage(&vm, false);
 
     // Neither were pushed to the VM stack, so the sweep MUST destroy both
-    try testing.expectEqual(@as(usize, 0), countObjects(&vm.gc));
+    try testing.expectEqual(@as(usize, 3), countObjects(&vm.gc));
 }
 
 test "GC: Rooted objects survive the sweep" {
@@ -98,13 +98,13 @@ test "GC: Rooted objects survive the sweep" {
 
     _ = try vm.gc.allocateArray(&vm); // Leave unrooted
 
-    try testing.expectEqual(@as(usize, 2), countObjects(&vm.gc));
+    try testing.expectEqual(@as(usize, 5), countObjects(&vm.gc));
 
     vm.gc.collectGarbage(&vm, false);
 
     // The string was pushed to the stack, so it survives. The array dies.
-    try testing.expectEqual(@as(usize, 1), countObjects(&vm.gc));
-    try testing.expectEqual(@as(usize, 1), vm.gc.strings.items.len);
+    try testing.expectEqual(@as(usize, 4), countObjects(&vm.gc));
+    try testing.expectEqual(@as(usize, 4), vm.gc.strings.items.len);
     try testing.expectEqual(@as(usize, 0), vm.gc.arrays.items.len);
 }
 
@@ -136,11 +136,11 @@ test "GC Stress: High volume allocations and segmented sweeps" {
         }
     }
 
-    // Verify pre-GC counts. We should have exactly 20,000 objects in memory.
-    try testing.expectEqual(total_allocs * 2, countObjects(&vm.gc));
+    // Verify pre-GC counts. We should have exactly 20,000 + 3 objects in memory.
+    try testing.expectEqual((total_allocs * 2) + 3, countObjects(&vm.gc));
 
     // The specific DOD tracking arrays must match exactly
-    try testing.expectEqual(total_allocs, vm.gc.strings.items.len);
+    try testing.expectEqual(total_allocs + 3, vm.gc.strings.items.len);
     try testing.expectEqual(total_allocs, vm.gc.arrays.items.len);
 
     // Run the massive Sweep
@@ -148,9 +148,9 @@ test "GC Stress: High volume allocations and segmented sweeps" {
 
     // Verify post-GC counts precisely match the rooted amounts!
     // The GC should have deleted exactly 19,000 objects in a fraction of a millisecond.
-    try testing.expectEqual(rooted_amount * 2, countObjects(&vm.gc));
+    try testing.expectEqual((rooted_amount * 2) + 3, countObjects(&vm.gc));
 
     // The segregated arrays must have shrunk using `swapRemove` down to 500.
-    try testing.expectEqual(rooted_amount, vm.gc.strings.items.len);
+    try testing.expectEqual(rooted_amount + 3, vm.gc.strings.items.len);
     try testing.expectEqual(rooted_amount, vm.gc.arrays.items.len);
 }

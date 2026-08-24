@@ -81,7 +81,7 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
         const kwargs_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[arg_count - 1].asObj())));
 
         if (vm.findMapKeyByString(kwargs_map, "default")) |idx| {
-            default_val = kwargs_map.values.items[idx];
+            default_val = kwargs_map.map.values()[idx];
             if (default_val.isNumber()) p_type = .number;
             if (default_val.isString()) p_type = .string;
             if (default_val.isBool()) p_type = .boolean;
@@ -89,17 +89,17 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
         }
 
         if (vm.findMapKeyByString(kwargs_map, "validate")) |v_idx| {
-            const val_map_val = kwargs_map.values.items[v_idx];
+            const val_map_val = kwargs_map.map.values()[v_idx];
             if (val_map_val.isObject() and val_map_val.asObj().obj_type == .map) {
                 const val_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", val_map_val.asObj())));
                 if (vm.findMapKeyByString(val_map, "min")) |min_idx| {
-                    if (val_map.values.items[min_idx].isNumber()) min_val = val_map.values.items[min_idx].asNumber();
+                    if (val_map.map.values()[min_idx].isNumber()) min_val = val_map.map.values()[min_idx].asNumber();
                 }
                 if (vm.findMapKeyByString(val_map, "max")) |max_idx| {
-                    if (val_map.values.items[max_idx].isNumber()) max_val = val_map.values.items[max_idx].asNumber();
+                    if (val_map.map.values()[max_idx].isNumber()) max_val = val_map.map.values()[max_idx].asNumber();
                 }
                 if (vm.findMapKeyByString(val_map, "in")) |in_idx| {
-                    const in_val = val_map.values.items[in_idx];
+                    const in_val = val_map.map.values()[in_idx];
                     if (in_val.isObject() and in_val.asObj().obj_type == .array) {
                         choices_array = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", in_val.asObj())));
                     }
@@ -114,7 +114,7 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
         if (global_params.isObject() and global_params.asObj().obj_type == .map) {
             const p_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", global_params.asObj())));
             if (vm.findMapKey(p_map, sym_key)) |idx| {
-                injected_val = p_map.values.items[idx];
+                injected_val = p_map.map.values()[idx];
             }
         }
     }
@@ -169,7 +169,6 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
         vm.param_registry.items(.param_type)[idx] = p_type;
         vm.param_registry.items(.min_val)[idx] = min_val;
         vm.param_registry.items(.max_val)[idx] = max_val;
-
         vm.param_registry.items(.current_value)[idx] = injected_val;
     } else {
         try vm.param_registry.append(vm.allocator, .{

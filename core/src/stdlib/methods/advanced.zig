@@ -50,14 +50,16 @@ pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
         pos_count -= 1;
-        for (map.keys.items, 0..) |k, i| {
+        var it = map.map.iterator();
+        while (it.next()) |entry| {
+            const k = entry.key_ptr.*;
             if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
                 const k_str = if (k.asObj().obj_type == .string)
                     @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
                 else
                     @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
 
-                const v = map.values.items[i];
+                const v = entry.value_ptr.*;
                 if (std.mem.eql(u8, k_str, "delta") and v.isNumber()) delta = v.asNumber();
                 if (std.mem.eql(u8, k_str, "join") and v.isSymbol()) {
                     const sym = v.asSymbol().chars;
@@ -98,8 +100,10 @@ pub fn meshProject(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     // Parse `cut: true` from kwargs
     if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
         const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
-        if (vm.findMapKeyByString(map, "cut")) |idx| {
-            if (map.values.items[idx].isBool()) cut = map.values.items[idx].asBool();
+        if (map.map.get(try vm.allocateSymbol("cut"))) |val| {
+            if (val.isBool()) cut = val.asBool();
+        } else if (map.map.get(try vm.allocateString("cut"))) |val| {
+            if (val.isBool()) cut = val.asBool();
         }
     }
 
