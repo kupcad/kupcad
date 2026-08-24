@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
+const limits = @import("../vm/limits.zig");
 const chunk = @import("../vm/chunk.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
@@ -1055,4 +1056,30 @@ test "Compiler: Local variable names are exported to chunk metadata for REPL int
     try testing.expectEqualStrings("height", locals[2]); // Slot 2: Positional Param 2
     try testing.expectEqualStrings("<anonymous>", locals[3]); // Slot 3: Implicit Block `&b`
     try testing.expectEqualStrings("area", locals[4]); // Slot 4: Inner Local Variable
+}
+
+test "Compiler: AST depth breaker prevents stack overflow on recursive nodes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Build a ridiculously deep AST tree of unary NOTs: !!!!!...true
+    var current = try b.booleanNode(true, 0);
+    for (0..limits.MAX_AST_DEPTH + 1) |_| {
+        current = try b.unary(.not, current, 0);
+    }
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Use a dummy limits value just for this test file context
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // The compiler MUST reject this gracefully instead of segfaulting the OS
+    const result = comp.compile(current);
+    try testing.expectError(error.UnsupportedScope, result);
 }

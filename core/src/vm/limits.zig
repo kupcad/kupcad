@@ -8,6 +8,7 @@ pub const MAX_LOCALS: usize = std.math.maxInt(u16); // 65_535
 pub const MAX_UPVALUES: usize = std.math.maxInt(u8); // 255
 pub const MAX_ARGS: usize = std.math.maxInt(u8); // 255
 pub const MAX_HASH_ENTRIES: usize = MAX_CONSTANTS / 2; // 32_767
+pub const MAX_AST_DEPTH: usize = 1500;
 
 // Runtime Execution Limits
 pub const INITIAL_STACK_CAPACITY: usize = 1024;

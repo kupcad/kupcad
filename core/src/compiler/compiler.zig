@@ -122,6 +122,7 @@ pub const Compiler = struct {
     current_stack_depth: usize = 0,
     max_stack_depth: usize = 0,
     max_local_slot: usize = 0,
+    ast_depth: usize = 0, // Tracks absolute recursion depth
 
     seeded_locals: []const []const u8 = &.{},
     seeded_slot_offset: u16 = 0,
@@ -151,6 +152,7 @@ pub const Compiler = struct {
             .loops = .empty,
             .current_stack_depth = 0,
             .max_stack_depth = 0,
+            .ast_depth = 0,
             .current_source_offset = 0,
             .max_local_slot = 0,
         };
@@ -309,6 +311,14 @@ pub const Compiler = struct {
     fn compileNode(self: *Compiler, node_idx: ast.NodeIndex) CompileError!void {
         if (node_idx == .none) return;
 
+        // AST Depth Breaker
+        self.ast_depth += 1;
+        if (self.ast_depth > limits.MAX_AST_DEPTH) {
+            self.vm.reportError("CompileError: AST nesting too deep. Expression is too complex.\n", .{});
+            return error.UnsupportedScope;
+        }
+        defer self.ast_depth -= 1;
+
         // Track where we started
         const expected_entry_depth = self.current_stack_depth;
 
@@ -356,7 +366,7 @@ pub const Compiler = struct {
             .index_access => try self.compileIndexAccess(node),
             .index_assignment => try self.compileIndexAssignment(node),
             .unary_op => try self.compileUnaryOp(node),
-            .binary_op => try self.compileBinaryOp(node),
+            .binary_op => try self.compileBinaryOp(node_idx),
             .array_literal => try self.compileArrayLiteral(node),
             .hash_literal => try self.compileHashLiteral(node),
             .case_stmt => try self.compileCaseStmt(node, expected_entry_depth),
@@ -748,56 +758,82 @@ pub const Compiler = struct {
         }
     }
 
-    fn compileBinaryOp(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const bin_expr = self.tree.binaryExpr(node);
+    fn compileBinaryOp(self: *Compiler, start_node_idx: ast.NodeIndex) CompileError!void {
+        var ops = std.ArrayListUnmanaged(ast.BinaryOp).empty;
+        var rights = std.ArrayListUnmanaged(ast.NodeIndex).empty;
+        defer ops.deinit(self.allocator);
+        defer rights.deinit(self.allocator);
 
-        // Handle Short-Circuiting Logical Operators BEFORE compiling the right side!
-        if (bin_expr.op == .logical_and) {
-            try self.compileNode(bin_expr.left);
-            const end_jump = try self.emitJump(.op_jump_if_false);
-            try self.emitOp(.op_pop); // pop the true left value
-            try self.compileNode(bin_expr.right);
-            self.patchJump(end_jump);
-            return;
-        } else if (bin_expr.op == .logical_or) {
-            try self.compileNode(bin_expr.left);
-            const else_jump = try self.emitJump(.op_jump_if_false);
-            const end_jump = try self.emitJump(.op_jump); // If true, skip right side
-            self.patchJump(else_jump); // If false, land here
-            try self.emitOp(.op_pop); // pop the false left value
-            try self.compileNode(bin_expr.right);
-            self.patchJump(end_jump); // True branch lands here
-            return;
+        var curr_idx = start_node_idx;
+        var curr_node = self.tree.getNode(curr_idx).?;
+
+        // Drill down the left side, recording the right side and operators in an explicit DOD stack
+        while (curr_node.tag == .binary_op) {
+            const bin_expr = self.tree.binaryExpr(curr_node);
+
+            // Short-Circuiting operators require control-flow jumps, so we compile them recursively
+            if (bin_expr.op == .logical_and) {
+                try self.compileNode(bin_expr.left);
+                const end_jump = try self.emitJump(.op_jump_if_false);
+                try self.emitOp(.op_pop); // pop the true left value
+                try self.compileNode(bin_expr.right);
+                self.patchJump(end_jump);
+                break;
+            } else if (bin_expr.op == .logical_or) {
+                try self.compileNode(bin_expr.left);
+                const else_jump = try self.emitJump(.op_jump_if_false);
+                const end_jump = try self.emitJump(.op_jump); // If true, skip right side
+                self.patchJump(else_jump); // If false, land here
+                try self.emitOp(.op_pop); // pop the false left value
+                try self.compileNode(bin_expr.right);
+                self.patchJump(end_jump); // True branch lands here
+                break;
+            }
+
+            try ops.append(self.allocator, bin_expr.op);
+            try rights.append(self.allocator, bin_expr.right);
+
+            curr_idx = bin_expr.left;
+            if (curr_idx == .none) break;
+            curr_node = self.tree.getNode(curr_idx).?;
         }
 
-        // Standard Binary Operators
-        try self.compileNode(bin_expr.left);
-        try self.compileNode(bin_expr.right);
+        // Compile the bottom-most left node natively (unless short-circuited)
+        if (curr_node.tag != .binary_op or (self.tree.binaryExpr(curr_node).op != .logical_and and self.tree.binaryExpr(curr_node).op != .logical_or)) {
+            try self.compileNode(curr_idx);
+        }
 
-        switch (bin_expr.op) {
-            .add => try self.emitOp(.op_add),
-            .subtract => try self.emitOp(.op_subtract),
-            .multiply => try self.emitOp(.op_multiply),
-            .divide => try self.emitOp(.op_divide),
-            .modulo => try self.emitOp(.op_modulo),
-            .exponent => try self.emitOp(.op_exponent),
-            .equal => try self.emitOp(.op_equal),
-            .not_equal => {
-                try self.emitOp(.op_equal);
-                try self.emitOp(.op_not);
-            },
-            .less => try self.emitOp(.op_less),
-            .greater => try self.emitOp(.op_greater),
-            .less_equal => {
-                try self.emitOp(.op_greater);
-                try self.emitOp(.op_not);
-            },
-            .greater_equal => {
-                try self.emitOp(.op_less);
-                try self.emitOp(.op_not);
-            },
-            .bitwise_and => try self.emitOp(.op_bitwise_and),
-            else => return error.UnknownNode,
+        // Unwind the explicit stack, compiling the right nodes and emitting operators bottom-up
+        var i: usize = rights.items.len;
+        while (i > 0) {
+            i -= 1;
+            try self.compileNode(rights.items[i]);
+
+            switch (ops.items[i]) {
+                .add => try self.emitOp(.op_add),
+                .subtract => try self.emitOp(.op_subtract),
+                .multiply => try self.emitOp(.op_multiply),
+                .divide => try self.emitOp(.op_divide),
+                .modulo => try self.emitOp(.op_modulo),
+                .exponent => try self.emitOp(.op_exponent),
+                .equal => try self.emitOp(.op_equal),
+                .not_equal => {
+                    try self.emitOp(.op_equal);
+                    try self.emitOp(.op_not);
+                },
+                .less => try self.emitOp(.op_less),
+                .greater => try self.emitOp(.op_greater),
+                .less_equal => {
+                    try self.emitOp(.op_greater);
+                    try self.emitOp(.op_not);
+                },
+                .greater_equal => {
+                    try self.emitOp(.op_less);
+                    try self.emitOp(.op_not);
+                },
+                .bitwise_and => try self.emitOp(.op_bitwise_and),
+                else => return error.UnknownNode,
+            }
         }
     }
 
