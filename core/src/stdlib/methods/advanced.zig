@@ -145,7 +145,12 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
 
     const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
 
-    const faces = kernel.queryFaces(vm.scratch_arena.allocator(), handle, direction, active_config.tolerance) orelse {
+    const tolerance = switch (handle.engine) {
+        .manifold => active_config.manifold.tolerance,
+        .brep_native => active_config.brep.tolerance,
+    };
+
+    const faces = kernel.queryFaces(vm.scratch_arena.allocator(), handle, direction, tolerance) orelse {
         vm.reportError("RuntimeError: Could not find a coplanar face matching the requested direction.\n", .{});
         return error.RuntimeError;
     };

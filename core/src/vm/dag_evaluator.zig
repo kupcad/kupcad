@@ -38,7 +38,9 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
                 .intersection_op => .intersection_op,
                 else => unreachable,
             };
-            return kernel.boolean(left_handle, right_handle, op) orelse return error.RuntimeError;
+
+            const result = kernel.boolean(left_handle, right_handle, op) orelse return error.RuntimeError;
+            return maybeSimplify(vm, result);
         },
         .translate => {
             const p = vm.dag_builder.getTranslatePayload(node);
@@ -68,13 +70,15 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
         .hull => {
             const p = vm.dag_builder.getHullPayload(node);
             const target_handle = try evaluateDAG(vm, p.target);
-            return kernel.hull(target_handle) orelse return error.RuntimeError;
+            const result = kernel.hull(target_handle) orelse return error.RuntimeError;
+            return maybeSimplify(vm, result);
         },
         .minkowski => {
             const p = vm.dag_builder.getBinaryPayload(node);
             const left_handle = try evaluateDAG(vm, p.left);
             const right_handle = try evaluateDAG(vm, p.right);
-            return kernel.minkowski(left_handle, right_handle) orelse return error.RuntimeError;
+            const result = kernel.minkowski(left_handle, right_handle) orelse return error.RuntimeError;
+            return maybeSimplify(vm, result);
         },
         .extrude => {
             const p = vm.dag_builder.getExtrudePayload(node);
@@ -190,4 +194,14 @@ pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geo
             return error.RuntimeError;
         },
     }
+}
+
+inline fn maybeSimplify(vm: *VM, handle: geom.GeometryHandle) geom.GeometryHandle {
+    const config = vm.config_stack.items[vm.config_stack.items.len - 1];
+
+    if (handle.engine == .manifold and config.manifold.simplify_coplanar) {
+        return kernel.simplify(handle, config.manifold.tolerance);
+    }
+
+    return handle;
 }

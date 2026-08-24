@@ -201,6 +201,11 @@ fn polygonImpl(allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHa
     _ = pts;
     return null;
 }
+fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
+    _ = tolerance;
+    std.debug.assert(a.engine == .brep_native);
+    return a; // Pass through unchanged
+}
 
 fn destructImpl(handle: geom.GeometryHandle) void {
     _ = handle;
@@ -252,6 +257,7 @@ pub const driver = kernel.GeometryKernel{
     .minGapFn = minGapImpl,
     .rayCastFn = rayCastImpl,
     .polygonFn = polygonImpl,
+    .simplifyFn = simplifyImpl,
 
     .destructFn = destructImpl,
     .destructCrossSectionFn = destructCrossSectionImpl,

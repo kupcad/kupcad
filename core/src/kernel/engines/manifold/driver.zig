@@ -2,6 +2,7 @@ const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
 const manifold = @import("../../../bindings/manifold/manifold.zig");
+const ManifoldConfig = @import("../../../core/engine_config.zig").ManifoldConfig;
 
 pub fn vecDot(a: [3]f64, b: [3]f64) f64 {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -43,6 +44,18 @@ fn materialPropFunc(new_prop: [*]f64, pos: manifold.ManifoldVec3, old_prop: [*]c
     _ = old_prop;
     const mat_id: u32 = @intCast(@intFromPtr(ctx));
     new_prop[0] = @floatFromInt(mat_id);
+}
+
+pub fn applySimplification(handle: geom.GeometryHandle, config: ManifoldConfig) ?geom.GeometryHandle {
+    if (!config.simplify_coplanar or @intFromPtr(handle.ptr) == 0) return handle;
+
+    const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
+    const simplified_ptr = manifold.simplify(obj, config.manifold.tolerance) orelse return handle;
+
+    return geom.GeometryHandle{
+        .engine = .manifold,
+        .ptr = @ptrCast(simplified_ptr),
+    };
 }
 
 // --- Primitives Generation ---
@@ -193,6 +206,13 @@ fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandl
     std.debug.assert(a.engine == .manifold);
     if (@intFromPtr(a.ptr) == 0) return null;
     const ptr = manifold.transform(@ptrCast(@alignCast(a.ptr)), mat[0], mat[1], mat[2], mat[3], mat[4], mat[5], mat[6], mat[7], mat[8], mat[9], mat[10], mat[11]) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold);
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const ptr = manifold.simplify(@ptrCast(@alignCast(a.ptr)), tolerance) orelse return a;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -494,6 +514,7 @@ pub const driver = kernel.GeometryKernel{
     .minGapFn = minGapImpl,
     .rayCastFn = rayCastImpl,
     .polygonFn = polygonImpl,
+    .simplifyFn = simplifyImpl,
     .setMaterialFn = setMaterialImpl,
     .destructFn = destructImpl,
     .destructCrossSectionFn = destructCrossSectionImpl,

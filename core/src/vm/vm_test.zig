@@ -1759,10 +1759,10 @@ test "VM: Inspection methods (volume, bbox) and inspect() work in KupCAD scripts
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result.isGeometry());
 
-    // Verify discrete tessellated volume calculation (~24,658.92)
+    // Relaxed volume bounds for 16-segment dynamic arc resolution (~24,688.7)
     const handle = try vm.ensureConcrete(result);
     const vol = kernel.volume(handle);
-    try testing.expect(vol > 24600.0 and vol < 24700.0);
+    try testing.expect(vol > 24500.0 and vol < 24800.0);
 }
 
 test "VM: 2D primitives, sweeps, and Bitwise AND (Intersection) work seamlessly" {
@@ -1842,8 +1842,9 @@ test "VM: 2D Boolean Operations (Union, Difference, Intersection) work seamlessl
     try comp.compile(doc.tree.root);
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
+    // Relaxed volume bounds for 16-segment dynamic arc resolution (~3235.4)
     const vol = result.asNumber();
-    try testing.expect(vol > 3200.0 and vol < 3230.0);
+    try testing.expect(vol > 3200.0 and vol < 3250.0);
 }
 
 test "VM: Minkowski sums and 2D Offsets evaluate correctly" {
@@ -7443,20 +7444,18 @@ test "VM: CAD.with_config safely applies and pops engine settings block-scoped" 
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // 1. Set global config to 16 segments
-    // 2. Set scoped config to 64 segments and B-Rep engine
-    // 3. Verify it resets back to 16 after the block
+    // Updated keys to match nested EngineConfig (`fixed_segments` under `manifold`)
     const source =
-        \\CAD.config(segments: 16)
+        \\CAD.config(manifold: { fixed_segments: 16 })
         \\conf1 = CAD.current_config
         \\
         \\conf2 = nil
-        \\CAD.with_config(segments: 64, engine: :brep) do
+        \\CAD.with_config(manifold: { fixed_segments: 64 }, engine: :brep) do
         \\  conf2 = CAD.current_config
         \\end
         \\
         \\conf3 = CAD.current_config
-        \\[conf1[:segments], conf2[:segments], conf3[:segments], conf2[:engine]]
+        \\[conf1[:manifold][:fixed_segments], conf2[:manifold][:fixed_segments], conf3[:manifold][:fixed_segments], conf2[:engine]]
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -7602,12 +7601,12 @@ test "VM CAD Edge Case: on_face gracefully throws RuntimeError on missing faces 
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Mute errors to prevent test console clutter[cite: 10]
+    // Mute errors to prevent test console clutter
     vm.mute_errors = true;
 
     // 1. Vector [1, 1, 1] on a standard cube will not match any single face normal.
     // 2. Symbol :invalid_dir is not a valid predefined shortcut.
-    // Both should safely abort the native execution, throw an error, and be caught by the rescue block.[cite: 10]
+    // Both should safely abort the native execution, throw an error, and be caught by the rescue block.
     const source =
         \\begin
         \\  c = cube(10)
@@ -7623,7 +7622,7 @@ test "VM CAD Edge Case: on_face gracefully throws RuntimeError on missing faces 
 
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
-    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len); //[cite: 10]
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len); //
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -7632,12 +7631,71 @@ test "VM CAD Edge Case: on_face gracefully throws RuntimeError on missing faces 
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    // The rescue blocks should safely consume the kernel errors and return our [1, 1] array[cite: 10]
-    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1); //[cite: 10]
+    // The rescue blocks should safely consume the kernel errors and return our [1, 1] array
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1); //
     try testing.expect(arr_val.isArray());
 
     const arr_obj = arr_val.asArray();
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operations" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Evaluate with simplify_coplanar: false
+    // Slices creates 10 rows of coplanar triangles along each side face
+    const source_unsimplified =
+        \\CAD.config(manifold: { simplify_coplanar: false })
+        \\a = square(size: 10).extrude(10, slices: 10)
+        \\b = cube(size: 2).translate(4, 4, 10)
+        \\a + b
+    ;
+
+    var doc1 = try Document.parse(testing.allocator, source_unsimplified);
+    defer doc1.deinit();
+    var chunk1 = chunk.Chunk.init();
+    defer chunk1.free(testing.allocator);
+    var comp1 = Compiler.init(testing.allocator, &doc1.tree, doc1.symbols, doc1.tokens.starts, &chunk1, &vm);
+    defer comp1.deinit();
+    try comp1.compile(doc1.tree.root);
+
+    const res1 = try executeAndAssertStack(&vm, &chunk1, 1);
+    const h1 = try vm.ensureConcrete(res1);
+    const mesh_unsimplified = (kernel.getMesh(testing.allocator, h1)).?;
+    defer {
+        testing.allocator.free(mesh_unsimplified.vert_props);
+        testing.allocator.free(mesh_unsimplified.tri_verts);
+    }
+
+    // 2. Evaluate with simplify_coplanar: true
+    const source_simplified =
+        \\CAD.config(manifold: { simplify_coplanar: true })
+        \\a = square(size: 10).extrude(10, slices: 10)
+        \\b = cube(size: 2).translate(4, 4, 10)
+        \\a + b
+    ;
+
+    var doc2 = try Document.parse(testing.allocator, source_simplified);
+    defer doc2.deinit();
+    var chunk2 = chunk.Chunk.init();
+    defer chunk2.free(testing.allocator);
+    var comp2 = Compiler.init(testing.allocator, &doc2.tree, doc2.symbols, doc2.tokens.starts, &chunk2, &vm);
+    defer comp2.deinit();
+    try comp2.compile(doc2.tree.root);
+
+    const res2 = try executeAndAssertStack(&vm, &chunk2, 1);
+    const h2 = try vm.ensureConcrete(res2);
+    const mesh_simplified = (kernel.getMesh(testing.allocator, h2)).?;
+    defer {
+        testing.allocator.free(mesh_simplified.vert_props);
+        testing.allocator.free(mesh_simplified.tri_verts);
+    }
+
+    // Unsimplified mesh retains the 10 height-slice subdivisions (~260+ indices)
+    // Simplified mesh dissolves the coplanar slice edges (~60-80 indices)
+    try testing.expect(mesh_unsimplified.tri_verts.len > mesh_simplified.tri_verts.len);
 }

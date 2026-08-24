@@ -33,7 +33,7 @@ fn parseArgs(args: []const value.Value) ArgParseCtx {
     return .{ .pos_count = arg_count, .kwargs = null };
 }
 
-fn extractGeomOptions(vm: *VM, parsed: ArgParseCtx) GeomOptions {
+fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
     var opts = GeomOptions{};
 
     if (parsed.kwargs) |kw| {
@@ -59,13 +59,6 @@ fn extractGeomOptions(vm: *VM, parsed: ArgParseCtx) GeomOptions {
             }
         }
     }
-
-    // Inherit VM Config Defaults
-    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-    if (opts.segments == 0 and active_config.segments > 0) {
-        opts.segments = active_config.segments;
-    }
-
     return opts;
 }
 
@@ -106,10 +99,13 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
     const cx = if (center) 0.0 else hw;
     const cy = if (center) 0.0 else hh;
 
+    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
+
     if (round_r) |r| {
         const safe_r = @min(r, @min(hw, hh));
         // Calculate segments per 90-degree arc (minimum 4, or inherited from user's global segments)
-        const arc_segs = if (segs > 0) @max(4, @as(usize, @intCast(segs)) / 4) else 8;
+        const total_segs: i32 = if (segs > 0) segs else @intCast(active_config.manifold.getSegments(safe_r));
+        const arc_segs = @max(1, @as(usize, @intCast(total_segs)) / 4);
         // Build corners Counter-Clockwise
         try pushArc(alloc, &pts, cx + hw - safe_r, cy - hh + safe_r, safe_r, -std.math.pi / 2.0, 0.0, arc_segs); // Bottom-Right
         try pushArc(alloc, &pts, cx + hw - safe_r, cy + hh - safe_r, safe_r, 0.0, std.math.pi / 2.0, arc_segs); // Top-Right
@@ -135,7 +131,7 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
 // --- Methods ---
 pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(vm, parsed);
+    var opts = extractGeomOptions(parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) {
         opts.x = args[0].asNumber();
         opts.y = opts.x;
@@ -157,7 +153,7 @@ pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(vm, parsed);
+    var opts = extractGeomOptions(parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) {
         opts.x = args[0].asNumber();
         opts.y = opts.x;
@@ -190,7 +186,7 @@ pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(vm, parsed);
+    var opts = extractGeomOptions(parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
     if (parsed.pos_count > 1 and args[1].isNumber()) opts.h = args[1].asNumber();
     if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
@@ -201,6 +197,12 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     try requirePositive(vm, r1, "radius 1");
     try requirePositive(vm, r2, "radius 2");
     try requirePositive(vm, opts.h, "height");
+
+    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
+
+    if (opts.segments == 0) {
+        opts.segments = @intCast(active_config.manifold.getSegments(@max(r1, r2)));
+    }
 
     var dag_idx: u32 = 0;
     if (opts.round_r != null or opts.chamfer != null) {
@@ -216,9 +218,11 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
         try pts.append(alloc, .{ 0.0, y_min });
 
         if (opts.round_r) |rr| {
-            const arc_segs = if (opts.segments > 0) @max(4, @as(usize, @intCast(opts.segments)) / 4) else 8;
             const safe_r1 = @min(rr, @min(r1, opts.h / 2.0));
             const safe_r2 = @min(rr, @min(r2, opts.h / 2.0));
+
+            const corner_segs: i32 = @intCast(active_config.manifold.getSegments(@max(safe_r1, safe_r2)));
+            const arc_segs = @max(1, @as(usize, @intCast(corner_segs)) / 4);
             // Bottom Right Corner (sweep from -90 deg to 0)
             try pushArc(alloc, &pts, r1 - safe_r1, y_min + safe_r1, safe_r1, -std.math.pi / 2.0, 0.0, arc_segs);
             // Top Right Corner (sweep from 0 to 90 deg)
@@ -247,7 +251,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(vm, parsed);
+    var opts = extractGeomOptions(parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
     try requirePositive(vm, opts.r, "radius");
     const dag_idx = try vm.dag_builder.addSphere(opts.r);
@@ -256,9 +260,16 @@ pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(vm, parsed);
+    var opts = extractGeomOptions(parsed);
+
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
     try requirePositive(vm, opts.r, "radius");
+
+    if (opts.segments == 0) {
+        const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
+        opts.segments = @intCast(active_config.manifold.getSegments(opts.r));
+    }
+
     try requireNonNegative(vm, @as(f64, @floatFromInt(opts.segments)), "segments");
     const dag_idx = try vm.dag_builder.addCircle(opts.r, opts.segments);
     return try vm.allocateCrossSection(dag_idx);

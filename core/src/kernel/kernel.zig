@@ -132,6 +132,13 @@ pub inline fn destructCrossSection(handle: geom.CrossSectionHandle) void {
     dispatch("destructCrossSectionFn", handle, .{});
 }
 
+pub inline fn simplify(handle: geom.GeometryHandle, tolerance: f64) geom.GeometryHandle {
+    switch (handle.engine) {
+        .manifold => return manifold_driver.simplifyFn(handle, tolerance) orelse handle,
+        .brep_native => return brep_driver.simplifyFn(handle, tolerance) orelse handle,
+    }
+}
+
 pub inline fn queryFaces(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
     switch (handle.engine) {
         .manifold => return manifold_driver.queryFacesFn(allocator, handle, direction, tolerance),
@@ -189,6 +196,7 @@ pub const GeometryKernel = struct {
     containsPointFn: *const fn (a: geom.GeometryHandle, pt: [3]f64) bool,
     minGapFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, search_length: f64) f64,
     rayCastFn: *const fn (allocator: std.mem.Allocator, a: geom.GeometryHandle, origin: [3]f64, end: [3]f64) ?[]geom.RayHit,
+    simplifyFn: *const fn (a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle,
     destructFn: *const fn (handle: geom.GeometryHandle) void,
     destructCrossSectionFn: *const fn (handle: geom.CrossSectionHandle) void,
 };
