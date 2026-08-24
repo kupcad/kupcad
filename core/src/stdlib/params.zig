@@ -43,11 +43,8 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
 
     // --- GETTER MODE ---
     if (arg_count == 1) {
-        const names = vm.param_registry.items(.name);
-        for (names, 0..) |n, i| {
-            if (vm.valuesEqual(n, sym_key)) {
-                return vm.param_registry.items(.current_value)[i];
-            }
+        if (vm.param_lookup.get(sym_key)) |idx| {
+            return vm.param_registry.items(.current_value)[idx];
         }
         vm.reportError("Runtime Error: Parameter ':{s}' used before definition.\n", .{sym_chars});
         return error.RuntimeError;
@@ -156,21 +153,13 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     }
 
     // --- DOD REGISTRY UPSERT ---
-    var existing_idx: ?usize = null;
-    const names = vm.param_registry.items(.name);
-    for (names, 0..) |n, i| {
-        if (vm.valuesEqual(n, sym_key)) {
-            existing_idx = i;
-            break;
-        }
-    }
-
-    if (existing_idx) |idx| {
+    if (vm.param_lookup.get(sym_key)) |idx| {
         vm.param_registry.items(.param_type)[idx] = p_type;
         vm.param_registry.items(.min_val)[idx] = min_val;
         vm.param_registry.items(.max_val)[idx] = max_val;
         vm.param_registry.items(.current_value)[idx] = injected_val;
     } else {
+        const new_idx = vm.param_registry.items(.name).len;
         try vm.param_registry.append(vm.allocator, .{
             .name = sym_key,
             .param_type = p_type,
@@ -179,6 +168,8 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
             .max_val = max_val,
             .choices = null, // Extractor schema handles serialization; runtime just needs validation block
         });
+        // Cache the index for O(1) reads
+        try vm.param_lookup.put(vm.allocator, sym_key, new_idx);
     }
 
     return injected_val;

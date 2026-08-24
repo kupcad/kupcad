@@ -65,6 +65,7 @@ pub const VM = struct {
     open_upvalues: ?*value.ObjUpvalue = null,
     rescue_frames: std.ArrayListUnmanaged(RescueFrame) = .empty,
     param_registry: parameters.ParamList = .{},
+    param_lookup: std.AutoHashMapUnmanaged(value.Value, usize) = .empty,
 
     materials: std.ArrayListUnmanaged(MaterialDef) = .empty,
 
@@ -130,6 +131,7 @@ pub const VM = struct {
             .step_mode = false,
             .rescue_frames = rescue_frames,
             .param_registry = .{},
+            .param_lookup = .empty,
             .host = .{},
             .materials = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
@@ -163,6 +165,7 @@ pub const VM = struct {
         self.frames.deinit(self.allocator);
         self.rescue_frames.deinit(self.allocator);
         self.param_registry.deinit(self.allocator);
+        self.param_lookup.deinit(self.allocator);
         self.materials.deinit(self.allocator);
         self.scratch_arena.deinit();
         self.gc.deinit();
@@ -839,62 +842,141 @@ pub const VM = struct {
                     self.globals.put(self.allocator, name_str, val) catch return .runtime_error;
                 },
                 .op_get_property, .op_get_property_wide => {
-                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_get_property_wide);
+                    const is_wide = op == .op_get_property_wide;
+                    const name_idx = self.readOperand(exec_chunk, frame, is_wide);
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const prop_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
+
                     const ic = self.readInlineCache(exec_chunk, frame);
+
                     const receiver = self.stack[self.stack_top - 1];
 
                     if (receiver.isInstance()) {
-                        self.stack_top -= 1; // Pop receiver
-                        if (self.getPropertyCached(receiver.asInstance(), name_str, ic)) |val| {
-                            self.push(val);
-                        } else {
-                            // Phase 4A FIX: Missing properties on instances evaluate to nil
-                            self.push(value.Value.initNil());
-                        }
-                    } else if (receiver.isModule()) {
-                        self.stack_top -= 1; // Pop receiver
-                        const mod = receiver.asModule();
-                        if (mod.methods.get(name_str)) |val| {
-                            self.push(val);
-                        } else {
-                            if (self.throwDynamicError("Runtime Error: Undefined module member '{s}'.", .{name_str}) != .ok) return .runtime_error;
-                            continue;
-                        }
-                    } else if (receiver.isClass()) {
-                        self.stack_top -= 1; // Pop receiver
-                        const cls = receiver.asClass();
+                        const instance = receiver.asInstance();
 
-                        // Check class_fields first to prioritize stored values over accessor methods
-                        if (cls.class_fields.get(name_str)) |val| {
-                            self.push(val);
-                        } else if (self.findClassMethod(cls, name_str)) |val| {
-                            self.push(val);
-                        } else {
-                            if (self.throwDynamicError("Runtime Error: Undefined class member '{s}'.", .{name_str}) != .ok) return .runtime_error;
+                        // FAST PATH: O(1) Array Offset Read
+                        if (ic.class == instance.class) {
+                            if (ic.offset < instance.fields.items.len) {
+                                self.stack[self.stack_top - 1] = instance.fields.items[ic.offset];
+                            } else {
+                                self.stack[self.stack_top - 1] = value.Value.initNil();
+                            }
                             continue;
                         }
-                    } else {
-                        if (self.throwDynamicError("Runtime Error: Only instances, modules, and classes have properties.\n", .{}) != .ok) return .runtime_error;
+
+                        // SLOW PATH: Dictionary Lookup
+                        if (instance.class.instance_layout.get(prop_name.chars)) |slot_idx| {
+                            ic.class = instance.class;
+                            ic.offset = @intCast(slot_idx);
+
+                            if (slot_idx < instance.fields.items.len) {
+                                self.stack[self.stack_top - 1] = instance.fields.items[slot_idx];
+                            } else {
+                                self.stack[self.stack_top - 1] = value.Value.initNil();
+                            }
+                            continue;
+                        }
+
+                        // Fallback: Check if it's a method
+                        if (self.findMethodWithPrivacy(instance.class, prop_name.chars, null).method) |method_val| {
+                            self.stack[self.stack_top - 1] = method_val;
+                            continue;
+                        }
+
+                        // Gracefully return nil for uninitialized variables instead of crashing
+                        self.stack[self.stack_top - 1] = value.Value.initNil();
+                        continue;
+                    } else if (receiver.isModule()) {
+                        const mod = receiver.asModule();
+                        if (mod.methods.get(prop_name.chars)) |val| {
+                            self.stack[self.stack_top - 1] = val;
+                            continue;
+                        }
+                        if (self.throwDynamicError("Runtime Error: Undefined module member '{s}'.\n", .{prop_name.chars}) != .ok) return .runtime_error;
+                        continue;
+                    } else if (receiver.isClass()) {
+                        const cls = receiver.asClass();
+                        if (cls.class_fields.get(prop_name.chars)) |val| {
+                            self.stack[self.stack_top - 1] = val;
+                            continue;
+                        }
+                        if (self.throwDynamicError("Runtime Error: Undefined class member '{s}'.\n", .{prop_name.chars}) != .ok) return .runtime_error;
+                        continue;
+                    } else if (self.getClass(receiver)) |class| {
+                        // Fallback for native types (Primitives, Arrays, Maps) calling methods
+                        if (self.findMethodWithPrivacy(class, prop_name.chars, null).method) |method_val| {
+                            self.stack[self.stack_top - 1] = method_val;
+                            continue;
+                        }
+                        if (self.throwDynamicError("Runtime Error: Method '{s}' not found on receiver.\n", .{prop_name.chars}) != .ok) return .runtime_error;
                         continue;
                     }
+
+                    if (self.throwDynamicError("Runtime Error: Only instances have properties.\n", .{}) != .ok) return .runtime_error;
+                    continue;
                 },
                 .op_set_property, .op_set_property_wide => {
-                    const val = self.pop();
-                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_set_property_wide);
+                    const is_wide = op == .op_set_property_wide;
+                    const name_idx = self.readOperand(exec_chunk, frame, is_wide);
+                    const name_val = exec_chunk.constants.items[name_idx];
+                    const prop_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
+
                     const ic = self.readInlineCache(exec_chunk, frame);
-                    const receiver = self.pop();
+
+                    // Stack is: [receiver, value]
+                    const receiver = self.stack[self.stack_top - 2];
+                    const val = self.stack[self.stack_top - 1];
 
                     if (receiver.isInstance()) {
-                        self.setInstanceField(receiver.asInstance(), name_str, val, ic) catch return .runtime_error;
-                        self.push(val);
+                        const instance = receiver.asInstance();
+
+                        // FAST PATH: O(1) Array Offset Write
+                        if (ic.class == instance.class) {
+                            if (ic.offset >= instance.fields.items.len) {
+                                instance.fields.appendNTimes(self.allocator, value.Value.initNil(), (ic.offset + 1) - instance.fields.items.len) catch return .runtime_error;
+                            }
+                            instance.fields.items[ic.offset] = val;
+                            self.stack[self.stack_top - 2] = val;
+                            self.stack_top -= 1;
+                            continue;
+                        }
+
+                        // SLOW PATH: Dictionary Lookup
+                        var slot_idx: usize = 0;
+                        if (instance.class.instance_layout.get(prop_name.chars)) |idx| {
+                            slot_idx = idx;
+                        } else {
+                            slot_idx = instance.class.instance_layout.count();
+                            instance.class.instance_layout.put(self.allocator, prop_name.chars, slot_idx) catch return .runtime_error;
+                        }
+
+                        if (slot_idx >= instance.fields.items.len) {
+                            instance.fields.appendNTimes(self.allocator, value.Value.initNil(), (slot_idx + 1) - instance.fields.items.len) catch return .runtime_error;
+                        }
+
+                        ic.class = instance.class;
+                        ic.offset = @intCast(slot_idx);
+
+                        instance.fields.items[slot_idx] = val;
+                        self.stack[self.stack_top - 2] = val;
+                        self.stack_top -= 1;
+                        continue;
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        cls.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
-                        self.push(val);
-                    } else {
-                        if (self.throwDynamicError("Runtime Error: Only instances and classes have properties.", .{}) != .ok) return .runtime_error;
+                        cls.class_fields.put(self.allocator, prop_name.chars, val) catch return .runtime_error;
+                        self.stack[self.stack_top - 2] = val;
+                        self.stack_top -= 1;
+                        continue;
+                    } else if (receiver.isModule()) {
+                        const mod = receiver.asModule();
+                        mod.methods.put(self.allocator, prop_name.chars, val) catch return .runtime_error;
+                        self.stack[self.stack_top - 2] = val;
+                        self.stack_top -= 1;
                         continue;
                     }
+
+                    if (self.throwDynamicError("Runtime Error: Only instances have properties.\n", .{}) != .ok) return .runtime_error;
+                    continue;
                 },
                 .op_inherit => {
                     const super_val = self.pop();
