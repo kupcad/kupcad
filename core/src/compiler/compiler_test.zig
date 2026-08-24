@@ -1075,6 +1075,8 @@ test "Compiler: AST depth breaker prevents stack overflow on recursive nodes" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
+    vm.mute_errors = true;
+
     // Use a dummy limits value just for this test file context
     var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();

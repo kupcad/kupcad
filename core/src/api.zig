@@ -132,12 +132,12 @@ pub fn buildModel(
     if (result != .ok) return error.RuntimeError;
 
     // --- Collect all meshes to export ---
-    var export_handles = std.ArrayList(geom.GeometryHandle).init(allocator);
-    defer export_handles.deinit();
+    var export_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
+    defer export_handles.deinit(allocator);
 
     // Add ghosts from the display list first
     for (vm.display_list.items) |ghost_handle| {
-        try export_handles.append(ghost_handle);
+        try export_handles.append(allocator, ghost_handle);
     }
 
     // Add the final evaluated geometry from the stack
@@ -146,7 +146,7 @@ pub fn buildModel(
         const final_val = vm.stack[0];
         if (final_val.isGeometry()) {
             const main_handle = try vm.ensureConcrete(final_val);
-            try export_handles.append(main_handle);
+            try export_handles.append(allocator, main_handle);
             main_handle_opt = main_handle;
         }
     }
