@@ -429,3 +429,32 @@ test "Manifold Driver: splitByPlane returns valid SolidPair" {
     try testing.expectApproxEqAbs(@as(f64, 500.0), vol1, 1e-5);
     try testing.expectApproxEqAbs(@as(f64, 500.0), vol2, 1e-5);
 }
+
+test "Manifold Driver: simplify reduces coplanar triangle count on sliced meshes" {
+    // Create a 10x10 2D square
+    const sq = driver.driver.squareFn(10.0, 10.0, true) orelse return error.SqFailed;
+    defer driver.driver.destructCrossSectionFn(sq);
+
+    // Extrude by 10 units with 10 height slices (generates multi-segmented coplanar side walls)
+    const ext = driver.driver.extrudeFn(sq, 10.0, 10, 0.0, 1.0, 1.0) orelse return error.ExtrudeFailed;
+    defer driver.driver.destructFn(ext);
+
+    const unsimplified_mesh = driver.driver.getMeshFn(testing.allocator, ext) orelse return error.MeshFailed;
+    defer {
+        testing.allocator.free(unsimplified_mesh.vert_props);
+        testing.allocator.free(unsimplified_mesh.tri_verts);
+    }
+
+    // Apply coplanar simplification directly through the driver interface
+    const simplified = driver.driver.simplifyFn(ext, 1e-5) orelse return error.SimplifyFailed;
+    defer if (simplified.ptr != ext.ptr) driver.driver.destructFn(simplified);
+
+    const simplified_mesh = driver.driver.getMeshFn(testing.allocator, simplified) orelse return error.MeshFailed;
+    defer {
+        testing.allocator.free(simplified_mesh.vert_props);
+        testing.allocator.free(simplified_mesh.tri_verts);
+    }
+
+    // The multi-slice mesh should contain more triangle indices than the simplified box mesh
+    try testing.expect(unsimplified_mesh.tri_verts.len > simplified_mesh.tri_verts.len);
+}

@@ -211,8 +211,10 @@ fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandl
 
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
+    if (@intFromPtr(a.ptr) == 0) return a;
+
     const ptr = manifold.simplify(@ptrCast(@alignCast(a.ptr)), tolerance) orelse return a;
+
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 

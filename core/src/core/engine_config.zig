@@ -7,7 +7,7 @@ pub const ManifoldConfig = struct {
     fixed_segments: u32 = 0, // Explicit segment count override (0 = auto-calculate via angle & length)
     min_angle_deg: f64 = 12.0, // Minimum angular step per segment in degrees (OpenSCAD $fa)
     min_segment_len: f64 = 2.0, // Minimum linear edge length in units/mm (OpenSCAD $fs)
-    simplify_coplanar: bool = true, // Merge redundant coplanar triangles after CSG operations
+    simplify_coplanar: bool = false, // Merge redundant coplanar triangles after CSG operations
 
     /// Calculates the optimal segment count for an arc or circle of a given radius.
     pub fn getSegments(self: ManifoldConfig, radius: f64) u32 {

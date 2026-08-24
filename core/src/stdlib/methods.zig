@@ -26,6 +26,7 @@ pub const meshOffset = advanced.meshOffset;
 pub const meshSlice = advanced.meshSlice;
 pub const meshProject = advanced.meshProject;
 pub const meshOnFace = advanced.meshOnFace;
+pub const meshSimplify = advanced.meshSimplify;
 // inspect
 pub const meshBBox = inspect.meshBBox;
 pub const meshVolume = inspect.meshVolume;

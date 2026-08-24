@@ -76,6 +76,7 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "slice", .category = .transform, .func = common.wrapMethod(methods.meshSlice) },
     .{ .name = "mirror", .category = .transform, .func = common.wrapMethod(methods.meshMirror) },
     .{ .name = "on_face", .category = .workplane_method, .func = common.wrapMethod(methods.meshOnFace) },
+    .{ .name = "simplify", .category = .transform, .func = common.wrapMethod(methods.meshSimplify) },
     .{ .name = "bbox", .category = .inspection_method, .func = common.wrapMethod(methods.meshBBox) },
     .{ .name = "volume", .category = .inspection_method, .func = common.wrapMethod(methods.meshVolume) },
     .{ .name = "surface_area", .category = .inspection_method, .func = common.wrapMethod(methods.meshSurfaceArea) },

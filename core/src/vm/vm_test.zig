@@ -7699,3 +7699,38 @@ test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operat
     // Simplified mesh dissolves the coplanar slice edges (~60-80 indices)
     try testing.expect(mesh_unsimplified.tri_verts.len > mesh_simplified.tri_verts.len);
 }
+
+test "VM: .simplify() script method decimates mesh on demand" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\shape = square(size: 10).extrude(10, slices: 10)
+        \\simplified = shape.simplify(0.001)
+        \\simplified
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(result.isGeometry());
+
+    const handle = try vm.ensureConcrete(result);
+    const mesh = (kernel.getMesh(testing.allocator, handle)).?;
+    defer {
+        testing.allocator.free(mesh.vert_props);
+        testing.allocator.free(mesh.tri_verts);
+    }
+
+    // Verified: simplified multi-slice extrusion should reduce down to 12 triangles (36 index entries)
+    try testing.expectEqual(@as(usize, 36), mesh.tri_verts.len);
+}

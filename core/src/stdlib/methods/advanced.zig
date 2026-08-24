@@ -159,3 +159,21 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
 
     return try vm.allocateWorkplane(receiver, faces[0].centroid, faces[0].normal);
 }
+
+pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
+    var tolerance: ?f64 = null;
+
+    // Optional positional argument: part.simplify(0.01)
+    if (args.len > 0 and args[0].isNumber()) {
+        tolerance = args[0].asNumber();
+    }
+
+    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
+    const tol = tolerance orelse active_config.manifold.tolerance;
+
+    // Force concrete DAG evaluation up to this point and run simplification
+    const handle = try vm.ensureConcrete(value.Value.initGeometry(receiver));
+    const simplified_handle = kernel.simplify(handle, tol);
+
+    return try vm.allocateGeometry(.{ .concrete = simplified_handle });
+}

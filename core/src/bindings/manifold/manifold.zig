@@ -183,8 +183,10 @@ pub fn polyhedron(vert_props: []const f32, tri_verts: []const u32) ?*ManifoldObj
     return manifold_of_meshgl(manifold_alloc_manifold(), mesh);
 }
 
-pub fn simplify(obj: *ManifoldObj, tolerance: f64) ?*ManifoldObj {
-    return manifold_simplify(manifold_alloc_manifold(), obj, tolerance);
+pub fn simplify(obj: ?*ManifoldObj, tolerance: f64) ?*ManifoldObj {
+    if (obj == null) return null;
+
+    return manifold_simplify(manifold_alloc_manifold(), obj.?, tolerance);
 }
 
 pub fn crossSectionEvenOddPolygons(allocator: std.mem.Allocator, contours: []const []const ManifoldVec2) ?*ManifoldCrossSection {
