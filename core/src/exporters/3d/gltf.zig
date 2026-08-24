@@ -16,11 +16,13 @@ const MaterialExt = struct {
     KHR_materials_transmission: ?TransmissionExt = null,
     KHR_materials_ior: ?IorExt = null,
 };
+const GltfExtras = struct { kupcad_role: []const u8 };
 const GltfMaterial = struct {
     pbrMetallicRoughness: Pbr,
     extensions: ?MaterialExt = null,
     alphaMode: []const u8,
     doubleSided: bool = true,
+    extras: ?GltfExtras = null,
 };
 const Primitive = struct {
     attributes: struct { POSITION: u32 },
@@ -62,104 +64,124 @@ fn parseHexColor(hex: []const u8, alpha: f64) [4]f64 {
 }
 
 /// Constructs and returns an owned slice of binary .GLB bytes directly in memory.
-pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handle: geom.GeometryHandle) ![]const u8 {
-    const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
-    defer allocator.free(mesh.vert_props);
-    defer allocator.free(mesh.tri_verts);
-
-    // --- 1. Group Triangles by Material ID ---
-    var mat_indices = std.AutoHashMap(u32, std.ArrayListUnmanaged(u32)).init(allocator);
-    defer {
-        var it = mat_indices.valueIterator();
-        while (it.next()) |list| list.deinit(allocator);
-        mat_indices.deinit();
-    }
-
-    var i: usize = 0;
-    while (i < mesh.tri_verts.len) : (i += 3) {
-        const v_idx = mesh.tri_verts[i] * mesh.num_prop;
-        const mat_id: u32 = if (mesh.num_prop >= 4) @intFromFloat(mesh.vert_props[v_idx + 3]) else 0;
-
-        const gop = try mat_indices.getOrPut(mat_id);
-        if (!gop.found_existing) {
-            gop.value_ptr.* = .empty;
-        }
-        try gop.value_ptr.appendSlice(allocator, &.{ mesh.tri_verts[i], mesh.tri_verts[i + 1], mesh.tri_verts[i + 2] });
-    }
-
-    // --- 2. Build Binary Data Chunk ---
-    var bin_buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer bin_buf.deinit(allocator);
-
-    var min_pos = [3]f64{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
-    var max_pos = [3]f64{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
-    const vertex_count: u32 = @intCast(mesh.vert_props.len / mesh.num_prop);
-
-    var v: usize = 0;
-    while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
-        const x: f64 = @floatCast(mesh.vert_props[v + 0]);
-        const y: f64 = @floatCast(mesh.vert_props[v + 1]);
-        const z: f64 = @floatCast(mesh.vert_props[v + 2]);
-
-        try bin_buf.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v + 0]));
-        try bin_buf.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v + 1]));
-        try bin_buf.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v + 2]));
-
-        if (x < min_pos[0]) min_pos[0] = x;
-        if (x > max_pos[0]) max_pos[0] = x;
-        if (y < min_pos[1]) min_pos[1] = y;
-        if (y > max_pos[1]) max_pos[1] = y;
-        if (z < min_pos[2]) min_pos[2] = z;
-        if (z > max_pos[2]) max_pos[2] = z;
-    }
-    const pos_byte_length: u32 = vertex_count * 12;
+/// Now supports multiple handles (combining the main CSG body and all display_list ghosts).
+pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const geom.GeometryHandle) ![]const u8 {
+    var vertex_buf: std.ArrayListUnmanaged(u8) = .empty;
+    var index_buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer vertex_buf.deinit(allocator);
+    defer index_buf.deinit(allocator);
 
     var primitives: std.ArrayListUnmanaged(Primitive) = .empty;
     var accessors: std.ArrayListUnmanaged(Accessor) = .empty;
     defer primitives.deinit(allocator);
     defer accessors.deinit(allocator);
 
-    try accessors.append(allocator, .{
+    var global_min = [3]f64{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
+    var global_max = [3]f64{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
+    var total_vertices: u32 = 0;
+
+    // --- Process All Meshes (Main + Ghosts) ---
+    for (handles) |handle| {
+        const mesh = kernel.getMesh(allocator, handle) orelse continue;
+        defer allocator.free(mesh.vert_props);
+        defer allocator.free(mesh.tri_verts);
+
+        const vertex_count: u32 = @intCast(mesh.vert_props.len / mesh.num_prop);
+        if (vertex_count == 0) continue;
+
+        // Offset new vertices by the total vertices already processed across previous meshes
+        const base_vertex = total_vertices;
+        total_vertices += vertex_count;
+
+        // Group Triangles by Material ID
+        var mat_indices = std.AutoHashMap(u32, std.ArrayListUnmanaged(u32)).init(allocator);
+        var i: usize = 0;
+        while (i < mesh.tri_verts.len) : (i += 3) {
+            const v_idx = mesh.tri_verts[i] * mesh.num_prop;
+            const mat_id: u32 = if (mesh.num_prop >= 4) @intFromFloat(mesh.vert_props[v_idx + 3]) else 0;
+
+            const gop = try mat_indices.getOrPut(mat_id);
+            if (!gop.found_existing) gop.value_ptr.* = .empty;
+
+            // Append the 3 vertex indices for this triangle, offset by the current base vertex
+            try gop.value_ptr.appendSlice(allocator, &.{ mesh.tri_verts[i] + base_vertex, mesh.tri_verts[i + 1] + base_vertex, mesh.tri_verts[i + 2] + base_vertex });
+        }
+
+        // Push Raw Vertices and calculate global bounding box
+        var v: usize = 0;
+        while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
+            const x: f64 = @floatCast(mesh.vert_props[v + 0]);
+            const y: f64 = @floatCast(mesh.vert_props[v + 1]);
+            const z: f64 = @floatCast(mesh.vert_props[v + 2]);
+
+            if (x < global_min[0]) global_min[0] = x;
+            if (x > global_max[0]) global_max[0] = x;
+            if (y < global_min[1]) global_min[1] = y;
+            if (y > global_max[1]) global_max[1] = y;
+            if (z < global_min[2]) global_min[2] = z;
+            if (z > global_max[2]) global_max[2] = z;
+
+            try vertex_buf.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v + 0]));
+            try vertex_buf.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v + 1]));
+            try vertex_buf.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v + 2]));
+        }
+
+        // Write Index Accessors and Primitives mapped to materials
+        var mat_it = mat_indices.iterator();
+        while (mat_it.next()) |entry| {
+            const mat_id = entry.key_ptr.*;
+            const indices = entry.value_ptr.items;
+            const current_index_byte_offset: u32 = @intCast(index_buf.items.len);
+
+            for (indices) |idx| {
+                try index_buf.appendSlice(allocator, std.mem.asBytes(&idx));
+            }
+
+            const accessor_id: u32 = @as(u32, @intCast(accessors.items.len)) + 1; // +1 because Accessor 0 is reserved for POSITION
+            try accessors.append(allocator, .{
+                .bufferView = 1,
+                .byteOffset = current_index_byte_offset,
+                .componentType = 5125, // UNSIGNED_INT
+                .count = @intCast(indices.len),
+                .type = "SCALAR",
+            });
+
+            try primitives.append(allocator, .{
+                .attributes = .{ .POSITION = 0 },
+                .indices = accessor_id,
+                .material = mat_id,
+            });
+            entry.value_ptr.deinit(allocator);
+        }
+        mat_indices.deinit();
+    }
+
+    if (total_vertices == 0) return error.NoGeometry;
+
+    // --- Build Binary Data Chunk ---
+    // Prepend the global POSITION accessor at index 0 now that we have the global min/max
+    try accessors.insert(allocator, 0, .{
         .bufferView = 0,
         .byteOffset = 0,
         .componentType = 5126, // FLOAT
-        .count = vertex_count,
+        .count = total_vertices,
         .type = "VEC3",
-        .min = min_pos,
-        .max = max_pos,
+        .min = global_min,
+        .max = global_max,
     });
 
-    const indices_start_offset: u32 = @intCast(bin_buf.items.len);
-    var current_index_offset: u32 = 0;
+    var bin_buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer bin_buf.deinit(allocator);
 
-    var mat_it = mat_indices.iterator();
-    while (mat_it.next()) |entry| {
-        const mat_id = entry.key_ptr.*;
-        const indices = entry.value_ptr.items;
+    try bin_buf.appendSlice(allocator, vertex_buf.items);
 
-        for (indices) |idx| {
-            try bin_buf.appendSlice(allocator, std.mem.asBytes(&idx));
-        }
+    const pos_byte_length: u32 = @intCast(vertex_buf.items.len);
+    const indices_start_offset: u32 = pos_byte_length;
+    const indices_byte_length: u32 = @intCast(index_buf.items.len);
 
-        const accessor_id: u32 = @intCast(accessors.items.len);
-        try accessors.append(allocator, .{
-            .bufferView = 1,
-            .byteOffset = current_index_offset,
-            .componentType = 5125, // UNSIGNED_INT
-            .count = @intCast(indices.len),
-            .type = "SCALAR",
-        });
+    try bin_buf.appendSlice(allocator, index_buf.items);
 
-        try primitives.append(allocator, .{
-            .attributes = .{ .POSITION = 0 },
-            .indices = accessor_id,
-            .material = mat_id,
-        });
-        current_index_offset += @intCast(indices.len * 4);
-    }
-    const indices_byte_length = current_index_offset;
-
-    // --- 3. Extract VM Materials & Extensions ---
+    // --- Extract VM Materials & Setup Semantic Roles ---
     var gltf_materials: std.ArrayListUnmanaged(GltfMaterial) = .empty;
     var extensionsUsed: std.ArrayListUnmanaged([]const u8) = .empty;
     defer gltf_materials.deinit(allocator);
@@ -168,6 +190,7 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handle: geom.Geome
     var has_transmission = false;
 
     if (vm.materials.items.len == 0) {
+        // Fallback standard material if none provided
         try gltf_materials.append(allocator, .{
             .pbrMetallicRoughness = .{ .baseColorFactor = .{ 0.8, 0.8, 0.8, 1.0 }, .metallicFactor = 0.0, .roughnessFactor = 0.5 },
             .alphaMode = "OPAQUE",
@@ -177,6 +200,17 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handle: geom.Geome
             const color = parseHexColor(mat.color_hex, mat.alpha);
             var ext: ?MaterialExt = null;
             var alphaMode: []const u8 = if (mat.alpha < 1.0) "BLEND" else "OPAQUE";
+
+            // Semantic Tagging for the Frontend Viewer
+            var extras: ?GltfExtras = null;
+
+            if (mat.role == .ghost) {
+                // Ensure GLTF viewers know to blend it even if they ignore `extras`
+                alphaMode = "BLEND";
+                extras = .{ .kupcad_role = "ghost" };
+            } else if (mat.role == .highlight) {
+                extras = .{ .kupcad_role = "highlight" };
+            }
 
             if (mat.transmission > 0.0) {
                 ext = .{
@@ -190,6 +224,7 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handle: geom.Geome
                 .pbrMetallicRoughness = .{ .baseColorFactor = color, .metallicFactor = mat.metallic, .roughnessFactor = mat.roughness },
                 .extensions = ext,
                 .alphaMode = alphaMode,
+                .extras = extras, // Inject semantics
             });
         }
     }
@@ -199,7 +234,7 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handle: geom.Geome
         try extensionsUsed.append(allocator, "KHR_materials_ior");
     }
 
-    // --- 4. Serialize JSON Hierarchy ---
+    // --- Serialize JSON Hierarchy ---
     var bufferViews = [_]BufferView{
         .{ .buffer = 0, .byteOffset = 0, .byteLength = pos_byte_length, .target = 34962 },
         .{ .buffer = 0, .byteOffset = indices_start_offset, .byteLength = indices_byte_length, .target = 34963 },
@@ -226,6 +261,7 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handle: geom.Geome
     defer json_out.deinit(allocator);
     try json_out.appendSlice(allocator, json_writer.written());
 
+    // GLB chunks must be aligned to 4-byte boundaries
     while (json_out.items.len % 4 != 0) try json_out.append(allocator, ' ');
     while (bin_buf.items.len % 4 != 0) try bin_buf.append(allocator, 0);
 
@@ -268,7 +304,8 @@ pub fn nativeExportGltf(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     const path = args[0].asString().chars;
     const handle = try vm.ensureConcrete(args[1]);
 
-    const glb_bytes = try buildGltfBuffer(vm.allocator, vm, handle);
+    // Pass as a slice
+    const glb_bytes = try buildGltfBuffer(vm.allocator, vm, &.{handle});
     defer vm.allocator.free(glb_bytes);
 
     const cwd = std.Io.Dir.cwd();

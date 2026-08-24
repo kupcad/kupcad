@@ -7477,3 +7477,76 @@ test "VM: CAD.with_config safely applies and pops engine settings block-scoped" 
     try testing.expectEqual(@as(f64, 16.0), arr[2].asNumber()); // Restored
     try testing.expectEqualStrings("brep", arr[3].asSymbol().chars); // Engine Swapped!
 }
+
+test "VM: ghost and highlight modifiers tag materials and route geometry correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\# Highlight stays on the stack for math
+        \\h = cube(10).highlight
+        \\
+        \\# Ghost drops off the stack (returns nil)
+        \\g = cylinder(r: 5, h: 10).ghost
+        \\
+        \\[h, g]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr = result.asArray().items.items;
+
+    // highlight returns geometry
+    try testing.expect(arr[0].isGeometry());
+    // ghost returns nil
+    try testing.expect(arr[1].isNil());
+
+    // Check the VM materials registry
+    try testing.expectEqual(@as(usize, 2), vm.materials.items.len);
+    try testing.expectEqual(.highlight, vm.materials.items[0].role);
+    try testing.expectEqual(.ghost, vm.materials.items[1].role);
+
+    // Check the display list (should contain exactly 1 item: the ghost)
+    try testing.expectEqual(@as(usize, 1), vm.display_list.items.len);
+}
+
+test "VM: Block modifiers ghost do and highlight do apply to inner CSG" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\ghost do
+        \\  cube(10) - cylinder(r: 2, h: 10)
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // ghost block returns nil
+    try testing.expect(result.isNil());
+
+    // VM caught the ghost
+    try testing.expectEqual(@as(usize, 1), vm.display_list.items.len);
+    try testing.expectEqual(.ghost, vm.materials.items[0].role);
+}

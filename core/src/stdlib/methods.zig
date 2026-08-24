@@ -35,3 +35,7 @@ pub const meshContains = inspect.meshContains;
 pub const meshRayCast = inspect.meshRayCast;
 // materials
 pub const meshMaterial = materials.meshMaterial;
+pub const meshHighlight = materials.meshHighlight;
+pub const meshGhost = materials.meshGhost;
+pub const globalHighlight = materials.globalHighlight;
+pub const globalGhost = materials.globalGhost;

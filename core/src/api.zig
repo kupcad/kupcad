@@ -7,6 +7,7 @@ const registry = @import("stdlib/registry.zig");
 const kernel = @import("kernel/kernel.zig");
 const extractor = @import("tools/doc/extractor.zig");
 const profiler_mod = @import("vm/profiler.zig");
+const geom = @import("kernel/geometry_handle.zig");
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const Linter = @import("tools/lint/linter.zig").Linter;
 const stl_exporter = @import("exporters/3d/stl.zig");
@@ -130,16 +131,40 @@ pub fn buildModel(
     const result = vm.interpret(&out_chunk);
     if (result != .ok) return error.RuntimeError;
 
-    if (vm.stack_top == 0) return error.NoGeometry;
-    const final_val = vm.stack[0];
-    if (!final_val.isGeometry()) return error.NotGeometry;
+    // --- Collect all meshes to export ---
+    var export_handles = std.ArrayList(geom.GeometryHandle).init(allocator);
+    defer export_handles.deinit();
 
-    const handle = try vm.ensureConcrete(final_val);
+    // Add ghosts from the display list first
+    for (vm.display_list.items) |ghost_handle| {
+        try export_handles.append(ghost_handle);
+    }
 
+    // Add the final evaluated geometry from the stack
+    var main_handle_opt: ?geom.GeometryHandle = null;
+    if (vm.stack_top > 0) {
+        const final_val = vm.stack[0];
+        if (final_val.isGeometry()) {
+            const main_handle = try vm.ensureConcrete(final_val);
+            try export_handles.append(main_handle);
+            main_handle_opt = main_handle;
+        }
+    }
+
+    if (export_handles.items.len == 0) return error.NoGeometry;
+
+    // --- Route to appropriate exporter ---
     if (std.mem.eql(u8, format, "stl")) {
-        return stl_exporter.buildStlBuffer(allocator, handle);
+        // STL doesn't support multiple separate meshes or materials easily.
+        // Export only the main solid geometry, ignoring ghosts.
+        if (main_handle_opt) |h| {
+            return stl_exporter.buildStlBuffer(allocator, h);
+        } else {
+            return error.NoGeometry;
+        }
     } else if (std.mem.eql(u8, format, "glb") or std.mem.eql(u8, format, "gltf")) {
-        return gltf_exporter.buildGltfBuffer(allocator, &vm, handle);
+        // GLTF supports full scene graphs: Pass ALL handles
+        return gltf_exporter.buildGltfBuffer(allocator, &vm, export_handles.items);
     } else {
         return error.UnsupportedFormat;
     }

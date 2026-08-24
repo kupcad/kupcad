@@ -38,6 +38,8 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "inspect", .func = common.wrapGlobal(io_mod.nativeInspect), .category = .io },
     .{ .name = "debugger", .func = common.wrapGlobal(debug_mod.nativeDebugger), .category = .io },
     .{ .name = "param", .func = params_mod.nativeParam, .category = .io },
+    .{ .name = "highlight", .func = methods.globalHighlight, .category = .transform },
+    .{ .name = "ghost", .func = methods.globalGhost, .category = .transform },
     .{ .name = "cube", .func = common.wrapGlobal(primitives.nativeCube), .category = .primitive_3d },
     .{ .name = "cylinder", .func = common.wrapGlobal(primitives.nativeCylinder), .category = .primitive_3d },
     .{ .name = "sphere", .func = common.wrapGlobal(primitives.nativeSphere), .category = .primitive_3d },
@@ -88,6 +90,8 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "contains?", .category = .inspection_method, .func = common.wrapMethod(methods.meshContains) },
     .{ .name = "ray_cast", .category = .inspection_method, .func = common.wrapMethod(methods.meshRayCast) },
     .{ .name = "material", .category = .transform, .func = common.wrapMethod(methods.meshMaterial) },
+    .{ .name = "highlight", .category = .transform, .func = common.wrapMethod(methods.meshHighlight) },
+    .{ .name = "ghost", .category = .transform, .func = common.wrapMethod(methods.meshGhost) },
 };
 
 // Compile-time generated O(1) jump table

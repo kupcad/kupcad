@@ -1,8 +1,7 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
-const vm_mod = @import("../../vm/vm.zig");
-const MaterialDef = vm_mod.MaterialDef;
-const VM = vm_mod.VM;
+const VM = @import("../../vm/vm.zig").VM;
+const MaterialDef = @import("../../core/material.zig").MaterialDef;
 
 pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
@@ -41,4 +40,72 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
 
     const new_idx = try vm.dag_builder.addSetMaterial(receiver.asGeometry().dag_idx, material_id);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+// --- Chained Methods ---
+
+pub fn meshHighlight(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    _ = args;
+    if (!receiver.isGeometry()) return error.RuntimeError;
+
+    const material_id = @as(u32, @intCast(vm.materials.items.len));
+    // Pure semantic tagging. Let the viewer handle the visuals.
+    try vm.materials.append(vm.allocator, .{ .role = .highlight });
+
+    const new_idx = try vm.dag_builder.addSetMaterial(receiver.asGeometry().dag_idx, material_id);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+pub fn meshGhost(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    _ = args;
+    if (!receiver.isGeometry()) return error.RuntimeError;
+
+    const material_id = @as(u32, @intCast(vm.materials.items.len));
+    // Pure semantic tagging
+    try vm.materials.append(vm.allocator, .{ .role = .ghost });
+
+    const new_idx = try vm.dag_builder.addSetMaterial(receiver.asGeometry().dag_idx, material_id);
+    const ghost_geom = try vm.allocateGeometry(.{ .symbolic = new_idx });
+
+    // Force JIT evaluation and push directly to the standalone display list
+    const handle = try vm.ensureConcrete(ghost_geom);
+    try vm.display_list.append(vm.allocator, handle);
+
+    // Return NIL so it drops completely out of the CSG math tree!
+    return value.Value.initNil();
+}
+
+// --- Global Block Modifiers ---
+
+pub fn globalHighlight(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    if (arg_count == 0 or !args[0].isClosure()) return error.RuntimeError;
+
+    const result = try vm.callClosureSync(args[0].asClosure(), &.{});
+    if (!result.isGeometry()) return result;
+
+    const material_id = @as(u32, @intCast(vm.materials.items.len));
+    try vm.materials.append(vm.allocator, .{ .role = .highlight });
+
+    const new_idx = try vm.dag_builder.addSetMaterial(result.asGeometry().dag_idx, material_id);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+pub fn globalGhost(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    if (arg_count == 0 or !args[0].isClosure()) return error.RuntimeError;
+
+    const result = try vm.callClosureSync(args[0].asClosure(), &.{});
+    if (!result.isGeometry()) return value.Value.initNil();
+
+    const material_id = @as(u32, @intCast(vm.materials.items.len));
+    try vm.materials.append(vm.allocator, .{ .role = .ghost });
+
+    const new_idx = try vm.dag_builder.addSetMaterial(result.asGeometry().dag_idx, material_id);
+    const ghost_geom = try vm.allocateGeometry(.{ .symbolic = new_idx });
+
+    const handle = try vm.ensureConcrete(ghost_geom);
+    try vm.display_list.append(vm.allocator, handle);
+
+    return value.Value.initNil();
 }

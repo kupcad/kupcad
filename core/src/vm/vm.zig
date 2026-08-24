@@ -10,6 +10,7 @@ const host_mod = @import("host.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const profiler_mod = @import("profiler.zig");
+const material_mod = @import("../core/material.zig");
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
@@ -38,14 +39,6 @@ pub const RescueFrame = struct {
     upvalue_ptr: ?*value.ObjUpvalue,
 };
 
-pub const MaterialDef = struct {
-    color_hex: []const u8 = "#FFFFFF",
-    alpha: f64 = 1.0,
-    roughness: f64 = 0.5,
-    metallic: f64 = 0.0,
-    transmission: f64 = 0.0,
-};
-
 pub const VM = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -67,7 +60,8 @@ pub const VM = struct {
     param_registry: parameters.ParamList = .{},
     param_lookup: std.AutoHashMapUnmanaged(value.Value, usize) = .empty,
 
-    materials: std.ArrayListUnmanaged(MaterialDef) = .empty,
+    materials: std.ArrayListUnmanaged(material_mod.MaterialDef) = .empty,
+    display_list: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty,
 
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
@@ -140,6 +134,7 @@ pub const VM = struct {
             .param_lookup = .empty,
             .host = .{},
             .materials = .empty,
+            .display_list = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
             .mute_errors = false,
             .scratch_arena = std.heap.ArenaAllocator.init(allocator),
@@ -174,6 +169,7 @@ pub const VM = struct {
         self.param_lookup.deinit(self.allocator);
         self.config_stack.deinit(self.allocator);
         self.materials.deinit(self.allocator);
+        self.display_list.deinit(self.allocator);
         self.scratch_arena.deinit();
         self.gc.deinit();
     }
