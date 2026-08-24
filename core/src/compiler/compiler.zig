@@ -8,6 +8,9 @@ const resolver = @import("../core/resolver.zig");
 const verifier = @import("../vm/verifier.zig");
 const VM = @import("../vm/vm.zig").VM;
 
+const scope_mod = @import("scope.zig");
+const emitter_mod = @import("emitter.zig");
+
 pub const CompileError = error{
     OutOfMemory,
     UnknownNode,
@@ -127,6 +130,34 @@ pub const Compiler = struct {
     seeded_locals: []const []const u8 = &.{},
     seeded_slot_offset: u16 = 0,
 
+    // --- Mixin Forwarding (Decoupled Modules) ---
+    pub const classifyVariable = scope_mod.classifyVariable;
+    pub const buildFullyQualifiedPath = scope_mod.buildFullyQualifiedPath;
+    pub const addLocal = scope_mod.addLocal;
+    pub const resolveLocal = scope_mod.resolveLocal;
+    pub const resolveUpvalue = scope_mod.resolveUpvalue;
+    pub const resolveSelfUpvalue = scope_mod.resolveSelfUpvalue;
+    pub const addUpvalue = scope_mod.addUpvalue;
+    pub const isScriptGlobal = scope_mod.isScriptGlobal;
+    pub const seedLocals = scope_mod.seedLocals;
+    pub const getNextLocalSlot = scope_mod.getNextLocalSlot;
+
+    pub const simulatePush = emitter_mod.simulatePush;
+    pub const simulatePop = emitter_mod.simulatePop;
+    pub const emitInlineCacheIndex = emitter_mod.emitInlineCacheIndex;
+    pub const emitByte = emitter_mod.emitByte;
+    pub const emitOp = emitter_mod.emitOp;
+    pub const makeConstant = emitter_mod.makeConstant;
+    pub const emitConstant = emitter_mod.emitConstant;
+    pub const emitJump = emitter_mod.emitJump;
+    pub const patchJump = emitter_mod.patchJump;
+    pub const emitLoop = emitter_mod.emitLoop;
+    pub const makeMethodNameConstant = emitter_mod.makeMethodNameConstant;
+    pub const makeStringConstant = emitter_mod.makeStringConstant;
+    pub const makeSymbolConstant = emitter_mod.makeSymbolConstant;
+    pub const emitOpWithOperand = emitter_mod.emitOpWithOperand;
+    pub const writeJumpOffset = emitter_mod.writeJumpOffset;
+
     pub fn init(
         allocator: std.mem.Allocator,
         tree: *const ast.Tree,
@@ -167,126 +198,6 @@ pub const Compiler = struct {
         }
         self.loops.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
-    }
-
-    // --- Lexical Scope Resolvers ---
-
-    fn classifyVariable(self: *Compiler, name_id: ast.StringId, sym_opt: ?resolver.ResolvedSymbol) CompileError!ResolvedVar {
-        const name_str = self.tree.getString(name_id);
-        if (std.ascii.isUpper(name_str[0])) return .{ .kind = .constant };
-        if (std.mem.startsWith(u8, name_str, "@@")) return .{ .kind = .class_var };
-        if (std.mem.startsWith(u8, name_str, "@")) return .{ .kind = .instance_var };
-
-        if (self.resolveLocal(name_id)) |slot| return .{ .kind = .local, .index = slot };
-        if (try self.resolveUpvalue(name_id)) |upv_slot| return .{ .kind = .upvalue, .index = upv_slot };
-
-        if (sym_opt) |sym| {
-            if (sym.kind == .global or self.enclosing == null or self.isScriptGlobal(name_id)) {
-                return .{ .kind = .global };
-            }
-            return .{ .kind = .new_local };
-        }
-
-        return .{ .kind = .global };
-    }
-
-    fn buildFullyQualifiedPath(self: *Compiler, target: []const u8, depth: usize) CompileError![]const u8 {
-        var buf = std.ArrayListUnmanaged(u8).empty;
-        errdefer buf.deinit(self.allocator);
-
-        for (self.namespace_stack.items[0..depth]) |ns_id| {
-            try buf.appendSlice(self.allocator, self.tree.getString(ns_id));
-            try buf.appendSlice(self.allocator, "::");
-        }
-        try buf.appendSlice(self.allocator, target);
-
-        // Return the owned slice directly to prevent duping leaks
-        return try buf.toOwnedSlice(self.allocator);
-    }
-
-    pub fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u16) CompileError!void {
-        // Allow anonymous padding slots (.none) to bypass deduplication ---
-        if (name_id != .none) {
-            for (self.locals.items) |loc| {
-                if (loc.name_id == name_id) return;
-            }
-        }
-        if (self.locals.items.len >= limits.MAX_LOCALS) return error.TooManyLocals;
-        try self.locals.append(self.allocator, .{ .name_id = name_id, .slot = slot });
-        if (slot > self.max_local_slot) self.max_local_slot = slot;
-
-        // --- DEBUGGER METADATA: Track local names ---
-        const name_str = if (name_id != .none) self.tree.getString(name_id) else "<anonymous>";
-
-        // Pad the array dynamically since block parameters can be registered out-of-order
-        while (self.current_chunk.local_names.items.len <= slot) {
-            try self.current_chunk.local_names.append(self.allocator, "<anonymous>");
-        }
-        self.current_chunk.local_names.items[slot] = name_str;
-    }
-
-    fn resolveLocal(self: *Compiler, name_id: ast.StringId) ?u16 {
-        const target_str = self.tree.getString(name_id);
-        var i: usize = self.locals.items.len;
-        while (i > 0) {
-            i -= 1;
-            const loc = self.locals.items[i];
-            if (loc.name_id != .none) {
-                if (std.mem.eql(u8, self.tree.getString(loc.name_id), target_str)) return loc.slot;
-            }
-        }
-
-        for (self.seeded_locals, 0..) |seeded_name, idx| {
-            if (std.mem.eql(u8, seeded_name, target_str)) return @intCast(idx + self.seeded_slot_offset);
-        }
-
-        return null;
-    }
-
-    fn resolveUpvalue(self: *Compiler, name_id: ast.StringId) CompileError!?u8 {
-        if (self.enclosing == null) return null;
-        const enclosing = self.enclosing.?;
-
-        // Look for it as a direct local variable in the parent
-        if (enclosing.resolveLocal(name_id)) |local_idx| {
-            return try self.addUpvalue(local_idx, true);
-        }
-
-        // Recursively look up the scope chain for an already captured upvalue
-        if (try enclosing.resolveUpvalue(name_id)) |upv_idx| {
-            return try self.addUpvalue(upv_idx, false);
-        }
-
-        return null;
-    }
-
-    fn resolveSelfUpvalue(self: *Compiler) CompileError!?u8 {
-        if (self.enclosing == null) return null;
-        const enclosing = self.enclosing.?;
-
-        if (enclosing.is_method) {
-            // The parent IS a method. Its `self` is at local 0.
-            return try self.addUpvalue(0, true);
-        }
-
-        // The parent is also a block. Recursively capture.
-        if (try enclosing.resolveSelfUpvalue()) |upv_idx| {
-            return try self.addUpvalue(upv_idx, false);
-        }
-
-        return null;
-    }
-
-    fn addUpvalue(self: *Compiler, index: u16, is_local: bool) CompileError!u8 {
-        for (self.upvalues.items, 0..) |upv, i| {
-            if (upv.index == index and upv.is_local == is_local) {
-                return @intCast(i);
-            }
-        }
-        if (self.upvalues.items.len >= limits.MAX_UPVALUES) return error.TooManyLocals;
-        try self.upvalues.append(self.allocator, .{ .index = index, .is_local = is_local });
-        if (self.function) |f| f.upvalue_count = @intCast(self.upvalues.items.len);
-        return @intCast(self.upvalues.items.len - 1);
     }
 
     // --- Compilation Engine ---
@@ -2003,94 +1914,6 @@ pub const Compiler = struct {
         return false;
     }
 
-    // --- Utility Methods ---
-
-    fn simulatePush(self: *Compiler, count: usize) void {
-        self.current_stack_depth += count;
-        if (self.current_stack_depth > self.max_stack_depth) {
-            self.max_stack_depth = self.current_stack_depth;
-        }
-    }
-
-    fn simulatePop(self: *Compiler, count: usize) void {
-        std.debug.assert(self.current_stack_depth >= count);
-        self.current_stack_depth -= count;
-    }
-
-    pub fn emitInlineCacheIndex(self: *Compiler) CompileError!void {
-        const ic_idx = self.current_chunk.addInlineCache(self.allocator) catch return error.OutOfMemory;
-        try self.emitByte(@intCast((ic_idx >> 8) & 0xff));
-        try self.emitByte(@intCast(ic_idx & 0xff));
-    }
-
-    fn emitByte(self: *Compiler, byte: u8) CompileError!void {
-        self.current_chunk.write(self.allocator, byte, self.current_source_offset) catch return error.OutOfMemory;
-    }
-
-    pub fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
-        try self.emitByte(@intFromEnum(op));
-
-        // Automatically apply static stack effects
-        if (getStaticStackEffect(op)) |effect| {
-            if (effect > 0) {
-                self.simulatePush(@intCast(effect));
-            } else if (effect < 0) {
-                self.simulatePop(@intCast(-effect));
-            }
-        }
-    }
-
-    pub fn makeConstant(self: *Compiler, val: value.Value) CompileError!usize {
-        // Linear scan over constants to reuse existing matching values
-        for (self.current_chunk.constants.items, 0..) |existing, i| {
-            if (self.vm.valuesEqual(existing, val)) return i;
-        }
-
-        const index = self.current_chunk.addConstant(self.allocator, val) catch return error.OutOfMemory;
-        if (index > limits.MAX_CONSTANTS) return error.TooManyConstants;
-        return index;
-    }
-
-    fn emitConstant(self: *Compiler, val: value.Value) CompileError!void {
-        const index = try self.makeConstant(val);
-        try self.emitOpWithOperand(.op_constant, .op_constant_wide, index);
-    }
-
-    fn emitJump(self: *Compiler, op: chunk.OpCode) CompileError!usize {
-        try self.emitOp(op);
-        // Write 4 bytes for a 32-bit jump offset
-        try self.emitByte(0xff);
-        try self.emitByte(0xff);
-        try self.emitByte(0xff);
-        try self.emitByte(0xff);
-        return self.current_chunk.code.items.len - 4;
-    }
-
-    fn patchJump(self: *Compiler, offset: usize) void {
-        const jump = self.current_chunk.code.items.len - offset - 4;
-        std.debug.assert(jump <= 0xFFFFFFFF); // Assert it fits in 32 bits
-        self.writeJumpOffset(offset, jump);
-    }
-
-    fn emitLoop(self: *Compiler, loop_start: usize) CompileError!void {
-        try self.emitOp(.op_loop);
-        const jump = self.current_chunk.code.items.len - loop_start + 4;
-        std.debug.assert(jump <= 0xFFFFFFFF);
-        try self.emitByte(@intCast((jump >> 24) & 0xff));
-        try self.emitByte(@intCast((jump >> 16) & 0xff));
-        try self.emitByte(@intCast((jump >> 8) & 0xff));
-        try self.emitByte(@intCast(jump & 0xff));
-    }
-
-    fn makeMethodNameConstant(self: *Compiler, name: []const u8, is_private: bool) CompileError!usize {
-        if (is_private) {
-            var name_buf: [256]u8 = undefined;
-            const mangled_name = std.fmt.bufPrint(&name_buf, "@private:{s}", .{name}) catch return error.OutOfMemory;
-            return self.makeStringConstant(mangled_name);
-        }
-        return self.makeStringConstant(name);
-    }
-
     /// Unifies Positional and Keyword Argument compilation for Method and Super calls
     fn compileCallArguments(self: *Compiler, args: []const ast.NamedArg) CompileError!usize {
         var pos_count: usize = 0;
@@ -2172,39 +1995,6 @@ pub const Compiler = struct {
             const fq_name_idx = try self.makeStringConstant(fq_name);
             try self.emitOp(.op_dup);
             try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
-        }
-    }
-
-    pub fn makeStringConstant(self: *Compiler, text: []const u8) CompileError!usize {
-        const str_val = try self.vm.allocateString(text);
-        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-        self.vm.push(str_val);
-        const idx = try self.makeConstant(str_val);
-        _ = self.vm.pop();
-        return idx;
-    }
-
-    fn makeSymbolConstant(self: *Compiler, text: []const u8) CompileError!usize {
-        const sym_val = try self.vm.allocateSymbol(text);
-        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-        self.vm.push(sym_val);
-        const idx = try self.makeConstant(sym_val);
-        _ = self.vm.pop();
-        return idx;
-    }
-
-    pub fn emitOpWithOperand(self: *Compiler, short_op: chunk.OpCode, wide_op: chunk.OpCode, operand: usize) CompileError!void {
-        if (short_op == .op_get_local or short_op == .op_set_local) {
-            if (operand > self.max_local_slot) self.max_local_slot = operand;
-        }
-
-        if (operand <= limits.MAX_SHORT_CONSTANTS) {
-            try self.emitOp(short_op);
-            try self.emitByte(@intCast(operand));
-        } else {
-            try self.emitOp(wide_op);
-            try self.emitByte(@intCast((operand >> 8) & 0xff)); // High byte
-            try self.emitByte(@intCast(operand & 0xff)); // Low byte
         }
     }
 
@@ -2409,27 +2199,6 @@ pub const Compiler = struct {
         }
     }
 
-    fn writeJumpOffset(self: *Compiler, target_index: usize, offset: usize) void {
-        // Prevent silent out-of-bounds overwrites in the bytecode array
-        std.debug.assert(target_index + 3 < self.current_chunk.code.items.len);
-
-        self.current_chunk.code.items[target_index] = @intCast((offset >> 24) & 0xFF);
-        self.current_chunk.code.items[target_index + 1] = @intCast((offset >> 16) & 0xFF);
-        self.current_chunk.code.items[target_index + 2] = @intCast((offset >> 8) & 0xFF);
-        self.current_chunk.code.items[target_index + 3] = @intCast(offset & 0xFF);
-    }
-
-    fn isScriptGlobal(self: *Compiler, name_id: ast.StringId) bool {
-        var root: *Compiler = self;
-        while (root.enclosing) |parent| {
-            root = parent;
-        }
-
-        // Use pure string lookup to bypass integer ID caching discrepancies
-        const name_str = self.tree.getString(name_id);
-        return root.script_globals.contains(name_str);
-    }
-
     /// Returns the net stack effect of an OpCode.
     /// Returns `null` if the effect is dynamic (e.g., depends on call arity or operand length).
     fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
@@ -2473,17 +2242,5 @@ pub const Compiler = struct {
 
             else => 0, // Fallback for any implicitly balanced ops
         };
-    }
-
-    pub fn seedLocals(self: *Compiler, names: []const []const u8, offset: u16) void {
-        self.seeded_locals = names;
-        self.seeded_slot_offset = offset;
-        if (names.len > 0) {
-            self.max_local_slot = @intCast(names.len + offset - 1);
-        }
-    }
-
-    pub fn getNextLocalSlot(self: *Compiler) u16 {
-        return @as(u16, @intCast(self.locals.items.len + self.seeded_locals.len + self.seeded_slot_offset));
     }
 };
