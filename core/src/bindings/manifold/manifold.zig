@@ -109,7 +109,7 @@ extern fn manifold_delete_simple_polygon(p: ?*ManifoldSimplePolygon) void;
 extern fn manifold_cross_section_of_simple_polygon(mem: ?*ManifoldCrossSection, p: ?*ManifoldSimplePolygon) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_even_odd_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
 
-extern fn manifold_simplify(manifold: *ManifoldObj, tolerance: f64) ?*ManifoldObj;
+extern fn manifold_simplify(mem: ?*ManifoldObj, manifold: *ManifoldObj, tolerance: f64) ?*ManifoldObj;
 
 extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumProp: c_int, propFunc: *const fn ([*]f64, ManifoldVec3, [*]const f64, ?*anyopaque) callconv(.c) void, ctx: ?*anyopaque) ?*ManifoldObj;
 
@@ -184,7 +184,7 @@ pub fn polyhedron(vert_props: []const f32, tri_verts: []const u32) ?*ManifoldObj
 }
 
 pub fn simplify(obj: *ManifoldObj, tolerance: f64) ?*ManifoldObj {
-    return manifold_simplify(obj, tolerance);
+    return manifold_simplify(manifold_alloc_manifold(), obj, tolerance);
 }
 
 pub fn crossSectionEvenOddPolygons(allocator: std.mem.Allocator, contours: []const []const ManifoldVec2) ?*ManifoldCrossSection {
