@@ -319,3 +319,106 @@ pub fn generateSphere(
 
     return solid_id;
 }
+
+/// Generates a 2D Polygon Face on the XY plane.
+pub fn generatePolygon(
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    pts: []const [2]f64,
+) GeneratorError!topo.FaceId {
+    // 1. Vertices
+    const v_start: u32 = @intCast(t_arena.vertices.items.len);
+    for (pts) |pt| {
+        try t_arena.vertices.append(t_arena.allocator, .{ .point = .{ pt[0], pt[1], 0.0 } });
+    }
+
+    const e_start: u32 = @intCast(t_arena.edges.items.len);
+    const we_start: u32 = @intCast(t_arena.wire_edges.items.len);
+
+    // 2. Edges and Geometric Lines
+    for (pts, 0..) |pt, i| {
+        const next_i = (i + 1) % pts.len;
+        const p1 = .{ pt[0], pt[1], 0.0 };
+        const p2 = .{ pts[next_i][0], pts[next_i][1], 0.0 };
+
+        const line_idx: u24 = @intCast(g_arena.lines.items.len);
+        try g_arena.lines.append(g_arena.allocator, .{ .start = p1, .end = p2 });
+
+        try t_arena.edges.append(t_arena.allocator, .{
+            .front = v_start + @as(u32, @intCast(i)),
+            .back = v_start + @as(u32, @intCast(next_i)),
+            .curve = .{ .index = line_idx, .curve_type = .line },
+        });
+
+        // Add to the outer wire boundary
+        try t_arena.wire_edges.append(t_arena.allocator, .{ .edge = e_start + @as(u32, @intCast(i)), .forward = true });
+    }
+
+    // 3. Topology Wire
+    const w_start: u32 = @intCast(t_arena.wires.items.len);
+    try t_arena.wires.append(t_arena.allocator, .{
+        .edges_start = we_start,
+        .edges_len = @intCast(pts.len),
+    });
+
+    const fw_start: u32 = @intCast(t_arena.face_wires.items.len);
+    try t_arena.face_wires.append(t_arena.allocator, w_start);
+
+    // 4. Geometric Plane (XY Plane)
+    const plane_idx: u24 = @intCast(g_arena.planes.items.len);
+    try g_arena.planes.append(g_arena.allocator, .{ .origin = .{ 0.0, 0.0, 0.0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+
+    // 5. Topology Face
+    const f_start: u32 = @intCast(t_arena.faces.items.len);
+    try t_arena.faces.append(t_arena.allocator, .{
+        .surface = .{ .index = plane_idx, .surface_type = .plane },
+        .forward = true,
+        .wires_start = fw_start,
+        .wires_len = 1,
+    });
+
+    return f_start;
+}
+
+/// Generates a 2D Square Face on the XY plane.
+pub fn generateSquare(
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    size_x: f64,
+    size_y: f64,
+    centered: bool,
+) GeneratorError!topo.FaceId {
+    const ox = if (centered) -size_x / 2.0 else 0.0;
+    const oy = if (centered) -size_y / 2.0 else 0.0;
+    const mx = ox + size_x;
+    const my = oy + size_y;
+
+    const pts = [_][2]f64{
+        .{ ox, oy },
+        .{ mx, oy },
+        .{ mx, my },
+        .{ ox, my },
+    };
+    return generatePolygon(t_arena, g_arena, &pts);
+}
+
+/// Generates a faceted 2D Circle Face on the XY plane.
+pub fn generateCircle(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    radius: f64,
+    segments: i32,
+) GeneratorError!topo.FaceId {
+    // If not specified, default to a smooth 32-sided polygon
+    const segs = if (segments < 3) 32 else @as(usize, @intCast(segments));
+    var pts = try allocator.alloc([2]f64, segs);
+    defer allocator.free(pts);
+
+    for (0..segs) |i| {
+        const angle = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(segs));
+        pts[i] = .{ radius * @cos(angle), radius * @sin(angle) };
+    }
+
+    return generatePolygon(t_arena, g_arena, pts);
+}

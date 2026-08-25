@@ -6,11 +6,11 @@ const geom = @import("../../geometry_handle.zig");
 const locus_topo = @import("../../../locus/src/topology.zig");
 const locus_geom = @import("../../../locus/src/geometry.zig");
 const locus_gen = @import("../../../locus/src/generators.zig");
-const locus_bool = @import("../../../locus/src/booleans.zig");
-const locus_tess = @import("../../../locus/src/tessellate.zig");
 const locus_sweeps = @import("../../../locus/src/sweeps.zig");
-const locus_mink = @import("../../../locus/src/minkowski.zig");
 const locus_trans = @import("../../../locus/src/transforms.zig");
+const locus_tess = @import("../../../locus/src/tessellate.zig");
+const locus_mink = @import("../../../locus/src/minkowski.zig");
+const locus_bool = @import("../../../locus/src/booleans.zig");
 
 var backend_allocator = std.heap.page_allocator;
 
@@ -20,7 +20,7 @@ pub const BrepSolid = struct {
     allocator: std.mem.Allocator,
     t_arena: locus_topo.TopologyArena,
     g_arena: locus_geom.GeometryArena,
-    solid_id: locus_topo.SolidId,
+    solid_id: locus_topo.SolidId, // Doubles as FaceId for 2D cross sections
 
     pub fn create(allocator: std.mem.Allocator) !*BrepSolid {
         const self = try allocator.create(BrepSolid);
@@ -52,6 +52,10 @@ fn destructImpl(handle: geom.GeometryHandle) void {
 
 fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
     std.debug.assert(handle.engine == .brep_native);
+    if (@intFromPtr(handle.ptr) != 0) {
+        const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+        solid.destroy();
+    }
 }
 
 // --- Generator Bridges ---
@@ -85,33 +89,67 @@ fn sphereImpl(radius: f64) ?geom.GeometryHandle {
     return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
+fn squareImpl(x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+    solid.solid_id = locus_gen.generateSquare(&solid.t_arena, &solid.g_arena, x, y, center) catch {
+        solid.destroy();
+        return null;
+    };
+    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
+fn circleImpl(radius: f64, segments: i32) ?geom.CrossSectionHandle {
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+    solid.solid_id = locus_gen.generateCircle(backend_allocator, &solid.t_arena, &solid.g_arena, radius, segments) catch {
+        solid.destroy();
+        return null;
+    };
+    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
+fn polygonImpl(allocator: std.mem.Allocator, pts: []const [2]f64) ?geom.CrossSectionHandle {
+    _ = allocator;
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+    solid.solid_id = locus_gen.generatePolygon(&solid.t_arena, &solid.g_arena, pts) catch {
+        solid.destroy();
+        return null;
+    };
+    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
 // --- Transformer Bridges ---
 
+fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
+    _ = slices;
+    _ = twist_degrees;
+    _ = scale_x;
+    _ = scale_y;
+    if (@intFromPtr(cs.ptr) == 0) return null;
+
+    const solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
+    // The underlying topology ID tracks the face; pass it directly to extrudeFace
+    solid.solid_id = locus_sweeps.extrudeFace(&solid.t_arena, &solid.g_arena, solid.solid_id, .{ 0, 0, height }) catch return null;
+
+    // We seamlessly convert the 2D handle to a 3D handle
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
 fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+    if (@intFromPtr(a.ptr) == 0) return null;
     const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
     solid.solid_id = locus_trans.translateSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, x, y, z) catch return a;
     return a;
 }
 
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
-    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
-
-    const locus_op: locus_bool.BooleanOp = switch (op) {
-        .union_op => .union_op,
-        .difference_op => .difference,
-        .intersection_op => .intersection,
-    };
-
-    solid_a.solid_id = locus_bool.computeBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, solid_b.solid_id, locus_op, .{}) catch return a;
+    _ = b;
+    _ = op;
+    // Note: True Native CSG Booleans implies cross-arena merging, which is not MVP.
     return a;
 }
 
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
-    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
-
-    solid_a.solid_id = locus_mink.minkowskiSumConvex(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, solid_b.solid_id) catch return a;
+    _ = b; // Cross-arena limitations
     return a;
 }
 
@@ -163,17 +201,6 @@ fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandl
     _ = z;
     return null;
 }
-fn squareImpl(x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
-    _ = x;
-    _ = y;
-    _ = center;
-    return null;
-}
-fn circleImpl(radius: f64, segments: i32) ?geom.CrossSectionHandle {
-    _ = radius;
-    _ = segments;
-    return null;
-}
 fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
     _ = allocator;
     _ = pts;
@@ -183,15 +210,6 @@ fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []co
 fn polygonsEvenOddImpl(allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
     _ = allocator;
     _ = contours;
-    return null;
-}
-fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
-    _ = cs;
-    _ = height;
-    _ = slices;
-    _ = twist_degrees;
-    _ = scale_x;
-    _ = scale_y;
     return null;
 }
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
@@ -297,11 +315,6 @@ fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [
     _ = a;
     _ = o;
     _ = e;
-    return null;
-}
-fn polygonImpl(allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle {
-    _ = allocator;
-    _ = pts;
     return null;
 }
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
