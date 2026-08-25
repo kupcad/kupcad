@@ -13,6 +13,8 @@ pub const driver = @import("driver.zig");
 
 test {
     _ = @import("booleans_test.zig");
+    _ = @import("driver_test.zig");
+    _ = @import("generators_test.zig");
     _ = @import("geometry_test.zig");
     _ = @import("tessellate_test.zig");
 }
