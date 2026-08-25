@@ -113,3 +113,30 @@ pub fn clipEars(allocator: std.mem.Allocator, poly: []const math.Vec2, out_trian
         if (!found_ear) break;
     }
 }
+
+/// Traverses a Solid's topology graph and tessellates all of its faces into a single Mesh.
+pub fn tessellateSolid(
+    allocator: std.mem.Allocator,
+    t_arena: *const topo.TopologyArena,
+    g_arena: *const geom.GeometryArena,
+    solid_id: topo.SolidId,
+    out_mesh: *Mesh,
+    config: anytype,
+) !void {
+    const solid = t_arena.solids.items[solid_id];
+
+    // 1. Traverse Shells
+    for (0..solid.shells_len) |s_offset| {
+        const shell_id = t_arena.solid_shells.items[solid.shells_start + s_offset];
+        const shell = t_arena.shells.items[shell_id];
+
+        // 2. Traverse Faces
+        for (0..shell.faces_len) |f_offset| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_offset];
+
+            // 3. Tessellate each face and append to the global mesh buffer
+            // (In a full implementation, `tessellateFace` will append the indices offset by the current vertex count)
+            try tessellateFace(allocator, t_arena, g_arena, face_id, out_mesh, config);
+        }
+    }
+}

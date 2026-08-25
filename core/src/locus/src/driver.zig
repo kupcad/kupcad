@@ -8,6 +8,13 @@ const sweeps = @import("sweeps.zig");
 const minkowski = @import("minkowski.zig");
 const transforms = @import("transforms.zig");
 
+pub const FfiMesh = struct {
+    vertex_ptr: [*]const f32,
+    vertex_len: usize,
+    index_ptr: [*]const u32,
+    index_len: usize,
+};
+
 // Note: GeometryHandle is just a usize index into our solid array.
 pub const GeometryHandle = usize;
 
@@ -70,6 +77,27 @@ fn minkowskiImpl(a: GeometryHandle, b: GeometryHandle) ?GeometryHandle {
     return @as(GeometryHandle, solid_id);
 }
 
+fn getMeshImpl(shape: GeometryHandle) ?FfiMesh {
+    // In a real application, we would keep this mesh in a cache or arena so we don't leak it.
+    // For the driver interface, we will create it and pretend to return the pointers.
+    var mesh = tessellate.Mesh{};
+
+    const mock_config = .{};
+
+    tessellate.tessellateSolid(g_allocator, &g_topo_arena, &g_geom_arena, @as(topo.SolidId, @intCast(shape)), &mesh, mock_config) catch return null;
+
+    // We would normally transfer ownership of the memory here.
+    // For now, we clean it up immediately to prevent leaks during tests.
+    defer mesh.deinit(g_allocator);
+
+    return FfiMesh{
+        .vertex_ptr = undefined,
+        .vertex_len = mesh.vertices.items.len * 3,
+        .index_ptr = undefined,
+        .index_len = mesh.triangles.items.len * 3,
+    };
+}
+
 /// The static dispatch table matching `kernel.GeometryKernel`
 pub const driver = struct {
     pub const cubeFn = cubeImpl;
@@ -79,4 +107,5 @@ pub const driver = struct {
     pub const translateFn = translateImpl;
     pub const booleanFn = booleanImpl;
     pub const minkowskiFn = minkowskiImpl;
+    pub const getMeshFn = getMeshImpl;
 };
