@@ -34,3 +34,28 @@ test "Quickhull: Initial Tetrahedron Construction" {
     try std.testing.expectApproxEqAbs(0.0, normal[1], math.MATH_EPSILON);
     try std.testing.expectApproxEqAbs(-1.0, normal[2], math.MATH_EPSILON);
 }
+
+test "Quickhull: Full Hull Generation (Cube with internal points)" {
+    const alloc = std.testing.allocator;
+
+    // 8 corners of a 10x10x10 cube, plus 3 internal garbage points
+    const points = [_]math.Vec3{
+        .{ 0, 0, 0 },  .{ 10, 0, 0 },  .{ 10, 10, 0 },  .{ 0, 10, 0 },
+        .{ 0, 0, 10 }, .{ 10, 0, 10 }, .{ 10, 10, 10 }, .{ 0, 10, 10 },
+        .{ 5, 5, 5 }, .{ 2, 8, 3 }, .{ 8, 2, 9 }, // Internal points (should be discarded)
+    };
+
+    var builder = qh.QuickhullBuilder.init(alloc, &points);
+    defer builder.deinit();
+
+    try builder.buildHull();
+
+    // Count the active faces (deleted horizon faces are flagged as disabled)
+    var active_faces: usize = 0;
+    for (builder.faces.items) |f| {
+        if (!f.disabled) active_faces += 1;
+    }
+
+    // A convex hull of a cube must triangulate into exactly 12 faces
+    try std.testing.expectEqual(@as(usize, 12), active_faces);
+}

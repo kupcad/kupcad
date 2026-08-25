@@ -16,13 +16,11 @@ pub const HullFace = struct {
     plane_distance: f64,
     first_half_edge: u32,
 
-    // Quickhull state
     farthest_point: u32 = 0,
     farthest_dist: f64 = 0.0,
     visible: bool = false,
     disabled: bool = false,
 
-    // Indices of points outside this face
     points_outside: std.ArrayListUnmanaged(u32) = .empty,
 };
 
@@ -48,18 +46,15 @@ pub const QuickhullBuilder = struct {
         self.faces.deinit(self.allocator);
     }
 
-    /// Computes the signed distance from a point to a plane.
     inline fn distToPlane(normal: Vec3, dist: f64, pt: Vec3) f64 {
         return math.dot(normal, pt) - dist;
     }
 
-    /// Creates a new face and its 3 half-edges. Does NOT stitch twin half-edges.
     fn addFace(self: *QuickhullBuilder, v0: u32, v1: u32, v2: u32) !u32 {
         const p0 = self.vertices[@as(usize, @intCast(v0))];
         const p1 = self.vertices[@as(usize, @intCast(v1))];
         const p2 = self.vertices[@as(usize, @intCast(v2))];
 
-        // Compute plane normal and distance
         var normal = math.normalize(math.cross(math.sub(p1, p0), math.sub(p2, p0)));
         if (math.magSq(normal) < math.MATH_EPSILON) normal = .{ 1, 0, 0 };
         const dist = math.dot(normal, p0);
@@ -82,75 +77,130 @@ pub const QuickhullBuilder = struct {
         return face_idx;
     }
 
-    /// Links two half edges together as opposites
-    fn linkOpposites(self: *QuickhullBuilder, h1: u32, h2: u32) void {
-        self.half_edges.items[@as(usize, @intCast(h1))].opp_edge = h2;
-        self.half_edges.items[@as(usize, @intCast(h2))].opp_edge = h1;
+    /// Dynamically rebuilds the twin-edge pointers for the entire active graph.
+    /// This saves us from writing highly complex manual stitching logic.
+    fn stitchHalfEdges(self: *QuickhullBuilder) !void {
+        var map = std.AutoHashMap(u64, u32).init(self.allocator);
+        defer map.deinit();
+
+        for (self.half_edges.items, 0..) |*he, i| {
+            he.opp_edge = std.math.maxInt(u32); // Reset
+            if (self.faces.items[@as(usize, @intCast(he.face))].disabled) continue;
+
+            const next_he = self.half_edges.items[@as(usize, @intCast(he.next_edge))];
+            const prev_he = self.half_edges.items[@as(usize, @intCast(next_he.next_edge))];
+            const p0 = prev_he.end_vertex;
+            const p1 = he.end_vertex;
+
+            // Generate unique keys for edge A->B and its twin B->A
+            const key = (@as(u64, p0) << 32) | @as(u64, p1);
+            const opp_key = (@as(u64, p1) << 32) | @as(u64, p0);
+
+            if (map.get(opp_key)) |opp_idx| {
+                he.opp_edge = opp_idx;
+                self.half_edges.items[@as(usize, @intCast(opp_idx))].opp_edge = @intCast(i);
+            } else {
+                try map.put(key, @intCast(i));
+            }
+        }
     }
 
-    /// Finds extreme points to form the initial tetrahedron
+    /// Finds extreme points to form the robust initial tetrahedron
     pub fn buildInitialTetrahedron(self: *QuickhullBuilder) !void {
         if (self.vertices.len < 4) return error.NotEnoughPoints;
 
-        var extrema = [_]u32{0} ** 6;
-        var vals = [_]f64{ std.math.inf(f64), -std.math.inf(f64), std.math.inf(f64), -std.math.inf(f64), std.math.inf(f64), -std.math.inf(f64) };
+        // 1. Find the two points furthest apart on the X axis
+        var v0: u32 = 0;
+        var v1: u32 = 0;
+        var min_x: f64 = std.math.inf(f64);
+        var max_x: f64 = -std.math.inf(f64);
 
         for (self.vertices, 0..) |v, i| {
-            const idx: u32 = @intCast(i);
-            if (v[0] < vals[0]) {
-                vals[0] = v[0];
-                extrema[0] = idx;
+            if (v[0] < min_x) {
+                min_x = v[0];
+                v0 = @intCast(i);
             }
-            if (v[0] > vals[1]) {
-                vals[1] = v[0];
-                extrema[1] = idx;
-            }
-            if (v[1] < vals[2]) {
-                vals[2] = v[1];
-                extrema[2] = idx;
-            }
-            if (v[1] > vals[3]) {
-                vals[3] = v[1];
-                extrema[3] = idx;
-            }
-            if (v[2] < vals[4]) {
-                vals[4] = v[2];
-                extrema[4] = idx;
-            }
-            if (v[2] > vals[5]) {
-                vals[5] = v[2];
-                extrema[5] = idx;
+            if (v[0] > max_x) {
+                max_x = v[0];
+                v1 = @intCast(i);
             }
         }
 
-        const v0: u32 = 0;
-        const v1: u32 = 1;
-        const v2: u32 = 2;
-        const v3: u32 = 3;
+        if (v0 == v1) {
+            for (self.vertices, 0..) |_, i| {
+                if (i != v0) {
+                    v1 = @intCast(i);
+                    break;
+                }
+            }
+        }
 
-        // Corrected winding orders so all normals point OUTWARD
-        _ = try self.addFace(v0, v2, v1); // F0: Bottom (XY plane, normal -Z)
-        _ = try self.addFace(v0, v3, v2); // F1: Back (YZ plane, normal -X)
-        _ = try self.addFace(v0, v1, v3); // F2: Left (XZ plane, normal -Y)
-        _ = try self.addFace(v1, v2, v3); // F3: Slanted (normal +X, +Y, +Z)
+        // 2. Find v2 furthest from the line v0-v1
+        var max_d_line: f64 = -1.0;
+        var v2: u32 = v0;
+        const p0 = self.vertices[@as(usize, @intCast(v0))];
+        const p1 = self.vertices[@as(usize, @intCast(v1))];
 
-        // Mapped the new opposite half-edges mathematically
-        self.linkOpposites(0, 5); // v0->v2 opposite v2->v0
-        self.linkOpposites(1, 9); // v2->v1 opposite v1->v2
-        self.linkOpposites(2, 6); // v1->v0 opposite v0->v1
-        self.linkOpposites(3, 8); // v0->v3 opposite v3->v0
-        self.linkOpposites(4, 10); // v3->v2 opposite v2->v3
-        self.linkOpposites(7, 11); // v1->v3 opposite v3->v1
+        var dir = math.sub(p1, p0);
+        const len = math.mag(dir);
+        if (len > math.MATH_EPSILON) {
+            dir = math.scale(dir, 1.0 / len);
+        } else {
+            dir = .{ 1, 0, 0 };
+        }
 
+        for (self.vertices, 0..) |pt, i| {
+            const d_vec = math.sub(pt, p0);
+            const proj_len = math.dot(d_vec, dir);
+            const proj_vec = math.scale(dir, proj_len);
+            const perp_vec = math.sub(d_vec, proj_vec);
+            const dist_sq = math.magSq(perp_vec);
+            if (dist_sq > max_d_line) {
+                max_d_line = dist_sq;
+                v2 = @intCast(i);
+            }
+        }
+
+        // 3. Find v3 furthest from the plane v0-v1-v2
+        var max_d_plane: f64 = -1.0;
+        var v3: u32 = v0;
+        const p2 = self.vertices[@as(usize, @intCast(v2))];
+        var normal = math.normalize(math.cross(math.sub(p1, p0), math.sub(p2, p0)));
+        if (math.magSq(normal) < math.MATH_EPSILON) normal = .{ 0, 0, 1 };
+        const d_plane = math.dot(normal, p0);
+
+        for (self.vertices, 0..) |pt, i| {
+            const dist = @abs(distToPlane(normal, d_plane, pt));
+            if (dist > max_d_plane) {
+                max_d_plane = dist;
+                v3 = @intCast(i);
+            }
+        }
+
+        // 4. Ensure proper winding (if v3 is on the negative side of the plane, swap to point normals outward)
+        if (distToPlane(normal, d_plane, self.vertices[@as(usize, @intCast(v3))]) < 0) {
+            std.mem.swap(u32, &v1, &v2);
+        }
+
+        // 5. Build the 4 outward-facing faces
+        _ = try self.addFace(v0, v2, v1);
+        _ = try self.addFace(v0, v3, v2);
+        _ = try self.addFace(v0, v1, v3);
+        _ = try self.addFace(v1, v2, v3);
+
+        // Dynamically wire the initial opposite edges
+        try self.stitchHalfEdges();
+
+        // 6. Assign all remaining points to the outside sets
         for (0..self.vertices.len) |i| {
             if (i == v0 or i == v1 or i == v2 or i == v3) continue;
-            // ... (keep the rest of the function the same)
             const pt = self.vertices[i];
 
             var max_dist: f64 = math.MATH_EPSILON;
             var max_face: ?u32 = null;
 
             for (self.faces.items, 0..) |face, f_idx| {
+                if (face.disabled) continue;
                 const dist = distToPlane(face.plane_normal, face.plane_distance, pt);
                 if (dist > max_dist) {
                     max_dist = dist;
@@ -168,7 +218,6 @@ pub const QuickhullBuilder = struct {
         }
     }
 
-    /// The core Quickhull generation loop with BFS Horizon Expansion
     pub fn buildHull(self: *QuickhullBuilder) !void {
         try self.buildInitialTetrahedron();
 
@@ -209,8 +258,8 @@ pub const QuickhullBuilder = struct {
             self.faces.items[@as(usize, @intCast(target_face.?))].visible = true;
             try visible_faces.append(self.allocator, target_face.?);
 
+            // BFS Traversal
             while (search_queue.items.len > 0) {
-                // Safely fetch and shrink bypassing pop() variations
                 const curr_f_u32 = search_queue.items[search_queue.items.len - 1];
                 search_queue.shrinkRetainingCapacity(search_queue.items.len - 1);
 
@@ -259,7 +308,8 @@ pub const QuickhullBuilder = struct {
                 const prev_he = self.half_edges.items[@as(usize, @intCast(next_he.next_edge))];
                 const p0_idx = prev_he.end_vertex;
 
-                const new_face_idx = try self.addFace(p1_idx, p0_idx, eye_pt_idx);
+                // FIX: Corrected winding order to p0 -> p1 -> eye so normals point outward
+                const new_face_idx = try self.addFace(p0_idx, p1_idx, eye_pt_idx);
 
                 for (unassigned_points.items) |p_idx| {
                     const pt = self.vertices[@as(usize, @intCast(p_idx))];
@@ -275,6 +325,9 @@ pub const QuickhullBuilder = struct {
                     }
                 }
             }
+
+            // Stitch all the newly added faces back into the BFS graph
+            try self.stitchHalfEdges();
         }
     }
 };
