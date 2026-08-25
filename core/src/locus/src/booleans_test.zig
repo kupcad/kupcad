@@ -249,3 +249,30 @@ test "CSG: Face Splitting" {
     const new_sub_wire = t_arena.wires.items[new_sub_wire_id];
     try std.testing.expectEqual(@as(usize, 4), new_sub_wire.edges_len);
 }
+
+test "CSG: 2D Point-in-Polygon Algorithm" {
+    // We can expose the private function for testing using @call,
+    // or since this is a test block within the same compilation unit, we can just call it.
+    // Ensure `isPointInPolygon2D` is accessible (add `pub` if needed).
+
+    // Create a 2D chevron / arrow shape
+    const polygon = [_][2]f64{
+        .{ 0.0, 0.0 },
+        .{ 10.0, 0.0 },
+        .{ 5.0, 5.0 }, // The inner notch of the chevron
+        .{ 10.0, 10.0 },
+        .{ 0.0, 10.0 },
+    };
+
+    // 1. Point strictly inside the top wing
+    try std.testing.expectEqual(true, booleans.isPointInPolygon2D(.{ 2.0, 8.0 }, &polygon));
+
+    // 2. Point strictly inside the bottom wing
+    try std.testing.expectEqual(true, booleans.isPointInPolygon2D(.{ 2.0, 2.0 }, &polygon));
+
+    // 3. Point outside (inside the notch of the chevron)
+    try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 7.0, 5.0 }, &polygon));
+
+    // 4. Point completely outside the bounding box
+    try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 15.0, 5.0 }, &polygon));
+}

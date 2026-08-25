@@ -95,12 +95,20 @@ fn classifyFace(
     _ = allocator;
     const face = t_arena.faces.items[face_id];
 
-    // 1. Calculate a sample point on the face.
-    // For a strict implementation, this should be the centroid.
-    // Here we sample the very first vertex of the face.
+    // 1. Calculate a sample point on the face using the Centroid.
+    // This avoids edge-grazing collinearity issues during raycasting.
     const first_wire = t_arena.wires.items[t_arena.face_wires.items[face.wires_start]];
-    const first_edge = t_arena.edges.items[t_arena.wire_edges.items[first_wire.edges_start].edge];
-    const sample_pt = t_arena.vertices.items[first_edge.front].point;
+    var centroid = math.Vec3{ 0, 0, 0 };
+    var v_count: f64 = 0.0;
+
+    for (0..first_wire.edges_len) |i| {
+        const d_edge = t_arena.wire_edges.items[first_wire.edges_start + i];
+        const edge = t_arena.edges.items[d_edge.edge];
+        const v_id = if (d_edge.forward) edge.front else edge.back;
+        centroid = math.add(centroid, t_arena.vertices.items[v_id].point);
+        v_count += 1.0;
+    }
+    const sample_pt = math.scale(centroid, 1.0 / v_count);
 
     // 2. We shift the sample point slightly along the face normal to avoid boundary ambiguity
     var normal = math.Vec3{ 0, 0, 1 };
@@ -417,6 +425,31 @@ fn rayIntersectPlane(
     return null;
 }
 
+/// Projects a 3D point onto a Plane's local 2D UV coordinate system.
+fn projectToPlane(pt: math.Vec3, origin: math.Vec3, u_axis: math.Vec3, v_axis: math.Vec3) [2]f64 {
+    const v = math.sub(pt, origin);
+    return .{ math.dot(v, u_axis), math.dot(v, v_axis) };
+}
+
+/// Tests if a 2D UV point is inside a 2D polygon using the Ray Casting (Crossing Number) algorithm.
+pub fn isPointInPolygon2D(pt: [2]f64, polygon: []const [2]f64) bool {
+    var inside = false;
+    var j: usize = polygon.len - 1;
+    for (0..polygon.len) |i| {
+        const pi = polygon[i];
+        const pj = polygon[j];
+
+        // Check if a horizontal ray cast from the point intersects the edge
+        if (((pi[1] > pt[1]) != (pj[1] > pt[1])) and
+            (pt[0] < (pj[0] - pi[0]) * (pt[1] - pi[1]) / (pj[1] - pi[1]) + pi[0]))
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    return inside;
+}
+
 /// Determines if a 3D point is strictly inside a Solid using the Even-Odd Raycast rule.
 pub fn isPointInsideSolid(
     t_arena: *const topo.TopologyArena,
@@ -435,7 +468,6 @@ pub fn isPointInsideSolid(
             const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
             const face = t_arena.faces.items[face_id];
 
-            // For now, assume all faces are planes
             if (face.surface.surface_type != .plane) continue;
             const plane = g_arena.planes.items[face.surface.index];
             const normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
@@ -443,35 +475,33 @@ pub fn isPointInsideSolid(
             if (rayIntersectPlane(pt, ray_dir, plane.origin, normal)) |t| {
                 const hit_pt = math.add(pt, math.scale(ray_dir, t));
 
-                // --- Point-in-Polygon Check (Simplified Bounding Box for Skeleton) ---
-                // In a production kernel, we project hit_pt into the 2D UV space of the plane
-                // and run a 2D winding number check against the face's wires.
-                // For this DOD skeleton, we do a quick AABB bounds check on the face's vertices.
-                var min_b = math.Vec3{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
-                var max_b = math.Vec3{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
+                // 1. Project the hit point into 2D UV Space
+                const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
 
-                for (0..face.wires_len) |w_off| {
-                    const wire = t_arena.wires.items[t_arena.face_wires.items[face.wires_start + w_off]];
-                    for (0..wire.edges_len) |e_off| {
-                        const edge = t_arena.edges.items[t_arena.wire_edges.items[wire.edges_start + e_off].edge];
-                        for ([_]topo.VertexId{ edge.front, edge.back }) |v_id| {
-                            const v_pt = t_arena.vertices.items[v_id].point;
-                            min_b[0] = @min(min_b[0], v_pt[0]);
-                            min_b[1] = @min(min_b[1], v_pt[1]);
-                            min_b[2] = @min(min_b[2], v_pt[2]);
-                            max_b[0] = @max(max_b[0], v_pt[0]);
-                            max_b[1] = @max(max_b[1], v_pt[1]);
-                            max_b[2] = @max(max_b[2], v_pt[2]);
-                        }
+                // 2. Extract the face's topological wire and project it to 2D
+                // We use a fixed buffer to avoid heap allocations in the inner loop!
+                var polygon_buf: [128][2]f64 = undefined;
+                var poly_len: usize = 0;
+
+                // Assume the first wire is the outer boundary
+                const wire = t_arena.wires.items[t_arena.face_wires.items[face.wires_start]];
+
+                for (0..wire.edges_len) |e_off| {
+                    const d_edge = t_arena.wire_edges.items[wire.edges_start + e_off];
+                    const edge = t_arena.edges.items[d_edge.edge];
+
+                    // We only need the starting vertex of each edge to form the polygon loop
+                    const v_id = if (d_edge.forward) edge.front else edge.back;
+                    const v_pt = t_arena.vertices.items[v_id].point;
+
+                    if (poly_len < polygon_buf.len) {
+                        polygon_buf[poly_len] = projectToPlane(v_pt, plane.origin, plane.u_axis, plane.v_axis);
+                        poly_len += 1;
                     }
                 }
 
-                // Add slight epsilon padding to AABB for robustness
-                const eps = 1e-4;
-                if (hit_pt[0] >= min_b[0] - eps and hit_pt[0] <= max_b[0] + eps and
-                    hit_pt[1] >= min_b[1] - eps and hit_pt[1] <= max_b[1] + eps and
-                    hit_pt[2] >= min_b[2] - eps and hit_pt[2] <= max_b[2] + eps)
-                {
+                // 3. Perform the rigorous 2D point-in-polygon test
+                if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len])) {
                     hit_count += 1;
                 }
             }
