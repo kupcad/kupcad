@@ -85,7 +85,6 @@ pub fn marchIntersection(
 }
 
 /// Determines if a face from Solid A is inside, outside, or coplanar to Solid B.
-/// (This will eventually use Raycasting + Winding numbers).
 fn classifyFace(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -94,11 +93,31 @@ fn classifyFace(
     target_solid_id: topo.SolidId,
 ) FaceClassification {
     _ = allocator;
-    _ = t_arena;
-    _ = g_arena;
-    _ = face_id;
-    _ = target_solid_id;
-    // STUB: Defaulting to outside so the compiler passes.
+    const face = t_arena.faces.items[face_id];
+
+    // 1. Calculate a sample point on the face.
+    // For a strict implementation, this should be the centroid.
+    // Here we sample the very first vertex of the face.
+    const first_wire = t_arena.wires.items[t_arena.face_wires.items[face.wires_start]];
+    const first_edge = t_arena.edges.items[t_arena.wire_edges.items[first_wire.edges_start].edge];
+    const sample_pt = t_arena.vertices.items[first_edge.front].point;
+
+    // 2. We shift the sample point slightly along the face normal to avoid boundary ambiguity
+    var normal = math.Vec3{ 0, 0, 1 };
+    if (face.surface.surface_type == .plane) {
+        const plane = g_arena.planes.items[face.surface.index];
+        normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+        if (!face.forward) normal = math.scale(normal, -1.0);
+    }
+
+    // Shift slightly inward (against the normal) to test if the body of the face is inside
+    const test_pt = math.sub(sample_pt, math.scale(normal, 1e-4));
+
+    // 3. Fire the Raycaster!
+    if (isPointInsideSolid(t_arena, g_arena, target_solid_id, test_pt)) {
+        return .inside;
+    }
+
     return .outside;
 }
 
@@ -180,7 +199,62 @@ fn intersectLinePlane(
     return null;
 }
 
-/// Splits a single topological edge at a given 3D point.
+/// Scans all wires in the topology arena. If a wire contains `old_edge`, it builds a
+/// brand new edge sequence at the end of the array, replacing the split edge with `e1` and `e2`
+/// while preserving the correct topological winding order.
+fn replaceEdgeInAllWires(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    old_edge: topo.EdgeId,
+    e1: topo.EdgeId,
+    e2: topo.EdgeId,
+) !void {
+    // Iterate through all active wires by reference so we can mutate them
+    for (t_arena.wires.items) |*wire| {
+        var contains_edge = false;
+
+        // Check if this wire contains the edge we just split
+        for (0..wire.edges_len) |i| {
+            if (t_arena.wire_edges.items[wire.edges_start + i].edge == old_edge) {
+                contains_edge = true;
+                break;
+            }
+        }
+
+        if (!contains_edge) continue;
+
+        // The wire needs reweaving. We append a new sequence to the end of wire_edges
+        // to avoid shifting memory and corrupting the indices of other wires.
+        const new_start: u32 = @intCast(t_arena.wire_edges.items.len);
+        var new_len: u32 = 0;
+
+        for (0..wire.edges_len) |i| {
+            const d_edge = t_arena.wire_edges.items[wire.edges_start + i];
+
+            if (d_edge.edge == old_edge) {
+                // We must respect the original winding order of the split edge!
+                if (d_edge.forward) {
+                    try t_arena.wire_edges.append(allocator, .{ .edge = e1, .forward = true });
+                    try t_arena.wire_edges.append(allocator, .{ .edge = e2, .forward = true });
+                } else {
+                    // If traversed backward, we hit the second segment (e2) BEFORE the first (e1)
+                    try t_arena.wire_edges.append(allocator, .{ .edge = e2, .forward = false });
+                    try t_arena.wire_edges.append(allocator, .{ .edge = e1, .forward = false });
+                }
+                new_len += 2;
+            } else {
+                try t_arena.wire_edges.append(allocator, d_edge);
+                new_len += 1;
+            }
+        }
+
+        // Point the wire to the newly appended memory segment
+        wire.edges_start = new_start;
+        wire.edges_len = new_len;
+    }
+}
+
+/// Splits a single topological edge at a given 3D point and dynamically re-weaves the graph.
 /// Returns the new VertexId and the two new EdgeIds.
 pub fn splitEdgeTopologically(
     allocator: std.mem.Allocator,
@@ -220,10 +294,97 @@ pub fn splitEdgeTopologically(
         .curve = .{ .index = l2_idx, .curve_type = .line },
     });
 
-    // Note: To fully apply this split, we would now scan `t_arena.wire_edges`
-    // for `orig_edge` and replace it with `e1_id` and `e2_id`.
+    // 4. Update the global graph!
+    try replaceEdgeInAllWires(allocator, t_arena, edge_id, e1_id, e2_id);
 
     return .{ .v_mid = v_mid_id, .e1 = e1_id, .e2 = e2_id };
+}
+
+/// Computes the intersection distance (t) between a Ray and a Plane.
+/// Returns null if parallel or if the intersection is behind the ray origin.
+fn rayIntersectPlane(
+    ray_origin: math.Vec3,
+    ray_dir: math.Vec3,
+    plane_origin: math.Vec3,
+    plane_normal: math.Vec3,
+) ?f64 {
+    const denom = math.dot(ray_dir, plane_normal);
+
+    // If denominator is near zero, ray is parallel to the plane
+    if (@abs(denom) < math.MATH_EPSILON) return null;
+
+    const p0l0 = math.sub(plane_origin, ray_origin);
+    const t = math.dot(p0l0, plane_normal) / denom;
+
+    // Only return positive hits (in front of the ray)
+    if (t > math.MATH_EPSILON) {
+        return t;
+    }
+    return null;
+}
+
+/// Determines if a 3D point is strictly inside a Solid using the Even-Odd Raycast rule.
+pub fn isPointInsideSolid(
+    t_arena: *const topo.TopologyArena,
+    g_arena: *const geom.GeometryArena,
+    solid_id: topo.SolidId,
+    pt: math.Vec3,
+) bool {
+    const ray_dir = math.Vec3{ 1.0, 0.0, 0.0 }; // Cast ray along +X axis
+    var hit_count: u32 = 0;
+
+    const solid = t_arena.solids.items[solid_id];
+
+    for (0..solid.shells_len) |s_off| {
+        const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = t_arena.faces.items[face_id];
+
+            // For now, assume all faces are planes
+            if (face.surface.surface_type != .plane) continue;
+            const plane = g_arena.planes.items[face.surface.index];
+            const normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+
+            if (rayIntersectPlane(pt, ray_dir, plane.origin, normal)) |t| {
+                const hit_pt = math.add(pt, math.scale(ray_dir, t));
+
+                // --- Point-in-Polygon Check (Simplified Bounding Box for Skeleton) ---
+                // In a production kernel, we project hit_pt into the 2D UV space of the plane
+                // and run a 2D winding number check against the face's wires.
+                // For this DOD skeleton, we do a quick AABB bounds check on the face's vertices.
+                var min_b = math.Vec3{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
+                var max_b = math.Vec3{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
+
+                for (0..face.wires_len) |w_off| {
+                    const wire = t_arena.wires.items[t_arena.face_wires.items[face.wires_start + w_off]];
+                    for (0..wire.edges_len) |e_off| {
+                        const edge = t_arena.edges.items[t_arena.wire_edges.items[wire.edges_start + e_off].edge];
+                        for ([_]topo.VertexId{ edge.front, edge.back }) |v_id| {
+                            const v_pt = t_arena.vertices.items[v_id].point;
+                            min_b[0] = @min(min_b[0], v_pt[0]);
+                            min_b[1] = @min(min_b[1], v_pt[1]);
+                            min_b[2] = @min(min_b[2], v_pt[2]);
+                            max_b[0] = @max(max_b[0], v_pt[0]);
+                            max_b[1] = @max(max_b[1], v_pt[1]);
+                            max_b[2] = @max(max_b[2], v_pt[2]);
+                        }
+                    }
+                }
+
+                // Add slight epsilon padding to AABB for robustness
+                const eps = 1e-4;
+                if (hit_pt[0] >= min_b[0] - eps and hit_pt[0] <= max_b[0] + eps and
+                    hit_pt[1] >= min_b[1] - eps and hit_pt[1] <= max_b[1] + eps and
+                    hit_pt[2] >= min_b[2] - eps and hit_pt[2] <= max_b[2] + eps)
+                {
+                    hit_count += 1;
+                }
+            }
+        }
+    }
+
+    return (hit_count % 2) != 0;
 }
 
 /// The Holy Grail: Computes the Boolean CSG operation between two solids.
