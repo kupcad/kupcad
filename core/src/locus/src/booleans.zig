@@ -11,6 +11,11 @@ pub const BooleanError = error{
     DidNotConverge,
 };
 
+pub const LoopError = error{
+    OpenManifold, // Thrown if edges don't form a perfectly closed loop
+    OutOfMemory,
+};
+
 /// Snaps a 3D point exactly onto the intersection curve of two surfaces.
 fn snapToIntersection(
     g_arena: *const geom.GeometryArena,
@@ -400,6 +405,82 @@ pub fn splitFaceTopologically(
     });
 
     return new_face_id;
+}
+
+/// Takes an unordered bag of edges and traces them end-to-end to form closed Wires.
+/// Automatically detects winding orientation. Returns the IDs of the new Wires.
+pub fn traceLoopsTopologically(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    edge_bag: []const topo.EdgeId,
+) LoopError!std.ArrayListUnmanaged(topo.WireId) {
+    var new_wires: std.ArrayListUnmanaged(topo.WireId) = .empty;
+
+    // Track which edges we have already woven into a loop
+    var visited = std.AutoHashMap(topo.EdgeId, void).init(allocator);
+    defer visited.deinit();
+
+    for (edge_bag) |start_edge_id| {
+        if (visited.contains(start_edge_id)) continue;
+
+        var current_loop_edges: std.ArrayListUnmanaged(topo.DirectedEdge) = .empty;
+        defer current_loop_edges.deinit(allocator);
+
+        // We arbitrarily pick the first unvisited edge to start a new loop.
+        // We will assume it travels "forward" to seed the traversal direction.
+        try visited.put(start_edge_id, {});
+        try current_loop_edges.append(allocator, .{ .edge = start_edge_id, .forward = true });
+
+        const start_v = t_arena.edges.items[start_edge_id].front;
+        var current_v = t_arena.edges.items[start_edge_id].back;
+
+        // Trace the graph until the loop closes back to `start_v`
+        while (current_v != start_v) {
+            var found_next = false;
+
+            for (edge_bag) |candidate_id| {
+                if (visited.contains(candidate_id)) continue;
+
+                const cand_edge = t_arena.edges.items[candidate_id];
+
+                if (cand_edge.front == current_v) {
+                    // The candidate's front connects to us. It flows forward.
+                    try visited.put(candidate_id, {});
+                    try current_loop_edges.append(allocator, .{ .edge = candidate_id, .forward = true });
+                    current_v = cand_edge.back;
+                    found_next = true;
+                    break;
+                } else if (cand_edge.back == current_v) {
+                    // The candidate's back connects to us. We must traverse it backward.
+                    try visited.put(candidate_id, {});
+                    try current_loop_edges.append(allocator, .{ .edge = candidate_id, .forward = false });
+                    current_v = cand_edge.front;
+                    found_next = true;
+                    break;
+                }
+            }
+
+            if (!found_next) {
+                // We reached a dead end! The edges do not form a closed loop.
+                // In a production CAD kernel, this means a floating point tolerance
+                // failed during the edge-splitting phase, leaving a gap.
+                return error.OpenManifold;
+            }
+        }
+
+        // Flush the fully closed loop to the DOD arena
+        if (current_loop_edges.items.len > 0) {
+            const w_start: u32 = @intCast(t_arena.wire_edges.items.len);
+            try t_arena.wire_edges.appendSlice(allocator, current_loop_edges.items);
+
+            const w_id: u32 = @intCast(t_arena.wires.items.len);
+            try t_arena.wires.append(allocator, .{ .edges_start = w_start, .edges_len = @intCast(current_loop_edges.items.len) });
+
+            try new_wires.append(allocator, w_id);
+        }
+    }
+
+    return new_wires;
 }
 
 /// Computes the intersection distance (t) between a Ray and a Plane.

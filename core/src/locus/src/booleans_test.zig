@@ -276,3 +276,58 @@ test "CSG: 2D Point-in-Polygon Algorithm" {
     // 4. Point completely outside the bounding box
     try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 15.0, 5.0 }, &polygon));
 }
+
+test "CSG: Loop Tracer (Graph Traversal)" {
+    const alloc = std.testing.allocator;
+
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit();
+
+    // 1. Create 4 vertices forming a square
+    const v0: u32 = @intCast(t_arena.vertices.items.len);
+    try t_arena.vertices.append(alloc, .{ .point = .{ 0, 0, 0 } });
+    const v1: u32 = @intCast(t_arena.vertices.items.len);
+    try t_arena.vertices.append(alloc, .{ .point = .{ 1, 0, 0 } });
+    const v2: u32 = @intCast(t_arena.vertices.items.len);
+    try t_arena.vertices.append(alloc, .{ .point = .{ 1, 1, 0 } });
+    const v3: u32 = @intCast(t_arena.vertices.items.len);
+    try t_arena.vertices.append(alloc, .{ .point = .{ 0, 1, 0 } });
+
+    // 2. Create 4 edges, intentionally scrambling their direction to test the auto-winding
+    const e0: u32 = @intCast(t_arena.edges.items.len);
+    try t_arena.edges.append(alloc, .{ .front = v0, .back = v1, .curve = undefined }); // Forward
+    const e1: u32 = @intCast(t_arena.edges.items.len);
+    try t_arena.edges.append(alloc, .{ .front = v2, .back = v1, .curve = undefined }); // BACKWARD!
+    const e2: u32 = @intCast(t_arena.edges.items.len);
+    try t_arena.edges.append(alloc, .{ .front = v2, .back = v3, .curve = undefined }); // Forward
+    const e3: u32 = @intCast(t_arena.edges.items.len);
+    try t_arena.edges.append(alloc, .{ .front = v0, .back = v3, .curve = undefined }); // BACKWARD!
+
+    // 3. Throw the edges into an unordered bag
+    const edge_bag = [_]topo.EdgeId{ e2, e0, e3, e1 }; // Totally random order
+
+    // 4. Run the Loop Tracer!
+    var new_wires = try booleans.traceLoopsTopologically(alloc, &t_arena, &edge_bag);
+    defer new_wires.deinit(alloc);
+
+    // 5. Validation
+    // It should have successfully found 1 closed loop.
+    try std.testing.expectEqual(@as(usize, 1), new_wires.items.len);
+
+    const wire_id = new_wires.items[0];
+    const wire = t_arena.wires.items[wire_id];
+
+    // The wire must contain exactly 4 edges
+    try std.testing.expectEqual(@as(usize, 4), wire.edges_len);
+
+    // Let's verify it correctly figured out the forward/backward winding!
+    // Since it started on e2 (v2->v3), the next connecting edge MUST be e3 (v0->v3) traversing BACKWARD (v3->v0).
+    const d_edge_0 = t_arena.wire_edges.items[wire.edges_start + 0]; // e2
+    const d_edge_1 = t_arena.wire_edges.items[wire.edges_start + 1]; // e3
+
+    try std.testing.expectEqual(e2, d_edge_0.edge);
+    try std.testing.expectEqual(true, d_edge_0.forward); // v2 -> v3
+
+    try std.testing.expectEqual(e3, d_edge_1.edge);
+    try std.testing.expectEqual(false, d_edge_1.forward); // v3 -> v0
+}
