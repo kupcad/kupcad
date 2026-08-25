@@ -102,8 +102,8 @@ fn classifyFace(
     return .outside;
 }
 
-/// Splits the faces of both solids along their intersection curves.
-/// Returns a list of the newly generated sub-faces for each solid.
+/// Scans the boundary edges of Solid A against the faces of Solid B.
+/// If an edge pierces a face, it geometrically splits the edge.
 fn splitIntersectingFaces(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -111,15 +111,119 @@ fn splitIntersectingFaces(
     solid_a: topo.SolidId,
     solid_b: topo.SolidId,
 ) !struct { faces_a: []topo.FaceId, faces_b: []topo.FaceId } {
-    _ = allocator;
-    _ = t_arena;
-    _ = g_arena;
-    _ = solid_a;
-    _ = solid_b;
-    // STUB: In a real implementation, this loops through A's faces and B's faces,
-    // runs `marchIntersection`, and splits the topology.
-    // For now, we return empty arrays to satisfy the pipeline structure.
+
+    // (This is a simplified O(N^2) naive broadphase for the skeleton).
+    const sa = t_arena.solids.items[solid_a];
+    const sb = t_arena.solids.items[solid_b];
+
+    // Iterate through all faces of Solid B (the cutting planes)
+    for (0..sb.shells_len) |sb_off| {
+        const shell_b = t_arena.shells.items[t_arena.solid_shells.items[sb.shells_start + sb_off]];
+        for (0..shell_b.faces_len) |fb_off| {
+            const face_b = t_arena.faces.items[t_arena.shell_faces.items[shell_b.faces_start + fb_off]];
+
+            // For now, assume cutting faces are planes
+            if (face_b.surface.surface_type != .plane) continue;
+            const plane_b = g_arena.planes.items[face_b.surface.index];
+
+            // Iterate through all edges of Solid A (the target edges)
+            for (0..sa.shells_len) |sa_off| {
+                const shell_a = t_arena.shells.items[t_arena.solid_shells.items[sa.shells_start + sa_off]];
+                for (0..shell_a.faces_len) |fa_off| {
+                    const face_a = t_arena.faces.items[t_arena.shell_faces.items[shell_a.faces_start + fa_off]];
+                    for (0..face_a.wires_len) |wa_off| {
+                        const wire_a = t_arena.wires.items[t_arena.face_wires.items[face_a.wires_start + wa_off]];
+                        for (0..wire_a.edges_len) |ea_off| {
+                            const edge_id = t_arena.wire_edges.items[wire_a.edges_start + ea_off].edge;
+                            const edge = t_arena.edges.items[edge_id];
+
+                            if (edge.curve.curve_type != .line) continue;
+                            const line = g_arena.lines.items[edge.curve.index];
+
+                            // Evaluate intersection
+                            const normal = math.cross(plane_b.u_axis, plane_b.v_axis);
+                            if (intersectLinePlane(line.start, line.end, plane_b.origin, normal)) |hit_pt| {
+                                // Split the edge!
+                                _ = try splitEdgeTopologically(allocator, t_arena, g_arena, edge_id, hit_pt);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     return .{ .faces_a = &[_]topo.FaceId{}, .faces_b = &[_]topo.FaceId{} };
+}
+
+/// Computes the exact 3D intersection point between a Line and a Plane.
+/// Returns null if they are parallel or the intersection is outside the line segment.
+fn intersectLinePlane(
+    line_start: math.Vec3,
+    line_end: math.Vec3,
+    plane_origin: math.Vec3,
+    plane_normal: math.Vec3,
+) ?math.Vec3 {
+    const dir = math.sub(line_end, line_start);
+    const denominator = math.dot(dir, plane_normal);
+
+    // If denominator is near 0, the line is parallel to the plane
+    if (@abs(denominator) < math.MATH_EPSILON) return null;
+
+    const p0l0 = math.sub(plane_origin, line_start);
+    const t = math.dot(p0l0, plane_normal) / denominator;
+
+    // Check if the intersection happens strictly within the line segment bounds
+    if (t > math.MATH_EPSILON and t < (1.0 - math.MATH_EPSILON)) {
+        return math.add(line_start, math.scale(dir, t));
+    }
+    return null;
+}
+
+/// Splits a single topological edge at a given 3D point.
+/// Returns the new VertexId and the two new EdgeIds.
+pub fn splitEdgeTopologically(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    edge_id: topo.EdgeId,
+    split_pt: math.Vec3,
+) !struct { v_mid: topo.VertexId, e1: topo.EdgeId, e2: topo.EdgeId } {
+    const orig_edge = t_arena.edges.items[edge_id];
+
+    // 1. Create the new Vertex
+    const v_mid_id: u32 = @intCast(t_arena.vertices.items.len);
+    try t_arena.vertices.append(allocator, .{ .point = split_pt });
+
+    // 2. Create the two new Geometric Lines
+    const p_front = t_arena.vertices.items[orig_edge.front].point;
+    const p_back = t_arena.vertices.items[orig_edge.back].point;
+
+    const l1_idx: u24 = @intCast(g_arena.lines.items.len);
+    try g_arena.lines.append(allocator, .{ .start = p_front, .end = split_pt });
+
+    const l2_idx: u24 = @intCast(g_arena.lines.items.len);
+    try g_arena.lines.append(allocator, .{ .start = split_pt, .end = p_back });
+
+    // 3. Create the two new Topological Edges
+    const e1_id: u32 = @intCast(t_arena.edges.items.len);
+    try t_arena.edges.append(allocator, .{
+        .front = orig_edge.front,
+        .back = v_mid_id,
+        .curve = .{ .index = l1_idx, .curve_type = .line },
+    });
+
+    const e2_id: u32 = @intCast(t_arena.edges.items.len);
+    try t_arena.edges.append(allocator, .{
+        .front = v_mid_id,
+        .back = orig_edge.back,
+        .curve = .{ .index = l2_idx, .curve_type = .line },
+    });
+
+    // Note: To fully apply this split, we would now scan `t_arena.wire_edges`
+    // for `orig_edge` and replace it with `e1_id` and `e2_id`.
+
+    return .{ .v_mid = v_mid_id, .e1 = e1_id, .e2 = e2_id };
 }
 
 /// The Holy Grail: Computes the Boolean CSG operation between two solids.

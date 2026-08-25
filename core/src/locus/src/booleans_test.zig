@@ -84,3 +84,49 @@ test "CSG Pipeline: High-Level Operations (Stubbed)" {
     // Expect 0 faces (Empty Solid)
     try std.testing.expectEqual(@as(usize, 0), int_shell.faces_len);
 }
+
+test "CSG: Topological Edge Splitting" {
+    const alloc = std.testing.allocator;
+
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit();
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit();
+
+    // Setup an isolated Edge spanning X=0 to X=10
+    const v0 = @as(u32, @intCast(t_arena.vertices.items.len));
+    try t_arena.vertices.append(alloc, .{ .point = .{ 0, 0, 0 } });
+
+    const v1 = @as(u32, @intCast(t_arena.vertices.items.len));
+    try t_arena.vertices.append(alloc, .{ .point = .{ 10, 0, 0 } });
+
+    const l_idx = @as(u24, @intCast(g_arena.lines.items.len));
+    try g_arena.lines.append(alloc, .{ .start = .{ 0, 0, 0 }, .end = .{ 10, 0, 0 } });
+
+    const edge_id = @as(u32, @intCast(t_arena.edges.items.len));
+    try t_arena.edges.append(alloc, .{
+        .front = v0,
+        .back = v1,
+        .curve = .{ .index = l_idx, .curve_type = .line },
+    });
+
+    // Simulate an intersection at X=5
+    const split_pt = math.Vec3{ 5, 0, 0 };
+
+    // This is the private function, we declare it public temporarily or use @call if needed,
+    // but since they are in the same module in a real build, it works.
+    const result = try booleans.splitEdgeTopologically(alloc, &t_arena, &g_arena, edge_id, split_pt);
+
+    // Validation
+    try std.testing.expectEqual(@as(usize, 3), t_arena.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 3), t_arena.edges.items.len); // Original + 2 New
+
+    const new_e1 = t_arena.edges.items[result.e1];
+    const new_e2 = t_arena.edges.items[result.e2];
+
+    try std.testing.expectEqual(v0, new_e1.front);
+    try std.testing.expectEqual(result.v_mid, new_e1.back);
+
+    try std.testing.expectEqual(result.v_mid, new_e2.front);
+    try std.testing.expectEqual(v1, new_e2.back);
+}
