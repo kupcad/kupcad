@@ -5,8 +5,6 @@ const math = @import("math.zig");
 
 pub const TransformError = error{OutOfMemory};
 
-/// Traverses a Solid's graph and collects all unique underlying geometry indices
-/// into HashMaps so we only transform the geometry belonging to this specific solid.
 fn collectSolidGeometry(
     allocator: std.mem.Allocator,
     t_arena: *const topo.TopologyArena,
@@ -22,41 +20,36 @@ fn collectSolidGeometry(
     const solid = t_arena.solids.items[solid_id];
     for (0..solid.shells_len) |s_off| {
         const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start + s_off]];
-
         for (0..shell.faces_len) |f_off| {
             const face = t_arena.faces.items[t_arena.shell_faces.items[shell.faces_start + f_off]];
 
-            // Collect Surfaces
             switch (face.surface.surface_type) {
                 .plane => try planes.put(face.surface.index, {}),
                 .sphere => try spheres.put(face.surface.index, {}),
                 .cylinder => try cylinders.put(face.surface.index, {}),
-                else => {}, // Ignore nurbs/others for this MVP
+                else => {},
             }
 
-            for (0..face.wires_len) |w_off| {
-                const wire = t_arena.wires.items[t_arena.face_wires.items[face.wires_start + w_off]];
-
-                for (0..wire.edges_len) |e_off| {
-                    const edge = t_arena.edges.items[t_arena.wire_edges.items[wire.edges_start + e_off].edge];
-
-                    // Collect Vertices
-                    try vertices.put(edge.front, {});
-                    try vertices.put(edge.back, {});
-
-                    // Collect Curves
-                    switch (edge.curve.curve_type) {
-                        .line => try lines.put(edge.curve.index, {}),
-                        .circle_arc => try arcs.put(edge.curve.index, {}),
-                        else => {}, // Ignore nurbs/others for this MVP
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+                const loop = t_arena.loops.items[loop_id];
+                var current_he = loop.first_half_edge;
+                while (true) {
+                    const he = t_arena.half_edges.items[current_he];
+                    try vertices.put(he.start_vertex, {});
+                    switch (he.curve.curve_type) {
+                        .line => try lines.put(he.curve.index, {}),
+                        .circle_arc => try arcs.put(he.curve.index, {}),
+                        else => {},
                     }
+                    current_he = he.next;
+                    if (current_he == loop.first_half_edge) break;
                 }
             }
         }
     }
 }
 
-/// Translates all geometry attached to a specific solid by a 3D vector.
 pub fn translateSolid(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -82,11 +75,9 @@ pub fn translateSolid(
     try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
     const offset = math.Vec3{ tx, ty, tz };
 
-    // 1. Translate Vertices
     var v_it = v_map.keyIterator();
     while (v_it.next()) |v| t_arena.vertices.items[v.*].point = math.add(t_arena.vertices.items[v.*].point, offset);
 
-    // 2. Translate Curves
     var l_it = l_map.keyIterator();
     while (l_it.next()) |l| {
         g_arena.lines.items[l.*].start = math.add(g_arena.lines.items[l.*].start, offset);
@@ -96,7 +87,6 @@ pub fn translateSolid(
     var a_it = a_map.keyIterator();
     while (a_it.next()) |a| g_arena.circle_arcs.items[a.*].center = math.add(g_arena.circle_arcs.items[a.*].center, offset);
 
-    // 3. Translate Surfaces
     var p_it = p_map.keyIterator();
     while (p_it.next()) |p| g_arena.planes.items[p.*].origin = math.add(g_arena.planes.items[p.*].origin, offset);
 
@@ -109,7 +99,6 @@ pub fn translateSolid(
     return solid_id;
 }
 
-/// Rotates a point around the origin using Euler angles (in degrees)
 fn applyRotation(pt: math.Vec3, rx: f64, ry: f64, rz: f64) math.Vec3 {
     const rad_x = rx * std.math.pi / 180.0;
     const rad_y = ry * std.math.pi / 180.0;
@@ -122,7 +111,6 @@ fn applyRotation(pt: math.Vec3, rx: f64, ry: f64, rz: f64) math.Vec3 {
     const cz = @cos(rad_z);
     const sz = @sin(rad_z);
 
-    // Z * Y * X rotation matrix
     const m00 = cy * cz;
     const m01 = cz * sx * sy - cx * sz;
     const m02 = cx * cz * sy + sx * sz;
@@ -142,7 +130,6 @@ fn applyRotation(pt: math.Vec3, rx: f64, ry: f64, rz: f64) math.Vec3 {
     };
 }
 
-/// Rotates all geometry attached to a specific solid using Euler angles (in degrees).
 pub fn rotateSolid(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -167,11 +154,9 @@ pub fn rotateSolid(
 
     try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
 
-    // 1. Rotate Vertices
     var v_it = v_map.keyIterator();
     while (v_it.next()) |v| t_arena.vertices.items[v.*].point = applyRotation(t_arena.vertices.items[v.*].point, rx, ry, rz);
 
-    // 2. Rotate Curves
     var l_it = l_map.keyIterator();
     while (l_it.next()) |l| {
         g_arena.lines.items[l.*].start = applyRotation(g_arena.lines.items[l.*].start, rx, ry, rz);
@@ -184,7 +169,6 @@ pub fn rotateSolid(
         g_arena.circle_arcs.items[a.*].y_axis = math.normalize(applyRotation(g_arena.circle_arcs.items[a.*].y_axis, rx, ry, rz));
     }
 
-    // 3. Rotate Surfaces
     var p_it = p_map.keyIterator();
     while (p_it.next()) |p| {
         g_arena.planes.items[p.*].origin = applyRotation(g_arena.planes.items[p.*].origin, rx, ry, rz);
@@ -205,7 +189,6 @@ pub fn rotateSolid(
     return solid_id;
 }
 
-/// Scales all geometry attached to a specific solid.
 pub fn scaleSolid(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -230,11 +213,8 @@ pub fn scaleSolid(
 
     try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
 
-    // Non-uniform scaling of a circle/sphere technically requires converting it
-    // to a NURBS surface. For this MVP, we approximate radius scaling via the average.
     const uniform_scale = (sx + sy + sz) / 3.0;
 
-    // 1. Scale Vertices
     var v_it = v_map.keyIterator();
     while (v_it.next()) |v| {
         t_arena.vertices.items[v.*].point[0] *= sx;
@@ -242,7 +222,6 @@ pub fn scaleSolid(
         t_arena.vertices.items[v.*].point[2] *= sz;
     }
 
-    // 2. Scale Curves
     var l_it = l_map.keyIterator();
     while (l_it.next()) |l| {
         g_arena.lines.items[l.*].start[0] *= sx;
@@ -261,7 +240,6 @@ pub fn scaleSolid(
         g_arena.circle_arcs.items[a.*].radius *= uniform_scale;
     }
 
-    // 3. Scale Surfaces
     var p_it = p_map.keyIterator();
     while (p_it.next()) |p| {
         g_arena.planes.items[p.*].origin[0] *= sx;

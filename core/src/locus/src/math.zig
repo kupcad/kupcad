@@ -67,7 +67,7 @@ pub inline fn sub2(a: Vec2, b: Vec2) Vec2 {
 
 pub inline fn invertMat2(m: Mat2) ?Mat2 {
     const det = m[0] * m[3] - m[1] * m[2];
-    // Check for degenerate Jacobian[cite: 38]
+    // Check for degenerate Jacobian
     if (@abs(det) < MATH_EPSILON) return null;
     const inv_det = 1.0 / det;
     return Mat2{
@@ -83,7 +83,7 @@ pub const CalcOutput2D = struct {
     jacobian: Mat2,
 };
 
-/// 2D Newton-Raphson root finder for evaluating surface parameters (u, v)[cite: 38].
+/// 2D Newton-Raphson root finder for evaluating surface parameters (u, v).
 pub fn solveNewton2D(
     ctx: anytype,
     evalFn: *const fn (ctx: @TypeOf(ctx), uv: Vec2) CalcOutput2D,
@@ -102,7 +102,7 @@ pub fn solveNewton2D(
 
         const inv_jac = invertMat2(out.jacobian) orelse return null;
 
-        // next = hint - inv * value[cite: 38]
+        // next = hint - inv * value
         uv[0] -= (inv_jac[0] * out.val[0] + inv_jac[1] * out.val[1]);
         uv[1] -= (inv_jac[2] * out.val[0] + inv_jac[3] * out.val[1]);
     }

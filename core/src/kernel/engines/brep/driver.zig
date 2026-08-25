@@ -15,8 +15,8 @@ const locus_merger = @import("../../../locus/src/merger.zig");
 
 var backend_allocator = std.heap.page_allocator;
 
-/// The container we store behind handle.ptr.
-/// It encapsulates a Locus CAD environment per geometry handle.
+/// The container stored behind handle.ptr.
+/// Encapsulates an isolated Locus CAD environment per geometry handle.
 pub const BrepSolid = struct {
     allocator: std.mem.Allocator,
     t_arena: locus_topo.TopologyArena,
@@ -35,8 +35,9 @@ pub const BrepSolid = struct {
     }
 
     pub fn destroy(self: *BrepSolid) void {
-        self.t_arena.deinit();
-        self.g_arena.deinit();
+        // Explicitly pass allocator to match updated Unmanaged arena deinit API
+        self.t_arena.deinit(self.allocator);
+        self.g_arena.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 };
@@ -63,7 +64,8 @@ fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
 
 fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     const solid = BrepSolid.create(backend_allocator) catch return null;
-    solid.solid_id = locus_gen.generateCube(&solid.t_arena, &solid.g_arena, x, y, z, center) catch {
+    // Pass backend_allocator as first parameter to half-edge generator
+    solid.solid_id = locus_gen.generateCube(backend_allocator, &solid.t_arena, &solid.g_arena, x, y, z, center) catch {
         solid.destroy();
         return null;
     };
@@ -72,9 +74,9 @@ fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
 
 fn cylinderImpl(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
     _ = r2;
-    _ = segments; // MVP Locus assumption
+    _ = segments;
     const solid = BrepSolid.create(backend_allocator) catch return null;
-    solid.solid_id = locus_gen.generateCylinder(&solid.t_arena, &solid.g_arena, r1, height, center) catch {
+    solid.solid_id = locus_gen.generateCylinder(backend_allocator, &solid.t_arena, &solid.g_arena, r1, height, center) catch {
         solid.destroy();
         return null;
     };
@@ -83,7 +85,7 @@ fn cylinderImpl(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geo
 
 fn sphereImpl(radius: f64) ?geom.GeometryHandle {
     const solid = BrepSolid.create(backend_allocator) catch return null;
-    solid.solid_id = locus_gen.generateSphere(&solid.t_arena, &solid.g_arena, radius) catch {
+    solid.solid_id = locus_gen.generateSphere(backend_allocator, &solid.t_arena, &solid.g_arena, radius) catch {
         solid.destroy();
         return null;
     };
@@ -92,7 +94,7 @@ fn sphereImpl(radius: f64) ?geom.GeometryHandle {
 
 fn squareImpl(x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
     const solid = BrepSolid.create(backend_allocator) catch return null;
-    solid.solid_id = locus_gen.generateSquare(&solid.t_arena, &solid.g_arena, x, y, center) catch {
+    solid.solid_id = locus_gen.generateSquare(backend_allocator, &solid.t_arena, &solid.g_arena, x, y, center) catch {
         solid.destroy();
         return null;
     };
@@ -111,7 +113,7 @@ fn circleImpl(radius: f64, segments: i32) ?geom.CrossSectionHandle {
 fn polygonImpl(allocator: std.mem.Allocator, pts: []const [2]f64) ?geom.CrossSectionHandle {
     _ = allocator;
     const solid = BrepSolid.create(backend_allocator) catch return null;
-    solid.solid_id = locus_gen.generatePolygon(&solid.t_arena, &solid.g_arena, pts) catch {
+    solid.solid_id = locus_gen.generatePolygon(backend_allocator, &solid.t_arena, &solid.g_arena, pts) catch {
         solid.destroy();
         return null;
     };
@@ -128,10 +130,10 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
     if (@intFromPtr(cs.ptr) == 0) return null;
 
     const solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
-    // The underlying topology ID tracks the face; pass it directly to extrudeFace
-    solid.solid_id = locus_sweeps.extrudeFace(&solid.t_arena, &solid.g_arena, solid.solid_id, .{ 0, 0, height }) catch return null;
+    // Pass backend_allocator as first parameter to extrudeFace
+    solid.solid_id = locus_sweeps.extrudeFace(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, .{ 0, 0, height }) catch return null;
 
-    // We seamlessly convert the 2D handle to a 3D handle
+    // Convert 2D CrossSectionHandle to 3D GeometryHandle
     return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
@@ -139,6 +141,20 @@ fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryH
     if (@intFromPtr(a.ptr) == 0) return null;
     const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
     solid.solid_id = locus_trans.translateSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, x, y, z) catch return a;
+    return a;
+}
+
+fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    solid.solid_id = locus_trans.rotateSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, x, y, z) catch return a;
+    return a;
+}
+
+fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    solid.solid_id = locus_trans.scaleSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, x, y, z) catch return a;
     return a;
 }
 
@@ -155,7 +171,7 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
     // Phase 1: Merge B into A's Arena
     const merged_b_id = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
 
-    // Phase 2 & 3: Compute Boolean CSG using the unified arena
+    // Phase 2 & 3: Compute Boolean CSG using the unified half-edge arena
     solid_a.solid_id = locus_bool.computeBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, merged_b_id, locus_op, .{}) catch return a;
 
     return a;
@@ -207,19 +223,7 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     };
 }
 
-fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    if (@intFromPtr(a.ptr) == 0) return null;
-    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    solid.solid_id = locus_trans.rotateSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, x, y, z) catch return a;
-    return a;
-}
-
-fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    if (@intFromPtr(a.ptr) == 0) return null;
-    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    solid.solid_id = locus_trans.scaleSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, x, y, z) catch return a;
-    return a;
-}
+// --- Stubbed / Unimplemented V-Table Endpoints ---
 
 fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
     _ = allocator;

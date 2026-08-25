@@ -15,10 +15,8 @@ pub const FfiMesh = struct {
     index_len: usize,
 };
 
-// Note: GeometryHandle is just a usize index into our solid array.
 pub const GeometryHandle = usize;
 
-// Global Kernel State
 var g_allocator: std.mem.Allocator = undefined;
 var g_topo_arena: topo.TopologyArena = undefined;
 var g_geom_arena: geom.GeometryArena = undefined;
@@ -30,29 +28,27 @@ pub fn init(allocator: std.mem.Allocator) void {
 }
 
 pub fn deinit() void {
-    g_topo_arena.deinit();
-    g_geom_arena.deinit();
+    g_topo_arena.deinit(g_allocator);
+    g_geom_arena.deinit(g_allocator);
 }
 
-// --- V-Table Implementations ---
-
 fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?GeometryHandle {
-    const solid_id = generators.generateCube(&g_topo_arena, &g_geom_arena, x, y, z, center) catch return null;
+    const solid_id = generators.generateCube(g_allocator, &g_topo_arena, &g_geom_arena, x, y, z, center) catch return null;
     return @as(GeometryHandle, solid_id);
 }
 
 fn cylinderImpl(radius: f64, height: f64, center: bool) ?GeometryHandle {
-    const solid_id = generators.generateCylinder(&g_topo_arena, &g_geom_arena, radius, height, center) catch return null;
+    const solid_id = generators.generateCylinder(g_allocator, &g_topo_arena, &g_geom_arena, radius, height, center) catch return null;
     return @as(GeometryHandle, solid_id);
 }
 
 fn sphereImpl(radius: f64) ?GeometryHandle {
-    const solid_id = generators.generateSphere(&g_topo_arena, &g_geom_arena, radius) catch return null;
+    const solid_id = generators.generateSphere(g_allocator, &g_topo_arena, &g_geom_arena, radius) catch return null;
     return @as(GeometryHandle, solid_id);
 }
 
 fn extrudeImpl(base: GeometryHandle, vx: f64, vy: f64, vz: f64) ?GeometryHandle {
-    const solid_id = sweeps.extrudeFace(&g_topo_arena, &g_geom_arena, @as(topo.FaceId, @intCast(base)), .{ vx, vy, vz }) catch return null;
+    const solid_id = sweeps.extrudeFace(g_allocator, &g_topo_arena, &g_geom_arena, @as(topo.FaceId, @intCast(base)), .{ vx, vy, vz }) catch return null;
     return @as(GeometryHandle, solid_id);
 }
 
@@ -87,16 +83,10 @@ fn minkowskiImpl(a: GeometryHandle, b: GeometryHandle) ?GeometryHandle {
 }
 
 fn getMeshImpl(shape: GeometryHandle) ?FfiMesh {
-    // In a real application, we would keep this mesh in a cache or arena so we don't leak it.
-    // For the driver interface, we will create it and pretend to return the pointers.
     var mesh = tessellate.Mesh{};
-
     const mock_config = .{};
 
     tessellate.tessellateSolid(g_allocator, &g_topo_arena, &g_geom_arena, @as(topo.SolidId, @intCast(shape)), &mesh, mock_config) catch return null;
-
-    // We would normally transfer ownership of the memory here.
-    // For now, we clean it up immediately to prevent leaks during tests.
     defer mesh.deinit(g_allocator);
 
     return FfiMesh{
@@ -107,7 +97,6 @@ fn getMeshImpl(shape: GeometryHandle) ?FfiMesh {
     };
 }
 
-/// The static dispatch table matching `kernel.GeometryKernel`
 pub const driver = struct {
     pub const cubeFn = cubeImpl;
     pub const cylinderFn = cylinderImpl;

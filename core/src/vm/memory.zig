@@ -607,7 +607,7 @@ pub const GC = struct {
             .bbox => self.destroyObject(value.ObjBBox, @alignCast(@fieldParentPtr("obj", obj))),
             .brep => {
                 const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));
-                brep_obj.data.deinit();
+                brep_obj.data.deinit(self.allocator);
                 self.allocator.destroy(brep_obj.data);
                 self.destroyObject(value.ObjBrep, brep_obj);
             },

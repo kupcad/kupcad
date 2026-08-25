@@ -3,7 +3,11 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const geom = @import("../../kernel/geometry_handle.zig");
 const brep_driver = @import("../../kernel/engines/brep/driver.zig");
+const topo = @import("../../locus/src/topology.zig");
+const locus_geom = @import("../../locus/src/geometry.zig");
 
+/// StepSerializer handles string formatting, sequential STEP entity ID generation,
+/// and buffer management for ISO 10303-21 output.
 const StepSerializer = struct {
     allocator: std.mem.Allocator,
     out: std.ArrayListUnmanaged(u8),
@@ -13,7 +17,7 @@ const StepSerializer = struct {
         return .{
             .allocator = allocator,
             .out = .empty,
-            .id_counter = 17, // Reserve 1-17 for Boilerplate + Solid ID
+            .id_counter = 17, // Reserve 1-17 for AP214 Header Boilerplate + Solid ID #17
         };
     }
 
@@ -22,6 +26,7 @@ const StepSerializer = struct {
         return self.id_counter;
     }
 
+    /// Formats and emits a single STEP record line (e.g. `#18=CARTESIAN_POINT('',(...));\n`).
     fn emit(self: *StepSerializer, comptime fmt: []const u8, args: anytype) !u32 {
         const id = self.nextId();
 
@@ -38,7 +43,7 @@ const StepSerializer = struct {
     }
 };
 
-/// Generates a valid ISO 10303-21 STEP file buffer from the Native B-Rep Arrays
+/// Generates a valid ISO 10303-21 STEP file buffer from Half-Edge B-Rep Topology.
 pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ![]const u8 {
     if (handle.engine != .brep_native) {
         return error.UnsupportedEngine;
@@ -46,11 +51,12 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
 
     const solid: *brep_driver.BrepSolid = @ptrCast(@alignCast(handle.ptr));
     const t = &solid.t_arena;
+    const g = &solid.g_arena;
 
     var s = StepSerializer.init(allocator);
     errdefer s.out.deinit(allocator);
 
-    const solid_id = 17; // Pre-allocated target for the MANIFOLD_SOLID_BREP
+    const solid_id = 17; // Target ID #17 for MANIFOLD_SOLID_BREP
 
     // --- 1. AP214 BOILERPLATE & HEADER ---
     try s.out.appendSlice(allocator,
@@ -79,8 +85,8 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         \\
     );
 
-    // --- 2. MAP TOPOLOGY TO STEP RECORDS ---
-
+    // --- 2. VERTICES ---
+    // Map internal VertexId to emitted STEP VERTEX_POINT record IDs
     var vertex_map = try allocator.alloc(u32, t.vertices.items.len);
     defer allocator.free(vertex_map);
 
@@ -89,17 +95,35 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         vertex_map[i] = try s.emit("VERTEX_POINT('',#{d})", .{pt_id});
     }
 
-    var edge_map = try allocator.alloc(u32, t.edges.items.len);
-    defer allocator.free(edge_map);
+    // --- 3. EDGE CURVES (HALF-EDGE PAIR DEDUPLICATION) ---
+    // Map HalfEdgeId -> STEP EDGE_CURVE record ID and boolean orientation
+    const EdgeCurveInfo = struct { edge_curve_id: u32, is_forward: bool };
+    var half_edge_map = try allocator.alloc(EdgeCurveInfo, t.half_edges.items.len);
+    defer allocator.free(half_edge_map);
 
-    for (t.edges.items, 0..) |edge, i| {
-        const p1 = t.vertices.items[edge.front].point;
-        const p2 = t.vertices.items[edge.back].point;
+    for (t.half_edges.items, 0..) |he, i| {
+        const he_id: u32 = @intCast(i);
+
+        // If this half-edge has a twin that was already emitted, reuse its EDGE_CURVE entity
+        if (he.twin != topo.NULL_ID and he.twin < he_id) {
+            const twin_info = half_edge_map[he.twin];
+            half_edge_map[i] = .{
+                .edge_curve_id = twin_info.edge_curve_id,
+                .is_forward = false, // Reversed orientation relative to its twin
+            };
+            continue;
+        }
+
+        // Calculate end vertex by inspecting the starting vertex of the next half-edge in the loop
+        const next_he = t.half_edges.items[he.next];
+        const p1 = t.vertices.items[he.start_vertex].point;
+        const p2 = t.vertices.items[next_he.start_vertex].point;
 
         const dx = p2[0] - p1[0];
         const dy = p2[1] - p1[1];
         const dz = p2[2] - p1[2];
-        const len = @sqrt(dx * dx + dy * dy + dz * dz);
+        var len = @sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 1e-12) len = 1.0;
 
         const dir_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ dx / len, dy / len, dz / len });
         const vec_id = try s.emit("VECTOR('',#{d},{d:.6})", .{ dir_id, len });
@@ -107,115 +131,127 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p1[0], p1[1], p1[2] });
         const line_id = try s.emit("LINE('',#{d},#{d})", .{ origin_id, vec_id });
 
-        edge_map[i] = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{ vertex_map[edge.front], vertex_map[edge.back], line_id });
+        const edge_curve_id = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{
+            vertex_map[he.start_vertex],
+            vertex_map[next_he.start_vertex],
+            line_id,
+        });
+
+        half_edge_map[i] = .{
+            .edge_curve_id = edge_curve_id,
+            .is_forward = true,
+        };
     }
 
-    // Wires (Loops)
-    var wire_map = try allocator.alloc(u32, t.wires.items.len);
-    defer allocator.free(wire_map);
+    // --- 4. LOOPS (EDGE_LOOPs) ---
+    // Traverse Half-Edge circular linked lists (following .next) to emit EDGE_LOOP entities
+    var loop_map = try allocator.alloc(u32, t.loops.items.len);
+    defer allocator.free(loop_map);
 
-    for (t.wires.items, 0..) |wire, i| {
-        var loop_edges = std.ArrayListUnmanaged(u32).empty;
-        defer loop_edges.deinit(allocator);
+    for (t.loops.items, 0..) |loop, i| {
+        var loop_oriented_edges = std.ArrayListUnmanaged(u32).empty;
+        defer loop_oriented_edges.deinit(allocator);
 
-        for (0..wire.edges_len) |we_off| {
-            const d_edge = t.wire_edges.items[wire.edges_start + we_off];
-            const oriented_id = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{ edge_map[d_edge.edge], if (d_edge.forward) "T" else "F" });
-            try loop_edges.append(allocator, oriented_id);
+        var curr_he_id = loop.first_half_edge;
+        while (true) {
+            const he_info = half_edge_map[curr_he_id];
+            const oriented_id = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{
+                he_info.edge_curve_id,
+                if (he_info.is_forward) "T" else "F",
+            });
+            try loop_oriented_edges.append(allocator, oriented_id);
+
+            const he = t.half_edges.items[curr_he_id];
+            curr_he_id = he.next;
+            if (curr_he_id == loop.first_half_edge) break;
         }
 
         var header_buf: [64]u8 = undefined;
         const header_str = try std.fmt.bufPrint(&header_buf, "#{d}=EDGE_LOOP('',(", .{s.nextId()});
         try s.out.appendSlice(allocator, header_str);
 
-        for (loop_edges.items, 0..) |oe, idx| {
+        for (loop_oriented_edges.items, 0..) |oe, idx| {
             if (idx > 0) try s.out.appendSlice(allocator, ",");
             var oe_buf: [32]u8 = undefined;
             const oe_str = try std.fmt.bufPrint(&oe_buf, "#{d}", .{oe});
             try s.out.appendSlice(allocator, oe_str);
         }
         try s.out.appendSlice(allocator, "));\n");
-        wire_map[i] = s.id_counter;
+        loop_map[i] = s.id_counter;
     }
 
-    // Faces
+    // --- 5. FACES & SURFACES ---
     var face_map = try allocator.alloc(u32, t.faces.items.len);
     defer allocator.free(face_map);
 
     for (t.faces.items, 0..) |face, i| {
-        const wire_id = t.face_wires.items[face.wires_start];
-        const wire = t.wires.items[wire_id];
+        // Emit Surface Geometry
+        var surface_record_id: u32 = 0;
 
-        if (wire.edges_len < 2) continue; // Safety guard
+        switch (face.surface.surface_type) {
+            .plane => {
+                const p = g.planes.items[face.surface.index];
+                const nx = p.u_axis[1] * p.v_axis[2] - p.u_axis[2] * p.v_axis[1];
+                const ny = p.u_axis[2] * p.v_axis[0] - p.u_axis[0] * p.v_axis[2];
+                const nz = p.u_axis[0] * p.v_axis[1] - p.u_axis[1] * p.v_axis[0];
 
-        const d_e1 = t.wire_edges.items[wire.edges_start];
-        const d_e2 = t.wire_edges.items[wire.edges_start + 1];
+                const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p.origin[0], p.origin[1], p.origin[2] });
+                const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ nx, ny, nz });
+                const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ p.u_axis[0], p.u_axis[1], p.u_axis[2] });
 
-        const e1 = t.edges.items[d_e1.edge];
-        const e2 = t.edges.items[d_e2.edge];
+                const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
+                surface_record_id = try s.emit("PLANE('',#{d})", .{axis2});
+            },
+            .cylinder => {
+                const cyl = g.cylinders.items[face.surface.index];
+                const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ cyl.origin[0], cyl.origin[1], cyl.origin[2] });
+                const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ cyl.axis[0], cyl.axis[1], cyl.axis[2] });
+                const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ cyl.x_axis[0], cyl.x_axis[1], cyl.x_axis[2] });
 
-        const p0 = t.vertices.items[e1.front].point;
-        const p1 = t.vertices.items[e1.back].point;
-        const p2 = if (e1.back == e2.front) t.vertices.items[e2.back].point else t.vertices.items[e2.front].point;
+                const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
+                surface_record_id = try s.emit("CYLINDRICAL_SURFACE('',#{d},{d:.6})", .{ axis2, cyl.radius });
+            },
+            .sphere => {
+                const sph = g.spheres.items[face.surface.index];
+                const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ sph.center[0], sph.center[1], sph.center[2] });
+                const z_axis_id = try s.emit("DIRECTION('',(0.000000,0.000000,1.000000))", .{});
+                const x_axis_id = try s.emit("DIRECTION('',(1.000000,0.000000,0.000000))", .{});
 
-        const dx1 = p1[0] - p0[0];
-        const dy1 = p1[1] - p0[1];
-        const dz1 = p1[2] - p0[2];
-        const dx2 = p2[0] - p0[0];
-        const dy2 = p2[1] - p0[1];
-        const dz2 = p2[2] - p0[2];
-
-        var nx = dy1 * dz2 - dz1 * dy2;
-        var ny = dz1 * dx2 - dx1 * dz2;
-        var nz = dx1 * dy2 - dy1 * dx2;
-        const nlen = @sqrt(nx * nx + ny * ny + nz * nz);
-        if (nlen > 0.0) {
-            nx /= nlen;
-            ny /= nlen;
-            nz /= nlen;
-        } else {
-            nz = 1.0;
+                const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
+                surface_record_id = try s.emit("SPHERICAL_SURFACE('',#{d},{d:.6})", .{ axis2, sph.radius });
+            },
+            .nurbs => {
+                const origin_id = try s.emit("CARTESIAN_POINT('',(0.000000,0.000000,0.000000))", .{});
+                const z_axis_id = try s.emit("DIRECTION('',(0.000000,0.000000,1.000000))", .{});
+                const x_axis_id = try s.emit("DIRECTION('',(1.000000,0.000000,0.000000))", .{});
+                const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
+                surface_record_id = try s.emit("PLANE('',#{d})", .{axis2});
+            },
         }
 
-        var xx = dx1;
-        var xy = dy1;
-        var xz = dz1;
-        const xlen = @sqrt(xx * xx + xy * xy + xz * xz);
-        if (xlen > 0.0) {
-            xx /= xlen;
-            xy /= xlen;
-            xz /= xlen;
-        } else {
-            xx = 1.0;
-        }
-
-        const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p0[0], p0[1], p0[2] });
-        const z_axis = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ nx, ny, nz });
-        const x_axis = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ xx, xy, xz });
-
-        const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis, x_axis });
-        const plane_id = try s.emit("PLANE('',#{d})", .{axis2});
-
-        // Generate Outer and Inner Bounds (Holes)
+        // Generate Outer Boundary (Loop 0) and Inner Bounds / Holes (Loops 1..N)
         var bounds_str = std.ArrayListUnmanaged(u8).empty;
         defer bounds_str.deinit(allocator);
 
-        for (0..face.wires_len) |w_off| {
-            const current_wire_id = t.face_wires.items[face.wires_start + w_off];
+        for (0..face.loops_len) |l_off| {
+            const current_loop_id = t.face_loops.items[face.loops_start + l_off];
 
-            // Wire 0 is always the Outer Bound. Wires 1..N are Inner Holes.
-            const bound_type = if (w_off == 0) "FACE_OUTER_BOUND" else "FACE_BOUND";
-            const bound_id = try s.emit("{s}('',#{d},.T.)", .{ bound_type, wire_map[current_wire_id] });
+            const bound_type = if (l_off == 0) "FACE_OUTER_BOUND" else "FACE_BOUND";
+            const bound_id = try s.emit("{s}('',#{d},.T.)", .{ bound_type, loop_map[current_loop_id] });
 
-            if (w_off > 0) try bounds_str.appendSlice(allocator, ",");
+            if (l_off > 0) try bounds_str.appendSlice(allocator, ",");
             var tmp: [32]u8 = undefined;
             try bounds_str.appendSlice(allocator, try std.fmt.bufPrint(&tmp, "#{d}", .{bound_id}));
         }
 
-        face_map[i] = try s.emit("ADVANCED_FACE('',({s}),#{d},.T.)", .{ bounds_str.items, plane_id });
+        face_map[i] = try s.emit("ADVANCED_FACE('',({s}),#{d},.{s}.)", .{
+            bounds_str.items,
+            surface_record_id,
+            if (face.forward) "T" else "F",
+        });
     }
 
-    // Shells
+    // --- 6. SHELLS ---
     var shell_map = try allocator.alloc(u32, t.shells.items.len);
     defer allocator.free(shell_map);
 
@@ -236,7 +272,8 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         shell_map[i] = s.id_counter;
     }
 
-    // Solid (We manually write the reserved ID #17 so the boilerplate finds it)
+    // --- 7. SOLID (MANIFOLD_SOLID_BREP) ---
+    // Emit target ID #17 referenced in the header boilerplate
     const active_solid_id = solid.solid_id;
     if (active_solid_id < t.solids.items.len) {
         const s_item = t.solids.items[active_solid_id];
@@ -252,7 +289,8 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
     return try s.out.toOwnedSlice(allocator);
 }
 
-// ... (keep nativeImportStep and nativeExportStep the same)
+// --- VM API BRIDGES ---
+
 pub fn nativeImportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
     _ = arg_count;

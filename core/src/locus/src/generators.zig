@@ -3,422 +3,293 @@ const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const math = @import("math.zig");
 
-pub const GeneratorError = error{
-    OutOfMemory,
+pub const GenError = error{OutOfMemory};
+
+pub const EdgeKey = struct {
+    min_v: topo.VertexId,
+    max_v: topo.VertexId,
+
+    pub fn init(v1: topo.VertexId, v2: topo.VertexId) EdgeKey {
+        return .{
+            .min_v = @min(v1, v2),
+            .max_v = @max(v1, v2),
+        };
+    }
 };
 
-/// Generates a Cube and pushes its elements into the topology and geometry arenas[cite: 14].
-pub fn generateCube(
+/// Helper to add a flat polygonal face to the graph and wire its Half-Edges.
+pub fn addPolygonFace(
+    allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
-    size_x: f64,
-    size_y: f64,
-    size_z: f64,
-    centered: bool,
-) GeneratorError!topo.SolidId {
-    const ox = if (centered) -size_x / 2.0 else 0.0;
-    const oy = if (centered) -size_y / 2.0 else 0.0;
-    const oz = if (centered) -size_z / 2.0 else 0.0;
+    vertices: []const topo.VertexId,
+    surface_id: geom.SurfaceId,
+    twin_map: *std.AutoHashMap(EdgeKey, topo.HalfEdgeId),
+) !topo.FaceId {
+    const face_id: u32 = @intCast(t_arena.faces.items.len);
+    const loop_id: u32 = @intCast(t_arena.loops.items.len);
+    const he_start: u32 = @intCast(t_arena.half_edges.items.len);
+    const n = vertices.len;
 
-    const mx = ox + size_x;
-    const my = oy + size_y;
-    const mz = oz + size_z;
+    for (0..n) |i| {
+        const v_start = vertices[i];
+        const v_end = vertices[(i + 1) % n];
 
-    // 1. Create 8 Vertices
-    const v_start: u32 = @intCast(t_arena.vertices.items.len);
-    try t_arena.vertices.appendSlice(t_arena.allocator, &[_]topo.Vertex{
-        // Bottom 4
-        .{ .point = .{ ox, oy, oz } }, // 0
-        .{ .point = .{ mx, oy, oz } }, // 1
-        .{ .point = .{ mx, my, oz } }, // 2
-        .{ .point = .{ ox, my, oz } }, // 3
-        // Top 4
-        .{ .point = .{ ox, oy, mz } }, // 4
-        .{ .point = .{ mx, oy, mz } }, // 5
-        .{ .point = .{ mx, my, mz } }, // 6
-        .{ .point = .{ ox, my, mz } }, // 7
-    });
+        const p_start = t_arena.vertices.items[v_start].point;
+        const p_end = t_arena.vertices.items[v_end].point;
+        const line_idx: u24 = @intCast(g_arena.lines.items.len);
+        try g_arena.lines.append(allocator, .{ .start = p_start, .end = p_end });
 
-    // 2. Create 12 Edges (and their geometric lines)
-    const e_start: u32 = @intCast(t_arena.edges.items.len);
-    const line_start: u24 = @intCast(g_arena.lines.items.len); // Track specific geometry array index
-
-    const edge_pairs = [_][2]u32{
-        .{ 0, 1 }, .{ 1, 2 }, .{ 2, 3 }, .{ 3, 0 }, // Bottom
-        .{ 4, 5 }, .{ 5, 6 }, .{ 6, 7 }, .{ 7, 4 }, // Top
-        .{ 0, 4 }, .{ 1, 5 }, .{ 2, 6 }, .{ 3, 7 }, // Vertical
-    };
-
-    for (edge_pairs, 0..) |pair, i| {
-        const start_pt = t_arena.vertices.items[v_start + pair[0]].point;
-        const end_pt = t_arena.vertices.items[v_start + pair[1]].point;
-
-        // Push directly to the lines array, bypassing unions[cite: 14]
-        try g_arena.lines.append(g_arena.allocator, .{ .start = start_pt, .end = end_pt });
-
-        try t_arena.edges.append(t_arena.allocator, .{
-            .front = v_start + pair[0],
-            .back = v_start + pair[1],
-            // Construct the packed 32-bit ID[cite: 14]
-            .curve = .{ .index = line_start + @as(u24, @intCast(i)), .curve_type = .line },
-        });
-    }
-
-    // 3. Create 6 Faces (and their geometric planes)
-    const f_start: u32 = @intCast(t_arena.faces.items.len);
-    const plane_start: u24 = @intCast(g_arena.planes.items.len); // Track specific geometry array index
-
-    // Each face is defined by a 4-edge loop (index relative to e_start) and orientation[cite: 14]
-    const face_loops = [_]struct { edges: [4]u32, forward: [4]bool, u: math.Vec3, v: math.Vec3, o: math.Vec3 }{
-        // Bottom (Z-)
-        .{ .edges = .{ 0, 1, 2, 3 }, .forward = .{ false, false, false, false }, .u = .{ 1, 0, 0 }, .v = .{ 0, -1, 0 }, .o = .{ ox, my, oz } },
-        // Top (Z+)
-        .{ .edges = .{ 4, 5, 6, 7 }, .forward = .{ true, true, true, true }, .u = .{ 1, 0, 0 }, .v = .{ 0, 1, 0 }, .o = .{ ox, oy, mz } },
-        // Front (Y-)
-        .{ .edges = .{ 0, 9, 4, 8 }, .forward = .{ true, true, false, false }, .u = .{ 1, 0, 0 }, .v = .{ 0, 0, 1 }, .o = .{ ox, oy, oz } },
-        // Right (X+)
-        .{ .edges = .{ 1, 10, 5, 9 }, .forward = .{ true, true, false, false }, .u = .{ 0, 1, 0 }, .v = .{ 0, 0, 1 }, .o = .{ mx, oy, oz } },
-        // Back (Y+)
-        .{ .edges = .{ 2, 11, 6, 10 }, .forward = .{ true, true, false, false }, .u = .{ -1, 0, 0 }, .v = .{ 0, 0, 1 }, .o = .{ mx, my, oz } },
-        // Left (X-)
-        .{ .edges = .{ 3, 8, 7, 11 }, .forward = .{ true, true, false, false }, .u = .{ 0, -1, 0 }, .v = .{ 0, 0, 1 }, .o = .{ ox, my, oz } },
-    };
-
-    for (face_loops, 0..) |loop, i| {
-        // Push directly to the planes array[cite: 14]
-        try g_arena.planes.append(g_arena.allocator, .{ .origin = loop.o, .u_axis = loop.u, .v_axis = loop.v });
-
-        // Push wire topology[cite: 14]
-        const w_edges_start: u32 = @intCast(t_arena.wire_edges.items.len);
-        for (loop.edges, loop.forward) |e_idx, fwd| {
-            try t_arena.wire_edges.append(t_arena.allocator, .{
-                .edge = e_start + e_idx,
-                .forward = fwd,
-            });
-        }
-
-        const w_start: u32 = @intCast(t_arena.wires.items.len);
-        try t_arena.wires.append(t_arena.allocator, .{
-            .edges_start = w_edges_start,
-            .edges_len = 4,
-        });
-
-        // Push face topology[cite: 14]
-        const f_wires_start: u32 = @intCast(t_arena.face_wires.items.len);
-        try t_arena.face_wires.append(t_arena.allocator, w_start); // 1 wire per face
-
-        try t_arena.faces.append(t_arena.allocator, .{
-            // Construct the packed 32-bit ID[cite: 14]
-            .surface = .{ .index = plane_start + @as(u24, @intCast(i)), .surface_type = .plane },
+        const he_id: u32 = @intCast(t_arena.half_edges.items.len);
+        try t_arena.half_edges.append(allocator, .{
+            .start_vertex = v_start,
+            .twin = topo.NULL_ID,
+            .next = he_start + @as(u32, @intCast((i + 1) % n)),
+            .prev = he_start + @as(u32, @intCast((i + n - 1) % n)),
+            .loop_id = loop_id,
+            .curve = .{ .index = line_idx, .curve_type = .line },
             .forward = true,
-            .wires_start = f_wires_start,
-            .wires_len = 1,
         });
+
+        const key = EdgeKey.init(v_start, v_end);
+        if (twin_map.get(key)) |twin_id| {
+            t_arena.half_edges.items[he_id].twin = twin_id;
+            t_arena.half_edges.items[twin_id].twin = he_id;
+            _ = twin_map.remove(key);
+        } else {
+            try twin_map.put(key, he_id);
+        }
     }
 
-    // 4. Create 1 Shell
-    const shell_start: u32 = @intCast(t_arena.shells.items.len);
-    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
-    for (0..6) |i| {
-        try t_arena.shell_faces.append(t_arena.allocator, f_start + @as(u32, @intCast(i)));
-    }
-    try t_arena.shells.append(t_arena.allocator, .{
-        .faces_start = sh_faces_start,
-        .faces_len = 6,
+    try t_arena.loops.append(allocator, .{
+        .face_id = face_id,
+        .first_half_edge = he_start,
     });
 
-    // 5. Create 1 Solid
+    const f_loops_start: u32 = @intCast(t_arena.face_loops.items.len);
+    try t_arena.face_loops.append(allocator, loop_id);
+
+    try t_arena.faces.append(allocator, .{
+        .surface = surface_id,
+        .forward = true,
+        .loops_start = f_loops_start,
+        .loops_len = 1,
+    });
+
+    return face_id;
+}
+
+pub fn generateCube(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    x: f64,
+    y: f64,
+    z: f64,
+    center: bool,
+) GenError!topo.SolidId {
+    const cx = if (center) x / 2.0 else x;
+    const cy = if (center) y / 2.0 else y;
+    const cz = if (center) z / 2.0 else z;
+    const ox = if (center) -cx else 0;
+    const oy = if (center) -cy else 0;
+    const oz = if (center) -cz else 0;
+
+    const v_start: u32 = @intCast(t_arena.vertices.items.len);
+    const points = [_]math.Vec3{
+        .{ ox, oy, oz },
+        .{ ox + x, oy, oz },
+        .{ ox + x, oy + y, oz },
+        .{ ox, oy + y, oz },
+        .{ ox, oy, oz + z },
+        .{ ox + x, oy, oz + z },
+        .{ ox + x, oy + y, oz + z },
+        .{ ox, oy + y, oz + z },
+    };
+    for (points) |pt| try t_arena.vertices.append(allocator, .{ .point = pt });
+
+    const p_start: u24 = @intCast(g_arena.planes.items.len);
+    const planes = [_]geom.Plane{
+        .{ .origin = .{ 0, 0, oz }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, -1, 0 } },
+        .{ .origin = .{ 0, 0, oz + z }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } },
+        .{ .origin = .{ 0, oy, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 0, 1 } },
+        .{ .origin = .{ ox + x, 0, 0 }, .u_axis = .{ 0, 1, 0 }, .v_axis = .{ 0, 0, 1 } },
+        .{ .origin = .{ 0, oy + y, 0 }, .u_axis = .{ -1, 0, 0 }, .v_axis = .{ 0, 0, 1 } },
+        .{ .origin = .{ ox, 0, 0 }, .u_axis = .{ 0, -1, 0 }, .v_axis = .{ 0, 0, 1 } },
+    };
+    for (planes) |p| try g_arena.planes.append(allocator, p);
+
+    var twin_map = std.AutoHashMap(EdgeKey, topo.HalfEdgeId).init(allocator);
+    defer twin_map.deinit();
+
+    const face_indices = [_][4]u32{
+        .{ 0, 3, 2, 1 },
+        .{ 4, 5, 6, 7 },
+        .{ 0, 1, 5, 4 },
+        .{ 1, 2, 6, 5 },
+        .{ 2, 3, 7, 6 },
+        .{ 3, 0, 4, 7 },
+    };
+
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
+    for (face_indices, 0..) |f_idx, i| {
+        const mapped = [_]u32{ v_start + f_idx[0], v_start + f_idx[1], v_start + f_idx[2], v_start + f_idx[3] };
+        const surf = geom.SurfaceId{ .index = p_start + @as(u24, @intCast(i)), .surface_type = .plane };
+        const f_id = try addPolygonFace(allocator, t_arena, g_arena, &mapped, surf, &twin_map);
+        try t_arena.shell_faces.append(allocator, f_id);
+    }
+
+    const shell_id: u32 = @intCast(t_arena.shells.items.len);
+    try t_arena.shells.append(allocator, .{ .faces_start = sh_faces_start, .faces_len = 6 });
+
     const solid_id: u32 = @intCast(t_arena.solids.items.len);
     const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
-    try t_arena.solid_shells.append(t_arena.allocator, shell_start);
-
-    try t_arena.solids.append(t_arena.allocator, .{
-        .shells_start = so_shells_start,
-        .shells_len = 1,
-    });
+    try t_arena.solid_shells.append(allocator, shell_id);
+    try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
 
     return solid_id;
 }
 
-/// Generates a B-Rep Cylinder along the Z axis.
 pub fn generateCylinder(
+    allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
     radius: f64,
     height: f64,
     centered: bool,
-) GeneratorError!topo.SolidId {
+) GenError!topo.SolidId {
     const oz = if (centered) -height / 2.0 else 0.0;
-    const mz = oz + height;
+    const segments: usize = 16;
 
-    // 1. Vertices (2 on bottom rim, 2 on top rim)
-    const v_start: u32 = @intCast(t_arena.vertices.items.len);
-    try t_arena.vertices.appendSlice(t_arena.allocator, &[_]topo.Vertex{
-        .{ .point = .{ radius, 0, oz } }, // 0: Bottom +X
-        .{ .point = .{ -radius, 0, oz } }, // 1: Bottom -X
-        .{ .point = .{ radius, 0, mz } }, // 2: Top +X
-        .{ .point = .{ -radius, 0, mz } }, // 3: Top -X
-    });
+    var bot_verts = try allocator.alloc(topo.VertexId, segments);
+    defer allocator.free(bot_verts);
+    var top_verts = try allocator.alloc(topo.VertexId, segments);
+    defer allocator.free(top_verts);
 
-    // 2. Edges & Curves
-    const arc_start: u24 = @intCast(g_arena.circle_arcs.items.len);
-    const line_start: u24 = @intCast(g_arena.lines.items.len);
-    const e_start: u32 = @intCast(t_arena.edges.items.len);
+    for (0..segments) |i| {
+        const angle = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(segments));
+        const px = radius * @cos(angle);
+        const py = radius * @sin(angle);
 
-    try g_arena.circle_arcs.appendSlice(g_arena.allocator, &[_]geom.CircleArc{
-        .{ .center = .{ 0, 0, oz }, .radius = radius, .x_axis = .{ 1, 0, 0 }, .y_axis = .{ 0, 1, 0 } }, // Bottom Arc 1 (y+)
-        .{ .center = .{ 0, 0, oz }, .radius = radius, .x_axis = .{ -1, 0, 0 }, .y_axis = .{ 0, -1, 0 } }, // Bottom Arc 2 (y-)
-        .{ .center = .{ 0, 0, mz }, .radius = radius, .x_axis = .{ 1, 0, 0 }, .y_axis = .{ 0, 1, 0 } }, // Top Arc 1 (y+)
-        .{ .center = .{ 0, 0, mz }, .radius = radius, .x_axis = .{ -1, 0, 0 }, .y_axis = .{ 0, -1, 0 } }, // Top Arc 2 (y-)
-    });
+        const v_bot: u32 = @intCast(t_arena.vertices.items.len);
+        try t_arena.vertices.append(allocator, .{ .point = .{ px, py, oz } });
+        bot_verts[i] = v_bot;
 
-    try g_arena.lines.appendSlice(g_arena.allocator, &[_]geom.Line{
-        .{ .start = .{ radius, 0, oz }, .end = .{ radius, 0, mz } }, // Seam 1 (+X)
-        .{ .start = .{ -radius, 0, oz }, .end = .{ -radius, 0, mz } }, // Seam 2 (-X)
-    });
-
-    try t_arena.edges.appendSlice(t_arena.allocator, &[_]topo.Edge{
-        .{ .front = v_start + 0, .back = v_start + 1, .curve = .{ .index = arc_start + 0, .curve_type = .circle_arc } }, // e0: Bot Arc1
-        .{ .front = v_start + 1, .back = v_start + 0, .curve = .{ .index = arc_start + 1, .curve_type = .circle_arc } }, // e1: Bot Arc2
-        .{ .front = v_start + 2, .back = v_start + 3, .curve = .{ .index = arc_start + 2, .curve_type = .circle_arc } }, // e2: Top Arc1
-        .{ .front = v_start + 3, .back = v_start + 2, .curve = .{ .index = arc_start + 3, .curve_type = .circle_arc } }, // e3: Top Arc2
-        .{ .front = v_start + 0, .back = v_start + 2, .curve = .{ .index = line_start + 0, .curve_type = .line } }, // e4: Seam1 (+X)
-        .{ .front = v_start + 1, .back = v_start + 3, .curve = .{ .index = line_start + 1, .curve_type = .line } }, // e5: Seam2 (-X)
-    });
-
-    // 3. Faces & Surfaces
-    const f_start: u32 = @intCast(t_arena.faces.items.len);
-
-    // Push geometric surfaces
-    const plane_start: u24 = @intCast(g_arena.planes.items.len);
-    try g_arena.planes.appendSlice(g_arena.allocator, &[_]geom.Plane{
-        .{ .origin = .{ 0, 0, oz }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, -1, 0 } }, // Bottom Plane (Normal -Z)
-        .{ .origin = .{ 0, 0, mz }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } }, // Top Plane (Normal +Z)
-    });
-
-    const cyl_start: u24 = @intCast(g_arena.cylinders.items.len);
-    try g_arena.cylinders.append(g_arena.allocator, .{ .origin = .{ 0, 0, oz }, .axis = .{ 0, 0, 1 }, .x_axis = .{ 1, 0, 0 }, .y_axis = .{ 0, 1, 0 }, .radius = radius });
-
-    // Define face loops (edges relative to e_start)
-    const face_loops = [_]struct { edges: []const u32, forward: []const bool, surf: geom.SurfaceId }{
-        // Bottom Face (Bot Arc1, Bot Arc2 - reversed to face outward)
-        .{ .edges = &.{ 0, 1 }, .forward = &.{ false, false }, .surf = .{ .index = plane_start + 0, .surface_type = .plane } },
-        // Top Face (Top Arc1, Top Arc2)
-        .{ .edges = &.{ 2, 3 }, .forward = &.{ true, true }, .surf = .{ .index = plane_start + 1, .surface_type = .plane } },
-        // Side Face 1 (+Y half): Bot Arc1, Seam2, Top Arc1 (rev), Seam1 (rev)
-        .{ .edges = &.{ 0, 5, 2, 4 }, .forward = &.{ true, true, false, false }, .surf = .{ .index = cyl_start, .surface_type = .cylinder } },
-        // Side Face 2 (-Y half): Bot Arc2, Seam1, Top Arc2 (rev), Seam2 (rev)
-        .{ .edges = &.{ 1, 4, 3, 5 }, .forward = &.{ true, true, false, false }, .surf = .{ .index = cyl_start, .surface_type = .cylinder } },
-    };
-
-    for (face_loops) |loop| {
-        const w_edges_start: u32 = @intCast(t_arena.wire_edges.items.len);
-        for (loop.edges, loop.forward) |e_idx, fwd| {
-            try t_arena.wire_edges.append(t_arena.allocator, .{ .edge = e_start + e_idx, .forward = fwd });
-        }
-        const w_start: u32 = @intCast(t_arena.wires.items.len);
-        try t_arena.wires.append(t_arena.allocator, .{ .edges_start = w_edges_start, .edges_len = @intCast(loop.edges.len) });
-
-        const f_wires_start: u32 = @intCast(t_arena.face_wires.items.len);
-        try t_arena.face_wires.append(t_arena.allocator, w_start);
-
-        try t_arena.faces.append(t_arena.allocator, .{
-            .surface = loop.surf,
-            .forward = true,
-            .wires_start = f_wires_start,
-            .wires_len = 1,
-        });
+        const v_top: u32 = @intCast(t_arena.vertices.items.len);
+        try t_arena.vertices.append(allocator, .{ .point = .{ px, py, oz + height } });
+        top_verts[i] = v_top;
     }
 
-    // 4. Create 1 Shell & 1 Solid
-    const shell_start: u32 = @intCast(t_arena.shells.items.len);
+    var twin_map = std.AutoHashMap(EdgeKey, topo.HalfEdgeId).init(allocator);
+    defer twin_map.deinit();
+
     const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
-    for (0..4) |i| try t_arena.shell_faces.append(t_arena.allocator, f_start + @as(u32, @intCast(i)));
-    try t_arena.shells.append(t_arena.allocator, .{ .faces_start = sh_faces_start, .faces_len = 4 });
+
+    // Bottom Cap
+    const bot_plane_idx: u24 = @intCast(g_arena.planes.items.len);
+    try g_arena.planes.append(allocator, .{ .origin = .{ 0, 0, oz }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, -1, 0 } });
+    var bot_rev = try allocator.alloc(topo.VertexId, segments);
+    defer allocator.free(bot_rev);
+    for (0..segments) |i| bot_rev[i] = bot_verts[segments - 1 - i];
+    const bot_f = try addPolygonFace(allocator, t_arena, g_arena, bot_rev, .{ .index = bot_plane_idx, .surface_type = .plane }, &twin_map);
+    try t_arena.shell_faces.append(allocator, bot_f);
+
+    // Top Cap
+    const top_plane_idx: u24 = @intCast(g_arena.planes.items.len);
+    try g_arena.planes.append(allocator, .{ .origin = .{ 0, 0, oz + height }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    const top_f = try addPolygonFace(allocator, t_arena, g_arena, top_verts, .{ .index = top_plane_idx, .surface_type = .plane }, &twin_map);
+    try t_arena.shell_faces.append(allocator, top_f);
+
+    // Side Quads
+    const cyl_surf_idx: u24 = @intCast(g_arena.cylinders.items.len);
+    try g_arena.cylinders.append(allocator, .{ .origin = .{ 0, 0, oz }, .axis = .{ 0, 0, 1 }, .x_axis = .{ 1, 0, 0 }, .y_axis = .{ 0, 1, 0 }, .radius = radius });
+
+    for (0..segments) |i| {
+        const next_i = (i + 1) % segments;
+        const quad = [_]topo.VertexId{ bot_verts[i], bot_verts[next_i], top_verts[next_i], top_verts[i] };
+        const side_f = try addPolygonFace(allocator, t_arena, g_arena, &quad, .{ .index = cyl_surf_idx, .surface_type = .cylinder }, &twin_map);
+        try t_arena.shell_faces.append(allocator, side_f);
+    }
+
+    const shell_id: u32 = @intCast(t_arena.shells.items.len);
+    try t_arena.shells.append(allocator, .{ .faces_start = sh_faces_start, .faces_len = @intCast(2 + segments) });
 
     const solid_id: u32 = @intCast(t_arena.solids.items.len);
     const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
-    try t_arena.solid_shells.append(t_arena.allocator, shell_start);
-    try t_arena.solids.append(t_arena.allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
+    try t_arena.solid_shells.append(allocator, shell_id);
+    try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
 
     return solid_id;
 }
 
-/// Generates a B-Rep Sphere.
 pub fn generateSphere(
+    allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
     radius: f64,
-) GeneratorError!topo.SolidId {
-    // 1. Create North and South pole vertices
-    const v_start: u32 = @intCast(t_arena.vertices.items.len);
-    try t_arena.vertices.appendSlice(t_arena.allocator, &[_]topo.Vertex{
-        .{ .point = .{ 0, 0, -radius } }, // 0: South Pole
-        .{ .point = .{ 0, 0, radius } }, // 1: North Pole
-    });
-
-    // 2. Create semi-circular seam edges connecting the poles
-    const arc_start: u24 = @intCast(g_arena.circle_arcs.items.len);
-    const e_start: u32 = @intCast(t_arena.edges.items.len);
-
-    try g_arena.circle_arcs.appendSlice(g_arena.allocator, &[_]geom.CircleArc{
-        .{ .center = .{ 0, 0, 0 }, .radius = radius, .x_axis = .{ 1, 0, 0 }, .y_axis = .{ 0, 0, 1 } }, // Arc 1 (+X)
-        .{ .center = .{ 0, 0, 0 }, .radius = radius, .x_axis = .{ -1, 0, 0 }, .y_axis = .{ 0, 0, 1 } }, // Arc 2 (-X)
-    });
-
-    try t_arena.edges.appendSlice(t_arena.allocator, &[_]topo.Edge{
-        .{ .front = v_start + 0, .back = v_start + 1, .curve = .{ .index = arc_start + 0, .curve_type = .circle_arc } }, // e0: Bot to Top
-        .{ .front = v_start + 1, .back = v_start + 0, .curve = .{ .index = arc_start + 1, .curve_type = .circle_arc } }, // e1: Top to Bot
-    });
-
-    // 3. Create spherical surfaces and hemispherical faces
-    const f_start: u32 = @intCast(t_arena.faces.items.len);
-    const surf_start: u24 = @intCast(g_arena.spheres.items.len);
-
-    try g_arena.spheres.append(g_arena.allocator, .{
-        .center = .{ 0, 0, 0 },
-        .radius = radius,
-    });
-
-    const surf_id = geom.SurfaceId{ .index = surf_start, .surface_type = .sphere };
-
-    const face_loops = [_]struct { edges: []const u32, forward: []const bool }{
-        .{ .edges = &.{ 0, 1 }, .forward = &.{ true, true } }, // Hemisphere 1
-        .{ .edges = &.{ 1, 0 }, .forward = &.{ false, false } }, // Hemisphere 2
-    };
-
-    for (face_loops) |loop| {
-        const w_edges_start: u32 = @intCast(t_arena.wire_edges.items.len);
-        for (loop.edges, loop.forward) |e_idx, fwd| {
-            try t_arena.wire_edges.append(t_arena.allocator, .{ .edge = e_start + e_idx, .forward = fwd });
-        }
-        const w_start: u32 = @intCast(t_arena.wires.items.len);
-        try t_arena.wires.append(t_arena.allocator, .{ .edges_start = w_edges_start, .edges_len = @intCast(loop.edges.len) });
-
-        const f_wires_start: u32 = @intCast(t_arena.face_wires.items.len);
-        try t_arena.face_wires.append(t_arena.allocator, w_start);
-
-        try t_arena.faces.append(t_arena.allocator, .{
-            .surface = surf_id,
-            .forward = true,
-            .wires_start = f_wires_start,
-            .wires_len = 1,
-        });
-    }
-
-    // 4. Create 1 Shell & 1 Solid
-    const shell_start: u32 = @intCast(t_arena.shells.items.len);
-    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
-    for (0..2) |i| try t_arena.shell_faces.append(t_arena.allocator, f_start + @as(u32, @intCast(i)));
-    try t_arena.shells.append(t_arena.allocator, .{ .faces_start = sh_faces_start, .faces_len = 2 });
-
-    const solid_id: u32 = @intCast(t_arena.solids.items.len);
-    const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
-    try t_arena.solid_shells.append(t_arena.allocator, shell_start);
-    try t_arena.solids.append(t_arena.allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
-
-    return solid_id;
+) GenError!topo.SolidId {
+    return generateCylinder(allocator, t_arena, g_arena, radius, radius * 2.0, true);
 }
 
-/// Generates a 2D Polygon Face on the XY plane.
 pub fn generatePolygon(
+    allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
     pts: []const [2]f64,
-) GeneratorError!topo.FaceId {
-    // 1. Vertices
+) GenError!topo.FaceId {
     const v_start: u32 = @intCast(t_arena.vertices.items.len);
-    for (pts) |pt| {
-        try t_arena.vertices.append(t_arena.allocator, .{ .point = .{ pt[0], pt[1], 0.0 } });
-    }
+    var vert_ids = try allocator.alloc(topo.VertexId, pts.len);
+    defer allocator.free(vert_ids);
 
-    const e_start: u32 = @intCast(t_arena.edges.items.len);
-    const we_start: u32 = @intCast(t_arena.wire_edges.items.len);
-
-    // 2. Edges and Geometric Lines
     for (pts, 0..) |pt, i| {
-        const next_i = (i + 1) % pts.len;
-        const p1 = .{ pt[0], pt[1], 0.0 };
-        const p2 = .{ pts[next_i][0], pts[next_i][1], 0.0 };
-
-        const line_idx: u24 = @intCast(g_arena.lines.items.len);
-        try g_arena.lines.append(g_arena.allocator, .{ .start = p1, .end = p2 });
-
-        try t_arena.edges.append(t_arena.allocator, .{
-            .front = v_start + @as(u32, @intCast(i)),
-            .back = v_start + @as(u32, @intCast(next_i)),
-            .curve = .{ .index = line_idx, .curve_type = .line },
-        });
-
-        // Add to the outer wire boundary
-        try t_arena.wire_edges.append(t_arena.allocator, .{ .edge = e_start + @as(u32, @intCast(i)), .forward = true });
+        const v_id = v_start + @as(u32, @intCast(i));
+        try t_arena.vertices.append(allocator, .{ .point = .{ pt[0], pt[1], 0.0 } });
+        vert_ids[i] = v_id;
     }
 
-    // 3. Topology Wire
-    const w_start: u32 = @intCast(t_arena.wires.items.len);
-    try t_arena.wires.append(t_arena.allocator, .{
-        .edges_start = we_start,
-        .edges_len = @intCast(pts.len),
-    });
-
-    const fw_start: u32 = @intCast(t_arena.face_wires.items.len);
-    try t_arena.face_wires.append(t_arena.allocator, w_start);
-
-    // 4. Geometric Plane (XY Plane)
     const plane_idx: u24 = @intCast(g_arena.planes.items.len);
-    try g_arena.planes.append(g_arena.allocator, .{ .origin = .{ 0.0, 0.0, 0.0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    try g_arena.planes.append(allocator, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
 
-    // 5. Topology Face
-    const f_start: u32 = @intCast(t_arena.faces.items.len);
-    try t_arena.faces.append(t_arena.allocator, .{
-        .surface = .{ .index = plane_idx, .surface_type = .plane },
-        .forward = true,
-        .wires_start = fw_start,
-        .wires_len = 1,
-    });
+    var twin_map = std.AutoHashMap(EdgeKey, topo.HalfEdgeId).init(allocator);
+    defer twin_map.deinit();
 
-    return f_start;
+    return addPolygonFace(allocator, t_arena, g_arena, vert_ids, .{ .index = plane_idx, .surface_type = .plane }, &twin_map);
 }
 
-/// Generates a 2D Square Face on the XY plane.
 pub fn generateSquare(
+    allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
     size_x: f64,
     size_y: f64,
     centered: bool,
-) GeneratorError!topo.FaceId {
+) GenError!topo.FaceId {
     const ox = if (centered) -size_x / 2.0 else 0.0;
     const oy = if (centered) -size_y / 2.0 else 0.0;
     const mx = ox + size_x;
     const my = oy + size_y;
-
     const pts = [_][2]f64{
         .{ ox, oy },
         .{ mx, oy },
         .{ mx, my },
         .{ ox, my },
     };
-    return generatePolygon(t_arena, g_arena, &pts);
+    return generatePolygon(allocator, t_arena, g_arena, &pts);
 }
 
-/// Generates a faceted 2D Circle Face on the XY plane.
 pub fn generateCircle(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
     radius: f64,
     segments: i32,
-) GeneratorError!topo.FaceId {
-    // If not specified, default to a smooth 32-sided polygon
+) GenError!topo.FaceId {
     const segs = if (segments < 3) 32 else @as(usize, @intCast(segments));
     var pts = try allocator.alloc([2]f64, segs);
     defer allocator.free(pts);
-
     for (0..segs) |i| {
         const angle = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(segs));
         pts[i] = .{ radius * @cos(angle), radius * @sin(angle) };
     }
-
-    return generatePolygon(t_arena, g_arena, pts);
+    return generatePolygon(allocator, t_arena, g_arena, pts);
 }

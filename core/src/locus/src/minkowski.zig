@@ -3,6 +3,7 @@ const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const math = @import("math.zig");
 const qh = @import("quickhull.zig");
+const generators = @import("generators.zig");
 
 pub const MinkowskiError = error{
     OutOfMemory,
@@ -18,14 +19,14 @@ pub fn minkowskiSumConvex(
     solid_a: topo.SolidId,
     solid_b: topo.SolidId,
 ) MinkowskiError!topo.SolidId {
-    // 1. Extract unique vertices from Solid A and Solid B
+    // 1. Extract unique 3D vertices from Solid A and Solid B by traversing Half-Edge loops
     var verts_a = extractSolidVertices(allocator, t_arena, solid_a) catch return error.OutOfMemory;
     defer verts_a.deinit(allocator);
 
     var verts_b = extractSolidVertices(allocator, t_arena, solid_b) catch return error.OutOfMemory;
     defer verts_b.deinit(allocator);
 
-    // 2. Compute the Minkowski Point Cloud (Pairwise Sum)
+    // 2. Compute the Minkowski Point Cloud (Pairwise Sum of all vertex pairs)
     var point_cloud: std.ArrayListUnmanaged(math.Vec3) = .empty;
     defer point_cloud.deinit(allocator);
 
@@ -37,155 +38,125 @@ pub fn minkowskiSumConvex(
         }
     }
 
-    // 3. Feed the point cloud into Quickhull
+    // 3. Feed the resulting point cloud into the Quickhull 3D convex hull generator
     var builder = qh.QuickhullBuilder.init(allocator, point_cloud.items);
     defer builder.deinit();
 
     builder.buildHull() catch return error.NotEnoughPoints;
 
-    // 4. Convert Quickhull output back into B-Rep Topology
+    // 4. Convert Quickhull triangular faces into Half-Edge B-Rep topology
     var v_map = std.AutoHashMap(u32, topo.VertexId).init(allocator);
     defer v_map.deinit();
 
-    // Edge map key: u64 formed by (min(v1,v2) << 32) | max(v1,v2) to prevent duplicate edges
-    var e_map = std.AutoHashMap(u64, topo.EdgeId).init(allocator);
-    defer e_map.deinit();
+    var twin_map = std.AutoHashMap(generators.EdgeKey, topo.HalfEdgeId).init(allocator);
+    defer twin_map.deinit();
 
-    const f_start: u32 = @intCast(t_arena.faces.items.len);
-    var valid_faces: u32 = 0;
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
+    var face_count: u32 = 0;
 
     for (builder.faces.items) |hull_face| {
         if (hull_face.disabled) continue;
 
-        // Push Plane geometry
-        const surf_idx: u24 = @intCast(g_arena.planes.items.len);
-        try g_arena.planes.append(allocator, .{
-            .origin = point_cloud.items[@as(usize, @intCast(builder.half_edges.items[@as(usize, @intCast(hull_face.first_half_edge))].end_vertex))],
-            .u_axis = .{ 1, 0, 0 }, // Simplified local basis
-            .v_axis = .{ 0, 1, 0 },
-        });
-        const surf_id = geom.SurfaceId{ .index = surf_idx, .surface_type = .plane };
-
-        const w_edges_start: u32 = @intCast(t_arena.wire_edges.items.len);
-        var edge_count: u32 = 0;
+        // Extract the ordered vertex sequence for this convex hull face
+        var face_v_ids: std.ArrayListUnmanaged(topo.VertexId) = .empty;
+        defer face_v_ids.deinit(allocator);
 
         var curr_he_idx = hull_face.first_half_edge;
         var started = false;
 
-        // Walk the half-edge loop to build the Wire
         while (!started or curr_he_idx != hull_face.first_half_edge) {
             started = true;
             const he = builder.half_edges.items[@as(usize, @intCast(curr_he_idx))];
-            const p1_idx = he.end_vertex;
 
-            // Find previous half-edge to get the start vertex (p0)
+            // Trace backward along the Quickhull half-edge loop to find the start vertex (p0)
             var prev_he_idx = he.next_edge;
             while (builder.half_edges.items[@as(usize, @intCast(prev_he_idx))].next_edge != curr_he_idx) {
                 prev_he_idx = builder.half_edges.items[@as(usize, @intCast(prev_he_idx))].next_edge;
             }
             const p0_idx = builder.half_edges.items[@as(usize, @intCast(prev_he_idx))].end_vertex;
 
-            // Register Vertices
+            // Register and deduplicate 3D topological vertices
             if (!v_map.contains(p0_idx)) {
-                try v_map.put(p0_idx, @intCast(t_arena.vertices.items.len));
+                const new_v_id: u32 = @intCast(t_arena.vertices.items.len);
                 try t_arena.vertices.append(allocator, .{ .point = point_cloud.items[@as(usize, @intCast(p0_idx))] });
-            }
-            if (!v_map.contains(p1_idx)) {
-                try v_map.put(p1_idx, @intCast(t_arena.vertices.items.len));
-                try t_arena.vertices.append(allocator, .{ .point = point_cloud.items[@as(usize, @intCast(p1_idx))] });
+                try v_map.put(p0_idx, new_v_id);
             }
 
-            const t_v0 = v_map.get(p0_idx).?;
-            const t_v1 = v_map.get(p1_idx).?;
-
-            // Register Edge (Deduplicated)
-            const min_v = @min(p0_idx, p1_idx);
-            const max_v = @max(p0_idx, p1_idx);
-            const edge_key = (@as(u64, min_v) << 32) | @as(u64, max_v);
-
-            var t_edge_id: topo.EdgeId = 0;
-            var forward = (p0_idx == min_v);
-
-            if (!e_map.contains(edge_key)) {
-                const line_idx: u24 = @intCast(g_arena.lines.items.len);
-                try g_arena.lines.append(allocator, .{
-                    .start = t_arena.vertices.items[t_v0].point,
-                    .end = t_arena.vertices.items[t_v1].point,
-                });
-
-                t_edge_id = @intCast(t_arena.edges.items.len);
-                try t_arena.edges.append(allocator, .{
-                    .front = t_v0,
-                    .back = t_v1,
-                    .curve = .{ .index = line_idx, .curve_type = .line },
-                });
-                try e_map.put(edge_key, t_edge_id);
-                forward = true;
-            } else {
-                t_edge_id = e_map.get(edge_key).?;
-                const existing_edge = t_arena.edges.items[t_edge_id];
-                forward = (existing_edge.front == t_v0);
-            }
-
-            try t_arena.wire_edges.append(allocator, .{ .edge = t_edge_id, .forward = forward });
-            edge_count += 1;
+            try face_v_ids.append(allocator, v_map.get(p0_idx).?);
             curr_he_idx = he.next_edge;
         }
 
-        // Connect the Wire to the Face
-        const w_start: u32 = @intCast(t_arena.wires.items.len);
-        try t_arena.wires.append(allocator, .{ .edges_start = w_edges_start, .edges_len = edge_count });
+        if (face_v_ids.items.len < 3) continue;
 
-        const f_wires_start: u32 = @intCast(t_arena.face_wires.items.len);
-        try t_arena.face_wires.append(allocator, w_start);
-
-        try t_arena.faces.append(allocator, .{
-            .surface = surf_id,
-            .forward = true,
-            .wires_start = f_wires_start,
-            .wires_len = 1,
+        // Push Plane geometry using the first vertex position as the local origin
+        const plane_idx: u24 = @intCast(g_arena.planes.items.len);
+        const p0_pos = t_arena.vertices.items[face_v_ids.items[0]].point;
+        try g_arena.planes.append(allocator, .{
+            .origin = p0_pos,
+            .u_axis = .{ 1, 0, 0 },
+            .v_axis = .{ 0, 1, 0 },
         });
 
-        valid_faces += 1;
+        // Wire Half-Edges, Loops, and Face using the generator helper
+        const surf_id = geom.SurfaceId{ .index = plane_idx, .surface_type = .plane };
+        const face_id = try generators.addPolygonFace(allocator, t_arena, g_arena, face_v_ids.items, surf_id, &twin_map);
+        try t_arena.shell_faces.append(allocator, face_id);
+        face_count += 1;
     }
 
-    // 5. Build Shell and Solid
-    const shell_start: u32 = @intCast(t_arena.shells.items.len);
-    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
-    for (0..valid_faces) |i| {
-        try t_arena.shell_faces.append(allocator, f_start + @as(u32, @intCast(i)));
-    }
-    try t_arena.shells.append(allocator, .{ .faces_start = sh_faces_start, .faces_len = valid_faces });
+    // 5. Package all new faces into a Shell and Solid
+    const shell_id: u32 = @intCast(t_arena.shells.items.len);
+    try t_arena.shells.append(allocator, .{
+        .faces_start = sh_faces_start,
+        .faces_len = face_count,
+    });
 
     const solid_id: u32 = @intCast(t_arena.solids.items.len);
     const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
-    try t_arena.solid_shells.append(allocator, shell_start);
-    try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
+    try t_arena.solid_shells.append(allocator, shell_id);
+    try t_arena.solids.append(allocator, .{
+        .shells_start = so_shells_start,
+        .shells_len = 1,
+    });
 
     return solid_id;
 }
 
-/// Helper to gather all unique vertex coordinates from a solid.
-fn extractSolidVertices(allocator: std.mem.Allocator, t_arena: *topo.TopologyArena, solid_id: topo.SolidId) !std.ArrayListUnmanaged(math.Vec3) {
+/// Helper to gather all unique 3D vertex coordinates from a solid by traversing its Half-Edge loops.
+fn extractSolidVertices(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    solid_id: topo.SolidId,
+) !std.ArrayListUnmanaged(math.Vec3) {
     var verts: std.ArrayListUnmanaged(math.Vec3) = .empty;
     var seen = std.AutoHashMap(topo.VertexId, void).init(allocator);
     defer seen.deinit();
 
     const solid = t_arena.solids.items[solid_id];
     for (0..solid.shells_len) |s_offset| {
-        const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start + s_offset]];
+        const shell_id = t_arena.solid_shells.items[solid.shells_start + s_offset];
+        const shell = t_arena.shells.items[shell_id];
+
         for (0..shell.faces_len) |f_offset| {
-            const face = t_arena.faces.items[t_arena.shell_faces.items[shell.faces_start + f_offset]];
-            for (0..face.wires_len) |w_offset| {
-                const wire = t_arena.wires.items[t_arena.face_wires.items[face.wires_start + w_offset]];
-                for (0..wire.edges_len) |e_offset| {
-                    const edge = t_arena.edges.items[t_arena.wire_edges.items[wire.edges_start + e_offset].edge];
-                    for ([_]topo.VertexId{ edge.front, edge.back }) |v_id| {
-                        if (!seen.contains(v_id)) {
-                            try seen.put(v_id, {});
-                            try verts.append(allocator, t_arena.vertices.items[v_id].point);
-                        }
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_offset];
+            const face = t_arena.faces.items[face_id];
+
+            for (0..face.loops_len) |l_offset| {
+                const loop_id = t_arena.face_loops.items[face.loops_start + l_offset];
+                const loop = t_arena.loops.items[loop_id];
+
+                var curr_he = loop.first_half_edge;
+                while (true) {
+                    const he = t_arena.half_edges.items[curr_he];
+                    const v_id = he.start_vertex;
+
+                    if (!seen.contains(v_id)) {
+                        try seen.put(v_id, {});
+                        try verts.append(allocator, t_arena.vertices.items[v_id].point);
                     }
+
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
                 }
             }
         }

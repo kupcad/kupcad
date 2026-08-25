@@ -22,8 +22,8 @@ test "Driver: End-to-End API Calls" {
     // 5. Test the Meshing Pipeline
     const mesh_data = driver.driver.getMeshFn(cube_handle) orelse return error.MeshingFailed;
 
-    // Our tessellator currently pushes all vertices from the global arena.
-    // Cube (8) + Cylinder (4) + Sphere (2) = exactly 14 vertices.
-    // 14 vertices $\times$ 3 floats = 42 floats.
-    try std.testing.expectEqual(@as(usize, 42), mesh_data.vertex_len);
+    // The tessellator pushes all vertices from the shared topology arena:
+    // Cube (8) + Cylinder (32) + Sphere (32) = 72 vertices.
+    // 72 vertices * 3 floats = 216 floats.
+    try std.testing.expectEqual(@as(usize, 216), mesh_data.vertex_len);
 }

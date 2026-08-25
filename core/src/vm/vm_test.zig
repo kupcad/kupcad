@@ -2268,26 +2268,34 @@ test "VM: TopologyArena deinit cleanly frees all arrays" {
     const topo = @import("../locus/src/topology.zig");
     const TopologyArena = topo.TopologyArena;
     const Vertex = topo.Vertex;
-    const Wire = topo.Wire;
-    const DirectedEdge = topo.DirectedEdge;
+    const Loop = topo.Loop;
+    const HalfEdge = topo.HalfEdge;
 
     var arena = TopologyArena.init(testing.allocator);
-    defer arena.deinit();
+    defer arena.deinit(testing.allocator);
 
-    // Simulate allocating topology slices using the new ArrayListUnmanaged API
+    // Simulate allocating topology slices using the ArrayListUnmanaged API
     for (0..10) |_| {
         try arena.vertices.append(testing.allocator, Vertex{ .point = .{ 0.0, 0.0, 0.0 } });
     }
     for (0..5) |_| {
-        try arena.wires.append(testing.allocator, Wire{ .edges_start = 0, .edges_len = 0 });
+        try arena.loops.append(testing.allocator, Loop{ .face_id = 0, .first_half_edge = 0 });
     }
 
-    // Simulate appending to the relationship arrays
-    try arena.wire_edges.append(testing.allocator, DirectedEdge{ .edge = 1, .forward = true });
-    try arena.wire_edges.append(testing.allocator, DirectedEdge{ .edge = 2, .forward = false });
+    // Simulate appending to the half-edge and relationship arrays
+    try arena.half_edges.append(testing.allocator, HalfEdge{
+        .start_vertex = 0,
+        .twin = topo.NULL_ID,
+        .next = 0,
+        .prev = 0,
+        .loop_id = 0,
+        .curve = .{ .index = 0, .curve_type = .line },
+        .forward = true,
+    });
+    try arena.face_loops.append(testing.allocator, 0);
 
-    // The defer arena.deinit() will trigger here.
-    // If it doesn't correctly free `.vertices`, `.wires`, and `.wire_edges`, Zig's test runner will panic with a memory leak.
+    // The defer arena.deinit(testing.allocator) will trigger here.
+    // If it doesn't correctly free `.vertices`, `.loops`, `.half_edges`, and `.face_loops`, Zig's test runner will panic with a memory leak.
 }
 
 test "VM: Closure stack frame safely pre-allocates local variables" {
