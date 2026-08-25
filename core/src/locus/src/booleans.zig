@@ -300,6 +300,100 @@ pub fn splitEdgeTopologically(
     return .{ .v_mid = v_mid_id, .e1 = e1_id, .e2 = e2_id };
 }
 
+/// Splits a face in two by drawing a new edge between v1 and v2 on its boundary.
+/// Modifies the original face and returns the ID of the newly generated sub-face.
+pub fn splitFaceTopologically(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    face_id: topo.FaceId,
+    v1_id: topo.VertexId,
+    v2_id: topo.VertexId,
+) !topo.FaceId {
+    const orig_face = t_arena.faces.items[face_id];
+    // For simplicity in this skeleton, we assume the face only has 1 outer wire.
+    const orig_wire_id = t_arena.face_wires.items[orig_face.wires_start];
+    const orig_wire = t_arena.wires.items[orig_wire_id];
+
+    // 1. Create the bridging geometric line and topological edge
+    const p1 = t_arena.vertices.items[v1_id].point;
+    const p2 = t_arena.vertices.items[v2_id].point;
+
+    const line_idx: u24 = @intCast(g_arena.lines.items.len);
+    try g_arena.lines.append(allocator, .{ .start = p1, .end = p2 });
+
+    const split_edge_id: u32 = @intCast(t_arena.edges.items.len);
+    try t_arena.edges.append(allocator, .{
+        .front = v1_id,
+        .back = v2_id,
+        .curve = .{ .index = line_idx, .curve_type = .line },
+    });
+
+    // 2. Traverse the original wire to separate edges into Loop A and Loop B
+    var edges_a: std.ArrayListUnmanaged(topo.DirectedEdge) = .empty;
+    defer edges_a.deinit(allocator);
+    var edges_b: std.ArrayListUnmanaged(topo.DirectedEdge) = .empty;
+    defer edges_b.deinit(allocator);
+
+    var current_loop = &edges_a;
+    var found_v1 = false;
+    var found_v2 = false;
+
+    for (0..orig_wire.edges_len) |i| {
+        const d_edge = t_arena.wire_edges.items[orig_wire.edges_start + i];
+        const edge = t_arena.edges.items[d_edge.edge];
+
+        // Check if this edge emits from one of our split points
+        const start_v = if (d_edge.forward) edge.front else edge.back;
+
+        if (start_v == v1_id) {
+            found_v1 = true;
+            current_loop = &edges_b; // Switch accumulation to Loop B
+        } else if (start_v == v2_id) {
+            found_v2 = true;
+            current_loop = &edges_a; // Switch accumulation back to Loop A
+        }
+
+        try current_loop.append(allocator, d_edge);
+    }
+
+    if (!found_v1 or !found_v2) return error.InvalidFace; // Vertices weren't on the boundary!
+
+    // 3. Close both loops with the new split edge
+    // Loop A needs the edge going from v2 -> v1 (backward)
+    try edges_a.append(allocator, .{ .edge = split_edge_id, .forward = false });
+    // Loop B needs the edge going from v1 -> v2 (forward)
+    try edges_b.append(allocator, .{ .edge = split_edge_id, .forward = true });
+
+    // 4. Construct the new Wires in the arena
+    const w_a_start: u32 = @intCast(t_arena.wire_edges.items.len);
+    try t_arena.wire_edges.appendSlice(allocator, edges_a.items);
+
+    // We overwrite the original wire to point to the new Loop A
+    t_arena.wires.items[orig_wire_id].edges_start = w_a_start;
+    t_arena.wires.items[orig_wire_id].edges_len = @intCast(edges_a.items.len);
+
+    const w_b_start: u32 = @intCast(t_arena.wire_edges.items.len);
+    try t_arena.wire_edges.appendSlice(allocator, edges_b.items);
+
+    const new_wire_id: u32 = @intCast(t_arena.wires.items.len);
+    try t_arena.wires.append(allocator, .{ .edges_start = w_b_start, .edges_len = @intCast(edges_b.items.len) });
+
+    // 5. Construct the new Sub-Face (Loop B)
+    const new_f_wires_start: u32 = @intCast(t_arena.face_wires.items.len);
+    try t_arena.face_wires.append(allocator, new_wire_id);
+
+    const new_face_id: u32 = @intCast(t_arena.faces.items.len);
+    try t_arena.faces.append(allocator, .{
+        .surface = orig_face.surface, // Both faces share the same geometric plane!
+        .forward = orig_face.forward,
+        .wires_start = new_f_wires_start,
+        .wires_len = 1,
+    });
+
+    return new_face_id;
+}
+
 /// Computes the intersection distance (t) between a Ray and a Plane.
 /// Returns null if parallel or if the intersection is behind the ray origin.
 fn rayIntersectPlane(

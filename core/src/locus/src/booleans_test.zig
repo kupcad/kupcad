@@ -209,3 +209,43 @@ test "CSG: Topological Edge Splitting & Wire Reweaving" {
     try std.testing.expectEqual(true, d_edge_1.forward);
     try std.testing.expectEqual(true, d_edge_2.forward);
 }
+
+test "CSG: Face Splitting" {
+    const alloc = std.testing.allocator;
+
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit();
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit();
+
+    // 1. Generate a Base Cube, we will extract its top face (Face 1)
+    _ = try generators.generateCube(&t_arena, &g_arena, 10, 10, 10, false);
+
+    const face_id: u32 = 1; // Top face (Z=10)
+
+    // The top face is bounded by 4 edges.
+    // We will split the first edge (Y=0) and the third edge (Y=10) in half.
+    const wire_id = t_arena.face_wires.items[t_arena.faces.items[face_id].wires_start];
+    const wire = t_arena.wires.items[wire_id];
+
+    const edge1_id = t_arena.wire_edges.items[wire.edges_start + 0].edge; // Bottom edge
+    const edge3_id = t_arena.wire_edges.items[wire.edges_start + 2].edge; // Top edge
+
+    // 2. Split Edge 1 at X=5, Y=0
+    const res1 = try booleans.splitEdgeTopologically(alloc, &t_arena, &g_arena, edge1_id, .{ 5, 0, 10 });
+    // 3. Split Edge 3 at X=5, Y=10
+    const res2 = try booleans.splitEdgeTopologically(alloc, &t_arena, &g_arena, edge3_id, .{ 5, 10, 10 });
+
+    // 4. Split the Face across the two new vertices!
+    const new_sub_face_id = try booleans.splitFaceTopologically(alloc, &t_arena, &g_arena, face_id, res1.v_mid, res2.v_mid);
+
+    // 5. Validation
+    // The face was cut in half, so the new face should exist.
+    // The original face's wire should now have 4 edges (it was 4, split into 6, divided into 4 and 4).
+    const modified_orig_wire = t_arena.wires.items[wire_id];
+    try std.testing.expectEqual(@as(usize, 4), modified_orig_wire.edges_len);
+
+    const new_sub_wire_id = t_arena.face_wires.items[t_arena.faces.items[new_sub_face_id].wires_start];
+    const new_sub_wire = t_arena.wires.items[new_sub_wire_id];
+    try std.testing.expectEqual(@as(usize, 4), new_sub_wire.edges_len);
+}
