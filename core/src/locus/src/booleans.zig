@@ -4,6 +4,7 @@ const geom = @import("geometry.zig");
 const math = @import("math.zig");
 
 pub const BooleanOp = enum { union_op, difference, intersection };
+pub const FaceClassification = enum { inside, outside, same, opposite };
 
 pub const BooleanError = error{
     OutOfMemory,
@@ -83,6 +84,45 @@ pub fn marchIntersection(
     return geom.CurveId{ .index = @intCast(g_arena.lines.items.len), .curve_type = .line };
 }
 
+/// Determines if a face from Solid A is inside, outside, or coplanar to Solid B.
+/// (This will eventually use Raycasting + Winding numbers).
+fn classifyFace(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    face_id: topo.FaceId,
+    target_solid_id: topo.SolidId,
+) FaceClassification {
+    _ = allocator;
+    _ = t_arena;
+    _ = g_arena;
+    _ = face_id;
+    _ = target_solid_id;
+    // STUB: Defaulting to outside so the compiler passes.
+    return .outside;
+}
+
+/// Splits the faces of both solids along their intersection curves.
+/// Returns a list of the newly generated sub-faces for each solid.
+fn splitIntersectingFaces(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    solid_a: topo.SolidId,
+    solid_b: topo.SolidId,
+) !struct { faces_a: []topo.FaceId, faces_b: []topo.FaceId } {
+    _ = allocator;
+    _ = t_arena;
+    _ = g_arena;
+    _ = solid_a;
+    _ = solid_b;
+    // STUB: In a real implementation, this loops through A's faces and B's faces,
+    // runs `marchIntersection`, and splits the topology.
+    // For now, we return empty arrays to satisfy the pipeline structure.
+    return .{ .faces_a = &[_]topo.FaceId{}, .faces_b = &[_]topo.FaceId{} };
+}
+
+/// The Holy Grail: Computes the Boolean CSG operation between two solids.
 pub fn computeBoolean(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -92,11 +132,94 @@ pub fn computeBoolean(
     op: BooleanOp,
     config: anytype,
 ) BooleanError!topo.SolidId {
-    _ = allocator;
-    _ = t_arena;
-    _ = g_arena;
-    _ = solid_b;
-    _ = op;
     _ = config;
-    return solid_a;
+
+    // 1. & 2. Intersection and Splitting
+    // This generates the raw pool of faces we will select from.
+    const split_result = splitIntersectingFaces(allocator, t_arena, g_arena, solid_a, solid_b) catch return error.OutOfMemory;
+    _ = split_result;
+
+    var selected_faces: std.ArrayListUnmanaged(topo.FaceId) = .empty;
+    defer selected_faces.deinit(allocator);
+
+    // Note: To make this function compile and testable immediately,
+    // we will iterate over the original faces of A and B,
+    // pretending they were returned by the `splitIntersectingFaces` step.
+
+    // --- Phase 3 & 4: Classification and Selection ---
+
+    // Process Solid A's Faces
+    const sa = t_arena.solids.items[solid_a];
+    for (0..sa.shells_len) |s_off| {
+        const shell = t_arena.shells.items[t_arena.solid_shells.items[sa.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+
+            const class = classifyFace(allocator, t_arena, g_arena, face_id, solid_b);
+
+            const keep = switch (op) {
+                .union_op => class == .outside or class == .same,
+                .difference => class == .outside or class == .opposite,
+                .intersection => class == .inside or class == .same,
+            };
+
+            if (keep) {
+                try selected_faces.append(allocator, face_id);
+            }
+        }
+    }
+
+    // Process Solid B's Faces
+    const sb = t_arena.solids.items[solid_b];
+    for (0..sb.shells_len) |s_off| {
+        const shell = t_arena.shells.items[t_arena.solid_shells.items[sb.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+
+            const class = classifyFace(allocator, t_arena, g_arena, face_id, solid_a);
+
+            const keep = switch (op) {
+                .union_op => class == .outside,
+                .difference => class == .inside, // Note: We would also need to flip the normal here!
+                .intersection => class == .inside,
+            };
+
+            if (keep) {
+                // For Difference, B's faces must be inverted so the normals face outward from the void.
+                if (op == .difference) {
+                    var flipped_face = t_arena.faces.items[face_id];
+                    flipped_face.forward = !flipped_face.forward;
+
+                    const new_face_id: u32 = @intCast(t_arena.faces.items.len);
+                    try t_arena.faces.append(allocator, flipped_face);
+                    try selected_faces.append(allocator, new_face_id);
+                } else {
+                    try selected_faces.append(allocator, face_id);
+                }
+            }
+        }
+    }
+
+    // --- Phase 5: Re-assembly ---
+    // Package the selected faces into a brand new Solid
+
+    const shell_start: u32 = @intCast(t_arena.shells.items.len);
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
+
+    try t_arena.shell_faces.appendSlice(allocator, selected_faces.items);
+    try t_arena.shells.append(allocator, .{
+        .faces_start = sh_faces_start,
+        .faces_len = @intCast(selected_faces.items.len),
+    });
+
+    const new_solid_id: u32 = @intCast(t_arena.solids.items.len);
+    const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
+
+    try t_arena.solid_shells.append(allocator, shell_start);
+    try t_arena.solids.append(allocator, .{
+        .shells_start = so_shells_start,
+        .shells_len = 1,
+    });
+
+    return new_solid_id;
 }
