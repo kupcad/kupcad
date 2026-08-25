@@ -17,4 +17,5 @@ test {
     _ = @import("generators_test.zig");
     _ = @import("geometry_test.zig");
     _ = @import("tessellate_test.zig");
+    _ = @import("transforms_test.zig");
 }

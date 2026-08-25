@@ -13,10 +13,13 @@ test "Driver: End-to-End API Calls" {
     try std.testing.expectEqual(@as(usize, 1), cyl_handle);
     try std.testing.expectEqual(@as(usize, 2), sphere_handle);
 
+    // 4. Test a transform
     const translated_handle = driver.driver.translateFn(cube_handle, 10.0, 0.0, 0.0) orelse return error.TranslateFailed;
-    try std.testing.expectEqual(@as(usize, 0), translated_handle);
 
-    // ADDED: Test the Meshing Pipeline
+    // Since there were already 3 solids (0, 1, 2) in the arena, the clone is ID 3.
+    try std.testing.expectEqual(@as(usize, 3), translated_handle);
+
+    // 5. Test the Meshing Pipeline
     const mesh_data = driver.driver.getMeshFn(cube_handle) orelse return error.MeshingFailed;
 
     // Our dummy `tessellateFace` currently pushes 1 vertex per face, so a cube (6 faces) = 6 vertices.

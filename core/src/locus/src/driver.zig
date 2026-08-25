@@ -57,7 +57,16 @@ fn extrudeImpl(base: GeometryHandle, vx: f64, vy: f64, vz: f64) ?GeometryHandle 
 }
 
 fn translateImpl(shape: GeometryHandle, x: f64, y: f64, z: f64) ?GeometryHandle {
-    const solid_id = transforms.translateSolid(&g_topo_arena, &g_geom_arena, @as(topo.SolidId, @intCast(shape)), x, y, z) catch return null;
+    const solid_id = transforms.translateSolid(
+        g_allocator,
+        &g_topo_arena,
+        &g_geom_arena,
+        @as(topo.SolidId, @intCast(shape)),
+        x,
+        y,
+        z,
+    ) catch return null;
+
     return @as(GeometryHandle, solid_id);
 }
 
