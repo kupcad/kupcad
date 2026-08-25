@@ -45,7 +45,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
     }
 
     const solid: *brep_driver.BrepSolid = @ptrCast(@alignCast(handle.ptr));
-    const b = &solid.brep;
+    const t = &solid.t_arena;
 
     var s = StepSerializer.init(allocator);
     errdefer s.out.deinit(allocator);
@@ -81,46 +81,46 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
 
     // --- 2. MAP TOPOLOGY TO STEP RECORDS ---
 
-    var vertex_map = try allocator.alloc(u32, b.vertices.items.len);
+    var vertex_map = try allocator.alloc(u32, t.vertices.items.len);
     defer allocator.free(vertex_map);
 
-    for (b.vertices.items, 0..) |v, i| {
-        const pt_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ v.point.x, v.point.y, v.point.z });
+    for (t.vertices.items, 0..) |v, i| {
+        const pt_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ v.point[0], v.point[1], v.point[2] });
         vertex_map[i] = try s.emit("VERTEX_POINT('',#{d})", .{pt_id});
     }
 
-    var edge_map = try allocator.alloc(u32, b.edges.items.len);
+    var edge_map = try allocator.alloc(u32, t.edges.items.len);
     defer allocator.free(edge_map);
 
-    for (b.edges.items, 0..) |edge, i| {
-        const p1 = b.vertices.items[edge.start_vertex].point;
-        const p2 = b.vertices.items[edge.end_vertex].point;
+    for (t.edges.items, 0..) |edge, i| {
+        const p1 = t.vertices.items[edge.front].point;
+        const p2 = t.vertices.items[edge.back].point;
 
-        const dx = p2.x - p1.x;
-        const dy = p2.y - p1.y;
-        const dz = p2.z - p1.z;
+        const dx = p2[0] - p1[0];
+        const dy = p2[1] - p1[1];
+        const dz = p2[2] - p1[2];
         const len = @sqrt(dx * dx + dy * dy + dz * dz);
 
         const dir_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ dx / len, dy / len, dz / len });
         const vec_id = try s.emit("VECTOR('',#{d},{d:.6})", .{ dir_id, len });
 
-        const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p1.x, p1.y, p1.z });
+        const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p1[0], p1[1], p1[2] });
         const line_id = try s.emit("LINE('',#{d},#{d})", .{ origin_id, vec_id });
 
-        edge_map[i] = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{ vertex_map[edge.start_vertex], vertex_map[edge.end_vertex], line_id });
+        edge_map[i] = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{ vertex_map[edge.front], vertex_map[edge.back], line_id });
     }
 
     // Wires (Loops)
-    var wire_map = try allocator.alloc(u32, b.wires.items.len);
+    var wire_map = try allocator.alloc(u32, t.wires.items.len);
     defer allocator.free(wire_map);
 
-    for (b.wires.items, 0..) |wire, i| {
+    for (t.wires.items, 0..) |wire, i| {
         var loop_edges = std.ArrayListUnmanaged(u32).empty;
         defer loop_edges.deinit(allocator);
 
-        for (0..wire.num_edges) |we_off| {
-            const e_id = b.wire_edges.items[wire.first_edge + we_off];
-            const oriented_id = try s.emit("ORIENTED_EDGE('',*,*,#{d},.T.)", .{edge_map[e_id]});
+        for (0..wire.edges_len) |we_off| {
+            const d_edge = t.wire_edges.items[wire.edges_start + we_off];
+            const oriented_id = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{ edge_map[d_edge.edge], if (d_edge.forward) "T" else "F" });
             try loop_edges.append(allocator, oriented_id);
         }
 
@@ -139,25 +139,31 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
     }
 
     // Faces
-    var face_map = try allocator.alloc(u32, b.faces.items.len);
+    var face_map = try allocator.alloc(u32, t.faces.items.len);
     defer allocator.free(face_map);
 
-    for (b.faces.items, 0..) |face, i| {
-        // Calculate true normal from the first two edges of the outer wire
-        const wire = b.wires.items[face.outer_wire];
-        const e1 = b.edges.items[b.wire_edges.items[wire.first_edge]];
-        const e2 = b.edges.items[b.wire_edges.items[wire.first_edge + 1]];
+    for (t.faces.items, 0..) |face, i| {
+        const wire_id = t.face_wires.items[face.wires_start];
+        const wire = t.wires.items[wire_id];
 
-        const p0 = b.vertices.items[e1.start_vertex].point;
-        const p1 = b.vertices.items[e1.end_vertex].point;
-        const p2 = if (e1.end_vertex == e2.start_vertex) b.vertices.items[e2.end_vertex].point else b.vertices.items[e2.start_vertex].point;
+        if (wire.edges_len < 2) continue; // Safety guard
 
-        const dx1 = p1.x - p0.x;
-        const dy1 = p1.y - p0.y;
-        const dz1 = p1.z - p0.z;
-        const dx2 = p2.x - p0.x;
-        const dy2 = p2.y - p0.y;
-        const dz2 = p2.z - p0.z;
+        const d_e1 = t.wire_edges.items[wire.edges_start];
+        const d_e2 = t.wire_edges.items[wire.edges_start + 1];
+
+        const e1 = t.edges.items[d_e1.edge];
+        const e2 = t.edges.items[d_e2.edge];
+
+        const p0 = t.vertices.items[e1.front].point;
+        const p1 = t.vertices.items[e1.back].point;
+        const p2 = if (e1.back == e2.front) t.vertices.items[e2.back].point else t.vertices.items[e2.front].point;
+
+        const dx1 = p1[0] - p0[0];
+        const dy1 = p1[1] - p0[1];
+        const dz1 = p1[2] - p0[2];
+        const dx2 = p2[0] - p0[0];
+        const dy2 = p2[1] - p0[1];
+        const dz2 = p2[2] - p0[2];
 
         var nx = dy1 * dz2 - dz1 * dy2;
         var ny = dz1 * dx2 - dx1 * dz2;
@@ -183,29 +189,29 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
             xx = 1.0;
         }
 
-        const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p0.x, p0.y, p0.z });
+        const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p0[0], p0[1], p0[2] });
         const z_axis = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ nx, ny, nz });
         const x_axis = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ xx, xy, xz });
 
         const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis, x_axis });
         const plane_id = try s.emit("PLANE('',#{d})", .{axis2});
 
-        const bound_id = try s.emit("FACE_OUTER_BOUND('',#{d},.T.)", .{wire_map[face.outer_wire]});
+        const bound_id = try s.emit("FACE_OUTER_BOUND('',#{d},.T.)", .{wire_map[wire_id]});
         face_map[i] = try s.emit("ADVANCED_FACE('',(#{d}),#{d},.T.)", .{ bound_id, plane_id });
     }
 
     // Shells
-    var shell_map = try allocator.alloc(u32, b.shells.items.len);
+    var shell_map = try allocator.alloc(u32, t.shells.items.len);
     defer allocator.free(shell_map);
 
-    for (b.shells.items, 0..) |shell, i| {
+    for (t.shells.items, 0..) |shell, i| {
         var header_buf: [64]u8 = undefined;
         const header_str = try std.fmt.bufPrint(&header_buf, "#{d}=CLOSED_SHELL('',(", .{s.nextId()});
         try s.out.appendSlice(allocator, header_str);
 
-        for (0..shell.num_faces) |f_off| {
+        for (0..shell.faces_len) |f_off| {
             if (f_off > 0) try s.out.appendSlice(allocator, ",");
-            const f_id = b.shell_faces.items[shell.first_face + f_off];
+            const f_id = t.shell_faces.items[shell.faces_start + f_off];
 
             var f_buf: [32]u8 = undefined;
             const f_str = try std.fmt.bufPrint(&f_buf, "#{d}", .{face_map[f_id]});
@@ -216,10 +222,14 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
     }
 
     // Solid (We manually write the reserved ID #17 so the boilerplate finds it)
-    if (b.solids.items.len > 0) {
-        var buf: [128]u8 = undefined;
-        const out_str = try std.fmt.bufPrint(&buf, "#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ solid_id, shell_map[b.solids.items[0].outer_shell] });
-        try s.out.appendSlice(allocator, out_str);
+    if (t.solids.items.len > 0) {
+        const s_item = t.solids.items[0];
+        if (s_item.shells_len > 0) {
+            const shell_id = t.solid_shells.items[s_item.shells_start];
+            var buf: [128]u8 = undefined;
+            const out_str = try std.fmt.bufPrint(&buf, "#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ solid_id, shell_map[shell_id] });
+            try s.out.appendSlice(allocator, out_str);
+        }
     }
 
     try s.out.appendSlice(allocator, "ENDSEC;\nEND-ISO-10303-21;\n");

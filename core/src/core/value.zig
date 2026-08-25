@@ -1,6 +1,6 @@
 const std = @import("std");
 const dag = @import("../vm/dag.zig");
-const topology = @import("../kernel/engines/brep/topology.zig");
+const topology = @import("../locus/src/topology.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 
 /// Identifies the primitive type of a Value.
@@ -205,7 +205,7 @@ pub const ObjNative = struct {
 
 pub const ObjBrep = struct {
     obj: Obj,
-    data: *topology.Brep, // Pointer to the pure Zig B-Rep data
+    data: *topology.TopologyArena, // Pointer to the pure Zig B-Rep data
 };
 
 pub const ObjBBox = struct {

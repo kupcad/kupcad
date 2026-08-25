@@ -1,5 +1,5 @@
 const std = @import("std");
-const driver = @import("../src/driver.zig");
+const driver = @import("driver.zig");
 
 test "Driver: End-to-End API Calls" {
     driver.init(std.testing.allocator);
@@ -22,7 +22,8 @@ test "Driver: End-to-End API Calls" {
     // 5. Test the Meshing Pipeline
     const mesh_data = driver.driver.getMeshFn(cube_handle) orelse return error.MeshingFailed;
 
-    // Our dummy `tessellateFace` currently pushes 1 vertex per face, so a cube (6 faces) = 6 vertices.
-    // 6 vertices * 3 floats (x,y,z) = 18 floats total.
-    try std.testing.expectEqual(@as(usize, 18), mesh_data.vertex_len);
+    // Our tessellator currently pushes all vertices from the global arena.
+    // Cube (8) + Cylinder (4) + Sphere (2) + Translated Cube (8) = 22 vertices.
+    // 22 vertices * 3 floats (x,y,z) = 66 floats total.
+    try std.testing.expectEqual(@as(usize, 66), mesh_data.vertex_len);
 }

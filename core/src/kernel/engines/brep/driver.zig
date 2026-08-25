@@ -1,32 +1,41 @@
 const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
-const topo = @import("topology.zig");
-const tessellate = @import("tessellate.zig");
-const generators = @import("generators.zig");
 
-// Provide a global backing allocator specifically for engine allocations,
-// mimicking C++ `new` behavior used by the Manifold driver counterpart.
+// Import the isolated Locus Native B-Rep Library
+const locus_topo = @import("../../../locus/src/topology.zig");
+const locus_geom = @import("../../../locus/src/geometry.zig");
+const locus_gen = @import("../../../locus/src/generators.zig");
+const locus_bool = @import("../../../locus/src/booleans.zig");
+const locus_tess = @import("../../../locus/src/tessellate.zig");
+const locus_sweeps = @import("../../../locus/src/sweeps.zig");
+const locus_mink = @import("../../../locus/src/minkowski.zig");
+const locus_trans = @import("../../../locus/src/transforms.zig");
+
 var backend_allocator = std.heap.page_allocator;
 
-/// The container we store behind handle.ptr for the native engine
+/// The container we store behind handle.ptr.
+/// It encapsulates a Locus CAD environment per geometry handle.
 pub const BrepSolid = struct {
     allocator: std.mem.Allocator,
-    brep: topo.Brep,
-    solid_id: u32,
+    t_arena: locus_topo.TopologyArena,
+    g_arena: locus_geom.GeometryArena,
+    solid_id: locus_topo.SolidId,
 
     pub fn create(allocator: std.mem.Allocator) !*BrepSolid {
         const self = try allocator.create(BrepSolid);
         self.* = .{
             .allocator = allocator,
-            .brep = topo.Brep.initEmpty(allocator),
+            .t_arena = locus_topo.TopologyArena.init(allocator),
+            .g_arena = locus_geom.GeometryArena.init(allocator),
             .solid_id = 0,
         };
         return self;
     }
 
     pub fn destroy(self: *BrepSolid) void {
-        self.brep.deinit();
+        self.t_arena.deinit();
+        self.g_arena.deinit();
         self.allocator.destroy(self);
     }
 };
@@ -43,47 +52,103 @@ fn destructImpl(handle: geom.GeometryHandle) void {
 
 fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
     std.debug.assert(handle.engine == .brep_native);
-    // Future: implement BrepProfile wrapper
 }
 
-// --- Primitive Mocks (Return null until locus is wired up) ---
+// --- Generator Bridges ---
 
 fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
-    // Pipe the generation through the DOD generator
-    const solid = generators.generateCube(backend_allocator, x, y, z, center) catch return null;
-
-    // Return the safe geometric handle wrapper
-    return geom.GeometryHandle{
-        .engine = .brep_native,
-        .ptr = @ptrCast(solid),
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+    solid.solid_id = locus_gen.generateCube(&solid.t_arena, &solid.g_arena, x, y, z, center) catch {
+        solid.destroy();
+        return null;
     };
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
 fn cylinderImpl(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
-    _ = r1;
     _ = r2;
-    _ = height;
-    _ = center;
-    _ = segments;
-    return null;
+    _ = segments; // MVP Locus assumption
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+    solid.solid_id = locus_gen.generateCylinder(&solid.t_arena, &solid.g_arena, r1, height, center) catch {
+        solid.destroy();
+        return null;
+    };
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
+
 fn sphereImpl(radius: f64) ?geom.GeometryHandle {
-    _ = radius;
-    return null;
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+    solid.solid_id = locus_gen.generateSphere(&solid.t_arena, &solid.g_arena, radius) catch {
+        solid.destroy();
+        return null;
+    };
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
-fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
-    _ = a;
-    _ = b;
-    _ = op;
-    return null;
-}
+
+// --- Transformer Bridges ---
+
 fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    _ = a;
-    _ = x;
-    _ = y;
-    _ = z;
-    return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    solid.solid_id = locus_trans.translateSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, x, y, z) catch return a;
+    return a;
 }
+
+fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
+    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
+
+    const locus_op: locus_bool.BooleanOp = switch (op) {
+        .union_op => .union_op,
+        .difference_op => .difference,
+        .intersection_op => .intersection,
+    };
+
+    solid_a.solid_id = locus_bool.computeBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, solid_b.solid_id, locus_op, .{}) catch return a;
+    return a;
+}
+
+fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
+    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
+
+    solid_a.solid_id = locus_mink.minkowskiSumConvex(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, solid_b.solid_id) catch return a;
+    return a;
+}
+
+// --- Tessellation Bridge ---
+
+fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
+    std.debug.assert(handle.engine == .brep_native);
+    if (@intFromPtr(handle.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+
+    var mesh = locus_tess.Mesh{};
+    defer mesh.deinit(backend_allocator);
+
+    locus_tess.tessellateSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, &mesh, .{}) catch return null;
+
+    var vert_props = allocator.alloc(f32, mesh.vertices.items.len * 3) catch return null;
+    for (mesh.vertices.items, 0..) |v, i| {
+        vert_props[i * 3 + 0] = @floatCast(v[0]);
+        vert_props[i * 3 + 1] = @floatCast(v[1]);
+        vert_props[i * 3 + 2] = @floatCast(v[2]);
+    }
+
+    var tri_verts = allocator.alloc(u32, mesh.triangles.items.len * 3) catch return null;
+    for (mesh.triangles.items, 0..) |t, i| {
+        tri_verts[i * 3 + 0] = t[0];
+        tri_verts[i * 3 + 1] = t[1];
+        tri_verts[i * 3 + 2] = t[2];
+    }
+
+    return geom.Mesh{
+        .vert_props = vert_props,
+        .tri_verts = tri_verts,
+        .num_prop = 3,
+    };
+}
+
+// --- Mocks for Unimplemented Engine Methods ---
 fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
     _ = a;
     _ = x;
@@ -210,15 +275,6 @@ fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
     _ = handle;
     return 0.0;
 }
-
-fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
-    std.debug.assert(handle.engine == .brep_native);
-    if (@intFromPtr(handle.ptr) == 0) return null;
-
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
-    return tessellate.tessellateSolid(allocator, solid) catch null;
-}
-
 fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
     _ = a;
     _ = pt;
@@ -229,11 +285,6 @@ fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
     _ = b;
     _ = sl;
     return 0.0;
-}
-fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
-    _ = a;
-    _ = b;
-    return null;
 }
 fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
     _ = cs;

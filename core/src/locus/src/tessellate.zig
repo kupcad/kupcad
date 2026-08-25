@@ -123,20 +123,56 @@ pub fn tessellateSolid(
     out_mesh: *Mesh,
     config: anytype,
 ) !void {
+    _ = g_arena;
+    _ = config;
     const solid = t_arena.solids.items[solid_id];
 
-    // 1. Traverse Shells
+    // 1. Copy all topological vertices directly into the mesh
+    for (t_arena.vertices.items) |v| {
+        try out_mesh.vertices.append(allocator, v.point);
+        // Mocking flat normals for now (can be computed via g_arena.surfaceNormal later)
+        try out_mesh.normals.append(allocator, .{ 0, 0, 1 });
+    }
+
+    // 2. Traverse Shells
     for (0..solid.shells_len) |s_offset| {
         const shell_id = t_arena.solid_shells.items[solid.shells_start + s_offset];
         const shell = t_arena.shells.items[shell_id];
 
-        // 2. Traverse Faces
+        // 3. Traverse Faces
         for (0..shell.faces_len) |f_offset| {
             const face_id = t_arena.shell_faces.items[shell.faces_start + f_offset];
+            const face = t_arena.faces.items[face_id];
 
-            // 3. Tessellate each face and append to the global mesh buffer
-            // (In a full implementation, `tessellateFace` will append the indices offset by the current vertex count)
-            try tessellateFace(allocator, t_arena, g_arena, face_id, out_mesh, config);
+            if (face.wires_len == 0) continue;
+
+            // Assume the first wire is the outer boundary loop
+            const wire_id = t_arena.face_wires.items[face.wires_start];
+            const wire = t_arena.wires.items[wire_id];
+
+            if (wire.edges_len < 3) continue;
+
+            // Extract the ordered vertex sequence of the face
+            var face_verts = try allocator.alloc(u32, wire.edges_len);
+            defer allocator.free(face_verts);
+
+            for (0..wire.edges_len) |e_off| {
+                const d_edge = t_arena.wire_edges.items[wire.edges_start + e_off];
+                const edge = t_arena.edges.items[d_edge.edge];
+
+                // Track the starting vertex based on the traversal direction
+                face_verts[e_off] = if (d_edge.forward) edge.front else edge.back;
+            }
+
+            // 4. Perform a Triangle Fan (Works perfectly for convex faces like Cubes/Cylinders)
+            var i: usize = 1;
+            while (i + 1 < face_verts.len) : (i += 1) {
+                try out_mesh.triangles.append(allocator, .{
+                    face_verts[0],
+                    face_verts[i],
+                    face_verts[i + 1],
+                });
+            }
         }
     }
 }

@@ -2263,28 +2263,30 @@ test "VM: Symbols are weak references and swept when unused" {
     try testing.expectEqual(false, vm.symbols.contains("ephemeral_key"));
 }
 
-test "VM: Brep topology deinit cleanly frees all arrays" {
-    // If Brep.deinit() leaks, std.testing.allocator will fail the test automatically!
-    const Brep = @import("../kernel/engines/brep/topology.zig").Brep;
-    const Vertex = @import("../kernel/engines/brep/topology.zig").Vertex;
-    const Wire = @import("../kernel/engines/brep/topology.zig").Wire;
+test "VM: TopologyArena deinit cleanly frees all arrays" {
+    // If TopologyArena.deinit() leaks, std.testing.allocator will fail the test automatically!
+    const topo = @import("../locus/src/topology.zig");
+    const TopologyArena = topo.TopologyArena;
+    const Vertex = topo.Vertex;
+    const Wire = topo.Wire;
+    const DirectedEdge = topo.DirectedEdge;
 
-    var brep = Brep.initEmpty(testing.allocator);
-    defer brep.deinit();
+    var arena = TopologyArena.init(testing.allocator);
+    defer arena.deinit();
 
     // Simulate allocating topology slices using the new ArrayListUnmanaged API
     for (0..10) |_| {
-        try brep.vertices.append(testing.allocator, Vertex{ .point = .{ .x = 0.0, .y = 0.0, .z = 0.0 } });
+        try arena.vertices.append(testing.allocator, Vertex{ .point = .{ 0.0, 0.0, 0.0 } });
     }
     for (0..5) |_| {
-        try brep.wires.append(testing.allocator, Wire{ .first_edge = 0, .num_edges = 0 });
+        try arena.wires.append(testing.allocator, Wire{ .edges_start = 0, .edges_len = 0 });
     }
 
     // Simulate appending to the relationship arrays
-    try brep.wire_edges.append(testing.allocator, 1);
-    try brep.wire_edges.append(testing.allocator, 2);
+    try arena.wire_edges.append(testing.allocator, DirectedEdge{ .edge = 1, .forward = true });
+    try arena.wire_edges.append(testing.allocator, DirectedEdge{ .edge = 2, .forward = false });
 
-    // The defer brep.deinit() will trigger here.
+    // The defer arena.deinit() will trigger here.
     // If it doesn't correctly free `.vertices`, `.wires`, and `.wire_edges`, Zig's test runner will panic with a memory leak.
 }
 
