@@ -123,14 +123,13 @@ pub fn tessellateSolid(
     out_mesh: *Mesh,
     config: anytype,
 ) !void {
-    _ = g_arena;
     _ = config;
     const solid = t_arena.solids.items[solid_id];
 
-    // 1. Copy all topological vertices directly into the mesh
+    // 1. Copy all topological vertices directly into the mesh buffer
     for (t_arena.vertices.items) |v| {
         try out_mesh.vertices.append(allocator, v.point);
-        // Mocking flat normals for now (can be computed via g_arena.surfaceNormal later)
+        // Mocking flat normals for this MVP
         try out_mesh.normals.append(allocator, .{ 0, 0, 1 });
     }
 
@@ -146,31 +145,52 @@ pub fn tessellateSolid(
 
             if (face.wires_len == 0) continue;
 
-            // Assume the first wire is the outer boundary loop
+            // For the MVP, we process the outer boundary wire
             const wire_id = t_arena.face_wires.items[face.wires_start];
             const wire = t_arena.wires.items[wire_id];
 
             if (wire.edges_len < 3) continue;
 
-            // Extract the ordered vertex sequence of the face
+            // Extract the ordered vertex sequence
             var face_verts = try allocator.alloc(u32, wire.edges_len);
             defer allocator.free(face_verts);
 
             for (0..wire.edges_len) |e_off| {
                 const d_edge = t_arena.wire_edges.items[wire.edges_start + e_off];
                 const edge = t_arena.edges.items[d_edge.edge];
-
-                // Track the starting vertex based on the traversal direction
                 face_verts[e_off] = if (d_edge.forward) edge.front else edge.back;
             }
 
-            // 4. Perform a Triangle Fan (Works perfectly for convex faces like Cubes/Cylinders)
-            var i: usize = 1;
-            while (i + 1 < face_verts.len) : (i += 1) {
+            // 4. Project 3D vertices into 2D UV Space for Ear-Clipping
+            var poly2d = try allocator.alloc(math.Vec2, face_verts.len);
+            defer allocator.free(poly2d);
+
+            for (face_verts, 0..) |v_id, i| {
+                const pt = t_arena.vertices.items[v_id].point;
+                // Dispatch to the centralized geometry evaluator
+                poly2d[i] = g_arena.surfaceProject(face.surface, pt);
+            }
+
+            // 5. Execute Ear-Clipping Algorithm
+            var local_triangles = std.ArrayListUnmanaged([3]u32).empty;
+            defer local_triangles.deinit(allocator);
+
+            clipEars(allocator, poly2d, &local_triangles) catch {};
+
+            // If Ear-Clipping failed or returned nothing, FORCE the Triangle Fan fallback!
+            if (local_triangles.items.len == 0) {
+                var i: usize = 1;
+                while (i + 1 < face_verts.len) : (i += 1) {
+                    try local_triangles.append(allocator, .{ 0, @intCast(i), @intCast(i + 1) });
+                }
+            }
+
+            // 6. Map the local 2D triangle indices back to global 3D Vertex IDs
+            for (local_triangles.items) |tri| {
                 try out_mesh.triangles.append(allocator, .{
-                    face_verts[0],
-                    face_verts[i],
-                    face_verts[i + 1],
+                    face_verts[tri[0]],
+                    face_verts[tri[1]],
+                    face_verts[tri[2]],
                 });
             }
         }

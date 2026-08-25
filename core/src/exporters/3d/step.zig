@@ -196,8 +196,23 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis, x_axis });
         const plane_id = try s.emit("PLANE('',#{d})", .{axis2});
 
-        const bound_id = try s.emit("FACE_OUTER_BOUND('',#{d},.T.)", .{wire_map[wire_id]});
-        face_map[i] = try s.emit("ADVANCED_FACE('',(#{d}),#{d},.T.)", .{ bound_id, plane_id });
+        // Generate Outer and Inner Bounds (Holes)
+        var bounds_str = std.ArrayListUnmanaged(u8).empty;
+        defer bounds_str.deinit(allocator);
+
+        for (0..face.wires_len) |w_off| {
+            const current_wire_id = t.face_wires.items[face.wires_start + w_off];
+
+            // Wire 0 is always the Outer Bound. Wires 1..N are Inner Holes.
+            const bound_type = if (w_off == 0) "FACE_OUTER_BOUND" else "FACE_BOUND";
+            const bound_id = try s.emit("{s}('',#{d},.T.)", .{ bound_type, wire_map[current_wire_id] });
+
+            if (w_off > 0) try bounds_str.appendSlice(allocator, ",");
+            var tmp: [32]u8 = undefined;
+            try bounds_str.appendSlice(allocator, try std.fmt.bufPrint(&tmp, "#{d}", .{bound_id}));
+        }
+
+        face_map[i] = try s.emit("ADVANCED_FACE('',({s}),#{d},.T.)", .{ bounds_str.items, plane_id });
     }
 
     // Shells
@@ -222,8 +237,9 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
     }
 
     // Solid (We manually write the reserved ID #17 so the boilerplate finds it)
-    if (t.solids.items.len > 0) {
-        const s_item = t.solids.items[0];
+    const active_solid_id = solid.solid_id;
+    if (active_solid_id < t.solids.items.len) {
+        const s_item = t.solids.items[active_solid_id];
         if (s_item.shells_len > 0) {
             const shell_id = t.solid_shells.items[s_item.shells_start];
             var buf: [128]u8 = undefined;

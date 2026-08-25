@@ -11,6 +11,7 @@ const locus_trans = @import("../../../locus/src/transforms.zig");
 const locus_tess = @import("../../../locus/src/tessellate.zig");
 const locus_mink = @import("../../../locus/src/minkowski.zig");
 const locus_bool = @import("../../../locus/src/booleans.zig");
+const locus_merger = @import("../../../locus/src/merger.zig");
 
 var backend_allocator = std.heap.page_allocator;
 
@@ -142,14 +143,34 @@ fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryH
 }
 
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
-    _ = b;
-    _ = op;
-    // Note: True Native CSG Booleans implies cross-arena merging, which is not MVP.
+    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
+
+    const locus_op: locus_bool.BooleanOp = switch (op) {
+        .union_op => .union_op,
+        .difference_op => .difference,
+        .intersection_op => .intersection,
+    };
+
+    // Phase 1: Merge B into A's Arena
+    const merged_b_id = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
+
+    // Phase 2 & 3: Compute Boolean CSG using the unified arena
+    solid_a.solid_id = locus_bool.computeBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, merged_b_id, locus_op, .{}) catch return a;
+
     return a;
 }
 
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
-    _ = b; // Cross-arena limitations
+    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
+
+    // Phase 1: Merge B into A's Arena
+    const merged_b_id = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
+
+    // Phase 2: Compute Minkowski Sum
+    solid_a.solid_id = locus_mink.minkowskiSumConvex(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, merged_b_id) catch return a;
+
     return a;
 }
 
@@ -186,21 +207,20 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     };
 }
 
-// --- Mocks for Unimplemented Engine Methods ---
 fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    _ = a;
-    _ = x;
-    _ = y;
-    _ = z;
-    return null;
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    solid.solid_id = locus_trans.rotateSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, x, y, z) catch return a;
+    return a;
 }
+
 fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    _ = a;
-    _ = x;
-    _ = y;
-    _ = z;
-    return null;
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    solid.solid_id = locus_trans.scaleSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, x, y, z) catch return a;
+    return a;
 }
+
 fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
     _ = allocator;
     _ = pts;

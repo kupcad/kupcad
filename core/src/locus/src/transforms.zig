@@ -3,269 +3,209 @@ const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const math = @import("math.zig");
 
-pub const TransformError = error{
-    OutOfMemory,
-};
+pub const TransformError = error{OutOfMemory};
 
-/// Helper to multiply a 3D point by a 4x4 row-major matrix.
-inline fn transformPt(mat: [16]f64, pt: math.Vec3) math.Vec3 {
-    return .{
-        pt[0] * mat[0] + pt[1] * mat[4] + pt[2] * mat[8] + mat[12],
-        pt[0] * mat[1] + pt[1] * mat[5] + pt[2] * mat[9] + mat[13],
-        pt[0] * mat[2] + pt[1] * mat[6] + pt[2] * mat[10] + mat[14],
-    };
-}
-
-/// Helper to transform a direction vector (ignores translation components).
-inline fn transformDir(mat: [16]f64, dir: math.Vec3) math.Vec3 {
-    const x = dir[0] * mat[0] + dir[1] * mat[4] + dir[2] * mat[8];
-    const y = dir[0] * mat[1] + dir[1] * mat[5] + dir[2] * mat[9];
-    const z = dir[0] * mat[2] + dir[1] * mat[6] + dir[2] * mat[10];
-    return math.normalize(.{ x, y, z });
-}
-
-/// Deep clones a Solid and applies a 4x4 affine transformation matrix to its geometry.
-pub fn transformSolid(
+/// Traverses a Solid's graph and collects all unique underlying geometry indices
+/// into HashMaps so we only transform the geometry belonging to this specific solid.
+fn collectSolidGeometry(
     allocator: std.mem.Allocator,
-    t_arena: *topo.TopologyArena,
-    g_arena: *geom.GeometryArena,
+    t_arena: *const topo.TopologyArena,
     solid_id: topo.SolidId,
-    mat: [16]f64,
-) TransformError!topo.SolidId {
-    // Maps track Old ID -> New ID so we don't duplicate shared elements
-    var v_map = std.AutoHashMap(topo.VertexId, topo.VertexId).init(allocator);
-    defer v_map.deinit();
-    var e_map = std.AutoHashMap(topo.EdgeId, topo.EdgeId).init(allocator);
-    defer e_map.deinit();
-    var c_map = std.AutoHashMap(geom.CurveId, geom.CurveId).init(allocator);
-    defer c_map.deinit();
-    var s_map = std.AutoHashMap(geom.SurfaceId, geom.SurfaceId).init(allocator);
-    defer s_map.deinit();
-
+    vertices: *std.AutoHashMap(topo.VertexId, void),
+    lines: *std.AutoHashMap(u24, void),
+    arcs: *std.AutoHashMap(u24, void),
+    planes: *std.AutoHashMap(u24, void),
+    spheres: *std.AutoHashMap(u24, void),
+    cylinders: *std.AutoHashMap(u24, void),
+) !void {
+    _ = allocator;
     const solid = t_arena.solids.items[solid_id];
-    const new_solid_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
+    for (0..solid.shells_len) |s_off| {
+        const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start + s_off]];
 
-    // 1. Traverse Shells
-    for (0..solid.shells_len) |s_offset| {
-        const shell_id = t_arena.solid_shells.items[solid.shells_start + s_offset];
-        const shell = t_arena.shells.items[shell_id];
+        for (0..shell.faces_len) |f_off| {
+            const face = t_arena.faces.items[t_arena.shell_faces.items[shell.faces_start + f_off]];
 
-        const new_shell_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
-
-        // 2. Traverse Faces
-        for (0..shell.faces_len) |f_offset| {
-            const face_id = t_arena.shell_faces.items[shell.faces_start + f_offset];
-            const face = t_arena.faces.items[face_id];
-
-            // Clone & Transform the geometric surface
-            var new_surf_id = face.surface;
-            if (!s_map.contains(face.surface)) {
-                new_surf_id = try cloneAndTransformSurface(allocator, g_arena, face.surface, mat);
-                try s_map.put(face.surface, new_surf_id);
-            } else {
-                new_surf_id = s_map.get(face.surface).?;
+            // Collect Surfaces
+            switch (face.surface.surface_type) {
+                .plane => try planes.put(face.surface.index, {}),
+                .sphere => try spheres.put(face.surface.index, {}),
+                .cylinder => try cylinders.put(face.surface.index, {}),
+                else => {}, // Ignore nurbs/others for this MVP
             }
 
-            const new_face_wires_start: u32 = @intCast(t_arena.face_wires.items.len);
+            for (0..face.wires_len) |w_off| {
+                const wire = t_arena.wires.items[t_arena.face_wires.items[face.wires_start + w_off]];
 
-            // 3. Traverse Wires
-            for (0..face.wires_len) |w_offset| {
-                const wire_id = t_arena.face_wires.items[face.wires_start + w_offset];
-                const wire = t_arena.wires.items[wire_id];
+                for (0..wire.edges_len) |e_off| {
+                    const edge = t_arena.edges.items[t_arena.wire_edges.items[wire.edges_start + e_off].edge];
 
-                const new_wire_edges_start: u32 = @intCast(t_arena.wire_edges.items.len);
+                    // Collect Vertices
+                    try vertices.put(edge.front, {});
+                    try vertices.put(edge.back, {});
 
-                // 4. Traverse Edges
-                for (0..wire.edges_len) |e_idx| {
-                    const d_edge = t_arena.wire_edges.items[wire.edges_start + e_idx];
-                    const edge = t_arena.edges.items[d_edge.edge];
-
-                    var new_edge_id = d_edge.edge;
-                    if (!e_map.contains(d_edge.edge)) {
-                        // Clone & Transform Curve
-                        var new_curve_id = edge.curve;
-                        if (!c_map.contains(edge.curve)) {
-                            new_curve_id = try cloneAndTransformCurve(allocator, g_arena, edge.curve, mat);
-                            try c_map.put(edge.curve, new_curve_id);
-                        } else {
-                            new_curve_id = c_map.get(edge.curve).?;
-                        }
-
-                        // Clone & Transform Front Vertex
-                        var new_front = edge.front;
-                        if (!v_map.contains(edge.front)) {
-                            const pt = t_arena.vertices.items[edge.front].point;
-                            new_front = @intCast(t_arena.vertices.items.len);
-                            try t_arena.vertices.append(allocator, .{ .point = transformPt(mat, pt) });
-                            try v_map.put(edge.front, new_front);
-                        } else {
-                            new_front = v_map.get(edge.front).?;
-                        }
-
-                        // Clone & Transform Back Vertex
-                        var new_back = edge.back;
-                        if (!v_map.contains(edge.back)) {
-                            const pt = t_arena.vertices.items[edge.back].point;
-                            new_back = @intCast(t_arena.vertices.items.len);
-                            try t_arena.vertices.append(allocator, .{ .point = transformPt(mat, pt) });
-                            try v_map.put(edge.back, new_back);
-                        } else {
-                            new_back = v_map.get(edge.back).?;
-                        }
-
-                        // Assemble New Edge
-                        new_edge_id = @intCast(t_arena.edges.items.len);
-                        try t_arena.edges.append(allocator, .{
-                            .front = new_front,
-                            .back = new_back,
-                            .curve = new_curve_id,
-                        });
-                        try e_map.put(d_edge.edge, new_edge_id);
-                    } else {
-                        new_edge_id = e_map.get(d_edge.edge).?;
+                    // Collect Curves
+                    switch (edge.curve.curve_type) {
+                        .line => try lines.put(edge.curve.index, {}),
+                        .circle_arc => try arcs.put(edge.curve.index, {}),
+                        else => {}, // Ignore nurbs/others for this MVP
                     }
-
-                    // Map DirectedEdge to Wire
-                    try t_arena.wire_edges.append(allocator, .{
-                        .edge = new_edge_id,
-                        .forward = d_edge.forward,
-                    });
                 }
-
-                // Assemble New Wire
-                const new_wire_id: u32 = @intCast(t_arena.wires.items.len);
-                try t_arena.wires.append(allocator, .{
-                    .edges_start = new_wire_edges_start,
-                    .edges_len = wire.edges_len,
-                });
-                try t_arena.face_wires.append(allocator, new_wire_id);
             }
-
-            // Assemble New Face
-            const new_face_id: u32 = @intCast(t_arena.faces.items.len);
-            try t_arena.faces.append(allocator, .{
-                .surface = new_surf_id,
-                .forward = face.forward,
-                .wires_start = new_face_wires_start,
-                .wires_len = face.wires_len,
-            });
-            try t_arena.shell_faces.append(allocator, new_face_id);
         }
-
-        // Assemble New Shell
-        const new_shell_id: u32 = @intCast(t_arena.shells.items.len);
-        try t_arena.shells.append(allocator, .{
-            .faces_start = new_shell_faces_start,
-            .faces_len = shell.faces_len,
-        });
-        try t_arena.solid_shells.append(allocator, new_shell_id);
-    }
-
-    // Assemble New Solid
-    const new_solid_id: u32 = @intCast(t_arena.solids.items.len);
-    try t_arena.solids.append(allocator, .{
-        .shells_start = new_solid_shells_start,
-        .shells_len = solid.shells_len,
-    });
-
-    return new_solid_id;
-}
-
-// --- Geometry Transformers ---
-
-fn cloneAndTransformSurface(
-    allocator: std.mem.Allocator,
-    g_arena: *geom.GeometryArena,
-    id: geom.SurfaceId,
-    mat: [16]f64,
-) !geom.SurfaceId {
-    switch (id.surface_type) {
-        .plane => {
-            const p = g_arena.planes.items[id.index];
-            const new_idx: u24 = @intCast(g_arena.planes.items.len);
-            try g_arena.planes.append(allocator, .{
-                .origin = transformPt(mat, p.origin),
-                .u_axis = transformDir(mat, p.u_axis),
-                .v_axis = transformDir(mat, p.v_axis),
-            });
-            return geom.SurfaceId{ .index = new_idx, .surface_type = .plane };
-        },
-        .cylinder => {
-            const c = g_arena.cylinders.items[id.index];
-            const new_idx: u24 = @intCast(g_arena.cylinders.items.len);
-            try g_arena.cylinders.append(allocator, .{
-                .origin = transformPt(mat, c.origin),
-                .axis = transformDir(mat, c.axis),
-                .x_axis = transformDir(mat, c.x_axis),
-                .y_axis = transformDir(mat, c.y_axis),
-                .radius = c.radius,
-            });
-            return geom.SurfaceId{ .index = new_idx, .surface_type = .cylinder };
-        },
-        .sphere => {
-            const s = g_arena.spheres.items[id.index];
-            const new_idx: u24 = @intCast(g_arena.spheres.items.len);
-            try g_arena.spheres.append(allocator, .{
-                .center = transformPt(mat, s.center),
-                .radius = s.radius,
-            });
-            return geom.SurfaceId{ .index = new_idx, .surface_type = .sphere };
-        },
-        .nurbs => unreachable,
     }
 }
 
-fn cloneAndTransformCurve(
-    allocator: std.mem.Allocator,
-    g_arena: *geom.GeometryArena,
-    id: geom.CurveId,
-    mat: [16]f64,
-) !geom.CurveId {
-    switch (id.curve_type) {
-        .line => {
-            const l = g_arena.lines.items[id.index];
-            const new_idx: u24 = @intCast(g_arena.lines.items.len);
-            try g_arena.lines.append(allocator, .{
-                .start = transformPt(mat, l.start),
-                .end = transformPt(mat, l.end),
-            });
-            return geom.CurveId{ .index = new_idx, .curve_type = .line };
-        },
-        .circle_arc => {
-            const c = g_arena.circle_arcs.items[id.index];
-            const new_idx: u24 = @intCast(g_arena.circle_arcs.items.len);
-            try g_arena.circle_arcs.append(allocator, .{
-                .center = transformPt(mat, c.center),
-                .radius = c.radius,
-                .x_axis = transformDir(mat, c.x_axis),
-                .y_axis = transformDir(mat, c.y_axis),
-            });
-            return geom.CurveId{ .index = new_idx, .curve_type = .circle_arc };
-        },
-        .nurbs => unreachable,
-    }
-}
-
-// --- High Level Public Transformers ---
-
+/// Translates all geometry attached to a specific solid by a 3D vector.
 pub fn translateSolid(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
     solid_id: topo.SolidId,
-    x: f64,
-    y: f64,
-    z: f64,
+    tx: f64,
+    ty: f64,
+    tz: f64,
 ) TransformError!topo.SolidId {
-    const mat = [_]f64{
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        x, y, z, 1,
-    };
-    return transformSolid(allocator, t_arena, g_arena, solid_id, mat);
+    var v_map = std.AutoHashMap(topo.VertexId, void).init(allocator);
+    defer v_map.deinit();
+    var l_map = std.AutoHashMap(u24, void).init(allocator);
+    defer l_map.deinit();
+    var a_map = std.AutoHashMap(u24, void).init(allocator);
+    defer a_map.deinit();
+    var p_map = std.AutoHashMap(u24, void).init(allocator);
+    defer p_map.deinit();
+    var s_map = std.AutoHashMap(u24, void).init(allocator);
+    defer s_map.deinit();
+    var c_map = std.AutoHashMap(u24, void).init(allocator);
+    defer c_map.deinit();
+
+    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
+    const offset = math.Vec3{ tx, ty, tz };
+
+    // 1. Translate Vertices
+    var v_it = v_map.keyIterator();
+    while (v_it.next()) |v| t_arena.vertices.items[v.*].point = math.add(t_arena.vertices.items[v.*].point, offset);
+
+    // 2. Translate Curves
+    var l_it = l_map.keyIterator();
+    while (l_it.next()) |l| {
+        g_arena.lines.items[l.*].start = math.add(g_arena.lines.items[l.*].start, offset);
+        g_arena.lines.items[l.*].end = math.add(g_arena.lines.items[l.*].end, offset);
+    }
+
+    var a_it = a_map.keyIterator();
+    while (a_it.next()) |a| g_arena.circle_arcs.items[a.*].center = math.add(g_arena.circle_arcs.items[a.*].center, offset);
+
+    // 3. Translate Surfaces
+    var p_it = p_map.keyIterator();
+    while (p_it.next()) |p| g_arena.planes.items[p.*].origin = math.add(g_arena.planes.items[p.*].origin, offset);
+
+    var s_it = s_map.keyIterator();
+    while (s_it.next()) |s| g_arena.spheres.items[s.*].center = math.add(g_arena.spheres.items[s.*].center, offset);
+
+    var c_it = c_map.keyIterator();
+    while (c_it.next()) |c| g_arena.cylinders.items[c.*].origin = math.add(g_arena.cylinders.items[c.*].origin, offset);
+
+    return solid_id;
 }
 
+/// Rotates a point around the origin using Euler angles (in degrees)
+fn applyRotation(pt: math.Vec3, rx: f64, ry: f64, rz: f64) math.Vec3 {
+    const rad_x = rx * std.math.pi / 180.0;
+    const rad_y = ry * std.math.pi / 180.0;
+    const rad_z = rz * std.math.pi / 180.0;
+
+    const cx = @cos(rad_x);
+    const sx = @sin(rad_x);
+    const cy = @cos(rad_y);
+    const sy = @sin(rad_y);
+    const cz = @cos(rad_z);
+    const sz = @sin(rad_z);
+
+    // Z * Y * X rotation matrix
+    const m00 = cy * cz;
+    const m01 = cz * sx * sy - cx * sz;
+    const m02 = cx * cz * sy + sx * sz;
+
+    const m10 = cy * sz;
+    const m11 = cx * cz + sx * sy * sz;
+    const m12 = -cz * sx + cx * sy * sz;
+
+    const m20 = -sy;
+    const m21 = cy * sx;
+    const m22 = cx * cy;
+
+    return .{
+        pt[0] * m00 + pt[1] * m01 + pt[2] * m02,
+        pt[0] * m10 + pt[1] * m11 + pt[2] * m12,
+        pt[0] * m20 + pt[1] * m21 + pt[2] * m22,
+    };
+}
+
+/// Rotates all geometry attached to a specific solid using Euler angles (in degrees).
+pub fn rotateSolid(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    solid_id: topo.SolidId,
+    rx: f64,
+    ry: f64,
+    rz: f64,
+) TransformError!topo.SolidId {
+    var v_map = std.AutoHashMap(topo.VertexId, void).init(allocator);
+    defer v_map.deinit();
+    var l_map = std.AutoHashMap(u24, void).init(allocator);
+    defer l_map.deinit();
+    var a_map = std.AutoHashMap(u24, void).init(allocator);
+    defer a_map.deinit();
+    var p_map = std.AutoHashMap(u24, void).init(allocator);
+    defer p_map.deinit();
+    var s_map = std.AutoHashMap(u24, void).init(allocator);
+    defer s_map.deinit();
+    var c_map = std.AutoHashMap(u24, void).init(allocator);
+    defer c_map.deinit();
+
+    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
+
+    // 1. Rotate Vertices
+    var v_it = v_map.keyIterator();
+    while (v_it.next()) |v| t_arena.vertices.items[v.*].point = applyRotation(t_arena.vertices.items[v.*].point, rx, ry, rz);
+
+    // 2. Rotate Curves
+    var l_it = l_map.keyIterator();
+    while (l_it.next()) |l| {
+        g_arena.lines.items[l.*].start = applyRotation(g_arena.lines.items[l.*].start, rx, ry, rz);
+        g_arena.lines.items[l.*].end = applyRotation(g_arena.lines.items[l.*].end, rx, ry, rz);
+    }
+    var a_it = a_map.keyIterator();
+    while (a_it.next()) |a| {
+        g_arena.circle_arcs.items[a.*].center = applyRotation(g_arena.circle_arcs.items[a.*].center, rx, ry, rz);
+        g_arena.circle_arcs.items[a.*].x_axis = math.normalize(applyRotation(g_arena.circle_arcs.items[a.*].x_axis, rx, ry, rz));
+        g_arena.circle_arcs.items[a.*].y_axis = math.normalize(applyRotation(g_arena.circle_arcs.items[a.*].y_axis, rx, ry, rz));
+    }
+
+    // 3. Rotate Surfaces
+    var p_it = p_map.keyIterator();
+    while (p_it.next()) |p| {
+        g_arena.planes.items[p.*].origin = applyRotation(g_arena.planes.items[p.*].origin, rx, ry, rz);
+        g_arena.planes.items[p.*].u_axis = math.normalize(applyRotation(g_arena.planes.items[p.*].u_axis, rx, ry, rz));
+        g_arena.planes.items[p.*].v_axis = math.normalize(applyRotation(g_arena.planes.items[p.*].v_axis, rx, ry, rz));
+    }
+    var s_it = s_map.keyIterator();
+    while (s_it.next()) |s| g_arena.spheres.items[s.*].center = applyRotation(g_arena.spheres.items[s.*].center, rx, ry, rz);
+
+    var c_it = c_map.keyIterator();
+    while (c_it.next()) |c| {
+        g_arena.cylinders.items[c.*].origin = applyRotation(g_arena.cylinders.items[c.*].origin, rx, ry, rz);
+        g_arena.cylinders.items[c.*].axis = math.normalize(applyRotation(g_arena.cylinders.items[c.*].axis, rx, ry, rz));
+        g_arena.cylinders.items[c.*].x_axis = math.normalize(applyRotation(g_arena.cylinders.items[c.*].x_axis, rx, ry, rz));
+        g_arena.cylinders.items[c.*].y_axis = math.normalize(applyRotation(g_arena.cylinders.items[c.*].y_axis, rx, ry, rz));
+    }
+
+    return solid_id;
+}
+
+/// Scales all geometry attached to a specific solid.
 pub fn scaleSolid(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -275,11 +215,75 @@ pub fn scaleSolid(
     sy: f64,
     sz: f64,
 ) TransformError!topo.SolidId {
-    const mat = [_]f64{
-        sx, 0,  0,  0,
-        0,  sy, 0,  0,
-        0,  0,  sz, 0,
-        0,  0,  0,  1,
-    };
-    return transformSolid(allocator, t_arena, g_arena, solid_id, mat);
+    var v_map = std.AutoHashMap(topo.VertexId, void).init(allocator);
+    defer v_map.deinit();
+    var l_map = std.AutoHashMap(u24, void).init(allocator);
+    defer l_map.deinit();
+    var a_map = std.AutoHashMap(u24, void).init(allocator);
+    defer a_map.deinit();
+    var p_map = std.AutoHashMap(u24, void).init(allocator);
+    defer p_map.deinit();
+    var s_map = std.AutoHashMap(u24, void).init(allocator);
+    defer s_map.deinit();
+    var c_map = std.AutoHashMap(u24, void).init(allocator);
+    defer c_map.deinit();
+
+    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
+
+    // Non-uniform scaling of a circle/sphere technically requires converting it
+    // to a NURBS surface. For this MVP, we approximate radius scaling via the average.
+    const uniform_scale = (sx + sy + sz) / 3.0;
+
+    // 1. Scale Vertices
+    var v_it = v_map.keyIterator();
+    while (v_it.next()) |v| {
+        t_arena.vertices.items[v.*].point[0] *= sx;
+        t_arena.vertices.items[v.*].point[1] *= sy;
+        t_arena.vertices.items[v.*].point[2] *= sz;
+    }
+
+    // 2. Scale Curves
+    var l_it = l_map.keyIterator();
+    while (l_it.next()) |l| {
+        g_arena.lines.items[l.*].start[0] *= sx;
+        g_arena.lines.items[l.*].start[1] *= sy;
+        g_arena.lines.items[l.*].start[2] *= sz;
+
+        g_arena.lines.items[l.*].end[0] *= sx;
+        g_arena.lines.items[l.*].end[1] *= sy;
+        g_arena.lines.items[l.*].end[2] *= sz;
+    }
+    var a_it = a_map.keyIterator();
+    while (a_it.next()) |a| {
+        g_arena.circle_arcs.items[a.*].center[0] *= sx;
+        g_arena.circle_arcs.items[a.*].center[1] *= sy;
+        g_arena.circle_arcs.items[a.*].center[2] *= sz;
+        g_arena.circle_arcs.items[a.*].radius *= uniform_scale;
+    }
+
+    // 3. Scale Surfaces
+    var p_it = p_map.keyIterator();
+    while (p_it.next()) |p| {
+        g_arena.planes.items[p.*].origin[0] *= sx;
+        g_arena.planes.items[p.*].origin[1] *= sy;
+        g_arena.planes.items[p.*].origin[2] *= sz;
+    }
+
+    var s_it = s_map.keyIterator();
+    while (s_it.next()) |s| {
+        g_arena.spheres.items[s.*].center[0] *= sx;
+        g_arena.spheres.items[s.*].center[1] *= sy;
+        g_arena.spheres.items[s.*].center[2] *= sz;
+        g_arena.spheres.items[s.*].radius *= uniform_scale;
+    }
+
+    var c_it = c_map.keyIterator();
+    while (c_it.next()) |c| {
+        g_arena.cylinders.items[c.*].origin[0] *= sx;
+        g_arena.cylinders.items[c.*].origin[1] *= sy;
+        g_arena.cylinders.items[c.*].origin[2] *= sz;
+        g_arena.cylinders.items[c.*].radius *= uniform_scale;
+    }
+
+    return solid_id;
 }

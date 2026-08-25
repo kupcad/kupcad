@@ -16,6 +16,131 @@ pub const LoopError = error{
     OutOfMemory,
 };
 
+/// Records a precise geometric intersection between an Edge and a Face
+pub const IntersectionEvent = struct {
+    edge_id: topo.EdgeId,
+    edge_solid: topo.SolidId, // Track which solid owns the edge being cut
+    face_id: topo.FaceId,
+    pt: math.Vec3,
+    t: f64, // The normalized distance [0.0 - 1.0] along the edge
+};
+
+/// Helper: Finds all faces in a solid that share the given edge.
+fn getFacesSharingEdge(
+    allocator: std.mem.Allocator,
+    t_arena: *const topo.TopologyArena,
+    solid_id: topo.SolidId,
+    edge_id: topo.EdgeId,
+) !std.ArrayListUnmanaged(topo.FaceId) {
+    var faces = std.ArrayListUnmanaged(topo.FaceId).empty;
+    const solid = t_arena.solids.items[solid_id];
+
+    for (0..solid.shells_len) |s_off| {
+        const shell_id = t_arena.solid_shells.items[solid.shells_start + s_off];
+        const shell = t_arena.shells.items[shell_id];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = t_arena.faces.items[face_id];
+
+            for (0..face.wires_len) |w_off| {
+                const wire_id = t_arena.face_wires.items[face.wires_start + w_off];
+                const wire = t_arena.wires.items[wire_id];
+                for (0..wire.edges_len) |e_off| {
+                    if (t_arena.wire_edges.items[wire.edges_start + e_off].edge == edge_id) {
+                        try faces.append(allocator, face_id);
+                    }
+                }
+            }
+        }
+    }
+    return faces;
+}
+
+/// Tests all edges of `solid_edges` against all faces of `solid_faces`
+fn collectPiercings(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    solid_edges: topo.SolidId,
+    solid_faces: topo.SolidId,
+    out_events: *std.ArrayListUnmanaged(IntersectionEvent),
+) !void {
+    const s_edges = t_arena.solids.items[solid_edges];
+    const s_faces = t_arena.solids.items[solid_faces];
+
+    // 1. Loop through all faces of the cutter solid
+    for (0..s_faces.shells_len) |sf_off| {
+        const shell_f = t_arena.shells.items[t_arena.solid_shells.items[s_faces.shells_start + sf_off]];
+        for (0..shell_f.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell_f.faces_start + f_off];
+            const face = t_arena.faces.items[face_id];
+
+            if (face.surface.surface_type != .plane) continue; // MVP limitation
+
+            const plane = g_arena.planes.items[face.surface.index];
+            var normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+            if (!face.forward) normal = math.scale(normal, -1.0);
+
+            // Extract 2D boundary of the face for hit testing
+            var polygon_buf: [128][2]f64 = undefined;
+            var poly_len: usize = 0;
+            const wire = t_arena.wires.items[t_arena.face_wires.items[face.wires_start]];
+
+            for (0..wire.edges_len) |e_off| {
+                const d_edge = t_arena.wire_edges.items[wire.edges_start + e_off];
+                const v_id = if (d_edge.forward) t_arena.edges.items[d_edge.edge].front else t_arena.edges.items[d_edge.edge].back;
+                if (poly_len < polygon_buf.len) {
+                    polygon_buf[poly_len] = projectToPlane(t_arena.vertices.items[v_id].point, plane.origin, plane.u_axis, plane.v_axis);
+                    poly_len += 1;
+                }
+            }
+
+            // 2. Loop through all edges of the target solid
+            for (0..s_edges.shells_len) |se_off| {
+                const shell_e = t_arena.shells.items[t_arena.solid_shells.items[s_edges.shells_start + se_off]];
+                for (0..shell_e.faces_len) |fe_off| {
+                    const t_face = t_arena.faces.items[t_arena.shell_faces.items[shell_e.faces_start + fe_off]];
+                    for (0..t_face.wires_len) |we_off| {
+                        const t_wire = t_arena.wires.items[t_arena.face_wires.items[t_face.wires_start + we_off]];
+                        for (0..t_wire.edges_len) |ee_off| {
+                            const edge_id = t_arena.wire_edges.items[t_wire.edges_start + ee_off].edge;
+                            const edge = t_arena.edges.items[edge_id];
+
+                            if (edge.curve.curve_type != .line) continue;
+
+                            const line = g_arena.lines.items[edge.curve.index];
+
+                            // 3. Math intersection!
+                            if (intersectLinePlane(line.start, line.end, plane.origin, normal)) |hit_pt| {
+
+                                // 4. Verify the hit is strictly INSIDE the face's 2D topological boundary
+                                const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
+                                if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len])) {
+
+                                    // Calculate normalized 't' along the edge
+                                    const edge_vec = math.sub(line.end, line.start);
+                                    const hit_vec = math.sub(hit_pt, line.start);
+                                    const total_dist = math.dot(edge_vec, edge_vec); // magSq
+                                    const hit_dist = math.dot(hit_vec, hit_vec);
+                                    const t = @sqrt(hit_dist / total_dist);
+
+                                    try out_events.append(allocator, .{
+                                        .edge_id = edge_id,
+                                        .edge_solid = solid_edges,
+                                        .face_id = face_id,
+                                        .pt = hit_pt,
+                                        .t = t,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Snaps a 3D point exactly onto the intersection curve of two surfaces.
 fn snapToIntersection(
     g_arena: *const geom.GeometryArena,
@@ -602,29 +727,108 @@ pub fn computeBoolean(
     op: BooleanOp,
     config: anytype,
 ) BooleanError!topo.SolidId {
-    _ = config;
+    _ = config; // Reserved for future tolerance/precision settings
 
-    // 1. & 2. Intersection and Splitting
-    // This generates the raw pool of faces we will select from.
-    const split_result = splitIntersectingFaces(allocator, t_arena, g_arena, solid_a, solid_b) catch return error.OutOfMemory;
-    _ = split_result;
+    // ==========================================
+    // PHASE 1: BIDIRECTIONAL PIERCING
+    // ==========================================
+    var intersection_events = std.ArrayListUnmanaged(IntersectionEvent).empty;
+    defer intersection_events.deinit(allocator);
 
-    var selected_faces: std.ArrayListUnmanaged(topo.FaceId) = .empty;
+    // Find exactly where Solid A's edges pierce Solid B's faces
+    collectPiercings(allocator, t_arena, g_arena, solid_a, solid_b, &intersection_events) catch return error.OutOfMemory;
+
+    // Find exactly where Solid B's edges pierce Solid A's faces
+    collectPiercings(allocator, t_arena, g_arena, solid_b, solid_a, &intersection_events) catch return error.OutOfMemory;
+
+    // Sort the events by edge_id and 't' (normalized distance).
+    // This is critical: if a single edge pierces multiple faces, we MUST split it
+    // sequentially from start to end so we don't corrupt the geometric lines!
+    std.mem.sort(IntersectionEvent, intersection_events.items, {}, struct {
+        fn lessThan(context: void, lhs: IntersectionEvent, rhs: IntersectionEvent) bool {
+            _ = context;
+            if (lhs.edge_id == rhs.edge_id) return lhs.t < rhs.t;
+            return lhs.edge_id < rhs.edge_id;
+        }
+    }.lessThan);
+
+    // ==========================================
+    // PHASE 2: EXECUTE TOPOLOGICAL EDGE SPLITS
+    // ==========================================
+    var active_original_edge: topo.EdgeId = std.math.maxInt(u32);
+    var current_sub_edge: topo.EdgeId = 0;
+
+    // Map: FaceId -> List of new piercing VertexIds on its boundary
+    var face_piercings = std.AutoHashMap(topo.FaceId, std.ArrayListUnmanaged(topo.VertexId)).init(allocator);
+    defer {
+        var pit = face_piercings.iterator();
+        while (pit.next()) |entry| entry.value_ptr.deinit(allocator);
+        face_piercings.deinit();
+    }
+
+    // Helper to safely register a vertex to a face without duplicates
+    const registerPiercing = struct {
+        fn apply(alloc: std.mem.Allocator, map: *std.AutoHashMap(topo.FaceId, std.ArrayListUnmanaged(topo.VertexId)), f_id: topo.FaceId, v_id: topo.VertexId) !void {
+            var res = try map.getOrPut(f_id);
+            if (!res.found_existing) res.value_ptr.* = .empty;
+            for (res.value_ptr.items) |existing_v| if (existing_v == v_id) return;
+            try res.value_ptr.append(alloc, v_id);
+        }
+    }.apply;
+
+    for (intersection_events.items) |event| {
+        if (event.edge_id != active_original_edge) {
+            active_original_edge = event.edge_id;
+            current_sub_edge = event.edge_id;
+        }
+
+        // Identify the faces attached to the original edge BEFORE we split it
+        var attached_faces = try getFacesSharingEdge(allocator, t_arena, event.edge_solid, active_original_edge);
+        defer attached_faces.deinit(allocator);
+
+        // Physically split the edge
+        const split = splitEdgeTopologically(allocator, t_arena, g_arena, current_sub_edge, event.pt) catch return error.OutOfMemory;
+        current_sub_edge = split.e2;
+
+        // Register the new intersection vertex to the cutter face AND the attached faces
+        try registerPiercing(allocator, &face_piercings, event.face_id, split.v_mid);
+        for (attached_faces.items) |adj_face| {
+            try registerPiercing(allocator, &face_piercings, adj_face, split.v_mid);
+        }
+    }
+
+    // ==========================================
+    // PHASE 3: SEAM WEAVING (FACE SPLITTING)
+    // ==========================================
+    var face_it = face_piercings.iterator();
+    while (face_it.next()) |entry| {
+        const face_id = entry.key_ptr.*;
+        const pts = entry.value_ptr.items;
+
+        // Convex MVP Assumption: If a face has exactly 2 piercing points on its boundary,
+        // they form a straight line across the face. We can cleanly slice the face in two!
+        if (pts.len == 2) {
+            // Physically slice the planar face into two valid sub-faces
+            _ = splitFaceTopologically(allocator, t_arena, g_arena, face_id, pts[0], pts[1]) catch continue;
+        }
+        // Note: If pts.len > 2, it means the intersection is concave or complex.
+        // Handling that requires sorting the points spatially along the plane, which is omitted in this MVP.
+    }
+
+    // ==========================================
+    // PHASE 4: CLASSIFICATION & SELECTION
+    // ==========================================
+    var selected_faces = std.ArrayListUnmanaged(topo.FaceId).empty;
     defer selected_faces.deinit(allocator);
 
-    // Note: To make this function compile and testable immediately,
-    // we will iterate over the original faces of A and B,
-    // pretending they were returned by the `splitIntersectingFaces` step.
-
-    // --- Phase 3 & 4: Classification and Selection ---
-
-    // Process Solid A's Faces
+    // 4A. Process Solid A's Faces against Solid B
     const sa = t_arena.solids.items[solid_a];
     for (0..sa.shells_len) |s_off| {
         const shell = t_arena.shells.items[t_arena.solid_shells.items[sa.shells_start + s_off]];
         for (0..shell.faces_len) |f_off| {
             const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
 
+            // Fire a ray from the face to see if it is inside the other solid
             const class = classifyFace(allocator, t_arena, g_arena, face_id, solid_b);
 
             const keep = switch (op) {
@@ -639,7 +843,7 @@ pub fn computeBoolean(
         }
     }
 
-    // Process Solid B's Faces
+    // 4B. Process Solid B's Faces against Solid A
     const sb = t_arena.solids.items[solid_b];
     for (0..sb.shells_len) |s_off| {
         const shell = t_arena.shells.items[t_arena.solid_shells.items[sb.shells_start + s_off]];
@@ -650,12 +854,12 @@ pub fn computeBoolean(
 
             const keep = switch (op) {
                 .union_op => class == .outside,
-                .difference => class == .inside, // Note: We would also need to flip the normal here!
+                .difference => class == .inside,
                 .intersection => class == .inside,
             };
 
             if (keep) {
-                // For Difference, B's faces must be inverted so the normals face outward from the void.
+                // For Difference (A - B), B's faces must be inverted so the normals face outward from the void!
                 if (op == .difference) {
                     var flipped_face = t_arena.faces.items[face_id];
                     flipped_face.forward = !flipped_face.forward;
@@ -670,8 +874,10 @@ pub fn computeBoolean(
         }
     }
 
-    // --- Phase 5: Re-assembly ---
-    // Package the selected faces into a brand new Solid
+    // ==========================================
+    // PHASE 5: REASSEMBLY
+    // ==========================================
+    // Package all the selected, correctly-oriented faces into a brand new Solid
 
     const shell_start: u32 = @intCast(t_arena.shells.items.len);
     const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);

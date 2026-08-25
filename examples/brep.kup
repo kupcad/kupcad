@@ -1,3 +1,10 @@
 CAD.config(engine: :brep)
 
-circle(10).extrude(20)
+box = cube(10, center: true)
+
+# Use a square drill instead of a cylinder so our MVP engine can calculate the line-plane intersections!
+drill = cube(3, 3, 20, center: true)
+    .rotate(0, 90, 0)
+    .translate(0, 2, 0)
+
+part = box - drill

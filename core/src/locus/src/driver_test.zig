@@ -16,14 +16,14 @@ test "Driver: End-to-End API Calls" {
     // 4. Test a transform
     const translated_handle = driver.driver.translateFn(cube_handle, 10.0, 0.0, 0.0) orelse return error.TranslateFailed;
 
-    // Since there were already 3 solids (0, 1, 2) in the arena, the clone is ID 3.
-    try std.testing.expectEqual(@as(usize, 3), translated_handle);
+    // Because it modifies in-place, the handle remains 0
+    try std.testing.expectEqual(@as(usize, 0), translated_handle);
 
     // 5. Test the Meshing Pipeline
     const mesh_data = driver.driver.getMeshFn(cube_handle) orelse return error.MeshingFailed;
 
     // Our tessellator currently pushes all vertices from the global arena.
-    // Cube (8) + Cylinder (4) + Sphere (2) + Translated Cube (8) = 22 vertices.
-    // 22 vertices * 3 floats (x,y,z) = 66 floats total.
-    try std.testing.expectEqual(@as(usize, 66), mesh_data.vertex_len);
+    // Cube (8) + Cylinder (4) + Sphere (2) = exactly 14 vertices.
+    // 14 vertices $\times$ 3 floats = 42 floats.
+    try std.testing.expectEqual(@as(usize, 42), mesh_data.vertex_len);
 }
