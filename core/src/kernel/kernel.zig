@@ -10,7 +10,6 @@ pub const BooleanOp = enum {
 };
 
 // --- Comptime Kernel Dispatcher ---
-// Helper to safely extract the return type from either a function or a function pointer in Zig 0.16+
 fn ReturnType(comptime T: type) type {
     switch (@typeInfo(T)) {
         .pointer => |ptr| return ReturnType(ptr.child),
@@ -26,30 +25,54 @@ inline fn dispatch(comptime fn_name: []const u8, handle: anytype, args: anytype)
     }
 }
 
-// --- Creation Dispatchers (Default to Manifold for interactive VM evaluation) ---
-pub inline fn cube(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
-    return manifold_driver.cubeFn(x, y, z, center);
+// --- Dynamic Creation Dispatchers ---
+pub inline fn cube(engine: geom.EngineType, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
+    switch (engine) {
+        .manifold => return manifold_driver.cubeFn(x, y, z, center),
+        .brep_native => return brep_driver.cubeFn(x, y, z, center),
+    }
 }
-pub inline fn cylinder(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
-    return manifold_driver.cylinderFn(r1, r2, height, center, segments);
+pub inline fn cylinder(engine: geom.EngineType, r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
+    switch (engine) {
+        .manifold => return manifold_driver.cylinderFn(r1, r2, height, center, segments),
+        .brep_native => return brep_driver.cylinderFn(r1, r2, height, center, segments),
+    }
 }
-pub inline fn sphere(radius: f64) ?geom.GeometryHandle {
-    return manifold_driver.sphereFn(radius);
+pub inline fn sphere(engine: geom.EngineType, radius: f64) ?geom.GeometryHandle {
+    switch (engine) {
+        .manifold => return manifold_driver.sphereFn(radius),
+        .brep_native => return brep_driver.sphereFn(radius),
+    }
 }
-pub inline fn square(x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
-    return manifold_driver.squareFn(x, y, center);
+pub inline fn square(engine: geom.EngineType, x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
+    switch (engine) {
+        .manifold => return manifold_driver.squareFn(x, y, center),
+        .brep_native => return brep_driver.squareFn(x, y, center),
+    }
 }
-pub inline fn circle(radius: f64, segments: i32) ?geom.CrossSectionHandle {
-    return manifold_driver.circleFn(radius, segments);
+pub inline fn circle(engine: geom.EngineType, radius: f64, segments: i32) ?geom.CrossSectionHandle {
+    switch (engine) {
+        .manifold => return manifold_driver.circleFn(radius, segments),
+        .brep_native => return brep_driver.circleFn(radius, segments),
+    }
 }
-pub inline fn polygon(allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle {
-    return manifold_driver.polygonFn(allocator, pts);
+pub inline fn polygon(engine: geom.EngineType, allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle {
+    switch (engine) {
+        .manifold => return manifold_driver.polygonFn(allocator, pts),
+        .brep_native => return brep_driver.polygonFn(allocator, pts),
+    }
 }
-pub inline fn polyhedron(allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
-    return manifold_driver.polyhedronFn(allocator, points, faces);
+pub inline fn polyhedron(engine: geom.EngineType, allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
+    switch (engine) {
+        .manifold => return manifold_driver.polyhedronFn(allocator, points, faces),
+        .brep_native => return brep_driver.polyhedronFn(allocator, points, faces),
+    }
 }
-pub inline fn polygonsEvenOdd(allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
-    return manifold_driver.polygonsEvenOddFn(allocator, contours);
+pub inline fn polygonsEvenOdd(engine: geom.EngineType, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
+    switch (engine) {
+        .manifold => return manifold_driver.polygonsEvenOddFn(allocator, contours),
+        .brep_native => return brep_driver.polygonsEvenOddFn(allocator, contours),
+    }
 }
 
 // --- Top-Level Static Dispatchers ---
@@ -138,14 +161,12 @@ pub inline fn simplify(handle: geom.GeometryHandle, tolerance: f64) geom.Geometr
         .brep_native => return brep_driver.simplifyFn(handle, tolerance) orelse handle,
     }
 }
-
 pub inline fn queryFaces(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
     switch (handle.engine) {
         .manifold => return manifold_driver.queryFacesFn(allocator, handle, direction, tolerance),
         .brep_native => return brep_driver.queryFacesFn(allocator, handle, direction, tolerance),
     }
 }
-// Allocator is ordered first in these signatures, so we dispatch them manually to preserve standard ordering
 pub inline fn rayCast(alloc: std.mem.Allocator, handle: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
     switch (handle.engine) {
         .manifold => return manifold_driver.rayCastFn(alloc, handle, o, e),
@@ -159,7 +180,6 @@ pub inline fn getMesh(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
     }
 }
 
-// Keep the internal v-table struct definition intact for the drivers
 pub const GeometryKernel = struct {
     cubeFn: *const fn (x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle,
     cylinderFn: *const fn (r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle,
@@ -194,7 +214,7 @@ pub const GeometryKernel = struct {
     surfaceAreaFn: *const fn (handle: geom.GeometryHandle) f64,
     getMeshFn: *const fn (allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh,
     containsPointFn: *const fn (a: geom.GeometryHandle, pt: [3]f64) bool,
-    minGapFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, search_length: f64) f64,
+    minGapFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64,
     rayCastFn: *const fn (allocator: std.mem.Allocator, a: geom.GeometryHandle, origin: [3]f64, end: [3]f64) ?[]geom.RayHit,
     simplifyFn: *const fn (a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle,
     destructFn: *const fn (handle: geom.GeometryHandle) void,

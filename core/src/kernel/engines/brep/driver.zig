@@ -1,14 +1,64 @@
 const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
+const topo = @import("topology.zig");
+const tessellate = @import("tessellate.zig");
+const generators = @import("generators.zig");
+
+// Provide a global backing allocator specifically for engine allocations,
+// mimicking C++ `new` behavior used by the Manifold driver counterpart.
+var backend_allocator = std.heap.page_allocator;
+
+/// The container we store behind handle.ptr for the native engine
+pub const BrepSolid = struct {
+    allocator: std.mem.Allocator,
+    brep: topo.Brep,
+    solid_id: u32,
+
+    pub fn create(allocator: std.mem.Allocator) !*BrepSolid {
+        const self = try allocator.create(BrepSolid);
+        self.* = .{
+            .allocator = allocator,
+            .brep = topo.Brep.initEmpty(allocator),
+            .solid_id = 0,
+        };
+        return self;
+    }
+
+    pub fn destroy(self: *BrepSolid) void {
+        self.brep.deinit();
+        self.allocator.destroy(self);
+    }
+};
+
+// --- Lifecycle Management ---
+
+fn destructImpl(handle: geom.GeometryHandle) void {
+    std.debug.assert(handle.engine == .brep_native);
+    if (@intFromPtr(handle.ptr) != 0) {
+        const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+        solid.destroy();
+    }
+}
+
+fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
+    std.debug.assert(handle.engine == .brep_native);
+    // Future: implement BrepProfile wrapper
+}
+
+// --- Primitive Mocks (Return null until locus is wired up) ---
 
 fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
-    _ = x;
-    _ = y;
-    _ = z;
-    _ = center;
-    return null;
+    // Pipe the generation through the DOD generator
+    const solid = generators.generateCube(backend_allocator, x, y, z, center) catch return null;
+
+    // Return the safe geometric handle wrapper
+    return geom.GeometryHandle{
+        .engine = .brep_native,
+        .ptr = @ptrCast(solid),
+    };
 }
+
 fn cylinderImpl(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
     _ = r1;
     _ = r2;
@@ -150,8 +200,6 @@ fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, dir
     _ = handle;
     _ = direction;
     _ = tolerance;
-    // MVP: B-Rep implementation pending.
-    // Future: Iterate TopoDS_Face, downcast to Geom_Plane, evaluate normal vs direction.
     return null;
 }
 fn volumeImpl(handle: geom.GeometryHandle) f64 {
@@ -162,11 +210,15 @@ fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
     _ = handle;
     return 0.0;
 }
+
 fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
-    _ = allocator;
-    _ = handle;
-    return null;
+    std.debug.assert(handle.engine == .brep_native);
+    if (@intFromPtr(handle.ptr) == 0) return null;
+
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    return tessellate.tessellateSolid(allocator, solid) catch null;
 }
+
 fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
     _ = a;
     _ = pt;
@@ -204,16 +256,8 @@ fn polygonImpl(allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHa
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
     _ = tolerance;
     std.debug.assert(a.engine == .brep_native);
-    return a; // Pass through unchanged
+    return a;
 }
-
-fn destructImpl(handle: geom.GeometryHandle) void {
-    _ = handle;
-}
-fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
-    _ = handle;
-}
-
 fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
     _ = a;
     _ = material_id;
@@ -228,7 +272,6 @@ pub const driver = kernel.GeometryKernel{
     .translateFn = translateImpl,
     .rotateFn = rotateImpl,
     .scaleFn = scaleImpl,
-
     .squareFn = squareImpl,
     .circleFn = circleImpl,
     .polyhedronFn = polyhedronImpl,
@@ -247,7 +290,6 @@ pub const driver = kernel.GeometryKernel{
     .minkowskiFn = minkowskiImpl,
     .offsetFn = offsetImpl,
     .crossSectionTransformFn = crossSectionTransformImpl,
-
     .boundingBoxFn = boundingBoxImpl,
     .queryFacesFn = queryFacesImpl,
     .volumeFn = volumeImpl,
@@ -258,9 +300,7 @@ pub const driver = kernel.GeometryKernel{
     .rayCastFn = rayCastImpl,
     .polygonFn = polygonImpl,
     .simplifyFn = simplifyImpl,
-
     .destructFn = destructImpl,
     .destructCrossSectionFn = destructCrossSectionImpl,
-
     .setMaterialFn = setMaterialImpl,
 };

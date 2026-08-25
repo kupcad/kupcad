@@ -7,28 +7,31 @@ const VM = @import("vm.zig").VM;
 pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHandle {
     const node = vm.dag_builder.nodes.items[node_idx];
 
+    // Extract the active engine from the config stack!
+    const config = vm.config_stack.items[vm.config_stack.items.len - 1];
+    const engine = config.engine;
+
     switch (node.tag) {
         .cube => {
             const dims = vm.dag_builder.getCubeDimensions(node);
-            return kernel.cube(dims.x, dims.y, dims.z, dims.center) orelse return error.RuntimeError;
+            return kernel.cube(engine, dims.x, dims.y, dims.z, dims.center) orelse return error.RuntimeError;
         },
         .cylinder => {
             const p = vm.dag_builder.getCylinderPayload(node);
-            return kernel.cylinder(p.r1, p.r2, p.height, p.center, p.segments) orelse return error.RuntimeError;
+            return kernel.cylinder(engine, p.r1, p.r2, p.height, p.center, p.segments) orelse return error.RuntimeError;
         },
         .sphere => {
             const p = vm.dag_builder.getSpherePayload(node);
-            return kernel.sphere(p.radius) orelse return error.RuntimeError;
+            return kernel.sphere(engine, p.radius) orelse return error.RuntimeError;
         },
         .polyhedron_op => {
             const p = vm.dag_builder.getPolyhedronPayload(node);
-            return kernel.polyhedron(vm.allocator, p.pts, p.faces) orelse return error.RuntimeError;
+            return kernel.polyhedron(engine, vm.allocator, p.pts, p.faces) orelse return error.RuntimeError;
         },
         .union_op, .difference_op, .intersection_op => {
             const payload = vm.dag_builder.getBinaryPayload(node);
             const left_handle = try evaluateDAG(vm, payload.left);
             const right_handle = try evaluateDAG(vm, payload.right);
-            // Ensure evaluated handles contain valid C++ pointers
             std.debug.assert(@intFromPtr(left_handle.ptr) != 0);
             std.debug.assert(@intFromPtr(right_handle.ptr) != 0);
 
@@ -111,15 +114,17 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
 
 pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.CrossSectionHandle {
     const node = vm.dag_builder.nodes.items[node_idx];
+    const config = vm.config_stack.items[vm.config_stack.items.len - 1];
+    const engine = config.engine;
 
     switch (node.tag) {
         .square => {
             const p = vm.dag_builder.getSquarePayload(node);
-            return kernel.square(p.x, p.y, p.center) orelse return error.RuntimeError;
+            return kernel.square(engine, p.x, p.y, p.center) orelse return error.RuntimeError;
         },
         .circle => {
             const p = vm.dag_builder.getCirclePayload(node);
-            return kernel.circle(p.radius, p.segments) orelse return error.RuntimeError;
+            return kernel.circle(engine, p.radius, p.segments) orelse return error.RuntimeError;
         },
         .slice_op => {
             const p = vm.dag_builder.getSlicePayload(node);
@@ -152,7 +157,7 @@ pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geo
                 pts[i][0] = vm.dag_builder.numbers.items[num_idx + (i * 2)];
                 pts[i][1] = vm.dag_builder.numbers.items[num_idx + (i * 2) + 1];
             }
-            return kernel.polygon(vm.allocator, pts) orelse return error.RuntimeError;
+            return kernel.polygon(engine, vm.allocator, pts) orelse return error.RuntimeError;
         },
         .polygons_even_odd => {
             const num_contours = vm.dag_builder.extra_data.items[node.data];
@@ -163,7 +168,6 @@ pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geo
             }
 
             for (0..num_contours) |i| {
-                // Read the start and length offsets we saved
                 const pts_start = vm.dag_builder.extra_data.items[node.data + 1 + (i * 2)];
                 const pts_len = vm.dag_builder.extra_data.items[node.data + 1 + (i * 2) + 1];
 
@@ -175,7 +179,7 @@ pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geo
                 contours[i] = pts;
             }
 
-            return kernel.polygonsEvenOdd(vm.allocator, contours) orelse return error.RuntimeError;
+            return kernel.polygonsEvenOdd(engine, vm.allocator, contours) orelse return error.RuntimeError;
         },
         .cs_union_op, .cs_difference_op, .cs_intersection_op => {
             const payload = vm.dag_builder.getBinaryPayload(node);
@@ -198,10 +202,8 @@ pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geo
 
 inline fn maybeSimplify(vm: *VM, handle: geom.GeometryHandle) geom.GeometryHandle {
     const config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
     if (handle.engine == .manifold and config.manifold.simplify_coplanar) {
         return kernel.simplify(handle, config.manifold.tolerance);
     }
-
     return handle;
 }

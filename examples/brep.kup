@@ -1,0 +1,3 @@
+CAD.config(engine: :brep)
+
+cube(10)

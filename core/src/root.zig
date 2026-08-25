@@ -38,6 +38,7 @@ test {
 
     // Kernels
     _ = @import("kernel/engines/manifold/driver_test.zig");
+    _ = @import("kernel/engines/brep/driver_test.zig");
 
     // CLI & Config Tests
     _ = @import("cli/config_test.zig");

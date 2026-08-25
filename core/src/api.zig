@@ -12,6 +12,7 @@ const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const Linter = @import("tools/lint/linter.zig").Linter;
 const stl_exporter = @import("exporters/3d/stl.zig");
 const gltf_exporter = @import("exporters/3d/gltf.zig");
+const step_exporter = @import("exporters/3d/step.zig"); // <-- ADD THIS
 
 pub const UiSchema = extractor.UiSchema;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
@@ -19,6 +20,8 @@ pub const Document = @import("core/document.zig").Document;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 pub const LinterDiagnostic = @import("tools/lint/linter.zig").LinterDiagnostic;
+
+// ... (Keep formatDocument, formatCode, checkDocument, checkCode, benchmarkScript, extractSchema exactly the same) ...
 
 /// Formats an already parsed Document. Caller owns the returned slice.
 pub fn formatDocument(allocator: std.mem.Allocator, doc: *const Document, config: FormatterConfig) ![]const u8 {
@@ -89,7 +92,7 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
 }
 
 /// Compiles and evaluates a KupCAD script, returning the binary buffer for the requested format.
-/// Supports formats: "stl", "glb", "gltf".
+/// Supports formats: "stl", "glb", "gltf", "step".
 /// The caller owns the returned slice and must free it.
 pub fn buildModel(
     allocator: std.mem.Allocator,
@@ -116,7 +119,6 @@ pub fn buildModel(
             const sym_key = try vm.allocateSymbol(entry.key_ptr.*);
             vm.push(sym_key);
             defer _ = vm.pop();
-            // O(1) Hash Map Insertion
             try map_obj.map.put(vm.allocator, sym_key, value.Value.initNumber(entry.value_ptr.*));
         }
     }
@@ -131,16 +133,13 @@ pub fn buildModel(
     const result = vm.interpret(&out_chunk);
     if (result != .ok) return error.RuntimeError;
 
-    // --- Collect all meshes to export ---
     var export_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
     defer export_handles.deinit(allocator);
 
-    // Add ghosts from the display list first
     for (vm.display_list.items) |ghost_handle| {
         try export_handles.append(allocator, ghost_handle);
     }
 
-    // Add the final evaluated geometry from the stack
     var main_handle_opt: ?geom.GeometryHandle = null;
     if (vm.stack_top > 0) {
         const final_val = vm.stack[0];
@@ -155,16 +154,19 @@ pub fn buildModel(
 
     // --- Route to appropriate exporter ---
     if (std.mem.eql(u8, format, "stl")) {
-        // STL doesn't support multiple separate meshes or materials easily.
-        // Export only the main solid geometry, ignoring ghosts.
         if (main_handle_opt) |h| {
             return stl_exporter.buildStlBuffer(allocator, h);
         } else {
             return error.NoGeometry;
         }
     } else if (std.mem.eql(u8, format, "glb") or std.mem.eql(u8, format, "gltf")) {
-        // GLTF supports full scene graphs: Pass ALL handles
         return gltf_exporter.buildGltfBuffer(allocator, &vm, export_handles.items);
+    } else if (std.mem.eql(u8, format, "step")) {
+        if (main_handle_opt) |h| {
+            return step_exporter.buildStepBuffer(allocator, h);
+        } else {
+            return error.NoGeometry;
+        }
     } else {
         return error.UnsupportedFormat;
     }

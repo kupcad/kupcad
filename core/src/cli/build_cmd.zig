@@ -38,6 +38,15 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
                 std.debug.print("Error: Missing format after {s}\n", .{arg});
                 return;
             };
+            // FIX: Explicitly validate supported formats to fail fast!
+            if (!std.mem.eql(u8, format, "stl") and
+                !std.mem.eql(u8, format, "glb") and
+                !std.mem.eql(u8, format, "gltf") and
+                !std.mem.eql(u8, format, "step")) // <-- SUPPORT STEP HERE
+            {
+                std.debug.print("Error: Unsupported format '{s}'. Allowed: stl, glb, gltf, step\n", .{format});
+                return;
+            }
         } else if (!std.mem.startsWith(u8, arg, "-")) {
             input_path = arg;
         }
