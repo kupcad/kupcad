@@ -5,51 +5,98 @@ const math = @import("math.zig");
 
 pub const BooleanOp = enum { union_op, difference, intersection };
 
-/// Computes the intersection curve between two surfaces using the Marching Algorithm[cite: 30].
-pub fn marchIntersection(
-    g_arena: *geom.GeometryArena,
-    surf_a: geom.Surface,
-    surf_b: geom.Surface,
-    start_pt: math.Vec3,
-    step_size: f64,
-) !geom.CurveId {
-    _ = g_arena;
-    var current_pt = start_pt;
-    // 1. Evaluate surface normals at current_pt[cite: 30].
-    // (Requires projecting start_pt to u,v for both surfaces using Newton solver).
-    const normal_a = surf_a.normal(0.0, 0.0); // Simplified
-    const normal_b = surf_b.normal(0.0, 0.0);
+pub const BooleanError = error{
+    OutOfMemory,
+    DidNotConverge,
+};
 
-    // 2. The exact tangent of the intersection curve is the cross product of the normals.
-    const tangent = math.normalize(math.cross(normal_a, normal_b));
+/// Snaps a 3D point exactly onto the intersection curve of two surfaces.
+fn snapToIntersection(
+    g_arena: *const geom.GeometryArena,
+    id_a: geom.SurfaceId,
+    id_b: geom.SurfaceId,
+    guess: math.Vec3,
+    tolerance: f64,
+) ?math.Vec3 {
+    var pt = guess;
+    for (0..10) |_| {
+        // Project onto A via centralized dispatcher
+        const uv_a = g_arena.surfaceProject(id_a, pt);
+        const pt_a = g_arena.surfaceSubs(id_a, uv_a[0], uv_a[1]);
 
-    // 3. Step forward by `step_size`[cite: 30].
-    const next_guess = math.add(current_pt, math.scale(tangent, step_size));
+        // Project onto B via centralized dispatcher
+        const uv_b = g_arena.surfaceProject(id_b, pt_a);
+        const pt_b = g_arena.surfaceSubs(id_b, uv_b[0], uv_b[1]);
 
-    // 4. Use 3D Newton-Raphson to pull `next_guess` exactly onto both surf_a and surf_b simultaneously[cite: 30].
-    // current_pt = snapToIntersection(next_guess, surf_a, surf_b);
-
-    // 5. Append points to a Polyline or fit a B-Spline curve.
-    return 0; // Return the CurveId of the new intersection curve
+        if (math.distSq(pt, pt_b) < tolerance * tolerance) {
+            return pt_b;
+        }
+        pt = pt_b;
+    }
+    return null;
 }
 
-/// Executes a CSG Boolean operation between two Solids[cite: 22].
+/// Computes the intersection curve between two surfaces using the Marching Algorithm.
+pub fn marchIntersection(
+    allocator: std.mem.Allocator,
+    g_arena: *geom.GeometryArena,
+    surf_a_id: geom.SurfaceId,
+    surf_b_id: geom.SurfaceId,
+    start_pt: math.Vec3,
+    step_size: f64,
+    max_steps: u32,
+    tolerance: f64,
+) BooleanError!geom.CurveId {
+    var points: std.ArrayListUnmanaged(math.Vec3) = .empty;
+    defer points.deinit(allocator);
+
+    var current_pt = start_pt;
+    try points.append(allocator, current_pt);
+
+    for (0..max_steps) |_| {
+        // 1. Get exact parameters via dispatch
+        const uv_a = g_arena.surfaceProject(surf_a_id, current_pt);
+        const uv_b = g_arena.surfaceProject(surf_b_id, current_pt);
+
+        // 2. Evaluate normals via dispatch
+        const normal_a = g_arena.surfaceNormal(surf_a_id, uv_a[0], uv_a[1]);
+        const normal_b = g_arena.surfaceNormal(surf_b_id, uv_b[0], uv_b[1]);
+
+        // 3. Tangent of intersection
+        const tangent = math.normalize(math.cross(normal_a, normal_b));
+        if (math.magSq(tangent) < math.MATH_EPSILON) break;
+
+        // 4. Step forward
+        const next_guess = math.add(current_pt, math.scale(tangent, step_size));
+
+        // 5. Snap back to intersection seam
+        current_pt = snapToIntersection(g_arena, surf_a_id, surf_b_id, next_guess, tolerance) orelse return error.DidNotConverge;
+
+        try points.append(allocator, current_pt);
+
+        if (points.items.len > 3 and math.distSq(current_pt, start_pt) < tolerance * tolerance) {
+            break;
+        }
+    }
+
+    // Dummy return, but wrapped in the new packed struct ID type
+    return geom.CurveId{ .index = @intCast(g_arena.lines.items.len), .curve_type = .line };
+}
+
 pub fn computeBoolean(
+    allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
     solid_a: topo.SolidId,
     solid_b: topo.SolidId,
     op: BooleanOp,
-) !topo.SolidId {
+    config: anytype,
+) BooleanError!topo.SolidId {
+    _ = allocator;
+    _ = t_arena;
+    _ = g_arena;
     _ = solid_b;
     _ = op;
-    // 1. Raycast edges of Solid A against surfaces of Solid B (and vice versa) to find intersections[cite: 22].
-    // 2. Split edges at intersection points[cite: 22].
-    // 3. March numerical intersection curves between intersecting surfaces[cite: 22, 30].
-    // 4. Project split boundaries into the 2D (u,v) space of each surface[cite: 28].
-    // 5. Build a 2D BSP Tree to classify loops as INSIDE or OUTSIDE the opposing shell[cite: 22, 29].
-    // 6. Retain/Discard faces based on the BooleanOp[cite: 22].
-
-    // Return a new stitched solid.
+    _ = config;
     return solid_a;
 }

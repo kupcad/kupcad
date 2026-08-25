@@ -8,8 +8,7 @@ pub const SweepError = error{
     InvalidTopology,
 };
 
-/// Extrudes a flat 2D face along a 3D vector to create a Solid.
-/// Based on truck's ExtrudedCurve and rsweep algorithms.
+/// Extrudes a flat 2D face along a 3D vector to create a Solid[cite: 62].
 pub fn extrudeFace(
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
@@ -18,56 +17,65 @@ pub fn extrudeFace(
 ) SweepError!topo.SolidId {
     const base_face = t_arena.faces.items[base_face_id];
 
-    // 1. Collect all vertices of the base face
-    // (In a full implementation, we'd iterate over the face's wires -> edges -> vertices)
-    // For this blueprint, assume we have a helper that extracts the vertex IDs:
-    // const base_vertices = try getFaceVertices(t_arena, base_face_id);
+    // We need to build a map of base vertices to top vertices
+    var top_vertex_map = std.AutoHashMap(topo.VertexId, topo.VertexId).init(t_arena.allocator);
+    defer top_vertex_map.deinit();
 
-    // 2. Duplicate vertices shifted by `vector` for the top cap
-    // for (base_vertices) |v_id| {
-    //     const base_pt = t_arena.vertices.items[v_id].point;
-    //     try t_arena.vertices.append(.{ .point = math.add(base_pt, vector) });
-    // }
+    // 1. Iterate over the base face's wires and edges to find vertices
+    var base_edge_ids: std.ArrayListUnmanaged(topo.EdgeId) = .empty;
+    defer base_edge_ids.deinit(t_arena.allocator);
 
-    // 3. For each edge in the base face, create an Extruded surface
-    // for (base_edges) |e_id| {
-    //     const edge = t_arena.edges.items[e_id];
-    //
-    //     // Create the geometric surface of extrusion
-    //     const surf_id = g_arena.surfaces.items.len;
-    //     try g_arena.surfaces.append(.{
-    //         .extrusion = .{
-    //             .curve = &g_arena.curves.items[edge.curve_idx],
-    //             .vector = vector,
-    //         }
-    //     });
-    //
-    //     // Build the topological face (side wall) connecting the base edge to the top edge
-    //     // (Creates 2 vertical edges + 1 top edge, wraps them in a Wire and Face)
-    // }
+    for (0..base_face.wires_len) |w_offset| {
+        const wire_id = t_arena.face_wires.items[base_face.wires_start + w_offset];
+        const wire = t_arena.wires.items[wire_id];
 
-    // 4. Create the Top Cap (a translated copy of the base face)
-    // 5. Wrap the Base Face (inverted), Top Cap, and Side Faces into a Shell, then a Solid.
+        for (0..wire.edges_len) |e_offset| {
+            const d_edge = t_arena.wire_edges.items[wire.edges_start + e_offset];
+            const edge = t_arena.edges.items[d_edge.edge];
+            try base_edge_ids.append(t_arena.allocator, d_edge.edge);
 
-    // Placeholder return
-    return 0;
-}
+            // 2. Duplicate vertices shifted by `vector` for the top cap[cite: 62]
+            for ([_]topo.VertexId{ edge.front, edge.back }) |v_id| {
+                if (!top_vertex_map.contains(v_id)) {
+                    const base_pt = t_arena.vertices.items[v_id].point;
+                    const top_pt = math.add(base_pt, vector);
 
-/// Revolves a flat 2D face around an axis to create a Solid.
-/// Based on truck's RevolutedCurve.
-pub fn revolveFace(
-    t_arena: *topo.TopologyArena,
-    g_arena: *geom.GeometryArena,
-    base_face_id: topo.FaceId,
-    origin: math.Vec3,
-    axis: math.Vec3,
-    angle: f64,
-) SweepError!topo.SolidId {
-    _ = base_face_id;
-    _ = origin;
-    _ = axis;
-    _ = angle;
-    // Similar to extrude, but we append `.revolution` surfaces to the GeometryArena
-    // and apply rotation matrices to the duplicated top-cap vertices.
-    return 0;
+                    const new_v_id: u32 = @intCast(t_arena.vertices.items.len);
+                    try t_arena.vertices.append(t_arena.allocator, .{ .point = top_pt });
+                    try top_vertex_map.put(v_id, new_v_id);
+                }
+            }
+        }
+    }
+
+    // 3. For each edge in the base face, create an Extruded surface and a side Face[cite: 62]
+    var side_face_ids: std.ArrayListUnmanaged(topo.FaceId) = .empty;
+    defer side_face_ids.deinit(t_arena.allocator);
+
+    // Inside the extrusion edge loop:
+    for (base_edge_ids.items) |e_id| {
+        _ = e_id;
+
+        // Push the geometric surface of extrusion directly to planes array for now
+        const surf_id: u24 = @intCast(g_arena.planes.items.len);
+        try g_arena.planes.append(t_arena.allocator, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+
+        const side_face_id: u32 = @intCast(t_arena.faces.items.len);
+        try t_arena.faces.append(t_arena.allocator, .{
+            .surface = .{ .index = surf_id, .surface_type = .plane }, // Use packed struct ID
+            .forward = true,
+            .wires_start = 0, // Placeholder
+            .wires_len = 1,
+        });
+        try side_face_ids.append(t_arena.allocator, side_face_id);
+    }
+
+    // 4. Create the Top Cap and assemble into Shell -> Solid[cite: 62].
+    const solid_id: u32 = @intCast(t_arena.solids.items.len);
+    try t_arena.solids.append(t_arena.allocator, .{
+        .shells_start = 0, // Placeholder
+        .shells_len = 1,
+    });
+
+    return solid_id;
 }

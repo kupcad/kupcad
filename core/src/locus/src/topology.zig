@@ -1,4 +1,5 @@
 const std = @import("std");
+const geom = @import("geometry.zig");
 
 // --- Strongly Typed Handles ---
 pub const VertexId = u32;
@@ -8,44 +9,47 @@ pub const FaceId = u32;
 pub const ShellId = u32;
 pub const SolidId = u32;
 
-// --- Geometric Handles ---
-pub const CurveId = u32;
-pub const SurfaceId = u32;
-
 // --- Topological Elements ---
 
+/// A 3D point in space.
 pub const Vertex = struct {
     point: [3]f64,
 };
 
+/// An edge bounded by two vertices, attached to a 3D curve[cite: 15].
 pub const Edge = struct {
     front: VertexId,
     back: VertexId,
-    curve: CurveId,
+    curve: geom.CurveId, // Now uses the strict DOD packed struct[cite: 15]
 };
 
+/// Used in Wires to track traversal direction of an edge[cite: 15].
 pub const DirectedEdge = struct {
     edge: EdgeId,
     forward: bool,
 };
 
+/// A sequence of connected edges forming a boundary loop[cite: 15].
 pub const Wire = struct {
     edges_start: u32,
     edges_len: u32,
 };
 
+/// A topological face bounded by wires, attached to a surface[cite: 15].
 pub const Face = struct {
-    surface: SurfaceId,
+    surface: geom.SurfaceId, // Now uses the strict DOD packed struct[cite: 15]
     forward: bool,
     wires_start: u32,
     wires_len: u32,
 };
 
+/// A connected set of faces[cite: 15].
 pub const Shell = struct {
     faces_start: u32,
     faces_len: u32,
 };
 
+/// A 3D volume bounded by closed shells[cite: 15].
 pub const Solid = struct {
     shells_start: u32,
     shells_len: u32,
@@ -56,7 +60,7 @@ pub const Solid = struct {
 pub const TopologyArena = struct {
     allocator: std.mem.Allocator,
 
-    // Primary Elements
+    // Core Elements
     vertices: std.ArrayListUnmanaged(Vertex) = .empty,
     edges: std.ArrayListUnmanaged(Edge) = .empty,
     wires: std.ArrayListUnmanaged(Wire) = .empty,

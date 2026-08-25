@@ -71,4 +71,7 @@ test {
     _ = @import("vm/validation_test.zig");
     _ = @import("vm/verifier_test.zig");
     _ = @import("vm/vm_test.zig");
+
+    // locus
+    _ = @import("locus/src/root.zig");
 }
