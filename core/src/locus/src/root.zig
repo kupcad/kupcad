@@ -14,6 +14,7 @@ pub const driver = @import("driver.zig");
 test {
     _ = @import("booleans_test.zig");
     _ = @import("driver_test.zig");
+    _ = @import("fuzz_test.zig");
     _ = @import("generators_test.zig");
     _ = @import("geometry_test.zig");
     _ = @import("minkowski_test.zig");

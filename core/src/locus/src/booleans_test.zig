@@ -70,7 +70,7 @@ test "CSG: Half-Edge Splitting" {
 
     const v1: u32 = @intCast(t_arena.vertices.items.len);
     try t_arena.vertices.append(alloc, .{ .point = .{ 10, 0, 0 } });
-    _ = v1;
+    _ = v1; // Marking unused explicitly since we test the graph rather than v1 directly.
 
     const l_idx: u24 = @intCast(g_arena.lines.items.len);
     try g_arena.lines.append(alloc, .{ .start = .{ 0, 0, 0 }, .end = .{ 10, 0, 0 } });
@@ -128,3 +128,61 @@ test "CSG: 2D Point-in-Polygon Algorithm" {
     try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 7.0, 5.0 }, &polygon));
     try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 15.0, 5.0 }, &polygon));
 }
+
+test "Curve Math: Arc vs Plane Intersection" {
+    // 1. Define an Arc on the XY plane (Radius 5, Center 0,0,0)
+    const arc = geom.CircleArc{
+        .center = .{ 0, 0, 0 },
+        .radius = 5.0,
+        .x_axis = .{ 1, 0, 0 },
+        .y_axis = .{ 0, 1, 0 },
+    };
+
+    // Define the boundary vertices of the half-edge (a full semi-circle)
+    const v_start = math.Vec3{ 5, 0, 0 };
+    const v_end = math.Vec3{ -5, 0, 0 };
+
+    // 2. Define a Plane at X = 3, facing positive X
+    const plane_origin = math.Vec3{ 3, 0, 0 };
+    const plane_normal = math.Vec3{ 1, 0, 0 };
+
+    // 3. Perform Intersection
+    const hit_opt = booleans.intersectArcPlane(arc, v_start, v_end, plane_origin, plane_normal, true);
+
+    try std.testing.expect(hit_opt != null);
+    const hit = hit_opt.?;
+
+    // If R=5 and X=3, then Y must be 4 (3-4-5 right triangle!)
+    try std.testing.expectApproxEqAbs(3.0, hit[0], math.MATH_EPSILON);
+    try std.testing.expectApproxEqAbs(4.0, @abs(hit[1]), math.MATH_EPSILON);
+    try std.testing.expectApproxEqAbs(0.0, hit[2], math.MATH_EPSILON);
+}
+
+test "Curve Math: NURBS vs Plane Intersection" {
+    // 1. Define a simple 3-point quadratic NURBS curve (a parabola)
+    const knots = [_]f64{ 0.0, 0.0, 0.0, 1.0, 1.0, 1.0 };
+    const control_points = [_]math.Vec4{
+        .{ 0.0, 0.0, 0.0, 1.0 }, // Start at Z=0
+        .{ 0.0, 0.0, 10.0, 1.0 }, // Pulled up to Z=10
+        .{ 10.0, 0.0, 0.0, 1.0 }, // End at X=10, Z=0
+    };
+    const curve = geom.NurbsCurve{
+        .degree = 2,
+        .knots = &knots,
+        .control_points = &control_points,
+    };
+
+    // 2. Define a horizontal Plane at Z = 2.5
+    const plane_origin = math.Vec3{ 0, 0, 2.5 };
+    const plane_normal = math.Vec3{ 0, 0, 1 };
+
+    // 3. Perform Intersection (Binary Search)
+    const hit_opt = booleans.intersectNurbsPlane(curve, plane_origin, plane_normal);
+
+    try std.testing.expect(hit_opt != null);
+    const hit = hit_opt.?;
+
+    // Verify it cleanly hit the Z=2.5 plane
+    try std.testing.expectApproxEqAbs(2.5, hit[2], 1e-4);
+}
+

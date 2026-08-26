@@ -2264,26 +2264,26 @@ test "VM: Symbols are weak references and swept when unused" {
 }
 
 test "VM: TopologyArena deinit cleanly frees all arrays" {
-    // If TopologyArena.deinit() leaks, std.testing.allocator will fail the test automatically!
+    // If TopologyArena.deinit() leaks, std.testing.allocator will fail the test automatically
     const topo = @import("../locus/src/topology.zig");
     const TopologyArena = topo.TopologyArena;
     const Vertex = topo.Vertex;
     const Loop = topo.Loop;
     const HalfEdge = topo.HalfEdge;
 
-    var arena = TopologyArena.init(testing.allocator);
-    defer arena.deinit(testing.allocator);
+    var arena = TopologyArena.init(std.testing.allocator);
+    defer arena.deinit(std.testing.allocator);
 
     // Simulate allocating topology slices using the ArrayListUnmanaged API
     for (0..10) |_| {
-        try arena.vertices.append(testing.allocator, Vertex{ .point = .{ 0.0, 0.0, 0.0 } });
+        try arena.vertices.append(std.testing.allocator, Vertex{ .point = .{ 0.0, 0.0, 0.0 } });
     }
     for (0..5) |_| {
-        try arena.loops.append(testing.allocator, Loop{ .face_id = 0, .first_half_edge = 0 });
+        try arena.loops.append(std.testing.allocator, Loop{ .face_id = 0, .first_half_edge = 0 });
     }
 
     // Simulate appending to the half-edge and relationship arrays
-    try arena.half_edges.append(testing.allocator, HalfEdge{
+    try arena.half_edges.append(std.testing.allocator, HalfEdge{
         .start_vertex = 0,
         .twin = topo.NULL_ID,
         .next = 0,
@@ -2292,10 +2292,11 @@ test "VM: TopologyArena deinit cleanly frees all arrays" {
         .curve = .{ .index = 0, .curve_type = .line },
         .forward = true,
     });
-    try arena.face_loops.append(testing.allocator, 0);
+    try arena.face_loops.append(std.testing.allocator, 0);
 
     // The defer arena.deinit(testing.allocator) will trigger here.
-    // If it doesn't correctly free `.vertices`, `.loops`, `.half_edges`, and `.face_loops`, Zig's test runner will panic with a memory leak.
+    // If it doesn't correctly free `.vertices`, `.loops`, `.half_edges`, and `.face_loops`,
+    // Zig's test runner will panic with a memory leak.
 }
 
 test "VM: Closure stack frame safely pre-allocates local variables" {
