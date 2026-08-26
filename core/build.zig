@@ -185,7 +185,6 @@ pub fn build(b: *std.Build) void {
 
         wasm.entry = .disabled;
         wasm.wasi_exec_model = .reactor;
-        wasm.rdynamic = true;
 
         // all mem must be aligned in 65536 bytes (64Kb)
         wasm.initial_memory = 134217728;
