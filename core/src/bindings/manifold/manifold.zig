@@ -7,6 +7,7 @@ pub const ManifoldMeshGL = opaque {};
 pub const ManifoldCrossSection = opaque {};
 pub const ManifoldPolygons = opaque {};
 pub const ManifoldSimplePolygon = opaque {};
+pub const ManifoldVecObj = opaque {};
 
 pub const OpType = enum(c_int) {
     add = 0,
@@ -46,11 +47,15 @@ extern fn manifold_alloc_cross_section() ?*ManifoldCrossSection;
 extern fn manifold_delete_cross_section(cs: ?*ManifoldCrossSection) void;
 extern fn manifold_alloc_polygons() ?*ManifoldPolygons;
 extern fn manifold_delete_polygons(p: ?*ManifoldPolygons) void;
+extern fn manifold_alloc_manifold_vec() ?*ManifoldVecObj;
+extern fn manifold_destruct_manifold_vec(ms: ?*ManifoldVecObj) void;
+extern fn manifold_manifold_vec_push_back(ms: ?*ManifoldVecObj, m: ?*ManifoldObj) void;
 
 extern fn manifold_cube(mem: ?*ManifoldObj, x: f64, y: f64, z: f64, center: c_int) ?*ManifoldObj;
 extern fn manifold_cylinder(mem: ?*ManifoldObj, height: f64, radiusLow: f64, radiusHigh: f64, circularSegments: c_int, center: c_int) ?*ManifoldObj;
 extern fn manifold_sphere(mem: ?*ManifoldObj, radius: f64, circularSegments: c_int) ?*ManifoldObj;
 extern fn manifold_boolean(mem: ?*ManifoldObj, a: ?*ManifoldObj, b: ?*ManifoldObj, op: OpType) ?*ManifoldObj;
+extern fn manifold_batch_boolean(mem: ?*ManifoldObj, ms: ?*ManifoldVecObj, op: OpType) ?*ManifoldObj;
 
 extern fn manifold_translate(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z: f64) ?*ManifoldObj;
 extern fn manifold_rotate(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z: f64) ?*ManifoldObj;
@@ -131,6 +136,19 @@ pub fn sphere(radius: f64) ?*ManifoldObj {
 
 pub fn boolean(a: ?*ManifoldObj, b: ?*ManifoldObj, op: OpType) ?*ManifoldObj {
     return manifold_boolean(manifold_alloc_manifold(), a, b, op);
+}
+
+pub fn batchBoolean(objs: []const ?*ManifoldObj, op: OpType) ?*ManifoldObj {
+    if (objs.len == 0) return null;
+
+    const vec = manifold_alloc_manifold_vec();
+    defer manifold_destruct_manifold_vec(vec);
+
+    for (objs) |obj| {
+        manifold_manifold_vec_push_back(vec, obj);
+    }
+
+    return manifold_batch_boolean(manifold_alloc_manifold(), vec, op);
 }
 
 pub fn translate(obj: ?*ManifoldObj, x: f64, y: f64, z: f64) ?*ManifoldObj {

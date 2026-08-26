@@ -177,6 +177,20 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
     return a;
 }
 
+fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
+    _ = allocator;
+    if (objs.len == 0) return null;
+
+    // Fallback for B-Rep: Sequential evaluation
+    var acc = objs[0];
+    for (objs[1..]) |obj| {
+        if (booleanImpl(acc, obj, op)) |res| {
+            acc = res;
+        }
+    }
+    return acc;
+}
+
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
     const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
     const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
@@ -357,6 +371,7 @@ pub const driver = kernel.GeometryKernel{
     .cylinderFn = cylinderImpl,
     .sphereFn = sphereImpl,
     .booleanFn = booleanImpl,
+    .batchBooleanFn = batchBooleanImpl,
     .translateFn = translateImpl,
     .rotateFn = rotateImpl,
     .scaleFn = scaleImpl,

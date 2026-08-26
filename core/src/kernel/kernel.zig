@@ -155,12 +155,23 @@ pub inline fn destructCrossSection(handle: geom.CrossSectionHandle) void {
     dispatch("destructCrossSectionFn", handle, .{});
 }
 
+pub inline fn batchBoolean(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle {
+    if (objs.len == 0) return null;
+    if (objs.len == 1) return objs[0];
+
+    switch (objs[0].engine) {
+        .manifold => return manifold_driver.batchBooleanFn(allocator, objs, op),
+        .brep_native => return brep_driver.batchBooleanFn(allocator, objs, op),
+    }
+}
+
 pub inline fn simplify(handle: geom.GeometryHandle, tolerance: f64) geom.GeometryHandle {
     switch (handle.engine) {
         .manifold => return manifold_driver.simplifyFn(handle, tolerance) orelse handle,
         .brep_native => return brep_driver.simplifyFn(handle, tolerance) orelse handle,
     }
 }
+
 pub inline fn queryFaces(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
     switch (handle.engine) {
         .manifold => return manifold_driver.queryFacesFn(allocator, handle, direction, tolerance),
@@ -185,6 +196,7 @@ pub const GeometryKernel = struct {
     cylinderFn: *const fn (r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle,
     sphereFn: *const fn (radius: f64) ?geom.GeometryHandle,
     booleanFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle,
+    batchBooleanFn: *const fn (allocator: std.mem.Allocator, objs: []const geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle,
     translateFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,
     rotateFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,
     scaleFn: *const fn (a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle,

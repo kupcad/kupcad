@@ -45,18 +45,21 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
             const result = kernel.boolean(left_handle, right_handle, op) orelse return error.RuntimeError;
             return maybeSimplify(vm, result);
         },
-        // Inside the `switch (node.tag)` in `evaluateDAG`, add:
         .batch_union_op => {
             const targets = vm.dag_builder.getBatchUnionPayload(node);
             if (targets.len == 0) return error.RuntimeError;
 
-            // MVP: Evaluate sequentially. (In the future, we swap this block for a direct `kernel.batchUnion(handles)` C++ call)
-            var acc = try evaluateDAG(vm, targets[0]);
-            for (targets[1..]) |target_idx| {
-                const curr = try evaluateDAG(vm, target_idx);
-                acc = kernel.boolean(acc, curr, .union_op) orelse return error.RuntimeError;
+            // Allocate a temporary slice of resolved handles
+            var handles = try vm.allocator.alloc(geom.GeometryHandle, targets.len);
+            defer vm.allocator.free(handles);
+
+            for (targets, 0..) |target_idx, i| {
+                handles[i] = try evaluateDAG(vm, target_idx);
             }
-            return maybeSimplify(vm, acc);
+
+            // Hand the array over to the kernel
+            const result = kernel.batchBoolean(vm.allocator, handles, .union_op) orelse return error.RuntimeError;
+            return maybeSimplify(vm, result);
         },
         .translate => {
             const p = vm.dag_builder.getTranslatePayload(node);

@@ -135,6 +135,25 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
+    if (objs.len == 0) return null;
+    var m_objs = allocator.alloc(?*manifold.ManifoldObj, objs.len) catch return null;
+    defer allocator.free(m_objs);
+
+    for (objs, 0..) |obj, i| {
+        m_objs[i] = @ptrCast(@alignCast(obj.ptr));
+    }
+
+    const m_op = switch (op) {
+        .union_op => manifold.OpType.add,
+        .difference_op => manifold.OpType.subtract,
+        .intersection_op => manifold.OpType.intersect,
+    };
+
+    const ptr = manifold.batchBoolean(m_objs, m_op) orelse return objs[0];
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
     std.debug.assert(a.engine == .manifold and b.engine == .manifold);
     const a_valid = @intFromPtr(a.ptr) != 0;
@@ -486,6 +505,7 @@ pub const driver = kernel.GeometryKernel{
     .cylinderFn = cylinderImpl,
     .sphereFn = sphereImpl,
     .booleanFn = booleanImpl,
+    .batchBooleanFn = batchBooleanImpl,
     .translateFn = translateImpl,
     .rotateFn = rotateImpl,
     .scaleFn = scaleImpl,
