@@ -45,18 +45,62 @@ const StepSerializer = struct {
 
 /// Generates a valid ISO 10303-21 STEP file buffer from Half-Edge B-Rep Topology.
 pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ![]const u8 {
-    if (handle.engine != .brep_native) {
-        return error.UnsupportedEngine;
-    }
+    if (handle.engine != .brep_native) return error.UnsupportedEngine;
 
     const solid: *brep_driver.BrepSolid = @ptrCast(@alignCast(handle.ptr));
     const t = &solid.t_arena;
     const g = &solid.g_arena;
 
+    const active_solid_id = solid.solid_id;
+    if (active_solid_id >= t.solids.items.len) return error.InvalidSolid;
+
+    // --- 0. TRAVERSE AND FILTER ACTIVE TOPOLOGY ---
+    // We only want to export the geometry belonging to the final solid,
+    // ignoring intermediate shapes left in the arena from boolean operations.
+    var active_shells = std.AutoHashMap(u32, void).init(allocator);
+    defer active_shells.deinit();
+    var active_faces = std.AutoHashMap(u32, void).init(allocator);
+    defer active_faces.deinit();
+    var active_loops = std.AutoHashMap(u32, void).init(allocator);
+    defer active_loops.deinit();
+    var active_half_edges = std.AutoHashMap(u32, void).init(allocator);
+    defer active_half_edges.deinit();
+    var active_vertices = std.AutoHashMap(u32, void).init(allocator);
+    defer active_vertices.deinit();
+
+    const target_solid = t.solids.items[active_solid_id];
+    for (0..target_solid.shells_len) |s_off| {
+        const shell_id = t.solid_shells.items[target_solid.shells_start + s_off];
+        try active_shells.put(shell_id, {});
+        const shell = t.shells.items[shell_id];
+
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t.shell_faces.items[shell.faces_start + f_off];
+            try active_faces.put(face_id, {});
+            const face = t.faces.items[face_id];
+
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t.face_loops.items[face.loops_start + l_off];
+                try active_loops.put(loop_id, {});
+                const loop = t.loops.items[loop_id];
+
+                var curr_he = loop.first_half_edge;
+                while (true) {
+                    try active_half_edges.put(curr_he, {});
+                    const he = t.half_edges.items[curr_he];
+                    try active_vertices.put(he.start_vertex, {});
+
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+
     var s = StepSerializer.init(allocator);
     errdefer s.out.deinit(allocator);
 
-    const solid_id = 17; // Target ID #17 for MANIFOLD_SOLID_BREP
+    const step_solid_id = 17; // Target ID #17 for MANIFOLD_SOLID_BREP
 
     // --- 1. AP214 BOILERPLATE & HEADER ---
     try s.out.appendSlice(allocator,
@@ -86,35 +130,34 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
     );
 
     // --- 2. VERTICES ---
-    // Map internal VertexId to emitted STEP VERTEX_POINT record IDs
-    var vertex_map = try allocator.alloc(u32, t.vertices.items.len);
-    defer allocator.free(vertex_map);
+    var vertex_map = std.AutoHashMap(u32, u32).init(allocator);
+    defer vertex_map.deinit();
 
     for (t.vertices.items, 0..) |v, i| {
+        if (!active_vertices.contains(@intCast(i))) continue;
         const pt_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ v.point[0], v.point[1], v.point[2] });
-        vertex_map[i] = try s.emit("VERTEX_POINT('',#{d})", .{pt_id});
+        try vertex_map.put(@intCast(i), try s.emit("VERTEX_POINT('',#{d})", .{pt_id}));
     }
 
     // --- 3. EDGE CURVES (HALF-EDGE PAIR DEDUPLICATION) ---
-    // Map HalfEdgeId -> STEP EDGE_CURVE record ID and boolean orientation
     const EdgeCurveInfo = struct { edge_curve_id: u32, is_forward: bool };
-    var half_edge_map = try allocator.alloc(EdgeCurveInfo, t.half_edges.items.len);
-    defer allocator.free(half_edge_map);
+    var half_edge_map = std.AutoHashMap(u32, EdgeCurveInfo).init(allocator);
+    defer half_edge_map.deinit();
 
     for (t.half_edges.items, 0..) |he, i| {
+        if (!active_half_edges.contains(@intCast(i))) continue;
         const he_id: u32 = @intCast(i);
 
         // If this half-edge has a twin that was already emitted, reuse its EDGE_CURVE entity
-        if (he.twin != topo.NULL_ID and he.twin < he_id) {
-            const twin_info = half_edge_map[he.twin];
-            half_edge_map[i] = .{
+        if (he.twin != topo.NULL_ID and he.twin < he_id and active_half_edges.contains(he.twin)) {
+            const twin_info = half_edge_map.get(he.twin).?;
+            try half_edge_map.put(he_id, .{
                 .edge_curve_id = twin_info.edge_curve_id,
                 .is_forward = false, // Reversed orientation relative to its twin
-            };
+            });
             continue;
         }
 
-        // Calculate end vertex by inspecting the starting vertex of the next half-edge in the loop
         const next_he = t.half_edges.items[he.next];
         const p1 = t.vertices.items[he.start_vertex].point;
         const p2 = t.vertices.items[next_he.start_vertex].point;
@@ -132,29 +175,30 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         const line_id = try s.emit("LINE('',#{d},#{d})", .{ origin_id, vec_id });
 
         const edge_curve_id = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{
-            vertex_map[he.start_vertex],
-            vertex_map[next_he.start_vertex],
+            vertex_map.get(he.start_vertex).?,
+            vertex_map.get(next_he.start_vertex).?,
             line_id,
         });
 
-        half_edge_map[i] = .{
+        try half_edge_map.put(he_id, .{
             .edge_curve_id = edge_curve_id,
             .is_forward = true,
-        };
+        });
     }
 
     // --- 4. LOOPS (EDGE_LOOPs) ---
-    // Traverse Half-Edge circular linked lists (following .next) to emit EDGE_LOOP entities
-    var loop_map = try allocator.alloc(u32, t.loops.items.len);
-    defer allocator.free(loop_map);
+    var loop_map = std.AutoHashMap(u32, u32).init(allocator);
+    defer loop_map.deinit();
 
     for (t.loops.items, 0..) |loop, i| {
+        if (!active_loops.contains(@intCast(i))) continue;
+
         var loop_oriented_edges = std.ArrayListUnmanaged(u32).empty;
         defer loop_oriented_edges.deinit(allocator);
 
         var curr_he_id = loop.first_half_edge;
         while (true) {
-            const he_info = half_edge_map[curr_he_id];
+            const he_info = half_edge_map.get(curr_he_id).?;
             const oriented_id = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{
                 he_info.edge_curve_id,
                 if (he_info.is_forward) "T" else "F",
@@ -177,15 +221,16 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
             try s.out.appendSlice(allocator, oe_str);
         }
         try s.out.appendSlice(allocator, "));\n");
-        loop_map[i] = s.id_counter;
+        try loop_map.put(@intCast(i), s.id_counter);
     }
 
     // --- 5. FACES & SURFACES ---
-    var face_map = try allocator.alloc(u32, t.faces.items.len);
-    defer allocator.free(face_map);
+    var face_map = std.AutoHashMap(u32, u32).init(allocator);
+    defer face_map.deinit();
 
     for (t.faces.items, 0..) |face, i| {
-        // Emit Surface Geometry
+        if (!active_faces.contains(@intCast(i))) continue;
+
         var surface_record_id: u32 = 0;
 
         switch (face.surface.surface_type) {
@@ -229,33 +274,33 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
             },
         }
 
-        // Generate Outer Boundary (Loop 0) and Inner Bounds / Holes (Loops 1..N)
         var bounds_str = std.ArrayListUnmanaged(u8).empty;
         defer bounds_str.deinit(allocator);
 
         for (0..face.loops_len) |l_off| {
             const current_loop_id = t.face_loops.items[face.loops_start + l_off];
-
             const bound_type = if (l_off == 0) "FACE_OUTER_BOUND" else "FACE_BOUND";
-            const bound_id = try s.emit("{s}('',#{d},.T.)", .{ bound_type, loop_map[current_loop_id] });
+            const bound_id = try s.emit("{s}('',#{d},.T.)", .{ bound_type, loop_map.get(current_loop_id).? });
 
             if (l_off > 0) try bounds_str.appendSlice(allocator, ",");
             var tmp: [32]u8 = undefined;
             try bounds_str.appendSlice(allocator, try std.fmt.bufPrint(&tmp, "#{d}", .{bound_id}));
         }
 
-        face_map[i] = try s.emit("ADVANCED_FACE('',({s}),#{d},.{s}.)", .{
+        try face_map.put(@intCast(i), try s.emit("ADVANCED_FACE('',({s}),#{d},.{s}.)", .{
             bounds_str.items,
             surface_record_id,
             if (face.forward) "T" else "F",
-        });
+        }));
     }
 
     // --- 6. SHELLS ---
-    var shell_map = try allocator.alloc(u32, t.shells.items.len);
-    defer allocator.free(shell_map);
+    var shell_map = std.AutoHashMap(u32, u32).init(allocator);
+    defer shell_map.deinit();
 
     for (t.shells.items, 0..) |shell, i| {
+        if (!active_shells.contains(@intCast(i))) continue;
+
         var header_buf: [64]u8 = undefined;
         const header_str = try std.fmt.bufPrint(&header_buf, "#{d}=CLOSED_SHELL('',(", .{s.nextId()});
         try s.out.appendSlice(allocator, header_str);
@@ -265,31 +310,24 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
             const f_id = t.shell_faces.items[shell.faces_start + f_off];
 
             var f_buf: [32]u8 = undefined;
-            const f_str = try std.fmt.bufPrint(&f_buf, "#{d}", .{face_map[f_id]});
+            const f_str = try std.fmt.bufPrint(&f_buf, "#{d}", .{face_map.get(f_id).?});
             try s.out.appendSlice(allocator, f_str);
         }
         try s.out.appendSlice(allocator, "));\n");
-        shell_map[i] = s.id_counter;
+        try shell_map.put(@intCast(i), s.id_counter);
     }
 
     // --- 7. SOLID (MANIFOLD_SOLID_BREP) ---
-    // Emit target ID #17 referenced in the header boilerplate
-    const active_solid_id = solid.solid_id;
-    if (active_solid_id < t.solids.items.len) {
-        const s_item = t.solids.items[active_solid_id];
-        if (s_item.shells_len > 0) {
-            const shell_id = t.solid_shells.items[s_item.shells_start];
-            var buf: [128]u8 = undefined;
-            const out_str = try std.fmt.bufPrint(&buf, "#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ solid_id, shell_map[shell_id] });
-            try s.out.appendSlice(allocator, out_str);
-        }
+    if (target_solid.shells_len > 0) {
+        const primary_shell_id = t.solid_shells.items[target_solid.shells_start];
+        var buf: [128]u8 = undefined;
+        const out_str = try std.fmt.bufPrint(&buf, "#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ step_solid_id, shell_map.get(primary_shell_id).? });
+        try s.out.appendSlice(allocator, out_str);
     }
 
     try s.out.appendSlice(allocator, "ENDSEC;\nEND-ISO-10303-21;\n");
     return try s.out.toOwnedSlice(allocator);
 }
-
-// --- VM API BRIDGES ---
 
 pub fn nativeImportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
