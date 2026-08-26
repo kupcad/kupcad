@@ -1,3 +1,4 @@
+const std = @import("std");
 const value = @import("../core/value.zig");
 const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;
@@ -93,4 +94,68 @@ pub fn nativeAssert(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     }
 
     return value.Value.initNil();
+}
+
+pub fn nativeWarn(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+
+    if (vm.host.print_handler) |print_handler| {
+        var out: std.Io.Writer.Allocating = .init(vm.allocator);
+        defer out.deinit();
+
+        try out.writer.writeAll("[Warning] ");
+
+        for (0..arg_count) |i| {
+            try args[i].stringify(false, &out.writer);
+        }
+        try out.writer.writeAll("\n");
+
+        print_handler(vm, out.written());
+    }
+
+    return value.Value.initNil();
+}
+
+pub fn nativeBenchmark(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+
+    var pos_count = arg_count;
+    var block_closure: ?*value.ObjClosure = null;
+
+    if (arg_count > 0 and args[arg_count - 1].isClosure()) {
+        block_closure = args[arg_count - 1].asClosure();
+        pos_count -= 1;
+    }
+
+    if (block_closure == null) {
+        vm.reportError("ArgumentError: benchmark requires a block.\n", .{});
+        return error.RuntimeError;
+    }
+
+    var label: []const u8 = "Execution";
+    if (pos_count > 0 and args[0].isString()) {
+        label = args[0].asString().chars;
+    }
+
+    // Start Timer using the VM's IO capability
+    const start_time = std.Io.Clock.now(.awake, vm.io);
+
+    const result = try vm.callClosureSync(block_closure.?, &.{});
+
+    // Stop Timer
+    const end_time = std.Io.Clock.now(.awake, vm.io);
+
+    // Calculate safe duration
+    const duration_ns = start_time.durationTo(end_time).toNanoseconds();
+    const elapsed_ns = @as(u64, @intCast(@max(0, duration_ns)));
+    const duration_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
+
+    if (vm.host.print_handler) |print_handler| {
+        var buf: [256]u8 = undefined;
+        if (std.fmt.bufPrint(&buf, "[Benchmark] {s}: {d:.3} ms\n", .{ label, duration_ms })) |msg| {
+            print_handler(vm, msg);
+        } else |_| {}
+    }
+
+    return result;
 }

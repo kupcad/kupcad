@@ -7745,6 +7745,49 @@ test "VM: .simplify() script method decimates mesh on demand" {
     try testing.expectEqual(@as(usize, 36), mesh.tri_verts.len);
 }
 
+test "VM: warn and benchmark utilities execute safely and transparently" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Mute the actual print handler so we don't spam the test console
+    vm.host.print_handler = null;
+
+    const source =
+        \\# Warn is a side effect and should return nil
+        \\w_res = warn("This is a test warning")
+        \\
+        \\# Benchmark should time the block but transparently return its result
+        \\b_res = benchmark("Heavy Math") do
+        \\  10 * 10
+        \\end
+        \\
+        \\[w_res.nil?, b_res]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+
+    // warn returns nil
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+
+    // benchmark transparently returns 100
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[1].asNumber());
+}
+
 test "VM Syntax: Endless methods evaluate correctly without 'end' keyword" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
