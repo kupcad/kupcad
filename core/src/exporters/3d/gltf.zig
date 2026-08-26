@@ -296,16 +296,34 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const g
 pub fn nativeExportGltf(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
 
-    if (arg_count < 2 or !args[0].isString() or !args[1].isGeometry()) {
-        vm.reportError("ArgumentError: export_gltf expects (String path, Geometry geom).\n", .{});
+    if (arg_count < 2 or !args[0].isString()) {
+        vm.reportError("ArgumentError: export_gltf expects (String path, target).\n", .{});
         return error.RuntimeError;
     }
 
     const path = args[0].asString().chars;
-    const handle = try vm.ensureConcrete(args[1]);
+    const target = args[1];
 
-    // Pass as a slice
-    const glb_bytes = try buildGltfBuffer(vm.allocator, vm, &.{handle});
+    // --- Dynamically extract geometries from either a direct handle, an Assembly, or an Array ---
+    var handles = std.ArrayListUnmanaged(geom.GeometryHandle).empty;
+    defer handles.deinit(vm.allocator);
+
+    if (target.isGeometry()) {
+        try handles.append(vm.allocator, try vm.ensureConcrete(target));
+    } else if (target.isAssembly()) {
+        for (target.asAssembly().parts.items.items) |part| {
+            if (part.isGeometry()) try handles.append(vm.allocator, try vm.ensureConcrete(part));
+        }
+    } else if (target.isArray()) {
+        for (target.asArray().items.items) |part| {
+            if (part.isGeometry()) try handles.append(vm.allocator, try vm.ensureConcrete(part));
+        }
+    } else {
+        vm.reportError("TypeError: export_gltf expects a Geometry, Assembly, or Array.\n", .{});
+        return error.RuntimeError;
+    }
+
+    const glb_bytes = try buildGltfBuffer(vm.allocator, vm, handles.items);
     defer vm.allocator.free(glb_bytes);
 
     const cwd = std.Io.Dir.cwd();

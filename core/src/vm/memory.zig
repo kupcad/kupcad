@@ -30,6 +30,7 @@ pub const GC = struct {
 
     geometries: std.ArrayListUnmanaged(*value.ObjGeometry) = .empty,
     cross_sections: std.ArrayListUnmanaged(*value.ObjCrossSection) = .empty,
+    assemblies: std.ArrayListUnmanaged(*value.ObjAssembly) = .empty,
     workplanes: std.ArrayListUnmanaged(*value.ObjWorkplane) = .empty,
 
     // GC triggering metrics
@@ -71,6 +72,7 @@ pub const GC = struct {
         self.bboxes.deinit(self.allocator);
         self.geometries.deinit(self.allocator);
         self.cross_sections.deinit(self.allocator);
+        self.assemblies.deinit(self.allocator);
         self.workplanes.deinit(self.allocator);
     }
 
@@ -319,6 +321,13 @@ pub const GC = struct {
         return ptr;
     }
 
+    pub fn allocateAssembly(self: *GC, vm: *VM, name: *value.ObjString, parts: *value.ObjArray) !*value.ObjAssembly {
+        const ptr = try self.allocateObject(vm, value.ObjAssembly, &self.assemblies, .assembly);
+        ptr.name = name;
+        ptr.parts = parts;
+        return ptr;
+    }
+
     pub fn allocateWorkplane(self: *GC, vm: *VM, parent: *value.ObjGeometry, origin: [3]f64, normal: [3]f64) !*value.ObjWorkplane {
         const ptr = try self.allocateObject(vm, value.ObjWorkplane, &self.workplanes, .workplane);
         ptr.parent = parent;
@@ -457,6 +466,11 @@ pub const GC = struct {
                 self.markValue(bound_obj.receiver);
                 self.markObject(&bound_obj.method.obj);
             },
+            .assembly => {
+                const assembly = @as(*value.ObjAssembly, @alignCast(@fieldParentPtr("obj", obj)));
+                self.markObject(&assembly.name.obj);
+                self.markObject(&assembly.parts.obj);
+            },
             .workplane => {
                 const wp_obj = @as(*value.ObjWorkplane, @alignCast(@fieldParentPtr("obj", obj)));
                 self.markObject(&wp_obj.parent.obj);
@@ -513,6 +527,7 @@ pub const GC = struct {
 
         self.sweepList(vm, value.ObjGeometry, &self.geometries);
         self.sweepList(vm, value.ObjCrossSection, &self.cross_sections);
+        self.sweepList(vm, value.ObjAssembly, &self.assemblies);
         self.sweepList(vm, value.ObjWorkplane, &self.workplanes);
     }
 
@@ -524,6 +539,10 @@ pub const GC = struct {
 
     fn freeObject(self: *GC, vm: *VM, obj: *value.Obj) void {
         switch (obj.obj_type) {
+            .assembly => {
+                const assembly_obj = @as(*value.ObjAssembly, @alignCast(@fieldParentPtr("obj", obj)));
+                self.destroyObject(value.ObjAssembly, assembly_obj);
+            },
             .geometry => {
                 const geom_obj = @as(*value.ObjGeometry, @alignCast(@fieldParentPtr("obj", obj)));
                 if (geom_obj.cached_topology) |cache| self.allocator.destroy(cache);

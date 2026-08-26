@@ -7,6 +7,7 @@ pub const DAGTag = enum(u8) {
     cylinder,
     sphere,
     union_op,
+    batch_union_op,
     difference_op,
     intersection_op,
     polyhedron_op,
@@ -81,6 +82,19 @@ pub const DAGBuilder = struct {
         try self.extra_data.append(alloc, right);
         const node_idx: u32 = @intCast(self.nodes.items.len);
         try self.nodes.append(alloc, .{ .tag = tag, .flags = 0, .data = extra_idx });
+        return node_idx;
+    }
+
+    pub fn addBatchUnion(self: *DAGBuilder, targets: []const DAGNodeIndex) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+
+        // Store length, then the indices
+        try self.extra_data.append(alloc, @intCast(targets.len));
+        try self.extra_data.appendSlice(alloc, targets);
+
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{ .tag = .batch_union_op, .flags = 0, .data = extra_idx });
         return node_idx;
     }
 
@@ -324,9 +338,17 @@ pub const DAGBuilder = struct {
     pub inline fn getBinaryPayload(self: *const DAGBuilder, node: DAGNode) BinaryPayload {
         return .{ .left = self.extra_data.items[node.data], .right = self.extra_data.items[node.data + 1] };
     }
+
+    pub inline fn getBatchUnionPayload(self: *const DAGBuilder, node: DAGNode) []const DAGNodeIndex {
+        const len = self.extra_data.items[node.data];
+        const start = node.data + 1;
+        return self.extra_data.items[start .. start + len];
+    }
+
     pub inline fn getCubeDimensions(self: *const DAGBuilder, node: DAGNode) struct { x: f64, y: f64, z: f64, center: bool } {
         return .{ .x = self.numbers.items[node.data], .y = self.numbers.items[node.data + 1], .z = self.numbers.items[node.data + 2], .center = (node.flags & 1) != 0 };
     }
+
     pub inline fn getCylinderPayload(self: *const DAGBuilder, node: DAGNode) struct { r1: f64, r2: f64, height: f64, center: bool, segments: i32 } {
         return .{
             .r1 = self.numbers.items[node.data],

@@ -7921,3 +7921,74 @@ test "VM: assert validates conditions, evaluates lazy blocks, and throws specifi
     try testing.expectEqual(true, arr_obj.items.items[2].asBool());
     try testing.expectEqual(true, arr_obj.items.items[3].asBool());
 }
+
+test "VM: assemble() creates a valid ObjAssembly with name and parts" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Creates an assembly and returns it
+    // (Note: in the KupCAD script it is fine to use `asm` because the
+    // Ruby-like frontend doesn't reserve it, but in Zig we must avoid it)
+    const source =
+        \\c1 = cube(10)
+        \\c2 = cube(20)
+        \\asm = assemble(name: "MyAssembly", parts: [c1, c2])
+        \\asm
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // Verify it yielded an Assembly object natively
+    try testing.expect(result.isAssembly());
+
+    const assembly_obj = result.asAssembly();
+    try testing.expectEqualStrings("MyAssembly", assembly_obj.name.chars);
+    try testing.expectEqual(@as(usize, 2), assembly_obj.parts.items.items.len);
+    try testing.expect(assembly_obj.parts.items.items[0].isGeometry());
+    try testing.expect(assembly_obj.parts.items.items[1].isGeometry());
+}
+
+test "VM: union() performs a batch CSG union on an array of geometries" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // We create two 10x10x10 cubes.
+    // We shift the second one by exactly 10 units on the X-axis so they touch end-to-end.
+    // The fused batch volume should be exactly 2000.
+    const source =
+        \\c1 = cube(10, 10, 10, false)
+        \\c2 = cube(10, 10, 10, false).translate(10, 0, 0)
+        \\fused = union([c1, c2])
+        \\fused.volume
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Execute the compiled bytecode
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(result.isNumber());
+    try testing.expectApproxEqAbs(@as(f64, 2000.0), result.asNumber(), 0.1);
+}

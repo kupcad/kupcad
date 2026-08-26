@@ -31,6 +31,7 @@ pub const ObjType = enum(u8) {
     bbox,
     cross_section,
     geometry,
+    assembly,
     workplane,
 };
 
@@ -194,6 +195,12 @@ pub const ObjCrossSection = struct {
     cached_handle: ?@import("../kernel/geometry_handle.zig").CrossSectionHandle,
 };
 
+pub const ObjAssembly = struct {
+    obj: Obj,
+    name: *ObjString,
+    parts: *ObjArray,
+};
+
 /// Signature for all Native CAD Built-ins
 /// Takes an opaque VM pointer to avoid circular imports, argument count, and a pointer to the first argument on the stack.
 pub const NativeFn = *const fn (vm: *anyopaque, arg_count: u8, args: [*]Value) anyerror!Value;
@@ -330,6 +337,9 @@ pub const Value = packed struct {
     pub inline fn isBBox(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .bbox;
     }
+    pub inline fn isAssembly(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .assembly;
+    }
 
     // --- Data Extractors ---
 
@@ -407,6 +417,11 @@ pub const Value = packed struct {
 
     pub inline fn asBBox(self: Value) *ObjBBox {
         std.debug.assert(self.isBBox());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asAssembly(self: Value) *ObjAssembly {
+        std.debug.assert(self.isAssembly());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
