@@ -2088,7 +2088,7 @@ pub const VM = struct {
         return .ok;
     }
 
-    inline fn executeThrow(self: *VM) InterpretResult {
+    pub fn executeThrow(self: *VM) InterpretResult {
         const err_val = self.pop();
         if (self.rescue_frames.items.len == 0) {
             // We removed the [Uncaught Exception] header!

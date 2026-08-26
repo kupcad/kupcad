@@ -10,6 +10,7 @@ const dag = @import("../vm/dag.zig");
 const io_mod = @import("io.zig");
 const chunk = @import("../vm/chunk.zig");
 const methods = @import("methods.zig");
+const assert_mod = @import("assert.zig");
 const params_mod = @import("params.zig");
 const debug_mod = @import("debug.zig");
 
@@ -38,6 +39,7 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "inspect", .func = common.wrapGlobal(io_mod.nativeInspect), .category = .io },
     .{ .name = "debugger", .func = common.wrapGlobal(debug_mod.nativeDebugger), .category = .io },
     .{ .name = "param", .func = params_mod.nativeParam, .category = .io },
+    .{ .name = "assert", .func = assert_mod.nativeAssert, .category = .io },
     .{ .name = "highlight", .func = methods.globalHighlight, .category = .transform },
     .{ .name = "ghost", .func = methods.globalGhost, .category = .transform },
     .{ .name = "cube", .func = common.wrapGlobal(primitives.nativeCube), .category = .primitive_3d },

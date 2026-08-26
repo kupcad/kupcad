@@ -86,6 +86,7 @@ pub fn registerExceptions(vm: *VM) !void {
         "RuntimeError",
         "IndexError",
         "ZeroDivisionError",
+        "AssertionError",
     };
 
     for (error_types) |err_name| {

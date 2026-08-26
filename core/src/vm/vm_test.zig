@@ -7744,3 +7744,137 @@ test "VM: .simplify() script method decimates mesh on demand" {
     // Verified: simplified multi-slice extrusion should reduce down to 12 triangles (36 index entries)
     try testing.expectEqual(@as(usize, 36), mesh.tri_verts.len);
 }
+
+test "VM Syntax: Endless methods evaluate correctly without 'end' keyword" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\# 1. Without arguments
+        \\def get_val() = 42
+        \\
+        \\# 2. With arguments and mathematical expressions
+        \\def double(x) = x * 2
+        \\
+        \\# 3. With string interpolation
+        \\def greet(name) = "Hello, #{name}!"
+        \\
+        \\# 4. As class methods and with modifiers (e.g. private)
+        \\class SecretAgent
+        \\  def access() = self.secret
+        \\  private def secret() = 100
+        \\end
+        \\
+        \\# 5. With keyword arguments and defaults!
+        \\def calc_area(width:, height: 10) = width * height
+        \\
+        \\agent = SecretAgent.new()
+        \\[
+        \\  get_val,
+        \\  double(21),
+        \\  greet("World"),
+        \\  agent.access,
+        \\  calc_area(width: 5),
+        \\  calc_area(width: 5, height: 20)
+        \\]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    // Ensure the parser successfully processed the `=` signs without syntax errors
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Execute the compiled bytecode
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(usize, 6), arr_obj.items.items.len);
+
+    // 1. get_val() == 42
+    try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber());
+
+    // 2. double(21) == 42
+    try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[1].asNumber());
+
+    // 3. greet("World") == "Hello, World!"
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj())));
+    try testing.expectEqualStrings("Hello, World!", str_obj.chars);
+
+    // 4. agent.access() == 100
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[3].asNumber());
+
+    // 5. calc_area(width: 5) == 50 (Uses default height of 10)
+    try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[4].asNumber());
+
+    // 6. calc_area(width: 5, height: 20) == 100
+    try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[5].asNumber());
+}
+
+test "VM: assert validates conditions, evaluates lazy blocks, and throws specified classes" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\# 1. Passes successfully (returns nil)
+        \\a = assert(10 > 5)
+        \\
+        \\# 2. Fails with string message
+        \\b_caught = false
+        \\begin
+        \\  assert(false, "Basic fail")
+        \\rescue AssertionError => e
+        \\  b_caught = e.message == "Basic fail"
+        \\end
+        \\
+        \\# 3. Fails with lazy evaluated block
+        \\c_caught = false
+        \\begin
+        \\  assert(nil) do
+        \\    "Lazy " + "fail"
+        \\  end
+        \\rescue AssertionError => e
+        \\  c_caught = e.message == "Lazy fail"
+        \\end
+        \\
+        \\# 4. Fails with Custom Exception Class
+        \\d_caught = false
+        \\begin
+        \\  assert(false, "Wrong Type", TypeError)
+        \\rescue TypeError => e
+        \\  d_caught = e.message == "Wrong Type"
+        \\end
+        \\
+        \\[a.nil?, b_caught, c_caught, d_caught]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+    // All 4 scenarios should have evaluated securely and returned true!
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[1].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[2].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[3].asBool());
+}

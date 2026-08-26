@@ -624,7 +624,9 @@ pub const Parser = struct {
         } else {
             const s_len = self.scratch_params.items.len;
             defer self.scratch_params.shrinkRetainingCapacity(s_len);
-            while (self.tag(0) != .newline and self.tag(0) != .eof and self.tag(0) != .comment) {
+
+            // ⚡ Added `.equal` to safely break out of parameter parsing if no parens are used
+            while (self.tag(0) != .newline and self.tag(0) != .eof and self.tag(0) != .comment and self.tag(0) != .equal) {
                 try self.scratch_params.append(self.allocator, try self.parseParam());
                 if (self.tag(0) == .comma) {
                     self.advance();
@@ -634,6 +636,28 @@ pub const Parser = struct {
         }
 
         self.skipIgnored();
+
+        // --- ENDLESS METHOD HANDLING ---
+        if (self.tag(0) == .equal) {
+            self.advance(); // consume '='
+            self.skipIgnored(); // skip spaces/newlines before the expression
+
+            // Parse the single expression on the right hand side
+            const expr = try self.parseExprOrMultiAssign();
+            const end_tok = self.tok_idx;
+
+            // Secretly wrap the single expression inside a standard block
+            const s_len = self.scratch_nodes.items.len;
+            defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+            try self.scratch_nodes.append(self.allocator, expr);
+
+            const body_node = self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, start_tok) catch return ParseError.OutOfMemory;
+
+            // Return the AST Node immediately without looking for an `end` keyword
+            return self.b.defStmt(try self.b.intern(self.tokens.lexeme(self.source, name_idx)), params_span, body_node, is_class_method, end_tok, is_private, start_tok) catch ParseError.OutOfMemory;
+        }
+
+        // --- TRADITIONAL MULTI-LINE METHOD ---
         const body_node = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
         const payload = try self.parseRescueAndEnsure();
         const end_tok = self.tok_idx;
