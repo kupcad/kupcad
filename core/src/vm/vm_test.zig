@@ -7752,7 +7752,7 @@ test "VM Syntax: Endless methods evaluate correctly without 'end' keyword" {
 
     const source =
         \\# 1. Without arguments
-        \\def get_val() = 42
+        \\def get_val = 42
         \\
         \\# 2. With arguments and mathematical expressions
         \\def double(x) = x * 2
@@ -7762,14 +7762,14 @@ test "VM Syntax: Endless methods evaluate correctly without 'end' keyword" {
         \\
         \\# 4. As class methods and with modifiers (e.g. private)
         \\class SecretAgent
-        \\  def access() = self.secret
-        \\  private def secret() = 100
+        \\  def access = self.secret
+        \\  private def secret = 100
         \\end
         \\
         \\# 5. With keyword arguments and defaults!
         \\def calc_area(width:, height: 10) = width * height
         \\
-        \\agent = SecretAgent.new()
+        \\agent = SecretAgent.new
         \\[
         \\  get_val,
         \\  double(21),
