@@ -171,7 +171,8 @@ kupcad/
 ## Deps
 
 ```
-brew install wabt wasmtime
+brew install binaryen wabt wasmtime
+wasm-opt -Oz kupcad.wasm -o kupcad_min.wasm
 ```
 
 

@@ -113,6 +113,7 @@ pub fn build(b: *std.Build) void {
             "-DMANIFOLD_NO_IOSTREAM",
             "-DMANIFOLD_NO_FILESYSTEM",
             "-DMANIFOLD_PAR=-1",
+            "-fvisibility=hidden", // Hides all internal Manifold C/C++ symbols
             "-include",
             wasm_stub_header,
         }
@@ -141,9 +142,14 @@ pub fn build(b: *std.Build) void {
     mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
     mod.addIncludePath(b.path("src"));
 
+    const clipper_flags: []const []const u8 = if (is_wasm)
+        &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
+    else
+        &.{ "-std=c++17", "-fno-exceptions" };
+
     mod.addCSourceFiles(.{
         .files = clipper_sources,
-        .flags = &.{ "-std=c++17", "-fno-exceptions" },
+        .flags = clipper_flags,
     });
 
     mod.addCSourceFiles(.{
@@ -185,6 +191,8 @@ pub fn build(b: *std.Build) void {
 
         wasm.entry = .disabled;
         wasm.wasi_exec_model = .reactor;
+        wasm.rdynamic = true;
+        wasm.root_module.strip = true;
 
         // all mem must be aligned in 65536 bytes (64Kb)
         wasm.initial_memory = 134217728;
