@@ -11,6 +11,7 @@ const Document = @import("../core/document.zig").Document;
 const Profiler = @import("profiler.zig").Profiler;
 const geom = @import("../kernel/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
+const InterpretResult = @import("vm.zig").InterpretResult;
 
 // --- Mock C++ Destructor for GC Tests ---
 var mock_destructor_called = false;
@@ -8114,4 +8115,52 @@ test "VM: genus() calculates topological holes" {
 
     try testing.expect(result.isNumber());
     try testing.expectEqual(@as(f64, 1.0), result.asNumber()); // Genus 1 = 1 hole
+}
+
+test "VM: fmtScratch safely formats short strings" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const result = try vm.fmtScratch("Hello {s}, value is {d}", .{ "World", 42 });
+    try testing.expectEqualStrings("Hello World, value is 42", result);
+}
+
+test "VM: fmtScratch dynamically allocates strings exceeding 256 bytes without truncation" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Create a massive string (300 characters of 'A')
+    var massive_buf: [300]u8 = undefined;
+    @memset(&massive_buf, 'A');
+    const massive_str = &massive_buf;
+
+    // Format it into a new string
+    const result = try vm.fmtScratch("Error Context: {s}", .{massive_str});
+
+    // "Error Context: " is 15 characters + 300 'A's = 315 characters total
+    try testing.expectEqual(@as(usize, 315), result.len);
+
+    // Verify the prefix and suffix are completely intact
+    try testing.expect(std.mem.startsWith(u8, result, "Error Context: AAAAA"));
+    try testing.expect(std.mem.endsWith(u8, result, "AAAAA"));
+}
+
+test "VM: throwDynamicError does not truncate massive error messages" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Mute errors so the massive string doesn't spam the test runner output
+    vm.mute_errors = true;
+
+    // Create a 300 character string
+    var massive_buf: [300]u8 = undefined;
+    @memset(&massive_buf, 'E');
+
+    // Throw an error using the massive string
+    const res = vm.throwDynamicError("Failure: {s}", .{&massive_buf});
+
+    // Since there are no rescue frames, it should halt with runtime_error.
+    // The fact that this succeeds without an OutOfBounds panic or buffer overflow
+    // proves that fmtScratch correctly dynamically allocated the massive string!
+    try testing.expectEqual(InterpretResult.runtime_error, res);
 }

@@ -151,8 +151,7 @@ pub fn nativeBenchmark(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
     const duration_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
 
     if (vm.host.print_handler) |print_handler| {
-        var buf: [256]u8 = undefined;
-        if (std.fmt.bufPrint(&buf, "[Benchmark] {s}: {d:.3} ms\n", .{ label, duration_ms })) |msg| {
+        if (vm.fmtScratch("[Benchmark] {s}: {d:.3} ms\n", .{ label, duration_ms })) |msg| {
             print_handler(vm, msg);
         } else |_| {}
     }

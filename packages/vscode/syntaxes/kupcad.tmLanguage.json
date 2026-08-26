@@ -167,7 +167,7 @@
       "name": "keyword.control.kupcad"
     },
     "builtins": {
-      "match": "(?<![\\\\w])(puts|print|inspect|debugger|param|import_stl|export_stl|import_step|export_step|export_gltf)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(puts|print|inspect|debugger|param|assert|warn|benchmark|import_stl|export_stl|import_step|export_step|export_gltf)(?![\\\\w?!])",
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {
@@ -183,7 +183,7 @@
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|mirror|simplify|extrude|revolve|hull|trim_by_plane|minkowski|offset|transform|material|highlight|ghost)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|mirror|split_by_plane|decompose|simplify|extrude|revolve|hull|trim_by_plane|minkowski|offset|transform|material|highlight|ghost)(?![\\\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {
@@ -195,7 +195,7 @@
       "name": "support.function.workplane.kupcad"
     },
     "inspections": {
-      "match": "(?<![\\\\w])(bbox|volume|surface_area|min_gap|contains?|ray_cast)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(genus|bbox|volume|surface_area|min_gap|contains?|ray_cast)(?![\\\\w?!])",
       "name": "support.function.inspection.kupcad"
     },
     "hash_keys": {

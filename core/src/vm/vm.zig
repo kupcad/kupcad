@@ -2256,8 +2256,7 @@ pub const VM = struct {
         const method_val = if (ic) |cache| self.findMethodCached(class, name, cache) else self.findMethod(class, name);
         if (method_val) |m| return .{ .method = m, .is_private = false };
 
-        var buf: [256]u8 = undefined;
-        if (std.fmt.bufPrint(&buf, "@private:{s}", .{name})) |priv_name| {
+        if (self.fmtScratch("@private:{s}", .{name})) |priv_name| {
             if (self.findMethod(class, priv_name)) |m| return .{ .method = m, .is_private = true };
         } else |_| {}
 
@@ -2267,8 +2266,7 @@ pub const VM = struct {
     pub fn findClassMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: []const u8) struct { method: ?value.Value, is_private: bool } {
         if (self.findClassMethod(class, name)) |m| return .{ .method = m, .is_private = false };
 
-        var buf: [256]u8 = undefined;
-        if (std.fmt.bufPrint(&buf, "@private:{s}", .{name})) |priv_name| {
+        if (self.fmtScratch("@private:{s}", .{name})) |priv_name| {
             if (self.findClassMethod(class, priv_name)) |m| return .{ .method = m, .is_private = true };
         } else |_| {}
 
@@ -2285,8 +2283,7 @@ pub const VM = struct {
     }
 
     pub fn throwDynamicError(self: *VM, comptime fmt: []const u8, args: anytype) InterpretResult {
-        var buf: [256]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, fmt, args) catch "Runtime Error";
+        const msg = self.fmtScratch(fmt, args) catch "Runtime Error: Out of Memory during formatting";
 
         // Try to instantiate a real `RuntimeError` object so it can be rescued natively
         if (self.globals.get("RuntimeError")) |rt_class_val| {
@@ -2371,15 +2368,14 @@ pub const VM = struct {
             const source_offset = exec_chunk.getOffset(instruction_ip);
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
 
-            var buf: [256]u8 = undefined;
             var trace_str: []const u8 = "";
 
             if (self.line_index) |li| {
                 const line = li.getLine(source_offset) + 1;
                 const col = li.getUtf8Column(source_offset) + 1;
-                trace_str = std.fmt.bufPrint(&buf, "    from script:{d}:{d}:in '{s}'", .{ line, col, func_name }) catch "    from unknown";
+                trace_str = self.fmtScratch("    from script:{d}:{d}:in '{s}'", .{ line, col, func_name }) catch "    from unknown";
             } else {
-                trace_str = std.fmt.bufPrint(&buf, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name }) catch "    from unknown";
+                trace_str = self.fmtScratch("    from script:offset {d}:in '{s}'", .{ source_offset, func_name }) catch "    from unknown";
             }
 
             const str_val = try self.allocateString(trace_str);
@@ -2426,5 +2422,10 @@ pub const VM = struct {
             return method_val;
         }
         return null;
+    }
+
+    // --- String Formatting Utility ---
+    pub fn fmtScratch(self: *VM, comptime fmt: []const u8, args: anytype) ![]const u8 {
+        return std.fmt.allocPrint(self.scratch_arena.allocator(), fmt, args);
     }
 };
