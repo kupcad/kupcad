@@ -7928,8 +7928,6 @@ test "VM: assemble() creates a valid ObjAssembly with name and parts" {
     try registry.registerStandardLibrary(&vm);
 
     // Creates an assembly and returns it
-    // (Note: in the KupCAD script it is fine to use `asm` because the
-    // Ruby-like frontend doesn't reserve it, but in Zig we must avoid it)
     const source =
         \\c1 = cube(10)
         \\c2 = cube(20)
