@@ -26,6 +26,8 @@ pub const meshOffset = advanced.meshOffset;
 pub const meshSlice = advanced.meshSlice;
 pub const meshProject = advanced.meshProject;
 pub const meshOnFace = advanced.meshOnFace;
+pub const meshSplitByPlane = advanced.meshSplitByPlane;
+pub const meshDecompose = advanced.meshDecompose;
 pub const meshSimplify = advanced.meshSimplify;
 // inspect
 pub const meshBBox = inspect.meshBBox;
@@ -34,6 +36,7 @@ pub const meshSurfaceArea = inspect.meshSurfaceArea;
 pub const meshMinGap = inspect.meshMinGap;
 pub const meshContains = inspect.meshContains;
 pub const meshRayCast = inspect.meshRayCast;
+pub const meshGenus = inspect.meshGenus;
 // materials
 pub const meshMaterial = materials.meshMaterial;
 pub const meshHighlight = materials.meshHighlight;

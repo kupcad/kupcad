@@ -51,3 +51,32 @@ pub fn nativeUnion(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     const dag_idx = try vm.dag_builder.addBatchUnion(scratch_indices.items);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
+
+pub fn nativeBatchHull(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+
+    if (arg_count != 1 or !args[0].isArray()) {
+        vm.reportError("ArgumentError: batch_hull expects exactly 1 Array argument.\n", .{});
+        return error.RuntimeError;
+    }
+
+    const parts = args[0].asArray();
+    if (parts.items.items.len == 0) {
+        vm.reportError("ArgumentError: batch_hull array cannot be empty.\n", .{});
+        return error.RuntimeError;
+    }
+
+    var scratch_indices = std.ArrayListUnmanaged(u32).empty;
+    defer scratch_indices.deinit(vm.allocator);
+
+    for (parts.items.items) |part| {
+        if (!part.isGeometry()) {
+            vm.reportError("TypeError: batch_hull array must contain only Geometries.\n", .{});
+            return error.RuntimeError;
+        }
+        try scratch_indices.append(vm.allocator, part.asGeometry().dag_idx);
+    }
+
+    const dag_idx = try vm.dag_builder.addBatchHull(scratch_indices.items);
+    return try vm.allocateGeometry(.{ .symbolic = dag_idx });
+}

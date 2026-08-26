@@ -7991,3 +7991,127 @@ test "VM: union() performs a batch CSG union on an array of geometries" {
     try testing.expect(result.isNumber());
     try testing.expectApproxEqAbs(@as(f64, 2000.0), result.asNumber(), 0.1);
 }
+
+test "VM: batch_hull() wraps multiple shapes in a convex hull" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Two 10x10 cubes separated by 100 units. The hull should stretch across them.
+    const source =
+        \\c1 = cube(10).translate(-50, 0, 0)
+        \\c2 = cube(10).translate(50, 0, 0)
+        \\h = batch_hull([c1, c2])
+        \\h.volume()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(result.isNumber());
+    // Hull of two 10x10 cubes 100 units apart (center to center) forms a 110x10x10 box
+    try testing.expectApproxEqAbs(@as(f64, 11000.0), result.asNumber(), 1.0);
+}
+
+test "VM: split_by_plane() returns an array of two geometries" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Split a 10x10x10 centered cube straight down the middle (Z=0 plane)
+    const source =
+        \\c = cube(10, center: true)
+        \\halves = c.split_by_plane(0, 0, 1, 0)
+        \\halves
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(result.isArray());
+    const arr = result.asArray().items.items;
+    try testing.expectEqual(@as(usize, 2), arr.len);
+    try testing.expect(arr[0].isGeometry()); // Top half
+    try testing.expect(arr[1].isGeometry()); // Bottom half
+}
+
+test "VM: decompose() splits disjoint bodies into an array" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Union two cubes that don't touch, then decompose them back into 2 parts
+    const source =
+        \\c1 = cube(10).translate(-50, 0, 0)
+        \\c2 = cube(10).translate(50, 0, 0)
+        \\fused = c1 + c2
+        \\parts = fused.decompose
+        \\parts
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(result.isArray());
+    const arr = result.asArray().items.items;
+    try testing.expectEqual(@as(usize, 2), arr.len);
+    try testing.expect(arr[0].isGeometry());
+    try testing.expect(arr[1].isGeometry());
+}
+
+test "VM: genus() calculates topological holes" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // A cube with a cylinder subtracted through the middle creates a "donut" (genus 1)
+    const source =
+        \\box = cube(20, 20, 20, true)
+        \\hole = cylinder(d: 10, h: 30, center: true)
+        \\donut = box - hole
+        \\donut.genus
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(result.isNumber());
+    try testing.expectEqual(@as(f64, 1.0), result.asNumber()); // Genus 1 = 1 hole
+}

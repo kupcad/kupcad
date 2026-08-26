@@ -104,3 +104,8 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     }
     return value.Value.initObj(&hit_arr_obj.obj);
 }
+
+pub fn meshGenus(vm: *VM, receiver: value.Value) !value.Value {
+    const handle = try vm.ensureConcrete(receiver);
+    return value.Value.initNumber(@floatFromInt(kernel.genus(handle)));
+}

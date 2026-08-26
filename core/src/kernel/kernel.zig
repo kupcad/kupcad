@@ -165,6 +165,23 @@ pub inline fn batchBoolean(allocator: std.mem.Allocator, objs: []const geom.Geom
     }
 }
 
+pub inline fn batchHull(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
+    if (objs.len == 0) return null;
+    if (objs.len == 1) return hull(objs[0]);
+
+    switch (objs[0].engine) {
+        .manifold => return manifold_driver.batchHullFn(allocator, objs),
+        .brep_native => return brep_driver.batchHullFn(allocator, objs),
+    }
+}
+
+pub inline fn decompose(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
+    switch (handle.engine) {
+        .manifold => return manifold_driver.decomposeFn(allocator, handle),
+        .brep_native => return brep_driver.decomposeFn(allocator, handle),
+    }
+}
+
 pub inline fn simplify(handle: geom.GeometryHandle, tolerance: f64) geom.GeometryHandle {
     switch (handle.engine) {
         .manifold => return manifold_driver.simplifyFn(handle, tolerance) orelse handle,
@@ -212,6 +229,8 @@ pub const GeometryKernel = struct {
     projectFn: *const fn (a: geom.GeometryHandle) ?geom.CrossSectionHandle,
     mirrorFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle,
     hullFn: *const fn (a: geom.GeometryHandle) ?geom.GeometryHandle,
+    batchHullFn: *const fn (allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle,
+    decomposeFn: *const fn (allocator: std.mem.Allocator, a: geom.GeometryHandle) ?[]geom.GeometryHandle,
     minkowskiFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle,
     trimByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?geom.GeometryHandle,
     splitByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair,

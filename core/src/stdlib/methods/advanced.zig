@@ -160,6 +160,51 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
     return try vm.allocateWorkplane(receiver, faces[0].centroid, faces[0].normal);
 }
 
+pub fn meshSplitByPlane(vm: *VM, receiver: *value.ObjGeometry, nx: f64, ny: f64, nz: f64, offset: ?f64) !value.Value {
+    // We must concrete-evaluate the DAG to split it natively
+    const handle = try vm.ensureConcrete(value.Value.initGeometry(receiver));
+    const pair = kernel.splitByPlane(handle, nx, ny, nz, offset orelse 0.0);
+
+    // Yield an array of exactly 2 items: [top_half, bottom_half]
+    const arr_obj = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&arr_obj.obj)); // protect from GC
+
+    if (pair.first) |first_handle| {
+        const geom_val = try vm.allocateGeometry(.{ .concrete = first_handle });
+        try arr_obj.items.append(vm.allocator, geom_val);
+    } else {
+        try arr_obj.items.append(vm.allocator, value.Value.initNil());
+    }
+
+    if (pair.second) |second_handle| {
+        const geom_val = try vm.allocateGeometry(.{ .concrete = second_handle });
+        try arr_obj.items.append(vm.allocator, geom_val);
+    } else {
+        try arr_obj.items.append(vm.allocator, value.Value.initNil());
+    }
+
+    _ = vm.pop();
+    return value.Value.initObj(&arr_obj.obj);
+}
+
+pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
+    const handle = try vm.ensureConcrete(receiver); // Eager!
+    const parts = kernel.decompose(vm.allocator, handle) orelse return value.Value.initNil();
+    defer vm.allocator.free(parts);
+
+    const arr_obj = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&arr_obj.obj)); // Protect during alloc
+
+    for (parts) |p| {
+        // Wrap the concrete pointer directly so the DAG is bypassed
+        const geom_val = try vm.allocateGeometry(.{ .concrete = p });
+        try arr_obj.items.append(vm.allocator, geom_val);
+    }
+
+    _ = vm.pop();
+    return value.Value.initObj(&arr_obj.obj);
+}
+
 pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
     var tolerance: ?f64 = null;
 

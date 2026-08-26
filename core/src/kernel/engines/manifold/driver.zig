@@ -221,6 +221,33 @@ fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
+    if (objs.len == 0) return null;
+    var m_objs = allocator.alloc(?*manifold.ManifoldObj, objs.len) catch return null;
+    defer allocator.free(m_objs);
+
+    for (objs, 0..) |obj, i| m_objs[i] = @ptrCast(@alignCast(obj.ptr));
+
+    const ptr = manifold.batchHull(m_objs) orelse return objs[0];
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
+    if (@intFromPtr(handle.ptr) == 0) return null;
+
+    const vec = manifold.decompose(@ptrCast(@alignCast(handle.ptr))) orelse return null;
+    defer manifold.destructManifoldVec(vec);
+
+    const len = manifold.manifoldVecLength(vec);
+    var res = allocator.alloc(geom.GeometryHandle, len) catch return null;
+
+    for (0..len) |i| {
+        const child_ptr = manifold.manifoldVecGet(vec, i);
+        res[i] = geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(child_ptr) };
+    }
+    return res;
+}
+
 fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
     if (@intFromPtr(a.ptr) == 0) return null;
@@ -506,6 +533,8 @@ pub const driver = kernel.GeometryKernel{
     .sphereFn = sphereImpl,
     .booleanFn = booleanImpl,
     .batchBooleanFn = batchBooleanImpl,
+    .batchHullFn = batchHullImpl,
+    .decomposeFn = decomposeImpl,
     .translateFn = translateImpl,
     .rotateFn = rotateImpl,
     .scaleFn = scaleImpl,

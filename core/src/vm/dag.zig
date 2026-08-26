@@ -11,6 +11,7 @@ pub const DAGTag = enum(u8) {
     difference_op,
     intersection_op,
     polyhedron_op,
+    batch_hull_op,
     translate,
     rotate,
     scale,
@@ -227,6 +228,16 @@ pub const DAGBuilder = struct {
         try self.extra_data.append(alloc, target);
         const node_idx: u32 = @intCast(self.nodes.items.len);
         try self.nodes.append(alloc, .{ .tag = .hull, .flags = 0, .data = extra_idx });
+        return node_idx;
+    }
+
+    pub fn addBatchHull(self: *DAGBuilder, targets: []const DAGNodeIndex) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+        try self.extra_data.append(alloc, @intCast(targets.len));
+        try self.extra_data.appendSlice(alloc, targets);
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        try self.nodes.append(alloc, .{ .tag = .batch_hull_op, .flags = 0, .data = extra_idx });
         return node_idx;
     }
 

@@ -50,6 +50,8 @@ extern fn manifold_delete_polygons(p: ?*ManifoldPolygons) void;
 extern fn manifold_alloc_manifold_vec() ?*ManifoldVecObj;
 extern fn manifold_destruct_manifold_vec(ms: ?*ManifoldVecObj) void;
 extern fn manifold_manifold_vec_push_back(ms: ?*ManifoldVecObj, m: ?*ManifoldObj) void;
+extern fn manifold_manifold_vec_length(ms: ?*ManifoldVecObj) usize;
+extern fn manifold_manifold_vec_get(mem: ?*ManifoldObj, ms: ?*ManifoldVecObj, idx: usize) ?*ManifoldObj;
 
 extern fn manifold_cube(mem: ?*ManifoldObj, x: f64, y: f64, z: f64, center: c_int) ?*ManifoldObj;
 extern fn manifold_cylinder(mem: ?*ManifoldObj, height: f64, radiusLow: f64, radiusHigh: f64, circularSegments: c_int, center: c_int) ?*ManifoldObj;
@@ -63,6 +65,7 @@ extern fn manifold_scale(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z
 
 extern fn manifold_mirror(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64) ?*ManifoldObj;
 extern fn manifold_hull(mem: ?*ManifoldObj, m: ?*ManifoldObj) ?*ManifoldObj;
+extern fn manifold_batch_hull(mem: ?*ManifoldObj, ms: ?*ManifoldVecObj) ?*ManifoldObj;
 extern fn manifold_trim_by_plane(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ?*ManifoldObj;
 extern fn manifold_split_by_plane(mem_first: ?*ManifoldObj, mem_second: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ManifoldManifoldPair;
 extern fn manifold_cross_section_boolean(mem: ?*ManifoldCrossSection, a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection;
@@ -89,6 +92,7 @@ extern fn manifold_box_max(b: ?*ManifoldBox) ManifoldVec3;
 extern fn manifold_volume(m: ?*ManifoldObj) f64;
 extern fn manifold_surface_area(m: ?*ManifoldObj) f64;
 extern fn manifold_genus(m: ?*ManifoldObj) c_int;
+extern fn manifold_decompose(mem: ?*ManifoldVecObj, m: ?*ManifoldObj) ?*ManifoldVecObj;
 
 extern fn manifold_meshgl(mem: ?*ManifoldMeshGL, vert_props: [*]const f32, num_verts: usize, num_prop: usize, tri_verts: [*]const u32, num_tris: usize) ?*ManifoldMeshGL;
 extern fn manifold_get_meshgl(mem: ?*ManifoldMeshGL, m: ?*ManifoldObj) ?*ManifoldMeshGL;
@@ -169,6 +173,31 @@ pub fn mirror(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64) ?*ManifoldObj {
 
 pub fn hull(obj: ?*ManifoldObj) ?*ManifoldObj {
     return manifold_hull(manifold_alloc_manifold(), obj);
+}
+
+pub fn batchHull(objs: []const ?*ManifoldObj) ?*ManifoldObj {
+    if (objs.len == 0) return null;
+
+    const vec = manifold_alloc_manifold_vec();
+    defer manifold_destruct_manifold_vec(vec);
+
+    for (objs) |obj| {
+        manifold_manifold_vec_push_back(vec, obj);
+    }
+
+    return manifold_batch_hull(manifold_alloc_manifold(), vec);
+}
+
+pub fn manifoldVecLength(ms: ?*ManifoldVecObj) usize {
+    return manifold_manifold_vec_length(ms);
+}
+
+pub fn manifoldVecGet(ms: ?*ManifoldVecObj, idx: usize) ?*ManifoldObj {
+    return manifold_manifold_vec_get(manifold_alloc_manifold(), ms, idx);
+}
+
+pub fn decompose(obj: ?*ManifoldObj) ?*ManifoldVecObj {
+    return manifold_decompose(manifold_alloc_manifold_vec(), obj);
 }
 
 pub fn trimByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?*ManifoldObj {
@@ -370,4 +399,7 @@ pub fn destruct(m: ?*ManifoldObj) void {
 }
 pub fn destructCrossSection(cs: ?*ManifoldCrossSection) void {
     if (cs != null) manifold_delete_cross_section(cs);
+}
+pub fn destructManifoldVec(ms: ?*ManifoldVecObj) void {
+    if (ms != null) manifold_destruct_manifold_vec(ms);
 }

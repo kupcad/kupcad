@@ -92,6 +92,20 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
             const result = kernel.hull(target_handle) orelse return error.RuntimeError;
             return maybeSimplify(vm, result);
         },
+        .batch_hull_op => {
+            const targets = vm.dag_builder.getBatchUnionPayload(node); // Payload layout is identical
+            if (targets.len == 0) return error.RuntimeError;
+
+            var handles = try vm.allocator.alloc(geom.GeometryHandle, targets.len);
+            defer vm.allocator.free(handles);
+
+            for (targets, 0..) |target_idx, i| {
+                handles[i] = try evaluateDAG(vm, target_idx);
+            }
+
+            const result = kernel.batchHull(vm.allocator, handles) orelse return error.RuntimeError;
+            return maybeSimplify(vm, result);
+        },
         .minkowski => {
             const p = vm.dag_builder.getBinaryPayload(node);
             const left_handle = try evaluateDAG(vm, p.left);

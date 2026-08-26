@@ -276,6 +276,19 @@ fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     _ = a;
     return null;
 }
+fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
+    _ = allocator;
+    _ = objs;
+    // B-Rep Convex Hulls require a dedicated solver (e.g. QuickHull3D). Stubbed for now.
+    return null;
+}
+
+fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
+    // Basic fallback: Return the solid itself as a single-item array
+    var res = allocator.alloc(geom.GeometryHandle, 1) catch return null;
+    res[0] = handle;
+    return res;
+}
 fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
     _ = a;
     _ = nx;
@@ -309,8 +322,16 @@ fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.Cro
     return null;
 }
 fn genusImpl(handle: geom.GeometryHandle) i32 {
-    _ = handle;
-    return 0;
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+
+    // Euler Formula: V - E + F = 2(1 - g)
+    const v = @as(i32, @intCast(solid.t_arena.vertices.items.len));
+    const e = @as(i32, @intCast(solid.t_arena.half_edges.items.len / 2));
+    const f = @as(i32, @intCast(solid.t_arena.faces.items.len));
+
+    const euler = v - e + f;
+    return @divTrunc(2 - euler, 2);
 }
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
     _ = handle;
@@ -385,6 +406,8 @@ pub const driver = kernel.GeometryKernel{
     .projectFn = projectImpl,
     .mirrorFn = mirrorImpl,
     .hullFn = hullImpl,
+    .batchHullFn = batchHullImpl,
+    .decomposeFn = decomposeImpl,
     .trimByPlaneFn = trimByPlaneImpl,
     .splitByPlaneFn = splitByPlaneImpl,
     .crossSectionBooleanFn = crossSectionBooleanImpl,
