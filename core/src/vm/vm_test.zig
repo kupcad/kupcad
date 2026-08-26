@@ -8253,3 +8253,74 @@ test "VM CAD: align and center mesh methods correctly translate geometry" {
     try testing.expectApproxEqAbs(@as(f64, 50.0), arr_obj.items.items[2].asNumber(), 0.001);
     try testing.expectApproxEqAbs(@as(f64, 52.0), arr_obj.items.items[3].asNumber(), 0.001);
 }
+
+test "VM CAD: regular_polygon creates 2D cross sections" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Create an 8-sided octagon with r=10, then extrude it by 5.
+    const source =
+        \\poly = regular_polygon(8, r: 10)
+        \\solid = poly.extrude(5)
+        \\[poly.is_a?(CrossSection), solid.bbox.x_size]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+
+    // It successfully registered as a 2D profile
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+
+    // X dimension for r=10 octagon should be exactly 20
+    try testing.expectApproxEqAbs(@as(f64, 20.0), arr_obj.items.items[1].asNumber(), 0.001);
+}
+
+test "VM CAD: torus synthesizes properly via revolve" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Create a Torus (major_r: 10, minor_r: 2)
+    const source =
+        \\ring = torus(major_r: 10, minor_r: 2)
+        \\box = ring.bbox
+        \\[ring.is_a?(Geometry), box.x_size, box.z_size]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+
+    // Returns a 3D volume
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+
+    // Total width = (major_r + minor_r) * 2 = (10 + 2) * 2 = 24
+    try testing.expectApproxEqAbs(@as(f64, 24.0), arr_obj.items.items[1].asNumber(), 0.5);
+
+    // Total height = minor_r * 2 = 4 (Polygonal approximation shrinks this slightly to ~3.9)
+    try testing.expectApproxEqAbs(@as(f64, 4.0), arr_obj.items.items[2].asNumber(), 0.2); // Increased tolerance
+}

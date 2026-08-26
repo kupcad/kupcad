@@ -54,6 +54,8 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "square", .func = common.wrapGlobal(primitives.nativeSquare), .category = .primitive_2d },
     .{ .name = "circle", .func = common.wrapGlobal(primitives.nativeCircle), .category = .primitive_2d },
     .{ .name = "polygon", .func = common.wrapGlobal(primitives.nativePolygon), .category = .primitive_2d },
+    .{ .name = "regular_polygon", .func = common.wrapGlobal(primitives.nativeRegularPolygon), .category = .primitive_2d },
+    .{ .name = "torus", .func = common.wrapGlobal(primitives.nativeTorus), .category = .primitive_3d },
     .{ .name = "polyhedron", .func = common.wrapGlobal(primitives.nativePolyhedron), .category = .primitive_3d },
     .{ .name = "text", .func = common.wrapGlobal(primitives.nativeText), .category = .primitive_2d },
     .{ .name = "import_stl", .func = stl.nativeImportStl, .category = .file_io },

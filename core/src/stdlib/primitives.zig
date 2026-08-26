@@ -352,6 +352,87 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     }
 }
 
+pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
+    const parsed = parseArgs(args);
+    var opts = extractGeomOptions(parsed);
+
+    var sides: i32 = 6; // Default to a hexagon
+    if (parsed.pos_count > 0 and args[0].isNumber()) sides = @intFromFloat(args[0].asNumber());
+    if (parsed.pos_count > 1 and args[1].isNumber()) opts.r = args[1].asNumber();
+
+    // Check kwargs explicitly for sides/radius if passed
+    if (parsed.kwargs) |kw| {
+        if (kw.isObject() and kw.asObj().obj_type == .map) {
+            const map = kw.asMap();
+            if (util.getKey(map, "sides")) |v| {
+                if (v.isNumber()) sides = @intFromFloat(v.asNumber());
+            }
+        }
+    }
+
+    if (sides < 3) {
+        vm.reportError("ValueError: 'sides' must be at least 3, got {d}.\n", .{sides});
+        return error.RuntimeError;
+    }
+    try requirePositive(vm, opts.r, "radius");
+
+    var pts = std.ArrayListUnmanaged([2]f64).empty;
+    const alloc = vm.scratch_arena.allocator();
+    defer pts.deinit(alloc);
+
+    // Generate points around the circle
+    const step = std.math.pi * 2.0 / @as(f64, @floatFromInt(sides));
+    for (0..@as(usize, @intCast(sides))) |i| {
+        const ang = @as(f64, @floatFromInt(i)) * step;
+        try pts.append(alloc, .{ opts.r * @cos(ang), opts.r * @sin(ang) });
+    }
+
+    const dag_idx = try vm.dag_builder.addPolygon(pts.items);
+    return try vm.allocateCrossSection(dag_idx);
+}
+
+pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
+    const parsed = parseArgs(args);
+    const opts = extractGeomOptions(parsed);
+
+    var major_r: f64 = 10.0;
+    var minor_r: f64 = 2.0;
+
+    if (parsed.pos_count > 0 and args[0].isNumber()) major_r = args[0].asNumber();
+    if (parsed.pos_count > 1 and args[1].isNumber()) minor_r = args[1].asNumber();
+
+    if (parsed.kwargs) |kw| {
+        if (kw.isObject() and kw.asObj().obj_type == .map) {
+            const map = kw.asMap();
+            if (util.getKey(map, "major_r")) |v| {
+                if (v.isNumber()) major_r = v.asNumber();
+            }
+            if (util.getKey(map, "minor_r")) |v| {
+                if (v.isNumber()) minor_r = v.asNumber();
+            }
+        }
+    }
+
+    try requirePositive(vm, major_r, "major_r");
+    try requirePositive(vm, minor_r, "minor_r");
+
+    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
+
+    // Create a 2D circle using the minor radius
+    const circ_segs = if (opts.segments > 0) opts.segments else @as(i32, @intCast(active_config.manifold.getSegments(minor_r)));
+    const circ_idx = try vm.dag_builder.addCircle(minor_r, circ_segs);
+
+    // Translate the circle outward by the major radius
+    const trans_mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, major_r, 0.0 };
+    const trans_idx = try vm.dag_builder.addCrossSectionTransform(circ_idx, trans_mat);
+
+    // Revolve the translated circle 360 degrees around the origin
+    const rev_segs = if (opts.segments > 0) opts.segments else @as(i32, @intCast(active_config.manifold.getSegments(major_r)));
+    const dag_idx = try vm.dag_builder.addRevolve(trans_idx, rev_segs, 360.0);
+
+    return try vm.allocateGeometry(.{ .symbolic = dag_idx });
+}
+
 pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     if (args.len < 2 or !args[0].isArray() or !args[1].isArray()) {
         vm.reportError("ArgumentError: polyhedron expects points Array and faces Array.\n", .{});
