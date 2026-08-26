@@ -56,6 +56,69 @@ pub fn bboxMax(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyer
     return buildVec3(vm, bbox.max[0], bbox.max[1], bbox.max[2]);
 }
 
+pub fn bboxXMin(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const bbox = try getSafeBBox(vm, args);
+    return value.Value.initNumber(bbox.min[0]);
+}
+
+pub fn bboxYMin(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const bbox = try getSafeBBox(vm, args);
+    return value.Value.initNumber(bbox.min[1]);
+}
+
+pub fn bboxZMin(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const bbox = try getSafeBBox(vm, args);
+    return value.Value.initNumber(bbox.min[2]);
+}
+
+pub fn bboxXMax(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const bbox = try getSafeBBox(vm, args);
+    return value.Value.initNumber(bbox.max[0]);
+}
+
+pub fn bboxYMax(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const bbox = try getSafeBBox(vm, args);
+    return value.Value.initNumber(bbox.max[1]);
+}
+
+pub fn bboxZMax(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const bbox = try getSafeBBox(vm, args);
+    return value.Value.initNumber(bbox.max[2]);
+}
+
+pub fn bboxXSize(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const bbox = try getSafeBBox(vm, args);
+    return value.Value.initNumber(@max(0.0, bbox.max[0] - bbox.min[0]));
+}
+
+pub fn bboxYSize(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const bbox = try getSafeBBox(vm, args);
+    return value.Value.initNumber(@max(0.0, bbox.max[1] - bbox.min[1]));
+}
+
+pub fn bboxZSize(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const bbox = try getSafeBBox(vm, args);
+    return value.Value.initNumber(@max(0.0, bbox.max[2] - bbox.min[2]));
+}
+
 pub fn bboxToS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
@@ -78,6 +141,15 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "center", .func = bboxCenter },
     .{ .name = "min", .func = bboxMin },
     .{ .name = "max", .func = bboxMax },
+    .{ .name = "x_min", .func = bboxXMin },
+    .{ .name = "y_min", .func = bboxYMin },
+    .{ .name = "z_min", .func = bboxZMin },
+    .{ .name = "x_max", .func = bboxXMax },
+    .{ .name = "y_max", .func = bboxYMax },
+    .{ .name = "z_max", .func = bboxZMax },
+    .{ .name = "x_size", .func = bboxXSize },
+    .{ .name = "y_size", .func = bboxYSize },
+    .{ .name = "z_size", .func = bboxZSize },
     .{ .name = "to_s", .func = bboxToS },
     .{ .name = "inspect", .func = bboxToS },
 };

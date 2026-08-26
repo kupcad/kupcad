@@ -82,6 +82,8 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "resize", .category = .transform, .func = common.wrapMethod(methods.meshResize) },
     .{ .name = "project", .category = .transform, .func = common.wrapMethod(methods.meshProject) },
     .{ .name = "slice", .category = .transform, .func = common.wrapMethod(methods.meshSlice) },
+    .{ .name = "center", .category = .transform, .func = common.wrapMethod(methods.meshCenter) },
+    .{ .name = "align", .category = .transform, .func = common.wrapMethod(methods.meshAlign) },
     .{ .name = "mirror", .category = .transform, .func = common.wrapMethod(methods.meshMirror) },
     .{ .name = "on_face", .category = .workplane_method, .func = common.wrapMethod(methods.meshOnFace) },
     .{ .name = "split_by_plane", .category = .transform, .func = common.wrapMethod(methods.meshSplitByPlane) },

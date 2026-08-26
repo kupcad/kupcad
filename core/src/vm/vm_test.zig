@@ -8164,3 +8164,92 @@ test "VM: throwDynamicError does not truncate massive error messages" {
     // proves that fmtScratch correctly dynamically allocated the massive string!
     try testing.expectEqual(InterpretResult.runtime_error, res);
 }
+
+test "VM CAD: BoundingBox explicit axis getters return precise dimensions" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Create a 10x20x30 cube at the origin (0,0,0)
+    const source =
+        \\c = cube(x: 10, y: 20, z: 30, center: false)
+        \\box = c.bbox
+        \\[
+        \\  box.x_size, box.y_size, box.z_size,
+        \\  box.x_min, box.y_min, box.z_min,
+        \\  box.x_max, box.y_max, box.z_max
+        \\]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 9), arr_obj.items.items.len);
+
+    // Sizes
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[2].asNumber());
+
+    // Mins (Since center: false, they start at 0)
+    try testing.expectEqual(@as(f64, 0.0), arr_obj.items.items[3].asNumber());
+    try testing.expectEqual(@as(f64, 0.0), arr_obj.items.items[4].asNumber());
+    try testing.expectEqual(@as(f64, 0.0), arr_obj.items.items[5].asNumber());
+
+    // Maxes
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[6].asNumber());
+    try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[7].asNumber());
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[8].asNumber());
+}
+
+test "VM CAD: align and center mesh methods correctly translate geometry" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Create a shaft (height 50)
+    // 2. Create a washer (height 2)
+    // 3. Center the washer on X/Y, and snap its bottom to the shaft's top
+    const source =
+        \\shaft = cylinder(d: 10, h: 50, center: false)
+        \\washer = cylinder(d: 20, h: 2, center: false)
+        \\          .center("XY")
+        \\          .align(shaft, "Z", "min", "max")
+        \\
+        \\box = washer.bbox
+        \\[box.x_min, box.x_max, box.z_min, box.z_max]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+
+    // Washer X bounds (Diameter 20, centered, so -10 to 10)
+    try testing.expectApproxEqAbs(@as(f64, -10.0), arr_obj.items.items[0].asNumber(), 0.001);
+    try testing.expectApproxEqAbs(@as(f64, 10.0), arr_obj.items.items[1].asNumber(), 0.001);
+
+    // Washer Z bounds (Snapped to top of 50mm shaft, height is 2, so 50 to 52)
+    try testing.expectApproxEqAbs(@as(f64, 50.0), arr_obj.items.items[2].asNumber(), 0.001);
+    try testing.expectApproxEqAbs(@as(f64, 52.0), arr_obj.items.items[3].asNumber(), 0.001);
+}
