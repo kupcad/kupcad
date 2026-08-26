@@ -172,7 +172,7 @@ kupcad/
 
 ```
 brew install binaryen wabt wasmtime
-wasm-opt -Oz kupcad.wasm -o kupcad_min.wasm
+wasm-opt --all-features -Oz kupcad.wasm -o kupcad_min.wasm
 ```
 
 
