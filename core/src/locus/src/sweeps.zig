@@ -10,56 +10,87 @@ pub fn extrudeFace(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
-    base_face_id: topo.FaceId,
+    base_solid_id: topo.SolidId,
     vec: math.Vec3,
 ) SweepError!topo.SolidId {
+    // Unpack the Face from the Solid wrapper
+    const s = t_arena.solids.items[base_solid_id];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[s.shells_start]];
+    const base_face_id = t_arena.shell_faces.items[shell.faces_start];
     const base_face = t_arena.faces.items[base_face_id];
-    const outer_loop_id = t_arena.face_loops.items[base_face.loops_start];
-    const outer_loop = t_arena.loops.items[outer_loop_id];
+    const loop = t_arena.loops.items[t_arena.face_loops.items[base_face.loops_start]];
 
-    var base_verts = std.ArrayListUnmanaged(topo.VertexId).empty;
-    defer base_verts.deinit(allocator);
+    var base_pts = std.ArrayListUnmanaged(topo.VertexId).empty;
+    defer base_pts.deinit(allocator);
 
-    var curr_he = outer_loop.first_half_edge;
+    var curr_he = loop.first_half_edge;
     while (true) {
         const he = t_arena.half_edges.items[curr_he];
-        try base_verts.append(allocator, he.start_vertex);
+        try base_pts.append(allocator, he.start_vertex);
         curr_he = he.next;
-        if (curr_he == outer_loop.first_half_edge) break;
+        if (curr_he == loop.first_half_edge) break;
     }
 
-    const n = base_verts.items.len;
-    var top_verts = try allocator.alloc(topo.VertexId, n);
-    defer allocator.free(top_verts);
+    const n = base_pts.items.len;
 
-    for (0..n) |i| {
-        const p_base = t_arena.vertices.items[base_verts.items[i]].point;
-        const v_top_id: u32 = @intCast(t_arena.vertices.items.len);
-        try t_arena.vertices.append(allocator, .{ .point = math.add(p_base, vec) });
-        top_verts[i] = v_top_id;
-    }
-
+    // Now create a BRAND NEW solid with N+2 faces (Bottom, Top, N sides)
+    // Using addPolygonFace ensures proper twin wiring without forced triangulation.
     var twin_map = std.AutoHashMap(generators.EdgeKey, topo.HalfEdgeId).init(allocator);
     defer twin_map.deinit();
 
     const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
-    try t_arena.shell_faces.append(allocator, base_face_id);
 
-    // Top Cap
-    const top_plane_idx: u24 = @intCast(g_arena.planes.items.len);
-    if (base_face.surface.surface_type == .plane) {
-        const bp = g_arena.planes.items[base_face.surface.index];
-        try g_arena.planes.append(allocator, .{ .origin = math.add(bp.origin, vec), .u_axis = bp.u_axis, .v_axis = bp.v_axis });
+    var bot_verts = try allocator.alloc(topo.VertexId, n);
+    defer allocator.free(bot_verts);
+    var top_verts = try allocator.alloc(topo.VertexId, n);
+    defer allocator.free(top_verts);
+
+    for (0..n) |i| {
+        const p_base = t_arena.vertices.items[base_pts.items[i]].point;
+        const v_bot: u32 = @intCast(t_arena.vertices.items.len);
+        try t_arena.vertices.append(allocator, .{ .point = p_base });
+        bot_verts[i] = v_bot;
+
+        const pt = math.add(p_base, vec);
+        const v_top: u32 = @intCast(t_arena.vertices.items.len);
+        try t_arena.vertices.append(allocator, .{ .point = pt });
+        top_verts[i] = v_top;
     }
+
+    // 1. Bottom Cap (needs to be reversed to face outwards, i.e. opposite to extrusion direction)
+    var bot_rev = try allocator.alloc(topo.VertexId, n);
+    defer allocator.free(bot_rev);
+    for (0..n) |i| {
+        bot_rev[i] = bot_verts[n - 1 - i];
+    }
+    const bot_plane_idx: u24 = @intCast(g_arena.planes.items.len);
+    const orig_plane = g_arena.planes.items[base_face.surface.index];
+    try g_arena.planes.append(allocator, .{ .origin = orig_plane.origin, .u_axis = orig_plane.u_axis, .v_axis = math.scale(orig_plane.v_axis, -1.0) });
+    const bot_f = try generators.addPolygonFace(allocator, t_arena, g_arena, bot_rev, .{ .index = bot_plane_idx, .surface_type = .plane }, &twin_map);
+    try t_arena.shell_faces.append(allocator, bot_f);
+
+    // 2. Top Cap
+    const top_plane_idx: u24 = @intCast(g_arena.planes.items.len);
+    try g_arena.planes.append(allocator, .{ .origin = math.add(orig_plane.origin, vec), .u_axis = orig_plane.u_axis, .v_axis = orig_plane.v_axis });
     const top_f = try generators.addPolygonFace(allocator, t_arena, g_arena, top_verts, .{ .index = top_plane_idx, .surface_type = .plane }, &twin_map);
     try t_arena.shell_faces.append(allocator, top_f);
 
-    // Side Quads
+    // 3. Side Quads
     for (0..n) |i| {
         const next_i = (i + 1) % n;
-        const quad = [_]topo.VertexId{ base_verts.items[i], base_verts.items[next_i], top_verts[next_i], top_verts[i] };
+        // CCW Outward Winding
+        const quad = [_]topo.VertexId{ bot_verts[i], bot_verts[next_i], top_verts[next_i], top_verts[i] };
+
         const side_plane_idx: u24 = @intCast(g_arena.planes.items.len);
-        try g_arena.planes.append(allocator, .{ .origin = t_arena.vertices.items[base_verts.items[i]].point, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 0, 1 } });
+        const p0 = t_arena.vertices.items[bot_verts[i]].point;
+        const p1 = t_arena.vertices.items[bot_verts[next_i]].point;
+        const p2 = t_arena.vertices.items[top_verts[next_i]].point;
+
+        const u_ax = math.normalize(math.sub(p1, p0));
+        var v_ax = math.normalize(math.sub(p2, p1));
+        if (math.magSq(v_ax) < 1e-6) v_ax = .{ 0, 0, 1 }; // Degenerate fallback
+
+        try g_arena.planes.append(allocator, .{ .origin = p0, .u_axis = u_ax, .v_axis = v_ax });
         const side_f = try generators.addPolygonFace(allocator, t_arena, g_arena, &quad, .{ .index = side_plane_idx, .surface_type = .plane }, &twin_map);
         try t_arena.shell_faces.append(allocator, side_f);
     }
@@ -75,20 +106,18 @@ pub fn extrudeFace(
     return solid_id;
 }
 
-/// Revolves a 2D cross-section face around the Y-axis to generate a 3D solid.
 pub fn revolveFace(
     allocator: std.mem.Allocator,
     out_t_arena: *topo.TopologyArena,
     out_g_arena: *geom.GeometryArena,
     in_t_arena: *const topo.TopologyArena,
-    base_face_id: topo.FaceId, // <-- Changed from SolidId to FaceId
+    base_face_id: topo.FaceId,
     segments: u32,
     degrees: f64,
 ) !topo.SolidId {
     var profile_pts = std.ArrayListUnmanaged([3]f64).empty;
     defer profile_pts.deinit(allocator);
 
-    // 1. Extract vertices directly from the base 2D cross section face
     const face = in_t_arena.faces.items[base_face_id];
     const loop = in_t_arena.loops.items[in_t_arena.face_loops.items[face.loops_start]];
 
@@ -109,7 +138,6 @@ pub fn revolveFace(
     const rad_step = (degrees * std.math.pi / 180.0) / @as(f64, @floatFromInt(segments));
     const num_pts = @as(u32, @intCast(profile_pts.items.len));
 
-    // 2. Generate swept layers by rotating around the Y-axis
     for (0..segments + 1) |layer| {
         const angle = @as(f64, @floatFromInt(layer)) * rad_step;
         const cos_a = @cos(angle);
@@ -119,7 +147,6 @@ pub fn revolveFace(
         }
     }
 
-    // 3. Generate quad triangles for the swept walls (CCW outward winding)
     for (0..segments) |layer| {
         for (0..num_pts) |p| {
             const next_p = (p + 1) % num_pts;
@@ -133,17 +160,13 @@ pub fn revolveFace(
         }
     }
 
-    // 4. Generate End Caps if it's not a complete 360 revolution
     if (degrees < 359.99) {
         for (1..num_pts - 1) |p| {
-            // Start cap
             try all_faces.append(allocator, .{ 0, @as(u32, @intCast(p)), @as(u32, @intCast(p + 1)) });
-            // End cap
             const end_offset = @as(u32, @intCast(segments)) * num_pts;
             try all_faces.append(allocator, .{ end_offset, end_offset + @as(u32, @intCast(p + 1)), end_offset + @as(u32, @intCast(p)) });
         }
     }
 
-    // 5. Pipe into the universal stitcher!
     return generators.buildPolyhedron(allocator, out_t_arena, out_g_arena, all_pts.items, all_faces.items);
 }

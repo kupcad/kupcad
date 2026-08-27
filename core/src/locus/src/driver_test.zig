@@ -159,3 +159,27 @@ test "Driver: Revolve 2D Profile" {
     const vol = driver.driver.volumeFn(rev_handle);
     try std.testing.expectApproxEqAbs(expected_vol, vol, 1e-4);
 }
+
+test "Driver: 2D Operations (Boolean, Transform, Offset)" {
+    driver.init(std.testing.allocator);
+    defer driver.deinit();
+
+    // 1. Create two intersecting 10x10 squares
+    const sq1 = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
+    const sq2 = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
+
+    // Shift square 2 by (+5, +5)
+    const mat = [6]f64{ 1, 0, 5, 0, 1, 5 };
+    _ = driver.driver.crossSectionTransformFn(sq2, mat) orelse return error.TransformFailed;
+
+    // 2. Perform 2D Boolean Union
+    const union_2d = driver.driver.crossSectionBooleanFn(sq1, sq2, 0) orelse return error.BooleanFailed;
+
+    // 3. Extrude the result into 3D!
+    // Two unioned 10x10 squares offset by (5,5) creates an L-shape with an area of 175.
+    // Extruding by 10 should yield a volume of 1750.
+    const final_solid = driver.driver.extrudeFn(union_2d, 0, 0, 10) orelse return error.ExtrudeFailed;
+
+    const vol = driver.driver.volumeFn(final_solid);
+    try std.testing.expectApproxEqAbs(1750.0, vol, 1e-4);
+}

@@ -236,7 +236,7 @@ pub fn generatePolygon(
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
     pts: []const [2]f64,
-) GenError!topo.FaceId {
+) GenError!topo.SolidId { // <-- Now returns a SolidId
     const v_start: u32 = @intCast(t_arena.vertices.items.len);
     var vert_ids = try allocator.alloc(topo.VertexId, pts.len);
     defer allocator.free(vert_ids);
@@ -253,7 +253,21 @@ pub fn generatePolygon(
     var twin_map = std.AutoHashMap(EdgeKey, topo.HalfEdgeId).init(allocator);
     defer twin_map.deinit();
 
-    return addPolygonFace(allocator, t_arena, g_arena, vert_ids, .{ .index = plane_idx, .surface_type = .plane }, &twin_map);
+    const face_id = try addPolygonFace(allocator, t_arena, g_arena, vert_ids, .{ .index = plane_idx, .surface_type = .plane }, &twin_map);
+
+    // Package the 2D face inside a standard Solid container
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
+    try t_arena.shell_faces.append(allocator, face_id);
+
+    const shell_id: u32 = @intCast(t_arena.shells.items.len);
+    try t_arena.shells.append(allocator, .{ .faces_start = sh_faces_start, .faces_len = 1 });
+
+    const solid_id: u32 = @intCast(t_arena.solids.items.len);
+    const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
+    try t_arena.solid_shells.append(allocator, shell_id);
+    try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
+
+    return solid_id;
 }
 
 pub fn generateSquare(
@@ -263,17 +277,12 @@ pub fn generateSquare(
     size_x: f64,
     size_y: f64,
     centered: bool,
-) GenError!topo.FaceId {
+) GenError!topo.SolidId {
     const ox = if (centered) -size_x / 2.0 else 0.0;
     const oy = if (centered) -size_y / 2.0 else 0.0;
     const mx = ox + size_x;
     const my = oy + size_y;
-    const pts = [_][2]f64{
-        .{ ox, oy },
-        .{ mx, oy },
-        .{ mx, my },
-        .{ ox, my },
-    };
+    const pts = [_][2]f64{ .{ ox, oy }, .{ mx, oy }, .{ mx, my }, .{ ox, my } };
     return generatePolygon(allocator, t_arena, g_arena, &pts);
 }
 
@@ -283,7 +292,7 @@ pub fn generateCircle(
     g_arena: *geom.GeometryArena,
     radius: f64,
     segments: i32,
-) GenError!topo.FaceId {
+) GenError!topo.SolidId {
     const segs = if (segments < 3) 32 else @as(usize, @intCast(segments));
     var pts = try allocator.alloc([2]f64, segs);
     defer allocator.free(pts);

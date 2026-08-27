@@ -3,6 +3,7 @@ const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const generators = @import("generators.zig");
 const booleans = @import("booleans.zig");
+const locus_bool2d = @import("booleans_2d.zig");
 const tessellate = @import("tessellate.zig");
 const sweeps = @import("sweeps.zig");
 const minkowski = @import("minkowski.zig");
@@ -226,6 +227,61 @@ fn revolveImpl(cs: GeometryHandle, segments: i32, degrees: f64) ?GeometryHandle 
     return @as(GeometryHandle, solid_id);
 }
 
+fn crossSectionTransformImpl(shape: GeometryHandle, mat: [6]f64) ?GeometryHandle {
+    const mat3d = [12]f64{
+        mat[0], mat[1], 0.0, mat[2],
+        mat[3], mat[4], 0.0, mat[5],
+        0.0,    0.0,    1.0, 0.0,
+    };
+    const solid_id = transforms.transformMatrixSolid(g_allocator, &g_topo_arena, &g_geom_arena, @intCast(shape), mat3d) catch return null;
+    return @as(GeometryHandle, solid_id);
+}
+
+fn crossSectionBooleanImpl(a: GeometryHandle, b: GeometryHandle, op_type: u8) ?GeometryHandle {
+    const op = switch (op_type) {
+        0 => booleans.BooleanOp.union_op,
+        1 => booleans.BooleanOp.difference,
+        else => booleans.BooleanOp.intersection,
+    };
+    const solid_id = locus_bool2d.crossSectionBoolean(g_allocator, &g_topo_arena, &g_geom_arena, @intCast(a), @intCast(b), op) catch return null;
+    return @as(GeometryHandle, solid_id);
+}
+
+fn offsetImpl(cs: GeometryHandle, delta: f64) ?GeometryHandle {
+    const solid_id: topo.SolidId = @intCast(cs);
+    const s = g_topo_arena.solids.items[solid_id];
+    const shell = g_topo_arena.shells.items[g_topo_arena.solid_shells.items[s.shells_start]];
+    const face_id = g_topo_arena.shell_faces.items[shell.faces_start];
+    const face = g_topo_arena.faces.items[face_id];
+    const loop = g_topo_arena.loops.items[g_topo_arena.face_loops.items[face.loops_start]];
+
+    var curr = loop.first_half_edge;
+    while (true) {
+        const he = g_topo_arena.half_edges.items[curr];
+        const prev_he = g_topo_arena.half_edges.items[he.prev];
+
+        const pt = g_topo_arena.vertices.items[he.start_vertex].point;
+        const prev_pt = g_topo_arena.vertices.items[prev_he.start_vertex].point;
+        const next_pt = g_topo_arena.vertices.items[g_topo_arena.half_edges.items[he.next].start_vertex].point;
+
+        const t1 = math.normalize(math.sub(pt, prev_pt));
+        const t2 = math.normalize(math.sub(next_pt, pt));
+        const n1 = math.Vec3{ t1[1], -t1[0], 0 };
+        const n2 = math.Vec3{ t2[1], -t2[0], 0 };
+
+        const bisector = math.normalize(math.add(n1, n2));
+        const dot = math.dot(bisector, n1);
+
+        if (@abs(dot) > 1e-4) {
+            const expand_dist = delta / dot;
+            g_topo_arena.vertices.items[he.start_vertex].point = math.add(pt, math.scale(bisector, expand_dist));
+        }
+        curr = he.next;
+        if (curr == loop.first_half_edge) break;
+    }
+    return cs;
+}
+
 pub const driver = struct {
     pub const cubeFn = cubeImpl;
     pub const cylinderFn = cylinderImpl;
@@ -244,4 +300,7 @@ pub const driver = struct {
     pub const squareFn = squareImpl;
     pub const polyhedronFn = polyhedronImpl;
     pub const revolveFn = revolveImpl;
+    pub const crossSectionTransformFn = crossSectionTransformImpl;
+    pub const crossSectionBooleanFn = crossSectionBooleanImpl;
+    pub const offsetFn = offsetImpl;
 };

@@ -11,8 +11,6 @@ pub const BooleanError = error{
     DidNotConverge,
 };
 
-/// Records a precise geometric intersection between a HalfEdge and a Face.
-/// The `t` parameter is used to sort multiple hits along the exact same edge.
 pub const IntersectionEvent = struct {
     he_id: topo.HalfEdgeId,
     edge_solid: topo.SolidId,
@@ -21,7 +19,6 @@ pub const IntersectionEvent = struct {
     t: f64,
 };
 
-/// Computes the intersection curve between two surfaces using a numerical Marching Algorithm.
 pub fn marchIntersection(
     allocator: std.mem.Allocator,
     g_arena: *geom.GeometryArena,
@@ -48,14 +45,30 @@ fn projectToPlane(pt: math.Vec3, origin: math.Vec3, u_axis: math.Vec3, v_axis: m
 }
 
 pub fn isPointInPolygon2D(pt: [2]f64, polygon: []const [2]f64) bool {
+    var centroid = [2]f64{ 0, 0 };
+    for (polygon) |p| {
+        centroid[0] += p[0];
+        centroid[1] += p[1];
+    }
+    centroid[0] /= @as(f64, @floatFromInt(polygon.len));
+    centroid[1] /= @as(f64, @floatFromInt(polygon.len));
+
+    // Epsilon-Shrink: Pull the point slightly towards the centroid.
+    // This allows points resting EXACTLY on a boundary to be safely raycasted as inside.
+    const eps = 1e-4;
+    const test_pt = [2]f64{
+        pt[0] * (1.0 - eps) + centroid[0] * eps,
+        pt[1] * (1.0 - eps) + centroid[1] * eps,
+    };
+
     var inside = false;
     var j: usize = polygon.len - 1;
     for (0..polygon.len) |i| {
         const pi = polygon[i];
         const pj = polygon[j];
 
-        if (((pi[1] > pt[1]) != (pj[1] > pt[1])) and
-            (pt[0] < (pj[0] - pi[0]) * (pt[1] - pi[1]) / (pj[1] - pi[1]) + pi[0]))
+        if (((pi[1] > test_pt[1]) != (pj[1] > test_pt[1])) and
+            (test_pt[0] < (pj[0] - pi[0]) * (test_pt[1] - pi[1]) / (pj[1] - pi[1]) + pi[0]))
         {
             inside = !inside;
         }
@@ -63,8 +76,6 @@ pub fn isPointInPolygon2D(pt: [2]f64, polygon: []const [2]f64) bool {
     }
     return inside;
 }
-
-// --- Intersection Algorithms ---
 
 pub fn intersectLinePlane(line_start: math.Vec3, line_end: math.Vec3, plane_origin: math.Vec3, plane_normal: math.Vec3) ?math.Vec3 {
     const dir = math.sub(line_end, line_start);
@@ -82,19 +93,15 @@ pub fn intersectArcPlane(arc: geom.CircleArc, v_start: math.Vec3, v_end: math.Ve
     const A = arc.radius * math.dot(plane_normal, arc.x_axis);
     const B = arc.radius * math.dot(plane_normal, arc.y_axis);
     const D = math.dot(plane_normal, math.sub(plane_origin, arc.center));
-
     const Rab_sq = A * A + B * B;
     if (Rab_sq < 1e-12) return null;
-
     const Rab = @sqrt(Rab_sq);
     if (@abs(D) > Rab + 1e-9) return null;
 
     const D_clamped = std.math.clamp(D / Rab, -1.0, 1.0);
     const phi = std.math.atan2(A, B);
-
     var t1 = std.math.asin(D_clamped) - phi;
     var t2 = std.math.pi - std.math.asin(D_clamped) - phi;
-
     t1 = @mod(t1, 2.0 * std.math.pi);
     if (t1 < 0) t1 += 2.0 * std.math.pi;
     t2 = @mod(t2, 2.0 * std.math.pi);
@@ -106,12 +113,10 @@ pub fn intersectArcPlane(arc: geom.CircleArc, v_start: math.Vec3, v_end: math.Ve
     var ang_end = std.math.atan2(math.dot(u_end, arc.y_axis), math.dot(u_end, arc.x_axis));
     if (ang_start < 0) ang_start += 2.0 * std.math.pi;
     if (ang_end < 0) ang_end += 2.0 * std.math.pi;
-
     if (!forward) std.mem.swap(f64, &ang_start, &ang_end);
 
     const is_full = math.distSq(v_start, v_end) < 1e-9;
     const eps = 1e-6;
-
     const in1 = is_full or (if (ang_start < ang_end) (t1 > ang_start + eps and t1 < ang_end - eps) else (t1 > ang_start + eps or t1 < ang_end - eps));
     const in2 = is_full or (if (ang_start < ang_end) (t2 > ang_start + eps and t2 < ang_end - eps) else (t2 > ang_start + eps or t2 < ang_end - eps));
 
@@ -121,7 +126,6 @@ pub fn intersectArcPlane(arc: geom.CircleArc, v_start: math.Vec3, v_end: math.Ve
     if (in1 and !in2) return p1;
     if (in2 and !in1) return p2;
     if (in1 and in2) return p1;
-
     return null;
 }
 
@@ -129,23 +133,19 @@ pub fn intersectNurbsPlane(curve: geom.NurbsCurve, plane_origin: math.Vec3, plan
     const segments = 20;
     var prev_pt = geom.evaluateNurbsCurve(curve, 0.0);
     var prev_dist = math.dot(plane_normal, math.sub(prev_pt, plane_origin));
-
     for (1..segments + 1) |i| {
         const t = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(segments));
         const curr_pt = geom.evaluateNurbsCurve(curve, t);
         const curr_dist = math.dot(plane_normal, math.sub(curr_pt, plane_origin));
-
         if (prev_dist * curr_dist < 0.0) {
             var t_low = t - (1.0 / @as(f64, @floatFromInt(segments)));
             var t_high = t;
-
             for (0..15) |_| {
                 const t_mid = (t_low + t_high) / 2.0;
                 const mid_pt = geom.evaluateNurbsCurve(curve, t_mid);
                 const mid_dist = math.dot(plane_normal, math.sub(mid_pt, plane_origin));
                 if (mid_dist * prev_dist > 0.0) t_low = t_mid else t_high = t_mid;
             }
-
             const hit_t = (t_low + t_high) / 2.0;
             if (hit_t > 0.001 and hit_t < 0.999) return geom.evaluateNurbsCurve(curve, hit_t);
         }
@@ -154,8 +154,6 @@ pub fn intersectNurbsPlane(curve: geom.NurbsCurve, plane_origin: math.Vec3, plan
     }
     return null;
 }
-
-// --- Topology Routines ---
 
 fn collectPiercings(
     allocator: std.mem.Allocator,
@@ -205,26 +203,15 @@ fn collectPiercings(
                         while (true) {
                             const edge = t_arena.half_edges.items[target_he_id];
 
-                            // CRITICAL FIX: Only test the primary edge to prevent double-splitting twins!
                             if (edge.twin == topo.NULL_ID or target_he_id < edge.twin) {
                                 const v_start = t_arena.vertices.items[edge.start_vertex].point;
                                 const v_end = t_arena.vertices.items[t_arena.half_edges.items[edge.next].start_vertex].point;
 
                                 var hit_pt_opt: ?math.Vec3 = null;
-
                                 switch (edge.curve.curve_type) {
-                                    .line => {
-                                        const line = g_arena.lines.items[edge.curve.index];
-                                        hit_pt_opt = intersectLinePlane(line.start, line.end, plane.origin, normal);
-                                    },
-                                    .circle_arc => {
-                                        const arc = g_arena.circle_arcs.items[edge.curve.index];
-                                        hit_pt_opt = intersectArcPlane(arc, v_start, v_end, plane.origin, normal, edge.forward);
-                                    },
-                                    .nurbs => {
-                                        const curve = g_arena.nurbs_curves.items[edge.curve.index];
-                                        hit_pt_opt = intersectNurbsPlane(curve, plane.origin, normal);
-                                    },
+                                    .line => hit_pt_opt = intersectLinePlane(g_arena.lines.items[edge.curve.index].start, g_arena.lines.items[edge.curve.index].end, plane.origin, normal),
+                                    .circle_arc => hit_pt_opt = intersectArcPlane(g_arena.circle_arcs.items[edge.curve.index], v_start, v_end, plane.origin, normal, edge.forward),
+                                    .nurbs => hit_pt_opt = intersectNurbsPlane(g_arena.nurbs_curves.items[edge.curve.index], plane.origin, normal),
                                 }
 
                                 if (hit_pt_opt) |hit_pt| {
@@ -241,7 +228,6 @@ fn collectPiercings(
                                     }
                                 }
                             }
-
                             target_he_id = edge.next;
                             if (target_he_id == t_loop.first_half_edge) break;
                         }
@@ -276,15 +262,13 @@ pub fn splitHalfEdge(
             new_curve_id = .{ .index = l_idx, .curve_type = .line };
         },
         .circle_arc => {
-            const arc = g_arena.circle_arcs.items[he.curve.index];
             const arc_idx: u24 = @intCast(g_arena.circle_arcs.items.len);
-            try g_arena.circle_arcs.append(allocator, arc);
+            try g_arena.circle_arcs.append(allocator, g_arena.circle_arcs.items[he.curve.index]);
             new_curve_id = .{ .index = arc_idx, .curve_type = .circle_arc };
         },
         .nurbs => {
-            const n_curve = g_arena.nurbs_curves.items[he.curve.index];
             const n_idx: u24 = @intCast(g_arena.nurbs_curves.items.len);
-            try g_arena.nurbs_curves.append(allocator, n_curve);
+            try g_arena.nurbs_curves.append(allocator, g_arena.nurbs_curves.items[he.curve.index]);
             new_curve_id = .{ .index = n_idx, .curve_type = .nurbs };
         },
     }
@@ -305,7 +289,6 @@ pub fn splitHalfEdge(
 
     if (twin_id != topo.NULL_ID) {
         const twin = t_arena.half_edges.items[twin_id];
-
         var twin_new_curve_id = twin.curve;
         switch (twin.curve.curve_type) {
             .line => {
@@ -315,15 +298,13 @@ pub fn splitHalfEdge(
                 twin_new_curve_id = .{ .index = l_idx, .curve_type = .line };
             },
             .circle_arc => {
-                const arc = g_arena.circle_arcs.items[twin.curve.index];
                 const arc_idx: u24 = @intCast(g_arena.circle_arcs.items.len);
-                try g_arena.circle_arcs.append(allocator, arc);
+                try g_arena.circle_arcs.append(allocator, g_arena.circle_arcs.items[twin.curve.index]);
                 twin_new_curve_id = .{ .index = arc_idx, .curve_type = .circle_arc };
             },
             .nurbs => {
-                const n_curve = g_arena.nurbs_curves.items[twin.curve.index];
                 const n_idx: u24 = @intCast(g_arena.nurbs_curves.items.len);
-                try g_arena.nurbs_curves.append(allocator, n_curve);
+                try g_arena.nurbs_curves.append(allocator, g_arena.nurbs_curves.items[twin.curve.index]);
                 twin_new_curve_id = .{ .index = n_idx, .curve_type = .nurbs };
             },
         }
@@ -420,7 +401,6 @@ fn sliceFace(
     t_arena.half_edges.items[he_a.?].prev = h2_id;
 
     const new_face_id: u32 = @intCast(t_arena.faces.items.len);
-
     curr = h2_id;
     while (true) {
         t_arena.half_edges.items[curr].loop_id = new_loop_id;
@@ -429,7 +409,6 @@ fn sliceFace(
     }
 
     try t_arena.loops.append(allocator, .{ .face_id = new_face_id, .first_half_edge = h2_id });
-
     const new_fl_start: u32 = @intCast(t_arena.face_loops.items.len);
     try t_arena.face_loops.append(allocator, new_loop_id);
 
@@ -439,9 +418,7 @@ fn sliceFace(
         .loops_start = new_fl_start,
         .loops_len = 1,
     });
-
     t_arena.loops.items[loop_id].first_half_edge = h1_id;
-
     return new_face_id;
 }
 
@@ -503,17 +480,14 @@ fn punchHole(
 
     const new_face_id: u32 = @intCast(t_arena.faces.items.len);
     try t_arena.loops.append(allocator, .{ .face_id = new_face_id, .first_half_edge = he_start });
-
     const new_fl_start: u32 = @intCast(t_arena.face_loops.items.len);
     try t_arena.face_loops.append(allocator, loop_id);
-
     try t_arena.faces.append(allocator, .{
         .surface = face.surface,
         .forward = face.forward,
         .loops_start = new_fl_start,
         .loops_len = 1,
     });
-
     return new_face_id;
 }
 
@@ -587,8 +561,17 @@ fn classifyFace(allocator: std.mem.Allocator, t_arena: *topo.TopologyArena, g_ar
         if (!face.forward) normal = math.scale(normal, -1.0);
     }
 
-    if (isPointInsideSolid(t_arena, g_arena, target_solid_id, math.sub(sample_pt, math.scale(normal, 1e-4)))) return .inside;
-    return .outside;
+    // Coplanar Classification Fix: By testing both sides, we perfectly detect coplanar overlap faces.
+    const pt_in = math.sub(sample_pt, math.scale(normal, 1e-4));
+    const pt_out = math.add(sample_pt, math.scale(normal, 1e-4));
+
+    const in_solid = isPointInsideSolid(t_arena, g_arena, target_solid_id, pt_in);
+    const out_solid = isPointInsideSolid(t_arena, g_arena, target_solid_id, pt_out);
+
+    if (in_solid and out_solid) return .inside;
+    if (!in_solid and !out_solid) return .outside;
+    if (in_solid and !out_solid) return .same;
+    return .opposite;
 }
 
 const FaceTracker = struct {

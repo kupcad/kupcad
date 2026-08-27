@@ -3,6 +3,7 @@ const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
 
 // Import the isolated Locus Native B-Rep Library
+const locus_math = @import("../../../locus/src/math.zig");
 const locus_topo = @import("../../../locus/src/topology.zig");
 const locus_geom = @import("../../../locus/src/geometry.zig");
 const locus_gen = @import("../../../locus/src/generators.zig");
@@ -11,6 +12,7 @@ const locus_trans = @import("../../../locus/src/transforms.zig");
 const locus_tess = @import("../../../locus/src/tessellate.zig");
 const locus_mink = @import("../../../locus/src/minkowski.zig");
 const locus_bool = @import("../../../locus/src/booleans.zig");
+const locus_bool2d = @import("../../../locus/src/booleans_2d.zig");
 const locus_merger = @import("../../../locus/src/merger.zig");
 const locus_slicing = @import("../../../locus/src/slicing.zig");
 
@@ -338,10 +340,24 @@ fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f
 }
 
 fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
-    _ = a;
-    _ = b;
-    _ = op;
-    return null;
+    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
+
+    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
+
+    const locus_op: locus_bool.BooleanOp = switch (op) {
+        .union_op => .union_op,
+        .difference_op => .difference,
+        .intersection_op => .intersection,
+    };
+
+    // Merge arenas so B is accessible inside A's topology
+    _ = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
+
+    solid_a.solid_id = locus_bool2d.crossSectionBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, @intCast(solid_a.solid_id), // solid_id doubles as FaceId for 2D
+        @intCast(solid_b.solid_id), locus_op) catch return a;
+
+    return a;
 }
 
 fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
@@ -352,10 +368,21 @@ fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandl
 }
 
 fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
-    _ = cs;
-    _ = mat;
-    return null;
+    if (@intFromPtr(cs.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
+
+    // Convert 2D 3x2 affine matrix into full 3D 4x4 matrix
+    const mat3d = [12]f64{
+        mat[0], mat[1], 0.0, mat[2],
+        mat[3], mat[4], 0.0, mat[5],
+        0.0,    0.0,    1.0, 0.0,
+    };
+
+    // We can apply our 3D matrix transform to the 2D face vertices
+    _ = locus_trans.transformMatrixSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, mat3d) catch return cs;
+    return cs;
 }
+
 fn genusImpl(handle: geom.GeometryHandle) i32 {
     if (@intFromPtr(handle.ptr) == 0) return 0;
     const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
@@ -481,12 +508,50 @@ fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
     _ = sl;
     return 0.0;
 }
+
 fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
-    _ = cs;
-    _ = delta;
     _ = join_type;
-    return null;
+    if (@intFromPtr(cs.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
+
+    // Basic Convex Vertex-Normal Expansion
+    const face_id: locus_topo.FaceId = @intCast(solid.solid_id); // <-- Fixed namespace
+    const face = solid.t_arena.faces.items[face_id];
+    const loop = solid.t_arena.loops.items[solid.t_arena.face_loops.items[face.loops_start]];
+
+    var curr = loop.first_half_edge;
+    while (true) {
+        const he = solid.t_arena.half_edges.items[curr];
+        const prev_he = solid.t_arena.half_edges.items[he.prev];
+
+        const pt = solid.t_arena.vertices.items[he.start_vertex].point;
+        const prev_pt = solid.t_arena.vertices.items[prev_he.start_vertex].point;
+        const next_pt = solid.t_arena.vertices.items[solid.t_arena.half_edges.items[he.next].start_vertex].point;
+
+        // Calculate tangent vectors of adjacent edges
+        const t1 = locus_math.normalize(locus_math.sub(pt, prev_pt)); // <-- Fixed namespace
+        const t2 = locus_math.normalize(locus_math.sub(next_pt, pt));
+
+        // Calculate outward normals
+        const n1 = locus_math.Vec3{ t1[1], -t1[0], 0 };
+        const n2 = locus_math.Vec3{ t2[1], -t2[0], 0 };
+
+        // Find angle bisector
+        const bisector = locus_math.normalize(locus_math.add(n1, n2));
+        const dot = locus_math.dot(bisector, n1);
+
+        // Push vertex outwards along the bisector
+        if (@abs(dot) > 1e-4) {
+            const expand_dist = delta / dot;
+            solid.t_arena.vertices.items[he.start_vertex].point = locus_math.add(pt, locus_math.scale(bisector, expand_dist));
+        }
+
+        curr = he.next;
+        if (curr == loop.first_half_edge) break;
+    }
+    return cs;
 }
+
 fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
     _ = alloc;
     _ = a;
