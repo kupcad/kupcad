@@ -214,3 +214,71 @@ test "Exact SSI: Plane vs Sphere (Through Center)" {
     try std.testing.expectApproxEqAbs(10.0, res.circle.radius, 1e-9);
     try std.testing.expectApproxEqAbs(5.0, res.circle.center[2], 1e-9);
 }
+
+test "Sampler SSI: Plane vs Cylinder (Perpendicular Circle)" {
+    const alloc = std.testing.allocator;
+    const plane = geom.Plane{ .origin = .{ 0, 0, 10 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } };
+    const cyl = geom.Cylinder{
+        .origin = .{ 0, 0, 0 },
+        .axis = .{ 0, 0, 1 },
+        .x_axis = .{ 1, 0, 0 },
+        .y_axis = .{ 0, 1, 0 },
+        .radius = 5.0,
+    };
+
+    const res = try booleans.intersectPlaneCylinder(alloc, plane, cyl);
+    try std.testing.expect(res == .circle);
+    try std.testing.expectApproxEqAbs(5.0, res.circle.radius, 1e-9);
+    try std.testing.expectApproxEqAbs(10.0, res.circle.center[2], 1e-9);
+}
+
+test "Sampler SSI: Plane vs Cylinder (Oblique Ellipse Sampled)" {
+    const alloc = std.testing.allocator;
+    // Angled plane at 45 degrees
+    const plane = geom.Plane{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 1 } };
+    const cyl = geom.Cylinder{
+        .origin = .{ 0, 0, 0 },
+        .axis = .{ 0, 0, 1 },
+        .x_axis = .{ 1, 0, 0 },
+        .y_axis = .{ 0, 1, 0 },
+        .radius = 5.0,
+    };
+
+    const res = try booleans.intersectPlaneCylinder(alloc, plane, cyl);
+    try std.testing.expect(res == .sampled);
+    defer alloc.free(res.sampled);
+
+    try std.testing.expect(res.sampled.len >= 64);
+}
+
+test "Phase 4: Face Line Clipping (Infinite Line to Finite Segment)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // 1. Generate a 10x10x10 cube
+    const cube_id = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+
+    // 2. Grab the top face (+Z plane)
+    const solid = t_arena.solids.items[cube_id];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
+    const top_face_id = t_arena.shell_faces.items[shell.faces_start + 1]; // Face 1 is Z+
+
+    // 3. Define an infinite line slicing diagonally across the top face at Y=0
+    // The cube goes from X=-5 to X=5.
+    const infinite_line = booleans.MathLine{
+        .origin = .{ 0, 0, 5 },
+        .direction = .{ 1, 0, 0 },
+    };
+
+    // 4. Clip the infinite line to the bounds of the face
+    const segments = try booleans.clipMathLineToFace(alloc, &t_arena, &g_arena, top_face_id, infinite_line);
+    defer alloc.free(segments);
+
+    // It should yield exactly one finite segment stretching from X=-5 to X=5
+    try std.testing.expectEqual(@as(usize, 1), segments.len);
+    try std.testing.expectApproxEqAbs(-5.0, segments[0].start[0], 1e-5);
+    try std.testing.expectApproxEqAbs(5.0, segments[0].end[0], 1e-5);
+}

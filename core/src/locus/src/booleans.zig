@@ -28,6 +28,11 @@ pub const IntersectionResult = union(enum) {
     two_sampled: [2][]math.Vec3,
 };
 
+pub const Segment3D = struct {
+    start: math.Vec3,
+    end: math.Vec3,
+};
+
 pub const BooleanOp = enum { union_op, difference, intersection };
 pub const FaceClassification = enum { inside, outside, same, opposite };
 
@@ -886,3 +891,235 @@ pub fn intersectSphereSphere(a: geom.Sphere, b: geom.Sphere) IntersectionResult 
         .y_axis = y_axis,
     } };
 }
+
+/// Calculate chordal sag samples for a cylinder of radius r
+fn ellipseSamples(r: f64) usize {
+    const sag = 1e-3;
+    if (r > sag) {
+        const arg = std.math.clamp(1.0 - sag / r, -1.0, 1.0);
+        const n = @ceil(std.math.pi / std.math.acos(arg));
+        return @intFromFloat(std.math.clamp(n, 64.0, 512.0));
+    }
+    return 64;
+}
+
+/// Intersection of a plane and a cylinder.
+/// Returns exact Circle/Lines for perpendicular/parallel axes, or a sampled polyline for oblique planes.
+pub fn intersectPlaneCylinder(
+    allocator: std.mem.Allocator,
+    plane: geom.Plane,
+    cyl: geom.Cylinder,
+) !IntersectionResult {
+    const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+    const axis = math.normalize(cyl.axis);
+
+    const cos_angle = @abs(math.dot(n, axis));
+
+    if (cos_angle < 1e-12) {
+        // Plane parallel to cylinder axis
+        const axis_pt = cyl.origin;
+        const dist = @abs(math.dot(n, math.sub(axis_pt, plane.origin)));
+
+        if (dist > cyl.radius + 1e-9) {
+            return .empty;
+        }
+
+        if (@abs(dist - cyl.radius) < 1e-9) {
+            // Tangent line
+            const signed_dist = math.dot(n, math.sub(axis_pt, plane.origin));
+            const closest = math.sub(axis_pt, math.scale(n, signed_dist));
+            return .{ .line = .{ .origin = closest, .direction = axis } };
+        }
+
+        // Two parallel lines
+        const signed_dist = math.dot(n, math.sub(axis_pt, plane.origin));
+        const axis_on_plane = math.sub(axis_pt, math.scale(n, signed_dist));
+
+        var perp = math.cross(axis, n);
+        if (math.magSq(perp) < 1e-12) {
+            return .empty;
+        }
+        perp = math.normalize(perp);
+
+        const lateral = @sqrt(cyl.radius * cyl.radius - dist * dist);
+        const p1 = math.add(axis_on_plane, math.scale(perp, lateral));
+        const p2 = math.sub(axis_on_plane, math.scale(perp, lateral));
+
+        return .{ .two_lines = .{
+            .{ .origin = p1, .direction = axis },
+            .{ .origin = p2, .direction = axis },
+        } };
+    } else if (@abs(cos_angle - 1.0) < 1e-12) {
+        // Plane perpendicular to cylinder axis -> Exact Circle
+        const dist_along_axis = math.dot(math.sub(plane.origin, cyl.origin), axis);
+        const circle_center = math.add(cyl.origin, math.scale(axis, dist_along_axis));
+
+        return .{ .circle = .{
+            .center = circle_center,
+            .radius = cyl.radius,
+            .normal = n,
+            .x_axis = cyl.x_axis,
+            .y_axis = cyl.y_axis,
+        } };
+    } else {
+        // General oblique case -> Ellipse sampled as a polyline
+        const n_samples = ellipseSamples(cyl.radius);
+        var points: std.ArrayListUnmanaged(math.Vec3) = .empty;
+        errdefer points.deinit(allocator);
+
+        const tau = 2.0 * std.math.pi;
+        for (0..n_samples) |i| {
+            const angle = tau * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(n_samples));
+            const cos_a = @cos(angle);
+            const sin_a = @sin(angle);
+
+            const radial = math.add(
+                math.scale(cyl.x_axis, cyl.radius * cos_a),
+                math.scale(cyl.y_axis, cyl.radius * sin_a),
+            );
+            const p_on_cyl_base = math.add(cyl.origin, radial);
+
+            const denom = math.dot(n, axis);
+            if (@abs(denom) < 1e-15) continue;
+
+            const t = math.dot(n, math.sub(plane.origin, p_on_cyl_base)) / denom;
+            const pt = math.add(p_on_cyl_base, math.scale(axis, t));
+            try points.append(allocator, pt);
+        }
+
+        if (points.items.len == 0) {
+            points.deinit(allocator);
+            return .empty;
+        }
+
+        // Close the sampled loop
+        try points.append(allocator, points.items[0]);
+        return .{ .sampled = try points.toOwnedSlice(allocator) };
+    }
+}
+
+/// Routes two Surface IDs to their corresponding exact algebraic solver.
+pub fn intersectSurfaces(
+    allocator: std.mem.Allocator,
+    g_arena: *const geom.GeometryArena,
+    surf_a: geom.SurfaceId,
+    surf_b: geom.SurfaceId,
+) !IntersectionResult {
+    switch (surf_a.surface_type) {
+        .plane => switch (surf_b.surface_type) {
+            .plane => return intersectPlanePlane(g_arena.planes.items[surf_a.index], g_arena.planes.items[surf_b.index]),
+            .cylinder => return try intersectPlaneCylinder(allocator, g_arena.planes.items[surf_a.index], g_arena.cylinders.items[surf_b.index]),
+            .sphere => return intersectPlaneSphere(g_arena.planes.items[surf_a.index], g_arena.spheres.items[surf_b.index]),
+            else => return .empty,
+        },
+        .cylinder => switch (surf_b.surface_type) {
+            .plane => return try intersectPlaneCylinder(allocator, g_arena.planes.items[surf_b.index], g_arena.cylinders.items[surf_a.index]),
+            else => return .empty,
+        },
+        .sphere => switch (surf_b.surface_type) {
+            .plane => return intersectPlaneSphere(g_arena.planes.items[surf_b.index], g_arena.spheres.items[surf_a.index]),
+            .sphere => return intersectSphereSphere(g_arena.spheres.items[surf_a.index], g_arena.spheres.items[surf_b.index]),
+            else => return .empty,
+        },
+        else => return .empty,
+    }
+}
+
+/// Finds where an infinite 2D line crosses a finite 2D line segment.
+/// Returns the `t` parameter along the INFINITE line, or null if it misses.
+fn intersectInfiniteLineSegment2D(line_o: [2]f64, line_d: [2]f64, p1: [2]f64, p2: [2]f64) ?f64 {
+    const seg_d = [2]f64{ p2[0] - p1[0], p2[1] - p1[1] };
+    const denom = line_d[0] * seg_d[1] - line_d[1] * seg_d[0];
+    if (@abs(denom) < 1e-9) return null; // Parallel
+
+    const diff = [2]f64{ p1[0] - line_o[0], p1[1] - line_o[1] };
+    const u = (diff[0] * line_d[1] - diff[1] * line_d[0]) / denom;
+    const t = (diff[0] * seg_d[1] - diff[1] * seg_d[0]) / denom;
+
+    // If the intersection lies within the bounds of the finite segment
+    if (u >= -1e-5 and u <= 1.0 + 1e-5) {
+        return t;
+    }
+    return null;
+}
+
+/// Projects an infinite 3D line into the 2D surface of a Face and clips it against the boundary loops.
+/// Returns a list of finite 3D segments that represent exactly where the line sits inside the face.
+pub fn clipMathLineToFace(
+    allocator: std.mem.Allocator,
+    t_arena: *const topo.TopologyArena,
+    g_arena: *const geom.GeometryArena,
+    face_id: topo.FaceId,
+    line: MathLine,
+) ![]Segment3D {
+    const face = t_arena.faces.items[face_id];
+
+    // Fallback: we only clip planar faces for now.
+    if (face.surface.surface_type != .plane) return &[_]Segment3D{};
+
+    const plane = g_arena.planes.items[face.surface.index];
+
+    // Project infinite 3D line down to a 2D line on the plane
+    const o_2d = projectToPlane(line.origin, plane.origin, plane.u_axis, plane.v_axis);
+    const pt2_2d = projectToPlane(math.add(line.origin, line.direction), plane.origin, plane.u_axis, plane.v_axis);
+    const d_2d = [2]f64{ pt2_2d[0] - o_2d[0], pt2_2d[1] - o_2d[1] };
+
+    var t_vals: std.ArrayListUnmanaged(f64) = .empty;
+    defer t_vals.deinit(allocator);
+
+    // Cast the infinite line against every bounding half-edge of the face
+    for (0..face.loops_len) |l_off| {
+        const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+        const loop = t_arena.loops.items[loop_id];
+        var curr_he = loop.first_half_edge;
+        while (true) {
+            const he = t_arena.half_edges.items[curr_he];
+            const p1 = t_arena.vertices.items[he.start_vertex].point;
+            const p2 = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
+
+            const p1_2d = projectToPlane(p1, plane.origin, plane.u_axis, plane.v_axis);
+            const p2_2d = projectToPlane(p2, plane.origin, plane.u_axis, plane.v_axis);
+
+            if (intersectInfiniteLineSegment2D(o_2d, d_2d, p1_2d, p2_2d)) |t_hit| {
+                try t_vals.append(allocator, t_hit);
+            }
+
+            curr_he = he.next;
+            if (curr_he == loop.first_half_edge) break;
+        }
+    }
+
+    if (t_vals.items.len < 2) return &[_]Segment3D{};
+
+    // Sort crossing points by distance along the line
+    std.mem.sort(f64, t_vals.items, {}, struct {
+        fn lessThan(_: void, a: f64, b: f64) bool {
+            return a < b;
+        }
+    }.lessThan);
+
+    // Deduplicate identical hits (e.g., ray passed exactly through a vertex sharing two edges)
+    var deduped: std.ArrayListUnmanaged(f64) = .empty;
+    defer deduped.deinit(allocator);
+    for (t_vals.items) |t| {
+        if (deduped.items.len == 0 or @abs(deduped.items[deduped.items.len - 1] - t) > 1e-5) {
+            try deduped.append(allocator, t);
+        }
+    }
+
+    // Pair up entry/exit points to create finite internal segments
+    var segments: std.ArrayListUnmanaged(Segment3D) = .empty;
+    var i: usize = 0;
+    while (i + 1 < deduped.items.len) : (i += 2) {
+        const t_start = deduped.items[i];
+        const t_end = deduped.items[i + 1];
+
+        const p_start = math.add(line.origin, math.scale(line.direction, t_start));
+        const p_end = math.add(line.origin, math.scale(line.direction, t_end));
+        try segments.append(allocator, .{ .start = p_start, .end = p_end });
+    }
+
+    return segments.toOwnedSlice(allocator);
+}
+
+
