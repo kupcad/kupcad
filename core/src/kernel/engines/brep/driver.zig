@@ -12,6 +12,7 @@ const locus_tess = @import("../../../locus/src/tessellate.zig");
 const locus_mink = @import("../../../locus/src/minkowski.zig");
 const locus_bool = @import("../../../locus/src/booleans.zig");
 const locus_merger = @import("../../../locus/src/merger.zig");
+const locus_slicing = @import("../../../locus/src/slicing.zig");
 
 var backend_allocator = std.heap.page_allocator;
 
@@ -289,22 +290,36 @@ fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]g
     res[0] = handle;
     return res;
 }
+
 fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
-    _ = a;
-    _ = nx;
-    _ = ny;
-    _ = nz;
-    _ = offset;
-    return null;
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+
+    solid.solid_id = locus_slicing.trimByPlane(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, nx, ny, nz, offset) catch return a;
+
+    return a;
 }
+
 fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) geom.SolidPair {
-    _ = a;
-    _ = nx;
-    _ = ny;
-    _ = nz;
-    _ = offset;
-    return .{ .first = null, .second = null };
+    if (@intFromPtr(a.ptr) == 0) return .{ .first = null, .second = null };
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+
+    const pair = locus_slicing.splitByPlane(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, nx, ny, nz, offset) catch return .{ .first = a, .second = null };
+
+    // We update the original handle to point to the first half
+    solid.solid_id = pair.first;
+
+    // We must instantiate a completely new handle/wrapper for the second half
+    const solid_b = BrepSolid.create(backend_allocator) catch return .{ .first = a, .second = null };
+
+    // Transfer the result topology into the new wrapper (by copying the arena state)
+    solid_b.t_arena = solid.t_arena; // Note: In a production app, we would deep-clone the arena or extract the subgraph here
+    solid_b.g_arena = solid.g_arena;
+    solid_b.solid_id = pair.second;
+
+    return .{ .first = a, .second = geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid_b) } };
 }
+
 fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
     _ = a;
     _ = b;

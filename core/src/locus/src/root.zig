@@ -8,6 +8,7 @@ pub const quickhull = @import("quickhull.zig");
 pub const sweeps = @import("sweeps.zig");
 pub const minkowski = @import("minkowski.zig");
 pub const booleans = @import("booleans.zig");
+pub const slicing = @import("slicing.zig");
 pub const tessellate = @import("tessellate.zig");
 pub const driver = @import("driver.zig");
 

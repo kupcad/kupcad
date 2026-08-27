@@ -7,6 +7,7 @@ const tessellate = @import("tessellate.zig");
 const sweeps = @import("sweeps.zig");
 const minkowski = @import("minkowski.zig");
 const transforms = @import("transforms.zig");
+const locus_slicing = @import("slicing.zig");
 const math = @import("math.zig");
 
 pub const FfiMesh = struct {
@@ -203,6 +204,11 @@ fn getMeshImpl(shape: GeometryHandle) ?FfiMesh {
     };
 }
 
+fn trimByPlaneImpl(shape: GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?GeometryHandle {
+    const solid_id = locus_slicing.trimByPlane(g_allocator, &g_topo_arena, &g_geom_arena, @as(topo.SolidId, @intCast(shape)), nx, ny, nz, offset) catch return null;
+    return @as(GeometryHandle, solid_id);
+}
+
 pub const driver = struct {
     pub const cubeFn = cubeImpl;
     pub const cylinderFn = cylinderImpl;
@@ -217,4 +223,5 @@ pub const driver = struct {
     pub const volumeFn = volumeImpl;
     pub const surfaceAreaFn = surfaceAreaImpl;
     pub const getMeshFn = getMeshImpl;
+    pub const trimByPlaneFn = trimByPlaneImpl;
 };

@@ -4,6 +4,7 @@ const geom = @import("geometry.zig");
 const generators = @import("generators.zig");
 const transforms = @import("transforms.zig");
 const booleans = @import("booleans.zig");
+const slicing = @import("slicing.zig");
 
 test "Fuzz: Geometry Generation, Transforms, and Raycasting" {
     const alloc = std.testing.allocator;
@@ -62,6 +63,55 @@ test "Fuzz: Geometry Generation, Transforms, and Raycasting" {
         }
 
         // 7. Clear arenas for the next fuzz loop so we don't run out of memory
+        t_arena.clearRetainingCapacity();
+        g_arena.clearRetainingCapacity();
+    }
+}
+
+test "Fuzz: Plane Slicing and Boolean Stability" {
+    const alloc = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0xCAFECAFE);
+    const random = prng.random();
+
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    for (0..50) |_| {
+        // 1. Generate a random base shape
+        const solid_id = if (random.boolean())
+            try generators.generateCube(alloc, &t_arena, &g_arena, random.float(f64) * 50.0 + 10.0, random.float(f64) * 50.0 + 10.0, random.float(f64) * 50.0 + 10.0, true)
+        else
+            try generators.generateCylinder(alloc, &t_arena, &g_arena, random.float(f64) * 25.0 + 5.0, random.float(f64) * 50.0 + 10.0, true);
+
+        // 2. Randomly orient and offset it
+        _ = try transforms.rotateSolid(alloc, &t_arena, &g_arena, solid_id, random.float(f64) * 360.0, random.float(f64) * 360.0, random.float(f64) * 360.0);
+        _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, solid_id, random.float(f64) * 100.0 - 50.0, random.float(f64) * 100.0 - 50.0, random.float(f64) * 100.0 - 50.0);
+
+        // 3. Generate a random slicing plane normal vector
+        var nx = random.float(f64) * 2.0 - 1.0;
+        var ny = random.float(f64) * 2.0 - 1.0;
+        var nz = random.float(f64) * 2.0 - 1.0;
+        const mag = @sqrt(nx * nx + ny * ny + nz * nz);
+        if (mag < 0.001) {
+            nx = 0;
+            ny = 0;
+            nz = 1;
+        } else {
+            nx /= mag;
+            ny /= mag;
+            nz /= mag;
+        }
+
+        // 4. Generate a random slicing offset cutting near the origin
+        const offset = random.float(f64) * 50.0 - 25.0;
+
+        // 5. Perform the slice.
+        // We use `catch continue` because incredibly thin micro-slices (e.g., cutting exactly 1e-7 units off a corner)
+        // might trigger topological rejections. We are fuzzing to ensure the engine NEVER panics, loops infinitely, or leaks memory.
+        if (slicing.splitByPlane(alloc, &t_arena, &g_arena, solid_id, nx, ny, nz, offset)) |_| {} else |_| {}
+
         t_arena.clearRetainingCapacity();
         g_arena.clearRetainingCapacity();
     }

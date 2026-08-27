@@ -84,3 +84,27 @@ test "Driver: Custom Matrix Transformations" {
     // Original X max was 5.0. Plus 20 = 25.0
     try std.testing.expectApproxEqAbs(25.0, bbox.max[0], 1e-6);
 }
+
+test "Driver: Trim by Plane (Half-Space Slicing)" {
+    driver.init(std.testing.allocator);
+    defer driver.deinit();
+
+    // Generate a 10x10x10 cube, centered at origin (-5 to +5 on all axes)
+    const cube_handle = driver.driver.cubeFn(10, 10, 10, true) orelse return error.CubeFailed;
+
+    // Slice it perfectly in half down the Z=0 plane.
+    // Normal = (0, 0, 1), offset = 0.
+    // We expect the top half (+Z) to be discarded, leaving -5 to 0 on the Z axis.
+    const sliced_handle = driver.driver.trimByPlaneFn(cube_handle, 0, 0, 1, 0.0) orelse return error.TrimFailed;
+
+    // Validate using the bounding box
+    const bbox = driver.driver.boundingBoxFn(sliced_handle) orelse return error.BBoxFailed;
+
+    // The Z max should now be perfectly 0.0, while Z min remains -5.0
+    try std.testing.expectApproxEqAbs(0.0, bbox.max[2], 1e-6);
+    try std.testing.expectApproxEqAbs(-5.0, bbox.min[2], 1e-6);
+
+    // Volume of a 10x10x5 box should be exactly 500
+    const vol = driver.driver.volumeFn(sliced_handle);
+    try std.testing.expectApproxEqAbs(500.0, vol, 1e-5);
+}
