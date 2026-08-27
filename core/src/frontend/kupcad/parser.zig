@@ -46,6 +46,7 @@ pub const Parser = struct {
     diagnostics: Diagnostics,
     comments: std.ArrayListUnmanaged(common_token.Comment) = .empty,
     in_block_params: bool = false,
+    scope_depth: u32 = 0,
 
     // --- Zero-Waste Scratch Buffers ---
     scratch_nodes: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
@@ -385,6 +386,10 @@ pub const Parser = struct {
         const start_tok = try self.expect(.minus_greater);
         const params = try self.parseParenParams();
         self.skipIgnored();
+
+        self.scope_depth += 1;
+        defer self.scope_depth -= 1;
+
         var body: ast.NodeIndex = .none;
         if (self.tag(0) == .l_brace) {
             self.advance();
@@ -484,8 +489,11 @@ pub const Parser = struct {
             _ = try self.expect(.pipe);
         }
 
+        self.scope_depth += 1;
         const end_tags: []const Tag = if (is_brace) &.{.r_brace} else &.{.keyword_end};
         const block_node_idx = try self.parseBlock(end_tags);
+        self.scope_depth -= 1;
+
         const end_tok = self.tok_idx;
 
         if (is_brace) {
@@ -514,41 +522,107 @@ pub const Parser = struct {
     }
 
     fn parseImportOrExportStatement(self: *Parser, is_export: bool) ParseError!ast.NodeIndex {
+        if (self.scope_depth > 0) {
+            self.reportError(self.getLoc(self.tok_idx), "Import and Export statements are only allowed at the top level", .{});
+            return ParseError.InvalidExpression;
+        }
+
         const start_tok = try self.expect(if (is_export) .keyword_export else .keyword_import);
         const s_len = self.scratch_strings.items.len;
         defer self.scratch_strings.shrinkRetainingCapacity(s_len);
+
+        var path_node: ast.StringId = .none;
+        var attributes: ast.NodeIndex = .none;
+        var has_from = false;
+
         if (self.tag(0) == .l_brace) {
             self.advance();
             while (self.tag(0) != .r_brace and self.tag(0) != .eof) {
                 self.skipIgnored();
-                if (self.tag(0) == .ident or self.tag(0) == .constant) {
-                    try self.scratch_strings.append(self.allocator, try self.b.intern(self.lexeme(0)));
+
+                // Track start of the namespace path
+                const path_start_tok = self.tok_idx;
+
+                if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
+                self.advance();
+
+                // Consume any `::` chain
+                while (self.tag(0) == .colon_colon) {
                     self.advance();
-                } else return ParseError.UnexpectedToken;
+                    if (self.tag(0) == .constant or self.tag(0) == .ident) {
+                        self.advance();
+                    } else return ParseError.UnexpectedToken;
+                }
+
+                // Combine the entire `A::B::C` token span into a single StringId
+                const p_start = self.tokens.starts[path_start_tok];
+                const prev_tok = self.tok_idx - 1;
+                const p_end = self.tokens.starts[prev_tok] + self.tokens.lengths[prev_tok];
+
+                try self.scratch_strings.append(self.allocator, try self.b.intern(self.source[p_start..p_end]));
+
                 if (self.tag(0) == .comma) self.advance() else break;
             }
             _ = try self.expect(.r_brace);
             _ = try self.expect(.keyword_from);
+            has_from = true;
         } else if (self.tag(0) == .constant or self.tag(0) == .ident) {
-            try self.scratch_strings.append(self.allocator, try self.b.intern(self.lexeme(0)));
-            self.advance();
-            _ = try self.expect(.keyword_from);
-        } else if (self.tag(0) != .string) {
+            // Support raw paths like `export Test::Example, Math::Vector`
+            while (true) {
+                self.skipIgnored();
+                const path_start_tok = self.tok_idx;
+                if (self.tag(0) != .constant and self.tag(0) != .ident) return ParseError.UnexpectedToken;
+
+                self.advance();
+                while (self.tag(0) == .colon_colon) {
+                    self.advance();
+                    if (self.tag(0) == .constant or self.tag(0) == .ident) {
+                        self.advance();
+                    } else return ParseError.UnexpectedToken;
+                }
+
+                // Combine the entire `A::B::C` token span into a single unfragmented StringId
+                const p_start = self.tokens.starts[path_start_tok];
+                const prev_tok = self.tok_idx - 1;
+                const p_end = self.tokens.starts[prev_tok] + self.tokens.lengths[prev_tok];
+
+                try self.scratch_strings.append(self.allocator, try self.b.intern(self.source[p_start..p_end]));
+
+                if (self.tag(0) == .comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+
+            if (self.tag(0) == .keyword_from) {
+                self.advance();
+                has_from = true;
+            }
+        } else if (self.tag(0) == .string) {
+            has_from = true; // e.g. import "file.kup"
+        } else {
             return ParseError.UnexpectedToken;
         }
-        const path_idx = try self.expect(.string);
-        const interned_path = try self.b.intern(self.tokens.lexeme(self.source, path_idx));
-        var attributes: ast.NodeIndex = .none;
-        self.skipIgnored();
-        if (self.tag(0) == .keyword_with) {
-            self.advance();
-            attributes = try self.parseHashLiteral();
+
+        if (has_from) {
+            const path_idx = try self.expect(.string);
+            path_node = try self.b.intern(self.tokens.lexeme(self.source, path_idx));
+            self.skipIgnored();
+            if (self.tag(0) == .keyword_with) {
+                self.advance();
+                attributes = try self.parseHashLiteral();
+            }
+        } else if (!is_export) {
+            self.reportError(self.getLoc(start_tok), "Import statement missing 'from' path", .{});
+            return ParseError.UnexpectedToken;
         }
+
         const span = try self.b.addStringLists(self.scratch_strings.items[s_len..]);
         if (is_export) {
-            return self.b.exportStmt(span, interned_path, attributes, start_tok) catch ParseError.OutOfMemory;
+            return self.b.exportStmt(span, path_node, attributes, start_tok) catch ParseError.OutOfMemory;
         } else {
-            return self.b.importStmt(span, interned_path, attributes, start_tok) catch ParseError.OutOfMemory;
+            return self.b.importStmt(span, path_node, attributes, start_tok) catch ParseError.OutOfMemory;
         }
     }
 
@@ -669,8 +743,11 @@ pub const Parser = struct {
             self.advance(); // consume '='
             self.skipIgnored(); // skip spaces/newlines before the expression
 
-            // Parse the single expression on the right hand side
+            // Increment scope_depth so endless method expressions can't trigger top-level imports/exports
+            self.scope_depth += 1;
             const expr = try self.parseExprOrMultiAssign();
+            self.scope_depth -= 1;
+
             const end_tok = self.tok_idx;
 
             // Secretly wrap the single expression inside a standard block
@@ -685,10 +762,15 @@ pub const Parser = struct {
         }
 
         // --- TRADITIONAL MULTI-LINE METHOD ---
+        // Increment scope_depth to prevent top-level imports/exports inside the method body
+        self.scope_depth += 1;
         const body_node = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
         const payload = try self.parseRescueAndEnsure();
+        self.scope_depth -= 1;
+
         const end_tok = self.tok_idx;
         _ = try self.expect(.keyword_end);
+
         var final_body = body_node;
 
         if (payload.rescues.start != payload.rescues.end or payload.ensure_body != .none) {
@@ -703,7 +785,11 @@ pub const Parser = struct {
         const name_idx = if (self.tag(0) == .constant or self.tag(0) == .ident) self.tok_idx else return ParseError.UnexpectedToken;
         self.advance();
         self.skipIgnored();
+
+        self.scope_depth += 1;
         const body = try self.parseBlock(&.{.keyword_end});
+        self.scope_depth -= 1;
+
         const end_tok = self.tok_idx;
         _ = try self.expect(.keyword_end);
         return self.b.moduleStmt(try self.b.intern(self.tokens.lexeme(self.source, name_idx)), try self.b.addParams(&.{}), body, end_tok, start_tok) catch ParseError.OutOfMemory;
@@ -740,7 +826,12 @@ pub const Parser = struct {
             self.advance();
             const target = try self.parseExpression(.none);
             self.skipIgnored();
+
+            // Increment scope_depth to prevent top-level imports/exports inside the singleton block
+            self.scope_depth += 1;
             const body = try self.parseBlock(&.{.keyword_end});
+            self.scope_depth -= 1;
+
             _ = try self.expect(.keyword_end);
             return self.b.singletonClass(target, body, start_tok) catch ParseError.OutOfMemory;
         }
@@ -751,8 +842,14 @@ pub const Parser = struct {
             self.advance();
             super_class = try self.parseClassPath();
         }
+
         self.skipIgnored();
+
+        // Increment scope_depth to prevent top-level imports/exports inside the class body
+        self.scope_depth += 1;
         const body = try self.parseBlock(&.{.keyword_end});
+        self.scope_depth -= 1;
+
         const end_tok = self.tok_idx;
         _ = try self.expect(.keyword_end);
         return self.b.classStmt(name_node, super_class, body, end_tok, start_tok) catch ParseError.OutOfMemory;

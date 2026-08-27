@@ -3392,3 +3392,122 @@ test "KupCAD Parser: Ruby Double-Quoted Escape Sequences" {
 
     try testing.expectEqualStrings("Line 1\nLine 2\tTabbed\"Quote\\Hash#", parsed_str);
 }
+
+test "KupCAD Parser: Standalone Export of Methods and Variables" {
+    // Exporting lowercase identifiers (methods/variables) mixed with a constant
+    const source = "export my_func, local_var, SomeClass";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    try testing.expectEqual(ast.Tag.export_stmt, stmt.tag);
+
+    const es = tree.exportStmt(stmt);
+    const symbols = tree.getStringLists(es.symbols);
+
+    // Verifies the parser correctly accepts `.ident` tokens without throwing UnexpectedToken
+    try testing.expectEqual(@as(usize, 3), symbols.len);
+    try testing.expectEqualStrings("my_func", tree.getString(symbols[0]));
+    try testing.expectEqualStrings("local_var", tree.getString(symbols[1]));
+    try testing.expectEqualStrings("SomeClass", tree.getString(symbols[2]));
+
+    // Standalone exports don't have a `from` path
+    try testing.expectEqual(ast.StringId.none, es.path);
+}
+
+test "KupCAD Parser: Braced Export of Methods and Variables" {
+    const source = "export { calculate_area, PI } from \"./math.kup\"";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    try testing.expectEqual(ast.Tag.export_stmt, stmt.tag);
+
+    const es = tree.exportStmt(stmt);
+    try testing.expectEqualStrings("./math.kup", tree.getString(es.path));
+
+    const symbols = tree.getStringLists(es.symbols);
+    try testing.expectEqual(@as(usize, 2), symbols.len);
+
+    // Verifies braced lists successfully process `.ident` and `.constant`
+    try testing.expectEqualStrings("calculate_area", tree.getString(symbols[0]));
+    try testing.expectEqualStrings("PI", tree.getString(symbols[1]));
+}
+
+test "KupCAD Parser: Standalone Namespace Exports" {
+    const source = "export Test::Example, Math::Vector";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    try testing.expectEqual(ast.Tag.export_stmt, stmt.tag);
+
+    const es = tree.exportStmt(stmt);
+    const symbols = tree.getStringLists(es.symbols);
+
+    // Verifies the `::` namespaces were perfectly merged into single string IDs
+    try testing.expectEqual(@as(usize, 2), symbols.len);
+    try testing.expectEqualStrings("Test::Example", tree.getString(symbols[0]));
+    try testing.expectEqualStrings("Math::Vector", tree.getString(symbols[1]));
+
+    // Standalone exports don't have a `from` path
+    try testing.expectEqual(ast.StringId.none, es.path);
+}
+
+test "KupCAD Parser: Braced Namespace Imports" {
+    const source = "import { Custom::Example, Base::Math::Vector } from \"./lib.kup\"";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    try testing.expectEqual(ast.Tag.import_stmt, stmt.tag);
+
+    const is_stmt = tree.importStmt(stmt);
+    try testing.expectEqualStrings("./lib.kup", tree.getString(is_stmt.path));
+
+    const symbols = tree.getStringLists(is_stmt.symbols);
+    try testing.expectEqual(@as(usize, 2), symbols.len);
+
+    // Verifies braced lists also successfully process `::` tokens
+    try testing.expectEqualStrings("Custom::Example", tree.getString(symbols[0]));
+    try testing.expectEqualStrings("Base::Math::Vector", tree.getString(symbols[1]));
+}
+
+test "KupCAD Parser: Rejects Nested Import/Export Statements" {
+    const source =
+        \\class Wrapper
+        \\  export Test::Example
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    // The parser will process the class, increment scope_depth, and then fail on `export`
+    _ = pt.parser.parseProgram() catch {};
+
+    try testing.expect(pt.parser.diagnostics.list.items.len > 0);
+    try testing.expectEqualStrings("Import and Export statements are only allowed at the top level", pt.parser.diagnostics.list.items[0].message);
+}
+
+test "KupCAD Parser: Rejects Imports inside Def Blocks" {
+    const source =
+        \\def fetch_data()
+        \\  import { Data } from "data.kup"
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    _ = pt.parser.parseProgram() catch {};
+
+    try testing.expect(pt.parser.diagnostics.list.items.len > 0);
+    try testing.expectEqualStrings("Import and Export statements are only allowed at the top level", pt.parser.diagnostics.list.items[0].message);
+}
