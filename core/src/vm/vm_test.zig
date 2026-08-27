@@ -8254,6 +8254,75 @@ test "VM CAD: align and center mesh methods correctly translate geometry" {
     try testing.expectApproxEqAbs(@as(f64, 52.0), arr_obj.items.items[3].asNumber(), 0.001);
 }
 
+test "VM CAD: repeat_linear duplicates and translates geometry" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Create a 10x10x10 cube, and repeat it 5 times along the X axis, spaced 10 units apart.
+    const source =
+        \\base = cube(10, center: false)
+        \\pattern = base.repeat_linear(5, [10, 0, 0])
+        \\box = pattern.bbox()
+        \\[box.x_size(), pattern.volume()]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    // 1. Check X Size: 5 cubes of size 10, offset by 10 each -> total span is exactly 50.
+    try testing.expectApproxEqAbs(@as(f64, 50.0), arr_obj.items.items[0].asNumber(), 0.001);
+
+    // 2. Check Volume: 5 cubes * 1000 volume each = 5000.
+    try testing.expectApproxEqAbs(@as(f64, 5000.0), arr_obj.items.items[1].asNumber(), 0.1);
+}
+
+test "VM CAD: repeat_polar duplicates and rotates geometry radially" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Create a centered 10x10x10 cube, shift it 20 units out on X, and copy it 4 times radially.
+    const source =
+        \\base = cube(10, center: true).translate(20, 0, 0)
+        \\pattern = base.repeat_polar(4, angle: 360)
+        \\box = pattern.bbox()
+        \\[box.x_size(), box.y_size(), pattern.volume()]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = arr_val.asArray();
+
+    // 1. Check Sizes: 4 cubes placed at radius 20. Bounding box max should be 25, min -25. Size = 50 on X and Y.
+    try testing.expectApproxEqAbs(@as(f64, 50.0), arr_obj.items.items[0].asNumber(), 0.001);
+    try testing.expectApproxEqAbs(@as(f64, 50.0), arr_obj.items.items[1].asNumber(), 0.001);
+
+    // 2. Check Volume: 4 cubes * 1000 volume each = 4000.
+    try testing.expectApproxEqAbs(@as(f64, 4000.0), arr_obj.items.items[2].asNumber(), 0.1);
+}
+
 test "VM CAD: regular_polygon creates 2D cross sections" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

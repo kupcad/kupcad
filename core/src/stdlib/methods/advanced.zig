@@ -1,6 +1,7 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const util = @import("util.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 
@@ -160,31 +161,51 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
     return try vm.allocateWorkplane(receiver, faces[0].centroid, faces[0].normal);
 }
 
-pub fn meshSplitByPlane(vm: *VM, receiver: *value.ObjGeometry, nx: f64, ny: f64, nz: f64, offset: ?f64) !value.Value {
-    // We must concrete-evaluate the DAG to split it natively
-    const handle = try vm.ensureConcrete(value.Value.initGeometry(receiver));
-    const pair = kernel.splitByPlane(handle, nx, ny, nz, offset orelse 0.0);
+pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
 
-    // Yield an array of exactly 2 items: [top_half, bottom_half]
-    const arr_obj = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&arr_obj.obj)); // protect from GC
+    var nx: f64 = 1.0;
+    var ny: f64 = 0.0;
+    var nz: f64 = 0.0;
+    var offset: f64 = 0.0;
 
-    if (pair.first) |first_handle| {
-        const geom_val = try vm.allocateGeometry(.{ .concrete = first_handle });
-        try arr_obj.items.append(vm.allocator, geom_val);
-    } else {
-        try arr_obj.items.append(vm.allocator, value.Value.initNil());
+    if (args.len >= 4 and args[0].isNumber() and args[1].isNumber() and args[2].isNumber() and args[3].isNumber()) {
+        nx = args[0].asNumber();
+        ny = args[1].asNumber();
+        nz = args[2].asNumber();
+        offset = args[3].asNumber();
+    } else if (args.len >= 1 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+        const map = args[args.len - 1].asMap();
+        if (util.getKey(map, "nx")) |v| if (v.isNumber()) {
+            nx = v.asNumber();
+        };
+        if (util.getKey(map, "ny")) |v| if (v.isNumber()) {
+            ny = v.asNumber();
+        };
+        if (util.getKey(map, "nz")) |v| if (v.isNumber()) {
+            nz = v.asNumber();
+        };
+        if (util.getKey(map, "offset")) |v| if (v.isNumber()) {
+            offset = v.asNumber();
+        };
     }
 
-    if (pair.second) |second_handle| {
-        const geom_val = try vm.allocateGeometry(.{ .concrete = second_handle });
-        try arr_obj.items.append(vm.allocator, geom_val);
-    } else {
-        try arr_obj.items.append(vm.allocator, value.Value.initNil());
-    }
+    const target_idx = receiver.asGeometry().dag_idx;
 
-    _ = vm.pop();
-    return value.Value.initObj(&arr_obj.obj);
+    // Front half: trimmed along plane (nx, ny, nz, offset)
+    const front_dag = try vm.dag_builder.addTrimByPlane(target_idx, nx, ny, nz, offset);
+
+    // Back half: trimmed along opposite plane (-nx, -ny, -nz, -offset)
+    const back_dag = try vm.dag_builder.addTrimByPlane(target_idx, -nx, -ny, -nz, -offset);
+
+    const front_geom = try vm.allocateGeometry(.{ .symbolic = front_dag });
+    const back_geom = try vm.allocateGeometry(.{ .symbolic = back_dag });
+
+    const arr = try vm.gc.allocateArray(vm);
+    try arr.items.append(vm.allocator, front_geom);
+    try arr.items.append(vm.allocator, back_geom);
+
+    return value.Value.initObj(&arr.obj);
 }
 
 pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {

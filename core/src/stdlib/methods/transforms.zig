@@ -243,3 +243,79 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, sx, sy, sz);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
+
+pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (args.len < 1 or !args[0].isNumber()) {
+        vm.reportError("ArgumentError: repeat_linear requires a 'count' number.\n", .{});
+        return error.RuntimeError;
+    }
+
+    const count: usize = @intFromFloat(args[0].asNumber());
+    if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
+
+    var tx: f64 = 0.0;
+    var ty: f64 = 0.0;
+    var tz: f64 = 0.0;
+
+    if (args.len > 1) {
+        if (args[1].isArray()) {
+            const arr = args[1].asArray().items.items;
+            if (arr.len > 0 and arr[0].isNumber()) tx = arr[0].asNumber();
+            if (arr.len > 1 and arr[1].isNumber()) ty = arr[1].asNumber();
+            if (arr.len > 2 and arr[2].isNumber()) tz = arr[2].asNumber();
+        } else if (args[1].isNumber()) {
+            tx = args[1].asNumber();
+            if (args.len > 2 and args[2].isNumber()) ty = args[2].asNumber();
+            if (args.len > 3 and args[3].isNumber()) tz = args[3].asNumber();
+        }
+    }
+
+    const base_idx = receiver.asGeometry().dag_idx;
+    var current_idx = base_idx;
+
+    for (1..count) |i| {
+        const factor = @as(f64, @floatFromInt(i));
+        const next_idx = try vm.dag_builder.addTranslate(base_idx, tx * factor, ty * factor, tz * factor);
+        current_idx = try vm.dag_builder.addBinary(.union_op, current_idx, next_idx);
+    }
+
+    return try vm.allocateGeometry(.{ .symbolic = current_idx });
+}
+
+pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (args.len < 1 or !args[0].isNumber()) {
+        vm.reportError("ArgumentError: repeat_polar requires a 'count' number.\n", .{});
+        return error.RuntimeError;
+    }
+
+    const count: usize = @intFromFloat(args[0].asNumber());
+    if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
+
+    var total_angle: f64 = 360.0;
+    if (args.len > 1 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+        const map = args[args.len - 1].asMap();
+        if (util.getKey(map, "angle")) |v| if (v.isNumber()) {
+            total_angle = v.asNumber();
+        };
+    } else if (args.len > 1 and args[1].isNumber()) {
+        total_angle = args[1].asNumber();
+    }
+
+    const step_angle = if (@abs(total_angle - 360.0) < 0.001)
+        total_angle / @as(f64, @floatFromInt(count))
+    else
+        total_angle / @as(f64, @floatFromInt(count - 1));
+
+    const base_idx = receiver.asGeometry().dag_idx;
+    var current_idx = base_idx;
+
+    for (1..count) |i| {
+        const rot_z = step_angle * @as(f64, @floatFromInt(i));
+        const next_idx = try vm.dag_builder.addRotate(base_idx, 0, 0, rot_z);
+        current_idx = try vm.dag_builder.addBinary(.union_op, current_idx, next_idx);
+    }
+
+    return try vm.allocateGeometry(.{ .symbolic = current_idx });
+}

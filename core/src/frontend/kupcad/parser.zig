@@ -181,6 +181,33 @@ pub const Parser = struct {
         }
     }
 
+    /// Safely peeks ahead through newlines and comments.
+    /// If it finds a method chain continuation (e.g., `.`), it consumes the whitespace
+    /// and commits to the chain. Otherwise, it leaves the stream untouched.
+    fn skipNewlinesIfChainedCall(self: *Parser) bool {
+        var lookahead: u24 = 0;
+        while (self.tag(lookahead) == .newline or self.tag(lookahead) == .comment or self.tag(lookahead) == .docstring) {
+            lookahead += 1;
+        }
+
+        const peek_tag = self.tag(lookahead);
+        if (peek_tag == .dot or peek_tag == .ampersand_dot) {
+            // It's a valid chain! Commit to consuming the whitespace/comments
+            while (lookahead > 0) {
+                if (self.tag(0) == .comment) {
+                    self.comments.append(self.allocator, .{
+                        .lexeme = self.lexeme(0),
+                        .loc = self.getLoc(self.tok_idx),
+                    }) catch {};
+                }
+                self.advance();
+                lookahead -= 1;
+            }
+            return true;
+        }
+        return false;
+    }
+
     fn isAssignmentOp(t: Tag) bool {
         return switch (t) {
             .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => true,
@@ -1040,24 +1067,11 @@ pub const Parser = struct {
             },
             .string => {
                 const str_tok = self.tok_idx;
+                const raw_lexeme = self.tokens.lexeme(self.source, str_tok);
                 self.advance();
-
-                // Only skip comments on the same line to avoid swallowing newlines after string literals!
                 self.skipComments();
 
-                if (self.tag(0) == .string) {
-                    var buf: std.ArrayListUnmanaged(u8) = .empty;
-                    defer buf.deinit(self.allocator);
-                    try buf.appendSlice(self.allocator, self.tokens.lexeme(self.source, str_tok));
-                    while (self.tag(0) == .string) {
-                        try buf.appendSlice(self.allocator, self.lexeme(0));
-                        self.advance();
-                        self.skipComments();
-                    }
-                    left = try self.b.stringNode(buf.items, str_tok);
-                } else {
-                    left = try self.b.stringNode(self.tokens.lexeme(self.source, str_tok), str_tok);
-                }
+                left = try self.b.stringNodeUnescaped(raw_lexeme, str_tok);
             },
             .symbol => {
                 self.advance();
@@ -1105,12 +1119,10 @@ pub const Parser = struct {
         }
 
         while (true) {
-            if (self.tag(0) == .newline) {
-                const next_tag = self.tag(1);
-                if (next_tag == .dot or next_tag == .ampersand_dot) {
-                    self.advance();
-                } else {
-                    break;
+            const t = self.tag(0);
+            if (t == .newline or t == .comment or t == .docstring) {
+                if (!self.skipNewlinesIfChainedCall()) {
+                    break; // Standard statement terminator, stop parsing the expression
                 }
             }
 
@@ -1158,7 +1170,8 @@ pub const Parser = struct {
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
 
-        try self.scratch_nodes.append(self.allocator, try self.b.stringNode(self.lexeme(0), start_tok));
+        const raw_start = self.lexeme(0);
+        try self.scratch_nodes.append(self.allocator, try self.b.stringNodeUnescaped(raw_start, start_tok));
         self.advance();
 
         while (true) {
@@ -1178,13 +1191,12 @@ pub const Parser = struct {
 
             self.skipIgnored();
 
-            if (self.tag(0) == .string_end) {
-                try self.scratch_nodes.append(self.allocator, try self.b.stringNode(self.lexeme(0), self.tok_idx));
+            if (self.tag(0) == .string_end or self.tag(0) == .string_mid) {
+                const raw_part = self.lexeme(0);
+                try self.scratch_nodes.append(self.allocator, try self.b.stringNodeUnescaped(raw_part, self.tok_idx));
+                const is_end = (self.tag(0) == .string_end);
                 self.advance();
-                break;
-            } else if (self.tag(0) == .string_mid) {
-                try self.scratch_nodes.append(self.allocator, try self.b.stringNode(self.lexeme(0), self.tok_idx));
-                self.advance();
+                if (is_end) break;
             } else {
                 return ParseError.UnexpectedToken;
             }

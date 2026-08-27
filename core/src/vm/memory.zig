@@ -303,7 +303,7 @@ pub const GC = struct {
         const ptr = try self.allocateObject(vm, value.ObjGeometry, &self.geometries, .geometry);
         ptr.dag_idx = switch (state) {
             .symbolic => |idx| idx,
-            .concrete => 0,
+            .concrete => std.math.maxInt(u32), // Sentinel value instead of 0
         };
         ptr.cached_handle = switch (state) {
             .symbolic => null,

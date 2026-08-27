@@ -3352,3 +3352,43 @@ test "KupCAD Parser: Attribute accessors AST parsing" {
     try testing.expectEqual(ast.Tag.method_call, pt.getNode(stmts[0]).tag);
     try testing.expectEqualStrings("attr_accessor", tree.getString(tree.methodCall(pt.getNode(stmts[0])).method_name));
 }
+
+test "KupCAD Parser: Multi-Line Fluent API with Trailing Inline Comments" {
+    const source =
+        \\part
+        \\  .translate(x: 10) # Trailing comment 1
+        \\  .rotate(z: 45)    # Trailing comment 2
+        \\  .chamfer()
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    try testing.expectEqual(ast.Tag.method_call, stmt.tag);
+
+    // Check final method in the chain
+    const mc = tree.methodCall(stmt);
+    try testing.expectEqualStrings("chamfer", tree.getString(mc.method_name));
+
+    // Check middle method
+    const prev_call = pt.getNode(mc.receiver);
+    const prev_mc = tree.methodCall(prev_call);
+    try testing.expectEqualStrings("rotate", tree.getString(prev_mc.method_name));
+}
+
+test "KupCAD Parser: Ruby Double-Quoted Escape Sequences" {
+    const source = "\"Line 1\\nLine 2\\tTabbed\\\"Quote\\\\Hash\\#\"";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const expr_idx = try pt.parser.parseExpression(.none);
+    const expr = pt.getNode(expr_idx);
+
+    try testing.expectEqual(ast.Tag.string, expr.tag);
+    const str_id = @as(ast.StringId, @enumFromInt(expr.data));
+    const parsed_str = pt.parser.b.tree.getString(str_id);
+
+    try testing.expectEqualStrings("Line 1\nLine 2\tTabbed\"Quote\\Hash#", parsed_str);
+}

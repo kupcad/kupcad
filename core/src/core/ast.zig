@@ -786,6 +786,48 @@ pub const Builder = struct {
         return id;
     }
 
+    /// Processes Ruby-style escape sequences (\n, \t, \", etc.) before interning
+    pub fn internUnescaped(self: *Builder, input: []const u8) !StringId {
+        // Fast path: if no backslashes exist, intern directly
+        if (std.mem.indexOfScalar(u8, input, '\\') == null) {
+            return try self.intern(input);
+        }
+
+        var buf = try std.ArrayListUnmanaged(u8).initCapacity(self.allocator, input.len);
+        defer buf.deinit(self.allocator);
+
+        var i: usize = 0;
+        while (i < input.len) : (i += 1) {
+            if (input[i] == '\\' and i + 1 < input.len) {
+                const next = input[i + 1];
+                const escaped_byte: ?u8 = switch (next) {
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    'f' => 12, // Form feed (\f)
+                    'v' => 11, // Vertical tab (\v)
+                    'b' => 8, // Backspace (\b)
+                    'a' => 7, // Bell (\a)
+                    'e' => 27, // Escape (\e)
+                    '"' => '"',
+                    '\\' => '\\',
+                    '#' => '#',
+                    '0' => 0,
+                    else => next,
+                };
+
+                if (escaped_byte) |b| {
+                    try buf.append(self.allocator, b);
+                    i += 1;
+                    continue;
+                }
+            }
+            try buf.append(self.allocator, input[i]);
+        }
+
+        return try self.intern(buf.items);
+    }
+
     /// Serializes payloads sequentially into the global DoD extra_data array
     fn addExtra(self: *Builder, items: anytype) !u32 {
         const start = @as(u32, @intCast(self.tree.extra_data.items.len));
@@ -925,6 +967,11 @@ pub const Builder = struct {
 
     pub fn stringNode(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
         const str_id = try self.intern(lexeme_str);
+        return self.createNode(.string, main_token, @intFromEnum(str_id));
+    }
+
+    pub fn stringNodeUnescaped(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
+        const str_id = try self.internUnescaped(lexeme_str);
         return self.createNode(.string, main_token, @intFromEnum(str_id));
     }
 

@@ -4,6 +4,53 @@ const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
 
+fn dumpDAG(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) void {
+    if (depth > 20) {
+        std.debug.print("... [max depth reached]\n", .{});
+        return;
+    }
+    if (node_idx >= vm.dag_builder.nodes.items.len) {
+        std.debug.print("[OUT OF BOUNDS: {d}]\n", .{node_idx});
+        return;
+    }
+
+    const node = vm.dag_builder.nodes.items[node_idx];
+
+    var i: usize = 0;
+    while (i < depth) : (i += 1) std.debug.print("  ", .{});
+
+    std.debug.print("Node #{d}: {s}", .{ node_idx, @tagName(node.tag) });
+
+    switch (node.tag) {
+        .union_op, .difference_op, .intersection_op, .cs_union_op, .cs_difference_op, .cs_intersection_op, .minkowski => {
+            const p = vm.dag_builder.getBinaryPayload(node);
+            std.debug.print("\n", .{});
+            dumpDAG(vm, p.left, depth + 1);
+            dumpDAG(vm, p.right, depth + 1);
+        },
+        .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material => {
+            const p = vm.dag_builder.getTranslatePayload(node);
+            std.debug.print("\n", .{});
+            dumpDAG(vm, p.target, depth + 1);
+        },
+        .extrude, .revolve => {
+            const p = vm.dag_builder.getExtrudePayload(node);
+            std.debug.print(" (sweeping 2D target)\n", .{});
+            dumpDAG(vm, p.target, depth + 1);
+        },
+        .batch_union_op, .batch_hull_op => {
+            const targets = vm.dag_builder.getBatchUnionPayload(node);
+            std.debug.print(" (batch count: {d})\n", .{targets.len});
+            for (targets) |t_idx| {
+                dumpDAG(vm, t_idx, depth + 1);
+            }
+        },
+        else => {
+            std.debug.print("\n", .{});
+        },
+    }
+}
+
 pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHandle {
     const node = vm.dag_builder.nodes.items[node_idx];
 
@@ -136,7 +183,15 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
             return kernel.setMaterial(target, p.material_id) orelse return error.RuntimeError;
         },
         else => {
-            vm.reportError("Runtime Error: Expected 3D Geometry node in DAG.\n", .{});
+            std.debug.print("\n========================================\n", .{});
+            std.debug.print("🔥 DAG EVALUATION CRASH DETECTED 🔥\n", .{});
+            std.debug.print("Failed at Node Index: {d} | Invalid Tag: '{s}'\n", .{ node_idx, @tagName(node.tag) });
+            std.debug.print("----------------------------------------\n", .{});
+            std.debug.print("DAG Hierarchy Tree:\n", .{});
+            dumpDAG(vm, node_idx, 0);
+            std.debug.print("========================================\n\n", .{});
+
+            vm.reportError("Runtime Error: Expected 3D Geometry node in DAG (found '{s}' at Node #{d}).\n", .{ @tagName(node.tag), node_idx });
             return error.RuntimeError;
         },
     }

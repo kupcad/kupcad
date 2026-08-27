@@ -141,12 +141,56 @@ pub fn buildModel(
     }
 
     var main_handle_opt: ?geom.GeometryHandle = null;
+    var batch_created_handle: ?geom.GeometryHandle = null;
+    defer if (batch_created_handle) |h| kernel.destruct(h);
+
     if (vm.stack_top > 0) {
         const final_val = vm.stack[0];
+
         if (final_val.isGeometry()) {
+            // 1. Direct Geometry Object
             const main_handle = try vm.ensureConcrete(final_val);
             try export_handles.append(allocator, main_handle);
             main_handle_opt = main_handle;
+        } else if (final_val.isAssembly()) {
+            // 2. Assembly Object (Extract all member parts)
+            var asm_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
+            defer asm_handles.deinit(allocator);
+
+            for (final_val.asAssembly().parts.items.items) |part_val| {
+                if (part_val.isGeometry()) {
+                    const h = try vm.ensureConcrete(part_val);
+                    try export_handles.append(allocator, h);
+                    try asm_handles.append(allocator, h);
+                }
+            }
+
+            if (asm_handles.items.len == 1) {
+                main_handle_opt = asm_handles.items[0];
+            } else if (asm_handles.items.len > 1) {
+                // Combine multi-part assemblies into a single CSG mesh for STL/STEP exports
+                main_handle_opt = kernel.batchBoolean(allocator, asm_handles.items, .union_op);
+                batch_created_handle = main_handle_opt;
+            }
+        } else if (final_val.isArray()) {
+            // 3. Array of Geometries
+            var arr_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
+            defer arr_handles.deinit(allocator);
+
+            for (final_val.asArray().items.items) |part_val| {
+                if (part_val.isGeometry()) {
+                    const h = try vm.ensureConcrete(part_val);
+                    try export_handles.append(allocator, h);
+                    try arr_handles.append(allocator, h);
+                }
+            }
+
+            if (arr_handles.items.len == 1) {
+                main_handle_opt = arr_handles.items[0];
+            } else if (arr_handles.items.len > 1) {
+                main_handle_opt = kernel.batchBoolean(allocator, arr_handles.items, .union_op);
+                batch_created_handle = main_handle_opt;
+            }
         }
     }
 

@@ -17,6 +17,8 @@ pub const meshAlign = transforms.meshAlign;
 pub const meshMirror = transforms.meshMirror;
 pub const meshTransform = transforms.meshTransform;
 pub const meshResize = transforms.meshResize;
+pub const meshRepeatLinear = transforms.meshRepeatLinear;
+pub const meshRepeatPolar = transforms.meshRepeatPolar;
 // sweeps
 pub const meshExtrude = sweeps.meshExtrude;
 pub const meshRevolve = sweeps.meshRevolve;

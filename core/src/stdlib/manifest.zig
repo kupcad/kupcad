@@ -105,6 +105,8 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "min_gap", .category = .inspection_method, .func = common.wrapMethod(methods.meshMinGap) },
     .{ .name = "contains?", .category = .inspection_method, .func = common.wrapMethod(methods.meshContains) },
     .{ .name = "ray_cast", .category = .inspection_method, .func = common.wrapMethod(methods.meshRayCast) },
+    .{ .name = "repeat_linear", .category = .transform, .func = common.wrapMethod(methods.meshRepeatLinear) },
+    .{ .name = "repeat_polar", .category = .transform, .func = common.wrapMethod(methods.meshRepeatPolar) },
     .{ .name = "material", .category = .transform, .func = common.wrapMethod(methods.meshMaterial) },
     .{ .name = "highlight", .category = .transform, .func = common.wrapMethod(methods.meshHighlight) },
     .{ .name = "ghost", .category = .transform, .func = common.wrapMethod(methods.meshGhost) },
@@ -138,7 +140,6 @@ pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Valu
         return error.RuntimeError;
     }
 
-    // Unified tag resolution
     const dag_tag: dag.DAGTag = switch (op) {
         .op_add => if (is_3d) .union_op else .cs_union_op,
         .op_subtract => if (is_3d) .difference_op else .cs_difference_op,
@@ -146,11 +147,9 @@ pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Valu
         else => return error.RuntimeError,
     };
 
-    // Unified index extraction
     const idx_a = if (is_3d) a.asGeometry().dag_idx else a.asCrossSection().dag_idx;
     const idx_b = if (is_3d) b.asGeometry().dag_idx else b.asCrossSection().dag_idx;
 
-    // Execute insertion once
     const result_idx = try vm.dag_builder.addBinary(dag_tag, idx_a, idx_b);
 
     if (is_3d) {
