@@ -175,15 +175,15 @@
       "name": "support.function.core.kupcad"
     },
     "primitives_3d": {
-      "match": "(?<![\\\\w])(cube|cylinder|sphere|polyhedron)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(cube|cylinder|sphere|torus|polyhedron)(?![\\\\w?!])",
       "name": "support.class.primitive.3d.kupcad"
     },
     "primitives_2d": {
-      "match": "(?<![\\\\w])(square|circle|polygon|text)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(square|circle|polygon|regular_polygon|text)(?![\\\\w?!])",
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|mirror|split_by_plane|decompose|simplify|extrude|revolve|hull|trim_by_plane|minkowski|offset|transform|material|highlight|ghost)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|center|align|mirror|split_by_plane|decompose|simplify|extrude|revolve|hull|trim_by_plane|minkowski|offset|transform|repeat_linear|repeat_polar|material|highlight|ghost)(?![\\\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {
