@@ -76,10 +76,6 @@ const BuilderContext = struct {
     fn flushContour(self: *BuilderContext) !void {
         if (self.current_contour) |*c| {
             if (c.items.len > 0) {
-                // TTF outer contours are Clockwise (CW).
-                // Manifold requires Counter-Clockwise (CCW) to face the +Z normal.
-                std.mem.reverse([2]f64, c.items);
-
                 try self.polygons.contours.append(self.allocator, c.*);
             } else {
                 c.deinit(self.allocator);
