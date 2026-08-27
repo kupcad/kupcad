@@ -282,3 +282,83 @@ test "Phase 4: Face Line Clipping (Infinite Line to Finite Segment)" {
     try std.testing.expectApproxEqAbs(-5.0, segments[0].start[0], 1e-5);
     try std.testing.expectApproxEqAbs(5.0, segments[0].end[0], 1e-5);
 }
+
+test "Phase 4: 3D Segment Overlap and Topological Slicing" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // 1. Line passing along X-axis
+    const line = booleans.MathLine{
+        .origin = .{ 0, 0, 0 },
+        .direction = .{ 1, 0, 0 },
+    };
+
+    // Segment A: [-10, 2]
+    const segs_a = [_]booleans.Segment3D{.{
+        .start = .{ -10, 0, 0 },
+        .end = .{ 2, 0, 0 },
+    }};
+
+    // Segment B: [-2, 10]
+    const segs_b = [_]booleans.Segment3D{.{
+        .start = .{ -2, 0, 0 },
+        .end = .{ 10, 0, 0 },
+    }};
+
+    // Overlap should be [-2, 2]
+    const overlap = try booleans.overlapSegments3D(alloc, line, &segs_a, &segs_b);
+    defer alloc.free(overlap);
+
+    try std.testing.expectEqual(@as(usize, 1), overlap.len);
+    try std.testing.expectApproxEqAbs(-2.0, overlap[0].start[0], 1e-5);
+    try std.testing.expectApproxEqAbs(2.0, overlap[0].end[0], 1e-5);
+
+    // 2. Test slicing a cube face with the overlapped segment
+    const cube_id = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    const solid = t_arena.solids.items[cube_id];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
+    const top_face_id = t_arena.shell_faces.items[shell.faces_start + 1];
+
+    // Slice top face (+Z) across Y=0 from X=-5 to X=5
+    const slice_seg = booleans.Segment3D{
+        .start = .{ -5, 0, 5 },
+        .end = .{ 5, 0, 5 },
+    };
+
+    const new_face = try booleans.sliceFaceWithSegment(alloc, &t_arena, &g_arena, top_face_id, slice_seg);
+    try std.testing.expect(new_face != null);
+}
+
+test "Phase 5: Full 3D SSI Pipeline (Intersecting Cube Faces)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const cube_a = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    const cube_b = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube_b, 5, 5, 5);
+
+    const initial_faces_a = t_arena.faces.items.len;
+
+    var faces_a: std.ArrayListUnmanaged(topo.FaceId) = .empty;
+    defer faces_a.deinit(alloc);
+    var faces_b: std.ArrayListUnmanaged(topo.FaceId) = .empty;
+    defer faces_b.deinit(alloc);
+
+    const s_a = t_arena.solids.items[cube_a];
+    const sh_a = t_arena.shells.items[t_arena.solid_shells.items[s_a.shells_start]];
+    for (0..sh_a.faces_len) |i| try faces_a.append(alloc, t_arena.shell_faces.items[sh_a.faces_start + i]);
+
+    const s_b = t_arena.solids.items[cube_b];
+    const sh_b = t_arena.shells.items[t_arena.solid_shells.items[s_b.shells_start]];
+    for (0..sh_b.faces_len) |i| try faces_b.append(alloc, t_arena.shell_faces.items[sh_b.faces_start + i]);
+
+    try booleans.intersectAndSplitFaces3D(alloc, &t_arena, &g_arena, cube_a, cube_b, &faces_a, &faces_b);
+
+    try std.testing.expect(t_arena.faces.items.len > initial_faces_a);
+}

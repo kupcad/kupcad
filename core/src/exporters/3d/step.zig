@@ -139,7 +139,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         try vertex_map.put(@intCast(i), try s.emit("VERTEX_POINT('',#{d})", .{pt_id}));
     }
 
-    // --- 3. EDGE CURVES (HALF-EDGE PAIR DEDUPLICATION) ---
+    // --- 3. EDGE CURVES (HALF-EDGE PAIR DEDUPLICATION & CURVE DISPATCH) ---
     const EdgeCurveInfo = struct { edge_curve_id: u32, is_forward: bool };
     var half_edge_map = std.AutoHashMap(u32, EdgeCurveInfo).init(allocator);
     defer half_edge_map.deinit();
@@ -153,7 +153,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
             const twin_info = half_edge_map.get(he.twin).?;
             try half_edge_map.put(he_id, .{
                 .edge_curve_id = twin_info.edge_curve_id,
-                .is_forward = false, // Reversed orientation relative to its twin
+                .is_forward = false,
             });
             continue;
         }
@@ -162,22 +162,44 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         const p1 = t.vertices.items[he.start_vertex].point;
         const p2 = t.vertices.items[next_he.start_vertex].point;
 
-        const dx = p2[0] - p1[0];
-        const dy = p2[1] - p1[1];
-        const dz = p2[2] - p1[2];
-        var len = @sqrt(dx * dx + dy * dy + dz * dz);
-        if (len < 1e-12) len = 1.0;
+        var curve_entity_id: u32 = 0;
 
-        const dir_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ dx / len, dy / len, dz / len });
-        const vec_id = try s.emit("VECTOR('',#{d},{d:.6})", .{ dir_id, len });
+        switch (he.curve.curve_type) {
+            .circle_arc => {
+                const arc = g.circle_arcs.items[he.curve.index];
+                const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
 
-        const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p1[0], p1[1], p1[2] });
-        const line_id = try s.emit("LINE('',#{d},#{d})", .{ origin_id, vec_id });
+                // Normal = x_axis x y_axis
+                const nx = arc.x_axis[1] * arc.y_axis[2] - arc.x_axis[2] * arc.y_axis[1];
+                const ny = arc.x_axis[2] * arc.y_axis[0] - arc.x_axis[0] * arc.y_axis[2];
+                const nz = arc.x_axis[0] * arc.y_axis[1] - arc.x_axis[1] * arc.y_axis[0];
+
+                const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ nx, ny, nz });
+                const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ arc.x_axis[0], arc.x_axis[1], arc.x_axis[2] });
+
+                const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ center_id, z_axis_id, x_axis_id });
+                curve_entity_id = try s.emit("CIRCLE('',#{d},{d:.6})", .{ axis2, arc.radius });
+            },
+            else => {
+                // Line fallback
+                const dx = p2[0] - p1[0];
+                const dy = p2[1] - p1[1];
+                const dz = p2[2] - p1[2];
+                var len = @sqrt(dx * dx + dy * dy + dz * dz);
+                if (len < 1e-12) len = 1.0;
+
+                const dir_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ dx / len, dy / len, dz / len });
+                const vec_id = try s.emit("VECTOR('',#{d},{d:.6})", .{ dir_id, len });
+
+                const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p1[0], p1[1], p1[2] });
+                curve_entity_id = try s.emit("LINE('',#{d},#{d})", .{ origin_id, vec_id });
+            },
+        }
 
         const edge_curve_id = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{
             vertex_map.get(he.start_vertex).?,
             vertex_map.get(next_he.start_vertex).?,
-            line_id,
+            curve_entity_id,
         });
 
         try half_edge_map.put(he_id, .{

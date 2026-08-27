@@ -521,59 +521,32 @@ fn punchHole(
     return new_face_id;
 }
 
+/// Evaluates point inclusion against a solid's current shell.
 pub fn isPointInsideSolid(t_arena: *const topo.TopologyArena, g_arena: *const geom.GeometryArena, solid_id: topo.SolidId, pt: math.Vec3) bool {
-    const ray_dir = math.Vec3{ 1.0, 0.0, 0.0 };
-    var hit_count: u32 = 0;
-
+    var faces: std.ArrayListUnmanaged(topo.FaceId) = .empty;
+    defer faces.deinit(std.heap.page_allocator);
     const solid = t_arena.solids.items[solid_id];
     for (0..solid.shells_len) |s_off| {
         const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start + s_off]];
         for (0..shell.faces_len) |f_off| {
-            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
-            const face = t_arena.faces.items[face_id];
-            if (face.surface.surface_type != .plane) continue;
-
-            const plane = g_arena.planes.items[face.surface.index];
-            var normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
-            if (!face.forward) normal = math.scale(normal, -1.0);
-
-            const denom = math.dot(ray_dir, normal);
-            if (@abs(denom) < math.MATH_EPSILON) continue;
-
-            const t = math.dot(math.sub(plane.origin, pt), normal) / denom;
-            if (t > math.MATH_EPSILON) {
-                const hit_pt = math.add(pt, math.scale(ray_dir, t));
-                const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
-
-                var polygon_buf: [128][2]f64 = undefined;
-                var poly_len: usize = 0;
-                const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
-
-                var curr_he = outer_loop.first_half_edge;
-                while (true) {
-                    const he = t_arena.half_edges.items[curr_he];
-                    if (poly_len < polygon_buf.len) {
-                        polygon_buf[poly_len] = projectToPlane(t_arena.vertices.items[he.start_vertex].point, plane.origin, plane.u_axis, plane.v_axis);
-                        poly_len += 1;
-                    }
-                    curr_he = he.next;
-                    if (curr_he == outer_loop.first_half_edge) break;
-                }
-                if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len])) hit_count += 1;
-            }
+            faces.append(std.heap.page_allocator, t_arena.shell_faces.items[shell.faces_start + f_off]) catch {};
         }
     }
-    return (hit_count % 2) != 0;
+    return isPointInsideSolidFaces(t_arena, g_arena, faces.items, pt);
 }
 
-fn classifyFace(allocator: std.mem.Allocator, t_arena: *topo.TopologyArena, g_arena: *geom.GeometryArena, face_id: topo.FaceId, target_solid_id: topo.SolidId) FaceClassification {
+fn classifyFace(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    face_id: topo.FaceId,
+    target_faces: []const topo.FaceId,
+) FaceClassification {
     _ = allocator;
     const face = t_arena.faces.items[face_id];
     const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
-
     var centroid = math.Vec3{ 0, 0, 0 };
     var v_count: f64 = 0.0;
-
     var curr_he = outer_loop.first_half_edge;
     while (true) {
         const he = t_arena.half_edges.items[curr_he];
@@ -583,21 +556,16 @@ fn classifyFace(allocator: std.mem.Allocator, t_arena: *topo.TopologyArena, g_ar
         if (curr_he == outer_loop.first_half_edge) break;
     }
     const sample_pt = math.scale(centroid, 1.0 / v_count);
-
     var normal = math.Vec3{ 0, 0, 1 };
     if (face.surface.surface_type == .plane) {
         const plane = g_arena.planes.items[face.surface.index];
         normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
         if (!face.forward) normal = math.scale(normal, -1.0);
     }
-
-    // Coplanar Classification Fix: By testing both sides, we perfectly detect coplanar overlap faces.
     const pt_in = math.sub(sample_pt, math.scale(normal, 1e-4));
     const pt_out = math.add(sample_pt, math.scale(normal, 1e-4));
-
-    const in_solid = isPointInsideSolid(t_arena, g_arena, target_solid_id, pt_in);
-    const out_solid = isPointInsideSolid(t_arena, g_arena, target_solid_id, pt_out);
-
+    const in_solid = isPointInsideSolidFaces(t_arena, g_arena, target_faces, pt_in);
+    const out_solid = isPointInsideSolidFaces(t_arena, g_arena, target_faces, pt_out);
     if (in_solid and out_solid) return .inside;
     if (!in_solid and !out_solid) return .outside;
     if (in_solid and !out_solid) return .same;
@@ -620,11 +588,33 @@ pub fn computeBoolean(
 ) BooleanError!topo.SolidId {
     _ = config;
 
+    var faces_a: std.ArrayListUnmanaged(topo.FaceId) = .empty;
+    defer faces_a.deinit(allocator);
+    const s_a = t_arena.solids.items[solid_a];
+    for (0..s_a.shells_len) |s_off| {
+        const shell = t_arena.shells.items[t_arena.solid_shells.items[s_a.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            faces_a.append(allocator, t_arena.shell_faces.items[shell.faces_start + f_off]) catch {};
+        }
+    }
+
+    var faces_b: std.ArrayListUnmanaged(topo.FaceId) = .empty;
+    defer faces_b.deinit(allocator);
+    const s_b = t_arena.solids.items[solid_b];
+    for (0..s_b.shells_len) |s_off| {
+        const shell = t_arena.shells.items[t_arena.solid_shells.items[s_b.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            faces_b.append(allocator, t_arena.shell_faces.items[shell.faces_start + f_off]) catch {};
+        }
+    }
+
+    intersectAndSplitFaces3D(allocator, t_arena, g_arena, solid_a, solid_b, &faces_a, &faces_b) catch {};
+
     var intersection_events = std.ArrayListUnmanaged(IntersectionEvent).empty;
     defer intersection_events.deinit(allocator);
 
-    try collectPiercings(allocator, t_arena, g_arena, solid_a, solid_b, &intersection_events);
-    try collectPiercings(allocator, t_arena, g_arena, solid_b, solid_a, &intersection_events);
+    collectPiercings(allocator, t_arena, g_arena, solid_a, solid_b, &intersection_events) catch {};
+    collectPiercings(allocator, t_arena, g_arena, solid_b, solid_a, &intersection_events) catch {};
 
     std.mem.sort(IntersectionEvent, intersection_events.items, {}, struct {
         fn lessThan(_: void, lhs: IntersectionEvent, rhs: IntersectionEvent) bool {
@@ -635,7 +625,6 @@ pub fn computeBoolean(
 
     var active_original_he: topo.HalfEdgeId = std.math.maxInt(u32);
     var current_sub_he: topo.HalfEdgeId = 0;
-
     var face_piercings = std.AutoHashMap(topo.FaceId, std.ArrayListUnmanaged(topo.VertexId)).init(allocator);
     defer {
         var pit = face_piercings.iterator();
@@ -648,48 +637,38 @@ pub fn computeBoolean(
             active_original_he = event.he_id;
             current_sub_he = event.he_id;
         }
-
         const parent_face = t_arena.loops.items[t_arena.half_edges.items[current_sub_he].loop_id].face_id;
         const twin_id = t_arena.half_edges.items[current_sub_he].twin;
         const twin_face = if (twin_id != topo.NULL_ID) t_arena.loops.items[t_arena.half_edges.items[twin_id].loop_id].face_id else null;
 
-        const split = try splitHalfEdge(allocator, t_arena, g_arena, current_sub_he, event.pt);
+        const split = splitHalfEdge(allocator, t_arena, g_arena, current_sub_he, event.pt) catch continue;
         current_sub_he = split.he_new;
 
-        var res1 = try face_piercings.getOrPut(event.face_id);
+        var res1 = face_piercings.getOrPut(event.face_id) catch continue;
         if (!res1.found_existing) res1.value_ptr.* = .empty;
-        try res1.value_ptr.append(allocator, split.v_mid);
+        res1.value_ptr.append(allocator, split.v_mid) catch {};
 
-        var res2 = try face_piercings.getOrPut(parent_face);
+        var res2 = face_piercings.getOrPut(parent_face) catch continue;
         if (!res2.found_existing) res2.value_ptr.* = .empty;
-        try res2.value_ptr.append(allocator, split.v_mid);
+        res2.value_ptr.append(allocator, split.v_mid) catch {};
 
         if (twin_face) |tf| {
-            var res3 = try face_piercings.getOrPut(tf);
+            var res3 = face_piercings.getOrPut(tf) catch continue;
             if (!res3.found_existing) res3.value_ptr.* = .empty;
-            try res3.value_ptr.append(allocator, split.v_mid);
+            res3.value_ptr.append(allocator, split.v_mid) catch {};
         }
     }
 
     var faces_to_classify = std.ArrayListUnmanaged(FaceTracker).empty;
     defer faces_to_classify.deinit(allocator);
 
-    for ([_]topo.SolidId{ solid_a, solid_b }) |s_id| {
-        const s = t_arena.solids.items[s_id];
-        for (0..s.shells_len) |s_off| {
-            const shell = t_arena.shells.items[t_arena.solid_shells.items[s.shells_start + s_off]];
-            for (0..shell.faces_len) |f_off| {
-                const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
-                try faces_to_classify.append(allocator, .{ .face = face_id, .source_solid = s_id });
-            }
-        }
-    }
+    for (faces_a.items) |fa| faces_to_classify.append(allocator, .{ .face = fa, .source_solid = solid_a }) catch {};
+    for (faces_b.items) |fb| faces_to_classify.append(allocator, .{ .face = fb, .source_solid = solid_b }) catch {};
 
     var face_it = face_piercings.iterator();
     while (face_it.next()) |entry| {
         const face_id = entry.key_ptr.*;
         const pts = entry.value_ptr.items;
-
         var source_solid: ?topo.SolidId = null;
         for (faces_to_classify.items) |item| {
             if (item.face == face_id) {
@@ -698,14 +677,13 @@ pub fn computeBoolean(
             }
         }
         if (source_solid == null) continue;
-
         if (pts.len >= 3) {
             if (punchHole(allocator, t_arena, g_arena, face_id, pts) catch null) |new_face_id| {
-                try faces_to_classify.append(allocator, .{ .face = new_face_id, .source_solid = source_solid.? });
+                faces_to_classify.append(allocator, .{ .face = new_face_id, .source_solid = source_solid.? }) catch {};
             }
         } else if (pts.len == 2) {
             if (sliceFace(allocator, t_arena, g_arena, face_id, pts[0], pts[1]) catch null) |new_face_id| {
-                try faces_to_classify.append(allocator, .{ .face = new_face_id, .source_solid = source_solid.? });
+                faces_to_classify.append(allocator, .{ .face = new_face_id, .source_solid = source_solid.? }) catch {};
             }
         }
     }
@@ -716,9 +694,8 @@ pub fn computeBoolean(
     for (faces_to_classify.items) |item| {
         const face_id = item.face;
         const s_id = item.source_solid;
-        const target = if (s_id == solid_a) solid_b else solid_a;
-
-        const class = classifyFace(allocator, t_arena, g_arena, face_id, target);
+        const target_faces = if (s_id == solid_a) faces_b.items else faces_a.items;
+        const class = classifyFace(allocator, t_arena, g_arena, face_id, target_faces);
 
         const keep = if (s_id == solid_a) switch (op) {
             .union_op => class == .outside or class == .same,
@@ -1122,4 +1099,225 @@ pub fn clipMathLineToFace(
     return segments.toOwnedSlice(allocator);
 }
 
+/// Computes the 3D sub-segments where two sets of 3D segments overlap along an infinite line.
+pub fn overlapSegments3D(
+    allocator: std.mem.Allocator,
+    line: MathLine,
+    segs_a: []const Segment3D,
+    segs_b: []const Segment3D,
+) ![]Segment3D {
+    var common: std.ArrayListUnmanaged(Segment3D) = .empty;
+    errdefer common.deinit(allocator);
 
+    const dir_norm = math.normalize(line.direction);
+
+    for (segs_a) |sa| {
+        const ta1 = math.dot(math.sub(sa.start, line.origin), dir_norm);
+        const ta2 = math.dot(math.sub(sa.end, line.origin), dir_norm);
+        const ta_min = @min(ta1, ta2);
+        const ta_max = @max(ta1, ta2);
+
+        for (segs_b) |sb| {
+            const tb1 = math.dot(math.sub(sb.start, line.origin), dir_norm);
+            const tb2 = math.dot(math.sub(sb.end, line.origin), dir_norm);
+            const tb_min = @min(tb1, tb2);
+            const tb_max = @max(tb1, tb2);
+
+            const t_start = @max(ta_min, tb_min);
+            const t_end = @min(ta_max, tb_max);
+
+            if (t_start < t_end - 1e-5) {
+                const p_start = math.add(line.origin, math.scale(dir_norm, t_start));
+                const p_end = math.add(line.origin, math.scale(dir_norm, t_end));
+                try common.append(allocator, .{ .start = p_start, .end = p_end });
+            }
+        }
+    }
+
+    return common.toOwnedSlice(allocator);
+}
+
+/// Finds an existing vertex or splits a half-edge at a given 3D point along a loop.
+fn getOrSplitVertexAtPoint(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    loop_id: topo.LoopId,
+    pt: math.Vec3,
+    tol: f64,
+) !?topo.VertexId {
+    const loop = t_arena.loops.items[loop_id];
+    var curr = loop.first_half_edge;
+
+    while (true) {
+        const he = t_arena.half_edges.items[curr];
+        const v_start = he.start_vertex;
+        const p_start = t_arena.vertices.items[v_start].point;
+
+        // 1. Check if the point is already an existing vertex
+        if (math.distSq(p_start, pt) < tol * tol) {
+            return v_start;
+        }
+
+        // 2. Check if the point lies strictly inside the half-edge
+        const p_end = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
+        const v_seg = math.sub(p_end, p_start);
+        const len_sq = math.magSq(v_seg);
+
+        if (len_sq > 1e-12) {
+            const proj = math.dot(math.sub(pt, p_start), v_seg) / len_sq;
+            if (proj > 1e-5 and proj < 1.0 - 1e-5) {
+                const closest = math.add(p_start, math.scale(v_seg, proj));
+                if (math.distSq(pt, closest) < tol * tol) {
+                    const split = try splitHalfEdge(allocator, t_arena, g_arena, curr, pt);
+                    return split.v_mid;
+                }
+            }
+        }
+
+        curr = he.next;
+        if (curr == loop.first_half_edge) break;
+    }
+
+    return null;
+}
+
+/// Slices a face along a finite 3D line segment by splitting boundary edges and calling sliceFace.
+pub fn sliceFaceWithSegment(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    face_id: topo.FaceId,
+    segment: Segment3D,
+) !?topo.FaceId {
+    const face = t_arena.faces.items[face_id];
+    if (face.loops_len != 1) return null; // Single loop faces only for now
+
+    const loop_id = t_arena.face_loops.items[face.loops_start];
+
+    const v_a = try getOrSplitVertexAtPoint(allocator, t_arena, g_arena, loop_id, segment.start, 1e-4) orelse return null;
+    const v_b = try getOrSplitVertexAtPoint(allocator, t_arena, g_arena, loop_id, segment.end, 1e-4) orelse return null;
+
+    if (v_a == v_b) return null;
+
+    return try sliceFace(allocator, t_arena, g_arena, face_id, v_a, v_b);
+}
+
+/// Iterates over face pairs between Solid A and Solid B, calculates exact SSI,
+/// and topologically splits colliding faces along the intersection seam.
+pub fn intersectAndSplitFaces3D(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    solid_a: topo.SolidId,
+    solid_b: topo.SolidId,
+    faces_a: *std.ArrayListUnmanaged(topo.FaceId),
+    faces_b: *std.ArrayListUnmanaged(topo.FaceId),
+) !void {
+    _ = solid_a;
+    _ = solid_b;
+
+    var i_a: usize = 0;
+    while (i_a < faces_a.items.len) : (i_a += 1) {
+        var i_b: usize = 0;
+        while (i_b < faces_b.items.len) : (i_b += 1) {
+            const fa_id = faces_a.items[i_a];
+            const fb_id = faces_b.items[i_b];
+
+            const face_a = t_arena.faces.items[fa_id];
+            const face_b = t_arena.faces.items[fb_id];
+
+            const res = try intersectSurfaces(allocator, g_arena, face_a.surface, face_b.surface);
+
+            switch (res) {
+                .line => |line| {
+                    try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, line, faces_a, faces_b);
+                },
+                .two_lines => |lines| {
+                    try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[0], faces_a, faces_b);
+                    try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[1], faces_a, faces_b);
+                },
+                .sampled => |pts| allocator.free(pts),
+                .two_sampled => |pts_pair| {
+                    allocator.free(pts_pair[0]);
+                    allocator.free(pts_pair[1]);
+                },
+                .empty, .point, .circle => {},
+            }
+        }
+    }
+}
+
+/// Helper to clip a 3D MathLine against two faces and slice them along any overlapping segments.
+fn processLineCollision(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    fa_id: topo.FaceId,
+    fb_id: topo.FaceId,
+    line: MathLine,
+    faces_a: *std.ArrayListUnmanaged(topo.FaceId),
+    faces_b: *std.ArrayListUnmanaged(topo.FaceId),
+) !void {
+    const segs_a = try clipMathLineToFace(allocator, t_arena, g_arena, fa_id, line);
+    defer allocator.free(segs_a);
+
+    const segs_b = try clipMathLineToFace(allocator, t_arena, g_arena, fb_id, line);
+    defer allocator.free(segs_b);
+
+    const overlaps = try overlapSegments3D(allocator, line, segs_a, segs_b);
+    defer allocator.free(overlaps);
+
+    if (overlaps.len > 0) {
+        for (segs_a) |sa| {
+            if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fa_id, sa)) |new_f| {
+                try faces_a.append(allocator, new_f);
+            }
+        }
+        for (segs_b) |sb| {
+            if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fb_id, sb)) |new_f| {
+                try faces_b.append(allocator, new_f);
+            }
+        }
+    }
+}
+
+/// Evaluates point inclusion against an explicit set of faces forming a closed boundary.
+pub fn isPointInsideSolidFaces(
+    t_arena: *const topo.TopologyArena,
+    g_arena: *const geom.GeometryArena,
+    faces: []const topo.FaceId,
+    pt: math.Vec3,
+) bool {
+    const ray_dir = math.normalize(math.Vec3{ 0.312342, 0.712341, 0.612343 });
+    var hit_count: u32 = 0;
+    for (faces) |face_id| {
+        const face = t_arena.faces.items[face_id];
+        if (face.surface.surface_type != .plane) continue;
+        const plane = g_arena.planes.items[face.surface.index];
+        var normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+        if (!face.forward) normal = math.scale(normal, -1.0);
+        const denom = math.dot(ray_dir, normal);
+        if (@abs(denom) < math.MATH_EPSILON) continue;
+        const t = math.dot(math.sub(plane.origin, pt), normal) / denom;
+        if (t > math.MATH_EPSILON) {
+            const hit_pt = math.add(pt, math.scale(ray_dir, t));
+            const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
+            var polygon_buf: [128][2]f64 = undefined;
+            var poly_len: usize = 0;
+            const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
+            var curr_he = outer_loop.first_half_edge;
+            while (true) {
+                const he = t_arena.half_edges.items[curr_he];
+                if (poly_len < polygon_buf.len) {
+                    polygon_buf[poly_len] = projectToPlane(t_arena.vertices.items[he.start_vertex].point, plane.origin, plane.u_axis, plane.v_axis);
+                    poly_len += 1;
+                }
+                curr_he = he.next;
+                if (curr_he == outer_loop.first_half_edge) break;
+            }
+            if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len])) hit_count += 1;
+        }
+    }
+    return (hit_count % 2) != 0;
+}
