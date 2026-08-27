@@ -56,7 +56,7 @@ benchmark("Total Generation Time") do
 
   # --- 9. Text & Embossing ---
   logo_2d = text("KUP", size: 6.0, font: :stencil)
-  logo_3d = logo_2d.extrude(2.0).translate(20.0 + (arm_len / 2.0) - 8.0, -3.0, 4.0)
+  logo_3d = logo_2d.extrude(4.0).translate(20.0 + (arm_len / 2.0) - 8.0, -3.0, 5.0)
 
   puts("=== ISOLATION DIAGNOSTICS ===")
 

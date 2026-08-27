@@ -56,10 +56,14 @@ main_assembly = main_assembly + pyr
 # --- 6. 2D Text & Extrusion Embossing ---
 # Subtract the KupCAD logo into the top surface of the bracket
 # Uses :stencil font to avoid floating islands in the 'P', 'A', and 'D'
-txt = text("KupCAD", size: 6, font: :stencil)
-txt_3d = txt.extrude(3.0).translate(6.0, 8.0, 16.0)
+txt = text("KupCAD", size: 6.0, font: :stencil, halign: :center, valign: :center)
+# 2. Extrude by 3.0mm
+# 3. Rotate 180 degrees around Z to match your preferred camera angle
+# 4. Translate to X=20.0 (center), Y=6.0 (safely away from the hole)
+# 5. Translate to Z=16.0 (so it carves 2mm deep into the Z=18.0 top surface)
+txt_3d = txt.extrude(3.0).rotate(0.0, 0.0, 180.0).translate(20.0, 6.0, 20.0)
 
-main_assembly = main_assembly - txt_3d
+main_assembly = main_assembly + txt_3d
 
 # --- 7. Spatial Queries & Inspection Engine ---
 puts("--- Spatial Inspection Diagnostics ---")

@@ -76,6 +76,10 @@ const BuilderContext = struct {
     fn flushContour(self: *BuilderContext) !void {
         if (self.current_contour) |*c| {
             if (c.items.len > 0) {
+                // TTF outer contours are Clockwise (CW).
+                // Manifold requires Counter-Clockwise (CCW) to face the +Z normal.
+                std.mem.reverse([2]f64, c.items);
+
                 try self.polygons.contours.append(self.allocator, c.*);
             } else {
                 c.deinit(self.allocator);
@@ -100,7 +104,7 @@ fn moveTo(ptr: *anyopaque, x: f32, y: f32) void {
     ctx.flushContour() catch return;
 
     ctx.current_contour = std.ArrayListUnmanaged([2]f64).empty;
-    const pt = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y - @as(f64, y) * ctx.scale };
+    const pt = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
     ctx.current_contour.?.append(ctx.allocator, pt) catch return;
 }
 
@@ -108,7 +112,7 @@ fn lineTo(ptr: *anyopaque, x: f32, y: f32) void {
     var ctx: *BuilderContext = @ptrCast(@alignCast(ptr));
     if (ctx.current_contour == null) return;
 
-    const pt = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y - @as(f64, y) * ctx.scale };
+    const pt = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
     ctx.current_contour.?.append(ctx.allocator, pt) catch return;
 }
 
@@ -117,8 +121,8 @@ fn quadTo(ptr: *anyopaque, x1: f32, y1: f32, x: f32, y: f32) void {
     if (ctx.current_contour == null) return;
 
     const p0 = ctx.lastPoint();
-    const p1 = [2]f64{ ctx.cursor_x + @as(f64, x1) * ctx.scale, ctx.cursor_y - @as(f64, y1) * ctx.scale };
-    const p2 = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y - @as(f64, y) * ctx.scale };
+    const p1 = [2]f64{ ctx.cursor_x + @as(f64, x1) * ctx.scale, ctx.cursor_y + @as(f64, y1) * ctx.scale };
+    const p2 = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
 
     bezier.flattenQuadratic(ctx.allocator, &ctx.current_contour.?, p0, p1, p2, ctx.tolerance_sq) catch return;
 }
@@ -128,9 +132,9 @@ fn curveTo(ptr: *anyopaque, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) 
     if (ctx.current_contour == null) return;
 
     const p0 = ctx.lastPoint();
-    const p1 = [2]f64{ ctx.cursor_x + @as(f64, x1) * ctx.scale, ctx.cursor_y - @as(f64, y1) * ctx.scale };
-    const p2 = [2]f64{ ctx.cursor_x + @as(f64, x2) * ctx.scale, ctx.cursor_y - @as(f64, y2) * ctx.scale };
-    const p3 = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y - @as(f64, y) * ctx.scale };
+    const p1 = [2]f64{ ctx.cursor_x + @as(f64, x1) * ctx.scale, ctx.cursor_y + @as(f64, y1) * ctx.scale };
+    const p2 = [2]f64{ ctx.cursor_x + @as(f64, x2) * ctx.scale, ctx.cursor_y + @as(f64, y2) * ctx.scale };
+    const p3 = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
 
     bezier.flattenCubic(ctx.allocator, &ctx.current_contour.?, p0, p1, p2, p3, ctx.tolerance_sq) catch return;
 }
