@@ -113,73 +113,77 @@ test "Driver: Polyhedron Import (Mesh to B-Rep)" {
     driver.init(std.testing.allocator);
     defer driver.deinit();
 
-    // Define a simple 10x10 square-based pyramid, height 10
+    // 10x10 square-based pyramid, height 10
     const pts = [_][3]f64{
-        .{ 0, 0, 0 }, // 0: Base BL
-        .{ 10, 0, 0 }, // 1: Base BR
-        .{ 10, 10, 0 }, // 2: Base TR
-        .{ 0, 10, 0 }, // 3: Base TL
-        .{ 5, 5, 10 }, // 4: Apex
+        .{ 0, 0, 0 },
+        .{ 10, 0, 0 },
+        .{ 10, 10, 0 },
+        .{ 0, 10, 0 },
+        .{ 5, 5, 10 },
     };
 
-    // Counter-Clockwise outward winding!
     const faces = [_][3]u32{
-        .{ 0, 3, 2 }, .{ 0, 2, 1 }, // Base (points -Z)
-        .{ 0, 1, 4 }, // Front (points -Y, +Z)
-        .{ 1, 2, 4 }, // Right (points +X, +Z)
-        .{ 2, 3, 4 }, // Back  (points +Y, +Z)
-        .{ 3, 0, 4 }, // Left  (points -X, +Z)
+        .{ 0, 3, 2 }, .{ 0, 2, 1 },
+        .{ 0, 1, 4 }, .{ 1, 2, 4 },
+        .{ 2, 3, 4 }, .{ 3, 0, 4 },
     };
 
     const poly_handle = driver.driver.polyhedronFn(std.testing.allocator, &pts, &faces) orelse return error.PolyhedronFailed;
-
-    // Volume of a pyramid is (Base * Height) / 3 = (100 * 10) / 3 = 333.333333
-    const vol = driver.driver.volumeFn(poly_handle);
-    try std.testing.expectApproxEqAbs(333.333333, vol, 1e-4);
+    try std.testing.expectApproxEqAbs(333.333333, driver.driver.volumeFn(poly_handle), 1e-4);
 }
 
 test "Driver: Revolve 2D Profile" {
     driver.init(std.testing.allocator);
     defer driver.deinit();
 
-    // 1. Create a 10x10 square starting at the origin (X: 0 to 10, Y: 0 to 10)
     const cs_handle = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
-
-    // 2. Revolve it 360 degrees around the Y-axis using 36 segments
     const rev_handle = driver.driver.revolveFn(cs_handle, 36, 360.0) orelse return error.RevolveFailed;
 
-    // 3. Mathematical Verification:
-    // It forms a faceted 36-sided cylinder of radius 10 and height 10.
-    // The area of a regular 36-sided polygon inscribed in a circle of radius R is:
-    // Area = (N / 2) * R^2 * sin(360 / N)
-    // Area = 18 * 100 * sin(10 degrees)
     const expected_area = 1800.0 * @sin(10.0 * std.math.pi / 180.0);
-    const expected_vol = expected_area * 10.0; // V = Area * Height
+    const expected_vol = expected_area * 10.0;
 
-    const vol = driver.driver.volumeFn(rev_handle);
-    try std.testing.expectApproxEqAbs(expected_vol, vol, 1e-4);
+    try std.testing.expectApproxEqAbs(expected_vol, driver.driver.volumeFn(rev_handle), 1e-4);
 }
 
 test "Driver: 2D Operations (Boolean, Transform, Offset)" {
     driver.init(std.testing.allocator);
     defer driver.deinit();
 
-    // 1. Create two intersecting 10x10 squares
     const sq1 = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
     const sq2 = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
 
-    // Shift square 2 by (+5, +5)
     const mat = [6]f64{ 1, 0, 5, 0, 1, 5 };
     _ = driver.driver.crossSectionTransformFn(sq2, mat) orelse return error.TransformFailed;
 
-    // 2. Perform 2D Boolean Union
     const union_2d = driver.driver.crossSectionBooleanFn(sq1, sq2, 0) orelse return error.BooleanFailed;
-
-    // 3. Extrude the result into 3D!
-    // Two unioned 10x10 squares offset by (5,5) creates an L-shape with an area of 175.
-    // Extruding by 10 should yield a volume of 1750.
     const final_solid = driver.driver.extrudeFn(union_2d, 0, 0, 10) orelse return error.ExtrudeFailed;
 
-    const vol = driver.driver.volumeFn(final_solid);
-    try std.testing.expectApproxEqAbs(1750.0, vol, 1e-4);
+    try std.testing.expectApproxEqAbs(1750.0, driver.driver.volumeFn(final_solid), 1e-4);
+}
+
+test "Driver: 2D Boolean Difference and Intersection" {
+    driver.init(std.testing.allocator);
+    defer driver.deinit();
+
+    const mat = [6]f64{ 1, 0, 5, 0, 1, 5 };
+
+    // --- INTERSECTION ---
+    const sq1 = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
+    const sq2 = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
+    _ = driver.driver.crossSectionTransformFn(sq2, mat) orelse return error.TransformFailed;
+
+    const inter_2d = driver.driver.crossSectionBooleanFn(sq1, sq2, 2) orelse return error.BooleanFailed;
+    const inter_solid = driver.driver.extrudeFn(inter_2d, 0, 0, 10) orelse return error.ExtrudeFailed;
+
+    try std.testing.expectApproxEqAbs(250.0, driver.driver.volumeFn(inter_solid), 1e-4);
+
+    // --- DIFFERENCE ---
+    const sq3 = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
+    const sq4 = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
+    _ = driver.driver.crossSectionTransformFn(sq4, mat) orelse return error.TransformFailed;
+
+    const diff_2d = driver.driver.crossSectionBooleanFn(sq3, sq4, 1) orelse return error.BooleanFailed;
+    const diff_solid = driver.driver.extrudeFn(diff_2d, 0, 0, 10) orelse return error.ExtrudeFailed;
+
+    try std.testing.expectApproxEqAbs(750.0, driver.driver.volumeFn(diff_solid), 1e-4);
 }

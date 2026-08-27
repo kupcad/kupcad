@@ -186,3 +186,31 @@ test "Curve Math: NURBS vs Plane Intersection" {
     try std.testing.expectApproxEqAbs(2.5, hit[2], 1e-4);
 }
 
+test "Exact SSI: Plane vs Plane (Perpendicular)" {
+    // XY Plane
+    const p1 = geom.Plane{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } };
+    // XZ Plane
+    const p2 = geom.Plane{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 0, 1 } };
+
+    const res = booleans.intersectPlanePlane(p1, p2);
+
+    // The intersection of XY and XZ is the X-axis
+    try std.testing.expect(res == .line);
+    try std.testing.expectApproxEqAbs(1.0, @abs(res.line.direction[0]), 1e-9);
+    try std.testing.expectApproxEqAbs(0.0, res.line.direction[1], 1e-9);
+    try std.testing.expectApproxEqAbs(0.0, res.line.direction[2], 1e-9);
+}
+
+test "Exact SSI: Plane vs Sphere (Through Center)" {
+    // XY Plane shifted to Z=5
+    const plane = geom.Plane{ .origin = .{ 0, 0, 5 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } };
+    // Sphere at Z=5, Radius 10
+    const sphere = geom.Sphere{ .center = .{ 0, 0, 5 }, .radius = 10.0 };
+
+    const res = booleans.intersectPlaneSphere(plane, sphere);
+
+    // Should be a perfect circle of radius 10 at Z=5
+    try std.testing.expect(res == .circle);
+    try std.testing.expectApproxEqAbs(10.0, res.circle.radius, 1e-9);
+    try std.testing.expectApproxEqAbs(5.0, res.circle.center[2], 1e-9);
+}

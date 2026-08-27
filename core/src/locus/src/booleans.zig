@@ -3,6 +3,31 @@ const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const math = @import("math.zig");
 
+// --- Mathematical Curve Definitions for Exact SSI ---
+
+pub const MathLine = struct {
+    origin: math.Vec3,
+    direction: math.Vec3,
+};
+
+pub const MathCircle = struct {
+    center: math.Vec3,
+    radius: f64,
+    normal: math.Vec3,
+    x_axis: math.Vec3,
+    y_axis: math.Vec3,
+};
+
+pub const IntersectionResult = union(enum) {
+    empty,
+    point: math.Vec3,
+    line: MathLine,
+    two_lines: [2]MathLine,
+    circle: MathCircle,
+    sampled: []math.Vec3,
+    two_sampled: [2][]math.Vec3,
+};
+
 pub const BooleanOp = enum { union_op, difference, intersection };
 pub const FaceClassification = enum { inside, outside, same, opposite };
 
@@ -724,4 +749,140 @@ pub fn computeBoolean(
     try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
 
     return new_solid_id;
+}
+
+/// Intersection of two planes.
+/// Returns an exact line, or empty if parallel/coincident.
+pub fn intersectPlanePlane(a: geom.Plane, b: geom.Plane) IntersectionResult {
+    const n1 = math.normalize(math.cross(a.u_axis, a.v_axis));
+    const n2 = math.normalize(math.cross(b.u_axis, b.v_axis));
+
+    const dir = math.cross(n1, n2);
+    const dir_len = math.mag(dir);
+
+    if (dir_len < 1e-12) {
+        // Parallel or coincident. For boolean boundaries, coincident faces
+        // are resolved via face classification, so we return empty.
+        return .empty;
+    }
+
+    const d1 = math.dot(n1, a.origin);
+    const d2 = math.dot(n2, b.origin);
+
+    const n1n1 = math.dot(n1, n1);
+    const n1n2 = math.dot(n1, n2);
+    const n2n2 = math.dot(n2, n2);
+
+    const det = n1n1 * n2n2 - n1n2 * n1n2;
+    if (@abs(det) < 1e-15) {
+        return .empty;
+    }
+
+    const c1 = (d1 * n2n2 - d2 * n1n2) / det;
+    const c2 = (d2 * n1n1 - d1 * n1n2) / det;
+
+    const origin = math.add(math.scale(n1, c1), math.scale(n2, c2));
+
+    return .{ .line = .{ .origin = origin, .direction = math.normalize(dir) } };
+}
+
+/// Intersection of a plane and a sphere.
+/// Returns a circle, a tangent point, or empty.
+pub fn intersectPlaneSphere(plane: geom.Plane, sphere: geom.Sphere) IntersectionResult {
+    const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+
+    // Signed distance from sphere center to plane
+    const dist = math.dot(n, math.sub(sphere.center, plane.origin));
+    const abs_dist = @abs(dist);
+
+    if (abs_dist > sphere.radius + 1e-9) {
+        return .empty;
+    }
+
+    if (@abs(abs_dist - sphere.radius) < 1e-9) {
+        // Tangent - single point
+        const pt = math.sub(sphere.center, math.scale(n, dist));
+        return .{ .point = pt };
+    }
+
+    // Circle
+    const circle_radius = @sqrt(sphere.radius * sphere.radius - dist * dist);
+    const circle_center = math.sub(sphere.center, math.scale(n, dist));
+
+    // Construct an arbitrary orthonormal basis for the circle on the plane
+    var x_axis = math.Vec3{ 1, 0, 0 };
+    if (@abs(n[0]) > 0.99) {
+        x_axis = math.normalize(math.cross(n, .{ 0, 1, 0 }));
+    } else {
+        x_axis = math.normalize(math.cross(n, .{ 1, 0, 0 }));
+    }
+    const y_axis = math.normalize(math.cross(n, x_axis));
+
+    return .{ .circle = .{
+        .center = circle_center,
+        .radius = circle_radius,
+        .normal = n,
+        .x_axis = x_axis,
+        .y_axis = y_axis,
+    } };
+}
+
+/// Intersection of two spheres.
+/// Returns a circle, a tangent point, or empty.
+pub fn intersectSphereSphere(a: geom.Sphere, b: geom.Sphere) IntersectionResult {
+    const ab = math.sub(b.center, a.center);
+    const d = math.mag(ab);
+
+    if (d < 1e-12) {
+        // Concentric spheres (or identical)
+        return .empty;
+    }
+
+    if (d > a.radius + b.radius + 1e-9) {
+        return .empty; // Too far apart
+    }
+
+    if (d < @abs(a.radius - b.radius) - 1e-9) {
+        return .empty; // One completely inside the other
+    }
+
+    // Check tangent cases
+    if (@abs(d - a.radius - b.radius) < 1e-9) {
+        // External tangent
+        const pt = math.add(a.center, math.scale(ab, a.radius / d));
+        return .{ .point = pt };
+    }
+
+    if (@abs(d - @abs(a.radius - b.radius)) < 1e-9) {
+        // Internal tangent
+        const sign: f64 = if (a.radius > b.radius) 1.0 else -1.0;
+        const pt = math.add(a.center, math.scale(ab, sign * (a.radius / d)));
+        return .{ .point = pt };
+    }
+
+    // General case - Circle
+    // Distance from center A to the plane containing the intersection circle
+    const h = (d * d + a.radius * a.radius - b.radius * b.radius) / (2.0 * d);
+    const circle_center = math.add(a.center, math.scale(ab, h / d));
+
+    // Clamp to 0 to prevent NaN from tiny floating point inaccuracies
+    const radius_sq = @max(0.0, a.radius * a.radius - h * h);
+    const circle_radius = @sqrt(radius_sq);
+    const normal = math.normalize(ab);
+
+    var x_axis = math.Vec3{ 1, 0, 0 };
+    if (@abs(normal[0]) > 0.99) {
+        x_axis = math.normalize(math.cross(normal, .{ 0, 1, 0 }));
+    } else {
+        x_axis = math.normalize(math.cross(normal, .{ 1, 0, 0 }));
+    }
+    const y_axis = math.normalize(math.cross(normal, x_axis));
+
+    return .{ .circle = .{
+        .center = circle_center,
+        .radius = circle_radius,
+        .normal = normal,
+        .x_axis = x_axis,
+        .y_axis = y_axis,
+    } };
 }
