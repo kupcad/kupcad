@@ -265,3 +265,79 @@ pub fn scaleSolid(
 
     return solid_id;
 }
+
+pub fn transformMatrixSolid(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    solid_id: topo.SolidId,
+    mat: [12]f64,
+) TransformError!topo.SolidId {
+    var v_map = std.AutoHashMap(topo.VertexId, void).init(allocator);
+    defer v_map.deinit();
+    var l_map = std.AutoHashMap(u24, void).init(allocator);
+    defer l_map.deinit();
+    var a_map = std.AutoHashMap(u24, void).init(allocator);
+    defer a_map.deinit();
+    var p_map = std.AutoHashMap(u24, void).init(allocator);
+    defer p_map.deinit();
+    var s_map = std.AutoHashMap(u24, void).init(allocator);
+    defer s_map.deinit();
+    var c_map = std.AutoHashMap(u24, void).init(allocator);
+    defer c_map.deinit();
+
+    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
+
+    const applyMat = struct {
+        fn apply(pt: math.Vec3, m: [12]f64) math.Vec3 {
+            return .{
+                pt[0] * m[0] + pt[1] * m[1] + pt[2] * m[2] + m[3],
+                pt[0] * m[4] + pt[1] * m[5] + pt[2] * m[6] + m[7],
+                pt[0] * m[8] + pt[1] * m[9] + pt[2] * m[10] + m[11],
+            };
+        }
+        fn applyDir(vec: math.Vec3, m: [12]f64) math.Vec3 {
+            return math.normalize(.{
+                vec[0] * m[0] + vec[1] * m[1] + vec[2] * m[2],
+                vec[0] * m[4] + vec[1] * m[5] + vec[2] * m[6],
+                vec[0] * m[8] + vec[1] * m[9] + vec[2] * m[10],
+            });
+        }
+    };
+
+    var v_it = v_map.keyIterator();
+    while (v_it.next()) |v| t_arena.vertices.items[v.*].point = applyMat.apply(t_arena.vertices.items[v.*].point, mat);
+
+    var l_it = l_map.keyIterator();
+    while (l_it.next()) |l| {
+        g_arena.lines.items[l.*].start = applyMat.apply(g_arena.lines.items[l.*].start, mat);
+        g_arena.lines.items[l.*].end = applyMat.apply(g_arena.lines.items[l.*].end, mat);
+    }
+
+    var p_it = p_map.keyIterator();
+    while (p_it.next()) |p| {
+        g_arena.planes.items[p.*].origin = applyMat.apply(g_arena.planes.items[p.*].origin, mat);
+        g_arena.planes.items[p.*].u_axis = applyMat.applyDir(g_arena.planes.items[p.*].u_axis, mat);
+        g_arena.planes.items[p.*].v_axis = applyMat.applyDir(g_arena.planes.items[p.*].v_axis, mat);
+    }
+
+    // Applying scaling to spheres and cylinders requires extracting the uniform scale factor from the matrix
+    const scale_factor = @sqrt(mat[0] * mat[0] + mat[4] * mat[4] + mat[8] * mat[8]);
+
+    var c_it = c_map.keyIterator();
+    while (c_it.next()) |c| {
+        g_arena.cylinders.items[c.*].origin = applyMat.apply(g_arena.cylinders.items[c.*].origin, mat);
+        g_arena.cylinders.items[c.*].axis = applyMat.applyDir(g_arena.cylinders.items[c.*].axis, mat);
+        g_arena.cylinders.items[c.*].x_axis = applyMat.applyDir(g_arena.cylinders.items[c.*].x_axis, mat);
+        g_arena.cylinders.items[c.*].y_axis = applyMat.applyDir(g_arena.cylinders.items[c.*].y_axis, mat);
+        g_arena.cylinders.items[c.*].radius *= scale_factor;
+    }
+
+    var s_it = s_map.keyIterator();
+    while (s_it.next()) |s| {
+        g_arena.spheres.items[s.*].center = applyMat.apply(g_arena.spheres.items[s.*].center, mat);
+        g_arena.spheres.items[s.*].radius *= scale_factor;
+    }
+
+    return solid_id;
+}

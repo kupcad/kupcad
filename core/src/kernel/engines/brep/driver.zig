@@ -311,11 +311,14 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
     _ = op;
     return null;
 }
+
 fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
-    _ = a;
-    _ = mat;
-    return null;
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    solid.solid_id = locus_trans.transformMatrixSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, mat) catch return a;
+    return a;
 }
+
 fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
     _ = cs;
     _ = mat;
@@ -333,10 +336,42 @@ fn genusImpl(handle: geom.GeometryHandle) i32 {
     const euler = v - e + f;
     return @divTrunc(2 - euler, 2);
 }
+
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
-    _ = handle;
-    return null;
+    if (@intFromPtr(handle.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+
+    var min = [_]f64{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
+    var max = [_]f64{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
+    var found = false;
+
+    // Traverse the Half-Edge graph to find all active vertices in this solid
+    const s = solid.t_arena.solids.items[solid.solid_id];
+    for (0..s.shells_len) |s_off| {
+        const shell = solid.t_arena.shells.items[solid.t_arena.solid_shells.items[s.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face = solid.t_arena.faces.items[solid.t_arena.shell_faces.items[shell.faces_start + f_off]];
+            for (0..face.loops_len) |l_off| {
+                const loop = solid.t_arena.loops.items[solid.t_arena.face_loops.items[face.loops_start + l_off]];
+                var curr_he = loop.first_half_edge;
+                while (true) {
+                    const he = solid.t_arena.half_edges.items[curr_he];
+                    const pt = solid.t_arena.vertices.items[he.start_vertex].point;
+                    for (0..3) |i| {
+                        if (pt[i] < min[i]) min[i] = pt[i];
+                        if (pt[i] > max[i]) max[i] = pt[i];
+                    }
+                    found = true;
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+    if (!found) return null;
+    return geom.BoundingBox{ .min = min, .max = max };
 }
+
 fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
     _ = allocator;
     _ = handle;
@@ -344,19 +379,70 @@ fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, dir
     _ = tolerance;
     return null;
 }
+
 fn volumeImpl(handle: geom.GeometryHandle) f64 {
-    _ = handle;
-    return 0.0;
+    const mesh = getMeshImpl(backend_allocator, handle) orelse return 0.0;
+    defer backend_allocator.free(mesh.vert_props);
+    defer backend_allocator.free(mesh.tri_verts);
+
+    var vol: f64 = 0.0;
+    var i: usize = 0;
+    // Divergence Theorem: Sum of (P0 dot (P1 cross P2)) / 6.0
+    while (i < mesh.tri_verts.len) : (i += 3) {
+        const idx0 = mesh.tri_verts[i] * 3;
+        const idx1 = mesh.tri_verts[i + 1] * 3;
+        const idx2 = mesh.tri_verts[i + 2] * 3;
+
+        const p0 = [_]f64{ mesh.vert_props[idx0], mesh.vert_props[idx0 + 1], mesh.vert_props[idx0 + 2] };
+        const p1 = [_]f64{ mesh.vert_props[idx1], mesh.vert_props[idx1 + 1], mesh.vert_props[idx1 + 2] };
+        const p2 = [_]f64{ mesh.vert_props[idx2], mesh.vert_props[idx2 + 1], mesh.vert_props[idx2 + 2] };
+
+        const cross_x = p1[1] * p2[2] - p1[2] * p2[1];
+        const cross_y = p1[2] * p2[0] - p1[0] * p2[2];
+        const cross_z = p1[0] * p2[1] - p1[1] * p2[0];
+
+        vol += (p0[0] * cross_x + p0[1] * cross_y + p0[2] * cross_z) / 6.0;
+    }
+    return @abs(vol);
 }
+
 fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
-    _ = handle;
-    return 0.0;
+    const mesh = getMeshImpl(backend_allocator, handle) orelse return 0.0;
+    defer backend_allocator.free(mesh.vert_props);
+    defer backend_allocator.free(mesh.tri_verts);
+
+    var area: f64 = 0.0;
+    var i: usize = 0;
+    // Area of a triangle is half the magnitude of the cross product of two edges
+    while (i < mesh.tri_verts.len) : (i += 3) {
+        const idx0 = mesh.tri_verts[i] * 3;
+        const idx1 = mesh.tri_verts[i + 1] * 3;
+        const idx2 = mesh.tri_verts[i + 2] * 3;
+
+        const v1x = mesh.vert_props[idx1] - mesh.vert_props[idx0];
+        const v1y = mesh.vert_props[idx1 + 1] - mesh.vert_props[idx0 + 1];
+        const v1z = mesh.vert_props[idx1 + 2] - mesh.vert_props[idx0 + 2];
+
+        const v2x = mesh.vert_props[idx2] - mesh.vert_props[idx0];
+        const v2y = mesh.vert_props[idx2 + 1] - mesh.vert_props[idx0 + 1];
+        const v2z = mesh.vert_props[idx2 + 2] - mesh.vert_props[idx0 + 2];
+
+        const cx = v1y * v2z - v1z * v2y;
+        const cy = v1z * v2x - v1x * v2z;
+        const cz = v1x * v2y - v1y * v2x;
+
+        area += 0.5 * @sqrt(cx * cx + cy * cy + cz * cz);
+    }
+    return area;
 }
+
 fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
-    _ = a;
-    _ = pt;
-    return false;
+    if (@intFromPtr(a.ptr) == 0) return false;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    // Wire directly into our Boolean raycaster
+    return locus_bool.isPointInsideSolid(&solid.t_arena, &solid.g_arena, solid.solid_id, pt);
 }
+
 fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
     _ = a;
     _ = b;

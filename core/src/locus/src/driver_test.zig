@@ -27,3 +27,60 @@ test "Driver: End-to-End API Calls" {
     // 72 vertices * 3 floats = 216 floats.
     try std.testing.expectEqual(@as(usize, 216), mesh_data.vertex_len);
 }
+
+test "Driver: Measurements (Volume, Surface Area, Bounding Box, Contains)" {
+    driver.init(std.testing.allocator);
+    defer driver.deinit();
+
+    // Generate a 10x10x10 cube, centered at the origin
+    const cube_handle = driver.driver.cubeFn(10, 10, 10, true) orelse return error.CubeFailed;
+
+    // 1. Bounding Box
+    const bbox = driver.driver.boundingBoxFn(cube_handle) orelse return error.BBoxFailed;
+    // A 10-unit centered cube goes from -5 to +5 on all axes
+    try std.testing.expectApproxEqAbs(-5.0, bbox.min[0], 1e-6);
+    try std.testing.expectApproxEqAbs(5.0, bbox.max[0], 1e-6);
+
+    // 2. Volume
+    const vol = driver.driver.volumeFn(cube_handle);
+    // 10 * 10 * 10 = 1000
+    try std.testing.expectApproxEqAbs(1000.0, vol, 1e-6);
+
+    // 3. Surface Area
+    const area = driver.driver.surfaceAreaFn(cube_handle);
+    // 6 faces * (10 * 10) = 600
+    try std.testing.expectApproxEqAbs(600.0, area, 1e-6);
+
+    // 4. Contains Point Raycaster
+    const is_inside = driver.driver.containsPointFn(cube_handle, .{ 0, 0, 0 });
+    const is_outside = driver.driver.containsPointFn(cube_handle, .{ 20, 0, 0 });
+
+    try std.testing.expect(is_inside);
+    try std.testing.expect(!is_outside);
+}
+
+test "Driver: Custom Matrix Transformations" {
+    driver.init(std.testing.allocator);
+    defer driver.deinit();
+
+    const cube_handle = driver.driver.cubeFn(10, 10, 10, true) orelse return error.CubeFailed;
+
+    // Define a 4x4 Translation Matrix (flattened to the 12 active floats).
+    // We are translating by +20 units on the X-axis.
+    // Layout: [ R00, R01, R02, TX,
+    //           R10, R11, R12, TY,
+    //           R20, R21, R22, TZ ]
+    const translation_matrix = [12]f64{
+        1, 0, 0, 20,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+    };
+
+    const transformed_handle = driver.driver.transformMatrixFn(cube_handle, translation_matrix) orelse return error.TransformFailed;
+
+    // Validate the new position using the Bounding Box
+    const bbox = driver.driver.boundingBoxFn(transformed_handle) orelse return error.BBoxFailed;
+
+    // Original X max was 5.0. Plus 20 = 25.0
+    try std.testing.expectApproxEqAbs(25.0, bbox.max[0], 1e-6);
+}
