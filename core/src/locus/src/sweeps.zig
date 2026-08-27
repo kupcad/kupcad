@@ -74,4 +74,76 @@ pub fn extrudeFace(
 
     return solid_id;
 }
-    
+
+/// Revolves a 2D cross-section face around the Y-axis to generate a 3D solid.
+pub fn revolveFace(
+    allocator: std.mem.Allocator,
+    out_t_arena: *topo.TopologyArena,
+    out_g_arena: *geom.GeometryArena,
+    in_t_arena: *const topo.TopologyArena,
+    base_face_id: topo.FaceId, // <-- Changed from SolidId to FaceId
+    segments: u32,
+    degrees: f64,
+) !topo.SolidId {
+    var profile_pts = std.ArrayListUnmanaged([3]f64).empty;
+    defer profile_pts.deinit(allocator);
+
+    // 1. Extract vertices directly from the base 2D cross section face
+    const face = in_t_arena.faces.items[base_face_id];
+    const loop = in_t_arena.loops.items[in_t_arena.face_loops.items[face.loops_start]];
+
+    var curr = loop.first_half_edge;
+    while (true) {
+        const he = in_t_arena.half_edges.items[curr];
+        const pt = in_t_arena.vertices.items[he.start_vertex].point;
+        try profile_pts.append(allocator, .{ pt[0], pt[1], pt[2] });
+        curr = he.next;
+        if (curr == loop.first_half_edge) break;
+    }
+
+    var all_pts = std.ArrayListUnmanaged([3]f64).empty;
+    defer all_pts.deinit(allocator);
+    var all_faces = std.ArrayListUnmanaged([3]u32).empty;
+    defer all_faces.deinit(allocator);
+
+    const rad_step = (degrees * std.math.pi / 180.0) / @as(f64, @floatFromInt(segments));
+    const num_pts = @as(u32, @intCast(profile_pts.items.len));
+
+    // 2. Generate swept layers by rotating around the Y-axis
+    for (0..segments + 1) |layer| {
+        const angle = @as(f64, @floatFromInt(layer)) * rad_step;
+        const cos_a = @cos(angle);
+        const sin_a = @sin(angle);
+        for (profile_pts.items) |p| {
+            try all_pts.append(allocator, .{ p[0] * cos_a + p[2] * sin_a, p[1], -p[0] * sin_a + p[2] * cos_a });
+        }
+    }
+
+    // 3. Generate quad triangles for the swept walls (CCW outward winding)
+    for (0..segments) |layer| {
+        for (0..num_pts) |p| {
+            const next_p = (p + 1) % num_pts;
+            const v0 = @as(u32, @intCast(layer)) * num_pts + @as(u32, @intCast(p));
+            const v1 = @as(u32, @intCast(layer)) * num_pts + @as(u32, @intCast(next_p));
+            const v2 = @as(u32, @intCast(layer + 1)) * num_pts + @as(u32, @intCast(next_p));
+            const v3 = @as(u32, @intCast(layer + 1)) * num_pts + @as(u32, @intCast(p));
+
+            try all_faces.append(allocator, .{ v0, v3, v2 });
+            try all_faces.append(allocator, .{ v0, v2, v1 });
+        }
+    }
+
+    // 4. Generate End Caps if it's not a complete 360 revolution
+    if (degrees < 359.99) {
+        for (1..num_pts - 1) |p| {
+            // Start cap
+            try all_faces.append(allocator, .{ 0, @as(u32, @intCast(p)), @as(u32, @intCast(p + 1)) });
+            // End cap
+            const end_offset = @as(u32, @intCast(segments)) * num_pts;
+            try all_faces.append(allocator, .{ end_offset, end_offset + @as(u32, @intCast(p + 1)), end_offset + @as(u32, @intCast(p)) });
+        }
+    }
+
+    // 5. Pipe into the universal stitcher!
+    return generators.buildPolyhedron(allocator, out_t_arena, out_g_arena, all_pts.items, all_faces.items);
+}

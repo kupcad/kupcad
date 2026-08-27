@@ -108,3 +108,54 @@ test "Driver: Trim by Plane (Half-Space Slicing)" {
     const vol = driver.driver.volumeFn(sliced_handle);
     try std.testing.expectApproxEqAbs(500.0, vol, 1e-5);
 }
+
+test "Driver: Polyhedron Import (Mesh to B-Rep)" {
+    driver.init(std.testing.allocator);
+    defer driver.deinit();
+
+    // Define a simple 10x10 square-based pyramid, height 10
+    const pts = [_][3]f64{
+        .{ 0, 0, 0 }, // 0: Base BL
+        .{ 10, 0, 0 }, // 1: Base BR
+        .{ 10, 10, 0 }, // 2: Base TR
+        .{ 0, 10, 0 }, // 3: Base TL
+        .{ 5, 5, 10 }, // 4: Apex
+    };
+
+    // Counter-Clockwise outward winding!
+    const faces = [_][3]u32{
+        .{ 0, 3, 2 }, .{ 0, 2, 1 }, // Base (points -Z)
+        .{ 0, 1, 4 }, // Front (points -Y, +Z)
+        .{ 1, 2, 4 }, // Right (points +X, +Z)
+        .{ 2, 3, 4 }, // Back  (points +Y, +Z)
+        .{ 3, 0, 4 }, // Left  (points -X, +Z)
+    };
+
+    const poly_handle = driver.driver.polyhedronFn(std.testing.allocator, &pts, &faces) orelse return error.PolyhedronFailed;
+
+    // Volume of a pyramid is (Base * Height) / 3 = (100 * 10) / 3 = 333.333333
+    const vol = driver.driver.volumeFn(poly_handle);
+    try std.testing.expectApproxEqAbs(333.333333, vol, 1e-4);
+}
+
+test "Driver: Revolve 2D Profile" {
+    driver.init(std.testing.allocator);
+    defer driver.deinit();
+
+    // 1. Create a 10x10 square starting at the origin (X: 0 to 10, Y: 0 to 10)
+    const cs_handle = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
+
+    // 2. Revolve it 360 degrees around the Y-axis using 36 segments
+    const rev_handle = driver.driver.revolveFn(cs_handle, 36, 360.0) orelse return error.RevolveFailed;
+
+    // 3. Mathematical Verification:
+    // It forms a faceted 36-sided cylinder of radius 10 and height 10.
+    // The area of a regular 36-sided polygon inscribed in a circle of radius R is:
+    // Area = (N / 2) * R^2 * sin(360 / N)
+    // Area = 18 * 100 * sin(10 degrees)
+    const expected_area = 1800.0 * @sin(10.0 * std.math.pi / 180.0);
+    const expected_vol = expected_area * 10.0; // V = Area * Height
+
+    const vol = driver.driver.volumeFn(rev_handle);
+    try std.testing.expectApproxEqAbs(expected_vol, vol, 1e-4);
+}

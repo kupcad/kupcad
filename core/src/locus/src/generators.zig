@@ -293,3 +293,103 @@ pub fn generateCircle(
     }
     return generatePolygon(allocator, t_arena, g_arena, pts);
 }
+
+/// Takes a raw array of vertices and triangle indices and stitches them into a perfect, manifold Half-Edge Solid.
+/// Automatically handles twin-edge pairing and plane generation.
+pub fn buildPolyhedron(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    pts: []const [3]f64,
+    faces: []const [3]u32,
+) !topo.SolidId {
+    const v_start: u32 = @intCast(t_arena.vertices.items.len);
+    for (pts) |p| {
+        try t_arena.vertices.append(allocator, .{ .point = .{ p[0], p[1], p[2] } });
+    }
+
+    const shell_id: u32 = @intCast(t_arena.shells.items.len);
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
+
+    // Track edges to automatically wire Twins! Key: EdgeKey, Value: HalfEdgeId
+    var edge_map = std.AutoHashMap(EdgeKey, topo.HalfEdgeId).init(allocator);
+    defer edge_map.deinit();
+
+    for (faces) |f| {
+        const v0 = v_start + f[0];
+        const v1 = v_start + f[1];
+        const v2 = v_start + f[2];
+
+        const p0 = t_arena.vertices.items[v0].point;
+        const p1 = t_arena.vertices.items[v1].point;
+        const p2 = t_arena.vertices.items[v2].point;
+
+        // Calculate planar face geometry dynamically
+        const u_axis = math.normalize(math.sub(p1, p0));
+        const v_vec = math.sub(p2, p0);
+        var normal = math.normalize(math.cross(u_axis, v_vec));
+        if (math.magSq(normal) < 1e-12) normal = .{ 0, 0, 1 }; // Degenerate fallback
+        const v_axis = math.normalize(math.cross(normal, u_axis));
+
+        const plane_idx: u24 = @intCast(g_arena.planes.items.len);
+        try g_arena.planes.append(allocator, .{ .origin = p0, .u_axis = u_axis, .v_axis = v_axis });
+
+        const he_start: u32 = @intCast(t_arena.half_edges.items.len);
+        const loop_id: u32 = @intCast(t_arena.loops.items.len);
+        const face_id: u32 = @intCast(t_arena.faces.items.len);
+
+        const v_arr = [_]u32{ v0, v1, v2 };
+        for (0..3) |i| {
+            const va = v_arr[i];
+            const vb = v_arr[(i + 1) % 3];
+
+            const line_idx: u24 = @intCast(g_arena.lines.items.len);
+            try g_arena.lines.append(allocator, .{ .start = t_arena.vertices.items[va].point, .end = t_arena.vertices.items[vb].point });
+
+            const he_id = he_start + @as(u32, @intCast(i));
+            try t_arena.half_edges.append(allocator, .{
+                .start_vertex = va,
+                .twin = topo.NULL_ID,
+                .next = he_start + @as(u32, @intCast((i + 1) % 3)),
+                .prev = he_start + @as(u32, @intCast((i + 2) % 3)),
+                .loop_id = loop_id,
+                .curve = .{ .index = line_idx, .curve_type = .line },
+                .forward = true,
+            });
+
+            // Universal Twin Stitching
+            const key = EdgeKey.init(va, vb);
+
+            if (edge_map.get(key)) |twin_he| {
+                t_arena.half_edges.items[he_id].twin = twin_he;
+                t_arena.half_edges.items[twin_he].twin = he_id;
+                _ = edge_map.remove(key);
+            } else {
+                try edge_map.put(key, he_id);
+            }
+        }
+
+        try t_arena.loops.append(allocator, .{ .face_id = face_id, .first_half_edge = he_start });
+        const fl_start: u32 = @intCast(t_arena.face_loops.items.len);
+        try t_arena.face_loops.append(allocator, loop_id);
+        try t_arena.faces.append(allocator, .{
+            .surface = .{ .index = plane_idx, .surface_type = .plane },
+            .forward = true,
+            .loops_start = fl_start,
+            .loops_len = 1,
+        });
+        try t_arena.shell_faces.append(allocator, face_id);
+    }
+
+    try t_arena.shells.append(allocator, .{
+        .faces_start = sh_faces_start,
+        .faces_len = @intCast(t_arena.shell_faces.items.len - sh_faces_start),
+    });
+
+    const solid_id: u32 = @intCast(t_arena.solids.items.len);
+    const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
+    try t_arena.solid_shells.append(allocator, shell_id);
+    try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
+
+    return solid_id;
+}

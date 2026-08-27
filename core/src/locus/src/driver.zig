@@ -209,6 +209,23 @@ fn trimByPlaneImpl(shape: GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64
     return @as(GeometryHandle, solid_id);
 }
 
+fn squareImpl(x: f64, y: f64, center: bool) ?GeometryHandle {
+    const solid_id = generators.generateSquare(g_allocator, &g_topo_arena, &g_geom_arena, x, y, center) catch return null;
+    return @as(GeometryHandle, solid_id);
+}
+
+fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?GeometryHandle {
+    const solid_id = generators.buildPolyhedron(allocator, &g_topo_arena, &g_geom_arena, pts, faces) catch return null;
+    return @as(GeometryHandle, solid_id);
+}
+
+fn revolveImpl(cs: GeometryHandle, segments: i32, degrees: f64) ?GeometryHandle {
+    const solid_id = sweeps.revolveFace(g_allocator, &g_topo_arena, &g_geom_arena, &g_topo_arena, // Test mock uses the same arena for 2D and 3D
+        @as(topo.FaceId, @intCast(cs)), // <-- Cast to FaceId instead of SolidId
+        @as(u32, @intCast(segments)), degrees) catch return null;
+    return @as(GeometryHandle, solid_id);
+}
+
 pub const driver = struct {
     pub const cubeFn = cubeImpl;
     pub const cylinderFn = cylinderImpl;
@@ -224,4 +241,7 @@ pub const driver = struct {
     pub const surfaceAreaFn = surfaceAreaImpl;
     pub const getMeshFn = getMeshImpl;
     pub const trimByPlaneFn = trimByPlaneImpl;
+    pub const squareFn = squareImpl;
+    pub const polyhedronFn = polyhedronImpl;
+    pub const revolveFn = revolveImpl;
 };

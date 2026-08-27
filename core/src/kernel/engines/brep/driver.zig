@@ -241,22 +241,39 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
 // --- Stubbed / Unimplemented V-Table Endpoints ---
 
 fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
-    _ = allocator;
-    _ = pts;
-    _ = faces;
-    return null;
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+
+    // Automatically wire raw meshes into perfect manifolds!
+    solid.solid_id = locus_gen.buildPolyhedron(allocator, &solid.t_arena, &solid.g_arena, pts, faces) catch {
+        solid.destroy();
+        return null;
+    };
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
+
 fn polygonsEvenOddImpl(allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
     _ = allocator;
     _ = contours;
     return null;
 }
+
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
-    _ = cs;
-    _ = segments;
-    _ = revolve_degrees;
-    return null;
+    if (@intFromPtr(cs.ptr) == 0) return null;
+    const solid_2d: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
+
+    // We mint a completely isolated 3D solid wrapper to house the new revolution geometry
+    const revolved_solid = BrepSolid.create(backend_allocator) catch return null;
+
+    revolved_solid.solid_id = locus_sweeps.revolveFace(backend_allocator, &revolved_solid.t_arena, &revolved_solid.g_arena, &solid_2d.t_arena, // Reading from the isolated 2D profile
+        solid_2d.solid_id, // The 2D face solid id
+        @intCast(segments), revolve_degrees) catch {
+        revolved_solid.destroy();
+        return null;
+    };
+
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(revolved_solid) };
 }
+
 fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
     _ = a;
     _ = height;
