@@ -15,6 +15,7 @@ const locus_bool = @import("../../../locus/src/booleans.zig");
 const locus_bool2d = @import("../../../locus/src/booleans_2d.zig");
 const locus_merger = @import("../../../locus/src/merger.zig");
 const locus_slicing = @import("../../../locus/src/slicing.zig");
+const locus_qh = @import("../../../locus/src/quickhull.zig");
 
 var backend_allocator = std.heap.page_allocator;
 
@@ -397,15 +398,85 @@ fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryH
     return a;
 }
 
-fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
-    _ = a;
-    return null;
+fn extractAllVertices(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const locus_math.Vec3 {
+    var pts = std.ArrayListUnmanaged(locus_math.Vec3).empty;
+    for (handles) |h| {
+        if (@intFromPtr(h.ptr) == 0) continue;
+        const solid: *BrepSolid = @ptrCast(@alignCast(h.ptr));
+        const s = solid.t_arena.solids.items[solid.solid_id];
+        for (0..s.shells_len) |s_off| {
+            const shell = solid.t_arena.shells.items[solid.t_arena.solid_shells.items[s.shells_start + s_off]];
+            for (0..shell.faces_len) |f_off| {
+                const face_id = solid.t_arena.shell_faces.items[shell.faces_start + f_off];
+                const face = solid.t_arena.faces.items[face_id];
+                for (0..face.loops_len) |l_off| {
+                    const loop = solid.t_arena.loops.items[solid.t_arena.face_loops.items[face.loops_start + l_off]];
+                    var curr = loop.first_half_edge;
+                    while (true) {
+                        const he = solid.t_arena.half_edges.items[curr];
+                        try pts.append(allocator, solid.t_arena.vertices.items[he.start_vertex].point);
+                        curr = he.next;
+                        if (curr == loop.first_half_edge) break;
+                    }
+                }
+            }
+        }
+    }
+    return pts.toOwnedSlice(allocator);
 }
+
+fn buildHullFromHandles(handles: []const geom.GeometryHandle) ?geom.GeometryHandle {
+    const pts = extractAllVertices(backend_allocator, handles) catch return null;
+    defer backend_allocator.free(pts);
+
+    if (pts.len < 4) return null;
+
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+
+    var builder = locus_qh.QuickhullBuilder.init(backend_allocator, pts);
+    defer builder.deinit();
+    builder.buildHull() catch {
+        solid.destroy();
+        return null;
+    };
+
+    var tris = std.ArrayListUnmanaged([3]u32).empty;
+    defer tris.deinit(backend_allocator);
+
+    for (builder.faces.items) |hull_face| {
+        if (hull_face.disabled) continue;
+
+        const he0 = builder.half_edges.items[hull_face.first_half_edge];
+        const he1 = builder.half_edges.items[he0.next_edge];
+        const he2 = builder.half_edges.items[he1.next_edge];
+
+        tris.append(backend_allocator, .{
+            he2.end_vertex,
+            he0.end_vertex,
+            he1.end_vertex,
+        }) catch {
+            solid.destroy();
+            return null;
+        };
+    }
+
+    solid.solid_id = locus_gen.buildPolyhedron(backend_allocator, &solid.t_arena, &solid.g_arena, pts, tris.items) catch {
+        solid.destroy();
+        return null;
+    };
+
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
+fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
+    if (@intFromPtr(a.ptr) == 0) return null;
+    return buildHullFromHandles(&[_]geom.GeometryHandle{a});
+}
+
 fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
     _ = allocator;
-    _ = objs;
-    // B-Rep Convex Hulls require a dedicated solver (e.g. QuickHull3D). Stubbed for now.
-    return null;
+    if (objs.len == 0) return null;
+    return buildHullFromHandles(objs);
 }
 
 fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
@@ -537,11 +608,75 @@ fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
 }
 
 fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
-    _ = allocator;
-    _ = handle;
-    _ = direction;
-    _ = tolerance;
-    return null;
+    if (@intFromPtr(handle.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const s = solid.t_arena.solids.items[solid.solid_id];
+
+    const norm_dir = locus_math.normalize(.{ direction[0], direction[1], direction[2] });
+    var max_depth: f64 = -std.math.inf(f64);
+    var accum_centroid = [3]f64{ 0, 0, 0 };
+    var match_count: usize = 0;
+
+    for (0..s.shells_len) |s_off| {
+        const shell = solid.t_arena.shells.items[solid.t_arena.solid_shells.items[s.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = solid.t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = solid.t_arena.faces.items[face_id];
+
+            if (face.surface.surface_type != .plane) continue;
+            const plane = solid.g_arena.planes.items[face.surface.index];
+
+            var normal = locus_math.normalize(locus_math.cross(plane.u_axis, plane.v_axis));
+            if (!face.forward) normal = locus_math.scale(normal, -1.0);
+
+            const alignment = locus_math.dot(normal, norm_dir);
+            if (1.0 - alignment <= tolerance) {
+                var centroid = [3]f64{ 0, 0, 0 };
+                var v_count: f64 = 0;
+                const loop = solid.t_arena.loops.items[solid.t_arena.face_loops.items[face.loops_start]];
+                var curr_he = loop.first_half_edge;
+                while (true) {
+                    const pt = solid.t_arena.vertices.items[solid.t_arena.half_edges.items[curr_he].start_vertex].point;
+                    centroid[0] += pt[0];
+                    centroid[1] += pt[1];
+                    centroid[2] += pt[2];
+                    v_count += 1.0;
+                    curr_he = solid.t_arena.half_edges.items[curr_he].next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+                if (v_count > 0) {
+                    centroid[0] /= v_count;
+                    centroid[1] /= v_count;
+                    centroid[2] /= v_count;
+                }
+
+                const depth = locus_math.dot(centroid, norm_dir);
+                if (depth > max_depth + tolerance) {
+                    max_depth = depth;
+                    accum_centroid = centroid;
+                    match_count = 1;
+                } else if (@abs(depth - max_depth) <= tolerance) {
+                    accum_centroid[0] += centroid[0];
+                    accum_centroid[1] += centroid[1];
+                    accum_centroid[2] += centroid[2];
+                    match_count += 1;
+                }
+            }
+        }
+    }
+
+    if (match_count == 0) return null;
+    var faces = allocator.alloc(geom.FaceHandle, 1) catch return null;
+    faces[0] = .{
+        .index = 0,
+        .normal = .{ norm_dir[0], norm_dir[1], norm_dir[2] },
+        .centroid = .{
+            accum_centroid[0] / @as(f64, @floatFromInt(match_count)),
+            accum_centroid[1] / @as(f64, @floatFromInt(match_count)),
+            accum_centroid[2] / @as(f64, @floatFromInt(match_count)),
+        },
+    };
+    return faces;
 }
 
 fn volumeImpl(handle: geom.GeometryHandle) f64 {
@@ -608,10 +743,33 @@ fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
 }
 
 fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
-    _ = a;
-    _ = b;
     _ = sl;
-    return 0.0;
+    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return 0.0;
+
+    const mesh_a = getMeshImpl(backend_allocator, a) orelse return 0.0;
+    defer {
+        backend_allocator.free(mesh_a.vert_props);
+        backend_allocator.free(mesh_a.tri_verts);
+    }
+
+    const mesh_b = getMeshImpl(backend_allocator, b) orelse return 0.0;
+    defer {
+        backend_allocator.free(mesh_b.vert_props);
+        backend_allocator.free(mesh_b.tri_verts);
+    }
+
+    var min_dist_sq: f64 = std.math.inf(f64);
+    var i: usize = 0;
+    while (i < mesh_a.vert_props.len) : (i += 3) {
+        const pa = locus_math.Vec3{ mesh_a.vert_props[i], mesh_a.vert_props[i + 1], mesh_a.vert_props[i + 2] };
+        var j: usize = 0;
+        while (j < mesh_b.vert_props.len) : (j += 3) {
+            const pb = locus_math.Vec3{ mesh_b.vert_props[j], mesh_b.vert_props[j + 1], mesh_b.vert_props[j + 2] };
+            const dist_sq = locus_math.distSq(pa, pb);
+            if (dist_sq < min_dist_sq) min_dist_sq = dist_sq;
+        }
+    }
+    return @sqrt(min_dist_sq);
 }
 
 fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
@@ -658,21 +816,84 @@ fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.Cros
 }
 
 fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
-    _ = alloc;
-    _ = a;
-    _ = o;
-    _ = e;
-    return null;
+    if (@intFromPtr(a.ptr) == 0) return null;
+
+    const mesh = getMeshImpl(backend_allocator, a) orelse return null;
+    defer {
+        backend_allocator.free(mesh.vert_props);
+        backend_allocator.free(mesh.tri_verts);
+    }
+
+    const ray_origin = locus_math.Vec3{ o[0], o[1], o[2] };
+    const ray_end = locus_math.Vec3{ e[0], e[1], e[2] };
+    const ray_vec = locus_math.sub(ray_end, ray_origin);
+    const ray_len = locus_math.mag(ray_vec);
+    if (ray_len < 1e-12) return null;
+    const ray_dir = locus_math.scale(ray_vec, 1.0 / ray_len);
+
+    var hits = std.ArrayListUnmanaged(geom.RayHit).empty;
+    defer hits.deinit(alloc);
+
+    var i: usize = 0;
+    while (i < mesh.tri_verts.len) : (i += 3) {
+        const idx0 = mesh.tri_verts[i] * 3;
+        const idx1 = mesh.tri_verts[i + 1] * 3;
+        const idx2 = mesh.tri_verts[i + 2] * 3;
+
+        const v0 = locus_math.Vec3{ mesh.vert_props[idx0], mesh.vert_props[idx0 + 1], mesh.vert_props[idx0 + 2] };
+        const v1 = locus_math.Vec3{ mesh.vert_props[idx1], mesh.vert_props[idx1 + 1], mesh.vert_props[idx1 + 2] };
+        const v2 = locus_math.Vec3{ mesh.vert_props[idx2], mesh.vert_props[idx2 + 1], mesh.vert_props[idx2 + 2] };
+
+        const edge1 = locus_math.sub(v1, v0);
+        const edge2 = locus_math.sub(v2, v0);
+        const h_vec = locus_math.cross(ray_dir, edge2);
+        const a_det = locus_math.dot(edge1, h_vec);
+
+        if (a_det > -1e-8 and a_det < 1e-8) continue;
+
+        const f = 1.0 / a_det;
+        const s_vec = locus_math.sub(ray_origin, v0);
+        const u = f * locus_math.dot(s_vec, h_vec);
+
+        if (u < 0.0 or u > 1.0) continue;
+
+        const q_vec = locus_math.cross(s_vec, edge1);
+        const v = f * locus_math.dot(ray_dir, q_vec);
+
+        if (v < 0.0 or u + v > 1.0) continue;
+
+        const t = f * locus_math.dot(edge2, q_vec);
+        if (t > 1e-8 and t < ray_len) {
+            const hit_pos = locus_math.add(ray_origin, locus_math.scale(ray_dir, t));
+            const normal = locus_math.normalize(locus_math.cross(edge1, edge2));
+            hits.append(alloc, .{
+                .distance = t,
+                .position = .{ hit_pos[0], hit_pos[1], hit_pos[2] },
+                .normal = .{ normal[0], normal[1], normal[2] },
+            }) catch continue;
+        }
+    }
+
+    if (hits.items.len == 0) return null;
+
+    std.mem.sort(geom.RayHit, hits.items, {}, struct {
+        fn lessThan(_: void, lhs: geom.RayHit, rhs: geom.RayHit) bool {
+            return lhs.distance < rhs.distance;
+        }
+    }.lessThan);
+
+    return hits.toOwnedSlice(alloc) catch null;
 }
+
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
     _ = tolerance;
     std.debug.assert(a.engine == .brep_native);
     return a;
 }
+
 fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
-    _ = a;
     _ = material_id;
-    return null;
+    return a; // MVP Phase 5: Pass-through
 }
 
 pub const driver = kernel.GeometryKernel{

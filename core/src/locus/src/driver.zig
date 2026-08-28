@@ -312,6 +312,174 @@ fn polygonsEvenOddImpl(allocator: std.mem.Allocator, contours: []const []const [
     return @as(GeometryHandle, solid_id);
 }
 
+fn queryFacesImpl(allocator: std.mem.Allocator, handle: GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
+    const solid_id: topo.SolidId = @intCast(handle);
+    if (solid_id >= g_topo_arena.solids.items.len) return null;
+    const s = g_topo_arena.solids.items[solid_id];
+
+    const norm_dir = math.normalize(.{ direction[0], direction[1], direction[2] });
+    var max_depth: f64 = -std.math.inf(f64);
+    var accum_centroid = [3]f64{ 0, 0, 0 };
+    var match_count: usize = 0;
+
+    for (0..s.shells_len) |s_off| {
+        const shell = g_topo_arena.shells.items[g_topo_arena.solid_shells.items[s.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = g_topo_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = g_topo_arena.faces.items[face_id];
+
+            if (face.surface.surface_type != .plane) continue;
+            const plane = g_geom_arena.planes.items[face.surface.index];
+
+            var normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+            if (!face.forward) normal = math.scale(normal, -1.0);
+
+            const alignment = math.dot(normal, norm_dir);
+            if (1.0 - alignment <= tolerance) {
+                var centroid = [3]f64{ 0, 0, 0 };
+                var v_count: f64 = 0;
+                const loop = g_topo_arena.loops.items[g_topo_arena.face_loops.items[face.loops_start]];
+                var curr_he = loop.first_half_edge;
+                while (true) {
+                    const pt = g_topo_arena.vertices.items[g_topo_arena.half_edges.items[curr_he].start_vertex].point;
+                    centroid[0] += pt[0];
+                    centroid[1] += pt[1];
+                    centroid[2] += pt[2];
+                    v_count += 1.0;
+                    curr_he = g_topo_arena.half_edges.items[curr_he].next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+                if (v_count > 0) {
+                    centroid[0] /= v_count;
+                    centroid[1] /= v_count;
+                    centroid[2] /= v_count;
+                }
+
+                const depth = math.dot(centroid, norm_dir);
+                if (depth > max_depth + tolerance) {
+                    max_depth = depth;
+                    accum_centroid = centroid;
+                    match_count = 1;
+                } else if (@abs(depth - max_depth) <= tolerance) {
+                    accum_centroid[0] += centroid[0];
+                    accum_centroid[1] += centroid[1];
+                    accum_centroid[2] += centroid[2];
+                    match_count += 1;
+                }
+            }
+        }
+    }
+
+    if (match_count == 0) return null;
+    var faces = allocator.alloc(geom.FaceHandle, 1) catch return null;
+    faces[0] = .{
+        .index = 0,
+        .normal = .{ norm_dir[0], norm_dir[1], norm_dir[2] },
+        .centroid = .{
+            accum_centroid[0] / @as(f64, @floatFromInt(match_count)),
+            accum_centroid[1] / @as(f64, @floatFromInt(match_count)),
+            accum_centroid[2] / @as(f64, @floatFromInt(match_count)),
+        },
+    };
+    return faces;
+}
+
+fn rayCastImpl(alloc: std.mem.Allocator, a: GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
+    const mesh = getMeshImpl(a) orelse return null;
+    defer {
+        g_allocator.free(mesh.vertex_ptr[0..mesh.vertex_len]);
+        g_allocator.free(mesh.index_ptr[0..mesh.index_len]);
+    }
+
+    const ray_origin = math.Vec3{ o[0], o[1], o[2] };
+    const ray_end = math.Vec3{ e[0], e[1], e[2] };
+    const ray_vec = math.sub(ray_end, ray_origin);
+    const ray_len = math.mag(ray_vec);
+    if (ray_len < 1e-12) return null;
+    const ray_dir = math.scale(ray_vec, 1.0 / ray_len);
+
+    var hits = std.ArrayListUnmanaged(geom.RayHit).empty;
+    defer hits.deinit(alloc);
+
+    var i: usize = 0;
+    while (i < mesh.index_len) : (i += 3) {
+        const idx0 = mesh.index_ptr[i] * 3;
+        const idx1 = mesh.index_ptr[i + 1] * 3;
+        const idx2 = mesh.index_ptr[i + 2] * 3;
+
+        const v0 = math.Vec3{ mesh.vertex_ptr[idx0], mesh.vertex_ptr[idx0 + 1], mesh.vertex_ptr[idx0 + 2] };
+        const v1 = math.Vec3{ mesh.vertex_ptr[idx1], mesh.vertex_ptr[idx1 + 1], mesh.vertex_ptr[idx1 + 2] };
+        const v2 = math.Vec3{ mesh.vertex_ptr[idx2], mesh.vertex_ptr[idx2 + 1], mesh.vertex_ptr[idx2 + 2] };
+
+        const edge1 = math.sub(v1, v0);
+        const edge2 = math.sub(v2, v0);
+        const h_vec = math.cross(ray_dir, edge2);
+        const a_det = math.dot(edge1, h_vec);
+
+        if (a_det > -1e-8 and a_det < 1e-8) continue;
+
+        const f = 1.0 / a_det;
+        const s_vec = math.sub(ray_origin, v0);
+        const u = f * math.dot(s_vec, h_vec);
+
+        if (u < 0.0 or u > 1.0) continue;
+
+        const q_vec = math.cross(s_vec, edge1);
+        const v = f * math.dot(ray_dir, q_vec);
+
+        if (v < 0.0 or u + v > 1.0) continue;
+
+        const t = f * math.dot(edge2, q_vec);
+        if (t > 1e-8 and t < ray_len) {
+            const hit_pos = math.add(ray_origin, math.scale(ray_dir, t));
+            const normal = math.normalize(math.cross(edge1, edge2));
+            hits.append(alloc, .{
+                .distance = t,
+                .position = .{ hit_pos[0], hit_pos[1], hit_pos[2] },
+                .normal = .{ normal[0], normal[1], normal[2] },
+            }) catch continue;
+        }
+    }
+
+    if (hits.items.len == 0) return null;
+
+    std.mem.sort(geom.RayHit, hits.items, {}, struct {
+        fn lessThan(_: void, lhs: geom.RayHit, rhs: geom.RayHit) bool {
+            return lhs.distance < rhs.distance;
+        }
+    }.lessThan);
+
+    return hits.toOwnedSlice(alloc) catch null;
+}
+
+fn minGapImpl(a: GeometryHandle, b: GeometryHandle, sl: f64) f64 {
+    _ = sl;
+    const mesh_a = getMeshImpl(a) orelse return 0.0;
+    defer {
+        g_allocator.free(mesh_a.vertex_ptr[0..mesh_a.vertex_len]);
+        g_allocator.free(mesh_a.index_ptr[0..mesh_a.index_len]);
+    }
+
+    const mesh_b = getMeshImpl(b) orelse return 0.0;
+    defer {
+        g_allocator.free(mesh_b.vertex_ptr[0..mesh_b.vertex_len]);
+        g_allocator.free(mesh_b.index_ptr[0..mesh_b.index_len]);
+    }
+
+    var min_dist_sq: f64 = std.math.inf(f64);
+    var i: usize = 0;
+    while (i < mesh_a.vertex_len) : (i += 3) {
+        const pa = math.Vec3{ mesh_a.vertex_ptr[i], mesh_a.vertex_ptr[i + 1], mesh_a.vertex_ptr[i + 2] };
+        var j: usize = 0;
+        while (j < mesh_b.vertex_len) : (j += 3) {
+            const pb = math.Vec3{ mesh_b.vertex_ptr[j], mesh_b.vertex_ptr[j + 1], mesh_b.vertex_ptr[j + 2] };
+            const dist_sq = math.distSq(pa, pb);
+            if (dist_sq < min_dist_sq) min_dist_sq = dist_sq;
+        }
+    }
+    return @sqrt(min_dist_sq);
+}
+
 pub const driver = struct {
     pub const cubeFn = cubeImpl;
     pub const cylinderFn = cylinderImpl;
@@ -335,4 +503,7 @@ pub const driver = struct {
     pub const offsetFn = offsetImpl;
     pub const mirrorFn = mirrorImpl;
     pub const polygonsEvenOddFn = polygonsEvenOddImpl;
+    pub const queryFacesFn = queryFacesImpl;
+    pub const rayCastFn = rayCastImpl;
+    pub const minGapFn = minGapImpl;
 };

@@ -1,6 +1,7 @@
 const std = @import("std");
 const driver = @import("driver.zig");
 const kernel = @import("../../kernel.zig");
+const geom = @import("../../geometry_handle.zig");
 
 test "Driver: End-to-End API Calls" {
     const cube_handle = driver.driver.cubeFn(10, 10, 10, true) orelse return error.CubeFailed;
@@ -178,4 +179,79 @@ test "Driver: Project Solid to 2D Silhouette" {
 
     const vol = driver.driver.volumeFn(res);
     try std.testing.expectApproxEqAbs(1000.0, vol, 1e-4);
+}
+
+test "Driver: Convex Hull (Single and Batch)" {
+    // 1. Single Hull (Hull of a cube is just the cube itself)
+    const cube1 = driver.driver.cubeFn(10, 10, 10, true) orelse return error.Cube;
+    defer driver.driver.destructFn(cube1);
+
+    const hull1 = driver.driver.hullFn(cube1) orelse return error.Hull;
+    defer driver.driver.destructFn(hull1);
+
+    const vol1 = driver.driver.volumeFn(hull1);
+    // B-Rep Quickhull triangulation causes extremely minor floating point rounding
+    try std.testing.expectApproxEqAbs(1000.0, vol1, 1e-4);
+
+    // 2. Batch Hull
+    const cube2 = driver.driver.cubeFn(10, 10, 10, true) orelse return error.Cube;
+    defer driver.driver.destructFn(cube2);
+    _ = driver.driver.translateFn(cube2, 20, 0, 0); // shift by 20 on X
+
+    const handles = [_]geom.GeometryHandle{ cube1, cube2 };
+    const batch_hull = driver.driver.batchHullFn(std.testing.allocator, &handles) orelse return error.BatchHull;
+    defer driver.driver.destructFn(batch_hull);
+
+    const bbox = driver.driver.boundingBoxFn(batch_hull) orelse return error.BBox;
+    // Min X is -5 (from cube1), Max X is 25 (from cube2)
+    try std.testing.expectApproxEqAbs(-5.0, bbox.min[0], 1e-4);
+    try std.testing.expectApproxEqAbs(25.0, bbox.max[0], 1e-4);
+
+    // Volume should enclose both cubes and the space between them (30x10x10)
+    const vol_batch = driver.driver.volumeFn(batch_hull);
+    try std.testing.expectApproxEqAbs(3000.0, vol_batch, 1e-4);
+}
+
+test "Driver: Spatial Queries (queryFaces)" {
+    const cube = driver.driver.cubeFn(10, 10, 10, true) orelse return error.Cube;
+    defer driver.driver.destructFn(cube);
+
+    const faces = driver.driver.queryFacesFn(std.testing.allocator, cube, .{ 0, 0, 1 }, 1e-4) orelse return error.Query;
+    defer std.testing.allocator.free(faces);
+
+    try std.testing.expectEqual(@as(usize, 1), faces.len);
+    try std.testing.expectApproxEqAbs(0.0, faces[0].normal[0], 1e-5);
+    try std.testing.expectApproxEqAbs(0.0, faces[0].normal[1], 1e-5);
+    try std.testing.expectApproxEqAbs(1.0, faces[0].normal[2], 1e-5);
+
+    // Centroid of +Z face on centered 10x10x10 cube is (0,0,5)
+    try std.testing.expectApproxEqAbs(0.0, faces[0].centroid[0], 1e-5);
+    try std.testing.expectApproxEqAbs(0.0, faces[0].centroid[1], 1e-5);
+    try std.testing.expectApproxEqAbs(5.0, faces[0].centroid[2], 1e-5);
+}
+
+test "Driver: Raycasting" {
+    const sphere = driver.driver.sphereFn(10.0) orelse return error.Sphere;
+    defer driver.driver.destructFn(sphere);
+
+    // Shoot ray from Z=20 down to Z=-20 directly through the center
+    const hits = driver.driver.rayCastFn(std.testing.allocator, sphere, .{ 0, 0, 20 }, .{ 0, 0, -20 }) orelse return error.RayCast;
+    defer std.testing.allocator.free(hits);
+
+    // Should hit top and bottom. Exact distance to top is ~10.0.
+    try std.testing.expect(hits.len >= 2);
+    try std.testing.expectApproxEqAbs(10.0, hits[0].distance, 0.5); // 0.5 tolerance for chordal sag
+}
+
+test "Driver: Minimum Gap" {
+    const cube1 = driver.driver.cubeFn(10, 10, 10, true) orelse return error.Cube;
+    defer driver.driver.destructFn(cube1);
+
+    const cube2 = driver.driver.cubeFn(10, 10, 10, true) orelse return error.Cube;
+    defer driver.driver.destructFn(cube2);
+
+    _ = driver.driver.translateFn(cube2, 20, 0, 0); // 10 unit gap from face to face (-5..5 vs 15..25)
+
+    const gap = driver.driver.minGapFn(cube1, cube2, 100.0);
+    try std.testing.expectApproxEqAbs(10.0, gap, 1e-4);
 }
