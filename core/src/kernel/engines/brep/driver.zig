@@ -282,13 +282,90 @@ fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64)
 }
 
 fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
-    _ = a;
-    _ = height;
-    return null;
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid_3d: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+
+    var mesh = locus_tess.Mesh{};
+    defer mesh.deinit(backend_allocator);
+    locus_tess.tessellateSolid(backend_allocator, &solid_3d.t_arena, &solid_3d.g_arena, solid_3d.solid_id, &mesh, .{}) catch return null;
+
+    const contours = locus_slicing.sliceMeshToContours(backend_allocator, &mesh, height) catch return null;
+    defer {
+        for (contours) |c| backend_allocator.free(c);
+        backend_allocator.free(contours);
+    }
+
+    if (contours.len == 0) return null;
+
+    const cs_solid = BrepSolid.create(backend_allocator) catch return null;
+    cs_solid.solid_id = locus_gen.generatePolygonsEvenOdd(backend_allocator, &cs_solid.t_arena, &cs_solid.g_arena, contours) catch {
+        cs_solid.destroy();
+        return null;
+    };
+
+    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(cs_solid) };
 }
+
 fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
-    _ = a;
-    return null;
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid_3d: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+
+    var combined_2d: ?geom.CrossSectionHandle = null;
+
+    const s = solid_3d.t_arena.solids.items[solid_3d.solid_id];
+    for (0..s.shells_len) |s_off| {
+        const shell = solid_3d.t_arena.shells.items[solid_3d.t_arena.solid_shells.items[s.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = solid_3d.t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = solid_3d.t_arena.faces.items[face_id];
+            if (face.loops_len == 0) continue;
+
+            const loop = solid_3d.t_arena.loops.items[solid_3d.t_arena.face_loops.items[face.loops_start]];
+            var pts2d = std.ArrayListUnmanaged([2]f64).empty;
+            defer pts2d.deinit(backend_allocator);
+
+            var curr_he = loop.first_half_edge;
+            while (true) {
+                const he = solid_3d.t_arena.half_edges.items[curr_he];
+                const pt = solid_3d.t_arena.vertices.items[he.start_vertex].point;
+                pts2d.append(backend_allocator, .{ pt[0], pt[1] }) catch break;
+                curr_he = he.next;
+                if (curr_he == loop.first_half_edge) break;
+            }
+
+            if (pts2d.items.len < 3) continue;
+
+            // Calculate exact 2D footprint area
+            var area: f64 = 0;
+            for (0..pts2d.items.len) |i| {
+                const p1 = pts2d.items[i];
+                const p2 = pts2d.items[(i + 1) % pts2d.items.len];
+                area += (p1[0] * p2[1] - p2[0] * p1[1]);
+            }
+            area = @abs(area) * 0.5;
+
+            // If it's a vertical wall, its projection area is 0; discard it.
+            if (area < 1e-4) continue;
+
+            const face_cs = BrepSolid.create(backend_allocator) catch continue;
+            face_cs.solid_id = locus_gen.generatePolygon(backend_allocator, &face_cs.t_arena, &face_cs.g_arena, pts2d.items) catch {
+                face_cs.destroy();
+                continue;
+            };
+
+            const cs_handle = geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(face_cs) };
+
+            if (combined_2d == null) {
+                combined_2d = cs_handle;
+            } else {
+                const new_combined = crossSectionBooleanImpl(combined_2d.?, cs_handle, .union_op);
+                destructCrossSectionImpl(cs_handle); // Destroy temp projection layer
+                combined_2d = new_combined;
+            }
+        }
+    }
+
+    return combined_2d;
 }
 
 fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {

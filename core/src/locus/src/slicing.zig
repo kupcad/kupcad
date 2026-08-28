@@ -5,6 +5,7 @@ const math = @import("math.zig");
 const generators = @import("generators.zig");
 const transforms = @import("transforms.zig");
 const booleans = @import("booleans.zig");
+const tessellate = @import("tessellate.zig");
 
 const HALF_SPACE_SIZE: f64 = 20000.0; // Massive bounding box
 
@@ -94,4 +95,102 @@ pub fn splitByPlane(
     const solid_pos = try booleans.computeBoolean(allocator, t_arena, g_arena, target_solid, space_pos, .intersection, .{});
 
     return .{ .first = solid_pos, .second = solid_neg };
+}
+
+/// Slices a 2-manifold triangle mesh exactly at Z = z_height, producing closed 2D loop contours.
+pub fn sliceMeshToContours(allocator: std.mem.Allocator, mesh: *const tessellate.Mesh, z_height: f64) ![][]const [2]f64 {
+    var segments = std.ArrayListUnmanaged([2][2]f64).empty;
+    defer segments.deinit(allocator);
+
+    for (mesh.triangles.items) |tri| {
+        const p0 = mesh.vertices.items[tri[0]];
+        const p1 = mesh.vertices.items[tri[1]];
+        const p2 = mesh.vertices.items[tri[2]];
+
+        var hit_pts = std.ArrayListUnmanaged([2]f64).empty;
+        defer hit_pts.deinit(allocator);
+
+        const edges = [_][2]math.Vec3{ .{ p0, p1 }, .{ p1, p2 }, .{ p2, p0 } };
+        for (edges) |edge| {
+            const z0 = edge[0][2];
+            const z1 = edge[1][2];
+
+            if ((z0 > z_height and z1 < z_height) or (z0 < z_height and z1 > z_height)) {
+                const t = (z_height - z0) / (z1 - z0);
+                const hx = edge[0][0] + t * (edge[1][0] - edge[0][0]);
+                const hy = edge[0][1] + t * (edge[1][1] - edge[0][1]);
+                try hit_pts.append(allocator, .{ hx, hy });
+            } else if (z0 == z_height and z1 == z_height) {
+                try hit_pts.append(allocator, .{ edge[0][0], edge[0][1] });
+                try hit_pts.append(allocator, .{ edge[1][0], edge[1][1] });
+            } else if (z0 == z_height) {
+                try hit_pts.append(allocator, .{ edge[0][0], edge[0][1] });
+            }
+        }
+
+        if (hit_pts.items.len >= 2) {
+            var unique_pts = std.ArrayListUnmanaged([2]f64).empty;
+            defer unique_pts.deinit(allocator);
+            for (hit_pts.items) |pt| {
+                var found = false;
+                for (unique_pts.items) |u| {
+                    if (@abs(u[0] - pt[0]) < 1e-5 and @abs(u[1] - pt[1]) < 1e-5) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) try unique_pts.append(allocator, pt);
+            }
+            if (unique_pts.items.len == 2) {
+                try segments.append(allocator, .{ unique_pts.items[0], unique_pts.items[1] });
+            }
+        }
+    }
+
+    var contours = std.ArrayListUnmanaged([]const [2]f64).empty;
+    var used = try allocator.alloc(bool, segments.items.len);
+    defer allocator.free(used);
+    @memset(used, false);
+
+    for (0..segments.items.len) |i| {
+        if (used[i]) continue;
+        used[i] = true;
+
+        var loop = std.ArrayListUnmanaged([2]f64).empty;
+        try loop.append(allocator, segments.items[i][0]);
+        var current_pt = segments.items[i][1];
+
+        while (true) {
+            if (@abs(current_pt[0] - loop.items[0][0]) < 1e-4 and @abs(current_pt[1] - loop.items[0][1]) < 1e-4) {
+                break; // Closed loop
+            }
+            try loop.append(allocator, current_pt);
+
+            var found = false;
+            for (0..segments.items.len) |j| {
+                if (used[j]) continue;
+                const seg = segments.items[j];
+
+                if (@abs(seg[0][0] - current_pt[0]) < 1e-4 and @abs(seg[0][1] - current_pt[1]) < 1e-4) {
+                    current_pt = seg[1];
+                    used[j] = true;
+                    found = true;
+                    break;
+                } else if (@abs(seg[1][0] - current_pt[0]) < 1e-4 and @abs(seg[1][1] - current_pt[1]) < 1e-4) {
+                    current_pt = seg[0];
+                    used[j] = true;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) break; // Dead end
+        }
+        if (loop.items.len >= 3) {
+            try contours.append(allocator, try loop.toOwnedSlice(allocator));
+        } else {
+            loop.deinit(allocator);
+        }
+    }
+
+    return try contours.toOwnedSlice(allocator);
 }

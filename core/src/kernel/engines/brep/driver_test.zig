@@ -143,3 +143,39 @@ test "Driver: Polygons Even-Odd" {
     const shell = solid_ptr.t_arena.shells.items[solid_ptr.t_arena.solid_shells.items[s.shells_start]];
     try std.testing.expectEqual(@as(usize, 10), shell.faces_len);
 }
+
+test "Driver: Slice Solid to 2D" {
+    // Create an angled/shifted cylinder
+    const cyl = driver.driver.cylinderFn(5.0, 5.0, 20.0, true, 32) orelse return error.Cyl;
+    defer driver.driver.destructFn(cyl);
+
+    // Slice cleanly at Z=0
+    const cs = driver.driver.sliceFn(cyl, 0.0) orelse return error.Slice;
+
+    // Extrude it back. 'cs' is consumed and mutated into 'res', so we only destruct 'res'.
+    const res = driver.driver.extrudeFn(cs, 10.0, 0, 0, 1.0, 1.0) orelse return error.Extrude;
+    defer driver.driver.destructFn(res);
+
+    const vol = driver.driver.volumeFn(res);
+    // The generator currently hardcodes 16 segments.
+    // 16-gon area = 8 * r^2 * sin(pi/8) = 76.536686 -> Vol = 765.366
+    try std.testing.expectApproxEqAbs(765.366, vol, 1.0);
+}
+
+test "Driver: Project Solid to 2D Silhouette" {
+    // Create a 10x10x10 cube, and shift it heavily so X and Y span [0, 10]
+    const cube = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.Cube;
+    defer driver.driver.destructFn(cube);
+
+    _ = driver.driver.translateFn(cube, 5, 5, 5);
+
+    // Project top/bottom planes and unify them
+    const cs = driver.driver.projectFn(cube) orelse return error.Project;
+
+    // Extrude to check boundary footprint integrity. 'cs' is consumed and mutated into 'res'.
+    const res = driver.driver.extrudeFn(cs, 10.0, 0, 0, 1.0, 1.0) orelse return error.Extrude;
+    defer driver.driver.destructFn(res);
+
+    const vol = driver.driver.volumeFn(res);
+    try std.testing.expectApproxEqAbs(1000.0, vol, 1e-4);
+}
