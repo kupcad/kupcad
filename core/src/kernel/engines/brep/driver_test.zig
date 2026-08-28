@@ -255,3 +255,41 @@ test "Driver: Minimum Gap" {
     const gap = driver.driver.minGapFn(cube1, cube2, 100.0);
     try std.testing.expectApproxEqAbs(10.0, gap, 1e-4);
 }
+
+test "Driver: 2D CrossSection Area and Bounding Box" {
+    // Create a 10x20 centered square
+    const sq = driver.driver.squareFn(10.0, 20.0, true) orelse return error.SquareFailed;
+    defer driver.driver.destructCrossSectionFn(sq);
+
+    const area = driver.driver.crossSectionAreaFn(sq);
+    const bounds = driver.driver.crossSectionBoundsFn(sq);
+
+    // Shoelace formula should evaluate area = 200.0
+    try std.testing.expectApproxEqAbs(200.0, area, 1e-4);
+
+    // Vertices traverse [-5, -10] to [5, 10]
+    try std.testing.expectApproxEqAbs(-5.0, bounds.min[0], 1e-4);
+    try std.testing.expectApproxEqAbs(-10.0, bounds.min[1], 1e-4);
+    try std.testing.expectApproxEqAbs(5.0, bounds.max[0], 1e-4);
+    try std.testing.expectApproxEqAbs(10.0, bounds.max[1], 1e-4);
+}
+
+test "Driver: 2D Polygon Even-Odd Area and Bounds" {
+    // Outer 20x20 square (Area = 400) with an inner 10x10 square hole (Area = 100)
+    const outer = [_][2]f64{ .{ -10, -10 }, .{ 10, -10 }, .{ 10, 10 }, .{ -10, 10 } };
+    const inner = [_][2]f64{ .{ -5, -5 }, .{ -5, 5 }, .{ 5, 5 }, .{ 5, -5 } };
+    const contours = [_][]const [2]f64{ &outer, &inner };
+
+    const cs_handle = driver.driver.polygonsEvenOddFn(std.testing.allocator, &contours) orelse return error.EvenOddFailed;
+    defer driver.driver.destructCrossSectionFn(cs_handle);
+
+    const area = driver.driver.crossSectionAreaFn(cs_handle);
+    const bounds = driver.driver.crossSectionBoundsFn(cs_handle);
+
+    // Total active area = 400 - 100 = 300.0
+    try std.testing.expectApproxEqAbs(300.0, area, 1e-4);
+
+    // Outer bounding box is [-10, -10] to [10, 10]
+    try std.testing.expectApproxEqAbs(-10.0, bounds.min[0], 1e-4);
+    try std.testing.expectApproxEqAbs(10.0, bounds.max[0], 1e-4);
+}

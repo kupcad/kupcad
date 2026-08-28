@@ -4,28 +4,44 @@ const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 
 pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
-    const handle = try vm.ensureConcrete(receiver);
-    const geom_obj = receiver.asGeometry();
+    if (receiver.isGeometry()) {
+        const handle = try vm.ensureConcrete(receiver);
+        const geom_obj = receiver.asGeometry();
 
-    if (geom_obj.cached_bbox == null) {
-        if (kernel.boundingBox(handle)) |k_box| {
-            geom_obj.cached_bbox = value.BBox{
-                .min_x = k_box.min[0],
-                .min_y = k_box.min[1],
-                .min_z = k_box.min[2],
-                .max_x = k_box.max[0],
-                .max_y = k_box.max[1],
-                .max_z = k_box.max[2],
-            };
+        if (geom_obj.cached_bbox == null) {
+            if (kernel.boundingBox(handle)) |k_box| {
+                geom_obj.cached_bbox = value.BBox{
+                    .min_x = k_box.min[0],
+                    .min_y = k_box.min[1],
+                    .min_z = k_box.min[2],
+                    .max_x = k_box.max[0],
+                    .max_y = k_box.max[1],
+                    .max_z = k_box.max[2],
+                };
+            }
         }
+
+        const box = geom_obj.cached_bbox orelse return value.Value.initNil();
+        const bbox_inst = try vm.gc.allocateBBox(vm, box.min_x, box.min_y, box.min_z, box.max_x, box.max_y, box.max_z);
+        return value.Value.initObj(&bbox_inst.obj);
+    } else if (receiver.isCrossSection()) {
+        const handle = try vm.ensureConcreteCrossSection(receiver);
+        const rect = kernel.crossSectionBounds(handle);
+
+        const bbox_inst = try vm.gc.allocateBBox(
+            vm,
+            rect.min[0],
+            rect.min[1],
+            0.0,
+            rect.max[0],
+            rect.max[1],
+            0.0,
+        );
+        return value.Value.initObj(&bbox_inst.obj);
     }
 
-    const box = geom_obj.cached_bbox orelse return value.Value.initNil();
-
-    // Allocate native struct instead of heavy hash-map dictionary instance
-    const bbox_inst = try vm.gc.allocateBBox(vm, box.min_x, box.min_y, box.min_z, box.max_x, box.max_y, box.max_z);
-    return value.Value.initObj(&bbox_inst.obj);
+    vm.reportError("RuntimeError: bbox() requires a 3D Geometry or 2D CrossSection.\n", .{});
+    return error.RuntimeError;
 }
 
 pub fn meshVolume(vm: *VM, receiver: value.Value) !value.Value {

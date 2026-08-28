@@ -172,6 +172,26 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+pub fn crossSectionAreaFn(handle: geom.CrossSectionHandle) f64 {
+    if (@intFromPtr(handle.ptr) == 0) return 0.0;
+    const cs: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(handle.ptr));
+    const temp_3d = manifold.extrude(cs, 1.0, 1, 0.0, 1.0, 1.0) orelse return 0.0;
+    defer manifold.destruct(temp_3d);
+    return manifold.volume(temp_3d);
+}
+
+pub fn crossSectionBoundsFn(handle: geom.CrossSectionHandle) geom.Rect2D {
+    if (@intFromPtr(handle.ptr) == 0) return .{ .min = .{ 0.0, 0.0 }, .max = .{ 0.0, 0.0 } };
+    const cs: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(handle.ptr));
+    const temp_3d = manifold.extrude(cs, 1.0, 1, 0.0, 1.0, 1.0) orelse return .{ .min = .{ 0.0, 0.0 }, .max = .{ 0.0, 0.0 } };
+    defer manifold.destruct(temp_3d);
+    const box = manifold.boundingBox(temp_3d);
+    return .{
+        .min = .{ box.min[0], box.min[1] },
+        .max = .{ box.max[0], box.max[1] },
+    };
+}
+
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold and b.engine == .manifold);
     if (@intFromPtr(a.ptr) == 0) return null;
@@ -557,6 +577,8 @@ pub const driver = kernel.GeometryKernel{
     .transformMatrixFn = transformMatrixImpl,
     .crossSectionTransformFn = crossSectionTransformImpl,
     .boundingBoxFn = boundingBoxImpl,
+    .crossSectionAreaFn = crossSectionAreaFn,
+    .crossSectionBoundsFn = crossSectionBoundsFn,
     .queryFacesFn = queryFacesImpl,
     .volumeFn = volumeImpl,
     .surfaceAreaFn = surfaceAreaImpl,

@@ -4,6 +4,12 @@ const lsp = @import("lsp");
 const api = @import("../api.zig");
 const ast = @import("../core/ast.zig");
 const manifest = @import("../stdlib/manifest.zig");
+const VM = @import("../vm/vm.zig").VM;
+const chunk = @import("../vm/chunk.zig");
+const value = @import("../core/value.zig");
+const kernel = @import("../kernel/kernel.zig");
+const Compiler = @import("../compiler/compiler.zig").Compiler;
+const registry = @import("../stdlib/registry.zig");
 
 pub const DocumentBuffer = struct {
     uri: []const u8,
@@ -77,6 +83,97 @@ fn getParamNames(method_name: []const u8, pos_count: usize) []const []const u8 {
     if (std.mem.eql(u8, method_name, "offset")) return &[_][]const u8{ "delta", "join" };
 
     return &[_][]const u8{};
+}
+
+fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, doc: *const api.Document, target_node: ast.NodeIndex, writer: anytype) !void {
+    var vm = try VM.init(allocator, io);
+    defer vm.deinit();
+    vm.mute_errors = true; // Prevent LSP from spamming stderr
+
+    // Set a strict instruction limit so the LSP doesn't hang on infinite loops
+    vm.instruction_limit = 500_000;
+
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Compile and run the ENTIRE document to populate global variables and state
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(allocator);
+
+    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    comp.compile(doc.tree.root) catch {}; // Ignore compile errors, try to run what we have
+
+    _ = vm.interpret(&main_chunk);
+
+    // 2. Extract requested node safely
+    const node = doc.tree.getNode(target_node) orelse return error.NoValue;
+    var val: value.Value = value.Value.initNil();
+
+    if (node.tag == .identifier) {
+        const name = doc.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
+        val = vm.globals.get(name) orelse return error.NoValue;
+    } else if (node.tag == .assignment) {
+        const assign = doc.tree.assignment(node);
+        const name = doc.tree.getString(assign.name);
+        val = vm.globals.get(name) orelse return error.NoValue;
+    } else if (node.tag == .method_call) {
+        // Compile and evaluate inline expression safely inside the VM
+        var expr_chunk = chunk.Chunk.init();
+        defer expr_chunk.free(allocator);
+
+        var expr_comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &expr_chunk, &vm);
+        expr_comp.compile(target_node) catch return error.RuntimeError;
+
+        const res = vm.interpret(&expr_chunk);
+        if (res != .ok or vm.stack_top == 0) return error.NoValue;
+        val = vm.stack[vm.stack_top - 1];
+    } else {
+        return;
+    }
+
+    // 3. Concretize and write Markdown while memory is safe
+    if (val.isGeometry()) {
+        try writer.print("\n---\n### 🧊 3D Solid\n", .{});
+
+        if (vm.ensureConcrete(val)) |handle| {
+            const vol = kernel.volume(handle);
+            const sa = kernel.surfaceArea(handle);
+            const gen = kernel.genus(handle);
+
+            if (kernel.boundingBox(handle)) |bx| {
+                const dx = bx.max[0] - bx.min[0];
+                const dy = bx.max[1] - bx.min[1];
+                const dz = bx.max[2] - bx.min[2];
+                try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ dx, dy, dz });
+            }
+
+            try writer.print("- **Volume:** `{d:.2}` mm³\n", .{vol});
+            try writer.print("- **Surface Area:** `{d:.2}` mm²\n", .{sa});
+            if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
+
+            if (kernel.getMesh(allocator, handle)) |mesh| {
+                defer allocator.free(mesh.vert_props);
+                defer allocator.free(mesh.tri_verts);
+                try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ mesh.vert_props.len / mesh.num_prop, mesh.tri_verts.len / 3 });
+            }
+        } else |_| {}
+    } else if (val.isCrossSection()) { //2D SAFE RESOLUTION
+        try writer.print("\n---\n### 📐 2D Profile\n", .{});
+
+        if (vm.ensureConcreteCrossSection(val)) |cs_handle| {
+            const area = kernel.crossSectionArea(cs_handle);
+            const rect = kernel.crossSectionBounds(cs_handle);
+
+            const w = rect.max[0] - rect.min[0];
+            const l = rect.max[1] - rect.min[1];
+
+            try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
+            try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
+        } else |_| {}
+    } else if (val.isString()) {
+        try writer.print("\n---\n*(String)* `\"{s}\"`\n", .{val.asString().chars});
+    } else if (val.isBool()) {
+        try writer.print("\n---\n*(Boolean)* `{}`\n", .{val.asBool()});
+    }
 }
 
 inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex) ScopeContext {
@@ -312,10 +409,8 @@ pub const Handler = struct {
         const buf = self.files.get(params.textDocument.uri) orelse return null;
         const doc = buf.doc orelse return null;
 
-        // Use lsp_kit's native positionToIndex offset resolver
         const target_offset = lsp.offsets.positionToIndex(buf.source, params.position, self.offset_encoding);
 
-        // Find the token under the cursor offset
         var found_token_idx: ?u24 = null;
         for (doc.tokens.starts, 0..) |start, i| {
             const len = doc.tokens.lengths[i];
@@ -327,7 +422,6 @@ pub const Handler = struct {
 
         const tok_idx = found_token_idx orelse return null;
 
-        // Find the AST node associated with this token
         var found_node_idx: ast.NodeIndex = .none;
         for (doc.tree.nodes.items, 0..) |node, i| {
             if (node.main_token == tok_idx) {
@@ -338,20 +432,15 @@ pub const Handler = struct {
 
         if (found_node_idx == .none) return null;
         const target_node = doc.tree.getNode(found_node_idx).?;
-
-        // Walk parents using `doc.parents` side-table to gather enclosing context
         const scope = findEnclosingScope(&doc, found_node_idx);
-        const def_name = scope.def_name;
-        const class_name = scope.class_name;
 
-        // Build Markdown response string using std.Io.Writer.Allocating
         var out: std.Io.Writer.Allocating = .init(arena);
         defer out.deinit();
 
+        // AST Base Formatting
         if (target_node.tag == .identifier) {
             const name = doc.tree.getString(@as(ast.StringId, @enumFromInt(target_node.data)));
             const sym = doc.symbols[@intFromEnum(found_node_idx)];
-
             out.writer.print("```kupcad\n(variable) {s}\n```\n", .{name}) catch return null;
             out.writer.print("**Scope:** `{s}` (slot `{d}`)\n\n", .{ @tagName(sym.kind), sym.index }) catch return null;
         } else if (target_node.tag == .method_call) {
@@ -361,14 +450,17 @@ pub const Handler = struct {
         } else if (target_node.tag == .number) {
             const num_val = doc.tree.number(target_node);
             out.writer.print("```kupcad\n(number) {d}\n```\n", .{num_val}) catch return null;
-        } else {
-            out.writer.print("```kupcad\n({s})\n```\n", .{@tagName(target_node.tag)}) catch return null;
         }
 
-        if (def_name) |dn| {
-            out.writer.print("*Enclosing Method:* `{s}`\n", .{dn}) catch return null;
+        // LIVE SPATIAL EVALUATION
+        // Silently execute and append live Markdown traits
+        writeSpatialHover(arena, self.io, &doc, found_node_idx, &out.writer) catch {};
+
+        // Add scope footer
+        if (scope.def_name) |dn| {
+            out.writer.print("\n*Enclosing Method:* `{s}`\n", .{dn}) catch return null;
         }
-        if (class_name) |cn| {
+        if (scope.class_name) |cn| {
             out.writer.print("*Enclosing Class:* `{s}`\n", .{cn}) catch return null;
         }
 

@@ -607,6 +607,76 @@ fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
     return geom.BoundingBox{ .min = min, .max = max };
 }
 
+fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
+    if (@intFromPtr(handle.ptr) == 0) return 0.0;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    var total_area: f64 = 0.0;
+
+    const face_id: u32 = @intCast(solid.solid_id);
+    if (face_id >= solid.t_arena.faces.items.len) return 0.0;
+
+    const face = solid.t_arena.faces.items[face_id];
+    for (0..face.loops_len) |l_off| {
+        const loop_id = solid.t_arena.face_loops.items[face.loops_start + l_off];
+        const loop = solid.t_arena.loops.items[loop_id];
+        var area: f64 = 0;
+        var curr_he = loop.first_half_edge;
+
+        while (true) {
+            const he = solid.t_arena.half_edges.items[curr_he];
+            const next_he = solid.t_arena.half_edges.items[he.next];
+            const p1 = solid.t_arena.vertices.items[he.start_vertex].point;
+            const p2 = solid.t_arena.vertices.items[next_he.start_vertex].point;
+
+            area += (p1[0] * p2[1] - p2[0] * p1[1]);
+
+            curr_he = he.next;
+            if (curr_he == loop.first_half_edge) break;
+        }
+        total_area += area / 2.0;
+    }
+    return @abs(total_area);
+}
+
+fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
+    var min = [_]f64{ std.math.inf(f64), std.math.inf(f64) };
+    var max = [_]f64{ -std.math.inf(f64), -std.math.inf(f64) };
+    if (@intFromPtr(handle.ptr) == 0) return .{ .min = min, .max = max };
+
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const face_id: u32 = @intCast(solid.solid_id);
+    if (face_id >= solid.t_arena.faces.items.len) return .{ .min = min, .max = max };
+
+    const face = solid.t_arena.faces.items[face_id];
+    var found = false;
+
+    for (0..face.loops_len) |l_off| {
+        const loop_id = solid.t_arena.face_loops.items[face.loops_start + l_off];
+        const loop = solid.t_arena.loops.items[loop_id];
+        var curr_he = loop.first_half_edge;
+
+        while (true) {
+            const he = solid.t_arena.half_edges.items[curr_he];
+            const pt = solid.t_arena.vertices.items[he.start_vertex].point;
+
+            if (pt[0] < min[0]) min[0] = pt[0];
+            if (pt[1] < min[1]) min[1] = pt[1];
+            if (pt[0] > max[0]) max[0] = pt[0];
+            if (pt[1] > max[1]) max[1] = pt[1];
+            found = true;
+
+            curr_he = he.next;
+            if (curr_he == loop.first_half_edge) break;
+        }
+    }
+
+    if (!found) {
+        min = .{ 0.0, 0.0 };
+        max = .{ 0.0, 0.0 };
+    }
+    return .{ .min = min, .max = max };
+}
+
 fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
     if (@intFromPtr(handle.ptr) == 0) return null;
     const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
@@ -926,6 +996,8 @@ pub const driver = kernel.GeometryKernel{
     .offsetFn = offsetImpl,
     .crossSectionTransformFn = crossSectionTransformImpl,
     .boundingBoxFn = boundingBoxImpl,
+    .crossSectionAreaFn = crossSectionAreaImpl,
+    .crossSectionBoundsFn = crossSectionBoundsImpl,
     .queryFacesFn = queryFacesImpl,
     .volumeFn = volumeImpl,
     .surfaceAreaFn = surfaceAreaImpl,

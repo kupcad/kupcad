@@ -8608,3 +8608,43 @@ test "VM: op_get_property gracefully falls back to method lookup on compound ass
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expectEqual(@as(f64, 15.0), result.asNumber());
 }
+
+test "VM CAD: 2D CrossSection bounding boxes map correctly to Z=0 dimensions" {
+    const source =
+        \\ s = square(x: 10, y: 20, center: true)
+        \\ b = s.bbox
+        \\
+        \\ assert(b.x_size == 10)
+        \\ assert(b.y_size == 20)
+        \\ assert(b.z_size == 0)
+        \\ assert(b.x_min == -5)
+        \\ assert(b.y_max == 10)
+        \\ assert(b.z_min == 0)
+        \\ assert(b.z_max == 0)
+        \\
+        \\ c = circle(r: 5, segments: 16)
+        \\ cb = c.bbox
+        \\
+        \\ assert(cb.x_size == 10)
+        \\ assert(cb.y_size == 10)
+        \\ assert(cb.z_size == 0)
+        \\ assert(cb.x_max == 5)
+        \\ assert(cb.y_min == -5)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+}

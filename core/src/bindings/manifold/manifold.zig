@@ -29,6 +29,11 @@ pub const ManifoldManifoldPair = extern struct {
     second: ?*ManifoldObj,
 };
 
+pub const ManifoldRect = extern struct {
+    min: [2]f64, // If manifoldc was compiled with double precision
+    max: [2]f64,
+};
+
 pub const ManifoldRayHitVec = opaque {};
 pub const ManifoldRayHit = extern struct {
     face_id: u64,
@@ -76,6 +81,8 @@ extern fn manifold_cross_section_square(mem: ?*ManifoldCrossSection, x: f64, y: 
 extern fn manifold_cross_section_circle(mem: ?*ManifoldCrossSection, radius: f64, circular_segments: c_int) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_to_polygons(mem: ?*ManifoldPolygons, cs: ?*ManifoldCrossSection) ?*ManifoldPolygons;
 extern fn manifold_cross_section_of_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
+extern fn manifold_cross_section_area(cs: ?*const anyopaque) f64;
+extern fn manifold_cross_section_bounds(cs: ?*const anyopaque) ManifoldRect;
 
 extern fn manifold_transform(mem: ?*ManifoldObj, m: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj;
 extern fn manifold_cross_section_transform(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) ?*ManifoldCrossSection;
@@ -272,6 +279,14 @@ pub fn transform(obj: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64
 }
 pub fn crossSectionTransform(cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) ?*ManifoldCrossSection {
     return manifold_cross_section_transform(manifold_alloc_cross_section(), cs, x1, y1, x2, y2, x3, y3);
+}
+
+pub fn crossSectionArea(cs: ?*const anyopaque) f64 {
+    return manifold_cross_section_area(cs);
+}
+
+pub fn crossSectionBounds(cs: ?*const anyopaque) ManifoldRect {
+    return manifold_cross_section_bounds(cs);
 }
 
 pub fn extrude(cs: ?*ManifoldCrossSection, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?*ManifoldObj {

@@ -57,6 +57,9 @@ fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
             if (util.getKey(map, "d2")) |v| {
                 if (v.isNumber()) opts.r2 = v.asNumber() / 2.0;
             }
+            if (util.getKey(map, "radius")) |v| {
+                if (v.isNumber()) opts.r = v.asNumber();
+            }
         }
     }
     return opts;

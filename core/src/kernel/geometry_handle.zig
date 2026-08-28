@@ -16,6 +16,11 @@ pub const CrossSectionHandle = struct {
     ptr: *anyopaque,
 };
 
+pub const Rect2D = struct {
+    min: [2]f64,
+    max: [2]f64,
+};
+
 pub const SolidPair = struct {
     first: ?GeometryHandle,
     second: ?GeometryHandle,

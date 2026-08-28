@@ -458,3 +458,30 @@ test "Manifold Driver: simplify reduces coplanar triangle count on sliced meshes
     // The multi-slice mesh should contain more triangle indices than the simplified box mesh
     try testing.expect(unsimplified_mesh.tri_verts.len > simplified_mesh.tri_verts.len);
 }
+
+test "Manifold Driver: crossSectionArea and crossSectionBounds evaluate 2D profile metrics" {
+    // Create a 10x20 centered square
+    const sq = driver.driver.squareFn(10.0, 20.0, true) orelse return error.SqFailed;
+    defer driver.driver.destructCrossSectionFn(sq);
+
+    const area = driver.driver.crossSectionAreaFn(sq);
+    const bounds = driver.driver.crossSectionBoundsFn(sq);
+
+    // Area = 10 * 20 = 200
+    try testing.expectApproxEqAbs(@as(f64, 200.0), area, 1e-4);
+
+    // Centered 10x20 bounds: Min [-5, -10], Max [5, 10]
+    try testing.expectApproxEqAbs(@as(f64, -5.0), bounds.min[0], 1e-4);
+    try testing.expectApproxEqAbs(@as(f64, -10.0), bounds.min[1], 1e-4);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), bounds.max[0], 1e-4);
+    try testing.expectApproxEqAbs(@as(f64, 10.0), bounds.max[1], 1e-4);
+}
+
+test "Manifold Driver: crossSectionArea calculates circle area" {
+    // Circle with radius 5. Area = pi * 5^2 = ~78.5398
+    const circ = driver.driver.circleFn(5.0, 32) orelse return error.CircFailed;
+    defer driver.driver.destructCrossSectionFn(circ);
+
+    const area = driver.driver.crossSectionAreaFn(circ);
+    try testing.expect(area > 78.0 and area < 79.0);
+}

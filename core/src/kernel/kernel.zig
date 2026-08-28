@@ -109,6 +109,12 @@ pub inline fn offset(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?ge
 pub inline fn crossSectionBoolean(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle {
     return dispatch("crossSectionBooleanFn", a, .{ b, op });
 }
+pub inline fn crossSectionArea(handle: geom.CrossSectionHandle) f64 {
+    return dispatch("crossSectionAreaFn", handle, .{});
+}
+pub inline fn crossSectionBounds(handle: geom.CrossSectionHandle) geom.Rect2D {
+    return dispatch("crossSectionBoundsFn", handle, .{});
+}
 pub inline fn crossSectionTransform(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
     return dispatch("crossSectionTransformFn", cs, .{mat});
 }
@@ -235,6 +241,8 @@ pub const GeometryKernel = struct {
     trimByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?geom.GeometryHandle,
     splitByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair,
     crossSectionBooleanFn: *const fn (a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle,
+    crossSectionAreaFn: *const fn (handle: geom.CrossSectionHandle) f64,
+    crossSectionBoundsFn: *const fn (handle: geom.CrossSectionHandle) geom.Rect2D,
     polygonsEvenOddFn: *const fn (allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle,
     setMaterialFn: *const fn (a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle,
     genusFn: *const fn (a: geom.GeometryHandle) i32,
