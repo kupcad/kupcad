@@ -6,6 +6,7 @@ pub const Tag = enum {
     eof,
     invalid,
     newline,
+    semicolon,
     ident,
     constant,
     number,
@@ -180,6 +181,7 @@ pub const Lexer = struct {
 
         return switch (c) {
             '\n' => self.consumeNewline(start_loc),
+            ';' => self.consumeChar(.semicolon, start_loc),
             '.' => {
                 if (self.index + 1 < self.buffer.len and std.ascii.isDigit(self.buffer[self.index + 1])) {
                     return self.consumeNumber(start_loc);

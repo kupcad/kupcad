@@ -3511,3 +3511,57 @@ test "KupCAD Parser: Rejects Imports inside Def Blocks" {
     try testing.expect(pt.parser.diagnostics.list.items.len > 0);
     try testing.expectEqualStrings("Import and Export statements are only allowed at the top level", pt.parser.diagnostics.list.items[0].message);
 }
+
+test "KupCAD Parser: Semicolons act as valid statement terminators" {
+    // Proves the parser can execute multiple statements on a single line separated by semicolons
+    const source = "x = 10; y = 20";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt1_idx = try pt.parser.parseStatement();
+    const stmt1 = pt.getNode(stmt1_idx);
+    try testing.expectEqual(ast.Tag.assignment, stmt1.tag);
+    try testing.expectEqualStrings("x", tree.getString(tree.assignment(stmt1).name));
+
+    // The semicolon should have safely bypassed the parser to the next statement
+    const stmt2_idx = try pt.parser.parseStatement();
+    const stmt2 = pt.getNode(stmt2_idx);
+    try testing.expectEqual(ast.Tag.assignment, stmt2.tag);
+    try testing.expectEqualStrings("y", tree.getString(tree.assignment(stmt2).name));
+}
+
+test "KupCAD Parser: Swallows redundant semicolons like blank lines" {
+    // Proves that skipIgnored() handles multiple trailing semicolons without error
+    const source = "a = 1;;;; b = 2";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    _ = try pt.parser.parseStatement(); // a = 1
+
+    // Without the parser update, this second call would throw UnexpectedToken
+    const stmt2_idx = try pt.parser.parseStatement(); // b = 2
+    const stmt2 = pt.getNode(stmt2_idx);
+    try testing.expectEqual(ast.Tag.assignment, stmt2.tag);
+    try testing.expectEqualStrings("b", pt.parser.b.tree.getString(pt.parser.b.tree.assignment(stmt2).name));
+}
+
+test "KupCAD Parser: Compiles single-line empty class and def stubs" {
+    // A highly common use case for semicolons
+    const source =
+        \\class Part; end
+        \\def noop; end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    // Class Stub
+    const stmt1_idx = try pt.parser.parseStatement();
+    const stmt1 = pt.getNode(stmt1_idx);
+    try testing.expectEqual(ast.Tag.class_stmt, stmt1.tag);
+
+    // Def Stub
+    const stmt2_idx = try pt.parser.parseStatement();
+    const stmt2 = pt.getNode(stmt2_idx);
+    try testing.expectEqual(ast.Tag.def_stmt, stmt2.tag);
+}

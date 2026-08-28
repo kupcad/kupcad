@@ -140,7 +140,8 @@ pub const Parser = struct {
     pub fn synchronize(self: *Parser) void {
         self.advance();
         while (self.tag(0) != .eof) {
-            if (self.tag(0) == .newline) return;
+            if (self.tag(0) == .newline or self.tag(0) == .semicolon) return;
+
             switch (self.tag(0)) {
                 .keyword_class, .keyword_def, .keyword_module, .keyword_if, .keyword_unless, .keyword_case, .keyword_while, .keyword_until, .keyword_return, .keyword_begin, .keyword_import, .keyword_export => return,
                 else => self.advance(),
@@ -159,7 +160,7 @@ pub const Parser = struct {
     }
 
     fn skipIgnored(self: *Parser) void {
-        while (self.tag(0) == .newline or self.tag(0) == .comment) {
+        while (self.tag(0) == .newline or self.tag(0) == .comment or self.tag(0) == .semicolon) {
             if (self.tag(0) == .comment) {
                 self.comments.append(self.allocator, .{
                     .lexeme = self.lexeme(0),
@@ -187,7 +188,7 @@ pub const Parser = struct {
     /// and commits to the chain. Otherwise, it leaves the stream untouched.
     fn skipNewlinesIfChainedCall(self: *Parser) bool {
         var lookahead: u24 = 0;
-        while (self.tag(lookahead) == .newline or self.tag(lookahead) == .comment or self.tag(lookahead) == .docstring) {
+        while (self.tag(lookahead) == .newline or self.tag(lookahead) == .comment or self.tag(lookahead) == .semicolon or self.tag(lookahead) == .docstring) {
             lookahead += 1;
         }
 
@@ -356,7 +357,8 @@ pub const Parser = struct {
             const start_tok = self.tok_idx;
             const s_len = self.scratch_lhs_exprs.items.len;
             defer self.scratch_lhs_exprs.shrinkRetainingCapacity(s_len);
-            while (self.tag(0) != .newline and self.tag(0) != .eof and self.tag(0) != .keyword_then) {
+
+            while (self.tag(0) != .newline and self.tag(0) != .semicolon and self.tag(0) != .eof and self.tag(0) != .keyword_then) {
                 if (isAssignmentOp(self.tag(0))) break;
                 var mod: ?ast.ArgModifier = null;
                 if (self.tag(0) == .star) {
@@ -371,6 +373,7 @@ pub const Parser = struct {
                     self.advance();
                 } else break;
             }
+
             if (isAssignmentOp(self.tag(0))) {
                 const op_tag = self.tag(0);
                 self.advance();
@@ -651,25 +654,27 @@ pub const Parser = struct {
     fn parseCaseStatement(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.keyword_case);
         var condition: ast.NodeIndex = .none;
-        if (self.tag(0) != .newline and self.tag(0) != .keyword_when) {
+        if (self.tag(0) != .newline and self.tag(0) != .semicolon and self.tag(0) != .keyword_when) {
             condition = try self.parseExpression(.none);
         }
         if (self.tag(0) == .keyword_then) self.advance();
+
         self.skipIgnored();
         const s_len = self.scratch_when_branches.items.len;
         defer self.scratch_when_branches.shrinkRetainingCapacity(s_len);
+
         while (self.tag(0) == .keyword_when) {
             self.advance();
             var cond_span: ast.Span = undefined;
-            {
-                const cond_s_len = self.scratch_nodes.items.len;
-                defer self.scratch_nodes.shrinkRetainingCapacity(cond_s_len);
-                while (self.tag(0) != .newline and self.tag(0) != .eof and self.tag(0) != .keyword_then) {
-                    try self.scratch_nodes.append(self.allocator, try self.parseExpression(.none));
-                    if (self.tag(0) == .comma) self.advance() else break;
-                }
-                cond_span = try self.b.addNodes(self.scratch_nodes.items[cond_s_len..]);
+
+            const cond_s_len = self.scratch_nodes.items.len;
+            defer self.scratch_nodes.shrinkRetainingCapacity(cond_s_len);
+            while (self.tag(0) != .newline and self.tag(0) != .semicolon and self.tag(0) != .eof and self.tag(0) != .keyword_then) {
+                try self.scratch_nodes.append(self.allocator, try self.parseExpression(.none));
+                if (self.tag(0) == .comma) self.advance() else break;
             }
+            cond_span = try self.b.addNodes(self.scratch_nodes.items[cond_s_len..]);
+
             if (self.tag(0) == .keyword_then) self.advance();
             self.skipIgnored();
             const body = try self.parseBlock(&.{ .keyword_when, .keyword_else, .keyword_end });
@@ -727,7 +732,7 @@ pub const Parser = struct {
             defer self.scratch_params.shrinkRetainingCapacity(s_len);
 
             // Added `.equal` to safely break out of parameter parsing if no parens are used
-            while (self.tag(0) != .newline and self.tag(0) != .eof and self.tag(0) != .comment and self.tag(0) != .equal) {
+            while (self.tag(0) != .newline and self.tag(0) != .semicolon and self.tag(0) != .eof and self.tag(0) != .comment and self.tag(0) != .equal) {
                 try self.scratch_params.append(self.allocator, try self.parseParam());
                 if (self.tag(0) == .comma) {
                     self.advance();
@@ -950,13 +955,16 @@ pub const Parser = struct {
         var has_comma = false;
         while (true) {
             const curr = if (temp_idx < self.tokens.tags.len) self.tokens.tags[temp_idx] else .eof;
-            if (curr == .newline or curr == .eof) break;
+            if (curr == .newline or curr == .semicolon or curr == .eof) break;
+
             if (isAssignmentOp(curr)) return has_comma;
+
             if (curr == .comma) {
                 has_comma = true;
             } else if (curr != .ident and curr != .constant and curr != .star) {
                 return false;
             }
+
             temp_idx += 1;
         }
         return false;
@@ -1146,7 +1154,7 @@ pub const Parser = struct {
 
     fn isExprListEnd(self: *Parser) bool {
         switch (self.tag(0)) {
-            .newline, .eof, .keyword_end, .keyword_unless, .keyword_if, .keyword_while, .keyword_until, .r_brace, .r_bracket, .r_paren => return true,
+            .newline, .semicolon, .eof, .keyword_end, .keyword_unless, .keyword_if, .keyword_while, .keyword_until, .r_brace, .r_bracket, .r_paren => return true,
             else => return false,
         }
     }
@@ -1217,7 +1225,7 @@ pub const Parser = struct {
 
         while (true) {
             const t = self.tag(0);
-            if (t == .newline or t == .comment or t == .docstring) {
+            if (t == .newline or t == .semicolon or t == .comment or t == .docstring) {
                 if (!self.skipNewlinesIfChainedCall()) {
                     break; // Standard statement terminator, stop parsing the expression
                 }
@@ -1389,7 +1397,7 @@ pub const Parser = struct {
     fn isCommandCallStart(self: *Parser) bool {
         const t = self.tag(0);
         switch (t) {
-            .newline, .eof, .comment, .docstring, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
+            .newline, .semicolon, .eof, .comment, .docstring, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
             .keyword_do, .l_brace => return true,
             else => {
                 if (isAssignmentOp(t)) return false;
@@ -1407,7 +1415,7 @@ pub const Parser = struct {
     fn parseCommandArgsAndBlock(self: *Parser) ParseError!struct { args: ast.Span, block: ?ast.NodeIndex } {
         const s_len = self.scratch_named_args.items.len;
         defer self.scratch_named_args.shrinkRetainingCapacity(s_len);
-        while (self.tag(0) != .newline and self.tag(0) != .eof and self.tag(0) != .keyword_do and self.tag(0) != .l_brace and self.tag(0) != .r_paren and self.tag(0) != .r_bracket and self.tag(0) != .r_brace and self.tag(0) != .keyword_if and self.tag(0) != .keyword_unless and self.tag(0) != .keyword_while and self.tag(0) != .keyword_until) {
+        while (self.tag(0) != .newline and self.tag(0) != .semicolon and self.tag(0) != .eof and self.tag(0) != .keyword_do and self.tag(0) != .l_brace and self.tag(0) != .r_paren and self.tag(0) != .r_bracket and self.tag(0) != .r_brace and self.tag(0) != .keyword_if and self.tag(0) != .keyword_unless and self.tag(0) != .keyword_while and self.tag(0) != .keyword_until) {
             try self.scratch_named_args.append(self.allocator, try self.parseNamedArg());
             if (self.tag(0) == .comma) {
                 self.advance();

@@ -515,3 +515,12 @@ test "KupCAD Lexer: Private class methods (private def self.method)" {
         t(.newline, "\n"),              t(.keyword_end, "end"),      t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Semicolons as statement terminators" {
+    try expectTokens("x = 10; y = 20;; z = 30", &.{
+        t(.ident, "x"),     t(.equal, "="), t(.number, "10"), t(.semicolon, ";"),
+        t(.ident, "y"),     t(.equal, "="), t(.number, "20"), t(.semicolon, ";"),
+        t(.semicolon, ";"), t(.ident, "z"), t(.equal, "="),   t(.number, "30"),
+        t(.eof, ""),
+    });
+}

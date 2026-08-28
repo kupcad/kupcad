@@ -388,3 +388,30 @@ test "Formatter: inserts blank lines between methods and classes" {
     ;
     try expectFormat(source, expected);
 }
+
+test "Formatter: Preserves same-line statements with a single semicolon and squashes repeats" {
+    // Messy input with terrible spacing and repeated semicolons
+    const source = "a = 1;;;   b = 2;; c = 3; \n d = 4";
+
+    // The formatter perfectly cleans up the spacing and reduces repeats to a single ';'
+    const expected =
+        \\a = 1; b = 2; c = 3
+        \\d = 4
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
+test "Formatter: Prevents semicolons from combining across lines" {
+    // If they were on different lines originally, they stay on different lines
+    const source =
+        \\x = 10;
+        \\y = 20;
+    ;
+    const expected =
+        \\x = 10
+        \\y = 20
+        \\
+    ;
+    try expectFormat(source, expected);
+}

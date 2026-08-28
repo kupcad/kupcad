@@ -246,18 +246,35 @@ pub const Formatter = struct {
 
         for (print_stmts, 0..) |stmt_idx, idx| {
             const stmt = tree.getNode(stmt_idx).?;
+            const stmt_line = self.getNodeLine(stmt);
+
             if (idx > 0) {
                 const prev_stmt = tree.getNode(print_stmts[idx - 1]).?;
-                if (requiresBlankLineSeparation(prev_stmt) or requiresBlankLineSeparation(stmt)) {
-                    try self.ensureBlankLine();
+                const prev_line = self.getNodeLine(prev_stmt);
+
+                if (stmt_line == prev_line) {
+                    // Same line in original source! Emit a single semicolon.
+                    try self.out.appendSlice(self.allocator, "; ");
+                } else {
+                    // Different lines, proceed with normal vertical formatting
+                    if (requiresBlankLineSeparation(prev_stmt) or requiresBlankLineSeparation(stmt)) {
+                        try self.ensureBlankLine();
+                    } else {
+                        try self.ensureNewline();
+                    }
+                    try self.flushLeadingComments(stmt_line);
+                    if (self.isAtLineStartOrEmpty()) try self.writeIndent();
                 }
+            } else {
+                try self.flushLeadingComments(stmt_line);
+                if (self.isAtLineStartOrEmpty()) try self.writeIndent();
             }
 
-            try self.flushLeadingComments(self.getNodeLine(stmt));
-            if (self.isAtLineStartOrEmpty()) try self.writeIndent();
             try self.formatNode(tree, stmt_idx);
-            try self.flushInlineComments(self.getNodeLine(stmt));
-            try self.ensureNewline();
+
+            // Inline comments inherently force a newline, which is correct
+            // because a comment goes to the end of the line.
+            try self.flushInlineComments(stmt_line);
         }
     }
 
