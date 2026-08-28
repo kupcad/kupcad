@@ -105,6 +105,7 @@ pub fn clipEars(
 }
 
 /// Traverses a Solid's Half-Edge graph and tessellates all of its faces into a 3D Mesh.
+/// Traverses a Solid's Half-Edge graph and tessellates all of its faces into a 3D Mesh.
 pub fn tessellateSolid(
     allocator: std.mem.Allocator,
     t_arena: *const topo.TopologyArena,
@@ -131,24 +132,63 @@ pub fn tessellateSolid(
         for (0..shell.faces_len) |f_offset| {
             const face_id = t_arena.shell_faces.items[shell.faces_start + f_offset];
             const face = t_arena.faces.items[face_id];
-
             if (face.loops_len == 0) continue;
 
-            // Extract Outer Boundary (Loop 0)
-            const outer_loop_id = t_arena.face_loops.items[face.loops_start];
-            const outer_loop = t_arena.loops.items[outer_loop_id];
+            // Extract all loops for the face
+            var loops_verts = std.ArrayListUnmanaged([]u32).empty;
+            defer {
+                for (loops_verts.items) |l| allocator.free(l);
+                loops_verts.deinit(allocator);
+            }
+
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+                const loop = t_arena.loops.items[loop_id];
+                var lv = std.ArrayListUnmanaged(u32).empty;
+                var current_he = loop.first_half_edge;
+                while (true) {
+                    const he = t_arena.half_edges.items[current_he];
+                    try lv.append(allocator, he.start_vertex);
+                    current_he = he.next;
+                    if (current_he == loop.first_half_edge) break;
+                }
+                try loops_verts.append(allocator, try lv.toOwnedSlice(allocator));
+            }
 
             var face_verts = std.ArrayListUnmanaged(u32).empty;
             defer face_verts.deinit(allocator);
 
-            // Traverse circular Half-Edge list
-            var current_he = outer_loop.first_half_edge;
-            while (true) {
-                const he = t_arena.half_edges.items[current_he];
-                try face_verts.append(allocator, he.start_vertex);
+            if (loops_verts.items.len > 0) {
+                try face_verts.appendSlice(allocator, loops_verts.items[0]);
 
-                current_he = he.next;
-                if (current_he == outer_loop.first_half_edge) break;
+                // Stitch holes directly into the outer boundary loop using shortest-bridge algorithm
+                for (loops_verts.items[1..]) |hole| {
+                    if (hole.len == 0) continue;
+                    var min_dist: f64 = std.math.inf(f64);
+                    var best_idx: usize = 0;
+                    const p_hole = t_arena.vertices.items[hole[0]].point;
+
+                    for (face_verts.items, 0..) |v_out, i| {
+                        const p_out = t_arena.vertices.items[v_out].point;
+                        const d = math.distSq(p_hole, p_out);
+                        if (d < min_dist) {
+                            min_dist = d;
+                            best_idx = i;
+                        }
+                    }
+
+                    var new_verts = std.ArrayListUnmanaged(u32).empty;
+                    try new_verts.appendSlice(allocator, face_verts.items[0 .. best_idx + 1]);
+                    try new_verts.appendSlice(allocator, hole);
+                    try new_verts.append(allocator, hole[0]); // Return trip start
+                    try new_verts.append(allocator, face_verts.items[best_idx]); // Return trip end
+                    if (best_idx + 1 < face_verts.items.len) {
+                        try new_verts.appendSlice(allocator, face_verts.items[best_idx + 1 ..]);
+                    }
+
+                    face_verts.deinit(allocator);
+                    face_verts = new_verts;
+                }
             }
 
             if (face_verts.items.len < 3) continue;

@@ -243,10 +243,11 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
 // --- Stubbed / Unimplemented V-Table Endpoints ---
 
 fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
+    _ = allocator; // Ignore the passed allocator, enforce isolated backend_allocator
     const solid = BrepSolid.create(backend_allocator) catch return null;
 
     // Automatically wire raw meshes into perfect manifolds!
-    solid.solid_id = locus_gen.buildPolyhedron(allocator, &solid.t_arena, &solid.g_arena, pts, faces) catch {
+    solid.solid_id = locus_gen.buildPolyhedron(backend_allocator, &solid.t_arena, &solid.g_arena, pts, faces) catch {
         solid.destroy();
         return null;
     };
@@ -255,8 +256,12 @@ fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []co
 
 fn polygonsEvenOddImpl(allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
     _ = allocator;
-    _ = contours;
-    return null;
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+    solid.solid_id = locus_gen.generatePolygonsEvenOdd(backend_allocator, &solid.t_arena, &solid.g_arena, contours) catch {
+        solid.destroy();
+        return null;
+    };
+    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
@@ -285,13 +290,36 @@ fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
     _ = a;
     return null;
 }
+
 fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {
-    _ = a;
-    _ = nx;
-    _ = ny;
-    _ = nz;
-    return null;
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+
+    const len = @sqrt(nx * nx + ny * ny + nz * nz);
+    if (len < 1e-12) return a;
+    const n = [3]f64{ nx / len, ny / len, nz / len };
+
+    // Standard reflection matrix across normal n
+    const mat = [12]f64{
+        1.0 - 2.0 * n[0] * n[0], -2.0 * n[0] * n[1],      -2.0 * n[0] * n[2],      0.0,
+        -2.0 * n[1] * n[0],      1.0 - 2.0 * n[1] * n[1], -2.0 * n[1] * n[2],      0.0,
+        -2.0 * n[2] * n[0],      -2.0 * n[2] * n[1],      1.0 - 2.0 * n[2] * n[2], 0.0,
+    };
+
+    solid.solid_id = locus_trans.transformMatrixSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, mat) catch return a;
+
+    // Mirroring flips chirality. Invert face orientation to keep normals outward!
+    const s = solid.t_arena.solids.items[solid.solid_id];
+    for (0..s.shells_len) |s_off| {
+        const shell = solid.t_arena.shells.items[solid.t_arena.solid_shells.items[s.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = solid.t_arena.shell_faces.items[shell.faces_start + f_off];
+            solid.t_arena.faces.items[face_id].forward = !solid.t_arena.faces.items[face_id].forward;
+        }
+    }
+    return a;
 }
+
 fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     _ = a;
     return null;
@@ -352,10 +380,10 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
     };
 
     // Merge arenas so B is accessible inside A's topology
-    _ = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
+    const merged_b_id = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
 
-    solid_a.solid_id = locus_bool2d.crossSectionBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, @intCast(solid_a.solid_id), // solid_id doubles as FaceId for 2D
-        @intCast(solid_b.solid_id), locus_op) catch return a;
+    // Use the correctly shifted merged_b_id!
+    solid_a.solid_id = locus_bool2d.crossSectionBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, merged_b_id, locus_op) catch return a;
 
     return a;
 }

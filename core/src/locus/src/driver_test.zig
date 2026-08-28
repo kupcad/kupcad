@@ -187,3 +187,37 @@ test "Driver: 2D Boolean Difference and Intersection" {
 
     try std.testing.expectApproxEqAbs(750.0, driver.driver.volumeFn(diff_solid), 1e-4);
 }
+
+test "Driver: Mirror Solid" {
+    driver.init(std.testing.allocator);
+    defer driver.deinit();
+
+    const cube_handle = driver.driver.cubeFn(10, 10, 10, false) orelse return error.CubeFailed;
+
+    const mirrored_handle = driver.driver.mirrorFn(cube_handle, 1, 0, 0) orelse return error.MirrorFailed;
+    const bbox = driver.driver.boundingBoxFn(mirrored_handle) orelse return error.BBoxFailed;
+
+    try std.testing.expectApproxEqAbs(-10.0, bbox.min[0], 1e-6);
+    try std.testing.expectApproxEqAbs(0.0, bbox.max[0], 1e-6);
+
+    const vol = driver.driver.volumeFn(mirrored_handle);
+    try std.testing.expectApproxEqAbs(1000.0, vol, 1e-5);
+}
+
+test "Driver: Polygons Even-Odd" {
+    driver.init(std.testing.allocator);
+    defer driver.deinit();
+
+    const outer = [_][2]f64{ .{ -10, -10 }, .{ 10, -10 }, .{ 10, 10 }, .{ -10, 10 } };
+    const inner = [_][2]f64{ .{ -5, -5 }, .{ -5, 5 }, .{ 5, 5 }, .{ 5, -5 } };
+    const contours = [_][]const [2]f64{ &outer, &inner };
+
+    const cs_handle = driver.driver.polygonsEvenOddFn(std.testing.allocator, &contours) orelse return error.EvenOddFailed;
+
+    // Extrude the profile into 3D space
+    const solid_handle = driver.driver.extrudeFn(cs_handle, 0, 0, 10) orelse return error.ExtrudeFailed;
+
+    // We can evaluate volume to verify outer boundaries and holes were respected
+    const vol = driver.driver.volumeFn(solid_handle);
+    try std.testing.expectApproxEqAbs(3000.0, vol, 1e-4);
+}

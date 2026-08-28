@@ -282,6 +282,36 @@ fn offsetImpl(cs: GeometryHandle, delta: f64) ?GeometryHandle {
     return cs;
 }
 
+fn mirrorImpl(shape: GeometryHandle, nx: f64, ny: f64, nz: f64) ?GeometryHandle {
+    const len = @sqrt(nx * nx + ny * ny + nz * nz);
+    if (len < 1e-12) return shape;
+    const n = [3]f64{ nx / len, ny / len, nz / len };
+
+    const mat = [12]f64{
+        1.0 - 2.0 * n[0] * n[0], -2.0 * n[0] * n[1],      -2.0 * n[0] * n[2],      0.0,
+        -2.0 * n[1] * n[0],      1.0 - 2.0 * n[1] * n[1], -2.0 * n[1] * n[2],      0.0,
+        -2.0 * n[2] * n[0],      -2.0 * n[2] * n[1],      1.0 - 2.0 * n[2] * n[2], 0.0,
+    };
+
+    const solid_id = transforms.transformMatrixSolid(g_allocator, &g_topo_arena, &g_geom_arena, @intCast(shape), mat) catch return null;
+
+    // Mirroring flips chirality. Invert face orientation to keep normals outward!
+    const s = g_topo_arena.solids.items[solid_id];
+    for (0..s.shells_len) |s_off| {
+        const shell = g_topo_arena.shells.items[g_topo_arena.solid_shells.items[s.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = g_topo_arena.shell_faces.items[shell.faces_start + f_off];
+            g_topo_arena.faces.items[face_id].forward = !g_topo_arena.faces.items[face_id].forward;
+        }
+    }
+    return @as(GeometryHandle, solid_id);
+}
+
+fn polygonsEvenOddImpl(allocator: std.mem.Allocator, contours: []const []const [2]f64) ?GeometryHandle {
+    const solid_id = generators.generatePolygonsEvenOdd(allocator, &g_topo_arena, &g_geom_arena, contours) catch return null;
+    return @as(GeometryHandle, solid_id);
+}
+
 pub const driver = struct {
     pub const cubeFn = cubeImpl;
     pub const cylinderFn = cylinderImpl;
@@ -303,4 +333,6 @@ pub const driver = struct {
     pub const crossSectionTransformFn = crossSectionTransformImpl;
     pub const crossSectionBooleanFn = crossSectionBooleanImpl;
     pub const offsetFn = offsetImpl;
+    pub const mirrorFn = mirrorImpl;
+    pub const polygonsEvenOddFn = polygonsEvenOddImpl;
 };

@@ -13,91 +13,93 @@ pub fn extrudeFace(
     base_solid_id: topo.SolidId,
     vec: math.Vec3,
 ) SweepError!topo.SolidId {
-    // Unpack the Face from the Solid wrapper
     const s = t_arena.solids.items[base_solid_id];
     const shell = t_arena.shells.items[t_arena.solid_shells.items[s.shells_start]];
     const base_face_id = t_arena.shell_faces.items[shell.faces_start];
     const base_face = t_arena.faces.items[base_face_id];
-    const loop = t_arena.loops.items[t_arena.face_loops.items[base_face.loops_start]];
 
-    var base_pts = std.ArrayListUnmanaged(topo.VertexId).empty;
-    defer base_pts.deinit(allocator);
-
-    var curr_he = loop.first_half_edge;
-    while (true) {
-        const he = t_arena.half_edges.items[curr_he];
-        try base_pts.append(allocator, he.start_vertex);
-        curr_he = he.next;
-        if (curr_he == loop.first_half_edge) break;
-    }
-
-    const n = base_pts.items.len;
-
-    // Now create a BRAND NEW solid with N+2 faces (Bottom, Top, N sides)
-    // Using addPolygonFace ensures proper twin wiring without forced triangulation.
     var twin_map = std.AutoHashMap(generators.EdgeKey, topo.HalfEdgeId).init(allocator);
     defer twin_map.deinit();
 
     const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
 
-    var bot_verts = try allocator.alloc(topo.VertexId, n);
-    defer allocator.free(bot_verts);
-    var top_verts = try allocator.alloc(topo.VertexId, n);
-    defer allocator.free(top_verts);
-
-    for (0..n) |i| {
-        const p_base = t_arena.vertices.items[base_pts.items[i]].point;
-        const v_bot: u32 = @intCast(t_arena.vertices.items.len);
-        try t_arena.vertices.append(allocator, .{ .point = p_base });
-        bot_verts[i] = v_bot;
-
-        const pt = math.add(p_base, vec);
-        const v_top: u32 = @intCast(t_arena.vertices.items.len);
-        try t_arena.vertices.append(allocator, .{ .point = pt });
-        top_verts[i] = v_top;
+    var bot_loops = std.ArrayListUnmanaged([]topo.VertexId).empty;
+    defer {
+        for (bot_loops.items) |arr| allocator.free(arr);
+        bot_loops.deinit(allocator);
+    }
+    var top_loops = std.ArrayListUnmanaged([]topo.VertexId).empty;
+    defer {
+        for (top_loops.items) |arr| allocator.free(arr);
+        top_loops.deinit(allocator);
     }
 
-    // 1. Bottom Cap (needs to be reversed to face outwards, i.e. opposite to extrusion direction)
-    var bot_rev = try allocator.alloc(topo.VertexId, n);
-    defer allocator.free(bot_rev);
-    for (0..n) |i| {
-        bot_rev[i] = bot_verts[n - 1 - i];
+    var num_side_faces: u32 = 0;
+
+    for (0..base_face.loops_len) |l_off| {
+        const loop = t_arena.loops.items[t_arena.face_loops.items[base_face.loops_start + l_off]];
+        var base_pts = std.ArrayListUnmanaged(topo.VertexId).empty;
+        defer base_pts.deinit(allocator);
+        var curr_he = loop.first_half_edge;
+        while (true) {
+            const he = t_arena.half_edges.items[curr_he];
+            try base_pts.append(allocator, he.start_vertex);
+            curr_he = he.next;
+            if (curr_he == loop.first_half_edge) break;
+        }
+        const n = base_pts.items.len;
+
+        var bot_verts = try allocator.alloc(topo.VertexId, n);
+        var top_verts = try allocator.alloc(topo.VertexId, n);
+
+        for (0..n) |i| {
+            const p_base = t_arena.vertices.items[base_pts.items[i]].point;
+            bot_verts[i] = @intCast(t_arena.vertices.items.len);
+            try t_arena.vertices.append(allocator, .{ .point = p_base });
+
+            top_verts[i] = @intCast(t_arena.vertices.items.len);
+            try t_arena.vertices.append(allocator, .{ .point = math.add(p_base, vec) });
+        }
+
+        var bot_rev = try allocator.alloc(topo.VertexId, n);
+        for (0..n) |i| bot_rev[i] = bot_verts[n - 1 - i];
+
+        // Side Quads
+        for (0..n) |i| {
+            const next_i = (i + 1) % n;
+            const quad = [_]topo.VertexId{ bot_verts[i], bot_verts[next_i], top_verts[next_i], top_verts[i] };
+            const side_plane_idx: u24 = @intCast(g_arena.planes.items.len);
+            const p0 = t_arena.vertices.items[bot_verts[i]].point;
+            const p1 = t_arena.vertices.items[bot_verts[next_i]].point;
+            const p2 = t_arena.vertices.items[top_verts[next_i]].point;
+            const u_ax = math.normalize(math.sub(p1, p0));
+            var v_ax = math.normalize(math.sub(p2, p1));
+            if (math.magSq(v_ax) < 1e-6) v_ax = .{ 0, 0, 1 };
+            try g_arena.planes.append(allocator, .{ .origin = p0, .u_axis = u_ax, .v_axis = v_ax });
+
+            const side_f = try generators.addPolygonFace(allocator, t_arena, g_arena, &quad, .{ .index = side_plane_idx, .surface_type = .plane }, &twin_map);
+            try t_arena.shell_faces.append(allocator, side_f);
+            num_side_faces += 1;
+        }
+
+        allocator.free(bot_verts);
+        try bot_loops.append(allocator, bot_rev);
+        try top_loops.append(allocator, top_verts);
     }
+
     const bot_plane_idx: u24 = @intCast(g_arena.planes.items.len);
     const orig_plane = g_arena.planes.items[base_face.surface.index];
     try g_arena.planes.append(allocator, .{ .origin = orig_plane.origin, .u_axis = orig_plane.u_axis, .v_axis = math.scale(orig_plane.v_axis, -1.0) });
-    const bot_f = try generators.addPolygonFace(allocator, t_arena, g_arena, bot_rev, .{ .index = bot_plane_idx, .surface_type = .plane }, &twin_map);
+    const bot_f = try generators.addMultiLoopFace(allocator, t_arena, g_arena, bot_loops.items, .{ .index = bot_plane_idx, .surface_type = .plane }, &twin_map);
     try t_arena.shell_faces.append(allocator, bot_f);
 
-    // 2. Top Cap
     const top_plane_idx: u24 = @intCast(g_arena.planes.items.len);
     try g_arena.planes.append(allocator, .{ .origin = math.add(orig_plane.origin, vec), .u_axis = orig_plane.u_axis, .v_axis = orig_plane.v_axis });
-    const top_f = try generators.addPolygonFace(allocator, t_arena, g_arena, top_verts, .{ .index = top_plane_idx, .surface_type = .plane }, &twin_map);
+    const top_f = try generators.addMultiLoopFace(allocator, t_arena, g_arena, top_loops.items, .{ .index = top_plane_idx, .surface_type = .plane }, &twin_map);
     try t_arena.shell_faces.append(allocator, top_f);
 
-    // 3. Side Quads
-    for (0..n) |i| {
-        const next_i = (i + 1) % n;
-        // CCW Outward Winding
-        const quad = [_]topo.VertexId{ bot_verts[i], bot_verts[next_i], top_verts[next_i], top_verts[i] };
-
-        const side_plane_idx: u24 = @intCast(g_arena.planes.items.len);
-        const p0 = t_arena.vertices.items[bot_verts[i]].point;
-        const p1 = t_arena.vertices.items[bot_verts[next_i]].point;
-        const p2 = t_arena.vertices.items[top_verts[next_i]].point;
-
-        const u_ax = math.normalize(math.sub(p1, p0));
-        var v_ax = math.normalize(math.sub(p2, p1));
-        if (math.magSq(v_ax) < 1e-6) v_ax = .{ 0, 0, 1 }; // Degenerate fallback
-
-        try g_arena.planes.append(allocator, .{ .origin = p0, .u_axis = u_ax, .v_axis = v_ax });
-        const side_f = try generators.addPolygonFace(allocator, t_arena, g_arena, &quad, .{ .index = side_plane_idx, .surface_type = .plane }, &twin_map);
-        try t_arena.shell_faces.append(allocator, side_f);
-    }
-
     const shell_id: u32 = @intCast(t_arena.shells.items.len);
-    try t_arena.shells.append(allocator, .{ .faces_start = sh_faces_start, .faces_len = @intCast(2 + n) });
-
+    try t_arena.shells.append(allocator, .{ .faces_start = sh_faces_start, .faces_len = num_side_faces + 2 });
     const solid_id: u32 = @intCast(t_arena.solids.items.len);
     const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
     try t_arena.solid_shells.append(allocator, shell_id);
