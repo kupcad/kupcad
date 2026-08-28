@@ -123,10 +123,15 @@ pub const OpCode = enum(u8) {
     op_return,
 };
 
+// A 2-way Polymorphic Inline Cache (PIC)
 pub const InlineCache = struct {
-    class: ?*value.ObjClass = null,
-    offset: usize = 0,
-    cached_value: value.Value = value.Value.initNil(),
+    cached_class_1: ?*value.ObjClass = null,
+    cached_val_1: value.Value = value.Value.initNil(),
+    offset_1: usize = 0,
+
+    cached_class_2: ?*value.ObjClass = null,
+    cached_val_2: value.Value = value.Value.initNil(),
+    offset_2: usize = 0,
 };
 
 pub const DebugSpan = struct {
@@ -202,12 +207,10 @@ pub const Chunk = struct {
         return result_offset;
     }
 
-    pub fn addInlineCache(self: *Chunk, allocator: std.mem.Allocator) !u16 {
+    pub fn addInlineCache(self: *Chunk, allocator: std.mem.Allocator) !usize {
         const idx = self.inline_caches.items.len;
-        if (idx > std.math.maxInt(u16)) return error.OutOfMemory;
-
-        try self.inline_caches.append(allocator, .{});
-        return @intCast(idx);
+        try self.inline_caches.append(allocator, InlineCache{});
+        return idx;
     }
 
     pub fn free(self: *Chunk, allocator: std.mem.Allocator) void {

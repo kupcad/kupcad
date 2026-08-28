@@ -726,7 +726,7 @@ pub const Parser = struct {
             const s_len = self.scratch_params.items.len;
             defer self.scratch_params.shrinkRetainingCapacity(s_len);
 
-            // ⚡ Added `.equal` to safely break out of parameter parsing if no parens are used
+            // Added `.equal` to safely break out of parameter parsing if no parens are used
             while (self.tag(0) != .newline and self.tag(0) != .eof and self.tag(0) != .comment and self.tag(0) != .equal) {
                 try self.scratch_params.append(self.allocator, try self.parseParam());
                 if (self.tag(0) == .comma) {

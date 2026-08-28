@@ -838,42 +838,21 @@ pub const VM = struct {
                 },
                 .op_get_property, .op_get_property_wide => {
                     const is_wide = op == .op_get_property_wide;
-                    const name_idx = self.readOperand(exec_chunk, frame, is_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const prop_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
-
+                    const name_str = self.readStringOperand(exec_chunk, frame, is_wide);
                     const ic = self.readInlineCache(exec_chunk, frame);
-
                     const receiver = self.stack[self.stack_top - 1];
 
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
 
-                        // FAST PATH: O(1) Array Offset Read
-                        if (ic.class == instance.class) {
-                            if (ic.offset < instance.fields.items.len) {
-                                self.stack[self.stack_top - 1] = instance.fields.items[ic.offset];
-                            } else {
-                                self.stack[self.stack_top - 1] = value.Value.initNil();
-                            }
+                        // --- 1. Property Fast/Slow Path ---
+                        if (self.getPropertyCached(instance, name_str, ic)) |prop_val| {
+                            self.stack[self.stack_top - 1] = prop_val;
                             continue;
                         }
 
-                        // SLOW PATH: Dictionary Lookup
-                        if (instance.class.instance_layout.get(prop_name.chars)) |slot_idx| {
-                            ic.class = instance.class;
-                            ic.offset = @intCast(slot_idx);
-
-                            if (slot_idx < instance.fields.items.len) {
-                                self.stack[self.stack_top - 1] = instance.fields.items[slot_idx];
-                            } else {
-                                self.stack[self.stack_top - 1] = value.Value.initNil();
-                            }
-                            continue;
-                        }
-
-                        // Fallback: Check if it's a method
-                        if (self.findMethodWithPrivacy(instance.class, prop_name.chars, null).method) |method_val| {
+                        // --- 2. Method Fallback ---
+                        if (self.findMethodWithPrivacy(instance.class, name_str, null).method) |method_val| {
                             self.stack[self.stack_top - 1] = method_val;
                             continue;
                         }
@@ -883,27 +862,26 @@ pub const VM = struct {
                         continue;
                     } else if (receiver.isModule()) {
                         const mod = receiver.asModule();
-                        if (mod.methods.get(prop_name.chars)) |val| {
+                        if (mod.methods.get(name_str)) |val| {
                             self.stack[self.stack_top - 1] = val;
                             continue;
                         }
-                        if (self.throwDynamicError("Runtime Error: Undefined module member '{s}'.\n", .{prop_name.chars}) != .ok) return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Undefined module member '{s}'.\n", .{name_str}) != .ok) return .runtime_error;
                         continue;
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        if (cls.class_fields.get(prop_name.chars)) |val| {
+                        if (cls.class_fields.get(name_str)) |val| {
                             self.stack[self.stack_top - 1] = val;
                             continue;
                         }
-                        if (self.throwDynamicError("Runtime Error: Undefined class member '{s}'.\n", .{prop_name.chars}) != .ok) return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Undefined class member '{s}'.\n", .{name_str}) != .ok) return .runtime_error;
                         continue;
                     } else if (self.getClass(receiver)) |class| {
-                        // Fallback for native types (Primitives, Arrays, Maps) calling methods
-                        if (self.findMethodWithPrivacy(class, prop_name.chars, null).method) |method_val| {
+                        if (self.findMethodWithPrivacy(class, name_str, null).method) |method_val| {
                             self.stack[self.stack_top - 1] = method_val;
                             continue;
                         }
-                        if (self.throwDynamicError("Runtime Error: Method '{s}' not found on receiver.\n", .{prop_name.chars}) != .ok) return .runtime_error;
+                        if (self.throwDynamicError("Runtime Error: Method '{s}' not found on receiver.\n", .{name_str}) != .ok) return .runtime_error;
                         continue;
                     }
 
@@ -912,59 +890,30 @@ pub const VM = struct {
                 },
                 .op_set_property, .op_set_property_wide => {
                     const is_wide = op == .op_set_property_wide;
-                    const name_idx = self.readOperand(exec_chunk, frame, is_wide);
-                    const name_val = exec_chunk.constants.items[name_idx];
-                    const prop_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj())));
-
+                    const name_str = self.readStringOperand(exec_chunk, frame, is_wide);
                     const ic = self.readInlineCache(exec_chunk, frame);
 
-                    // Stack is: [receiver, value]
                     const receiver = self.stack[self.stack_top - 2];
                     const val = self.stack[self.stack_top - 1];
 
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
 
-                        // FAST PATH: O(1) Array Offset Write
-                        if (ic.class == instance.class) {
-                            if (ic.offset >= instance.fields.items.len) {
-                                instance.fields.appendNTimes(self.allocator, value.Value.initNil(), (ic.offset + 1) - instance.fields.items.len) catch return .runtime_error;
-                            }
-                            instance.fields.items[ic.offset] = val;
-                            self.stack[self.stack_top - 2] = val;
-                            self.stack_top -= 1;
-                            continue;
-                        }
+                        // --- Property Fast/Slow Path ---
+                        self.setInstanceField(instance, name_str, val, ic) catch return .runtime_error;
 
-                        // SLOW PATH: Dictionary Lookup
-                        var slot_idx: usize = 0;
-                        if (instance.class.instance_layout.get(prop_name.chars)) |idx| {
-                            slot_idx = idx;
-                        } else {
-                            slot_idx = instance.class.instance_layout.count();
-                            instance.class.instance_layout.put(self.allocator, prop_name.chars, slot_idx) catch return .runtime_error;
-                        }
-
-                        if (slot_idx >= instance.fields.items.len) {
-                            instance.fields.appendNTimes(self.allocator, value.Value.initNil(), (slot_idx + 1) - instance.fields.items.len) catch return .runtime_error;
-                        }
-
-                        ic.class = instance.class;
-                        ic.offset = @intCast(slot_idx);
-
-                        instance.fields.items[slot_idx] = val;
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        cls.class_fields.put(self.allocator, prop_name.chars, val) catch return .runtime_error;
+                        cls.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
                     } else if (receiver.isModule()) {
                         const mod = receiver.asModule();
-                        mod.methods.put(self.allocator, prop_name.chars, val) catch return .runtime_error;
+                        mod.methods.put(self.allocator, name_str, val) catch return .runtime_error;
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
@@ -1763,8 +1712,14 @@ pub const VM = struct {
         if (receiver.isInstance() and arg_count == 0) {
             const instance = receiver.asInstance();
             if (instance.class.instance_layout.get(method_name_str)) |idx| {
-                ic.class = instance.class;
-                ic.offset = idx;
+                // Populate PIC slots
+                if (ic.cached_class_1 == null) {
+                    ic.cached_class_1 = instance.class;
+                    ic.offset_1 = idx;
+                } else if (ic.cached_class_1 != instance.class) { // Prevents redundant slot 2 evictions
+                    ic.cached_class_2 = instance.class;
+                    ic.offset_2 = idx;
+                }
 
                 self.popAndRelease(1); // Pop receiver
                 if (idx < instance.fields.items.len) {
@@ -2189,18 +2144,25 @@ pub const VM = struct {
         _ = self;
         var offset: usize = 0;
 
-        // Fast Path (O(1) Array Read)
-        if (ic.class == instance.class) {
-            offset = ic.offset;
+        // Fast Path
+        if (ic.cached_class_1 == instance.class) {
+            offset = ic.offset_1;
+        } else if (ic.cached_class_2 == instance.class) {
+            offset = ic.offset_2;
         }
-        // Slow Path (Hash Map Lookup)
+
+        // Slow Path
         else if (instance.class.instance_layout.get(name_str)) |idx| {
-            ic.class = instance.class;
-            ic.offset = idx;
+            if (ic.cached_class_1 == null) {
+                ic.cached_class_1 = instance.class;
+                ic.offset_1 = idx;
+            } else {
+                ic.cached_class_2 = instance.class;
+                ic.offset_2 = idx;
+            }
             offset = idx;
         } else {
-            // Uninitialized instance variables gracefully return nil
-            return value.Value.initNil();
+            return null; // Return null so the VM knows to check for methods
         }
 
         if (offset < instance.fields.items.len) {
@@ -2214,9 +2176,12 @@ pub const VM = struct {
         var idx: usize = 0;
 
         // Fast Path
-        if (ic != null and ic.?.class == instance.class) {
-            idx = ic.?.offset;
+        if (ic != null and ic.?.cached_class_1 == instance.class) {
+            idx = ic.?.offset_1;
+        } else if (ic != null and ic.?.cached_class_2 == instance.class) {
+            idx = ic.?.offset_2;
         }
+
         // Slow Path
         else {
             if (instance.class.instance_layout.get(name)) |existing_idx| {
@@ -2226,8 +2191,13 @@ pub const VM = struct {
                 try instance.class.instance_layout.put(self.allocator, name, idx);
             }
             if (ic) |cache| {
-                cache.class = instance.class;
-                cache.offset = idx;
+                if (cache.cached_class_1 == null) {
+                    cache.cached_class_1 = instance.class;
+                    cache.offset_1 = idx;
+                } else {
+                    cache.cached_class_2 = instance.class;
+                    cache.offset_2 = idx;
+                }
             }
         }
 
@@ -2411,14 +2381,24 @@ pub const VM = struct {
     }
 
     inline fn findMethodCached(self: *VM, class: *value.ObjClass, name: []const u8, ic: *chunk.InlineCache) ?value.Value {
-        // Fast Path
-        if (ic.class == class) {
-            if (!ic.cached_value.isNil()) return ic.cached_value;
+        // Fast Path (Monomorphic)
+        if (ic.cached_class_1 == class) {
+            if (!ic.cached_val_1.isNil()) return ic.cached_val_1;
         }
+        // Fast Path (Polymorphic)
+        else if (ic.cached_class_2 == class) {
+            if (!ic.cached_val_2.isNil()) return ic.cached_val_2;
+        }
+
         // Slow Path (Traverse inheritance hierarchy)
         if (self.findMethod(class, name)) |method_val| {
-            ic.class = class;
-            ic.cached_value = method_val;
+            if (ic.cached_class_1 == null) {
+                ic.cached_class_1 = class;
+                ic.cached_val_1 = method_val;
+            } else {
+                ic.cached_class_2 = class;
+                ic.cached_val_2 = method_val;
+            }
             return method_val;
         }
         return null;
