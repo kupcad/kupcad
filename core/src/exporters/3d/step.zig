@@ -5,7 +5,7 @@ const geom = @import("../../kernel/geometry_handle.zig");
 const brep_driver = @import("../../kernel/engines/brep/driver.zig");
 const topo = @import("../../locus/src/topology.zig");
 const locus_geom = @import("../../locus/src/geometry.zig");
-const locus_math = @import("../../locus/src/math.zig"); // <-- Added for Vector Math
+const locus_math = @import("../../locus/src/math.zig");
 
 /// StepSerializer handles string formatting, sequential STEP entity ID generation,
 /// and buffer management for ISO 10303-21 output.
@@ -42,6 +42,18 @@ const StepSerializer = struct {
         try self.out.appendSlice(self.allocator, ";\n");
         return id;
     }
+};
+
+/// Tracks oriented edge specs for single edges or split 1-vertex closed loops.
+const OrientedEdgeSpec = struct {
+    edge_curve_id: u32,
+    is_forward: bool,
+};
+
+/// A half-edge can expand into 1 or 2 oriented edges (when splitting 360° closed circles).
+const HalfEdgeExpansion = struct {
+    e1: OrientedEdgeSpec,
+    e2: ?OrientedEdgeSpec = null,
 };
 
 /// Generates a valid ISO 10303-21 STEP file buffer from Half-Edge B-Rep Topology.
@@ -138,74 +150,123 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         try vertex_map.put(@intCast(i), try s.emit("VERTEX_POINT('',#{d})", .{pt_id}));
     }
 
-    // --- 3. EDGE CURVES (HALF-EDGE PAIR DEDUPLICATION & CURVE DISPATCH) ---
-    const EdgeCurveInfo = struct { edge_curve_id: u32, is_forward: bool };
-    var half_edge_map = std.AutoHashMap(u32, EdgeCurveInfo).init(allocator);
+    // --- 3. EDGE CURVES (HALF-EDGE PAIR DEDUPLICATION & SPLITTING) ---
+    var half_edge_map = std.AutoHashMap(u32, HalfEdgeExpansion).init(allocator);
     defer half_edge_map.deinit();
 
     for (t.half_edges.items, 0..) |he, i| {
         if (!active_half_edges.contains(@intCast(i))) continue;
         const he_id: u32 = @intCast(i);
 
-        // If this half-edge has a twin that was already emitted, reuse its EDGE_CURVE entity
+        // Deduplicate twin half-edges
         if (he.twin != topo.NULL_ID and he.twin < he_id and active_half_edges.contains(he.twin)) {
-            const twin_info = half_edge_map.get(he.twin).?;
-            try half_edge_map.put(he_id, .{
-                .edge_curve_id = twin_info.edge_curve_id,
-                .is_forward = false,
-            });
+            const twin_exp = half_edge_map.get(he.twin).?;
+            if (twin_exp.e2) |e2_spec| {
+                // Reverse traversal order for twin when split into 2 segments:
+                try half_edge_map.put(he_id, .{
+                    .e1 = .{ .edge_curve_id = e2_spec.edge_curve_id, .is_forward = !e2_spec.is_forward },
+                    .e2 = .{ .edge_curve_id = twin_exp.e1.edge_curve_id, .is_forward = !twin_exp.e1.is_forward },
+                });
+            } else {
+                try half_edge_map.put(he_id, .{
+                    .e1 = .{ .edge_curve_id = twin_exp.e1.edge_curve_id, .is_forward = !twin_exp.e1.is_forward },
+                    .e2 = null,
+                });
+            }
             continue;
         }
 
         const next_he = t.half_edges.items[he.next];
-        const p1 = t.vertices.items[he.start_vertex].point;
-        const p2 = t.vertices.items[next_he.start_vertex].point;
+        const v1_id = he.start_vertex;
+        const v2_id = next_he.start_vertex;
+        const p1 = t.vertices.items[v1_id].point;
 
-        var curve_entity_id: u32 = 0;
+        // CRITICAL FIX: Split 1-vertex closed 360° circles into two 180° arcs.
+        // STEP viewers reject single-vertex closed EDGE_CURVEs![cite: 19]
+        if (v1_id == v2_id and he.curve.curve_type == .circle_arc) {
+            const arc = g.circle_arcs.items[he.curve.index];
+            const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
 
-        switch (he.curve.curve_type) {
-            .circle_arc => {
-                const arc = g.circle_arcs.items[he.curve.index];
-                const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
+            const nx = arc.x_axis[1] * arc.y_axis[2] - arc.x_axis[2] * arc.y_axis[1];
+            const ny = arc.x_axis[2] * arc.y_axis[0] - arc.x_axis[0] * arc.y_axis[2];
+            const nz = arc.x_axis[0] * arc.y_axis[1] - arc.x_axis[1] * arc.y_axis[0];
 
-                const nx = arc.x_axis[1] * arc.y_axis[2] - arc.x_axis[2] * arc.y_axis[1];
-                const ny = arc.x_axis[2] * arc.y_axis[0] - arc.x_axis[0] * arc.y_axis[2];
-                const nz = arc.x_axis[0] * arc.y_axis[1] - arc.x_axis[1] * arc.y_axis[0];
+            const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ nx, ny, nz });
+            const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ arc.x_axis[0], arc.x_axis[1], arc.x_axis[2] });
 
-                const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ nx, ny, nz });
-                const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ arc.x_axis[0], arc.x_axis[1], arc.x_axis[2] });
+            const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ center_id, z_axis_id, x_axis_id });
+            const circle_id = try s.emit("CIRCLE('',#{d},{d:.6})", .{ axis2, arc.radius });
 
-                const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ center_id, z_axis_id, x_axis_id });
-                curve_entity_id = try s.emit("CIRCLE('',#{d},{d:.6})", .{ axis2, arc.radius });
-            },
-            else => {
-                // Line fallback
-                const dx = p2[0] - p1[0];
-                const dy = p2[1] - p1[1];
-                const dz = p2[2] - p1[2];
-                var len = @sqrt(dx * dx + dy * dy + dz * dz);
-                if (len < 1e-12) len = 1.0;
+            // Synthesize antipodal vertex (180 degrees opposite)[cite: 19]
+            const p_anti = .{
+                2.0 * arc.center[0] - p1[0],
+                2.0 * arc.center[1] - p1[1],
+                2.0 * arc.center[2] - p1[2],
+            };
+            const anti_pt_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p_anti[0], p_anti[1], p_anti[2] });
+            const anti_v_id = try s.emit("VERTEX_POINT('',#{d})", .{anti_pt_id});
 
-                const dir_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ dx / len, dy / len, dz / len });
+            const v1_step = vertex_map.get(v1_id).?;
 
-                // CRITICAL FIX: Ensure VECTOR parametrization magnitude is strictly 1.0 for straight boundary limits
-                const vec_id = try s.emit("VECTOR('',#{d},1.0)", .{dir_id});
+            const edge_curve_1 = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{
+                v1_step,
+                anti_v_id,
+                circle_id,
+            });
+            const edge_curve_2 = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{
+                anti_v_id,
+                v1_step,
+                circle_id,
+            });
 
-                const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p1[0], p1[1], p1[2] });
-                curve_entity_id = try s.emit("LINE('',#{d},#{d})", .{ origin_id, vec_id });
-            },
+            try half_edge_map.put(he_id, .{
+                .e1 = .{ .edge_curve_id = edge_curve_1, .is_forward = true },
+                .e2 = .{ .edge_curve_id = edge_curve_2, .is_forward = true },
+            });
+        } else {
+            const p2 = t.vertices.items[v2_id].point;
+            var curve_entity_id: u32 = 0;
+
+            switch (he.curve.curve_type) {
+                .circle_arc => {
+                    const arc = g.circle_arcs.items[he.curve.index];
+                    const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
+
+                    const nx = arc.x_axis[1] * arc.y_axis[2] - arc.x_axis[2] * arc.y_axis[1];
+                    const ny = arc.x_axis[2] * arc.y_axis[0] - arc.x_axis[0] * arc.y_axis[2];
+                    const nz = arc.x_axis[0] * arc.y_axis[1] - arc.x_axis[1] * arc.y_axis[0];
+
+                    const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ nx, ny, nz });
+                    const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ arc.x_axis[0], arc.x_axis[1], arc.x_axis[2] });
+
+                    const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ center_id, z_axis_id, x_axis_id });
+                    curve_entity_id = try s.emit("CIRCLE('',#{d},{d:.6})", .{ axis2, arc.radius });
+                },
+                else => {
+                    const dx = p2[0] - p1[0];
+                    const dy = p2[1] - p1[1];
+                    const dz = p2[2] - p1[2];
+                    var len = @sqrt(dx * dx + dy * dy + dz * dz);
+                    if (len < 1e-12) len = 1.0;
+
+                    const dir_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ dx / len, dy / len, dz / len });
+                    const vec_id = try s.emit("VECTOR('',#{d},1.0)", .{dir_id});
+                    const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p1[0], p1[1], p1[2] });
+                    curve_entity_id = try s.emit("LINE('',#{d},#{d})", .{ origin_id, vec_id });
+                },
+            }
+
+            const edge_curve_id = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{
+                vertex_map.get(v1_id).?,
+                vertex_map.get(v2_id).?,
+                curve_entity_id,
+            });
+
+            try half_edge_map.put(he_id, .{
+                .e1 = .{ .edge_curve_id = edge_curve_id, .is_forward = true },
+                .e2 = null,
+            });
         }
-
-        const edge_curve_id = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{
-            vertex_map.get(he.start_vertex).?,
-            vertex_map.get(next_he.start_vertex).?,
-            curve_entity_id,
-        });
-
-        try half_edge_map.put(he_id, .{
-            .edge_curve_id = edge_curve_id,
-            .is_forward = true,
-        });
     }
 
     // --- 4. LOOPS (EDGE_LOOPs) ---
@@ -220,12 +281,21 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
 
         var curr_he_id = loop.first_half_edge;
         while (true) {
-            const he_info = half_edge_map.get(curr_he_id).?;
-            const oriented_id = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{
-                he_info.edge_curve_id,
-                if (he_info.is_forward) "T" else "F",
+            const expansion = half_edge_map.get(curr_he_id).?;
+
+            const oe1_id = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{
+                expansion.e1.edge_curve_id,
+                if (expansion.e1.is_forward) "T" else "F",
             });
-            try loop_oriented_edges.append(allocator, oriented_id);
+            try loop_oriented_edges.append(allocator, oe1_id);
+
+            if (expansion.e2) |e2_spec| {
+                const oe2_id = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{
+                    e2_spec.edge_curve_id,
+                    if (e2_spec.is_forward) "T" else "F",
+                });
+                try loop_oriented_edges.append(allocator, oe2_id);
+            }
 
             const he = t.half_edges.items[curr_he_id];
             curr_he_id = he.next;
@@ -254,39 +324,63 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         if (!active_faces.contains(@intCast(i))) continue;
 
         var surface_record_id: u32 = 0;
+        var face_orientation: []const u8 = undefined;
 
         switch (face.surface.surface_type) {
             .plane => {
                 const p = g.planes.items[face.surface.index];
-                const nx = p.u_axis[1] * p.v_axis[2] - p.u_axis[2] * p.v_axis[1];
-                const ny = p.u_axis[2] * p.v_axis[0] - p.u_axis[0] * p.v_axis[2];
-                const nz = p.u_axis[0] * p.v_axis[1] - p.u_axis[1] * p.v_axis[0];
+
+                const raw_nx = p.u_axis[1] * p.v_axis[2] - p.u_axis[2] * p.v_axis[1];
+                const raw_ny = p.u_axis[2] * p.v_axis[0] - p.u_axis[0] * p.v_axis[2];
+                const raw_nz = p.u_axis[0] * p.v_axis[1] - p.u_axis[1] * p.v_axis[0];
+
+                var n_ax = locus_math.normalize(.{ raw_nx, raw_ny, raw_nz });
+                if (locus_math.magSq(n_ax) < 1e-12) n_ax = .{ 0, 0, 1 };
+
+                var u_ax = locus_math.normalize(.{ p.u_axis[0], p.u_axis[1], p.u_axis[2] });
+                if (locus_math.magSq(u_ax) < 1e-12) u_ax = .{ 1, 0, 0 };
 
                 const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p.origin[0], p.origin[1], p.origin[2] });
-                const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ nx, ny, nz });
-                const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ p.u_axis[0], p.u_axis[1], p.u_axis[2] });
+                const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ n_ax[0], n_ax[1], n_ax[2] });
+                const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ u_ax[0], u_ax[1], u_ax[2] });
 
                 const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
                 surface_record_id = try s.emit("PLANE('',#{d})", .{axis2});
+                face_orientation = if (face.forward) "T" else "F";
             },
             else => {
-                // FACETED FALLBACK:
-                // Booleans output polyhedral faces bounded by straight lines.
-                // STEP strictly requires boundaries to mathematically sit on the surface.
-                // To export valid STEP bodies from polyhedral operations, we evaluate an exact
-                // planar surface facet securely from the topological vertices of the outer boundary loop.
+                // FACETED FALLBACK (Newell's Method)[cite: 13, 19]
                 const loop_id = t.face_loops.items[face.loops_start];
                 const loop = t.loops.items[loop_id];
-                const he0 = t.half_edges.items[loop.first_half_edge];
-                const he1 = t.half_edges.items[he0.next];
 
-                const p0 = t.vertices.items[he0.start_vertex].point;
-                const p1 = t.vertices.items[he1.start_vertex].point;
-                const p2 = t.vertices.items[t.half_edges.items[he1.next].start_vertex].point;
+                var nx: f64 = 0;
+                var ny: f64 = 0;
+                var nz: f64 = 0;
+                var curr_he = loop.first_half_edge;
+                const p0 = t.vertices.items[t.half_edges.items[curr_he].start_vertex].point;
 
-                const u_ax = locus_math.normalize(locus_math.sub(p1, p0));
-                var n_ax = locus_math.normalize(locus_math.cross(u_ax, locus_math.sub(p2, p0)));
+                while (true) {
+                    const he_c = t.half_edges.items[curr_he];
+                    const p_c = t.vertices.items[he_c.start_vertex].point;
+                    const p_n = t.vertices.items[t.half_edges.items[he_c.next].start_vertex].point;
+
+                    nx += (p_c[1] - p_n[1]) * (p_c[2] + p_n[2]);
+                    ny += (p_c[2] - p_n[2]) * (p_c[0] + p_n[0]);
+                    nz += (p_c[0] - p_n[0]) * (p_c[1] + p_n[1]);
+
+                    curr_he = he_c.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+
+                var n_ax = locus_math.normalize(.{ nx, ny, nz });
                 if (locus_math.magSq(n_ax) < 1e-12) n_ax = .{ 0, 0, 1 };
+
+                var u_ax: [3]f64 = undefined;
+                if (@abs(n_ax[0]) < 0.9) {
+                    u_ax = locus_math.normalize(locus_math.cross(.{ 1.0, 0.0, 0.0 }, n_ax));
+                } else {
+                    u_ax = locus_math.normalize(locus_math.cross(.{ 0.0, 1.0, 0.0 }, n_ax));
+                }
 
                 const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p0[0], p0[1], p0[2] });
                 const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ n_ax[0], n_ax[1], n_ax[2] });
@@ -294,6 +388,9 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
 
                 const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
                 surface_record_id = try s.emit("PLANE('',#{d})", .{axis2});
+
+                // Newell's method inherently incorporates the loop winding direction[cite: 13].
+                face_orientation = "T";
             },
         }
 
@@ -313,7 +410,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         try face_map.put(@intCast(i), try s.emit("ADVANCED_FACE('',({s}),#{d},.{s}.)", .{
             bounds_str.items,
             surface_record_id,
-            if (face.forward) "T" else "F",
+            face_orientation,
         }));
     }
 
