@@ -1220,7 +1220,6 @@ pub const Compiler = struct {
     fn compileMultipleAssignment(self: *Compiler, node: *const ast.Node) CompileError!void {
         const ma = self.tree.multipleAssignment(node);
         const lhs = self.tree.getLhsExprs(ma.lhs);
-
         for (lhs) |l| {
             if (l.name != .none) {
                 const name_id = l.name;
@@ -1236,8 +1235,6 @@ pub const Compiler = struct {
             }
         }
 
-        try self.compileNode(ma.value);
-
         var splat_idx: ?usize = null;
         for (lhs, 0..) |l, i| {
             if (l.modifier != null and l.modifier.? == .splat) {
@@ -1246,6 +1243,50 @@ pub const Compiler = struct {
             }
         }
 
+        const val_node = self.tree.getNode(ma.value).?;
+        var is_static_array = false;
+        var arr_elements: []const ast.NodeIndex = &.{};
+
+        if (val_node.tag == .array_literal) {
+            arr_elements = self.tree.getNodes(self.tree.nodeSpan(val_node));
+            is_static_array = true;
+            for (arr_elements) |el| {
+                if (self.tree.getNode(el).?.tag == .splat_expr) {
+                    is_static_array = false;
+                    break;
+                }
+            }
+        }
+
+        // Unpack fixed-length arrays directly onto the stack
+        if (is_static_array and splat_idx == null) {
+            for (arr_elements) |el| {
+                try self.compileNode(el);
+            }
+
+            if (arr_elements.len > lhs.len) {
+                const excess = arr_elements.len - lhs.len;
+                for (0..excess) |_| {
+                    try self.emitOp(.op_pop);
+                }
+            } else if (lhs.len > arr_elements.len) {
+                const deficit = lhs.len - arr_elements.len;
+                for (0..deficit) |_| {
+                    try self.emitOp(.op_nil);
+                }
+            }
+
+            var i: usize = lhs.len;
+            while (i > 0) {
+                i -= 1;
+                try self.compileDestructure(lhs[i]);
+            }
+            try self.emitOp(.op_nil);
+            return;
+        }
+
+        // --- Standard Dynamic Unpacking Fallback ---
+        try self.compileNode(ma.value);
         if (splat_idx) |s_idx| {
             const pre_count = s_idx;
             const post_count = lhs.len - 1 - s_idx;
@@ -1680,33 +1721,10 @@ pub const Compiler = struct {
         for (param_nodes, 0..) |p_idx, i| {
             const p_node = self.tree.getNode(p_idx).?;
             if (p_node.tag == .array_literal) {
-                // The tuple is sitting in local slot (i + 1) because slot 0 is the closure itself
+                // The tuple is sitting in local slot (i + 1)
                 try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
-
-                const elements = self.tree.getNodes(self.tree.nodeSpan(p_node));
-                try self.emitOp(.op_unpack);
-                try self.emitByte(@intCast(elements.len));
-                self.simulatePop(1);
-                self.simulatePush(elements.len);
-
-                // Unpack in reverse order to match the stack
-                var el_i: usize = elements.len;
-                while (el_i > 0) {
-                    el_i -= 1;
-                    const el_node = self.tree.getNode(elements[el_i]).?;
-
-                    // Safe Guard against unsupported nested destructuring
-                    if (el_node.tag != .identifier) {
-                        return error.UnknownNode;
-                    }
-
-                    // Re-use your existing destructuring engine
-                    const lhs = ast.LhsExpr{
-                        .name = self.tree.stringId(el_node),
-                        .modifier = null,
-                    };
-                    try self.compileDestructure(lhs);
-                }
+                // Call recursive destructuring directly
+                try self.compileDestructureNode(p_idx);
             }
         }
 
@@ -1989,6 +2007,36 @@ pub const Compiler = struct {
         } else {
             // Unhandled pattern or skipped element (e.g., `_`): pop to maintain stack equilibrium
             try self.emitOp(.op_pop);
+        }
+    }
+
+    // Helper function to handle nested array destructuring
+    fn compileDestructureNode(self: *Compiler, target_node_idx: ast.NodeIndex) CompileError!void {
+        const node = self.tree.getNode(target_node_idx) orelse return error.UnknownNode;
+
+        if (node.tag == .identifier) {
+            const name_id = self.tree.stringId(node);
+            const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
+            try self.emitVariableStore(name_id, dummy_sym);
+            try self.emitOp(.op_pop);
+        } else if (node.tag == .array_literal) {
+            // Recursive Spatial Destructuring!
+            const elements = self.tree.getNodes(self.tree.nodeSpan(node));
+            if (elements.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
+
+            try self.emitOp(.op_unpack);
+            try self.emitByte(@intCast(elements.len));
+            self.simulatePop(1);
+            self.simulatePush(elements.len);
+
+            var el_i: usize = elements.len;
+            while (el_i > 0) {
+                el_i -= 1;
+                try self.compileDestructureNode(elements[el_i]);
+            }
+        } else {
+            // MUST reject invalid tuple parameters (like splats or defaults) natively
+            return error.UnknownNode;
         }
     }
 

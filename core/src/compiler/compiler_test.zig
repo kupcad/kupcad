@@ -1085,3 +1085,68 @@ test "Compiler: AST depth breaker prevents stack overflow on recursive nodes" {
     const result = comp.compile(current);
     try testing.expectError(error.UnsupportedScope, result);
 }
+
+test "Compiler: Multiple assignment optimization skips heap allocation for static arrays" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source = "x, y = 10, 20";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Verify op_build_array and op_unpack are completely absent
+    var found_build = false;
+    var found_unpack = false;
+    for (out_chunk.code.items) |byte| {
+        if (byte == @intFromEnum(chunk.OpCode.op_build_array)) found_build = true;
+        if (byte == @intFromEnum(chunk.OpCode.op_unpack)) found_unpack = true;
+    }
+
+    try testing.expect(!found_build);
+    try testing.expect(!found_unpack);
+}
+
+test "Compiler: Deep spatial tuple destructuring emits recursive unpacks" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\points.each do |((x, y), z)|
+        \\end
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Scan constants to find the compiled block chunk
+    var child_chunk: ?*chunk.Chunk = null;
+    for (out_chunk.constants.items) |c_val| {
+        if (c_val.isObject() and c_val.asObj().obj_type == .function) {
+            const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", c_val.asObj())));
+            if (func.name == null) {
+                child_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(func.chunk.?)));
+                break;
+            }
+        }
+    }
+
+    try testing.expect(child_chunk != null);
+
+    // Verify op_unpack was emitted exactly twice (once for outer tuple, once for inner (x, y))
+    var unpack_count: usize = 0;
+    for (child_chunk.?.code.items) |byte| {
+        if (byte == @intFromEnum(chunk.OpCode.op_unpack)) unpack_count += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), unpack_count);
+}

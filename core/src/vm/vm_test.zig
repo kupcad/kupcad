@@ -8393,3 +8393,60 @@ test "VM CAD: torus synthesizes properly via revolve" {
     // Total height = minor_r * 2 = 4 (Polygonal approximation shrinks this slightly to ~3.9)
     try testing.expectApproxEqAbs(@as(f64, 4.0), arr_obj.items.items[2].asNumber(), 0.2); // Increased tolerance
 }
+
+test "VM: Evaluates static multiple assignment optimization (Deficit and Excess)" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests deficit (c gets nil) and excess (5 is popped and ignored) without allocating an array
+    const source =
+        \\a, b, c = 1, 2
+        \\d, e = 3, 4, 5
+        \\[c, e]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(arr_val.isObject() and arr_val.asObj().obj_type == .array);
+    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+
+    try testing.expect(arr_obj.items.items[0].isNil()); // 'c' should be nil
+    try testing.expectEqual(@as(f64, 4.0), arr_obj.items.items[1].asNumber()); // 'e' should be 4
+}
+
+test "VM: Evaluates nested spatial tuple destructuring inside blocks" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Sends an array containing `[[10, 20], 30]` into the block
+    const source =
+        \\def call_it(&b)
+        \\  b([[10, 20], 30])
+        \\end
+        \\call_it do |((x, y), z)|
+        \\  x + y + z
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Result should be 10 + 20 + 30 = 60
+    const res = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 60.0), res.asNumber());
+}
