@@ -76,13 +76,22 @@ pub const DAGBuilder = struct {
 
     // --- Adders ---
 
+    fn appendNode(self: *DAGBuilder, new_node: DAGNode) !void {
+        const alloc = self.allocator();
+        try self.nodes.append(alloc, new_node);
+    }
+
     pub fn addBinary(self: *DAGBuilder, tag: DAGTag, left: DAGNodeIndex, right: DAGNodeIndex) !DAGNodeIndex {
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.append(alloc, left);
         try self.extra_data.append(alloc, right);
+
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = tag, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = tag, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -95,7 +104,10 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, targets);
 
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .batch_union_op, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .batch_union_op, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -104,7 +116,10 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.numbers.appendSlice(alloc, &.{ x, y, z });
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .cube, .flags = if (center) 1 else 0, .data = num_idx });
+        const new_node = DAGNode{ .tag = .cube, .flags = if (center) 1 else 0, .data = num_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -113,7 +128,10 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.numbers.appendSlice(alloc, &.{ r1, r2, height, @as(f64, @floatFromInt(segments)) });
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .cylinder, .flags = if (center) 1 else 0, .data = num_idx });
+        const new_node = DAGNode{ .tag = .cylinder, .flags = if (center) 1 else 0, .data = num_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -122,7 +140,10 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.numbers.append(alloc, radius);
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .sphere, .flags = 0, .data = num_idx });
+        const new_node = DAGNode{ .tag = .sphere, .flags = 0, .data = num_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -131,7 +152,10 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.numbers.appendSlice(alloc, &.{ x, y });
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .square, .flags = if (center) 1 else 0, .data = num_idx });
+        const new_node = DAGNode{ .tag = .square, .flags = if (center) 1 else 0, .data = num_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -140,7 +164,10 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.numbers.appendSlice(alloc, &.{ radius, @floatFromInt(segments) });
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .circle, .flags = 0, .data = num_idx });
+        const new_node = DAGNode{ .tag = .circle, .flags = 0, .data = num_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -151,7 +178,10 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &.{ x, y, z });
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = tag, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = tag, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -172,7 +202,10 @@ pub const DAGBuilder = struct {
         try self.extra_data.append(alloc, @intCast(faces.len));
 
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .polyhedron_op, .flags = 0, .data = data_offset });
+        const new_node = DAGNode{ .tag = .polyhedron_op, .flags = 0, .data = data_offset };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -196,7 +229,10 @@ pub const DAGBuilder = struct {
         }
 
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .polygons_even_odd, .flags = 0, .data = data_offset });
+        const new_node = DAGNode{ .tag = .polygons_even_odd, .flags = 0, .data = data_offset };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -205,7 +241,10 @@ pub const DAGBuilder = struct {
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.appendSlice(alloc, &.{ target, material_id });
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .set_material, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .set_material, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -227,7 +266,10 @@ pub const DAGBuilder = struct {
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.append(alloc, target);
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .hull, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .hull, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -237,7 +279,10 @@ pub const DAGBuilder = struct {
         try self.extra_data.append(alloc, @intCast(targets.len));
         try self.extra_data.appendSlice(alloc, targets);
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .batch_hull_op, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .batch_hull_op, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -246,7 +291,10 @@ pub const DAGBuilder = struct {
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.append(alloc, target);
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .project_op, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .project_op, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -257,7 +305,10 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.append(alloc, height);
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .slice_op, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .slice_op, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -268,7 +319,10 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &.{ nx, ny, nz, offset });
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .trim_by_plane, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .trim_by_plane, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -281,7 +335,10 @@ pub const DAGBuilder = struct {
         try self.numbers.appendSlice(alloc, &.{ height, @as(f64, @floatFromInt(slices)), twist_degrees, scale_x, scale_y });
 
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .extrude, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .extrude, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -292,7 +349,10 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.append(alloc, delta);
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .offset, .flags = join_type, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .offset, .flags = join_type, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -305,7 +365,10 @@ pub const DAGBuilder = struct {
         try self.numbers.appendSlice(alloc, &.{ @as(f64, @floatFromInt(segments)), degrees });
 
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .revolve, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .revolve, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -316,7 +379,10 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &mat);
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .transform_matrix, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .transform_matrix, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -327,7 +393,10 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &mat);
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .cs_transform, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .cs_transform, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -341,7 +410,10 @@ pub const DAGBuilder = struct {
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.appendSlice(alloc, &.{ num_idx, @intCast(pts.len) });
         const node_idx: u32 = @intCast(self.nodes.items.len);
-        try self.nodes.append(alloc, .{ .tag = .polygon, .flags = 0, .data = extra_idx });
+        const new_node = DAGNode{ .tag = .polygon, .flags = 0, .data = extra_idx };
+
+        try self.appendNode(new_node);
+
         return node_idx;
     }
 
@@ -461,5 +533,151 @@ pub const DAGBuilder = struct {
             .target = self.extra_data.items[node.data],
             .material_id = self.extra_data.items[node.data + 1],
         };
+    }
+
+    // Add the deterministic hashing engine to the bottom of the file
+    fn computeNodeHash(self: *const DAGBuilder, node: DAGNode) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(std.mem.asBytes(&node.tag));
+        hasher.update(std.mem.asBytes(&node.flags));
+
+        switch (node.tag) {
+            // --- 3D Primitives ---
+            .cube => {
+                const p = self.getCubeDimensions(node);
+                hasher.update(std.mem.asBytes(&p.x));
+                hasher.update(std.mem.asBytes(&p.y));
+                hasher.update(std.mem.asBytes(&p.z));
+            },
+            .cylinder => {
+                const p = self.getCylinderPayload(node);
+                hasher.update(std.mem.asBytes(&p.r1));
+                hasher.update(std.mem.asBytes(&p.r2));
+                hasher.update(std.mem.asBytes(&p.height));
+                hasher.update(std.mem.asBytes(&p.segments));
+            },
+            .sphere => {
+                const p = self.getSpherePayload(node);
+                hasher.update(std.mem.asBytes(&p.radius));
+            },
+            // --- 2D Primitives ---
+            .square => {
+                const p = self.getSquarePayload(node);
+                hasher.update(std.mem.asBytes(&p.x));
+                hasher.update(std.mem.asBytes(&p.y));
+            },
+            .circle => {
+                const p = self.getCirclePayload(node);
+                hasher.update(std.mem.asBytes(&p.radius));
+                hasher.update(std.mem.asBytes(&p.segments));
+            },
+            .polygon => {
+                // Polygon data is stored in the numbers array
+                const num_idx = self.extra_data.items[node.data];
+                const pt_count = self.extra_data.items[node.data + 1];
+                for (0..pt_count) |i| {
+                    hasher.update(std.mem.asBytes(&self.numbers.items[num_idx + (i * 2)]));
+                    hasher.update(std.mem.asBytes(&self.numbers.items[num_idx + (i * 2) + 1]));
+                }
+            },
+            .polygons_even_odd => {
+                const num_contours = self.extra_data.items[node.data];
+                hasher.update(std.mem.asBytes(&num_contours));
+                for (0..num_contours) |i| {
+                    const pts_start = self.extra_data.items[node.data + 1 + (i * 2)];
+                    const pts_len = self.extra_data.items[node.data + 1 + (i * 2) + 1];
+                    for (0..pts_len) |pt_idx| {
+                        hasher.update(std.mem.asBytes(&self.numbers.items[pts_start + (pt_idx * 2)]));
+                        hasher.update(std.mem.asBytes(&self.numbers.items[pts_start + (pt_idx * 2) + 1]));
+                    }
+                }
+            },
+            .polyhedron_op => {
+                const p = self.getPolyhedronPayload(node);
+                for (p.pts) |pt| {
+                    hasher.update(std.mem.asBytes(&pt[0]));
+                    hasher.update(std.mem.asBytes(&pt[1]));
+                    hasher.update(std.mem.asBytes(&pt[2]));
+                }
+                for (p.faces) |f| {
+                    hasher.update(std.mem.asBytes(&f[0]));
+                    hasher.update(std.mem.asBytes(&f[1]));
+                    hasher.update(std.mem.asBytes(&f[2]));
+                }
+            },
+            // --- Binary & Batch Operations ---
+            .union_op, .difference_op, .intersection_op, .cs_union_op, .cs_difference_op, .cs_intersection_op, .minkowski => {
+                const p = self.getBinaryPayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.left]));
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.right]));
+            },
+            .batch_union_op, .batch_hull_op => {
+                const targets = self.getBatchUnionPayload(node);
+                for (targets) |t_idx| {
+                    hasher.update(std.mem.asBytes(&self.node_hashes.items[t_idx]));
+                }
+            },
+            // --- Unary Transforms ---
+            .translate, .rotate, .scale, .mirror => {
+                const p = self.getTranslatePayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&p.x));
+                hasher.update(std.mem.asBytes(&p.y));
+                hasher.update(std.mem.asBytes(&p.z));
+            },
+            .extrude => {
+                const p = self.getExtrudePayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&p.height));
+                hasher.update(std.mem.asBytes(&p.slices));
+                hasher.update(std.mem.asBytes(&p.twist_degrees));
+                hasher.update(std.mem.asBytes(&p.scale_x));
+                hasher.update(std.mem.asBytes(&p.scale_y));
+            },
+            .revolve => {
+                const p = self.getRevolvePayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&p.segments));
+                hasher.update(std.mem.asBytes(&p.degrees));
+            },
+            .trim_by_plane => {
+                const p = self.getTrimByPlanePayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&p.nx));
+                hasher.update(std.mem.asBytes(&p.ny));
+                hasher.update(std.mem.asBytes(&p.nz));
+                hasher.update(std.mem.asBytes(&p.offset));
+            },
+            .offset => {
+                const p = self.getOffsetPayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&p.delta));
+                hasher.update(std.mem.asBytes(&p.join_type));
+            },
+            .slice_op => {
+                const p = self.getSlicePayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&p.height));
+            },
+            .project_op, .hull => {
+                const p = self.getProjectPayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+            },
+            .transform_matrix, .cs_transform => {
+                const p = self.getTransformPayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+
+                const count: u32 = if (node.tag == .transform_matrix) 12 else 6;
+                for (0..count) |i| {
+                    hasher.update(std.mem.asBytes(&self.numbers.items[p.num_idx + i]));
+                }
+            },
+            .set_material => {
+                const p = self.getMaterialPayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&p.material_id));
+            },
+        }
+        return hasher.final();
     }
 };
