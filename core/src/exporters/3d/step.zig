@@ -5,6 +5,7 @@ const geom = @import("../../kernel/geometry_handle.zig");
 const brep_driver = @import("../../kernel/engines/brep/driver.zig");
 const topo = @import("../../locus/src/topology.zig");
 const locus_geom = @import("../../locus/src/geometry.zig");
+const locus_math = @import("../../locus/src/math.zig"); // <-- Added for Vector Math
 
 /// StepSerializer handles string formatting, sequential STEP entity ID generation,
 /// and buffer management for ISO 10303-21 output.
@@ -55,8 +56,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
     if (active_solid_id >= t.solids.items.len) return error.InvalidSolid;
 
     // --- 0. TRAVERSE AND FILTER ACTIVE TOPOLOGY ---
-    // We only want to export the geometry belonging to the final solid,
-    // ignoring intermediate shapes left in the arena from boolean operations.
     var active_shells = std.AutoHashMap(u32, void).init(allocator);
     defer active_shells.deinit();
     var active_faces = std.AutoHashMap(u32, void).init(allocator);
@@ -169,7 +168,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
                 const arc = g.circle_arcs.items[he.curve.index];
                 const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
 
-                // Normal = x_axis x y_axis
                 const nx = arc.x_axis[1] * arc.y_axis[2] - arc.x_axis[2] * arc.y_axis[1];
                 const ny = arc.x_axis[2] * arc.y_axis[0] - arc.x_axis[0] * arc.y_axis[2];
                 const nz = arc.x_axis[0] * arc.y_axis[1] - arc.x_axis[1] * arc.y_axis[0];
@@ -189,7 +187,9 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
                 if (len < 1e-12) len = 1.0;
 
                 const dir_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ dx / len, dy / len, dz / len });
-                const vec_id = try s.emit("VECTOR('',#{d},{d:.6})", .{ dir_id, len });
+
+                // CRITICAL FIX: Ensure VECTOR parametrization magnitude is strictly 1.0 for straight boundary limits
+                const vec_id = try s.emit("VECTOR('',#{d},1.0)", .{dir_id});
 
                 const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p1[0], p1[1], p1[2] });
                 curve_entity_id = try s.emit("LINE('',#{d},#{d})", .{ origin_id, vec_id });
@@ -269,28 +269,29 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
                 const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
                 surface_record_id = try s.emit("PLANE('',#{d})", .{axis2});
             },
-            .cylinder => {
-                const cyl = g.cylinders.items[face.surface.index];
-                const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ cyl.origin[0], cyl.origin[1], cyl.origin[2] });
-                const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ cyl.axis[0], cyl.axis[1], cyl.axis[2] });
-                const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ cyl.x_axis[0], cyl.x_axis[1], cyl.x_axis[2] });
+            else => {
+                // FACETED FALLBACK:
+                // Booleans output polyhedral faces bounded by straight lines.
+                // STEP strictly requires boundaries to mathematically sit on the surface.
+                // To export valid STEP bodies from polyhedral operations, we evaluate an exact
+                // planar surface facet securely from the topological vertices of the outer boundary loop.
+                const loop_id = t.face_loops.items[face.loops_start];
+                const loop = t.loops.items[loop_id];
+                const he0 = t.half_edges.items[loop.first_half_edge];
+                const he1 = t.half_edges.items[he0.next];
 
-                const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
-                surface_record_id = try s.emit("CYLINDRICAL_SURFACE('',#{d},{d:.6})", .{ axis2, cyl.radius });
-            },
-            .sphere => {
-                const sph = g.spheres.items[face.surface.index];
-                const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ sph.center[0], sph.center[1], sph.center[2] });
-                const z_axis_id = try s.emit("DIRECTION('',(0.000000,0.000000,1.000000))", .{});
-                const x_axis_id = try s.emit("DIRECTION('',(1.000000,0.000000,0.000000))", .{});
+                const p0 = t.vertices.items[he0.start_vertex].point;
+                const p1 = t.vertices.items[he1.start_vertex].point;
+                const p2 = t.vertices.items[t.half_edges.items[he1.next].start_vertex].point;
 
-                const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
-                surface_record_id = try s.emit("SPHERICAL_SURFACE('',#{d},{d:.6})", .{ axis2, sph.radius });
-            },
-            .nurbs => {
-                const origin_id = try s.emit("CARTESIAN_POINT('',(0.000000,0.000000,0.000000))", .{});
-                const z_axis_id = try s.emit("DIRECTION('',(0.000000,0.000000,1.000000))", .{});
-                const x_axis_id = try s.emit("DIRECTION('',(1.000000,0.000000,0.000000))", .{});
+                const u_ax = locus_math.normalize(locus_math.sub(p1, p0));
+                var n_ax = locus_math.normalize(locus_math.cross(u_ax, locus_math.sub(p2, p0)));
+                if (locus_math.magSq(n_ax) < 1e-12) n_ax = .{ 0, 0, 1 };
+
+                const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p0[0], p0[1], p0[2] });
+                const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ n_ax[0], n_ax[1], n_ax[2] });
+                const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ u_ax[0], u_ax[1], u_ax[2] });
+
                 const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
                 surface_record_id = try s.emit("PLANE('',#{d})", .{axis2});
             },

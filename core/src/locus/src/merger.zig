@@ -17,6 +17,8 @@ pub fn mergeSolidArenas(
     const plane_off = @as(u24, @intCast(dest_g.planes.items.len));
     const sphere_off = @as(u24, @intCast(dest_g.spheres.items.len));
     const cyl_off = @as(u24, @intCast(dest_g.cylinders.items.len));
+    const cone_off = @as(u24, @intCast(dest_g.cones.items.len));
+    const torus_off = @as(u24, @intCast(dest_g.toruses.items.len));
 
     const v_off = @as(u32, @intCast(dest_t.vertices.items.len));
     const he_off = @as(u32, @intCast(dest_t.half_edges.items.len));
@@ -33,6 +35,8 @@ pub fn mergeSolidArenas(
     try dest_g.planes.appendSlice(allocator, src_g.planes.items);
     try dest_g.spheres.appendSlice(allocator, src_g.spheres.items);
     try dest_g.cylinders.appendSlice(allocator, src_g.cylinders.items);
+    try dest_g.cones.appendSlice(allocator, src_g.cones.items);
+    try dest_g.toruses.appendSlice(allocator, src_g.toruses.items);
 
     try dest_t.vertices.appendSlice(allocator, src_t.vertices.items);
     try dest_t.half_edges.appendSlice(allocator, src_t.half_edges.items);
@@ -68,13 +72,14 @@ pub fn mergeSolidArenas(
             .plane => face.surface.index += plane_off,
             .sphere => face.surface.index += sphere_off,
             .cylinder => face.surface.index += cyl_off,
+            .cone => face.surface.index += cone_off,
+            .torus => face.surface.index += torus_off,
             .nurbs => {},
         }
     }
 
     for (dest_t.shells.items[sh_off..]) |*shell| shell.faces_start += sf_off;
     for (dest_t.solids.items[solid_off..]) |*solid| solid.shells_start += ss_off;
-
     for (dest_t.face_loops.items[fl_off..]) |*l_id| l_id.* += loop_off;
     for (dest_t.shell_faces.items[sf_off..]) |*f_id| f_id.* += f_off;
     for (dest_t.solid_shells.items[ss_off..]) |*sh_id| sh_id.* += sh_off;

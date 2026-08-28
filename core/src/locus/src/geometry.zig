@@ -11,6 +11,8 @@ pub const SurfaceType = enum(u8) {
     plane,
     sphere,
     cylinder,
+    cone,
+    torus,
     nurbs,
 };
 
@@ -61,6 +63,24 @@ pub const Cylinder = struct {
     radius: f64,
 };
 
+pub const Cone = struct {
+    origin: math.Vec3,
+    axis: math.Vec3,
+    x_axis: math.Vec3,
+    y_axis: math.Vec3,
+    radius: f64,
+    half_angle: f64,
+};
+
+pub const Torus = struct {
+    center: math.Vec3,
+    axis: math.Vec3,
+    x_axis: math.Vec3,
+    y_axis: math.Vec3,
+    major_radius: f64,
+    minor_radius: f64,
+};
+
 pub const GeometryArena = struct {
     lines: std.ArrayListUnmanaged(Line) = .empty,
     circle_arcs: std.ArrayListUnmanaged(CircleArc) = .empty,
@@ -68,6 +88,8 @@ pub const GeometryArena = struct {
     planes: std.ArrayListUnmanaged(Plane) = .empty,
     spheres: std.ArrayListUnmanaged(Sphere) = .empty,
     cylinders: std.ArrayListUnmanaged(Cylinder) = .empty,
+    cones: std.ArrayListUnmanaged(Cone) = .empty,
+    toruses: std.ArrayListUnmanaged(Torus) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) GeometryArena {
         _ = allocator;
@@ -81,6 +103,8 @@ pub const GeometryArena = struct {
         self.planes.deinit(allocator);
         self.spheres.deinit(allocator);
         self.cylinders.deinit(allocator);
+        self.cones.deinit(allocator);
+        self.toruses.deinit(allocator);
     }
 
     pub fn clearRetainingCapacity(self: *GeometryArena) void {
@@ -90,6 +114,8 @@ pub const GeometryArena = struct {
         self.planes.clearRetainingCapacity();
         self.spheres.clearRetainingCapacity();
         self.cylinders.clearRetainingCapacity();
+        self.cones.clearRetainingCapacity();
+        self.toruses.clearRetainingCapacity();
     }
 
     pub fn surfaceProject(self: GeometryArena, id: SurfaceId, pt: math.Vec3) math.Vec2 {
@@ -116,26 +142,67 @@ pub const GeometryArena = struct {
                 const theta = std.math.atan2(y_val, x_val);
                 return .{ theta, z_val };
             },
+            .cone => {
+                const c = self.cones.items[id.index];
+                const v = math.sub(pt, c.origin);
+                const z_val = math.dot(v, c.axis);
+                const proj = math.sub(v, math.scale(c.axis, z_val));
+                const x_val = math.dot(proj, c.x_axis);
+                const y_val = math.dot(proj, c.y_axis);
+                const u = std.math.atan2(y_val, x_val);
+                const v_val = z_val / @cos(c.half_angle);
+                return .{ u, v_val };
+            },
+            .torus => {
+                const t = self.toruses.items[id.index];
+                const v = math.sub(pt, t.center);
+                const z_val = math.dot(v, t.axis);
+                const proj = math.sub(v, math.scale(t.axis, z_val));
+                const x_val = math.dot(proj, t.x_axis);
+                const y_val = math.dot(proj, t.y_axis);
+                const u = std.math.atan2(y_val, x_val);
+                const proj_mag = math.mag(proj);
+                const r_val = proj_mag - t.major_radius;
+                const v_val = std.math.atan2(z_val, r_val);
+                return .{ u, v_val };
+            },
             .nurbs => return .{ 0, 0 },
         }
     }
 
     pub fn surfaceNormal(self: GeometryArena, id: SurfaceId, u: f64, v: f64) math.Vec3 {
-        _ = u;
-        _ = v;
         switch (id.surface_type) {
             .plane => {
                 const p = self.planes.items[id.index];
                 return math.normalize(math.cross(p.u_axis, p.v_axis));
             },
             .sphere => {
-                const s = self.spheres.items[id.index];
-                _ = s;
+                // Requires exact 3D point evaluation context for spherical coordinate fallback
                 return .{ 0, 0, 1 };
             },
             .cylinder => {
                 const c = self.cylinders.items[id.index];
-                return c.x_axis;
+                const cos_u = @cos(u);
+                const sin_u = @sin(u);
+                return math.normalize(math.add(math.scale(c.x_axis, cos_u), math.scale(c.y_axis, sin_u)));
+            },
+            .cone => {
+                const c = self.cones.items[id.index];
+                const cos_u = @cos(u);
+                const sin_u = @sin(u);
+                const radial = math.add(math.scale(c.x_axis, cos_u), math.scale(c.y_axis, sin_u));
+                const cos_ha = @cos(c.half_angle);
+                const sin_ha = @sin(c.half_angle);
+                return math.normalize(math.add(math.scale(radial, cos_ha), math.scale(c.axis, -sin_ha)));
+            },
+            .torus => {
+                const t = self.toruses.items[id.index];
+                const cos_u = @cos(u);
+                const sin_u = @sin(u);
+                const radial = math.add(math.scale(t.x_axis, cos_u), math.scale(t.y_axis, sin_u));
+                const cos_v = @cos(v);
+                const sin_v = @sin(v);
+                return math.normalize(math.add(math.scale(radial, cos_v), math.scale(t.axis, sin_v)));
             },
             .nurbs => return .{ 0, 0, 1 },
         }

@@ -200,14 +200,22 @@ pub fn generateCylinder(
     const top_f = try addPolygonFace(allocator, t_arena, g_arena, top_verts, .{ .index = top_plane_idx, .surface_type = .plane }, &twin_map);
     try t_arena.shell_faces.append(allocator, top_f);
 
-    // Side Quads
-    const cyl_surf_idx: u24 = @intCast(g_arena.cylinders.items.len);
-    try g_arena.cylinders.append(allocator, .{ .origin = .{ 0, 0, oz }, .axis = .{ 0, 0, 1 }, .x_axis = .{ 1, 0, 0 }, .y_axis = .{ 0, 1, 0 }, .radius = radius });
-
+    // Side Quads (Now correctly calculated as Planes)
     for (0..segments) |i| {
         const next_i = (i + 1) % segments;
         const quad = [_]topo.VertexId{ bot_verts[i], bot_verts[next_i], top_verts[next_i], top_verts[i] };
-        const side_f = try addPolygonFace(allocator, t_arena, g_arena, &quad, .{ .index = cyl_surf_idx, .surface_type = .cylinder }, &twin_map);
+
+        const p0 = t_arena.vertices.items[bot_verts[i]].point;
+        const p1 = t_arena.vertices.items[bot_verts[next_i]].point;
+        const p2 = t_arena.vertices.items[top_verts[next_i]].point;
+        const u_ax = math.normalize(math.sub(p1, p0));
+        var v_ax = math.normalize(math.sub(p2, p1));
+        if (math.magSq(v_ax) < 1e-6) v_ax = .{ 0, 0, 1 };
+
+        const side_plane_idx: u24 = @intCast(g_arena.planes.items.len);
+        try g_arena.planes.append(allocator, .{ .origin = p0, .u_axis = u_ax, .v_axis = v_ax });
+
+        const side_f = try addPolygonFace(allocator, t_arena, g_arena, &quad, .{ .index = side_plane_idx, .surface_type = .plane }, &twin_map);
         try t_arena.shell_faces.append(allocator, side_f);
     }
 

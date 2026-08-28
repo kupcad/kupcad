@@ -110,6 +110,11 @@ pub fn buildModel(
     vm.line_index = &doc.line_index;
     try registry.registerStandardLibrary(&vm);
 
+    // Force the native B-Rep engine for STEP exports to ensure exact analytical geometry
+    if (std.mem.eql(u8, format, "step")) {
+        vm.config_stack.items[0].engine = .brep_native;
+    }
+
     // Inject CLI Params into the Global Map
     if (cli_params) |cli_p| {
         const p_val = vm.globals.get("params").?;

@@ -15,6 +15,8 @@ fn collectSolidGeometry(
     planes: *std.AutoHashMap(u24, void),
     spheres: *std.AutoHashMap(u24, void),
     cylinders: *std.AutoHashMap(u24, void),
+    cones: *std.AutoHashMap(u24, void),
+    toruses: *std.AutoHashMap(u24, void),
 ) !void {
     _ = allocator;
     const solid = t_arena.solids.items[solid_id];
@@ -22,14 +24,14 @@ fn collectSolidGeometry(
         const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start + s_off]];
         for (0..shell.faces_len) |f_off| {
             const face = t_arena.faces.items[t_arena.shell_faces.items[shell.faces_start + f_off]];
-
             switch (face.surface.surface_type) {
                 .plane => try planes.put(face.surface.index, {}),
                 .sphere => try spheres.put(face.surface.index, {}),
                 .cylinder => try cylinders.put(face.surface.index, {}),
+                .cone => try cones.put(face.surface.index, {}),
+                .torus => try toruses.put(face.surface.index, {}),
                 else => {},
             }
-
             for (0..face.loops_len) |l_off| {
                 const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
                 const loop = t_arena.loops.items[loop_id];
@@ -71,8 +73,13 @@ pub fn translateSolid(
     defer s_map.deinit();
     var c_map = std.AutoHashMap(u24, void).init(allocator);
     defer c_map.deinit();
+    var co_map = std.AutoHashMap(u24, void).init(allocator);
+    defer co_map.deinit();
+    var t_map = std.AutoHashMap(u24, void).init(allocator);
+    defer t_map.deinit();
 
-    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
+    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map, &co_map, &t_map);
+
     const offset = math.Vec3{ tx, ty, tz };
 
     var v_it = v_map.keyIterator();
@@ -96,6 +103,12 @@ pub fn translateSolid(
     var c_it = c_map.keyIterator();
     while (c_it.next()) |c| g_arena.cylinders.items[c.*].origin = math.add(g_arena.cylinders.items[c.*].origin, offset);
 
+    var co_it = co_map.keyIterator();
+    while (co_it.next()) |co| g_arena.cones.items[co.*].origin = math.add(g_arena.cones.items[co.*].origin, offset);
+
+    var t_it = t_map.keyIterator();
+    while (t_it.next()) |to| g_arena.toruses.items[to.*].center = math.add(g_arena.toruses.items[to.*].center, offset);
+
     return solid_id;
 }
 
@@ -103,7 +116,6 @@ fn applyRotation(pt: math.Vec3, rx: f64, ry: f64, rz: f64) math.Vec3 {
     const rad_x = rx * std.math.pi / 180.0;
     const rad_y = ry * std.math.pi / 180.0;
     const rad_z = rz * std.math.pi / 180.0;
-
     const cx = @cos(rad_x);
     const sx = @sin(rad_x);
     const cy = @cos(rad_y);
@@ -114,11 +126,9 @@ fn applyRotation(pt: math.Vec3, rx: f64, ry: f64, rz: f64) math.Vec3 {
     const m00 = cy * cz;
     const m01 = cz * sx * sy - cx * sz;
     const m02 = cx * cz * sy + sx * sz;
-
     const m10 = cy * sz;
     const m11 = cx * cz + sx * sy * sz;
     const m12 = -cz * sx + cx * sy * sz;
-
     const m20 = -sy;
     const m21 = cy * sx;
     const m22 = cx * cy;
@@ -151,8 +161,12 @@ pub fn rotateSolid(
     defer s_map.deinit();
     var c_map = std.AutoHashMap(u24, void).init(allocator);
     defer c_map.deinit();
+    var co_map = std.AutoHashMap(u24, void).init(allocator);
+    defer co_map.deinit();
+    var t_map = std.AutoHashMap(u24, void).init(allocator);
+    defer t_map.deinit();
 
-    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
+    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map, &co_map, &t_map);
 
     var v_it = v_map.keyIterator();
     while (v_it.next()) |v| t_arena.vertices.items[v.*].point = applyRotation(t_arena.vertices.items[v.*].point, rx, ry, rz);
@@ -162,6 +176,7 @@ pub fn rotateSolid(
         g_arena.lines.items[l.*].start = applyRotation(g_arena.lines.items[l.*].start, rx, ry, rz);
         g_arena.lines.items[l.*].end = applyRotation(g_arena.lines.items[l.*].end, rx, ry, rz);
     }
+
     var a_it = a_map.keyIterator();
     while (a_it.next()) |a| {
         g_arena.circle_arcs.items[a.*].center = applyRotation(g_arena.circle_arcs.items[a.*].center, rx, ry, rz);
@@ -175,6 +190,7 @@ pub fn rotateSolid(
         g_arena.planes.items[p.*].u_axis = math.normalize(applyRotation(g_arena.planes.items[p.*].u_axis, rx, ry, rz));
         g_arena.planes.items[p.*].v_axis = math.normalize(applyRotation(g_arena.planes.items[p.*].v_axis, rx, ry, rz));
     }
+
     var s_it = s_map.keyIterator();
     while (s_it.next()) |s| g_arena.spheres.items[s.*].center = applyRotation(g_arena.spheres.items[s.*].center, rx, ry, rz);
 
@@ -184,6 +200,22 @@ pub fn rotateSolid(
         g_arena.cylinders.items[c.*].axis = math.normalize(applyRotation(g_arena.cylinders.items[c.*].axis, rx, ry, rz));
         g_arena.cylinders.items[c.*].x_axis = math.normalize(applyRotation(g_arena.cylinders.items[c.*].x_axis, rx, ry, rz));
         g_arena.cylinders.items[c.*].y_axis = math.normalize(applyRotation(g_arena.cylinders.items[c.*].y_axis, rx, ry, rz));
+    }
+
+    var co_it = co_map.keyIterator();
+    while (co_it.next()) |co| {
+        g_arena.cones.items[co.*].origin = applyRotation(g_arena.cones.items[co.*].origin, rx, ry, rz);
+        g_arena.cones.items[co.*].axis = math.normalize(applyRotation(g_arena.cones.items[co.*].axis, rx, ry, rz));
+        g_arena.cones.items[co.*].x_axis = math.normalize(applyRotation(g_arena.cones.items[co.*].x_axis, rx, ry, rz));
+        g_arena.cones.items[co.*].y_axis = math.normalize(applyRotation(g_arena.cones.items[co.*].y_axis, rx, ry, rz));
+    }
+
+    var t_it = t_map.keyIterator();
+    while (t_it.next()) |to| {
+        g_arena.toruses.items[to.*].center = applyRotation(g_arena.toruses.items[to.*].center, rx, ry, rz);
+        g_arena.toruses.items[to.*].axis = math.normalize(applyRotation(g_arena.toruses.items[to.*].axis, rx, ry, rz));
+        g_arena.toruses.items[to.*].x_axis = math.normalize(applyRotation(g_arena.toruses.items[to.*].x_axis, rx, ry, rz));
+        g_arena.toruses.items[to.*].y_axis = math.normalize(applyRotation(g_arena.toruses.items[to.*].y_axis, rx, ry, rz));
     }
 
     return solid_id;
@@ -210,8 +242,12 @@ pub fn scaleSolid(
     defer s_map.deinit();
     var c_map = std.AutoHashMap(u24, void).init(allocator);
     defer c_map.deinit();
+    var co_map = std.AutoHashMap(u24, void).init(allocator);
+    defer co_map.deinit();
+    var t_map = std.AutoHashMap(u24, void).init(allocator);
+    defer t_map.deinit();
 
-    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
+    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map, &co_map, &t_map);
 
     const uniform_scale = (sx + sy + sz) / 3.0;
 
@@ -227,11 +263,11 @@ pub fn scaleSolid(
         g_arena.lines.items[l.*].start[0] *= sx;
         g_arena.lines.items[l.*].start[1] *= sy;
         g_arena.lines.items[l.*].start[2] *= sz;
-
         g_arena.lines.items[l.*].end[0] *= sx;
         g_arena.lines.items[l.*].end[1] *= sy;
         g_arena.lines.items[l.*].end[2] *= sz;
     }
+
     var a_it = a_map.keyIterator();
     while (a_it.next()) |a| {
         g_arena.circle_arcs.items[a.*].center[0] *= sx;
@@ -263,6 +299,23 @@ pub fn scaleSolid(
         g_arena.cylinders.items[c.*].radius *= uniform_scale;
     }
 
+    var co_it = co_map.keyIterator();
+    while (co_it.next()) |co| {
+        g_arena.cones.items[co.*].origin[0] *= sx;
+        g_arena.cones.items[co.*].origin[1] *= sy;
+        g_arena.cones.items[co.*].origin[2] *= sz;
+        g_arena.cones.items[co.*].radius *= uniform_scale;
+    }
+
+    var t_it = t_map.keyIterator();
+    while (t_it.next()) |to| {
+        g_arena.toruses.items[to.*].center[0] *= sx;
+        g_arena.toruses.items[to.*].center[1] *= sy;
+        g_arena.toruses.items[to.*].center[2] *= sz;
+        g_arena.toruses.items[to.*].major_radius *= uniform_scale;
+        g_arena.toruses.items[to.*].minor_radius *= uniform_scale;
+    }
+
     return solid_id;
 }
 
@@ -285,8 +338,12 @@ pub fn transformMatrixSolid(
     defer s_map.deinit();
     var c_map = std.AutoHashMap(u24, void).init(allocator);
     defer c_map.deinit();
+    var co_map = std.AutoHashMap(u24, void).init(allocator);
+    defer co_map.deinit();
+    var t_map = std.AutoHashMap(u24, void).init(allocator);
+    defer t_map.deinit();
 
-    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map);
+    try collectSolidGeometry(allocator, t_arena, solid_id, &v_map, &l_map, &a_map, &p_map, &s_map, &c_map, &co_map, &t_map);
 
     const applyMat = struct {
         fn apply(pt: math.Vec3, m: [12]f64) math.Vec3 {
@@ -321,7 +378,6 @@ pub fn transformMatrixSolid(
         g_arena.planes.items[p.*].v_axis = applyMat.applyDir(g_arena.planes.items[p.*].v_axis, mat);
     }
 
-    // Applying scaling to spheres and cylinders requires extracting the uniform scale factor from the matrix
     const scale_factor = @sqrt(mat[0] * mat[0] + mat[4] * mat[4] + mat[8] * mat[8]);
 
     var c_it = c_map.keyIterator();
@@ -337,6 +393,25 @@ pub fn transformMatrixSolid(
     while (s_it.next()) |s| {
         g_arena.spheres.items[s.*].center = applyMat.apply(g_arena.spheres.items[s.*].center, mat);
         g_arena.spheres.items[s.*].radius *= scale_factor;
+    }
+
+    var co_it = co_map.keyIterator();
+    while (co_it.next()) |co| {
+        g_arena.cones.items[co.*].origin = applyMat.apply(g_arena.cones.items[co.*].origin, mat);
+        g_arena.cones.items[co.*].axis = applyMat.applyDir(g_arena.cones.items[co.*].axis, mat);
+        g_arena.cones.items[co.*].x_axis = applyMat.applyDir(g_arena.cones.items[co.*].x_axis, mat);
+        g_arena.cones.items[co.*].y_axis = applyMat.applyDir(g_arena.cones.items[co.*].y_axis, mat);
+        g_arena.cones.items[co.*].radius *= scale_factor;
+    }
+
+    var t_it = t_map.keyIterator();
+    while (t_it.next()) |to| {
+        g_arena.toruses.items[to.*].center = applyMat.apply(g_arena.toruses.items[to.*].center, mat);
+        g_arena.toruses.items[to.*].axis = applyMat.applyDir(g_arena.toruses.items[to.*].axis, mat);
+        g_arena.toruses.items[to.*].x_axis = applyMat.applyDir(g_arena.toruses.items[to.*].x_axis, mat);
+        g_arena.toruses.items[to.*].y_axis = applyMat.applyDir(g_arena.toruses.items[to.*].y_axis, mat);
+        g_arena.toruses.items[to.*].major_radius *= scale_factor;
+        g_arena.toruses.items[to.*].minor_radius *= scale_factor;
     }
 
     return solid_id;
