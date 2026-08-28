@@ -486,10 +486,21 @@ pub const Handler = struct {
 
         for (diags) |d| {
             const start_line = line_index.getLine(d.loc.offset);
-            const end_offset = d.loc.offset + if (d.loc.length > 0) d.loc.length else 1;
-            const end_line = line_index.getLine(end_offset);
             const start_char = self.getColumn(&line_index, d.loc.offset);
-            const end_char = self.getColumn(&line_index, end_offset);
+
+            var end_line = start_line;
+            var end_char = start_char;
+
+            if (d.loc.length > 0) {
+                // Standard multi-character token
+                const end_offset = d.loc.offset + d.loc.length;
+                end_line = line_index.getLine(end_offset);
+                end_char = self.getColumn(&line_index, end_offset);
+            } else {
+                // Zero-length token (EOF, missing semicolon, etc)
+                // Draw a 1-character wide squiggly explicitly on the same line
+                end_char = start_char + 1;
+            }
 
             try lsp_diags.append(arena, .{
                 .range = .{
