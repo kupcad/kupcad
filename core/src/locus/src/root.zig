@@ -11,16 +11,16 @@ pub const booleans = @import("booleans.zig");
 pub const booleans_2d = @import("booleans_2d.zig");
 pub const slicing = @import("slicing.zig");
 pub const tessellate = @import("tessellate.zig");
-pub const driver = @import("driver.zig");
 
 test {
     _ = @import("booleans_test.zig");
-    _ = @import("driver_test.zig");
+    _ = @import("booleans_2d_test.zig");
     _ = @import("fuzz_test.zig");
     _ = @import("generators_test.zig");
     _ = @import("geometry_test.zig");
     _ = @import("minkowski_test.zig");
     _ = @import("quickhull_test.zig");
+    _ = @import("slicing_test.zig");
     _ = @import("sweeps_test.zig");
     _ = @import("tessellate_test.zig");
     _ = @import("transforms_test.zig");
