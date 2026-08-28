@@ -99,6 +99,28 @@ benchmark("Total Generation Time") do
   payload = cube(20.0, 20.0, 20.0, center: true).translate(20.0 + arm_len, 30.0, 0.0)
   inspect("Clearance to payload:", final_part.min_gap(payload).round(2))
 
+  # ==========================================
+  # DEBUG EXPORT ISOLATION
+  # ==========================================
+  # Uncomment ONLY ONE of the lines below to export a specific sub-assembly.
+  # This will pinpoint which geometric operation breaks the B-Rep graph.
+
+  # 1. Test Base assembly (Booleans and Arrays)
+  # motor_base
+
+  # 2. Test the Minkowski + Plane Slicing
+  # flat_bumper
+
+  # 3. Test the Arm Body (Batch Hull)
+  # arm_body
+
+  # 4. Test the pre-text unified part
+  # (motor_base + arm_body + flat_bumper)
+
+  # 5. Test the final part (Subtraction of 3D Text)
+  # final_part
+
+  # 6. Default: The full assembly (Includes ghosted/highlighted parts)
   drone_arm_assembly
 
 end # End Benchmark

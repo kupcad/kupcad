@@ -12,7 +12,7 @@ const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const Linter = @import("tools/lint/linter.zig").Linter;
 const stl_exporter = @import("exporters/3d/stl.zig");
 const gltf_exporter = @import("exporters/3d/gltf.zig");
-const step_exporter = @import("exporters/3d/step.zig"); // <-- ADD THIS
+const step_exporter = @import("exporters/3d/step.zig");
 
 pub const UiSchema = extractor.UiSchema;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
@@ -20,8 +20,6 @@ pub const Document = @import("core/document.zig").Document;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 pub const LinterDiagnostic = @import("tools/lint/linter.zig").LinterDiagnostic;
-
-// ... (Keep formatDocument, formatCode, checkDocument, checkCode, benchmarkScript, extractSchema exactly the same) ...
 
 /// Formats an already parsed Document. Caller owns the returned slice.
 pub fn formatDocument(allocator: std.mem.Allocator, doc: *const Document, config: FormatterConfig) ![]const u8 {
@@ -173,9 +171,11 @@ pub fn buildModel(
             if (asm_handles.items.len == 1) {
                 main_handle_opt = asm_handles.items[0];
             } else if (asm_handles.items.len > 1) {
-                // Combine multi-part assemblies into a single CSG mesh for STL/STEP exports
-                main_handle_opt = kernel.batchBoolean(allocator, asm_handles.items, .union_op);
-                batch_created_handle = main_handle_opt;
+                // Combine multi-part assemblies into a single CSG mesh ONLY for STL!
+                if (std.mem.eql(u8, format, "stl")) {
+                    main_handle_opt = kernel.batchBoolean(allocator, asm_handles.items, .union_op);
+                    batch_created_handle = main_handle_opt;
+                }
             }
         } else if (final_val.isArray()) {
             // 3. Array of Geometries
@@ -193,8 +193,10 @@ pub fn buildModel(
             if (arr_handles.items.len == 1) {
                 main_handle_opt = arr_handles.items[0];
             } else if (arr_handles.items.len > 1) {
-                main_handle_opt = kernel.batchBoolean(allocator, arr_handles.items, .union_op);
-                batch_created_handle = main_handle_opt;
+                if (std.mem.eql(u8, format, "stl")) {
+                    main_handle_opt = kernel.batchBoolean(allocator, arr_handles.items, .union_op);
+                    batch_created_handle = main_handle_opt;
+                }
             }
         }
     }
@@ -211,11 +213,8 @@ pub fn buildModel(
     } else if (std.mem.eql(u8, format, "glb") or std.mem.eql(u8, format, "gltf")) {
         return gltf_exporter.buildGltfBuffer(allocator, &vm, export_handles.items);
     } else if (std.mem.eql(u8, format, "step")) {
-        if (main_handle_opt) |h| {
-            return step_exporter.buildStepBuffer(allocator, h);
-        } else {
-            return error.NoGeometry;
-        }
+        // Pass the entire slice of separate bodies natively
+        return step_exporter.buildStepBuffer(allocator, export_handles.items);
     } else {
         return error.UnsupportedFormat;
     }
