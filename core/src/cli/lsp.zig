@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const lsp = @import("lsp");
 const api = @import("../api.zig");
 const ast = @import("../core/ast.zig");
+const manifest = @import("../stdlib/manifest.zig");
 
 pub const DocumentBuffer = struct {
     uri: []const u8,
@@ -20,6 +21,53 @@ const ScopeContext = struct {
     def_name: ?[]const u8 = null,
     class_name: ?[]const u8 = null,
 };
+
+fn getReturnTypeHint(method_name: []const u8) ?[]const u8 {
+    // Check Global Functions
+    for (manifest.global_functions) |g| {
+        if (std.mem.eql(u8, g.name, method_name)) {
+            return switch (g.category) {
+                .primitive_3d, .csg_operator, .brep_op => "Geometry",
+                .primitive_2d => "CrossSection",
+                .transform => if (std.mem.eql(u8, method_name, "ghost") or std.mem.eql(u8, method_name, "highlight")) "Geometry" else "CrossSection",
+                .file_io => "Geometry",
+                else => null,
+            };
+        }
+    }
+
+    // Check Mesh Methods
+    for (manifest.mesh_methods) |m| {
+        if (std.mem.eql(u8, m.name, method_name)) {
+            return switch (m.category) {
+                .csg_operator, .transform => "Geometry",
+                .workplane_method => "Workplane",
+                .inspection_method => "Number",
+                else => null,
+            };
+        }
+    }
+
+    return null;
+}
+
+fn getParamNames(method_name: []const u8) []const []const u8 {
+    if (std.mem.eql(u8, method_name, "cube")) return &[_][]const u8{ "size", "y", "z", "center" };
+    if (std.mem.eql(u8, method_name, "sphere")) return &[_][]const u8{"radius"};
+    if (std.mem.eql(u8, method_name, "cylinder")) return &[_][]const u8{ "r", "r2", "h", "center", "segments" };
+    if (std.mem.eql(u8, method_name, "square")) return &[_][]const u8{ "size", "y", "center" };
+    if (std.mem.eql(u8, method_name, "circle")) return &[_][]const u8{ "radius", "segments" };
+    if (std.mem.eql(u8, method_name, "translate") or
+        std.mem.eql(u8, method_name, "rotate") or
+        std.mem.eql(u8, method_name, "scale") or
+        std.mem.eql(u8, method_name, "resize")) return &[_][]const u8{ "x", "y", "z" };
+    if (std.mem.eql(u8, method_name, "mirror")) return &[_][]const u8{ "nx", "ny", "nz" };
+    if (std.mem.eql(u8, method_name, "extrude")) return &[_][]const u8{ "height", "slices", "twist", "scale_x", "scale_y" };
+    if (std.mem.eql(u8, method_name, "revolve")) return &[_][]const u8{ "segments", "degrees" };
+    if (std.mem.eql(u8, method_name, "regular_polygon")) return &[_][]const u8{ "sides", "r" };
+    if (std.mem.eql(u8, method_name, "offset")) return &[_][]const u8{ "delta", "join" };
+    return &[_][]const u8{};
+}
 
 inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex) ScopeContext {
     var current = start_node;
@@ -119,6 +167,7 @@ pub const Handler = struct {
             },
             .documentFormattingProvider = .{ .bool = true },
             .hoverProvider = .{ .bool = true },
+            .inlayHintProvider = .{ .bool = true },
         };
 
         if (builtin.mode == .Debug) {
@@ -321,6 +370,77 @@ pub const Handler = struct {
                 },
             },
         };
+    }
+
+    pub fn @"textDocument/inlayHint"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.InlayHint.Params, // ⚡ Updated from InlayHintParams
+    ) !?[]const lsp.types.InlayHint {
+        self.log("Inlay hints requested for {s}", .{params.textDocument.uri});
+        const buf = self.files.get(params.textDocument.uri) orelse return null;
+        const doc = buf.doc orelse return null;
+
+        var hints = std.ArrayListUnmanaged(lsp.types.InlayHint).empty;
+        var line_index = try api.LineIndex.init(arena, buf.source);
+
+        for (doc.tree.nodes.items) |*node| {
+            if (node.tag == .assignment) {
+                const assign = doc.tree.assignment(node);
+                const rhs_node = doc.tree.getNode(assign.value) orelse continue;
+
+                if (rhs_node.tag == .method_call) {
+                    const mc = doc.tree.methodCall(rhs_node);
+                    const m_name = doc.tree.getString(mc.method_name);
+
+                    if (getReturnTypeHint(m_name)) |type_hint| {
+                        const lhs_tok = node.main_token;
+                        const end_offset = doc.tokens.starts[lhs_tok] + doc.tokens.lengths[lhs_tok];
+
+                        const line = line_index.getLine(end_offset);
+                        const char = self.getColumn(&line_index, end_offset);
+
+                        try hints.append(arena, .{
+                            .position = .{ .line = line, .character = char },
+                            .label = .{ .string = try std.fmt.allocPrint(arena, ": {s}", .{type_hint}) },
+                            .kind = .Type,
+                            .paddingLeft = false,
+                            .paddingRight = false,
+                        });
+                    }
+                }
+            } else if (node.tag == .method_call) {
+                const mc = doc.tree.methodCall(node);
+                const m_name = doc.tree.getString(mc.method_name);
+                const param_names = getParamNames(m_name);
+
+                if (param_names.len > 0) {
+                    const args = doc.tree.getNamedArgs(mc.args);
+                    for (args, 0..) |arg, arg_idx| {
+                        if (arg_idx >= param_names.len) break;
+                        // Skip if the user already provided an explicit keyword argument label
+                        if (arg.name != .none) continue;
+
+                        const arg_val_node = doc.tree.getNode(arg.value) orelse continue;
+                        const arg_tok = arg_val_node.main_token;
+                        const start_offset = doc.tokens.starts[arg_tok];
+
+                        const line = line_index.getLine(start_offset);
+                        const char = self.getColumn(&line_index, start_offset);
+
+                        try hints.append(arena, .{
+                            .position = .{ .line = line, .character = char },
+                            .label = .{ .string = try std.fmt.allocPrint(arena, "{s}:", .{param_names[arg_idx]}) },
+                            .kind = .Parameter,
+                            .paddingLeft = false,
+                            .paddingRight = true,
+                        });
+                    }
+                }
+            }
+        }
+
+        return hints.items;
     }
 
     fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, source: []const u8) !void {
