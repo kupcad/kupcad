@@ -171,15 +171,25 @@ pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
     return try out.toOwnedSlice(allocator);
 }
 
-pub fn nativeExportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    if (arg_count != 2) return error.RuntimeError;
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+    const handle = try vm.ensureConcrete(receiver);
 
-    if (!args[0].isString()) return error.RuntimeError;
-    if (!args[1].isGeometry()) return error.RuntimeError;
+    const stl_bytes = try buildStlBuffer(vm.allocator, handle);
+    defer vm.allocator.free(stl_bytes);
 
-    const path_str = args[0].asString().chars;
-    const handle = try vm.ensureConcrete(args[1]);
+    const cwd = std.Io.Dir.cwd();
+    try cwd.writeFile(vm.io, .{
+        .sub_path = filepath,
+        .data = stl_bytes,
+    });
+
+    // Return receiver to support method chaining
+    return receiver;
+}
+
+/// Global function fallback variant (e.g. `export_stl("out.stl", my_part)`)
+pub fn nativeExportStl(vm: *VM, path_str: []const u8, target: value.Value) !value.Value {
+    const handle = try vm.ensureConcrete(target);
 
     const stl_bytes = try buildStlBuffer(vm.allocator, handle);
     defer vm.allocator.free(stl_bytes);
@@ -190,18 +200,11 @@ pub fn nativeExportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
         .data = stl_bytes,
     });
 
-    return value.Value.initNil();
+    return target;
 }
 
-pub fn nativeImportStl(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
-    if (arg_count < 1 or !args[0].isString()) {
-        vm.reportError("ArgumentError: import_stl expects (String path).\n", .{});
-        return error.RuntimeError;
-    }
-
-    const path_str = args[0].asString().chars;
+/// Strongly typed global import (e.g. `import_stl("in.stl")`)
+pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {
     const cwd = std.Io.Dir.cwd();
 
     const file = cwd.openFile(vm.io, path_str, .{}) catch |err| {

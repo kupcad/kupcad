@@ -58,11 +58,8 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "torus", .func = common.wrapGlobal(primitives.nativeTorus), .category = .primitive_3d },
     .{ .name = "polyhedron", .func = common.wrapGlobal(primitives.nativePolyhedron), .category = .primitive_3d },
     .{ .name = "text", .func = common.wrapGlobal(primitives.nativeText), .category = .primitive_2d },
-    .{ .name = "import_stl", .func = stl.nativeImportStl, .category = .file_io },
-    .{ .name = "export_stl", .func = stl.nativeExportStl, .category = .file_io },
-    .{ .name = "import_step", .func = step.nativeImportStep, .category = .file_io },
-    .{ .name = "export_step", .func = step.nativeExportStep, .category = .file_io },
-    .{ .name = "export_gltf", .func = gltf.nativeExportGltf, .category = .file_io },
+    .{ .name = "import_stl", .func = common.wrapGlobal(stl.nativeImportStl), .category = .file_io },
+    .{ .name = "import_step", .func = common.wrapGlobal(step.nativeImportStep), .category = .file_io },
 };
 
 // Strongly typed function pointer for Mesh methods
@@ -110,6 +107,9 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "material", .category = .transform, .func = common.wrapMethod(methods.meshMaterial) },
     .{ .name = "highlight", .category = .transform, .func = common.wrapMethod(methods.meshHighlight) },
     .{ .name = "ghost", .category = .transform, .func = common.wrapMethod(methods.meshGhost) },
+    .{ .name = "export_stl", .category = .file_io, .func = common.wrapMethod(stl.meshExportStl) },
+    .{ .name = "export_step", .category = .file_io, .func = common.wrapMethod(step.meshExportStep) },
+    .{ .name = "export_gltf", .category = .file_io, .func = common.wrapMethod(gltf.meshExportGltf) },
 };
 
 // Compile-time generated O(1) jump table

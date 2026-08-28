@@ -458,32 +458,20 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
     return try s.out.toOwnedSlice(allocator);
 }
 
-pub fn nativeImportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    _ = arg_count;
-    _ = args;
-    vm.reportError("Runtime Error: import_step not yet supported for native B-Rep engine.\n", .{});
-    return error.RuntimeError;
-}
-
-pub fn nativeExportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    if (arg_count != 2 or !args[0].isString() or !args[1].isGeometry()) return error.RuntimeError;
-
-    const filename = args[0].asString();
-
+/// Method invocation variant (e.g. `my_part.export_step("out.step")`)
+pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
     var export_handles = std.ArrayListUnmanaged(geom.GeometryHandle).empty;
     defer export_handles.deinit(vm.allocator);
 
-    if (args[1].isAssembly()) {
-        for (args[1].asAssembly().parts.items.items) |part_val| {
+    if (receiver.isAssembly()) {
+        for (receiver.asAssembly().parts.items.items) |part_val| {
             if (part_val.isGeometry()) {
                 const h = try vm.ensureConcrete(part_val);
                 try export_handles.append(vm.allocator, h);
             }
         }
     } else {
-        const h = try vm.ensureConcrete(args[1]);
+        const h = try vm.ensureConcrete(receiver);
         try export_handles.append(vm.allocator, h);
     }
 
@@ -494,6 +482,19 @@ pub fn nativeExportStep(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     defer vm.allocator.free(step_bytes);
 
     const cwd = std.Io.Dir.cwd();
-    try cwd.writeFile(vm.io, .{ .sub_path = filename.chars, .data = step_bytes });
-    return value.Value.initNil();
+    try cwd.writeFile(vm.io, .{ .sub_path = filepath, .data = step_bytes });
+
+    return receiver;
+}
+
+/// Global function fallback variant (e.g. `export_step("out.step", my_part)`)
+pub fn nativeExportStep(vm: *VM, path_str: []const u8, target: value.Value) !value.Value {
+    return meshExportStep(vm, target, path_str);
+}
+
+/// Strongly typed global import (e.g. `import_step("in.step")`)
+pub fn nativeImportStep(vm: *VM, path_str: []const u8) !value.Value {
+    _ = path_str;
+    vm.reportError("Runtime Error: import_step not yet supported for native B-Rep engine.\n", .{});
+    return error.RuntimeError;
 }
