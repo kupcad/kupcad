@@ -51,21 +51,31 @@ fn getReturnTypeHint(method_name: []const u8) ?[]const u8 {
     return null;
 }
 
-fn getParamNames(method_name: []const u8) []const []const u8 {
-    if (std.mem.eql(u8, method_name, "cube")) return &[_][]const u8{ "size", "y", "z", "center" };
+fn getParamNames(method_name: []const u8, pos_count: usize) []const []const u8 {
+    if (std.mem.eql(u8, method_name, "cube")) {
+        if (pos_count <= 1) return &[_][]const u8{ "size", "y", "z", "center" };
+        return &[_][]const u8{ "x", "y", "z", "center" };
+    }
+    if (std.mem.eql(u8, method_name, "square")) {
+        if (pos_count <= 1) return &[_][]const u8{ "size", "y", "center" };
+        return &[_][]const u8{ "x", "y", "center" };
+    }
+
     if (std.mem.eql(u8, method_name, "sphere")) return &[_][]const u8{"radius"};
-    if (std.mem.eql(u8, method_name, "cylinder")) return &[_][]const u8{ "r", "r2", "h", "center", "segments" };
-    if (std.mem.eql(u8, method_name, "square")) return &[_][]const u8{ "size", "y", "center" };
+    if (std.mem.eql(u8, method_name, "cylinder")) return &[_][]const u8{ "r1", "r2", "h", "center", "segments" };
     if (std.mem.eql(u8, method_name, "circle")) return &[_][]const u8{ "radius", "segments" };
+
     if (std.mem.eql(u8, method_name, "translate") or
         std.mem.eql(u8, method_name, "rotate") or
         std.mem.eql(u8, method_name, "scale") or
         std.mem.eql(u8, method_name, "resize")) return &[_][]const u8{ "x", "y", "z" };
+
     if (std.mem.eql(u8, method_name, "mirror")) return &[_][]const u8{ "nx", "ny", "nz" };
     if (std.mem.eql(u8, method_name, "extrude")) return &[_][]const u8{ "height", "slices", "twist", "scale_x", "scale_y" };
     if (std.mem.eql(u8, method_name, "revolve")) return &[_][]const u8{ "segments", "degrees" };
     if (std.mem.eql(u8, method_name, "regular_polygon")) return &[_][]const u8{ "sides", "r" };
     if (std.mem.eql(u8, method_name, "offset")) return &[_][]const u8{ "delta", "join" };
+
     return &[_][]const u8{};
 }
 
@@ -412,10 +422,18 @@ pub const Handler = struct {
             } else if (node.tag == .method_call) {
                 const mc = doc.tree.methodCall(node);
                 const m_name = doc.tree.getString(mc.method_name);
-                const param_names = getParamNames(m_name);
+                const args = doc.tree.getNamedArgs(mc.args);
+
+                // Count positional arguments
+                var pos_count: usize = 0;
+                for (args) |arg| {
+                    if (arg.name == .none) pos_count += 1;
+                }
+
+                // Pass the count to get dynamic parameter names
+                const param_names = getParamNames(m_name, pos_count);
 
                 if (param_names.len > 0) {
-                    const args = doc.tree.getNamedArgs(mc.args);
                     for (args, 0..) |arg, arg_idx| {
                         if (arg_idx >= param_names.len) break;
                         // Skip if the user already provided an explicit keyword argument label
