@@ -26,8 +26,8 @@ matrix_3d = [
 ]
 shifted_bracket = bracket_3d.transform(matrix_3d)
 
-# Plane Trimming
-trimmed_bracket = shifted_bracket.trim_by_plane(0.0, 0.0, 1.0, 18.0)
+# Plane Trimming: Inverted normal vector to keep geometry below Z = 18.0
+trimmed_bracket = shifted_bracket.trim_by_plane(0.0, 0.0, -1.0, -18.0)
 
 # --- 3. 3D Minkowski Softening & Union ---
 pin_core = cube(x: 6.0, y: 6.0, z: 8.0, center: true)
@@ -60,10 +60,11 @@ txt = text("KupCAD", size: 6.0, font: :stencil, halign: :center, valign: :center
 # 2. Extrude by 3.0mm
 # 3. Rotate 180 degrees around Z to match your preferred camera angle
 # 4. Translate to X=20.0 (center), Y=6.0 (safely away from the hole)
-# 5. Translate to Z=16.0 (so it carves 2mm deep into the Z=18.0 top surface)
+# 5. Translate to Z=20.0 (so it carves 2mm deep into the Z=18.0 top surface)
 txt_3d = txt.extrude(3.0).rotate(0.0, 0.0, 180.0).translate(20.0, 6.0, 20.0)
 
-main_assembly = main_assembly + txt_3d
+# Subtract 3D text to carve into the top surface instead of adding it
+main_assembly = main_assembly - txt_3d
 
 # --- 7. Spatial Queries & Inspection Engine ---
 puts("--- Spatial Inspection Diagnostics ---")
