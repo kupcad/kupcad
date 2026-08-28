@@ -64,7 +64,7 @@ test "Fuzz: Geometry Generation, Transforms, and Raycasting" {
 
         // 7. Clear arenas for the next fuzz loop so we don't run out of memory
         t_arena.clearRetainingCapacity();
-        g_arena.clearRetainingCapacity();
+        g_arena.clearRetainingCapacity(alloc);
     }
 }
 
@@ -113,6 +113,6 @@ test "Fuzz: Plane Slicing and Boolean Stability" {
         if (slicing.splitByPlane(alloc, &t_arena, &g_arena, solid_id, nx, ny, nz, offset)) |_| {} else |_| {}
 
         t_arena.clearRetainingCapacity();
-        g_arena.clearRetainingCapacity();
+        g_arena.clearRetainingCapacity(alloc);
     }
 }

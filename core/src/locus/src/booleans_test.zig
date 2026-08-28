@@ -362,3 +362,58 @@ test "Phase 5: Full 3D SSI Pipeline (Intersecting Cube Faces)" {
 
     try std.testing.expect(t_arena.faces.items.len > initial_faces_a);
 }
+
+test "Exact SSI: Plane vs Cone (Apex Cut Rulings)" {
+    const plane = geom.Plane{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 0, 1 } };
+    const cone = geom.Cone{
+        .origin = .{ 0, 0, 0 },
+        .axis = .{ 0, 0, 1 },
+        .x_axis = .{ 1, 0, 0 },
+        .y_axis = .{ 0, 1, 0 },
+        .radius = 0.0,
+        .half_angle = std.math.pi / 4.0,
+    };
+
+    const res = try booleans.intersectPlaneCone(std.testing.allocator, plane, cone);
+    try std.testing.expect(res == .two_lines);
+}
+
+test "Exact SSI: Cylinder vs Cylinder (Steinmetz Curves)" {
+    const alloc = std.testing.allocator;
+    const cyl_a = geom.Cylinder{
+        .origin = .{ 0, 0, 0 },
+        .axis = .{ 0, 0, 1 },
+        .x_axis = .{ 1, 0, 0 },
+        .y_axis = .{ 0, 1, 0 },
+        .radius = 5.0,
+    };
+    const cyl_b = geom.Cylinder{
+        .origin = .{ 0, 0, 0 },
+        .axis = .{ 0, 1, 0 },
+        .x_axis = .{ 1, 0, 0 },
+        .y_axis = .{ 0, 0, 1 },
+        .radius = 5.0,
+    };
+
+    const res = try booleans.intersectCylinderCylinder(alloc, cyl_a, cyl_b);
+    try std.testing.expect(res == .two_sampled);
+    alloc.free(res.two_sampled[0]); // Indexed as array element 0
+    alloc.free(res.two_sampled[1]); // Indexed as array element 1
+}
+
+test "Exact SSI: Plane vs Torus (Perpendicular Cut)" {
+    const alloc = std.testing.allocator;
+    const plane = geom.Plane{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } };
+    const torus = geom.Torus{
+        .center = .{ 0, 0, 0 },
+        .axis = .{ 0, 0, 1 },
+        .x_axis = .{ 1, 0, 0 },
+        .y_axis = .{ 0, 1, 0 },
+        .major_radius = 10.0,
+        .minor_radius = 3.0,
+    };
+
+    const res = try booleans.intersectPlaneTorus(alloc, plane, torus);
+    try std.testing.expect(res == .circle);
+    try std.testing.expectApproxEqAbs(13.0, res.circle.radius, 1e-9);
+}

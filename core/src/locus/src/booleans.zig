@@ -39,6 +39,7 @@ pub const FaceClassification = enum { inside, outside, same, opposite };
 pub const BooleanError = error{
     OutOfMemory,
     DidNotConverge,
+    SurfaceKindMismatch,
 };
 
 pub const IntersectionEvent = struct {
@@ -49,6 +50,78 @@ pub const IntersectionEvent = struct {
     t: f64,
 };
 
+/// Projects any 3D point onto the nearest point on a surface.
+pub fn projectPointToSurface(g_arena: *const geom.GeometryArena, id: geom.SurfaceId, pt: math.Vec3) math.Vec3 {
+    switch (id.surface_type) {
+        .plane => {
+            const p = g_arena.planes.items[id.index];
+            const u_ax = math.normalize(p.u_axis);
+            const v_ax = math.normalize(p.v_axis);
+            var n = math.cross(u_ax, v_ax);
+            const n_len = math.mag(n);
+            if (n_len < 1e-12) return pt;
+            n = math.scale(n, 1.0 / n_len);
+            const dist = math.dot(n, math.sub(pt, p.origin));
+            return math.sub(pt, math.scale(n, dist));
+        },
+        .sphere => {
+            const s = g_arena.spheres.items[id.index];
+            const v = math.sub(pt, s.center);
+            const len = math.mag(v);
+            if (len < 1e-12) return math.add(s.center, .{ s.radius, 0, 0 });
+            return math.add(s.center, math.scale(v, s.radius / len));
+        },
+        .cylinder => {
+            const c = g_arena.cylinders.items[id.index];
+            const axis = math.normalize(c.axis);
+            const v = math.sub(pt, c.origin);
+            const z_val = math.dot(v, axis);
+            const proj_axis = math.add(c.origin, math.scale(axis, z_val));
+            const radial = math.sub(pt, proj_axis);
+            const rad_len = math.mag(radial);
+            if (rad_len < 1e-12) {
+                const x_ax = if (math.magSq(c.x_axis) > 1e-6) math.normalize(c.x_axis) else .{ 1, 0, 0 };
+                return math.add(proj_axis, math.scale(x_ax, c.radius));
+            }
+            return math.add(proj_axis, math.scale(radial, c.radius / rad_len));
+        },
+        .cone => {
+            const c = g_arena.cones.items[id.index];
+            const axis = math.normalize(c.axis);
+            const v = math.sub(pt, c.origin);
+            const z_val = math.dot(v, axis);
+            const proj_axis = math.add(c.origin, math.scale(axis, z_val));
+            const radial = math.sub(pt, proj_axis);
+            const rad_len = math.mag(radial);
+            const r_at_z = c.radius + z_val * @tan(c.half_angle);
+            if (rad_len < 1e-12) {
+                const x_ax = if (math.magSq(c.x_axis) > 1e-6) math.normalize(c.x_axis) else .{ 1, 0, 0 };
+                return math.add(proj_axis, math.scale(x_ax, r_at_z));
+            }
+            return math.add(proj_axis, math.scale(radial, r_at_z / rad_len));
+        },
+        .torus => {
+            const t = g_arena.toruses.items[id.index];
+            const axis = math.normalize(t.axis);
+            const v = math.sub(pt, t.center);
+            const z_val = math.dot(v, axis);
+            const proj_plane = math.sub(v, math.scale(axis, z_val));
+            const proj_len = math.mag(proj_plane);
+            const x_ax = if (math.magSq(t.x_axis) > 1e-6) math.normalize(t.x_axis) else .{ 1, 0, 0 };
+            const tube_center = if (proj_len < 1e-12)
+                math.add(t.center, math.scale(x_ax, t.major_radius))
+            else
+                math.add(t.center, math.scale(proj_plane, t.major_radius / proj_len));
+            const to_pt = math.sub(pt, tube_center);
+            const to_pt_len = math.mag(to_pt);
+            if (to_pt_len < 1e-12) return tube_center;
+            return math.add(tube_center, math.scale(to_pt, t.minor_radius / to_pt_len));
+        },
+        .nurbs => return pt,
+    }
+}
+
+/// 3D Predictor-Corrector Surface-Surface Marching Solver
 pub fn marchIntersection(
     allocator: std.mem.Allocator,
     g_arena: *geom.GeometryArena,
@@ -59,14 +132,95 @@ pub fn marchIntersection(
     max_steps: u32,
     tolerance: f64,
 ) BooleanError!geom.CurveId {
-    _ = allocator;
-    _ = surf_a_id;
-    _ = surf_b_id;
-    _ = start_pt;
-    _ = step_size;
-    _ = max_steps;
     _ = tolerance;
-    return geom.CurveId{ .index = @intCast(g_arena.lines.items.len), .curve_type = .line };
+    var points: std.ArrayListUnmanaged(math.Vec3) = .empty;
+    defer points.deinit(allocator);
+
+    var curr_pt = start_pt;
+    try points.append(allocator, curr_pt);
+
+    var prev_dir: ?math.Vec3 = null;
+
+    for (0..max_steps) |_| {
+        // Corrector on start point
+        const p_a = projectPointToSurface(g_arena, surf_a_id, curr_pt);
+        const p_b = projectPointToSurface(g_arena, surf_b_id, curr_pt);
+        curr_pt = math.scale(math.add(p_a, p_b), 0.5);
+
+        const uv_a = g_arena.surfaceProject(surf_a_id, curr_pt);
+        const uv_b = g_arena.surfaceProject(surf_b_id, curr_pt);
+
+        const n_a = g_arena.surfaceNormal(surf_a_id, uv_a[0], uv_a[1]);
+        const n_b = g_arena.surfaceNormal(surf_b_id, uv_b[0], uv_b[1]);
+
+        var tangent = math.cross(n_a, n_b);
+        const tan_len = math.mag(tangent);
+
+        if (tan_len < 1e-6) {
+            if (prev_dir) |pd| {
+                tangent = pd;
+            } else {
+                // At a saddle/crossing point (normals parallel), pick orthogonal tangent
+                var arb = math.Vec3{ 0, 1, 1 };
+                if (@abs(math.dot(n_a, arb)) > 0.9) arb = .{ 1, 0, 1 };
+                tangent = math.normalize(math.cross(n_a, arb));
+            }
+        } else {
+            tangent = math.scale(tangent, 1.0 / tan_len);
+            if (prev_dir) |pd| {
+                if (math.dot(tangent, pd) < 0.0) {
+                    tangent = math.scale(tangent, -1.0);
+                }
+            }
+        }
+        prev_dir = tangent;
+
+        // Predictor step along the tangent
+        const pred_pt = math.add(curr_pt, math.scale(tangent, step_size));
+
+        // Corrector step: project onto both surfaces and average
+        var corr_pt = pred_pt;
+        for (0..3) |_| {
+            const corr_a = projectPointToSurface(g_arena, surf_a_id, corr_pt);
+            const corr_b = projectPointToSurface(g_arena, surf_b_id, corr_pt);
+            corr_pt = math.scale(math.add(corr_a, corr_b), 0.5);
+        }
+
+        curr_pt = corr_pt;
+        try points.append(allocator, curr_pt);
+
+        if (math.distSq(curr_pt, start_pt) < step_size * step_size and points.items.len > 3) {
+            break;
+        }
+    }
+
+    if (points.items.len < 2) return error.DidNotConverge;
+
+    const nurbs_idx: u24 = @intCast(g_arena.nurbs_curves.items.len);
+    var control_pts = try allocator.alloc(math.Vec4, points.items.len);
+    defer allocator.free(control_pts);
+
+    for (points.items, 0..) |p, i| {
+        control_pts[i] = .{ p[0], p[1], p[2], 1.0 };
+    }
+
+    const n = points.items.len;
+    var knots = try allocator.alloc(f64, n + 3);
+    defer allocator.free(knots);
+
+    @memset(knots[0..3], 0.0);
+    @memset(knots[n .. n + 3], 1.0);
+    for (3..n) |i| {
+        knots[i] = @as(f64, @floatFromInt(i - 2)) / @as(f64, @floatFromInt(n - 2));
+    }
+
+    try g_arena.nurbs_curves.append(allocator, .{
+        .degree = 2,
+        .knots = try allocator.dupe(f64, knots),
+        .control_points = try allocator.dupe(math.Vec4, control_pts),
+    });
+
+    return geom.CurveId{ .index = nurbs_idx, .curve_type = .nurbs };
 }
 
 fn projectToPlane(pt: math.Vec3, origin: math.Vec3, u_axis: math.Vec3, v_axis: math.Vec3) [2]f64 {
@@ -987,15 +1141,26 @@ pub fn intersectSurfaces(
             .plane => return intersectPlanePlane(g_arena.planes.items[surf_a.index], g_arena.planes.items[surf_b.index]),
             .cylinder => return try intersectPlaneCylinder(allocator, g_arena.planes.items[surf_a.index], g_arena.cylinders.items[surf_b.index]),
             .sphere => return intersectPlaneSphere(g_arena.planes.items[surf_a.index], g_arena.spheres.items[surf_b.index]),
+            .cone => return try intersectPlaneCone(allocator, g_arena.planes.items[surf_a.index], g_arena.cones.items[surf_b.index]),
+            .torus => return try intersectPlaneTorus(allocator, g_arena.planes.items[surf_a.index], g_arena.toruses.items[surf_b.index]),
             else => return .empty,
         },
         .cylinder => switch (surf_b.surface_type) {
             .plane => return try intersectPlaneCylinder(allocator, g_arena.planes.items[surf_b.index], g_arena.cylinders.items[surf_a.index]),
+            .cylinder => return try intersectCylinderCylinder(allocator, g_arena.cylinders.items[surf_a.index], g_arena.cylinders.items[surf_b.index]),
             else => return .empty,
         },
         .sphere => switch (surf_b.surface_type) {
             .plane => return intersectPlaneSphere(g_arena.planes.items[surf_b.index], g_arena.spheres.items[surf_a.index]),
             .sphere => return intersectSphereSphere(g_arena.spheres.items[surf_a.index], g_arena.spheres.items[surf_b.index]),
+            else => return .empty,
+        },
+        .cone => switch (surf_b.surface_type) {
+            .plane => return try intersectPlaneCone(allocator, g_arena.planes.items[surf_b.index], g_arena.cones.items[surf_a.index]),
+            else => return .empty,
+        },
+        .torus => switch (surf_b.surface_type) {
+            .plane => return try intersectPlaneTorus(allocator, g_arena.planes.items[surf_b.index], g_arena.toruses.items[surf_a.index]),
             else => return .empty,
         },
         else => return .empty,
@@ -1320,4 +1485,264 @@ pub fn isPointInsideSolidFaces(
         }
     }
     return (hit_count % 2) != 0;
+}
+
+// Handles Plane x Cone intersection (rulings, circles, oblique cuts)
+pub fn intersectPlaneCone(
+    allocator: std.mem.Allocator,
+    plane: geom.Plane,
+    cone: geom.Cone,
+) !IntersectionResult {
+    const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+    const axis = math.normalize(cone.axis);
+    const cos_angle = @abs(math.dot(n, axis));
+
+    // Check if plane passes directly through cone apex
+    const apex_dist = math.dot(n, math.sub(plane.origin, cone.origin));
+    const apex_scale = @max(math.mag(cone.origin), @max(math.mag(plane.origin), 1.0));
+
+    if (@abs(apex_dist) < 1e-9 * apex_scale) {
+        const ca = @cos(cone.half_angle);
+        const sa = @sin(cone.half_angle);
+        const a_coef = sa * math.dot(n, cone.x_axis);
+        const b_coef = sa * math.dot(n, cone.y_axis);
+        const c_coef = ca * math.dot(n, axis);
+        const r_coef = @sqrt(a_coef * a_coef + b_coef * b_coef);
+
+        if (r_coef < @abs(c_coef) - 1e-12) return .{ .point = cone.origin };
+
+        const phi = std.math.atan2(b_coef, a_coef);
+        if (r_coef < @abs(c_coef) + 1e-12) {
+            const u = if (c_coef <= 0.0) phi else phi + std.math.pi;
+            const dir = math.add(math.scale(axis, ca), math.scale(math.add(math.scale(cone.x_axis, @cos(u)), math.scale(cone.y_axis, @sin(u))), sa));
+            return .{ .line = .{ .origin = cone.origin, .direction = math.normalize(dir) } };
+        }
+
+        const delta = std.math.acos(std.math.clamp(-c_coef / r_coef, -1.0, 1.0));
+        const u_1 = phi + delta;
+        const u_2 = phi - delta;
+        const dir1 = math.normalize(math.add(math.scale(axis, ca), math.scale(math.add(math.scale(cone.x_axis, @cos(u_1)), math.scale(cone.y_axis, @sin(u_1))), sa)));
+        const dir2 = math.normalize(math.add(math.scale(axis, ca), math.scale(math.add(math.scale(cone.x_axis, @cos(u_2)), math.scale(cone.y_axis, @sin(u_2))), sa)));
+
+        return .{ .two_lines = .{
+            .{ .origin = cone.origin, .direction = dir1 },
+            .{ .origin = cone.origin, .direction = dir2 },
+        } };
+    }
+
+    if (@abs(cos_angle - 1.0) < 1e-12) {
+        // Plane perpendicular to cone axis -> Circle
+        const apex_to_plane = math.dot(axis, math.sub(plane.origin, cone.origin));
+        const v_param = apex_to_plane / @cos(cone.half_angle);
+
+        if (@abs(v_param) < 1e-12) return .{ .point = cone.origin };
+        if (v_param < 0.0) return .empty;
+
+        const circle_radius = @abs(apex_to_plane) * @tan(cone.half_angle);
+        const circle_center = math.add(cone.origin, math.scale(axis, apex_to_plane));
+
+        return .{ .circle = .{
+            .center = circle_center,
+            .radius = circle_radius,
+            .normal = n,
+            .x_axis = cone.x_axis,
+            .y_axis = cone.y_axis,
+        } };
+    }
+
+    // Oblique Conic Section -> Parameter sweep
+    return try marchingSsiConePlane(allocator, plane, cone, 64);
+}
+
+fn marchingSsiConePlane(
+    allocator: std.mem.Allocator,
+    plane: geom.Plane,
+    cone: geom.Cone,
+    n_samples: usize,
+) !IntersectionResult {
+    var points: std.ArrayListUnmanaged(math.Vec3) = .empty;
+    errdefer points.deinit(allocator);
+
+    const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+    const axis = math.normalize(cone.axis);
+    const ca = @cos(cone.half_angle);
+    const sa = @sin(cone.half_angle);
+
+    for (0..n_samples) |i| {
+        const u = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(n_samples));
+        const dir_u = math.add(math.scale(axis, ca), math.scale(math.add(math.scale(cone.x_axis, @cos(u)), math.scale(cone.y_axis, @sin(u))), sa));
+        const denom = math.dot(n, dir_u);
+        if (@abs(denom) < 1e-15) continue;
+
+        const numer = math.dot(n, math.sub(plane.origin, cone.origin));
+        const v = numer / denom;
+        if (v > 1e-12) {
+            try points.append(allocator, math.add(cone.origin, math.scale(dir_u, v)));
+        }
+    }
+
+    if (points.items.len == 0) {
+        points.deinit(allocator);
+        return .empty;
+    }
+    return .{ .sampled = try points.toOwnedSlice(allocator) };
+}
+
+// Handles Cylinder x Cylinder (Steinmetz curves & fallback)
+pub fn intersectCylinderCylinder(
+    allocator: std.mem.Allocator,
+    a: geom.Cylinder,
+    b: geom.Cylinder,
+) !IntersectionResult {
+    const axis_a = math.normalize(a.axis);
+    const axis_b = math.normalize(b.axis);
+    const dot_ab = math.dot(axis_a, axis_b);
+
+    if (@abs(@abs(dot_ab) - 1.0) < 1e-9) return .empty;
+
+    // Check for perpendicular equal-radii cylinders (Steinmetz curves)
+    if (@abs(dot_ab) < 1e-6 and @abs(a.radius - b.radius) < 1e-6) {
+        const cb_minus_ca = math.sub(b.origin, a.origin);
+        const t = math.dot(cb_minus_ca, axis_a);
+        const s = -math.dot(cb_minus_ca, axis_b);
+        const p_a = math.add(a.origin, math.scale(axis_a, t));
+        const p_b = math.add(b.origin, math.scale(axis_b, s));
+
+        if (math.mag(math.sub(p_a, p_b)) < 1e-6) {
+            const n_samples: usize = 64;
+            var curve_plus = try allocator.alloc(math.Vec3, n_samples + 1);
+            errdefer allocator.free(curve_plus);
+            var curve_minus = try allocator.alloc(math.Vec3, n_samples + 1);
+            errdefer allocator.free(curve_minus);
+
+            const ref_a = axis_b;
+            const y_a = math.cross(axis_a, ref_a);
+            const r = a.radius;
+
+            for (0..n_samples + 1) |i| {
+                const theta = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(n_samples));
+                const cos_t = @cos(theta);
+                const sin_t = @sin(theta);
+                const lateral = math.add(math.scale(ref_a, r * cos_t), math.scale(y_a, r * sin_t));
+                const axial = math.scale(axis_a, r * cos_t);
+
+                curve_plus[i] = math.add(p_a, math.add(lateral, axial));
+                curve_minus[i] = math.add(p_a, math.sub(lateral, axial));
+            }
+
+            return .{ .two_sampled = .{ curve_plus, curve_minus } };
+        }
+    }
+
+    // General fallback to Marching SSI
+    const surf_a_id = geom.SurfaceId{ .index = 0, .surface_type = .cylinder };
+    const surf_b_id = geom.SurfaceId{ .index = 1, .surface_type = .cylinder };
+    var arena = geom.GeometryArena.init(allocator);
+    defer arena.deinit(allocator);
+    try arena.cylinders.append(allocator, a);
+    try arena.cylinders.append(allocator, b);
+
+    const start_pt = math.add(a.origin, math.scale(a.x_axis, a.radius));
+    _ = try marchIntersection(allocator, &arena, surf_a_id, surf_b_id, start_pt, 0.5, 64, 1e-5);
+
+    return .empty;
+}
+
+// Handles Plane x Torus intersection
+pub fn intersectPlaneTorus(
+    allocator: std.mem.Allocator,
+    plane: geom.Plane,
+    torus: geom.Torus,
+) !IntersectionResult {
+    const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+    const dist = @abs(math.dot(n, math.sub(torus.center, plane.origin)));
+
+    if (dist > torus.major_radius + torus.minor_radius + 1e-9) return .empty;
+
+    const cos_angle = @abs(math.dot(n, math.normalize(torus.axis)));
+    if (@abs(cos_angle - 1.0) < 1e-12) {
+        const z = math.dot(n, math.sub(torus.center, plane.origin));
+        const abs_z = @abs(z);
+        if (abs_z > torus.minor_radius + 1e-9) return .empty;
+
+        const r_offset = @sqrt(@max(0.0, torus.minor_radius * torus.minor_radius - z * z));
+        const circle_center = math.sub(torus.center, math.scale(n, z));
+
+        return .{ .circle = .{
+            .center = circle_center,
+            .radius = torus.major_radius + r_offset,
+            .normal = n,
+            .x_axis = torus.x_axis,
+            .y_axis = torus.y_axis,
+        } };
+    }
+
+    return try marchingSsiTorusPlane(allocator, plane, torus, 64);
+}
+
+fn marchingSsiTorusPlane(
+    allocator: std.mem.Allocator,
+    plane: geom.Plane,
+    torus: geom.Torus,
+    n_samples: usize,
+) !IntersectionResult {
+    var points: std.ArrayListUnmanaged(math.Vec3) = .empty;
+    errdefer points.deinit(allocator);
+
+    const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+    const n_v: usize = 32;
+
+    for (0..n_samples) |i| {
+        const u = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(n_samples));
+        var prev_dist: ?f64 = null;
+
+        for (0..n_v + 1) |j| {
+            const v = 2.0 * std.math.pi * @as(f64, @floatFromInt(j)) / @as(f64, @floatFromInt(n_v));
+            const pt = evaluateTorusPoint(torus, u, v);
+            const dist = math.dot(n, math.sub(pt, plane.origin));
+
+            if (prev_dist) |pd| {
+                if (pd * dist < 0.0) {
+                    const v_prev = 2.0 * std.math.pi * @as(f64, @floatFromInt(j - 1)) / @as(f64, @floatFromInt(n_v));
+                    const v_ref = refineTorusCrossing(torus, plane, u, v_prev, v);
+                    try points.append(allocator, evaluateTorusPoint(torus, u, v_ref));
+                }
+            }
+            prev_dist = dist;
+        }
+    }
+
+    if (points.items.len == 0) {
+        points.deinit(allocator);
+        return .empty;
+    }
+    return .{ .sampled = try points.toOwnedSlice(allocator) };
+}
+
+fn evaluateTorusPoint(torus: geom.Torus, u: f64, v: f64) math.Vec3 {
+    const radial = math.add(math.scale(torus.x_axis, @cos(u)), math.scale(torus.y_axis, @sin(u)));
+    const tube_center = math.add(torus.center, math.scale(radial, torus.major_radius));
+    const tube_offset = math.add(math.scale(radial, torus.minor_radius * @cos(v)), math.scale(torus.axis, torus.minor_radius * @sin(v)));
+    return math.add(tube_center, tube_offset);
+}
+
+fn refineTorusCrossing(torus: geom.Torus, plane: geom.Plane, u: f64, v_a: f64, v_b: f64) f64 {
+    var lo = v_a;
+    var hi = v_b;
+    const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+
+    for (0..20) |_| {
+        const mid = 0.5 * (lo + hi);
+        const pt = evaluateTorusPoint(torus, u, mid);
+        const dist = math.dot(n, math.sub(pt, plane.origin));
+        const pt_lo = evaluateTorusPoint(torus, u, lo);
+        const dist_lo = math.dot(n, math.sub(pt_lo, plane.origin));
+
+        if (dist_lo * dist < 0.0) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    return 0.5 * (lo + hi);
 }

@@ -99,6 +99,11 @@ pub const GeometryArena = struct {
     pub fn deinit(self: *GeometryArena, allocator: std.mem.Allocator) void {
         self.lines.deinit(allocator);
         self.circle_arcs.deinit(allocator);
+        // Free heap-allocated slices inside each NURBS curve before deallocating the list
+        for (self.nurbs_curves.items) |nc| {
+            allocator.free(nc.knots);
+            allocator.free(nc.control_points);
+        }
         self.nurbs_curves.deinit(allocator);
         self.planes.deinit(allocator);
         self.spheres.deinit(allocator);
@@ -107,9 +112,13 @@ pub const GeometryArena = struct {
         self.toruses.deinit(allocator);
     }
 
-    pub fn clearRetainingCapacity(self: *GeometryArena) void {
+    pub fn clearRetainingCapacity(self: *GeometryArena, allocator: std.mem.Allocator) void {
         self.lines.clearRetainingCapacity();
         self.circle_arcs.clearRetainingCapacity();
+        for (self.nurbs_curves.items) |nc| {
+            allocator.free(nc.knots);
+            allocator.free(nc.control_points);
+        }
         self.nurbs_curves.clearRetainingCapacity();
         self.planes.clearRetainingCapacity();
         self.spheres.clearRetainingCapacity();
