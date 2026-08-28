@@ -499,19 +499,49 @@ fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f
     if (@intFromPtr(a.ptr) == 0) return .{ .first = null, .second = null };
     const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
 
+    // 1. Perform the first boolean intersection (Positive Half)
     const pair = locus_slicing.splitByPlane(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, nx, ny, nz, offset) catch return .{ .first = a, .second = null };
 
-    // We update the original handle to point to the first half
+    // Update the original handle to point to the first half
     solid.solid_id = pair.first;
 
-    // We must instantiate a completely new handle/wrapper for the second half
+    // 2. Create the second wrapper
     const solid_b = BrepSolid.create(backend_allocator) catch return .{ .first = a, .second = null };
 
-    // Transfer the result topology into the new wrapper (by copying the arena state)
-    solid_b.t_arena = solid.t_arena; // Note: In a production app, we would deep-clone the arena or extract the subgraph here
-    solid_b.g_arena = solid.g_arena;
-    solid_b.solid_id = pair.second;
+    // 3. We must fully duplicate the underlying arenas so that solid_b is memory-independent
+    // Since the boolean operation appended new topology to the END of the shared arena,
+    // both solids currently live in the SAME array list memory space.
+    // Deep cloning the entire list guarantees independent GC memory tracking without manual rewiring.
 
+    // DEEP CLONE TOPOLOGY ARENA
+    solid_b.t_arena.vertices = solid.t_arena.vertices.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.t_arena.half_edges = solid.t_arena.half_edges.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.t_arena.loops = solid.t_arena.loops.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.t_arena.faces = solid.t_arena.faces.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.t_arena.shells = solid.t_arena.shells.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.t_arena.solids = solid.t_arena.solids.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.t_arena.face_loops = solid.t_arena.face_loops.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.t_arena.shell_faces = solid.t_arena.shell_faces.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.t_arena.solid_shells = solid.t_arena.solid_shells.clone(backend_allocator) catch return .{ .first = a, .second = null };
+
+    // DEEP CLONE GEOMETRY ARENA
+    solid_b.g_arena.lines = solid.g_arena.lines.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.g_arena.circle_arcs = solid.g_arena.circle_arcs.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.g_arena.planes = solid.g_arena.planes.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.g_arena.spheres = solid.g_arena.spheres.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.g_arena.cylinders = solid.g_arena.cylinders.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.g_arena.cones = solid.g_arena.cones.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.g_arena.toruses = solid.g_arena.toruses.clone(backend_allocator) catch return .{ .first = a, .second = null };
+
+    // Deep clone heap-allocated slices inside NURBS
+    const cloned_nurbs = solid.g_arena.nurbs_curves.clone(backend_allocator) catch return .{ .first = a, .second = null };
+    for (cloned_nurbs.items) |*nc| {
+        nc.knots = backend_allocator.dupe(f64, nc.knots) catch return .{ .first = a, .second = null };
+        nc.control_points = backend_allocator.dupe(locus_math.Vec4, nc.control_points) catch return .{ .first = a, .second = null };
+    }
+    solid_b.g_arena.nurbs_curves = cloned_nurbs;
+
+    solid_b.solid_id = pair.second;
     return .{ .first = a, .second = geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid_b) } };
 }
 

@@ -7,9 +7,63 @@ const transforms = @import("transforms.zig");
 const booleans = @import("booleans.zig");
 const tessellate = @import("tessellate.zig");
 
-const HALF_SPACE_SIZE: f64 = 20000.0; // Massive bounding box
+pub const BBox = struct {
+    min: math.Vec3 = .{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) },
+    max: math.Vec3 = .{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) },
 
-/// Generates a massive solid cube that entirely fills the negative half-space of a plane.
+    pub fn xSpan(self: BBox) f64 {
+        return self.max[0] - self.min[0];
+    }
+    pub fn ySpan(self: BBox) f64 {
+        return self.max[1] - self.min[1];
+    }
+    pub fn zSpan(self: BBox) f64 {
+        return self.max[2] - self.min[2];
+    }
+    pub fn maxSpan(self: BBox) f64 {
+        return @max(self.xSpan(), @max(self.ySpan(), self.zSpan()));
+    }
+};
+
+/// Computes the 3D Axis-Aligned Bounding Box (AABB) of a topological B-Rep solid.
+pub fn getSolidBBox(t_arena: *const topo.TopologyArena, solid_id: topo.SolidId) BBox {
+    var bbox = BBox{};
+    if (solid_id >= t_arena.solids.items.len) return bbox;
+    const solid = t_arena.solids.items[solid_id];
+
+    for (0..solid.shells_len) |s_off| {
+        const shell_id = t_arena.solid_shells.items[solid.shells_start + s_off];
+        const shell = t_arena.shells.items[shell_id];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = t_arena.faces.items[face_id];
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+                const loop = t_arena.loops.items[loop_id];
+                var curr_he = loop.first_half_edge;
+                var safety: u32 = 0;
+                while (curr_he != topo.NULL_ID and safety < 10000) : (safety += 1) {
+                    const he = t_arena.half_edges.items[curr_he];
+                    const pt = t_arena.vertices.items[he.start_vertex].point;
+
+                    bbox.min[0] = @min(bbox.min[0], pt[0]);
+                    bbox.min[1] = @min(bbox.min[1], pt[1]);
+                    bbox.min[2] = @min(bbox.min[2], pt[2]);
+
+                    bbox.max[0] = @max(bbox.max[0], pt[0]);
+                    bbox.max[1] = @max(bbox.max[1], pt[1]);
+                    bbox.max[2] = @max(bbox.max[2], pt[2]);
+
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+    return bbox;
+}
+
+/// Generates a solid cube sized relative to the object that fills the negative half-space of a plane.
 fn generateHalfSpace(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -18,10 +72,11 @@ fn generateHalfSpace(
     ny: f64,
     nz: f64,
     offset: f64,
+    box_size: f64,
     flip: bool,
 ) !topo.SolidId {
-    // 1. Generate a massive centered cube
-    const cube_id = try generators.generateCube(allocator, t_arena, g_arena, HALF_SPACE_SIZE, HALF_SPACE_SIZE, HALF_SPACE_SIZE, true);
+    // 1. Generate a centered cube matching the target object scale + padding
+    const cube_id = try generators.generateCube(allocator, t_arena, g_arena, box_size, box_size, box_size, true);
 
     // 2. Define the local coordinate basis for the plane
     var normal = math.normalize(.{ nx, ny, nz });
@@ -36,12 +91,11 @@ fn generateHalfSpace(
     const y_axis = math.normalize(math.cross(normal, x_axis));
 
     // 3. Calculate Translation
-    // The plane is at distance `offset` along the normal from the origin.
     const p0 = math.scale(math.normalize(.{ nx, ny, nz }), offset);
 
     // Shift the cube so its top face (Z = +SIZE/2) lies exactly on the plane,
-    // meaning the entire body of the cube extends downward into the -Z direction.
-    const shift_down = math.scale(normal, -(HALF_SPACE_SIZE / 2.0));
+    // extending downward in the -Z direction.
+    const shift_down = math.scale(normal, -(box_size / 2.0));
     const translation = math.add(p0, shift_down);
 
     // 4. Construct 4x4 Affine Matrix (Row-Major)
@@ -51,7 +105,7 @@ fn generateHalfSpace(
         x_axis[2], y_axis[2], normal[2], translation[2],
     };
 
-    // 5. Snap the cube into place
+    // 5. Transform the cube into position
     return try transforms.transformMatrixSolid(allocator, t_arena, g_arena, cube_id, mat);
 }
 
@@ -66,7 +120,10 @@ pub fn trimByPlane(
     nz: f64,
     offset: f64,
 ) !topo.SolidId {
-    const half_space = try generateHalfSpace(allocator, t_arena, g_arena, nx, ny, nz, offset, false);
+    const bbox = getSolidBBox(t_arena, target_solid);
+    const box_size = @max(bbox.maxSpan() * 2.0 + 10.0, 100.0);
+
+    const half_space = try generateHalfSpace(allocator, t_arena, g_arena, nx, ny, nz, offset, box_size, false);
     return try booleans.computeBoolean(allocator, t_arena, g_arena, target_solid, half_space, .intersection, .{});
 }
 
@@ -86,11 +143,12 @@ pub fn splitByPlane(
     nz: f64,
     offset: f64,
 ) !SolidPair {
-    // We generate TWO half spaces facing opposite directions
-    const space_neg = try generateHalfSpace(allocator, t_arena, g_arena, nx, ny, nz, offset, false);
-    const space_pos = try generateHalfSpace(allocator, t_arena, g_arena, nx, ny, nz, offset, true);
+    const bbox = getSolidBBox(t_arena, target_solid);
+    const box_size = @max(bbox.maxSpan() * 2.0 + 10.0, 100.0);
 
-    // To prevent graph corruption, we don't destroy the original yet. We just extract two intersections.
+    const space_neg = try generateHalfSpace(allocator, t_arena, g_arena, nx, ny, nz, offset, box_size, false);
+    const space_pos = try generateHalfSpace(allocator, t_arena, g_arena, nx, ny, nz, offset, box_size, true);
+
     const solid_neg = try booleans.computeBoolean(allocator, t_arena, g_arena, target_solid, space_neg, .intersection, .{});
     const solid_pos = try booleans.computeBoolean(allocator, t_arena, g_arena, target_solid, space_pos, .intersection, .{});
 

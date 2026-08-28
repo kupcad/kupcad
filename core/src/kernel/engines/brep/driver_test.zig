@@ -293,3 +293,23 @@ test "Driver: 2D Polygon Even-Odd Area and Bounds" {
     try std.testing.expectApproxEqAbs(-10.0, bounds.min[0], 1e-4);
     try std.testing.expectApproxEqAbs(10.0, bounds.max[0], 1e-4);
 }
+
+test "Driver: splitByPlane deeply clones arenas avoiding double-free corruption" {
+    const cube = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const pair = driver.driver.splitByPlaneFn(cube, 0.0, 0.0, 1.0, 0.0);
+    try std.testing.expect(pair.first != null);
+    try std.testing.expect(pair.second != null);
+
+    // Destroy second half immediately to trigger potential double-free
+    driver.driver.destructFn(pair.second.?);
+
+    const cutter = driver.driver.cubeFn(5.0, 5.0, 20.0, true) orelse return error.CutterFailed;
+    defer driver.driver.destructFn(cutter);
+
+    // Test that the remaining half can safely undergo further CSG boolean operations
+    const result = driver.driver.booleanFn(pair.first.?, cutter, .difference_op) orelse return error.BoolFailed;
+    defer driver.driver.destructFn(result);
+
+    const vol = driver.driver.volumeFn(result);
+    try std.testing.expect(vol > 0.0); // Assert graph is alive and computable
+}

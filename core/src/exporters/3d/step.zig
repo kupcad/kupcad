@@ -158,11 +158,10 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         if (!active_half_edges.contains(@intCast(i))) continue;
         const he_id: u32 = @intCast(i);
 
-        // Deduplicate twin half-edges
+        // Deduplicate twin half-edges safely
         if (he.twin != topo.NULL_ID and he.twin < he_id and active_half_edges.contains(he.twin)) {
-            const twin_exp = half_edge_map.get(he.twin).?;
+            const twin_exp = half_edge_map.get(he.twin) orelse return error.CorruptTopology;
             if (twin_exp.e2) |e2_spec| {
-                // Reverse traversal order for twin when split into 2 segments:
                 try half_edge_map.put(he_id, .{
                     .e1 = .{ .edge_curve_id = e2_spec.edge_curve_id, .is_forward = !e2_spec.is_forward },
                     .e2 = .{ .edge_curve_id = twin_exp.e1.edge_curve_id, .is_forward = !twin_exp.e1.is_forward },
@@ -181,8 +180,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         const v2_id = next_he.start_vertex;
         const p1 = t.vertices.items[v1_id].point;
 
-        // CRITICAL FIX: Split 1-vertex closed 360° circles into two 180° arcs.
-        // STEP viewers reject single-vertex closed EDGE_CURVEs![cite: 19]
         if (v1_id == v2_id and he.curve.curve_type == .circle_arc) {
             const arc = g.circle_arcs.items[he.curve.index];
             const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
@@ -197,27 +194,14 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
             const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ center_id, z_axis_id, x_axis_id });
             const circle_id = try s.emit("CIRCLE('',#{d},{d:.6})", .{ axis2, arc.radius });
 
-            // Synthesize antipodal vertex (180 degrees opposite)[cite: 19]
-            const p_anti = .{
-                2.0 * arc.center[0] - p1[0],
-                2.0 * arc.center[1] - p1[1],
-                2.0 * arc.center[2] - p1[2],
-            };
+            const p_anti = .{ 2.0 * arc.center[0] - p1[0], 2.0 * arc.center[1] - p1[1], 2.0 * arc.center[2] - p1[2] };
             const anti_pt_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ p_anti[0], p_anti[1], p_anti[2] });
             const anti_v_id = try s.emit("VERTEX_POINT('',#{d})", .{anti_pt_id});
 
-            const v1_step = vertex_map.get(v1_id).?;
+            const v1_step = vertex_map.get(v1_id) orelse return error.CorruptTopology;
 
-            const edge_curve_1 = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{
-                v1_step,
-                anti_v_id,
-                circle_id,
-            });
-            const edge_curve_2 = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{
-                anti_v_id,
-                v1_step,
-                circle_id,
-            });
+            const edge_curve_1 = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{ v1_step, anti_v_id, circle_id });
+            const edge_curve_2 = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{ anti_v_id, v1_step, circle_id });
 
             try half_edge_map.put(he_id, .{
                 .e1 = .{ .edge_curve_id = edge_curve_1, .is_forward = true },
@@ -231,14 +215,11 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
                 .circle_arc => {
                     const arc = g.circle_arcs.items[he.curve.index];
                     const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
-
                     const nx = arc.x_axis[1] * arc.y_axis[2] - arc.x_axis[2] * arc.y_axis[1];
                     const ny = arc.x_axis[2] * arc.y_axis[0] - arc.x_axis[0] * arc.y_axis[2];
                     const nz = arc.x_axis[0] * arc.y_axis[1] - arc.x_axis[1] * arc.y_axis[0];
-
                     const z_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ nx, ny, nz });
                     const x_axis_id = try s.emit("DIRECTION('',({d:.6},{d:.6},{d:.6}))", .{ arc.x_axis[0], arc.x_axis[1], arc.x_axis[2] });
-
                     const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ center_id, z_axis_id, x_axis_id });
                     curve_entity_id = try s.emit("CIRCLE('',#{d},{d:.6})", .{ axis2, arc.radius });
                 },
@@ -256,11 +237,9 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
                 },
             }
 
-            const edge_curve_id = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{
-                vertex_map.get(v1_id).?,
-                vertex_map.get(v2_id).?,
-                curve_entity_id,
-            });
+            const v1_step = vertex_map.get(v1_id) orelse return error.CorruptTopology;
+            const v2_step = vertex_map.get(v2_id) orelse return error.CorruptTopology;
+            const edge_curve_id = try s.emit("EDGE_CURVE('',#{d},#{d},#{d},.T.)", .{ v1_step, v2_step, curve_entity_id });
 
             try half_edge_map.put(he_id, .{
                 .e1 = .{ .edge_curve_id = edge_curve_id, .is_forward = true },
@@ -394,13 +373,15 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
             },
         }
 
+        // Safe bounds extraction
         var bounds_str = std.ArrayListUnmanaged(u8).empty;
         defer bounds_str.deinit(allocator);
 
         for (0..face.loops_len) |l_off| {
             const current_loop_id = t.face_loops.items[face.loops_start + l_off];
             const bound_type = if (l_off == 0) "FACE_OUTER_BOUND" else "FACE_BOUND";
-            const bound_id = try s.emit("{s}('',#{d},.T.)", .{ bound_type, loop_map.get(current_loop_id).? });
+            const step_loop_id = loop_map.get(current_loop_id) orelse return error.CorruptTopology;
+            const bound_id = try s.emit("{s}('',#{d},.T.)", .{ bound_type, step_loop_id });
 
             if (l_off > 0) try bounds_str.appendSlice(allocator, ",");
             var tmp: [32]u8 = undefined;
@@ -428,9 +409,10 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
         for (0..shell.faces_len) |f_off| {
             if (f_off > 0) try s.out.appendSlice(allocator, ",");
             const f_id = t.shell_faces.items[shell.faces_start + f_off];
+            const step_face_id = face_map.get(f_id) orelse return error.CorruptTopology;
 
             var f_buf: [32]u8 = undefined;
-            const f_str = try std.fmt.bufPrint(&f_buf, "#{d}", .{face_map.get(f_id).?});
+            const f_str = try std.fmt.bufPrint(&f_buf, "#{d}", .{step_face_id});
             try s.out.appendSlice(allocator, f_str);
         }
         try s.out.appendSlice(allocator, "));\n");
@@ -440,8 +422,9 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle
     // --- 7. SOLID (MANIFOLD_SOLID_BREP) ---
     if (target_solid.shells_len > 0) {
         const primary_shell_id = t.solid_shells.items[target_solid.shells_start];
+        const step_shell_id = shell_map.get(primary_shell_id) orelse return error.CorruptTopology;
         var buf: [128]u8 = undefined;
-        const out_str = try std.fmt.bufPrint(&buf, "#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ step_solid_id, shell_map.get(primary_shell_id).? });
+        const out_str = try std.fmt.bufPrint(&buf, "#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ step_solid_id, step_shell_id });
         try s.out.appendSlice(allocator, out_str);
     }
 
