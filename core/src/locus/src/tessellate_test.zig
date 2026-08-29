@@ -18,7 +18,7 @@ test "Ear Clipping Triangulator" {
     var tris: std.ArrayListUnmanaged([3]u32) = .empty;
     defer tris.deinit(alloc);
 
-    try tessellate.clipEars(alloc, &poly, &tris);
+    try tessellate.triangulatePolygon(alloc, &poly, &tris);
 
     try std.testing.expectEqual(@as(usize, 4), tris.items.len);
 }

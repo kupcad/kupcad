@@ -6,6 +6,12 @@ const booleans = @import("booleans.zig");
 const math = @import("math.zig");
 const transforms = @import("transforms.zig");
 
+const test_tol = math.Tolerance{
+    .absolute = 1e-5,
+    .squared = 1e-10,
+    .parametric = 1e-5,
+};
+
 test "March Intersection (Perpendicular Cylinders)" {
     const alloc = std.testing.allocator;
     const cyl_a = geom.Cylinder{
@@ -35,7 +41,7 @@ test "March Intersection (Perpendicular Cylinders)" {
     const id_a = geom.SurfaceId{ .index = 0, .surface_type = .cylinder };
     const id_b = geom.SurfaceId{ .index = 1, .surface_type = .cylinder };
 
-    const curve_id = try booleans.marchIntersection(alloc, &g_arena, id_a, id_b, start_pt, 0.5, 10, 1e-5);
+    const curve_id = try booleans.marchIntersection(alloc, &g_arena, id_a, id_b, start_pt, 0.5, 10, test_tol);
     try std.testing.expectEqual(@as(u32, 0), curve_id.index);
 }
 
@@ -123,10 +129,10 @@ test "CSG: 2D Point-in-Polygon Algorithm" {
         .{ 0.0, 10.0 },
     };
 
-    try std.testing.expectEqual(true, booleans.isPointInPolygon2D(.{ 2.0, 8.0 }, &polygon));
-    try std.testing.expectEqual(true, booleans.isPointInPolygon2D(.{ 2.0, 2.0 }, &polygon));
-    try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 7.0, 5.0 }, &polygon));
-    try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 15.0, 5.0 }, &polygon));
+    try std.testing.expectEqual(true, booleans.isPointInPolygon2D(.{ 2.0, 8.0 }, &polygon, test_tol));
+    try std.testing.expectEqual(true, booleans.isPointInPolygon2D(.{ 2.0, 2.0 }, &polygon, test_tol));
+    try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 7.0, 5.0 }, &polygon, test_tol));
+    try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 15.0, 5.0 }, &polygon, test_tol));
 }
 
 test "Curve Math: Arc vs Plane Intersection" {
@@ -147,7 +153,7 @@ test "Curve Math: Arc vs Plane Intersection" {
     const plane_normal = math.Vec3{ 1, 0, 0 };
 
     // 3. Perform Intersection
-    const hit_opt = booleans.intersectArcPlane(arc, v_start, v_end, plane_origin, plane_normal, true);
+    const hit_opt = booleans.intersectArcPlane(arc, v_start, v_end, plane_origin, plane_normal, true, test_tol);
 
     try std.testing.expect(hit_opt != null);
     const hit = hit_opt.?;
@@ -177,7 +183,7 @@ test "Curve Math: NURBS vs Plane Intersection" {
     const plane_normal = math.Vec3{ 0, 0, 1 };
 
     // 3. Perform Intersection (Binary Search)
-    const hit_opt = booleans.intersectNurbsPlane(curve, plane_origin, plane_normal);
+    const hit_opt = booleans.intersectNurbsPlane(curve, plane_origin, plane_normal, test_tol);
 
     try std.testing.expect(hit_opt != null);
     const hit = hit_opt.?;
@@ -192,7 +198,7 @@ test "Exact SSI: Plane vs Plane (Perpendicular)" {
     // XZ Plane
     const p2 = geom.Plane{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 0, 1 } };
 
-    const res = booleans.intersectPlanePlane(p1, p2);
+    const res = booleans.intersectPlanePlane(p1, p2, test_tol);
 
     // The intersection of XY and XZ is the X-axis
     try std.testing.expect(res == .line);
@@ -207,7 +213,7 @@ test "Exact SSI: Plane vs Sphere (Through Center)" {
     // Sphere at Z=5, Radius 10
     const sphere = geom.Sphere{ .center = .{ 0, 0, 5 }, .radius = 10.0 };
 
-    const res = booleans.intersectPlaneSphere(plane, sphere);
+    const res = booleans.intersectPlaneSphere(plane, sphere, test_tol);
 
     // Should be a perfect circle of radius 10 at Z=5
     try std.testing.expect(res == .circle);
@@ -226,7 +232,7 @@ test "Sampler SSI: Plane vs Cylinder (Perpendicular Circle)" {
         .radius = 5.0,
     };
 
-    const res = try booleans.intersectPlaneCylinder(alloc, plane, cyl);
+    const res = try booleans.intersectPlaneCylinder(alloc, plane, cyl, test_tol);
     try std.testing.expect(res == .circle);
     try std.testing.expectApproxEqAbs(5.0, res.circle.radius, 1e-9);
     try std.testing.expectApproxEqAbs(10.0, res.circle.center[2], 1e-9);
@@ -244,7 +250,7 @@ test "Sampler SSI: Plane vs Cylinder (Oblique Ellipse Sampled)" {
         .radius = 5.0,
     };
 
-    const res = try booleans.intersectPlaneCylinder(alloc, plane, cyl);
+    const res = try booleans.intersectPlaneCylinder(alloc, plane, cyl, test_tol);
     try std.testing.expect(res == .sampled);
     defer alloc.free(res.sampled);
 
@@ -274,7 +280,7 @@ test "Phase 4: Face Line Clipping (Infinite Line to Finite Segment)" {
     };
 
     // 4. Clip the infinite line to the bounds of the face
-    const segments = try booleans.clipMathLineToFace(alloc, &t_arena, &g_arena, top_face_id, infinite_line);
+    const segments = try booleans.clipMathLineToFace(alloc, &t_arena, &g_arena, top_face_id, infinite_line, test_tol);
     defer alloc.free(segments);
 
     // It should yield exactly one finite segment stretching from X=-5 to X=5
@@ -309,7 +315,7 @@ test "Phase 4: 3D Segment Overlap and Topological Slicing" {
     }};
 
     // Overlap should be [-2, 2]
-    const overlap = try booleans.overlapSegments3D(alloc, line, &segs_a, &segs_b);
+    const overlap = try booleans.overlapSegments3D(alloc, line, &segs_a, &segs_b, test_tol);
     defer alloc.free(overlap);
 
     try std.testing.expectEqual(@as(usize, 1), overlap.len);
@@ -328,7 +334,7 @@ test "Phase 4: 3D Segment Overlap and Topological Slicing" {
         .end = .{ 5, 0, 5 },
     };
 
-    const new_face = try booleans.sliceFaceWithSegment(alloc, &t_arena, &g_arena, top_face_id, slice_seg);
+    const new_face = try booleans.sliceFaceWithSegment(alloc, &t_arena, &g_arena, top_face_id, slice_seg, test_tol);
     try std.testing.expect(new_face != null);
 }
 
@@ -358,7 +364,7 @@ test "Phase 5: Full 3D SSI Pipeline (Intersecting Cube Faces)" {
     const sh_b = t_arena.shells.items[t_arena.solid_shells.items[s_b.shells_start]];
     for (0..sh_b.faces_len) |i| try faces_b.append(alloc, t_arena.shell_faces.items[sh_b.faces_start + i]);
 
-    try booleans.intersectAndSplitFaces3D(alloc, &t_arena, &g_arena, cube_a, cube_b, &faces_a, &faces_b);
+    try booleans.intersectAndSplitFaces3D(alloc, &t_arena, &g_arena, cube_a, cube_b, &faces_a, &faces_b, test_tol);
 
     try std.testing.expect(t_arena.faces.items.len > initial_faces_a);
 }
@@ -374,7 +380,7 @@ test "Exact SSI: Plane vs Cone (Apex Cut Rulings)" {
         .half_angle = std.math.pi / 4.0,
     };
 
-    const res = try booleans.intersectPlaneCone(std.testing.allocator, plane, cone);
+    const res = try booleans.intersectPlaneCone(std.testing.allocator, plane, cone, test_tol);
     try std.testing.expect(res == .two_lines);
 }
 
@@ -395,7 +401,7 @@ test "Exact SSI: Cylinder vs Cylinder (Steinmetz Curves)" {
         .radius = 5.0,
     };
 
-    const res = try booleans.intersectCylinderCylinder(alloc, cyl_a, cyl_b);
+    const res = try booleans.intersectCylinderCylinder(alloc, cyl_a, cyl_b, test_tol);
     try std.testing.expect(res == .two_sampled);
     alloc.free(res.two_sampled[0]); // Indexed as array element 0
     alloc.free(res.two_sampled[1]); // Indexed as array element 1
@@ -413,7 +419,7 @@ test "Exact SSI: Plane vs Torus (Perpendicular Cut)" {
         .minor_radius = 3.0,
     };
 
-    const res = try booleans.intersectPlaneTorus(alloc, plane, torus);
+    const res = try booleans.intersectPlaneTorus(alloc, plane, torus, test_tol);
     try std.testing.expect(res == .circle);
     try std.testing.expectApproxEqAbs(13.0, res.circle.radius, 1e-9);
 }

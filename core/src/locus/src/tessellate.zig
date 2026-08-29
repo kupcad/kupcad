@@ -15,96 +15,108 @@ pub const Mesh = struct {
     }
 };
 
-/// 2D Point-in-Polygon check for Ear-Clipping
-fn isPointInTriangle2D(p: math.Vec2, a: math.Vec2, b: math.Vec2, c: math.Vec2) bool {
-    const ax = c[0] - b[0];
-    const ay = c[1] - b[1];
-    const bx = a[0] - c[0];
-    const by = a[1] - c[1];
-    const cx = b[0] - a[0];
-    const cy = b[1] - a[1];
+const Node = struct {
+    i: u32,
+    x: f64,
+    y: f64,
+    prev: *Node,
+    next: *Node,
+};
 
-    const apx = p[0] - a[0];
-    const apy = p[1] - a[1];
-    const bpx = p[0] - b[0];
-    const bpy = p[1] - b[1];
-    const cpx = p[0] - c[0];
-    const cpy = p[1] - c[1];
-
-    const aCrossBp = ax * bpy - ay * bpx;
-    const cCrossAp = cx * apy - cy * apx;
-    const bCrossCp = bx * cpy - by * cpx;
-
-    return (aCrossBp >= 0.0) and (bCrossCp >= 0.0) and (cCrossAp >= 0.0);
+fn pointInTriangle(px: f64, py: f64, ax: f64, ay: f64, bx: f64, by: f64, cx: f64, cy: f64) bool {
+    const c1 = (cx - bx) * (py - by) - (cy - by) * (px - bx);
+    const c2 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx);
+    const c3 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+    return (c1 >= 0 and c2 >= 0 and c3 >= 0) or (c1 <= 0 and c2 <= 0 and c3 <= 0);
 }
 
-/// Robust 2D Ear-Clipping Algorithm
-pub fn clipEars(
+fn isEar(node: *const Node) bool {
+    const a = node.prev;
+    const b = node;
+    const c = node.next;
+
+    // Must be convex (CCW orientation)
+    const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    if (cross <= 1e-9) return false;
+
+    // Check if any other remaining node lies inside triangle ABC
+    var p = c.next;
+    while (p != a) {
+        if (pointInTriangle(p.x, p.y, a.x, a.y, b.x, b.y, c.x, c.y)) return false;
+        p = p.next;
+    }
+    return true;
+}
+
+/// Robust 2D Polygon Triangulation using doubly-linked reflex/convex node ear-clipping
+pub fn triangulatePolygon(
     allocator: std.mem.Allocator,
-    polygon: []const math.Vec2,
+    pts: []const math.Vec2,
     out_triangles: *std.ArrayListUnmanaged([3]u32),
 ) !void {
-    const n = polygon.len;
+    const n = pts.len;
     if (n < 3) return;
 
-    var indices = try allocator.alloc(u32, n);
-    defer allocator.free(indices);
-    for (0..n) |i| indices[i] = @intCast(i);
+    // Allocate continuous arena memory for linked list nodes
+    var nodes = try allocator.alloc(Node, n);
+    defer allocator.free(nodes);
 
-    var count = n;
-    var curr: usize = 0;
+    for (0..n) |i| {
+        nodes[i] = .{
+            .i = @intCast(i),
+            .x = pts[i][0],
+            .y = pts[i][1],
+            .prev = undefined,
+            .next = undefined,
+        };
+    }
 
-    while (count > 2) {
+    // Link circular doubly-linked list
+    for (0..n) |i| {
+        nodes[i].prev = &nodes[(i + n - 1) % n];
+        nodes[i].next = &nodes[(i + 1) % n];
+    }
+
+    var head: *Node = &nodes[0];
+    var stop_node: *Node = head;
+    var remaining = n;
+
+    while (remaining > 2) {
         var ear_found = false;
+        var curr: *Node = head;
 
-        for (0..count) |_| {
-            const prev = (curr + count - 1) % count;
-            const next = (curr + 1) % count;
+        while (true) {
+            if (isEar(curr)) {
+                // Emit triangle
+                try out_triangles.append(allocator, .{ curr.prev.i, curr.i, curr.next.i });
 
-            const i_prev = indices[prev];
-            const i_curr = indices[curr];
-            const i_next = indices[next];
+                // Unlink current ear node from circular list
+                curr.prev.next = curr.next;
+                curr.next.prev = curr.prev;
 
-            const a = polygon[i_prev];
-            const b = polygon[i_curr];
-            const c = polygon[i_next];
-
-            // 1. Check if the vertex is convex (forms a CCW angle)
-            const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-
-            if (cross > 1e-9) {
-                // 2. Verify no other remaining vertex lies inside this triangle
-                var is_empty = true;
-                for (0..count) |j| {
-                    if (j == prev or j == curr or j == next) continue;
-                    const p = polygon[indices[j]];
-                    if (isPointInTriangle2D(p, a, b, c)) {
-                        is_empty = false;
-                        break;
-                    }
-                }
-
-                if (is_empty) {
-                    try out_triangles.append(allocator, .{ i_prev, i_curr, i_next });
-
-                    // Cut the ear out of the array
-                    for (curr..count - 1) |k| {
-                        indices[k] = indices[k + 1];
-                    }
-                    count -= 1;
-                    ear_found = true;
-                    break;
-                }
+                head = curr.next;
+                stop_node = head;
+                remaining -= 1;
+                ear_found = true;
+                break;
             }
 
-            curr = (curr + 1) % count;
+            curr = curr.next;
+            if (curr == stop_node) break;
         }
 
-        if (!ear_found) return error.TessellationFailed;
+        // Fallback for self-intersecting or complex polygons: triangle fan
+        if (!ear_found) {
+            var curr_fan = head.next;
+            while (curr_fan.next != head) {
+                try out_triangles.append(allocator, .{ head.i, curr_fan.i, curr_fan.next.i });
+                curr_fan = curr_fan.next;
+            }
+            break;
+        }
     }
 }
 
-/// Traverses a Solid's Half-Edge graph and tessellates all of its faces into a 3D Mesh.
 /// Traverses a Solid's Half-Edge graph and tessellates all of its faces into a 3D Mesh.
 pub fn tessellateSolid(
     allocator: std.mem.Allocator,
@@ -202,11 +214,11 @@ pub fn tessellateSolid(
                 poly2d[i] = g_arena.surfaceProject(face.surface, pt);
             }
 
-            // 5. Triangulate (Ear-Clipping with Triangle Fan Fallback)
+            // 5. Triangulate (Doubly-Linked Ear-Clipping with Triangle Fan Fallback)
             var local_triangles = std.ArrayListUnmanaged([3]u32).empty;
             defer local_triangles.deinit(allocator);
 
-            clipEars(allocator, poly2d, &local_triangles) catch {};
+            triangulatePolygon(allocator, poly2d, &local_triangles) catch {};
 
             if (local_triangles.items.len == 0) {
                 var i: usize = 1;

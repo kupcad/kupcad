@@ -16,6 +16,10 @@ const locus_bool2d = @import("../../../locus/src/booleans_2d.zig");
 const locus_merger = @import("../../../locus/src/merger.zig");
 const locus_slicing = @import("../../../locus/src/slicing.zig");
 const locus_qh = @import("../../../locus/src/quickhull.zig");
+const locus_prop = @import("../../../locus/src/properties.zig");
+const locus_insp = @import("../../../locus/src/inspection.zig");
+const locus_proj = @import("../../../locus/src/projections.zig");
+const locus_query = @import("../../../locus/src/queries.zig");
 
 var backend_allocator = std.heap.page_allocator;
 
@@ -39,12 +43,70 @@ pub const BrepSolid = struct {
     }
 
     pub fn destroy(self: *BrepSolid) void {
-        // Explicitly pass allocator to match updated Unmanaged arena deinit API
         self.t_arena.deinit(self.allocator);
         self.g_arena.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 };
+
+fn extractAllVertices(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const locus_math.Vec3 {
+    var pts = std.ArrayListUnmanaged(locus_math.Vec3).empty;
+    for (handles) |h| {
+        if (@intFromPtr(h.ptr) == 0) continue;
+        const solid: *BrepSolid = @ptrCast(@alignCast(h.ptr));
+        const s = solid.t_arena.solids.items[solid.solid_id];
+        for (0..s.shells_len) |s_off| {
+            const shell = solid.t_arena.shells.items[solid.t_arena.solid_shells.items[s.shells_start + s_off]];
+            for (0..shell.faces_len) |f_off| {
+                const face_id = solid.t_arena.shell_faces.items[shell.faces_start + f_off];
+                const face = solid.t_arena.faces.items[face_id];
+                for (0..face.loops_len) |l_off| {
+                    const loop = solid.t_arena.loops.items[solid.t_arena.face_loops.items[face.loops_start + l_off]];
+                    var curr = loop.first_half_edge;
+                    while (true) {
+                        const he = solid.t_arena.half_edges.items[curr];
+                        try pts.append(allocator, solid.t_arena.vertices.items[he.start_vertex].point);
+                        curr = he.next;
+                        if (curr == loop.first_half_edge) break;
+                    }
+                }
+            }
+        }
+    }
+    return pts.toOwnedSlice(allocator);
+}
+
+fn buildHullFromHandles(handles: []const geom.GeometryHandle) ?geom.GeometryHandle {
+    const pts = extractAllVertices(backend_allocator, handles) catch return null;
+    defer backend_allocator.free(pts);
+
+    if (pts.len < 4) return null;
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+
+    var builder = locus_qh.QuickhullBuilder.init(backend_allocator, pts);
+    defer builder.deinit();
+    builder.buildHull() catch {
+        solid.destroy();
+        return null;
+    };
+
+    var tris = std.ArrayListUnmanaged([3]u32).empty;
+    defer tris.deinit(backend_allocator);
+
+    for (builder.faces.items) |hull_face| {
+        if (hull_face.disabled) continue;
+        const he0 = builder.half_edges.items[hull_face.first_half_edge];
+        const he1 = builder.half_edges.items[he0.next_edge];
+        const he2 = builder.half_edges.items[he1.next_edge];
+        tris.append(backend_allocator, .{ he2.end_vertex, he0.end_vertex, he1.end_vertex }) catch return null;
+    }
+
+    solid.solid_id = locus_gen.buildPolyhedron(backend_allocator, &solid.t_arena, &solid.g_arena, pts, tris.items) catch {
+        solid.destroy();
+        return null;
+    };
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
 
 // --- Lifecycle Management ---
 
@@ -68,7 +130,6 @@ fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
 
 fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     const solid = BrepSolid.create(backend_allocator) catch return null;
-    // Pass backend_allocator as first parameter to half-edge generator
     solid.solid_id = locus_gen.generateCube(backend_allocator, &solid.t_arena, &solid.g_arena, x, y, z, center) catch {
         solid.destroy();
         return null;
@@ -124,6 +185,26 @@ fn polygonImpl(allocator: std.mem.Allocator, pts: []const [2]f64) ?geom.CrossSec
     return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
+fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
+    _ = allocator;
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+    solid.solid_id = locus_gen.buildPolyhedron(backend_allocator, &solid.t_arena, &solid.g_arena, pts, faces) catch {
+        solid.destroy();
+        return null;
+    };
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
+fn polygonsEvenOddImpl(allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
+    _ = allocator;
+    const solid = BrepSolid.create(backend_allocator) catch return null;
+    solid.solid_id = locus_gen.generatePolygonsEvenOdd(backend_allocator, &solid.t_arena, &solid.g_arena, contours) catch {
+        solid.destroy();
+        return null;
+    };
+    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
 // --- Transformer Bridges ---
 
 fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
@@ -134,11 +215,21 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
     if (@intFromPtr(cs.ptr) == 0) return null;
 
     const solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
-    // Pass backend_allocator as first parameter to extrudeFace
     solid.solid_id = locus_sweeps.extrudeFace(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, .{ 0, 0, height }) catch return null;
-
-    // Convert 2D CrossSectionHandle to 3D GeometryHandle
     return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
+fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
+    if (@intFromPtr(cs.ptr) == 0) return null;
+    const solid_2d: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
+    const revolved_solid = BrepSolid.create(backend_allocator) catch return null;
+
+    revolved_solid.solid_id = locus_sweeps.revolveFace(backend_allocator, &revolved_solid.t_arena, &revolved_solid.g_arena, &solid_2d.t_arena, solid_2d.solid_id, @intCast(segments), revolve_degrees) catch {
+        revolved_solid.destroy();
+        return null;
+    };
+
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(revolved_solid) };
 }
 
 fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
@@ -162,6 +253,40 @@ fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandl
     return a;
 }
 
+fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    solid.solid_id = locus_trans.transformMatrixSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, mat) catch return a;
+    return a;
+}
+
+fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
+    if (@intFromPtr(cs.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
+    const mat3d = [12]f64{
+        mat[0], mat[1], 0.0, mat[2],
+        mat[3], mat[4], 0.0, mat[5],
+        0.0,    0.0,    1.0, 0.0,
+    };
+    _ = locus_trans.transformMatrixSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, mat3d) catch return cs;
+    return cs;
+}
+
+fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    solid.solid_id = locus_trans.mirrorSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, nx, ny, nz) catch return a;
+    return a;
+}
+
+fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
+    _ = join_type;
+    _ = delta;
+    return cs; // To be moved to locus sweeps
+}
+
+// --- Boolean Bridges ---
+
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
     const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
     const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
@@ -172,10 +297,7 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
         .intersection_op => .intersection,
     };
 
-    // Phase 1: Merge B into A's Arena
     const merged_b_id = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
-
-    // Phase 2 & 3: Compute Boolean CSG using the unified half-edge arena
     solid_a.solid_id = locus_bool.computeBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, merged_b_id, locus_op, .{}) catch return a;
 
     return a;
@@ -184,8 +306,6 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
 fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
     _ = allocator;
     if (objs.len == 0) return null;
-
-    // Fallback for B-Rep: Sequential evaluation
     var acc = objs[0];
     for (objs[1..]) |obj| {
         if (booleanImpl(acc, obj, op)) |res| {
@@ -199,16 +319,219 @@ fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryH
     const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
     const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
 
-    // Phase 1: Merge B into A's Arena
     const merged_b_id = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
-
-    // Phase 2: Compute Minkowski Sum
     solid_a.solid_id = locus_mink.minkowskiSumConvex(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, merged_b_id) catch return a;
 
     return a;
 }
 
-// --- Tessellation Bridge ---
+fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
+    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
+
+    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
+
+    const locus_op: locus_bool.BooleanOp = switch (op) {
+        .union_op => .union_op,
+        .difference_op => .difference,
+        .intersection_op => .intersection,
+    };
+
+    const merged_b_id = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
+    solid_a.solid_id = locus_bool2d.crossSectionBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, merged_b_id, locus_op) catch return a;
+
+    return a;
+}
+
+fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    solid.solid_id = locus_slicing.trimByPlane(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, nx, ny, nz, offset) catch return a;
+    return a;
+}
+
+fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) geom.SolidPair {
+    if (@intFromPtr(a.ptr) == 0) return .{ .first = null, .second = null };
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+
+    const pair = locus_slicing.splitByPlane(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, nx, ny, nz, offset) catch return .{ .first = a, .second = null };
+
+    solid.solid_id = pair.first;
+    const solid_b = BrepSolid.create(backend_allocator) catch return .{ .first = a, .second = null };
+    solid_b.t_arena = solid.t_arena;
+    solid_b.g_arena = solid.g_arena;
+    solid_b.solid_id = pair.second;
+
+    return .{ .first = a, .second = geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid_b) } };
+}
+
+fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
+    if (@intFromPtr(a.ptr) == 0) return null;
+    return buildHullFromHandles(&[_]geom.GeometryHandle{a});
+}
+
+fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
+    _ = allocator;
+    if (objs.len == 0) return null;
+    return buildHullFromHandles(objs);
+}
+
+fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
+    var res = allocator.alloc(geom.GeometryHandle, 1) catch return null;
+    res[0] = handle;
+    return res;
+}
+
+// --- Projections & Slicing ---
+
+fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid_3d: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+
+    var mesh = locus_tess.Mesh{};
+    defer mesh.deinit(backend_allocator);
+    locus_tess.tessellateSolid(backend_allocator, &solid_3d.t_arena, &solid_3d.g_arena, solid_3d.solid_id, &mesh, .{}) catch return null;
+
+    const contours = locus_slicing.sliceMeshToContours(backend_allocator, &mesh, height) catch return null;
+    defer {
+        for (contours) |c| backend_allocator.free(c);
+        backend_allocator.free(contours);
+    }
+
+    if (contours.len == 0) return null;
+
+    const cs_solid = BrepSolid.create(backend_allocator) catch return null;
+    cs_solid.solid_id = locus_gen.generatePolygonsEvenOdd(backend_allocator, &cs_solid.t_arena, &cs_solid.g_arena, contours) catch {
+        cs_solid.destroy();
+        return null;
+    };
+
+    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(cs_solid) };
+}
+
+fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid_3d: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+
+    const face_cs = BrepSolid.create(backend_allocator) catch return null;
+
+    if (locus_proj.projectSolid(
+        backend_allocator,
+        &face_cs.t_arena,
+        &face_cs.g_arena,
+        &solid_3d.t_arena,
+        &solid_3d.g_arena,
+        solid_3d.solid_id,
+    ) catch null) |cs_id| {
+        face_cs.solid_id = cs_id;
+        return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(face_cs) };
+    }
+
+    face_cs.destroy();
+    return null;
+}
+
+// --- Properties & Diagnostics ---
+
+fn genusImpl(handle: geom.GeometryHandle) i32 {
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    return locus_prop.genus(&solid.t_arena, solid.solid_id);
+}
+
+fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
+    if (@intFromPtr(handle.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    if (locus_prop.boundingBox(&solid.t_arena, solid.solid_id)) |bb| {
+        return geom.BoundingBox{ .min = bb.min, .max = bb.max };
+    }
+    return null;
+}
+
+fn volumeImpl(handle: geom.GeometryHandle) f64 {
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    return locus_prop.volume(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id);
+}
+
+fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    return locus_prop.surfaceArea(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id);
+}
+
+fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
+    if (@intFromPtr(handle.ptr) == 0) return 0.0;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    return locus_prop.crossSectionArea(&solid.t_arena, solid.solid_id);
+}
+
+fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
+    if (@intFromPtr(handle.ptr) == 0) return .{ .min = .{ 0, 0 }, .max = .{ 0, 0 } };
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const bb = locus_prop.crossSectionBounds(&solid.t_arena, solid.solid_id);
+    return .{ .min = .{ bb.min[0], bb.min[1] }, .max = .{ bb.max[0], bb.max[1] } };
+}
+
+fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
+    if (@intFromPtr(handle.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+
+    if (locus_insp.queryFaces(allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, direction, tolerance) catch null) |l_faces| {
+        var handles = allocator.alloc(geom.FaceHandle, l_faces.len) catch return null;
+        for (l_faces, 0..) |f, i| {
+            handles[i] = .{ .index = f.index, .normal = f.normal, .centroid = f.centroid };
+        }
+        allocator.free(l_faces);
+        return handles;
+    }
+    return null;
+}
+
+fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
+    if (@intFromPtr(a.ptr) == 0) return false;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    return locus_bool.isPointInsideSolid(&solid.t_arena, &solid.g_arena, solid.solid_id, pt);
+}
+
+fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
+    _ = sl;
+    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return 0.0;
+
+    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
+
+    var mesh_a = locus_tess.Mesh{};
+    defer mesh_a.deinit(backend_allocator);
+    var mesh_b = locus_tess.Mesh{};
+    defer mesh_b.deinit(backend_allocator);
+
+    // Tessellate locally because the two handles have strictly isolated GeometryArenas
+    locus_tess.tessellateSolid(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, &mesh_a, .{}) catch return 0.0;
+    locus_tess.tessellateSolid(backend_allocator, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id, &mesh_b, .{}) catch return 0.0;
+
+    var min_dist_sq: f64 = std.math.inf(f64);
+    for (mesh_a.vertices.items) |pa| {
+        for (mesh_b.vertices.items) |pb| {
+            const dist_sq = locus_math.distSq(pa, pb);
+            if (dist_sq < min_dist_sq) min_dist_sq = dist_sq;
+        }
+    }
+    return @sqrt(min_dist_sq);
+}
+
+fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+
+    if (locus_query.rayCast(alloc, &solid.t_arena, &solid.g_arena, solid.solid_id, o, e) catch null) |hits| {
+        var mapped = alloc.alloc(geom.RayHit, hits.len) catch return null;
+        for (hits, 0..) |h, i| mapped[i] = .{ .distance = h.distance, .position = h.position, .normal = h.normal };
+        alloc.free(hits);
+        return mapped;
+    }
+    return null;
+}
 
 fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
     std.debug.assert(handle.engine == .brep_native);
@@ -241,729 +564,14 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     };
 }
 
-// --- Stubbed / Unimplemented V-Table Endpoints ---
-
-fn polyhedronImpl(allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
-    _ = allocator; // Ignore the passed allocator, enforce isolated backend_allocator
-    const solid = BrepSolid.create(backend_allocator) catch return null;
-
-    // Automatically wire raw meshes into perfect manifolds!
-    solid.solid_id = locus_gen.buildPolyhedron(backend_allocator, &solid.t_arena, &solid.g_arena, pts, faces) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
-}
-
-fn polygonsEvenOddImpl(allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
-    _ = allocator;
-    const solid = BrepSolid.create(backend_allocator) catch return null;
-    solid.solid_id = locus_gen.generatePolygonsEvenOdd(backend_allocator, &solid.t_arena, &solid.g_arena, contours) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
-}
-
-fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
-    if (@intFromPtr(cs.ptr) == 0) return null;
-    const solid_2d: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
-
-    // We mint a completely isolated 3D solid wrapper to house the new revolution geometry
-    const revolved_solid = BrepSolid.create(backend_allocator) catch return null;
-
-    revolved_solid.solid_id = locus_sweeps.revolveFace(backend_allocator, &revolved_solid.t_arena, &revolved_solid.g_arena, &solid_2d.t_arena, // Reading from the isolated 2D profile
-        solid_2d.solid_id, // The 2D face solid id
-        @intCast(segments), revolve_degrees) catch {
-        revolved_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(revolved_solid) };
-}
-
-fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
-    if (@intFromPtr(a.ptr) == 0) return null;
-    const solid_3d: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-
-    var mesh = locus_tess.Mesh{};
-    defer mesh.deinit(backend_allocator);
-    locus_tess.tessellateSolid(backend_allocator, &solid_3d.t_arena, &solid_3d.g_arena, solid_3d.solid_id, &mesh, .{}) catch return null;
-
-    const contours = locus_slicing.sliceMeshToContours(backend_allocator, &mesh, height) catch return null;
-    defer {
-        for (contours) |c| backend_allocator.free(c);
-        backend_allocator.free(contours);
-    }
-
-    if (contours.len == 0) return null;
-
-    const cs_solid = BrepSolid.create(backend_allocator) catch return null;
-    cs_solid.solid_id = locus_gen.generatePolygonsEvenOdd(backend_allocator, &cs_solid.t_arena, &cs_solid.g_arena, contours) catch {
-        cs_solid.destroy();
-        return null;
-    };
-
-    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(cs_solid) };
-}
-
-fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
-    if (@intFromPtr(a.ptr) == 0) return null;
-    const solid_3d: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-
-    var combined_2d: ?geom.CrossSectionHandle = null;
-
-    const s = solid_3d.t_arena.solids.items[solid_3d.solid_id];
-    for (0..s.shells_len) |s_off| {
-        const shell = solid_3d.t_arena.shells.items[solid_3d.t_arena.solid_shells.items[s.shells_start + s_off]];
-        for (0..shell.faces_len) |f_off| {
-            const face_id = solid_3d.t_arena.shell_faces.items[shell.faces_start + f_off];
-            const face = solid_3d.t_arena.faces.items[face_id];
-            if (face.loops_len == 0) continue;
-
-            const loop = solid_3d.t_arena.loops.items[solid_3d.t_arena.face_loops.items[face.loops_start]];
-            var pts2d = std.ArrayListUnmanaged([2]f64).empty;
-            defer pts2d.deinit(backend_allocator);
-
-            var curr_he = loop.first_half_edge;
-            while (true) {
-                const he = solid_3d.t_arena.half_edges.items[curr_he];
-                const pt = solid_3d.t_arena.vertices.items[he.start_vertex].point;
-                pts2d.append(backend_allocator, .{ pt[0], pt[1] }) catch break;
-                curr_he = he.next;
-                if (curr_he == loop.first_half_edge) break;
-            }
-
-            if (pts2d.items.len < 3) continue;
-
-            // Calculate exact 2D footprint area
-            var area: f64 = 0;
-            for (0..pts2d.items.len) |i| {
-                const p1 = pts2d.items[i];
-                const p2 = pts2d.items[(i + 1) % pts2d.items.len];
-                area += (p1[0] * p2[1] - p2[0] * p1[1]);
-            }
-            area = @abs(area) * 0.5;
-
-            // If it's a vertical wall, its projection area is 0; discard it.
-            if (area < 1e-4) continue;
-
-            const face_cs = BrepSolid.create(backend_allocator) catch continue;
-            face_cs.solid_id = locus_gen.generatePolygon(backend_allocator, &face_cs.t_arena, &face_cs.g_arena, pts2d.items) catch {
-                face_cs.destroy();
-                continue;
-            };
-
-            const cs_handle = geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(face_cs) };
-
-            if (combined_2d == null) {
-                combined_2d = cs_handle;
-            } else {
-                const new_combined = crossSectionBooleanImpl(combined_2d.?, cs_handle, .union_op);
-                destructCrossSectionImpl(cs_handle); // Destroy temp projection layer
-                combined_2d = new_combined;
-            }
-        }
-    }
-
-    return combined_2d;
-}
-
-fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {
-    if (@intFromPtr(a.ptr) == 0) return null;
-    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-
-    const len = @sqrt(nx * nx + ny * ny + nz * nz);
-    if (len < 1e-12) return a;
-    const n = [3]f64{ nx / len, ny / len, nz / len };
-
-    // Standard reflection matrix across normal n
-    const mat = [12]f64{
-        1.0 - 2.0 * n[0] * n[0], -2.0 * n[0] * n[1],      -2.0 * n[0] * n[2],      0.0,
-        -2.0 * n[1] * n[0],      1.0 - 2.0 * n[1] * n[1], -2.0 * n[1] * n[2],      0.0,
-        -2.0 * n[2] * n[0],      -2.0 * n[2] * n[1],      1.0 - 2.0 * n[2] * n[2], 0.0,
-    };
-
-    solid.solid_id = locus_trans.transformMatrixSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, mat) catch return a;
-
-    // Mirroring flips chirality. Invert face orientation to keep normals outward!
-    const s = solid.t_arena.solids.items[solid.solid_id];
-    for (0..s.shells_len) |s_off| {
-        const shell = solid.t_arena.shells.items[solid.t_arena.solid_shells.items[s.shells_start + s_off]];
-        for (0..shell.faces_len) |f_off| {
-            const face_id = solid.t_arena.shell_faces.items[shell.faces_start + f_off];
-            solid.t_arena.faces.items[face_id].forward = !solid.t_arena.faces.items[face_id].forward;
-        }
-    }
-    return a;
-}
-
-fn extractAllVertices(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const locus_math.Vec3 {
-    var pts = std.ArrayListUnmanaged(locus_math.Vec3).empty;
-    for (handles) |h| {
-        if (@intFromPtr(h.ptr) == 0) continue;
-        const solid: *BrepSolid = @ptrCast(@alignCast(h.ptr));
-        const s = solid.t_arena.solids.items[solid.solid_id];
-        for (0..s.shells_len) |s_off| {
-            const shell = solid.t_arena.shells.items[solid.t_arena.solid_shells.items[s.shells_start + s_off]];
-            for (0..shell.faces_len) |f_off| {
-                const face_id = solid.t_arena.shell_faces.items[shell.faces_start + f_off];
-                const face = solid.t_arena.faces.items[face_id];
-                for (0..face.loops_len) |l_off| {
-                    const loop = solid.t_arena.loops.items[solid.t_arena.face_loops.items[face.loops_start + l_off]];
-                    var curr = loop.first_half_edge;
-                    while (true) {
-                        const he = solid.t_arena.half_edges.items[curr];
-                        try pts.append(allocator, solid.t_arena.vertices.items[he.start_vertex].point);
-                        curr = he.next;
-                        if (curr == loop.first_half_edge) break;
-                    }
-                }
-            }
-        }
-    }
-    return pts.toOwnedSlice(allocator);
-}
-
-fn buildHullFromHandles(handles: []const geom.GeometryHandle) ?geom.GeometryHandle {
-    const pts = extractAllVertices(backend_allocator, handles) catch return null;
-    defer backend_allocator.free(pts);
-
-    if (pts.len < 4) return null;
-
-    const solid = BrepSolid.create(backend_allocator) catch return null;
-
-    var builder = locus_qh.QuickhullBuilder.init(backend_allocator, pts);
-    defer builder.deinit();
-    builder.buildHull() catch {
-        solid.destroy();
-        return null;
-    };
-
-    var tris = std.ArrayListUnmanaged([3]u32).empty;
-    defer tris.deinit(backend_allocator);
-
-    for (builder.faces.items) |hull_face| {
-        if (hull_face.disabled) continue;
-
-        const he0 = builder.half_edges.items[hull_face.first_half_edge];
-        const he1 = builder.half_edges.items[he0.next_edge];
-        const he2 = builder.half_edges.items[he1.next_edge];
-
-        tris.append(backend_allocator, .{
-            he2.end_vertex,
-            he0.end_vertex,
-            he1.end_vertex,
-        }) catch {
-            solid.destroy();
-            return null;
-        };
-    }
-
-    solid.solid_id = locus_gen.buildPolyhedron(backend_allocator, &solid.t_arena, &solid.g_arena, pts, tris.items) catch {
-        solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
-}
-
-fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
-    if (@intFromPtr(a.ptr) == 0) return null;
-    return buildHullFromHandles(&[_]geom.GeometryHandle{a});
-}
-
-fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
-    _ = allocator;
-    if (objs.len == 0) return null;
-    return buildHullFromHandles(objs);
-}
-
-fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
-    // Basic fallback: Return the solid itself as a single-item array
-    var res = allocator.alloc(geom.GeometryHandle, 1) catch return null;
-    res[0] = handle;
-    return res;
-}
-
-fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
-    if (@intFromPtr(a.ptr) == 0) return null;
-    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-
-    solid.solid_id = locus_slicing.trimByPlane(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, nx, ny, nz, offset) catch return a;
-
-    return a;
-}
-
-fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) geom.SolidPair {
-    if (@intFromPtr(a.ptr) == 0) return .{ .first = null, .second = null };
-    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-
-    const pair = locus_slicing.splitByPlane(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, nx, ny, nz, offset) catch return .{ .first = a, .second = null };
-
-    // We update the original handle to point to the first half
-    solid.solid_id = pair.first;
-
-    // We must instantiate a completely new handle/wrapper for the second half
-    const solid_b = BrepSolid.create(backend_allocator) catch return .{ .first = a, .second = null };
-
-    // Transfer the result topology into the new wrapper (by copying the arena state)
-    solid_b.t_arena = solid.t_arena; // Note: In a production app, we would deep-clone the arena or extract the subgraph here
-    solid_b.g_arena = solid.g_arena;
-    solid_b.solid_id = pair.second;
-
-    return .{ .first = a, .second = geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid_b) } };
-}
-
-fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
-    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
-
-    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
-
-    const locus_op: locus_bool.BooleanOp = switch (op) {
-        .union_op => .union_op,
-        .difference_op => .difference,
-        .intersection_op => .intersection,
-    };
-
-    // Merge arenas so B is accessible inside A's topology
-    const merged_b_id = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
-
-    // Use the correctly shifted merged_b_id!
-    solid_a.solid_id = locus_bool2d.crossSectionBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, merged_b_id, locus_op) catch return a;
-
-    return a;
-}
-
-fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
-    if (@intFromPtr(a.ptr) == 0) return null;
-    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    solid.solid_id = locus_trans.transformMatrixSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, mat) catch return a;
-    return a;
-}
-
-fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
-    if (@intFromPtr(cs.ptr) == 0) return null;
-    const solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
-
-    // Convert 2D 3x2 affine matrix into full 3D 4x4 matrix
-    const mat3d = [12]f64{
-        mat[0], mat[1], 0.0, mat[2],
-        mat[3], mat[4], 0.0, mat[5],
-        0.0,    0.0,    1.0, 0.0,
-    };
-
-    // We can apply our 3D matrix transform to the 2D face vertices
-    _ = locus_trans.transformMatrixSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, mat3d) catch return cs;
-    return cs;
-}
-
-fn genusImpl(handle: geom.GeometryHandle) i32 {
-    if (@intFromPtr(handle.ptr) == 0) return 0;
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
-
-    // Euler Formula: V - E + F = 2(1 - g)
-    const v = @as(i32, @intCast(solid.t_arena.vertices.items.len));
-    const e = @as(i32, @intCast(solid.t_arena.half_edges.items.len / 2));
-    const f = @as(i32, @intCast(solid.t_arena.faces.items.len));
-
-    const euler = v - e + f;
-    return @divTrunc(2 - euler, 2);
-}
-
-fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
-    if (@intFromPtr(handle.ptr) == 0) return null;
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
-
-    var min = [_]f64{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
-    var max = [_]f64{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
-    var found = false;
-
-    // Traverse the Half-Edge graph to find all active vertices in this solid
-    const s = solid.t_arena.solids.items[solid.solid_id];
-    for (0..s.shells_len) |s_off| {
-        const shell = solid.t_arena.shells.items[solid.t_arena.solid_shells.items[s.shells_start + s_off]];
-        for (0..shell.faces_len) |f_off| {
-            const face = solid.t_arena.faces.items[solid.t_arena.shell_faces.items[shell.faces_start + f_off]];
-            for (0..face.loops_len) |l_off| {
-                const loop = solid.t_arena.loops.items[solid.t_arena.face_loops.items[face.loops_start + l_off]];
-                var curr_he = loop.first_half_edge;
-                while (true) {
-                    const he = solid.t_arena.half_edges.items[curr_he];
-                    const pt = solid.t_arena.vertices.items[he.start_vertex].point;
-                    for (0..3) |i| {
-                        if (pt[i] < min[i]) min[i] = pt[i];
-                        if (pt[i] > max[i]) max[i] = pt[i];
-                    }
-                    found = true;
-                    curr_he = he.next;
-                    if (curr_he == loop.first_half_edge) break;
-                }
-            }
-        }
-    }
-    if (!found) return null;
-    return geom.BoundingBox{ .min = min, .max = max };
-}
-
-fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
-    if (@intFromPtr(handle.ptr) == 0) return 0.0;
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
-    var total_area: f64 = 0.0;
-
-    const face_id: u32 = @intCast(solid.solid_id);
-    if (face_id >= solid.t_arena.faces.items.len) return 0.0;
-
-    const face = solid.t_arena.faces.items[face_id];
-    for (0..face.loops_len) |l_off| {
-        const loop_id = solid.t_arena.face_loops.items[face.loops_start + l_off];
-        const loop = solid.t_arena.loops.items[loop_id];
-        var area: f64 = 0;
-        var curr_he = loop.first_half_edge;
-
-        while (true) {
-            const he = solid.t_arena.half_edges.items[curr_he];
-            const next_he = solid.t_arena.half_edges.items[he.next];
-            const p1 = solid.t_arena.vertices.items[he.start_vertex].point;
-            const p2 = solid.t_arena.vertices.items[next_he.start_vertex].point;
-
-            area += (p1[0] * p2[1] - p2[0] * p1[1]);
-
-            curr_he = he.next;
-            if (curr_he == loop.first_half_edge) break;
-        }
-        total_area += area / 2.0;
-    }
-    return @abs(total_area);
-}
-
-fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
-    var min = [_]f64{ std.math.inf(f64), std.math.inf(f64) };
-    var max = [_]f64{ -std.math.inf(f64), -std.math.inf(f64) };
-    if (@intFromPtr(handle.ptr) == 0) return .{ .min = min, .max = max };
-
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
-    const face_id: u32 = @intCast(solid.solid_id);
-    if (face_id >= solid.t_arena.faces.items.len) return .{ .min = min, .max = max };
-
-    const face = solid.t_arena.faces.items[face_id];
-    var found = false;
-
-    for (0..face.loops_len) |l_off| {
-        const loop_id = solid.t_arena.face_loops.items[face.loops_start + l_off];
-        const loop = solid.t_arena.loops.items[loop_id];
-        var curr_he = loop.first_half_edge;
-
-        while (true) {
-            const he = solid.t_arena.half_edges.items[curr_he];
-            const pt = solid.t_arena.vertices.items[he.start_vertex].point;
-
-            if (pt[0] < min[0]) min[0] = pt[0];
-            if (pt[1] < min[1]) min[1] = pt[1];
-            if (pt[0] > max[0]) max[0] = pt[0];
-            if (pt[1] > max[1]) max[1] = pt[1];
-            found = true;
-
-            curr_he = he.next;
-            if (curr_he == loop.first_half_edge) break;
-        }
-    }
-
-    if (!found) {
-        min = .{ 0.0, 0.0 };
-        max = .{ 0.0, 0.0 };
-    }
-    return .{ .min = min, .max = max };
-}
-
-fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
-    if (@intFromPtr(handle.ptr) == 0) return null;
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
-    const s = solid.t_arena.solids.items[solid.solid_id];
-
-    const norm_dir = locus_math.normalize(.{ direction[0], direction[1], direction[2] });
-    var max_depth: f64 = -std.math.inf(f64);
-    var accum_centroid = [3]f64{ 0, 0, 0 };
-    var match_count: usize = 0;
-
-    for (0..s.shells_len) |s_off| {
-        const shell = solid.t_arena.shells.items[solid.t_arena.solid_shells.items[s.shells_start + s_off]];
-        for (0..shell.faces_len) |f_off| {
-            const face_id = solid.t_arena.shell_faces.items[shell.faces_start + f_off];
-            const face = solid.t_arena.faces.items[face_id];
-
-            if (face.surface.surface_type != .plane) continue;
-            const plane = solid.g_arena.planes.items[face.surface.index];
-
-            var normal = locus_math.normalize(locus_math.cross(plane.u_axis, plane.v_axis));
-            if (!face.forward) normal = locus_math.scale(normal, -1.0);
-
-            const alignment = locus_math.dot(normal, norm_dir);
-            if (1.0 - alignment <= tolerance) {
-                var centroid = [3]f64{ 0, 0, 0 };
-                var v_count: f64 = 0;
-                const loop = solid.t_arena.loops.items[solid.t_arena.face_loops.items[face.loops_start]];
-                var curr_he = loop.first_half_edge;
-                while (true) {
-                    const pt = solid.t_arena.vertices.items[solid.t_arena.half_edges.items[curr_he].start_vertex].point;
-                    centroid[0] += pt[0];
-                    centroid[1] += pt[1];
-                    centroid[2] += pt[2];
-                    v_count += 1.0;
-                    curr_he = solid.t_arena.half_edges.items[curr_he].next;
-                    if (curr_he == loop.first_half_edge) break;
-                }
-                if (v_count > 0) {
-                    centroid[0] /= v_count;
-                    centroid[1] /= v_count;
-                    centroid[2] /= v_count;
-                }
-
-                const depth = locus_math.dot(centroid, norm_dir);
-                if (depth > max_depth + tolerance) {
-                    max_depth = depth;
-                    accum_centroid = centroid;
-                    match_count = 1;
-                } else if (@abs(depth - max_depth) <= tolerance) {
-                    accum_centroid[0] += centroid[0];
-                    accum_centroid[1] += centroid[1];
-                    accum_centroid[2] += centroid[2];
-                    match_count += 1;
-                }
-            }
-        }
-    }
-
-    if (match_count == 0) return null;
-    var faces = allocator.alloc(geom.FaceHandle, 1) catch return null;
-    faces[0] = .{
-        .index = 0,
-        .normal = .{ norm_dir[0], norm_dir[1], norm_dir[2] },
-        .centroid = .{
-            accum_centroid[0] / @as(f64, @floatFromInt(match_count)),
-            accum_centroid[1] / @as(f64, @floatFromInt(match_count)),
-            accum_centroid[2] / @as(f64, @floatFromInt(match_count)),
-        },
-    };
-    return faces;
-}
-
-fn volumeImpl(handle: geom.GeometryHandle) f64 {
-    const mesh = getMeshImpl(backend_allocator, handle) orelse return 0.0;
-    defer backend_allocator.free(mesh.vert_props);
-    defer backend_allocator.free(mesh.tri_verts);
-
-    var vol: f64 = 0.0;
-    var i: usize = 0;
-    // Divergence Theorem: Sum of (P0 dot (P1 cross P2)) / 6.0
-    while (i < mesh.tri_verts.len) : (i += 3) {
-        const idx0 = mesh.tri_verts[i] * 3;
-        const idx1 = mesh.tri_verts[i + 1] * 3;
-        const idx2 = mesh.tri_verts[i + 2] * 3;
-
-        const p0 = [_]f64{ mesh.vert_props[idx0], mesh.vert_props[idx0 + 1], mesh.vert_props[idx0 + 2] };
-        const p1 = [_]f64{ mesh.vert_props[idx1], mesh.vert_props[idx1 + 1], mesh.vert_props[idx1 + 2] };
-        const p2 = [_]f64{ mesh.vert_props[idx2], mesh.vert_props[idx2 + 1], mesh.vert_props[idx2 + 2] };
-
-        const cross_x = p1[1] * p2[2] - p1[2] * p2[1];
-        const cross_y = p1[2] * p2[0] - p1[0] * p2[2];
-        const cross_z = p1[0] * p2[1] - p1[1] * p2[0];
-
-        vol += (p0[0] * cross_x + p0[1] * cross_y + p0[2] * cross_z) / 6.0;
-    }
-    return @abs(vol);
-}
-
-fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
-    const mesh = getMeshImpl(backend_allocator, handle) orelse return 0.0;
-    defer backend_allocator.free(mesh.vert_props);
-    defer backend_allocator.free(mesh.tri_verts);
-
-    var area: f64 = 0.0;
-    var i: usize = 0;
-    // Area of a triangle is half the magnitude of the cross product of two edges
-    while (i < mesh.tri_verts.len) : (i += 3) {
-        const idx0 = mesh.tri_verts[i] * 3;
-        const idx1 = mesh.tri_verts[i + 1] * 3;
-        const idx2 = mesh.tri_verts[i + 2] * 3;
-
-        const v1x = mesh.vert_props[idx1] - mesh.vert_props[idx0];
-        const v1y = mesh.vert_props[idx1 + 1] - mesh.vert_props[idx0 + 1];
-        const v1z = mesh.vert_props[idx1 + 2] - mesh.vert_props[idx0 + 2];
-
-        const v2x = mesh.vert_props[idx2] - mesh.vert_props[idx0];
-        const v2y = mesh.vert_props[idx2 + 1] - mesh.vert_props[idx0 + 1];
-        const v2z = mesh.vert_props[idx2 + 2] - mesh.vert_props[idx0 + 2];
-
-        const cx = v1y * v2z - v1z * v2y;
-        const cy = v1z * v2x - v1x * v2z;
-        const cz = v1x * v2y - v1y * v2x;
-
-        area += 0.5 * @sqrt(cx * cx + cy * cy + cz * cz);
-    }
-    return area;
-}
-
-fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
-    if (@intFromPtr(a.ptr) == 0) return false;
-    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    // Wire directly into our Boolean raycaster
-    return locus_bool.isPointInsideSolid(&solid.t_arena, &solid.g_arena, solid.solid_id, pt);
-}
-
-fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
-    _ = sl;
-    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return 0.0;
-
-    const mesh_a = getMeshImpl(backend_allocator, a) orelse return 0.0;
-    defer {
-        backend_allocator.free(mesh_a.vert_props);
-        backend_allocator.free(mesh_a.tri_verts);
-    }
-
-    const mesh_b = getMeshImpl(backend_allocator, b) orelse return 0.0;
-    defer {
-        backend_allocator.free(mesh_b.vert_props);
-        backend_allocator.free(mesh_b.tri_verts);
-    }
-
-    var min_dist_sq: f64 = std.math.inf(f64);
-    var i: usize = 0;
-    while (i < mesh_a.vert_props.len) : (i += 3) {
-        const pa = locus_math.Vec3{ mesh_a.vert_props[i], mesh_a.vert_props[i + 1], mesh_a.vert_props[i + 2] };
-        var j: usize = 0;
-        while (j < mesh_b.vert_props.len) : (j += 3) {
-            const pb = locus_math.Vec3{ mesh_b.vert_props[j], mesh_b.vert_props[j + 1], mesh_b.vert_props[j + 2] };
-            const dist_sq = locus_math.distSq(pa, pb);
-            if (dist_sq < min_dist_sq) min_dist_sq = dist_sq;
-        }
-    }
-    return @sqrt(min_dist_sq);
-}
-
-fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
-    _ = join_type;
-    if (@intFromPtr(cs.ptr) == 0) return null;
-    const solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
-
-    // Basic Convex Vertex-Normal Expansion
-    const face_id: locus_topo.FaceId = @intCast(solid.solid_id); // <-- Fixed namespace
-    const face = solid.t_arena.faces.items[face_id];
-    const loop = solid.t_arena.loops.items[solid.t_arena.face_loops.items[face.loops_start]];
-
-    var curr = loop.first_half_edge;
-    while (true) {
-        const he = solid.t_arena.half_edges.items[curr];
-        const prev_he = solid.t_arena.half_edges.items[he.prev];
-
-        const pt = solid.t_arena.vertices.items[he.start_vertex].point;
-        const prev_pt = solid.t_arena.vertices.items[prev_he.start_vertex].point;
-        const next_pt = solid.t_arena.vertices.items[solid.t_arena.half_edges.items[he.next].start_vertex].point;
-
-        // Calculate tangent vectors of adjacent edges
-        const t1 = locus_math.normalize(locus_math.sub(pt, prev_pt)); // <-- Fixed namespace
-        const t2 = locus_math.normalize(locus_math.sub(next_pt, pt));
-
-        // Calculate outward normals
-        const n1 = locus_math.Vec3{ t1[1], -t1[0], 0 };
-        const n2 = locus_math.Vec3{ t2[1], -t2[0], 0 };
-
-        // Find angle bisector
-        const bisector = locus_math.normalize(locus_math.add(n1, n2));
-        const dot = locus_math.dot(bisector, n1);
-
-        // Push vertex outwards along the bisector
-        if (@abs(dot) > 1e-4) {
-            const expand_dist = delta / dot;
-            solid.t_arena.vertices.items[he.start_vertex].point = locus_math.add(pt, locus_math.scale(bisector, expand_dist));
-        }
-
-        curr = he.next;
-        if (curr == loop.first_half_edge) break;
-    }
-    return cs;
-}
-
-fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
-    if (@intFromPtr(a.ptr) == 0) return null;
-
-    const mesh = getMeshImpl(backend_allocator, a) orelse return null;
-    defer {
-        backend_allocator.free(mesh.vert_props);
-        backend_allocator.free(mesh.tri_verts);
-    }
-
-    const ray_origin = locus_math.Vec3{ o[0], o[1], o[2] };
-    const ray_end = locus_math.Vec3{ e[0], e[1], e[2] };
-    const ray_vec = locus_math.sub(ray_end, ray_origin);
-    const ray_len = locus_math.mag(ray_vec);
-    if (ray_len < 1e-12) return null;
-    const ray_dir = locus_math.scale(ray_vec, 1.0 / ray_len);
-
-    var hits = std.ArrayListUnmanaged(geom.RayHit).empty;
-    defer hits.deinit(alloc);
-
-    var i: usize = 0;
-    while (i < mesh.tri_verts.len) : (i += 3) {
-        const idx0 = mesh.tri_verts[i] * 3;
-        const idx1 = mesh.tri_verts[i + 1] * 3;
-        const idx2 = mesh.tri_verts[i + 2] * 3;
-
-        const v0 = locus_math.Vec3{ mesh.vert_props[idx0], mesh.vert_props[idx0 + 1], mesh.vert_props[idx0 + 2] };
-        const v1 = locus_math.Vec3{ mesh.vert_props[idx1], mesh.vert_props[idx1 + 1], mesh.vert_props[idx1 + 2] };
-        const v2 = locus_math.Vec3{ mesh.vert_props[idx2], mesh.vert_props[idx2 + 1], mesh.vert_props[idx2 + 2] };
-
-        const edge1 = locus_math.sub(v1, v0);
-        const edge2 = locus_math.sub(v2, v0);
-        const h_vec = locus_math.cross(ray_dir, edge2);
-        const a_det = locus_math.dot(edge1, h_vec);
-
-        if (a_det > -1e-8 and a_det < 1e-8) continue;
-
-        const f = 1.0 / a_det;
-        const s_vec = locus_math.sub(ray_origin, v0);
-        const u = f * locus_math.dot(s_vec, h_vec);
-
-        if (u < 0.0 or u > 1.0) continue;
-
-        const q_vec = locus_math.cross(s_vec, edge1);
-        const v = f * locus_math.dot(ray_dir, q_vec);
-
-        if (v < 0.0 or u + v > 1.0) continue;
-
-        const t = f * locus_math.dot(edge2, q_vec);
-        if (t > 1e-8 and t < ray_len) {
-            const hit_pos = locus_math.add(ray_origin, locus_math.scale(ray_dir, t));
-            const normal = locus_math.normalize(locus_math.cross(edge1, edge2));
-            hits.append(alloc, .{
-                .distance = t,
-                .position = .{ hit_pos[0], hit_pos[1], hit_pos[2] },
-                .normal = .{ normal[0], normal[1], normal[2] },
-            }) catch continue;
-        }
-    }
-
-    if (hits.items.len == 0) return null;
-
-    std.mem.sort(geom.RayHit, hits.items, {}, struct {
-        fn lessThan(_: void, lhs: geom.RayHit, rhs: geom.RayHit) bool {
-            return lhs.distance < rhs.distance;
-        }
-    }.lessThan);
-
-    return hits.toOwnedSlice(alloc) catch null;
-}
-
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
     _ = tolerance;
-    std.debug.assert(a.engine == .brep_native);
     return a;
 }
 
 fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
     _ = material_id;
-    return a; // MVP Phase 5: Pass-through
+    return a;
 }
 
 pub const driver = kernel.GeometryKernel{

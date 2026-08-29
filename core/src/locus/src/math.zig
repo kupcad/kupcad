@@ -9,6 +9,40 @@ pub const Vec4 = [4]f64;
 pub const Mat2 = [4]f64; // Row-major: [m00, m01, m10, m11]
 pub const Mat3 = [9]f64; // Row-major 3x3
 
+// --- Tolerances ---
+
+pub const Tolerance = struct {
+    absolute: f64,
+    squared: f64,
+    parametric: f64, // Used for 2D (u,v) UV space checks
+
+    /// Calculates adaptive tolerances based on solid bounding box dimensions
+    pub fn fromBoundingBox(min: Vec3, max: Vec3) Tolerance {
+        const dx = max[0] - min[0];
+        const dy = max[1] - min[1];
+        const dz = max[2] - min[2];
+        const max_dim = @max(dx, @max(dy, dz));
+
+        // Scale relative to object size (minimum floor of 1e-7 mm)
+        const abs_tol = @max(1.0e-7, max_dim * 1.0e-7);
+        return .{
+            .absolute = abs_tol,
+            .squared = abs_tol * abs_tol,
+            .parametric = 1.0e-5, // Fixed domain tolerance for [0, 1] parameter space
+        };
+    }
+
+    pub inline fn pointsCoincide(self: Tolerance, p1: Vec3, p2: Vec3) bool {
+        return distSq(p1, p2) <= self.squared;
+    }
+
+    pub inline fn pointsCoincide2D(self: Tolerance, p1: Vec2, p2: Vec2) bool {
+        const dx = p1[0] - p2[0];
+        const dy = p1[1] - p2[1];
+        return (dx * dx + dy * dy) <= (self.parametric * self.parametric);
+    }
+};
+
 // --- Vector Math ---
 
 pub inline fn dot(a: Vec3, b: Vec3) f64 {
@@ -95,7 +129,7 @@ pub fn solveNewton2D(
     for (0..trials) |_| {
         const out = evalFn(ctx, uv);
 
-        // Convergence check using injected tolerance[cite: 38, 39]
+        // Convergence check using injected tolerance
         if (@abs(out.val[0]) < tolerance and @abs(out.val[1]) < tolerance) {
             return uv;
         }

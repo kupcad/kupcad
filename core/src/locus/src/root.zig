@@ -20,6 +20,10 @@ test {
     _ = @import("geometry_test.zig");
     _ = @import("minkowski_test.zig");
     _ = @import("quickhull_test.zig");
+    _ = @import("properties_test.zig");
+    _ = @import("inspection_test.zig");
+    _ = @import("projections_test.zig");
+    _ = @import("queries_test.zig");
     _ = @import("slicing_test.zig");
     _ = @import("sweeps_test.zig");
     _ = @import("tessellate_test.zig");

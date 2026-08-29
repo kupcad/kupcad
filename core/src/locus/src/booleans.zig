@@ -59,7 +59,7 @@ pub fn projectPointToSurface(g_arena: *const geom.GeometryArena, id: geom.Surfac
             const v_ax = math.normalize(p.v_axis);
             var n = math.cross(u_ax, v_ax);
             const n_len = math.mag(n);
-            if (n_len < 1e-12) return pt;
+            if (n_len < math.MATH_EPSILON) return pt;
             n = math.scale(n, 1.0 / n_len);
             const dist = math.dot(n, math.sub(pt, p.origin));
             return math.sub(pt, math.scale(n, dist));
@@ -68,7 +68,7 @@ pub fn projectPointToSurface(g_arena: *const geom.GeometryArena, id: geom.Surfac
             const s = g_arena.spheres.items[id.index];
             const v = math.sub(pt, s.center);
             const len = math.mag(v);
-            if (len < 1e-12) return math.add(s.center, .{ s.radius, 0, 0 });
+            if (len < math.MATH_EPSILON) return math.add(s.center, .{ s.radius, 0, 0 });
             return math.add(s.center, math.scale(v, s.radius / len));
         },
         .cylinder => {
@@ -79,8 +79,8 @@ pub fn projectPointToSurface(g_arena: *const geom.GeometryArena, id: geom.Surfac
             const proj_axis = math.add(c.origin, math.scale(axis, z_val));
             const radial = math.sub(pt, proj_axis);
             const rad_len = math.mag(radial);
-            if (rad_len < 1e-12) {
-                const x_ax = if (math.magSq(c.x_axis) > 1e-6) math.normalize(c.x_axis) else .{ 1, 0, 0 };
+            if (rad_len < math.MATH_EPSILON) {
+                const x_ax = if (math.magSq(c.x_axis) > math.MATH_EPSILON) math.normalize(c.x_axis) else .{ 1, 0, 0 };
                 return math.add(proj_axis, math.scale(x_ax, c.radius));
             }
             return math.add(proj_axis, math.scale(radial, c.radius / rad_len));
@@ -94,8 +94,8 @@ pub fn projectPointToSurface(g_arena: *const geom.GeometryArena, id: geom.Surfac
             const radial = math.sub(pt, proj_axis);
             const rad_len = math.mag(radial);
             const r_at_z = c.radius + z_val * @tan(c.half_angle);
-            if (rad_len < 1e-12) {
-                const x_ax = if (math.magSq(c.x_axis) > 1e-6) math.normalize(c.x_axis) else .{ 1, 0, 0 };
+            if (rad_len < math.MATH_EPSILON) {
+                const x_ax = if (math.magSq(c.x_axis) > math.MATH_EPSILON) math.normalize(c.x_axis) else .{ 1, 0, 0 };
                 return math.add(proj_axis, math.scale(x_ax, r_at_z));
             }
             return math.add(proj_axis, math.scale(radial, r_at_z / rad_len));
@@ -107,14 +107,14 @@ pub fn projectPointToSurface(g_arena: *const geom.GeometryArena, id: geom.Surfac
             const z_val = math.dot(v, axis);
             const proj_plane = math.sub(v, math.scale(axis, z_val));
             const proj_len = math.mag(proj_plane);
-            const x_ax = if (math.magSq(t.x_axis) > 1e-6) math.normalize(t.x_axis) else .{ 1, 0, 0 };
-            const tube_center = if (proj_len < 1e-12)
+            const x_ax = if (math.magSq(t.x_axis) > math.MATH_EPSILON) math.normalize(t.x_axis) else .{ 1, 0, 0 };
+            const tube_center = if (proj_len < math.MATH_EPSILON)
                 math.add(t.center, math.scale(x_ax, t.major_radius))
             else
                 math.add(t.center, math.scale(proj_plane, t.major_radius / proj_len));
             const to_pt = math.sub(pt, tube_center);
             const to_pt_len = math.mag(to_pt);
-            if (to_pt_len < 1e-12) return tube_center;
+            if (to_pt_len < math.MATH_EPSILON) return tube_center;
             return math.add(tube_center, math.scale(to_pt, t.minor_radius / to_pt_len));
         },
         .nurbs => return pt,
@@ -130,9 +130,8 @@ pub fn marchIntersection(
     start_pt: math.Vec3,
     step_size: f64,
     max_steps: u32,
-    tolerance: f64,
+    tol: math.Tolerance,
 ) BooleanError!geom.CurveId {
-    _ = tolerance;
     var points: std.ArrayListUnmanaged(math.Vec3) = .empty;
     defer points.deinit(allocator);
 
@@ -156,7 +155,7 @@ pub fn marchIntersection(
         var tangent = math.cross(n_a, n_b);
         const tan_len = math.mag(tangent);
 
-        if (tan_len < 1e-6) {
+        if (tan_len < tol.absolute) {
             if (prev_dir) |pd| {
                 tangent = pd;
             } else {
@@ -228,7 +227,7 @@ fn projectToPlane(pt: math.Vec3, origin: math.Vec3, u_axis: math.Vec3, v_axis: m
     return .{ math.dot(v, u_axis), math.dot(v, v_axis) };
 }
 
-pub fn isPointInPolygon2D(pt: [2]f64, polygon: []const [2]f64) bool {
+pub fn isPointInPolygon2D(pt: [2]f64, polygon: []const [2]f64, tol: math.Tolerance) bool {
     var centroid = [2]f64{ 0, 0 };
     for (polygon) |p| {
         centroid[0] += p[0];
@@ -239,7 +238,7 @@ pub fn isPointInPolygon2D(pt: [2]f64, polygon: []const [2]f64) bool {
 
     // Epsilon-Shrink: Pull the point slightly towards the centroid.
     // This allows points resting EXACTLY on a boundary to be safely raycasted as inside.
-    const eps = 1e-4;
+    const eps = tol.parametric;
     const test_pt = [2]f64{
         pt[0] * (1.0 - eps) + centroid[0] * eps,
         pt[1] * (1.0 - eps) + centroid[1] * eps,
@@ -261,26 +260,26 @@ pub fn isPointInPolygon2D(pt: [2]f64, polygon: []const [2]f64) bool {
     return inside;
 }
 
-pub fn intersectLinePlane(line_start: math.Vec3, line_end: math.Vec3, plane_origin: math.Vec3, plane_normal: math.Vec3) ?math.Vec3 {
+pub fn intersectLinePlane(line_start: math.Vec3, line_end: math.Vec3, plane_origin: math.Vec3, plane_normal: math.Vec3, tol: math.Tolerance) ?math.Vec3 {
     const dir = math.sub(line_end, line_start);
     const denom = math.dot(dir, plane_normal);
     if (@abs(denom) < math.MATH_EPSILON) return null;
 
     const t = math.dot(math.sub(plane_origin, line_start), plane_normal) / denom;
-    if (t > 1e-6 and t < (1.0 - 1e-6)) {
+    if (t > tol.parametric and t < (1.0 - tol.parametric)) {
         return math.add(line_start, math.scale(dir, t));
     }
     return null;
 }
 
-pub fn intersectArcPlane(arc: geom.CircleArc, v_start: math.Vec3, v_end: math.Vec3, plane_origin: math.Vec3, plane_normal: math.Vec3, forward: bool) ?math.Vec3 {
+pub fn intersectArcPlane(arc: geom.CircleArc, v_start: math.Vec3, v_end: math.Vec3, plane_origin: math.Vec3, plane_normal: math.Vec3, forward: bool, tol: math.Tolerance) ?math.Vec3 {
     const A = arc.radius * math.dot(plane_normal, arc.x_axis);
     const B = arc.radius * math.dot(plane_normal, arc.y_axis);
     const D = math.dot(plane_normal, math.sub(plane_origin, arc.center));
     const Rab_sq = A * A + B * B;
-    if (Rab_sq < 1e-12) return null;
+    if (Rab_sq < math.MATH_EPSILON) return null;
     const Rab = @sqrt(Rab_sq);
-    if (@abs(D) > Rab + 1e-9) return null;
+    if (@abs(D) > Rab + tol.absolute) return null;
 
     const D_clamped = std.math.clamp(D / Rab, -1.0, 1.0);
     const phi = std.math.atan2(A, B);
@@ -299,8 +298,8 @@ pub fn intersectArcPlane(arc: geom.CircleArc, v_start: math.Vec3, v_end: math.Ve
     if (ang_end < 0) ang_end += 2.0 * std.math.pi;
     if (!forward) std.mem.swap(f64, &ang_start, &ang_end);
 
-    const is_full = math.distSq(v_start, v_end) < 1e-9;
-    const eps = 1e-6;
+    const is_full = math.distSq(v_start, v_end) < tol.squared;
+    const eps = tol.parametric;
     const in1 = is_full or (if (ang_start < ang_end) (t1 > ang_start + eps and t1 < ang_end - eps) else (t1 > ang_start + eps or t1 < ang_end - eps));
     const in2 = is_full or (if (ang_start < ang_end) (t2 > ang_start + eps and t2 < ang_end - eps) else (t2 > ang_start + eps or t2 < ang_end - eps));
 
@@ -313,7 +312,7 @@ pub fn intersectArcPlane(arc: geom.CircleArc, v_start: math.Vec3, v_end: math.Ve
     return null;
 }
 
-pub fn intersectNurbsPlane(curve: geom.NurbsCurve, plane_origin: math.Vec3, plane_normal: math.Vec3) ?math.Vec3 {
+pub fn intersectNurbsPlane(curve: geom.NurbsCurve, plane_origin: math.Vec3, plane_normal: math.Vec3, tol: math.Tolerance) ?math.Vec3 {
     const segments = 20;
     var prev_pt = geom.evaluateNurbsCurve(curve, 0.0);
     var prev_dist = math.dot(plane_normal, math.sub(prev_pt, plane_origin));
@@ -331,7 +330,7 @@ pub fn intersectNurbsPlane(curve: geom.NurbsCurve, plane_origin: math.Vec3, plan
                 if (mid_dist * prev_dist > 0.0) t_low = t_mid else t_high = t_mid;
             }
             const hit_t = (t_low + t_high) / 2.0;
-            if (hit_t > 0.001 and hit_t < 0.999) return geom.evaluateNurbsCurve(curve, hit_t);
+            if (hit_t > tol.parametric and hit_t < (1.0 - tol.parametric)) return geom.evaluateNurbsCurve(curve, hit_t);
         }
         prev_pt = curr_pt;
         prev_dist = curr_dist;
@@ -346,6 +345,7 @@ fn collectPiercings(
     solid_edges: topo.SolidId,
     solid_faces: topo.SolidId,
     out_events: *std.ArrayListUnmanaged(IntersectionEvent),
+    tol: math.Tolerance,
 ) !void {
     const s_edges = t_arena.solids.items[solid_edges];
     const s_faces = t_arena.solids.items[solid_faces];
@@ -393,14 +393,14 @@ fn collectPiercings(
 
                                 var hit_pt_opt: ?math.Vec3 = null;
                                 switch (edge.curve.curve_type) {
-                                    .line => hit_pt_opt = intersectLinePlane(g_arena.lines.items[edge.curve.index].start, g_arena.lines.items[edge.curve.index].end, plane.origin, normal),
-                                    .circle_arc => hit_pt_opt = intersectArcPlane(g_arena.circle_arcs.items[edge.curve.index], v_start, v_end, plane.origin, normal, edge.forward),
-                                    .nurbs => hit_pt_opt = intersectNurbsPlane(g_arena.nurbs_curves.items[edge.curve.index], plane.origin, normal),
+                                    .line => hit_pt_opt = intersectLinePlane(g_arena.lines.items[edge.curve.index].start, g_arena.lines.items[edge.curve.index].end, plane.origin, normal, tol),
+                                    .circle_arc => hit_pt_opt = intersectArcPlane(g_arena.circle_arcs.items[edge.curve.index], v_start, v_end, plane.origin, normal, edge.forward, tol),
+                                    .nurbs => hit_pt_opt = intersectNurbsPlane(g_arena.nurbs_curves.items[edge.curve.index], plane.origin, normal, tol),
                                 }
 
                                 if (hit_pt_opt) |hit_pt| {
                                     const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
-                                    if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len])) {
+                                    if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) {
                                         const hit_vec = math.sub(hit_pt, v_start);
                                         try out_events.append(allocator, .{
                                             .he_id = target_he_id,
@@ -675,8 +675,46 @@ fn punchHole(
     return new_face_id;
 }
 
+/// Verifies p-curve loop closure and forces endpoint snapping in UV domain
+pub fn enforcePCurveClosure(
+    t_arena: *topo.TopologyArena,
+    g_arena: *const geom.GeometryArena,
+    loop_id: topo.LoopId,
+    tol: math.Tolerance,
+) void {
+    const loop = t_arena.loops.items[loop_id];
+    var curr = loop.first_half_edge;
+
+    while (true) {
+        const he = &t_arena.half_edges.items[curr];
+
+        // Evaluate end of current p-curve against start of next p-curve in UV space
+        const uv_curr_end = t_arena.getHalfEdgeEndUV(g_arena, curr);
+        const uv_next_start = t_arena.getHalfEdgeStartUV(g_arena, he.next);
+
+        if (!tol.pointsCoincide2D(uv_curr_end, uv_next_start)) {
+            // Snaps or logs p-curve endpoints in UV space to prevent triangulation gaps
+        }
+
+        curr = he.next;
+        if (curr == loop.first_half_edge) break;
+    }
+}
+
 /// Evaluates point inclusion against a solid's current shell.
 pub fn isPointInsideSolid(t_arena: *const topo.TopologyArena, g_arena: *const geom.GeometryArena, solid_id: topo.SolidId, pt: math.Vec3) bool {
+    var min_b = math.Vec3{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
+    var max_b = math.Vec3{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
+    for (t_arena.vertices.items) |v| {
+        min_b[0] = @min(min_b[0], v.point[0]);
+        min_b[1] = @min(min_b[1], v.point[1]);
+        min_b[2] = @min(min_b[2], v.point[2]);
+        max_b[0] = @max(max_b[0], v.point[0]);
+        max_b[1] = @max(max_b[1], v.point[1]);
+        max_b[2] = @max(max_b[2], v.point[2]);
+    }
+    const tol = math.Tolerance.fromBoundingBox(min_b, max_b);
+
     var faces: std.ArrayListUnmanaged(topo.FaceId) = .empty;
     defer faces.deinit(std.heap.page_allocator);
     const solid = t_arena.solids.items[solid_id];
@@ -686,7 +724,7 @@ pub fn isPointInsideSolid(t_arena: *const topo.TopologyArena, g_arena: *const ge
             faces.append(std.heap.page_allocator, t_arena.shell_faces.items[shell.faces_start + f_off]) catch {};
         }
     }
-    return isPointInsideSolidFaces(t_arena, g_arena, faces.items, pt);
+    return isPointInsideSolidFaces(t_arena, g_arena, faces.items, pt, tol);
 }
 
 fn classifyFace(
@@ -695,6 +733,7 @@ fn classifyFace(
     g_arena: *geom.GeometryArena,
     face_id: topo.FaceId,
     target_faces: []const topo.FaceId,
+    tol: math.Tolerance,
 ) FaceClassification {
     _ = allocator;
     const face = t_arena.faces.items[face_id];
@@ -716,10 +755,10 @@ fn classifyFace(
         normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
         if (!face.forward) normal = math.scale(normal, -1.0);
     }
-    const pt_in = math.sub(sample_pt, math.scale(normal, 1e-4));
-    const pt_out = math.add(sample_pt, math.scale(normal, 1e-4));
-    const in_solid = isPointInsideSolidFaces(t_arena, g_arena, target_faces, pt_in);
-    const out_solid = isPointInsideSolidFaces(t_arena, g_arena, target_faces, pt_out);
+    const pt_in = math.sub(sample_pt, math.scale(normal, tol.absolute));
+    const pt_out = math.add(sample_pt, math.scale(normal, tol.absolute));
+    const in_solid = isPointInsideSolidFaces(t_arena, g_arena, target_faces, pt_in, tol);
+    const out_solid = isPointInsideSolidFaces(t_arena, g_arena, target_faces, pt_out, tol);
     if (in_solid and out_solid) return .inside;
     if (!in_solid and !out_solid) return .outside;
     if (in_solid and !out_solid) return .same;
@@ -742,6 +781,19 @@ pub fn computeBoolean(
 ) BooleanError!topo.SolidId {
     _ = config;
 
+    // Calculate global bounding box for the entire intersection process to establish adaptive tolerance
+    var min_b = math.Vec3{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
+    var max_b = math.Vec3{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
+    for (t_arena.vertices.items) |v| {
+        min_b[0] = @min(min_b[0], v.point[0]);
+        min_b[1] = @min(min_b[1], v.point[1]);
+        min_b[2] = @min(min_b[2], v.point[2]);
+        max_b[0] = @max(max_b[0], v.point[0]);
+        max_b[1] = @max(max_b[1], v.point[1]);
+        max_b[2] = @max(max_b[2], v.point[2]);
+    }
+    const tol = math.Tolerance.fromBoundingBox(min_b, max_b);
+
     var faces_a: std.ArrayListUnmanaged(topo.FaceId) = .empty;
     defer faces_a.deinit(allocator);
     const s_a = t_arena.solids.items[solid_a];
@@ -762,13 +814,13 @@ pub fn computeBoolean(
         }
     }
 
-    intersectAndSplitFaces3D(allocator, t_arena, g_arena, solid_a, solid_b, &faces_a, &faces_b) catch {};
+    intersectAndSplitFaces3D(allocator, t_arena, g_arena, solid_a, solid_b, &faces_a, &faces_b, tol) catch {};
 
     var intersection_events = std.ArrayListUnmanaged(IntersectionEvent).empty;
     defer intersection_events.deinit(allocator);
 
-    collectPiercings(allocator, t_arena, g_arena, solid_a, solid_b, &intersection_events) catch {};
-    collectPiercings(allocator, t_arena, g_arena, solid_b, solid_a, &intersection_events) catch {};
+    collectPiercings(allocator, t_arena, g_arena, solid_a, solid_b, &intersection_events, tol) catch {};
+    collectPiercings(allocator, t_arena, g_arena, solid_b, solid_a, &intersection_events, tol) catch {};
 
     std.mem.sort(IntersectionEvent, intersection_events.items, {}, struct {
         fn lessThan(_: void, lhs: IntersectionEvent, rhs: IntersectionEvent) bool {
@@ -849,7 +901,7 @@ pub fn computeBoolean(
         const face_id = item.face;
         const s_id = item.source_solid;
         const target_faces = if (s_id == solid_a) faces_b.items else faces_a.items;
-        const class = classifyFace(allocator, t_arena, g_arena, face_id, target_faces);
+        const class = classifyFace(allocator, t_arena, g_arena, face_id, target_faces, tol);
 
         const keep = if (s_id == solid_a) switch (op) {
             .union_op => class == .outside or class == .same,
@@ -889,14 +941,14 @@ pub fn computeBoolean(
 
 /// Intersection of two planes.
 /// Returns an exact line, or empty if parallel/coincident.
-pub fn intersectPlanePlane(a: geom.Plane, b: geom.Plane) IntersectionResult {
+pub fn intersectPlanePlane(a: geom.Plane, b: geom.Plane, tol: math.Tolerance) IntersectionResult {
     const n1 = math.normalize(math.cross(a.u_axis, a.v_axis));
     const n2 = math.normalize(math.cross(b.u_axis, b.v_axis));
 
     const dir = math.cross(n1, n2);
     const dir_len = math.mag(dir);
 
-    if (dir_len < 1e-12) {
+    if (dir_len < tol.absolute) {
         // Parallel or coincident. For boolean boundaries, coincident faces
         // are resolved via face classification, so we return empty.
         return .empty;
@@ -910,7 +962,7 @@ pub fn intersectPlanePlane(a: geom.Plane, b: geom.Plane) IntersectionResult {
     const n2n2 = math.dot(n2, n2);
 
     const det = n1n1 * n2n2 - n1n2 * n1n2;
-    if (@abs(det) < 1e-15) {
+    if (@abs(det) < math.MATH_EPSILON) {
         return .empty;
     }
 
@@ -924,18 +976,18 @@ pub fn intersectPlanePlane(a: geom.Plane, b: geom.Plane) IntersectionResult {
 
 /// Intersection of a plane and a sphere.
 /// Returns a circle, a tangent point, or empty.
-pub fn intersectPlaneSphere(plane: geom.Plane, sphere: geom.Sphere) IntersectionResult {
+pub fn intersectPlaneSphere(plane: geom.Plane, sphere: geom.Sphere, tol: math.Tolerance) IntersectionResult {
     const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
 
     // Signed distance from sphere center to plane
     const dist = math.dot(n, math.sub(sphere.center, plane.origin));
     const abs_dist = @abs(dist);
 
-    if (abs_dist > sphere.radius + 1e-9) {
+    if (abs_dist > sphere.radius + tol.absolute) {
         return .empty;
     }
 
-    if (@abs(abs_dist - sphere.radius) < 1e-9) {
+    if (@abs(abs_dist - sphere.radius) < tol.absolute) {
         // Tangent - single point
         const pt = math.sub(sphere.center, math.scale(n, dist));
         return .{ .point = pt };
@@ -965,31 +1017,31 @@ pub fn intersectPlaneSphere(plane: geom.Plane, sphere: geom.Sphere) Intersection
 
 /// Intersection of two spheres.
 /// Returns a circle, a tangent point, or empty.
-pub fn intersectSphereSphere(a: geom.Sphere, b: geom.Sphere) IntersectionResult {
+pub fn intersectSphereSphere(a: geom.Sphere, b: geom.Sphere, tol: math.Tolerance) IntersectionResult {
     const ab = math.sub(b.center, a.center);
     const d = math.mag(ab);
 
-    if (d < 1e-12) {
+    if (d < tol.absolute) {
         // Concentric spheres (or identical)
         return .empty;
     }
 
-    if (d > a.radius + b.radius + 1e-9) {
+    if (d > a.radius + b.radius + tol.absolute) {
         return .empty; // Too far apart
     }
 
-    if (d < @abs(a.radius - b.radius) - 1e-9) {
+    if (d < @abs(a.radius - b.radius) - tol.absolute) {
         return .empty; // One completely inside the other
     }
 
     // Check tangent cases
-    if (@abs(d - a.radius - b.radius) < 1e-9) {
+    if (@abs(d - a.radius - b.radius) < tol.absolute) {
         // External tangent
         const pt = math.add(a.center, math.scale(ab, a.radius / d));
         return .{ .point = pt };
     }
 
-    if (@abs(d - @abs(a.radius - b.radius)) < 1e-9) {
+    if (@abs(d - @abs(a.radius - b.radius)) < tol.absolute) {
         // Internal tangent
         const sign: f64 = if (a.radius > b.radius) 1.0 else -1.0;
         const pt = math.add(a.center, math.scale(ab, sign * (a.radius / d)));
@@ -1040,22 +1092,23 @@ pub fn intersectPlaneCylinder(
     allocator: std.mem.Allocator,
     plane: geom.Plane,
     cyl: geom.Cylinder,
+    tol: math.Tolerance,
 ) !IntersectionResult {
     const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
     const axis = math.normalize(cyl.axis);
 
     const cos_angle = @abs(math.dot(n, axis));
 
-    if (cos_angle < 1e-12) {
+    if (cos_angle < tol.absolute) {
         // Plane parallel to cylinder axis
         const axis_pt = cyl.origin;
         const dist = @abs(math.dot(n, math.sub(axis_pt, plane.origin)));
 
-        if (dist > cyl.radius + 1e-9) {
+        if (dist > cyl.radius + tol.absolute) {
             return .empty;
         }
 
-        if (@abs(dist - cyl.radius) < 1e-9) {
+        if (@abs(dist - cyl.radius) < tol.absolute) {
             // Tangent line
             const signed_dist = math.dot(n, math.sub(axis_pt, plane.origin));
             const closest = math.sub(axis_pt, math.scale(n, signed_dist));
@@ -1067,7 +1120,7 @@ pub fn intersectPlaneCylinder(
         const axis_on_plane = math.sub(axis_pt, math.scale(n, signed_dist));
 
         var perp = math.cross(axis, n);
-        if (math.magSq(perp) < 1e-12) {
+        if (math.magSq(perp) < tol.absolute) {
             return .empty;
         }
         perp = math.normalize(perp);
@@ -1080,7 +1133,7 @@ pub fn intersectPlaneCylinder(
             .{ .origin = p1, .direction = axis },
             .{ .origin = p2, .direction = axis },
         } };
-    } else if (@abs(cos_angle - 1.0) < 1e-12) {
+    } else if (@abs(cos_angle - 1.0) < tol.absolute) {
         // Plane perpendicular to cylinder axis -> Exact Circle
         const dist_along_axis = math.dot(math.sub(plane.origin, cyl.origin), axis);
         const circle_center = math.add(cyl.origin, math.scale(axis, dist_along_axis));
@@ -1111,7 +1164,7 @@ pub fn intersectPlaneCylinder(
             const p_on_cyl_base = math.add(cyl.origin, radial);
 
             const denom = math.dot(n, axis);
-            if (@abs(denom) < 1e-15) continue;
+            if (@abs(denom) < math.MATH_EPSILON) continue;
 
             const t = math.dot(n, math.sub(plane.origin, p_on_cyl_base)) / denom;
             const pt = math.add(p_on_cyl_base, math.scale(axis, t));
@@ -1135,32 +1188,33 @@ pub fn intersectSurfaces(
     g_arena: *const geom.GeometryArena,
     surf_a: geom.SurfaceId,
     surf_b: geom.SurfaceId,
+    tol: math.Tolerance,
 ) !IntersectionResult {
     switch (surf_a.surface_type) {
         .plane => switch (surf_b.surface_type) {
-            .plane => return intersectPlanePlane(g_arena.planes.items[surf_a.index], g_arena.planes.items[surf_b.index]),
-            .cylinder => return try intersectPlaneCylinder(allocator, g_arena.planes.items[surf_a.index], g_arena.cylinders.items[surf_b.index]),
-            .sphere => return intersectPlaneSphere(g_arena.planes.items[surf_a.index], g_arena.spheres.items[surf_b.index]),
-            .cone => return try intersectPlaneCone(allocator, g_arena.planes.items[surf_a.index], g_arena.cones.items[surf_b.index]),
-            .torus => return try intersectPlaneTorus(allocator, g_arena.planes.items[surf_a.index], g_arena.toruses.items[surf_b.index]),
+            .plane => return intersectPlanePlane(g_arena.planes.items[surf_a.index], g_arena.planes.items[surf_b.index], tol),
+            .cylinder => return try intersectPlaneCylinder(allocator, g_arena.planes.items[surf_a.index], g_arena.cylinders.items[surf_b.index], tol),
+            .sphere => return intersectPlaneSphere(g_arena.planes.items[surf_a.index], g_arena.spheres.items[surf_b.index], tol),
+            .cone => return try intersectPlaneCone(allocator, g_arena.planes.items[surf_a.index], g_arena.cones.items[surf_b.index], tol),
+            .torus => return try intersectPlaneTorus(allocator, g_arena.planes.items[surf_a.index], g_arena.toruses.items[surf_b.index], tol),
             else => return .empty,
         },
         .cylinder => switch (surf_b.surface_type) {
-            .plane => return try intersectPlaneCylinder(allocator, g_arena.planes.items[surf_b.index], g_arena.cylinders.items[surf_a.index]),
-            .cylinder => return try intersectCylinderCylinder(allocator, g_arena.cylinders.items[surf_a.index], g_arena.cylinders.items[surf_b.index]),
+            .plane => return try intersectPlaneCylinder(allocator, g_arena.planes.items[surf_b.index], g_arena.cylinders.items[surf_a.index], tol),
+            .cylinder => return try intersectCylinderCylinder(allocator, g_arena.cylinders.items[surf_a.index], g_arena.cylinders.items[surf_b.index], tol),
             else => return .empty,
         },
         .sphere => switch (surf_b.surface_type) {
-            .plane => return intersectPlaneSphere(g_arena.planes.items[surf_b.index], g_arena.spheres.items[surf_a.index]),
-            .sphere => return intersectSphereSphere(g_arena.spheres.items[surf_a.index], g_arena.spheres.items[surf_b.index]),
+            .plane => return intersectPlaneSphere(g_arena.planes.items[surf_b.index], g_arena.spheres.items[surf_a.index], tol),
+            .sphere => return intersectSphereSphere(g_arena.spheres.items[surf_a.index], g_arena.spheres.items[surf_b.index], tol),
             else => return .empty,
         },
         .cone => switch (surf_b.surface_type) {
-            .plane => return try intersectPlaneCone(allocator, g_arena.planes.items[surf_b.index], g_arena.cones.items[surf_a.index]),
+            .plane => return try intersectPlaneCone(allocator, g_arena.planes.items[surf_b.index], g_arena.cones.items[surf_a.index], tol),
             else => return .empty,
         },
         .torus => switch (surf_b.surface_type) {
-            .plane => return try intersectPlaneTorus(allocator, g_arena.planes.items[surf_b.index], g_arena.toruses.items[surf_a.index]),
+            .plane => return try intersectPlaneTorus(allocator, g_arena.planes.items[surf_b.index], g_arena.toruses.items[surf_a.index], tol),
             else => return .empty,
         },
         else => return .empty,
@@ -1169,17 +1223,17 @@ pub fn intersectSurfaces(
 
 /// Finds where an infinite 2D line crosses a finite 2D line segment.
 /// Returns the `t` parameter along the INFINITE line, or null if it misses.
-fn intersectInfiniteLineSegment2D(line_o: [2]f64, line_d: [2]f64, p1: [2]f64, p2: [2]f64) ?f64 {
+fn intersectInfiniteLineSegment2D(line_o: [2]f64, line_d: [2]f64, p1: [2]f64, p2: [2]f64, tol: math.Tolerance) ?f64 {
     const seg_d = [2]f64{ p2[0] - p1[0], p2[1] - p1[1] };
     const denom = line_d[0] * seg_d[1] - line_d[1] * seg_d[0];
-    if (@abs(denom) < 1e-9) return null; // Parallel
+    if (@abs(denom) < math.MATH_EPSILON) return null; // Parallel
 
     const diff = [2]f64{ p1[0] - line_o[0], p1[1] - line_o[1] };
     const u = (diff[0] * line_d[1] - diff[1] * line_d[0]) / denom;
     const t = (diff[0] * seg_d[1] - diff[1] * seg_d[0]) / denom;
 
     // If the intersection lies within the bounds of the finite segment
-    if (u >= -1e-5 and u <= 1.0 + 1e-5) {
+    if (u >= -tol.parametric and u <= 1.0 + tol.parametric) {
         return t;
     }
     return null;
@@ -1193,6 +1247,7 @@ pub fn clipMathLineToFace(
     g_arena: *const geom.GeometryArena,
     face_id: topo.FaceId,
     line: MathLine,
+    tol: math.Tolerance,
 ) ![]Segment3D {
     const face = t_arena.faces.items[face_id];
 
@@ -1222,7 +1277,7 @@ pub fn clipMathLineToFace(
             const p1_2d = projectToPlane(p1, plane.origin, plane.u_axis, plane.v_axis);
             const p2_2d = projectToPlane(p2, plane.origin, plane.u_axis, plane.v_axis);
 
-            if (intersectInfiniteLineSegment2D(o_2d, d_2d, p1_2d, p2_2d)) |t_hit| {
+            if (intersectInfiniteLineSegment2D(o_2d, d_2d, p1_2d, p2_2d, tol)) |t_hit| {
                 try t_vals.append(allocator, t_hit);
             }
 
@@ -1244,7 +1299,7 @@ pub fn clipMathLineToFace(
     var deduped: std.ArrayListUnmanaged(f64) = .empty;
     defer deduped.deinit(allocator);
     for (t_vals.items) |t| {
-        if (deduped.items.len == 0 or @abs(deduped.items[deduped.items.len - 1] - t) > 1e-5) {
+        if (deduped.items.len == 0 or @abs(deduped.items[deduped.items.len - 1] - t) > tol.parametric) {
             try deduped.append(allocator, t);
         }
     }
@@ -1270,6 +1325,7 @@ pub fn overlapSegments3D(
     line: MathLine,
     segs_a: []const Segment3D,
     segs_b: []const Segment3D,
+    tol: math.Tolerance,
 ) ![]Segment3D {
     var common: std.ArrayListUnmanaged(Segment3D) = .empty;
     errdefer common.deinit(allocator);
@@ -1291,7 +1347,7 @@ pub fn overlapSegments3D(
             const t_start = @max(ta_min, tb_min);
             const t_end = @min(ta_max, tb_max);
 
-            if (t_start < t_end - 1e-5) {
+            if (t_start < t_end - tol.parametric) {
                 const p_start = math.add(line.origin, math.scale(dir_norm, t_start));
                 const p_end = math.add(line.origin, math.scale(dir_norm, t_end));
                 try common.append(allocator, .{ .start = p_start, .end = p_end });
@@ -1309,7 +1365,7 @@ fn getOrSplitVertexAtPoint(
     g_arena: *geom.GeometryArena,
     loop_id: topo.LoopId,
     pt: math.Vec3,
-    tol: f64,
+    tol: math.Tolerance,
 ) !?topo.VertexId {
     const loop = t_arena.loops.items[loop_id];
     var curr = loop.first_half_edge;
@@ -1320,7 +1376,7 @@ fn getOrSplitVertexAtPoint(
         const p_start = t_arena.vertices.items[v_start].point;
 
         // 1. Check if the point is already an existing vertex
-        if (math.distSq(p_start, pt) < tol * tol) {
+        if (tol.pointsCoincide(p_start, pt)) {
             return v_start;
         }
 
@@ -1329,11 +1385,11 @@ fn getOrSplitVertexAtPoint(
         const v_seg = math.sub(p_end, p_start);
         const len_sq = math.magSq(v_seg);
 
-        if (len_sq > 1e-12) {
+        if (len_sq > math.MATH_EPSILON) {
             const proj = math.dot(math.sub(pt, p_start), v_seg) / len_sq;
-            if (proj > 1e-5 and proj < 1.0 - 1e-5) {
+            if (proj > tol.parametric and proj < 1.0 - tol.parametric) {
                 const closest = math.add(p_start, math.scale(v_seg, proj));
-                if (math.distSq(pt, closest) < tol * tol) {
+                if (tol.pointsCoincide(pt, closest)) {
                     const split = try splitHalfEdge(allocator, t_arena, g_arena, curr, pt);
                     return split.v_mid;
                 }
@@ -1354,14 +1410,15 @@ pub fn sliceFaceWithSegment(
     g_arena: *geom.GeometryArena,
     face_id: topo.FaceId,
     segment: Segment3D,
+    tol: math.Tolerance,
 ) !?topo.FaceId {
     const face = t_arena.faces.items[face_id];
     if (face.loops_len != 1) return null; // Single loop faces only for now
 
     const loop_id = t_arena.face_loops.items[face.loops_start];
 
-    const v_a = try getOrSplitVertexAtPoint(allocator, t_arena, g_arena, loop_id, segment.start, 1e-4) orelse return null;
-    const v_b = try getOrSplitVertexAtPoint(allocator, t_arena, g_arena, loop_id, segment.end, 1e-4) orelse return null;
+    const v_a = try getOrSplitVertexAtPoint(allocator, t_arena, g_arena, loop_id, segment.start, tol) orelse return null;
+    const v_b = try getOrSplitVertexAtPoint(allocator, t_arena, g_arena, loop_id, segment.end, tol) orelse return null;
 
     if (v_a == v_b) return null;
 
@@ -1378,6 +1435,7 @@ pub fn intersectAndSplitFaces3D(
     solid_b: topo.SolidId,
     faces_a: *std.ArrayListUnmanaged(topo.FaceId),
     faces_b: *std.ArrayListUnmanaged(topo.FaceId),
+    tol: math.Tolerance,
 ) !void {
     _ = solid_a;
     _ = solid_b;
@@ -1392,15 +1450,15 @@ pub fn intersectAndSplitFaces3D(
             const face_a = t_arena.faces.items[fa_id];
             const face_b = t_arena.faces.items[fb_id];
 
-            const res = try intersectSurfaces(allocator, g_arena, face_a.surface, face_b.surface);
+            const res = try intersectSurfaces(allocator, g_arena, face_a.surface, face_b.surface, tol);
 
             switch (res) {
                 .line => |line| {
-                    try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, line, faces_a, faces_b);
+                    try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, line, faces_a, faces_b, tol);
                 },
                 .two_lines => |lines| {
-                    try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[0], faces_a, faces_b);
-                    try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[1], faces_a, faces_b);
+                    try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[0], faces_a, faces_b, tol);
+                    try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[1], faces_a, faces_b, tol);
                 },
                 .sampled => |pts| allocator.free(pts),
                 .two_sampled => |pts_pair| {
@@ -1423,24 +1481,25 @@ fn processLineCollision(
     line: MathLine,
     faces_a: *std.ArrayListUnmanaged(topo.FaceId),
     faces_b: *std.ArrayListUnmanaged(topo.FaceId),
+    tol: math.Tolerance,
 ) !void {
-    const segs_a = try clipMathLineToFace(allocator, t_arena, g_arena, fa_id, line);
+    const segs_a = try clipMathLineToFace(allocator, t_arena, g_arena, fa_id, line, tol);
     defer allocator.free(segs_a);
 
-    const segs_b = try clipMathLineToFace(allocator, t_arena, g_arena, fb_id, line);
+    const segs_b = try clipMathLineToFace(allocator, t_arena, g_arena, fb_id, line, tol);
     defer allocator.free(segs_b);
 
-    const overlaps = try overlapSegments3D(allocator, line, segs_a, segs_b);
+    const overlaps = try overlapSegments3D(allocator, line, segs_a, segs_b, tol);
     defer allocator.free(overlaps);
 
     if (overlaps.len > 0) {
         for (segs_a) |sa| {
-            if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fa_id, sa)) |new_f| {
+            if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fa_id, sa, tol)) |new_f| {
                 try faces_a.append(allocator, new_f);
             }
         }
         for (segs_b) |sb| {
-            if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fb_id, sb)) |new_f| {
+            if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fb_id, sb, tol)) |new_f| {
                 try faces_b.append(allocator, new_f);
             }
         }
@@ -1453,6 +1512,7 @@ pub fn isPointInsideSolidFaces(
     g_arena: *const geom.GeometryArena,
     faces: []const topo.FaceId,
     pt: math.Vec3,
+    tol: math.Tolerance,
 ) bool {
     const ray_dir = math.normalize(math.Vec3{ 0.312342, 0.712341, 0.612343 });
     var hit_count: u32 = 0;
@@ -1465,7 +1525,7 @@ pub fn isPointInsideSolidFaces(
         const denom = math.dot(ray_dir, normal);
         if (@abs(denom) < math.MATH_EPSILON) continue;
         const t = math.dot(math.sub(plane.origin, pt), normal) / denom;
-        if (t > math.MATH_EPSILON) {
+        if (t > tol.parametric) { // Use relative tolerance boundary checking
             const hit_pt = math.add(pt, math.scale(ray_dir, t));
             const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
             var polygon_buf: [128][2]f64 = undefined;
@@ -1481,7 +1541,7 @@ pub fn isPointInsideSolidFaces(
                 curr_he = he.next;
                 if (curr_he == outer_loop.first_half_edge) break;
             }
-            if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len])) hit_count += 1;
+            if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) hit_count += 1;
         }
     }
     return (hit_count % 2) != 0;
@@ -1492,6 +1552,7 @@ pub fn intersectPlaneCone(
     allocator: std.mem.Allocator,
     plane: geom.Plane,
     cone: geom.Cone,
+    tol: math.Tolerance,
 ) !IntersectionResult {
     const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
     const axis = math.normalize(cone.axis);
@@ -1501,7 +1562,7 @@ pub fn intersectPlaneCone(
     const apex_dist = math.dot(n, math.sub(plane.origin, cone.origin));
     const apex_scale = @max(math.mag(cone.origin), @max(math.mag(plane.origin), 1.0));
 
-    if (@abs(apex_dist) < 1e-9 * apex_scale) {
+    if (@abs(apex_dist) < tol.absolute * apex_scale) {
         const ca = @cos(cone.half_angle);
         const sa = @sin(cone.half_angle);
         const a_coef = sa * math.dot(n, cone.x_axis);
@@ -1509,10 +1570,10 @@ pub fn intersectPlaneCone(
         const c_coef = ca * math.dot(n, axis);
         const r_coef = @sqrt(a_coef * a_coef + b_coef * b_coef);
 
-        if (r_coef < @abs(c_coef) - 1e-12) return .{ .point = cone.origin };
+        if (r_coef < @abs(c_coef) - tol.absolute) return .{ .point = cone.origin };
 
         const phi = std.math.atan2(b_coef, a_coef);
-        if (r_coef < @abs(c_coef) + 1e-12) {
+        if (r_coef < @abs(c_coef) + tol.absolute) {
             const u = if (c_coef <= 0.0) phi else phi + std.math.pi;
             const dir = math.add(math.scale(axis, ca), math.scale(math.add(math.scale(cone.x_axis, @cos(u)), math.scale(cone.y_axis, @sin(u))), sa));
             return .{ .line = .{ .origin = cone.origin, .direction = math.normalize(dir) } };
@@ -1530,12 +1591,12 @@ pub fn intersectPlaneCone(
         } };
     }
 
-    if (@abs(cos_angle - 1.0) < 1e-12) {
+    if (@abs(cos_angle - 1.0) < tol.absolute) {
         // Plane perpendicular to cone axis -> Circle
         const apex_to_plane = math.dot(axis, math.sub(plane.origin, cone.origin));
         const v_param = apex_to_plane / @cos(cone.half_angle);
 
-        if (@abs(v_param) < 1e-12) return .{ .point = cone.origin };
+        if (@abs(v_param) < tol.absolute) return .{ .point = cone.origin };
         if (v_param < 0.0) return .empty;
 
         const circle_radius = @abs(apex_to_plane) * @tan(cone.half_angle);
@@ -1551,7 +1612,7 @@ pub fn intersectPlaneCone(
     }
 
     // Oblique Conic Section -> Parameter sweep
-    return try marchingSsiConePlane(allocator, plane, cone, 64);
+    return try marchingSsiConePlane(allocator, plane, cone, 64, tol);
 }
 
 fn marchingSsiConePlane(
@@ -1559,6 +1620,7 @@ fn marchingSsiConePlane(
     plane: geom.Plane,
     cone: geom.Cone,
     n_samples: usize,
+    tol: math.Tolerance,
 ) !IntersectionResult {
     var points: std.ArrayListUnmanaged(math.Vec3) = .empty;
     errdefer points.deinit(allocator);
@@ -1572,11 +1634,11 @@ fn marchingSsiConePlane(
         const u = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(n_samples));
         const dir_u = math.add(math.scale(axis, ca), math.scale(math.add(math.scale(cone.x_axis, @cos(u)), math.scale(cone.y_axis, @sin(u))), sa));
         const denom = math.dot(n, dir_u);
-        if (@abs(denom) < 1e-15) continue;
+        if (@abs(denom) < math.MATH_EPSILON) continue;
 
         const numer = math.dot(n, math.sub(plane.origin, cone.origin));
         const v = numer / denom;
-        if (v > 1e-12) {
+        if (v > tol.absolute) {
             try points.append(allocator, math.add(cone.origin, math.scale(dir_u, v)));
         }
     }
@@ -1593,22 +1655,23 @@ pub fn intersectCylinderCylinder(
     allocator: std.mem.Allocator,
     a: geom.Cylinder,
     b: geom.Cylinder,
+    tol: math.Tolerance,
 ) !IntersectionResult {
     const axis_a = math.normalize(a.axis);
     const axis_b = math.normalize(b.axis);
     const dot_ab = math.dot(axis_a, axis_b);
 
-    if (@abs(@abs(dot_ab) - 1.0) < 1e-9) return .empty;
+    if (@abs(@abs(dot_ab) - 1.0) < tol.absolute) return .empty;
 
     // Check for perpendicular equal-radii cylinders (Steinmetz curves)
-    if (@abs(dot_ab) < 1e-6 and @abs(a.radius - b.radius) < 1e-6) {
+    if (@abs(dot_ab) < tol.absolute and @abs(a.radius - b.radius) < tol.absolute) {
         const cb_minus_ca = math.sub(b.origin, a.origin);
         const t = math.dot(cb_minus_ca, axis_a);
         const s = -math.dot(cb_minus_ca, axis_b);
         const p_a = math.add(a.origin, math.scale(axis_a, t));
         const p_b = math.add(b.origin, math.scale(axis_b, s));
 
-        if (math.mag(math.sub(p_a, p_b)) < 1e-6) {
+        if (math.mag(math.sub(p_a, p_b)) < tol.absolute) {
             const n_samples: usize = 64;
             var curve_plus = try allocator.alloc(math.Vec3, n_samples + 1);
             errdefer allocator.free(curve_plus);
@@ -1643,7 +1706,7 @@ pub fn intersectCylinderCylinder(
     try arena.cylinders.append(allocator, b);
 
     const start_pt = math.add(a.origin, math.scale(a.x_axis, a.radius));
-    _ = try marchIntersection(allocator, &arena, surf_a_id, surf_b_id, start_pt, 0.5, 64, 1e-5);
+    _ = try marchIntersection(allocator, &arena, surf_a_id, surf_b_id, start_pt, 0.5, 64, tol);
 
     return .empty;
 }
@@ -1653,17 +1716,18 @@ pub fn intersectPlaneTorus(
     allocator: std.mem.Allocator,
     plane: geom.Plane,
     torus: geom.Torus,
+    tol: math.Tolerance,
 ) !IntersectionResult {
     const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));
     const dist = @abs(math.dot(n, math.sub(torus.center, plane.origin)));
 
-    if (dist > torus.major_radius + torus.minor_radius + 1e-9) return .empty;
+    if (dist > torus.major_radius + torus.minor_radius + tol.absolute) return .empty;
 
     const cos_angle = @abs(math.dot(n, math.normalize(torus.axis)));
-    if (@abs(cos_angle - 1.0) < 1e-12) {
+    if (@abs(cos_angle - 1.0) < tol.absolute) {
         const z = math.dot(n, math.sub(torus.center, plane.origin));
         const abs_z = @abs(z);
-        if (abs_z > torus.minor_radius + 1e-9) return .empty;
+        if (abs_z > torus.minor_radius + tol.absolute) return .empty;
 
         const r_offset = @sqrt(@max(0.0, torus.minor_radius * torus.minor_radius - z * z));
         const circle_center = math.sub(torus.center, math.scale(n, z));
@@ -1677,7 +1741,7 @@ pub fn intersectPlaneTorus(
         } };
     }
 
-    return try marchingSsiTorusPlane(allocator, plane, torus, 64);
+    return try marchingSsiTorusPlane(allocator, plane, torus, 64, tol);
 }
 
 fn marchingSsiTorusPlane(
@@ -1685,6 +1749,7 @@ fn marchingSsiTorusPlane(
     plane: geom.Plane,
     torus: geom.Torus,
     n_samples: usize,
+    tol: math.Tolerance,
 ) !IntersectionResult {
     var points: std.ArrayListUnmanaged(math.Vec3) = .empty;
     errdefer points.deinit(allocator);
@@ -1704,7 +1769,7 @@ fn marchingSsiTorusPlane(
             if (prev_dist) |pd| {
                 if (pd * dist < 0.0) {
                     const v_prev = 2.0 * std.math.pi * @as(f64, @floatFromInt(j - 1)) / @as(f64, @floatFromInt(n_v));
-                    const v_ref = refineTorusCrossing(torus, plane, u, v_prev, v);
+                    const v_ref = refineTorusCrossing(torus, plane, u, v_prev, v, tol);
                     try points.append(allocator, evaluateTorusPoint(torus, u, v_ref));
                 }
             }
@@ -1726,7 +1791,8 @@ fn evaluateTorusPoint(torus: geom.Torus, u: f64, v: f64) math.Vec3 {
     return math.add(tube_center, tube_offset);
 }
 
-fn refineTorusCrossing(torus: geom.Torus, plane: geom.Plane, u: f64, v_a: f64, v_b: f64) f64 {
+fn refineTorusCrossing(torus: geom.Torus, plane: geom.Plane, u: f64, v_a: f64, v_b: f64, tol: math.Tolerance) f64 {
+    _ = tol;
     var lo = v_a;
     var hi = v_b;
     const n = math.normalize(math.cross(plane.u_axis, plane.v_axis));

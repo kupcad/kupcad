@@ -7,6 +7,11 @@ pub const CurveType = enum(u8) {
     nurbs,
 };
 
+pub const PCurveType = enum(u8) {
+    line_2d,
+    nurbs_2d,
+};
+
 pub const SurfaceType = enum(u8) {
     plane,
     sphere,
@@ -21,6 +26,11 @@ pub const CurveId = packed struct {
     curve_type: CurveType,
 };
 
+pub const PCurveId = packed struct {
+    index: u24,
+    curve_type: PCurveType,
+};
+
 pub const SurfaceId = packed struct {
     index: u24,
     surface_type: SurfaceType,
@@ -29,6 +39,11 @@ pub const SurfaceId = packed struct {
 pub const Line = struct {
     start: math.Vec3,
     end: math.Vec3,
+};
+
+pub const Line2D = struct {
+    start: math.Vec2,
+    end: math.Vec2,
 };
 
 pub const CircleArc = struct {
@@ -83,6 +98,7 @@ pub const Torus = struct {
 
 pub const GeometryArena = struct {
     lines: std.ArrayListUnmanaged(Line) = .empty,
+    lines_2d: std.ArrayListUnmanaged(Line2D) = .empty,
     circle_arcs: std.ArrayListUnmanaged(CircleArc) = .empty,
     nurbs_curves: std.ArrayListUnmanaged(NurbsCurve) = .empty,
     planes: std.ArrayListUnmanaged(Plane) = .empty,
@@ -98,6 +114,7 @@ pub const GeometryArena = struct {
 
     pub fn deinit(self: *GeometryArena, allocator: std.mem.Allocator) void {
         self.lines.deinit(allocator);
+        self.lines_2d.deinit(allocator);
         self.circle_arcs.deinit(allocator);
         // Free heap-allocated slices inside each NURBS curve before deallocating the list
         for (self.nurbs_curves.items) |nc| {
@@ -114,6 +131,7 @@ pub const GeometryArena = struct {
 
     pub fn clearRetainingCapacity(self: *GeometryArena, allocator: std.mem.Allocator) void {
         self.lines.clearRetainingCapacity();
+        self.lines_2d.clearRetainingCapacity();
         self.circle_arcs.clearRetainingCapacity();
         for (self.nurbs_curves.items) |nc| {
             allocator.free(nc.knots);

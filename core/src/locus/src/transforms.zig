@@ -416,3 +416,38 @@ pub fn transformMatrixSolid(
 
     return solid_id;
 }
+
+/// Applies a reflection matrix and natively inverts topological chirality
+pub fn mirrorSolid(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    solid_id: topo.SolidId,
+    nx: f64,
+    ny: f64,
+    nz: f64,
+) TransformError!topo.SolidId {
+    const len = @sqrt(nx * nx + ny * ny + nz * nz);
+    if (len < 1e-12) return solid_id;
+    const n = [3]f64{ nx / len, ny / len, nz / len };
+
+    // Standard reflection matrix across normal n
+    const mat = [12]f64{
+        1.0 - 2.0 * n[0] * n[0], -2.0 * n[0] * n[1],      -2.0 * n[0] * n[2],      0.0,
+        -2.0 * n[1] * n[0],      1.0 - 2.0 * n[1] * n[1], -2.0 * n[1] * n[2],      0.0,
+        -2.0 * n[2] * n[0],      -2.0 * n[2] * n[1],      1.0 - 2.0 * n[2] * n[2], 0.0,
+    };
+
+    _ = try transformMatrixSolid(allocator, t_arena, g_arena, solid_id, mat);
+
+    // Mirroring flips chirality. Invert face orientation to keep normals outward
+    const s = t_arena.solids.items[solid_id];
+    for (0..s.shells_len) |s_off| {
+        const shell = t_arena.shells.items[t_arena.solid_shells.items[s.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+            t_arena.faces.items[face_id].forward = !t_arena.faces.items[face_id].forward;
+        }
+    }
+    return solid_id;
+}

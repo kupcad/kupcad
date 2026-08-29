@@ -24,7 +24,8 @@ pub const HalfEdge = struct {
     next: HalfEdgeId,
     prev: HalfEdgeId,
     loop_id: LoopId,
-    curve: geom.CurveId,
+    curve: geom.CurveId, // 3D World Curve
+    p_curve: ?geom.PCurveId = null, // 2D Parametric Surface UV Curve
     forward: bool,
 };
 
@@ -101,5 +102,24 @@ pub const TopologyArena = struct {
         self.face_loops.clearRetainingCapacity();
         self.shell_faces.clearRetainingCapacity();
         self.solid_shells.clearRetainingCapacity();
+    }
+
+    /// Computes the 2D UV parametric point for a half-edge's start vertex on its parent face.
+    pub fn getHalfEdgeStartUV(self: TopologyArena, g_arena: *const geom.GeometryArena, he_id: HalfEdgeId) math.Vec2 {
+        const he = self.half_edges.items[he_id];
+        const loop = self.loops.items[he.loop_id];
+        const face = self.faces.items[loop.face_id];
+        const pt = self.vertices.items[he.start_vertex].point;
+        return g_arena.surfaceProject(face.surface, pt);
+    }
+
+    /// Computes the 2D UV parametric point for a half-edge's end vertex on its parent face.
+    pub fn getHalfEdgeEndUV(self: TopologyArena, g_arena: *const geom.GeometryArena, he_id: HalfEdgeId) math.Vec2 {
+        const he = self.half_edges.items[he_id];
+        const next_he = self.half_edges.items[he.next];
+        const loop = self.loops.items[he.loop_id];
+        const face = self.faces.items[loop.face_id];
+        const pt = self.vertices.items[next_he.start_vertex].point;
+        return g_arena.surfaceProject(face.surface, pt);
     }
 };
