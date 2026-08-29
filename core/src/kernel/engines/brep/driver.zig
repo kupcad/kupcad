@@ -358,9 +358,19 @@ fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f
 
     solid.solid_id = pair.first;
     const solid_b = BrepSolid.create(backend_allocator) catch return .{ .first = a, .second = null };
-    solid_b.t_arena = solid.t_arena;
-    solid_b.g_arena = solid.g_arena;
-    solid_b.solid_id = pair.second;
+
+    // Deep-clone the second half's topology and geometry into solid_b's clean arena
+    solid_b.solid_id = locus_merger.mergeSolidArenas(
+        backend_allocator,
+        &solid_b.t_arena,
+        &solid_b.g_arena,
+        &solid.t_arena,
+        &solid.g_arena,
+        pair.second,
+    ) catch {
+        solid_b.destroy();
+        return .{ .first = a, .second = null };
+    };
 
     return .{ .first = a, .second = geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid_b) } };
 }
