@@ -6,7 +6,11 @@ const primitives = @import("primitives.zig");
 const std_exceptions = @import("exceptions.zig");
 const core_classes = @import("core_classes.zig");
 const manifest = @import("manifest.zig");
+const io_mod = @import("io.zig");
+const diagnostics_mod = @import("diagnostics.zig");
+const debug_mod = @import("debug.zig");
 const object_mod = @import("classes/object.zig");
+const params_mod = @import("params.zig");
 const kernel = @import("../kernel/kernel.zig");
 
 fn defaultPrintHandler(vm: *VM, message: []const u8) void {
@@ -62,9 +66,20 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.geometry_class = try defineBuiltinClass(vm, "Geometry", vm.object_class);
     vm.cross_section_class = try defineBuiltinClass(vm, "CrossSection", vm.object_class);
 
-    // --- Formalize Solid and Sketch2D Classes ---
+    // --- Formalize Kernel, Solid and Sketch2D Classes ---
+    const kernel_class = try defineBuiltinClass(vm, "Kernel", vm.object_class);
     const solid_class = try defineBuiltinClass(vm, "Solid", vm.geometry_class);
     const sketch2d_class = try defineBuiltinClass(vm, "Sketch2D", vm.cross_section_class);
+
+    // I/O & Debugging
+    try bindNativeClassMethod(vm, kernel_class, "puts", common.wrapGlobal(io_mod.nativePuts));
+    try bindNativeClassMethod(vm, kernel_class, "print", common.wrapGlobal(io_mod.nativePrint));
+    try bindNativeClassMethod(vm, kernel_class, "inspect", common.wrapGlobal(io_mod.nativeInspect));
+    try bindNativeClassMethod(vm, kernel_class, "debugger", common.wrapGlobal(debug_mod.nativeDebugger));
+    try bindNativeClassMethod(vm, kernel_class, "warn", common.wrapGlobal(diagnostics_mod.nativeWarn));
+    try bindNativeClassMethod(vm, kernel_class, "assert", common.wrapGlobal(diagnostics_mod.nativeAssert));
+    try bindNativeClassMethod(vm, kernel_class, "benchmark", common.wrapGlobal(diagnostics_mod.nativeBenchmark));
+    try bindNativeClassMethod(vm, kernel_class, "param", common.wrapGlobal(params_mod.nativeParam));
 
     // Bind 3D Static Primitive Constructors to Solid
     try bindNativeClassMethod(vm, solid_class, "cube", common.wrapGlobal(primitives.nativeCube));

@@ -17,10 +17,8 @@ fn reportValidationFail(vm_ctx: *VM, loc: []const u8, comptime fmt: []const u8, 
     return error.RuntimeError;
 }
 
-pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
-    if (arg_count == 0) return error.RuntimeError;
+pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
+    if (args.len == 0) return error.RuntimeError;
 
     const key_val = args[0];
     if (!key_val.isObject() or (key_val.asObj().obj_type != .symbol and key_val.asObj().obj_type != .string)) {
@@ -42,7 +40,7 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     const sym_chars = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", sym_key.asObj()))).chars;
 
     // --- GETTER MODE ---
-    if (arg_count == 1) {
+    if (args.len == 1) {
         if (vm.param_lookup.get(sym_key)) |idx| {
             return vm.param_registry.items(.current_value)[idx];
         }
@@ -74,8 +72,8 @@ pub fn nativeParam(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     var p_type: parameters.ParamType = .number;
     var choices_array: ?*value.ObjArray = null;
 
-    if (args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
-        const kwargs_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[arg_count - 1].asObj())));
+    if (args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+        const kwargs_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
 
         if (vm.findMapKeyByString(kwargs_map, "default")) |idx| {
             default_val = kwargs_map.map.values()[idx];

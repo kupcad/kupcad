@@ -3,20 +3,18 @@ const value = @import("../core/value.zig");
 const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;
 
-pub fn nativeAssert(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
-    if (arg_count == 0) {
+pub fn nativeAssert(vm: *VM, args: []const value.Value) anyerror!value.Value {
+    if (args.len == 0) {
         vm.reportError("ArgumentError: assert requires at least 1 argument.\n", .{});
         return error.RuntimeError;
     }
 
-    var pos_count = arg_count;
+    var pos_count = args.len;
     var block_closure: ?*value.ObjClosure = null;
 
     // The VM pushes blocks as the final argument invisibly. Extract it if present.
-    if (arg_count > 0 and args[arg_count - 1].isClosure()) {
-        block_closure = args[arg_count - 1].asClosure();
+    if (args.len > 0 and args[args.len - 1].isClosure()) {
+        block_closure = args[args.len - 1].asClosure();
         pos_count -= 1;
     }
 
@@ -29,7 +27,6 @@ pub fn nativeAssert(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
 
     // Check if the assertion failed (using Truthiness: only false or nil fail)
     if (value.Value.isFalsey(condition)) {
-
         // Determine Exception Class
         var err_class: *value.ObjClass = undefined;
         if (pos_count == 3) {
@@ -96,17 +93,15 @@ pub fn nativeAssert(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     return value.Value.initNil();
 }
 
-pub fn nativeWarn(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
+pub fn nativeWarn(vm: *VM, args: []const value.Value) anyerror!value.Value {
     if (vm.host.print_handler) |print_handler| {
         var out: std.Io.Writer.Allocating = .init(vm.allocator);
         defer out.deinit();
 
         try out.writer.writeAll("[Warning] ");
 
-        for (0..arg_count) |i| {
-            try args[i].stringify(false, &out.writer);
+        for (args) |arg| {
+            try arg.stringify(false, &out.writer);
         }
         try out.writer.writeAll("\n");
 
@@ -116,14 +111,12 @@ pub fn nativeWarn(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) an
     return value.Value.initNil();
 }
 
-pub fn nativeBenchmark(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
-    var pos_count = arg_count;
+pub fn nativeBenchmark(vm: *VM, args: []const value.Value) anyerror!value.Value {
+    var pos_count = args.len;
     var block_closure: ?*value.ObjClosure = null;
 
-    if (arg_count > 0 and args[arg_count - 1].isClosure()) {
-        block_closure = args[arg_count - 1].asClosure();
+    if (args.len > 0 and args[args.len - 1].isClosure()) {
+        block_closure = args[args.len - 1].asClosure();
         pos_count -= 1;
     }
 
