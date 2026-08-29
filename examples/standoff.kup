@@ -21,14 +21,12 @@ shoulder_thick  = param(:shoulder_thick, default: 1.25)
 platform_l = platform_offset + platform_padding
 
 # --- 1. Solid Body ---
-main_body = cube(0.001)
-
-# Standoff Sleeves
-[-1, 1].each do |i|
-  sleeve = cylinder(d: standoff_dia + (wall_thickness * 2.0), h: standoff_height)
+sleeves = [-1, 1].map do |i|
+  cylinder(d: standoff_dia + (wall_thickness * 2.0), h: standoff_height)
     .translate(i * standoff_dist / 2.0, 0.0, 0.0)
-  main_body = main_body + sleeve
 end
+
+main_body = sleeves[0] + sleeves[1]
 
 # Mounting Platform
 platform = cube(x: platform_w, y: platform_l, z: mounting_thick)

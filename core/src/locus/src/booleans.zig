@@ -50,6 +50,102 @@ pub const IntersectionEvent = struct {
     t: f64,
 };
 
+const FaceTracker = struct {
+    face: topo.FaceId,
+    source_solid: topo.SolidId,
+};
+
+/// Numerical root-refinement solver to intersect an edge segment with quadric surfaces (.cylinder, .cone, .sphere, .torus)
+fn intersectSegmentSurface(
+    allocator: std.mem.Allocator,
+    g_arena: *const geom.GeometryArena,
+    surface_id: geom.SurfaceId,
+    v_start: math.Vec3,
+    v_end: math.Vec3,
+    tol: math.Tolerance,
+) ![]math.Vec3 {
+    var hits: std.ArrayListUnmanaged(math.Vec3) = .empty;
+    const steps: usize = 32;
+    var prev_pt = v_start;
+    var prev_proj = projectPointToSurface(g_arena, surface_id, prev_pt);
+
+    for (1..steps + 1) |i| {
+        const t = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(steps));
+        const curr_pt = math.add(v_start, math.scale(math.sub(v_end, v_start), t));
+        const curr_proj = projectPointToSurface(g_arena, surface_id, curr_pt);
+
+        const uv_p = g_arena.surfaceProject(surface_id, prev_pt);
+        const uv_c = g_arena.surfaceProject(surface_id, curr_pt);
+        const norm_p = g_arena.surfaceNormal(surface_id, uv_p[0], uv_p[1]);
+        const norm_c = g_arena.surfaceNormal(surface_id, uv_c[0], uv_c[1]);
+
+        const side_prev = math.dot(math.sub(prev_pt, prev_proj), norm_p);
+        const side_curr = math.dot(math.sub(curr_pt, curr_proj), norm_c);
+
+        if (side_prev * side_curr < 0.0) {
+            var t_lo = @as(f64, @floatFromInt(i - 1)) / @as(f64, @floatFromInt(steps));
+            var t_hi = t;
+
+            for (0..15) |_| {
+                const t_mid = 0.5 * (t_lo + t_hi);
+                const mid_pt = math.add(v_start, math.scale(math.sub(v_end, v_start), t_mid));
+                const mid_proj = projectPointToSurface(g_arena, surface_id, mid_pt);
+                const uv_m = g_arena.surfaceProject(surface_id, mid_pt);
+                const norm_m = g_arena.surfaceNormal(surface_id, uv_m[0], uv_m[1]);
+                const side_m = math.dot(math.sub(mid_pt, mid_proj), norm_m);
+
+                if (side_m * side_prev > 0.0) {
+                    t_lo = t_mid;
+                } else {
+                    t_hi = t_mid;
+                }
+            }
+
+            const hit_t = 0.5 * (t_lo + t_hi);
+            if (hit_t > tol.parametric and hit_t < 1.0 - tol.parametric) {
+                const hit_pt = math.add(v_start, math.scale(math.sub(v_end, v_start), hit_t));
+                try hits.append(allocator, hit_pt);
+            }
+        }
+        prev_pt = curr_pt;
+        prev_proj = curr_proj;
+    }
+    return hits.toOwnedSlice(allocator);
+}
+
+/// Analytical intersection between a 3D ray (pt + t * ray_dir) and a Cylinder surface.
+fn intersectRayCylinder(pt: math.Vec3, ray_dir: math.Vec3, cyl: geom.Cylinder) [2]?f64 {
+    var hits = [2]?f64{ null, null };
+    const axis = math.normalize(cyl.axis);
+
+    const v = math.sub(pt, cyl.origin);
+    const v_proj = math.sub(v, math.scale(axis, math.dot(v, axis)));
+    const d_proj = math.sub(ray_dir, math.scale(axis, math.dot(ray_dir, axis)));
+
+    const a = math.magSq(d_proj);
+    if (a < math.MATH_EPSILON) return hits;
+
+    const b = 2.0 * math.dot(v_proj, d_proj);
+    const c = math.magSq(v_proj) - (cyl.radius * cyl.radius);
+    const disc = b * b - 4.0 * a * c;
+
+    if (disc < 0.0) return hits;
+
+    const sqrt_disc = @sqrt(disc);
+    const t1 = (-b - sqrt_disc) / (2.0 * a);
+    const t2 = (-b + sqrt_disc) / (2.0 * a);
+
+    var count: usize = 0;
+    if (t1 > math.MATH_EPSILON) {
+        hits[count] = t1;
+        count += 1;
+    }
+    if (t2 > math.MATH_EPSILON) {
+        hits[count] = t2;
+    }
+    return hits;
+}
+
 /// Projects any 3D point onto the nearest point on a surface.
 pub fn projectPointToSurface(g_arena: *const geom.GeometryArena, id: geom.SurfaceId, pt: math.Vec3) math.Vec3 {
     switch (id.surface_type) {
@@ -228,16 +324,18 @@ fn projectToPlane(pt: math.Vec3, origin: math.Vec3, u_axis: math.Vec3, v_axis: m
 }
 
 pub fn isPointInPolygon2D(pt: [2]f64, polygon: []const [2]f64, tol: math.Tolerance) bool {
+    if (polygon.len < 3) return false;
+
     var centroid = [2]f64{ 0, 0 };
     for (polygon) |p| {
         centroid[0] += p[0];
         centroid[1] += p[1];
     }
-    centroid[0] /= @as(f64, @floatFromInt(polygon.len));
-    centroid[1] /= @as(f64, @floatFromInt(polygon.len));
+    const len_f = @as(f64, @floatFromInt(polygon.len));
+    centroid[0] /= len_f;
+    centroid[1] /= len_f;
 
-    // Epsilon-Shrink: Pull the point slightly towards the centroid.
-    // This allows points resting EXACTLY on a boundary to be safely raycasted as inside.
+    // Epsilon-Shrink: Pull test point slightly toward centroid to handle boundary edge cases cleanly
     const eps = tol.parametric;
     const test_pt = [2]f64{
         pt[0] * (1.0 - eps) + centroid[0] * eps,
@@ -355,12 +453,8 @@ fn collectPiercings(
         for (0..shell_f.faces_len) |f_off| {
             const face_id = t_arena.shell_faces.items[shell_f.faces_start + f_off];
             const face = t_arena.faces.items[face_id];
-            if (face.surface.surface_type != .plane) continue;
 
-            const plane = g_arena.planes.items[face.surface.index];
-            var normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
-            if (!face.forward) normal = math.scale(normal, -1.0);
-
+            // Project 3D loop boundary into surface 2D UV domain
             var polygon_buf: [128][2]f64 = undefined;
             var poly_len: usize = 0;
             const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
@@ -369,7 +463,8 @@ fn collectPiercings(
             while (true) {
                 const he = t_arena.half_edges.items[curr_he];
                 if (poly_len < polygon_buf.len) {
-                    polygon_buf[poly_len] = projectToPlane(t_arena.vertices.items[he.start_vertex].point, plane.origin, plane.u_axis, plane.v_axis);
+                    const pt3d = t_arena.vertices.items[he.start_vertex].point;
+                    polygon_buf[poly_len] = g_arena.surfaceProject(face.surface, pt3d);
                     poly_len += 1;
                 }
                 curr_he = he.next;
@@ -391,15 +486,32 @@ fn collectPiercings(
                                 const v_start = t_arena.vertices.items[edge.start_vertex].point;
                                 const v_end = t_arena.vertices.items[t_arena.half_edges.items[edge.next].start_vertex].point;
 
-                                var hit_pt_opt: ?math.Vec3 = null;
-                                switch (edge.curve.curve_type) {
-                                    .line => hit_pt_opt = intersectLinePlane(g_arena.lines.items[edge.curve.index].start, g_arena.lines.items[edge.curve.index].end, plane.origin, normal, tol),
-                                    .circle_arc => hit_pt_opt = intersectArcPlane(g_arena.circle_arcs.items[edge.curve.index], v_start, v_end, plane.origin, normal, edge.forward, tol),
-                                    .nurbs => hit_pt_opt = intersectNurbsPlane(g_arena.nurbs_curves.items[edge.curve.index], plane.origin, normal, tol),
+                                var hit_pts: []math.Vec3 = &[_]math.Vec3{};
+                                defer if (hit_pts.len > 0) allocator.free(hit_pts);
+
+                                if (face.surface.surface_type == .plane) {
+                                    const plane = g_arena.planes.items[face.surface.index];
+                                    var normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+                                    if (!face.forward) normal = math.scale(normal, -1.0);
+
+                                    var hit_pt_opt: ?math.Vec3 = null;
+                                    switch (edge.curve.curve_type) {
+                                        .line => hit_pt_opt = intersectLinePlane(g_arena.lines.items[edge.curve.index].start, g_arena.lines.items[edge.curve.index].end, plane.origin, normal, tol),
+                                        .circle_arc => hit_pt_opt = intersectArcPlane(g_arena.circle_arcs.items[edge.curve.index], v_start, v_end, plane.origin, normal, edge.forward, tol),
+                                        .nurbs => hit_pt_opt = intersectNurbsPlane(g_arena.nurbs_curves.items[edge.curve.index], plane.origin, normal, tol),
+                                    }
+                                    if (hit_pt_opt) |hp| {
+                                        var slice = try allocator.alloc(math.Vec3, 1);
+                                        slice[0] = hp;
+                                        hit_pts = slice;
+                                    }
+                                } else {
+                                    // Quadric Surface Piercings (.cylinder, .cone, .sphere, .torus)
+                                    hit_pts = try intersectSegmentSurface(allocator, g_arena, face.surface, v_start, v_end, tol);
                                 }
 
-                                if (hit_pt_opt) |hit_pt| {
-                                    const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
+                                for (hit_pts) |hit_pt| {
+                                    const uv_hit = g_arena.surfaceProject(face.surface, hit_pt);
                                     if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) {
                                         const hit_vec = math.sub(hit_pt, v_start);
                                         try out_events.append(allocator, .{
@@ -738,9 +850,11 @@ fn classifyFace(
     _ = allocator;
     const face = t_arena.faces.items[face_id];
     const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
+
     var centroid = math.Vec3{ 0, 0, 0 };
     var v_count: f64 = 0.0;
     var curr_he = outer_loop.first_half_edge;
+
     while (true) {
         const he = t_arena.half_edges.items[curr_he];
         centroid = math.add(centroid, t_arena.vertices.items[he.start_vertex].point);
@@ -748,27 +862,39 @@ fn classifyFace(
         curr_he = he.next;
         if (curr_he == outer_loop.first_half_edge) break;
     }
+
     const sample_pt = math.scale(centroid, 1.0 / v_count);
     var normal = math.Vec3{ 0, 0, 1 };
+
     if (face.surface.surface_type == .plane) {
         const plane = g_arena.planes.items[face.surface.index];
         normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
         if (!face.forward) normal = math.scale(normal, -1.0);
+    } else if (face.surface.surface_type == .cylinder) {
+        const cyl = g_arena.cylinders.items[face.surface.index];
+        const axis = math.normalize(cyl.axis);
+        const v = math.sub(sample_pt, cyl.origin);
+        const v_proj = math.sub(v, math.scale(axis, math.dot(v, axis)));
+        const len = math.mag(v_proj);
+        if (len > math.MATH_EPSILON) {
+            normal = math.scale(v_proj, 1.0 / len);
+        }
+        if (!face.forward) normal = math.scale(normal, -1.0);
     }
-    const pt_in = math.sub(sample_pt, math.scale(normal, tol.absolute));
-    const pt_out = math.add(sample_pt, math.scale(normal, tol.absolute));
+
+    // Offset sample point tightly along the surface normal
+    const offset_dist = @max(tol.absolute * 2.0, 1e-5);
+    const pt_in = math.sub(sample_pt, math.scale(normal, offset_dist));
+    const pt_out = math.add(sample_pt, math.scale(normal, offset_dist));
+
     const in_solid = isPointInsideSolidFaces(t_arena, g_arena, target_faces, pt_in, tol);
     const out_solid = isPointInsideSolidFaces(t_arena, g_arena, target_faces, pt_out, tol);
+
     if (in_solid and out_solid) return .inside;
     if (!in_solid and !out_solid) return .outside;
     if (in_solid and !out_solid) return .same;
     return .opposite;
 }
-
-const FaceTracker = struct {
-    face: topo.FaceId,
-    source_solid: topo.SolidId,
-};
 
 pub fn computeBoolean(
     allocator: std.mem.Allocator,
@@ -1425,6 +1551,60 @@ pub fn sliceFaceWithSegment(
     return try sliceFace(allocator, t_arena, g_arena, face_id, v_a, v_b);
 }
 
+/// Slices faces along 3D polyline curves resulting from surface intersections
+fn processSampledCollision(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    fa_id: topo.FaceId,
+    fb_id: topo.FaceId,
+    pts: []const math.Vec3,
+    faces_a: *std.ArrayListUnmanaged(topo.FaceId),
+    faces_b: *std.ArrayListUnmanaged(topo.FaceId),
+    tol: math.Tolerance,
+) !void {
+    if (pts.len < 2) return;
+    for (0..pts.len - 1) |i| {
+        const seg = Segment3D{ .start = pts[i], .end = pts[i + 1] };
+        if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fa_id, seg, tol)) |new_f| {
+            try faces_a.append(allocator, new_f);
+        }
+        if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fb_id, seg, tol)) |new_f| {
+            try faces_b.append(allocator, new_f);
+        }
+    }
+}
+
+/// Discretizes a 3D intersection circle into a polyline and slices colliding faces
+fn processCircleCollision(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    fa_id: topo.FaceId,
+    fb_id: topo.FaceId,
+    circle: MathCircle,
+    faces_a: *std.ArrayListUnmanaged(topo.FaceId),
+    faces_b: *std.ArrayListUnmanaged(topo.FaceId),
+    tol: math.Tolerance,
+) !void {
+    const samples: usize = 32;
+    var pts = try allocator.alloc(math.Vec3, samples + 1);
+    defer allocator.free(pts);
+
+    const tau = 2.0 * std.math.pi;
+    for (0..samples) |i| {
+        const theta = tau * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(samples));
+        const radial = math.add(
+            math.scale(circle.x_axis, circle.radius * @cos(theta)),
+            math.scale(circle.y_axis, circle.radius * @sin(theta)),
+        );
+        pts[i] = math.add(circle.center, radial);
+    }
+    pts[samples] = pts[0]; // Close circle loop
+
+    try processSampledCollision(allocator, t_arena, g_arena, fa_id, fb_id, pts, faces_a, faces_b, tol);
+}
+
 /// Iterates over face pairs between Solid A and Solid B, calculates exact SSI,
 /// and topologically splits colliding faces along the intersection seam.
 pub fn intersectAndSplitFaces3D(
@@ -1460,12 +1640,20 @@ pub fn intersectAndSplitFaces3D(
                     try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[0], faces_a, faces_b, tol);
                     try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[1], faces_a, faces_b, tol);
                 },
-                .sampled => |pts| allocator.free(pts),
-                .two_sampled => |pts_pair| {
-                    allocator.free(pts_pair[0]);
-                    allocator.free(pts_pair[1]);
+                .circle => |circle| {
+                    try processCircleCollision(allocator, t_arena, g_arena, fa_id, fb_id, circle, faces_a, faces_b, tol);
                 },
-                .empty, .point, .circle => {},
+                .sampled => |pts| {
+                    defer allocator.free(pts);
+                    try processSampledCollision(allocator, t_arena, g_arena, fa_id, fb_id, pts, faces_a, faces_b, tol);
+                },
+                .two_sampled => |pts_pair| {
+                    defer allocator.free(pts_pair[0]);
+                    defer allocator.free(pts_pair[1]);
+                    try processSampledCollision(allocator, t_arena, g_arena, fa_id, fb_id, pts_pair[0], faces_a, faces_b, tol);
+                    try processSampledCollision(allocator, t_arena, g_arena, fa_id, fb_id, pts_pair[1], faces_a, faces_b, tol);
+                },
+                .empty, .point => {},
             }
         }
     }
@@ -1506,7 +1694,30 @@ fn processLineCollision(
     }
 }
 
-/// Evaluates point inclusion against an explicit set of faces forming a closed boundary.
+fn isPointNearPolygonEdge2D(pt: [2]f64, poly: [][2]f64, edge_tol: f64) bool {
+    var i: usize = 0;
+    var j: usize = poly.len - 1;
+    while (i < poly.len) : (i += 1) {
+        const p1 = poly[i];
+        const p2 = poly[j];
+
+        const dx = p2[0] - p1[0];
+        const dy = p2[1] - p1[1];
+        const len_sq = dx * dx + dy * dy;
+
+        if (len_sq > math.MATH_EPSILON) {
+            const t = std.math.clamp(((pt[0] - p1[0]) * dx + (pt[1] - p1[1]) * dy) / len_sq, 0.0, 1.0);
+            const proj_x = p1[0] + t * dx;
+            const proj_y = p1[1] + t * dy;
+            const dist_sq = (pt[0] - proj_x) * (pt[0] - proj_x) + (pt[1] - proj_y) * (pt[1] - proj_y);
+            if (dist_sq < edge_tol * edge_tol) return true;
+        }
+        j = i;
+    }
+    return false;
+}
+
+/// Evaluates point inclusion against closed boundaries using first-hit normal orientation and multi-ray voting.
 pub fn isPointInsideSolidFaces(
     t_arena: *const topo.TopologyArena,
     g_arena: *const geom.GeometryArena,
@@ -1514,37 +1725,108 @@ pub fn isPointInsideSolidFaces(
     pt: math.Vec3,
     tol: math.Tolerance,
 ) bool {
-    const ray_dir = math.normalize(math.Vec3{ 0.312342, 0.712341, 0.612343 });
-    var hit_count: u32 = 0;
-    for (faces) |face_id| {
-        const face = t_arena.faces.items[face_id];
-        if (face.surface.surface_type != .plane) continue;
-        const plane = g_arena.planes.items[face.surface.index];
-        var normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
-        if (!face.forward) normal = math.scale(normal, -1.0);
-        const denom = math.dot(ray_dir, normal);
-        if (@abs(denom) < math.MATH_EPSILON) continue;
-        const t = math.dot(math.sub(plane.origin, pt), normal) / denom;
-        if (t > tol.parametric) { // Use relative tolerance boundary checking
-            const hit_pt = math.add(pt, math.scale(ray_dir, t));
-            const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
+    const rays = [_]math.Vec3{
+        math.normalize(.{ 0.31234201, 0.71234103, 0.61234307 }),
+        math.normalize(.{ -0.81234105, 0.21234309, 0.54321101 }),
+        math.normalize(.{ 0.12345603, -0.91234507, 0.38765401 }),
+        math.normalize(.{ -0.45678901, -0.65432103, 0.60123405 }),
+        math.normalize(.{ 0.78912307, 0.34567801, -0.51234509 }),
+    };
+
+    var inside_votes: u8 = 0;
+    var valid_rays: u8 = 0;
+
+    for (rays) |ray_dir| {
+        var min_t: f64 = std.math.inf(f64);
+        var min_hit_normal: ?math.Vec3 = null;
+        var hit_count: u32 = 0;
+
+        for (faces) |face_id| {
+            const face = t_arena.faces.items[face_id];
+
             var polygon_buf: [128][2]f64 = undefined;
             var poly_len: usize = 0;
             const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
+
             var curr_he = outer_loop.first_half_edge;
             while (true) {
                 const he = t_arena.half_edges.items[curr_he];
                 if (poly_len < polygon_buf.len) {
-                    polygon_buf[poly_len] = projectToPlane(t_arena.vertices.items[he.start_vertex].point, plane.origin, plane.u_axis, plane.v_axis);
+                    const v_pt = t_arena.vertices.items[he.start_vertex].point;
+                    polygon_buf[poly_len] = g_arena.surfaceProject(face.surface, v_pt);
                     poly_len += 1;
                 }
                 curr_he = he.next;
                 if (curr_he == outer_loop.first_half_edge) break;
             }
-            if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) hit_count += 1;
+
+            switch (face.surface.surface_type) {
+                .plane => {
+                    const plane = g_arena.planes.items[face.surface.index];
+                    var normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+                    if (!face.forward) normal = math.scale(normal, -1.0);
+
+                    const denom = math.dot(ray_dir, normal);
+                    if (@abs(denom) < math.MATH_EPSILON) continue;
+
+                    const t = math.dot(math.sub(plane.origin, pt), normal) / denom;
+                    if (t > tol.absolute) {
+                        const hit_pt = math.add(pt, math.scale(ray_dir, t));
+                        const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
+                        if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) {
+                            hit_count += 1;
+                            if (t < min_t) {
+                                min_t = t;
+                                min_hit_normal = normal;
+                            }
+                        }
+                    }
+                },
+                .cylinder => {
+                    const cyl = g_arena.cylinders.items[face.surface.index];
+                    const t_hits = intersectRayCylinder(pt, ray_dir, cyl);
+
+                    for (t_hits) |t_opt| {
+                        if (t_opt) |t| {
+                            if (t > tol.absolute) {
+                                const hit_pt = math.add(pt, math.scale(ray_dir, t));
+                                const uv_hit = g_arena.surfaceProject(face.surface, hit_pt);
+                                if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) {
+                                    hit_count += 1;
+                                    if (t < min_t) {
+                                        min_t = t;
+                                        const axis = math.normalize(cyl.axis);
+                                        const v = math.sub(hit_pt, cyl.origin);
+                                        const v_proj = math.sub(v, math.scale(axis, math.dot(v, axis)));
+                                        const len = math.mag(v_proj);
+                                        var cyl_normal = if (len > math.MATH_EPSILON) math.scale(v_proj, 1.0 / len) else cyl.x_axis;
+                                        if (!face.forward) cyl_normal = math.scale(cyl_normal, -1.0);
+                                        min_hit_normal = cyl_normal;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        if (min_hit_normal) |norm| {
+            valid_rays += 1;
+            const dot_p = math.dot(ray_dir, norm);
+            if (dot_p > 1e-4) {
+                inside_votes += 1;
+            } else if (@abs(dot_p) <= 1e-4) {
+                if ((hit_count % 2) != 0) inside_votes += 1;
+            }
+        } else {
+            valid_rays += 1;
         }
     }
-    return (hit_count % 2) != 0;
+
+    if (valid_rays == 0) return false;
+    return (inside_votes * 2) >= valid_rays;
 }
 
 // Handles Plane x Cone intersection (rulings, circles, oblique cuts)

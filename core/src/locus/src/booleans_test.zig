@@ -12,6 +12,102 @@ const test_tol = math.Tolerance{
     .parametric = 1e-5,
 };
 
+fn makeTestCubeFaces(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    center: math.Vec3,
+    size: f64,
+) ![]topo.FaceId {
+    const hs = size / 2.0;
+    const v_start = t_arena.vertices.items.len;
+
+    const corners = [_]math.Vec3{
+        .{ center[0] - hs, center[1] - hs, center[2] - hs },
+        .{ center[0] + hs, center[1] - hs, center[2] - hs },
+        .{ center[0] + hs, center[1] + hs, center[2] - hs },
+        .{ center[0] - hs, center[1] + hs, center[2] - hs },
+        .{ center[0] - hs, center[1] - hs, center[2] + hs },
+        .{ center[0] + hs, center[1] - hs, center[2] + hs },
+        .{ center[0] + hs, center[1] + hs, center[2] + hs },
+        .{ center[0] - hs, center[1] + hs, center[2] + hs },
+    };
+
+    for (corners) |c| {
+        try t_arena.vertices.append(allocator, .{ .point = c });
+    }
+
+    const quads = [_][4]usize{
+        .{ 0, 3, 2, 1 }, // -Z
+        .{ 4, 5, 6, 7 }, // +Z
+        .{ 0, 1, 5, 4 }, // -Y
+        .{ 2, 3, 7, 6 }, // +Y
+        .{ 0, 4, 7, 3 }, // -X
+        .{ 1, 2, 6, 5 }, // +X
+    };
+
+    const normals = [_]math.Vec3{
+        .{ 0, 0, -1 },
+        .{ 0, 0, 1 },
+        .{ 0, -1, 0 },
+        .{ 0, 1, 0 },
+        .{ -1, 0, 0 },
+        .{ 1, 0, 0 },
+    };
+
+    var created_faces: std.ArrayListUnmanaged(topo.FaceId) = .empty;
+
+    for (quads, normals) |quad, n| {
+        const plane_idx: u24 = @intCast(g_arena.planes.items.len);
+        var u_ax = math.Vec3{ 1, 0, 0 };
+        if (@abs(n[0]) > 0.9) u_ax = .{ 0, 1, 0 };
+        const v_ax = math.normalize(math.cross(n, u_ax));
+        u_ax = math.normalize(math.cross(v_ax, n));
+
+        try g_arena.planes.append(allocator, .{
+            .origin = t_arena.vertices.items[v_start + quad[0]].point,
+            .u_axis = u_ax,
+            .v_axis = v_ax,
+        });
+
+        const loop_id: u32 = @intCast(t_arena.loops.items.len);
+        const he_start: u32 = @intCast(t_arena.half_edges.items.len);
+
+        for (0..4) |i| {
+            const v0 = @as(u32, @intCast(v_start + quad[i]));
+            const next_he = he_start + @as(u32, @intCast((i + 1) % 4));
+            const prev_he = he_start + @as(u32, @intCast((i + 3) % 4));
+
+            try t_arena.half_edges.append(allocator, .{
+                .start_vertex = v0,
+                .twin = topo.NULL_ID,
+                .next = next_he,
+                .prev = prev_he,
+                .loop_id = loop_id,
+                .curve = .{ .index = 0, .curve_type = .line },
+                .forward = true,
+            });
+        }
+
+        const face_id: u32 = @intCast(t_arena.faces.items.len);
+        try t_arena.loops.append(allocator, .{ .face_id = face_id, .first_half_edge = he_start });
+
+        const fl_start: u32 = @intCast(t_arena.face_loops.items.len);
+        try t_arena.face_loops.append(allocator, loop_id);
+
+        try t_arena.faces.append(allocator, .{
+            .surface = .{ .index = plane_idx, .surface_type = .plane },
+            .forward = true,
+            .loops_start = fl_start,
+            .loops_len = 1,
+        });
+
+        try created_faces.append(allocator, face_id);
+    }
+
+    return created_faces.toOwnedSlice(allocator);
+}
+
 test "March Intersection (Perpendicular Cylinders)" {
     const alloc = std.testing.allocator;
     const cyl_a = geom.Cylinder{
@@ -422,4 +518,46 @@ test "Exact SSI: Plane vs Torus (Perpendicular Cut)" {
     const res = try booleans.intersectPlaneTorus(alloc, plane, torus, test_tol);
     try std.testing.expect(res == .circle);
     try std.testing.expectApproxEqAbs(13.0, res.circle.radius, 1e-9);
+}
+
+test "Booleans: Point Inclusion for Multi-Body Boundaries" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const left_faces = try makeTestCubeFaces(alloc, &t_arena, &g_arena, .{ -10.0, 0.0, 0.0 }, 6.0);
+    defer alloc.free(left_faces);
+
+    const right_faces = try makeTestCubeFaces(alloc, &t_arena, &g_arena, .{ 10.0, 0.0, 0.0 }, 6.0);
+    defer alloc.free(right_faces);
+
+    var all_faces: std.ArrayListUnmanaged(topo.FaceId) = .empty;
+    defer all_faces.deinit(alloc);
+    try all_faces.appendSlice(alloc, left_faces);
+    try all_faces.appendSlice(alloc, right_faces);
+
+    const tol = math.Tolerance{ .absolute = 1e-7, .parametric = 1e-7, .squared = 1e-14 };
+
+    // Point inside left standoff
+    try std.testing.expect(booleans.isPointInsideSolidFaces(&t_arena, &g_arena, all_faces.items, .{ -10.0, 0.0, 0.0 }, tol));
+    // Point inside right standoff
+    try std.testing.expect(booleans.isPointInsideSolidFaces(&t_arena, &g_arena, all_faces.items, .{ 10.0, 0.0, 0.0 }, tol));
+    // Point outside between standoffs
+    try std.testing.expect(!booleans.isPointInsideSolidFaces(&t_arena, &g_arena, all_faces.items, .{ 0.0, 0.0, 0.0 }, tol));
+}
+
+test "Projections: 2D Point Containment Boundary Precision" {
+    const polygon = [_][2]f64{
+        .{ -5.0, -5.0 },
+        .{ 5.0, -5.0 },
+        .{ 5.0, 5.0 },
+        .{ -5.0, 5.0 },
+    };
+    const tol = math.Tolerance{ .absolute = 1e-7, .parametric = 1e-7, .squared = 1e-14 };
+
+    try std.testing.expect(booleans.isPointInPolygon2D(.{ 0.0, 0.0 }, &polygon, tol));
+    try std.testing.expect(booleans.isPointInPolygon2D(.{ 5.0, 0.0 }, &polygon, tol));
+    try std.testing.expect(!booleans.isPointInPolygon2D(.{ 6.0, 0.0 }, &polygon, tol));
 }
