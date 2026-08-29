@@ -60,16 +60,27 @@ const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "circle", .protected_symbol },
     .{ "polygon", .protected_symbol },
 
-    // Core Classes
+    // Core Data Classes
+    .{ "Object", .protected_symbol },
     .{ "Array", .protected_symbol },
     .{ "String", .protected_symbol },
     .{ "Map", .protected_symbol },
     .{ "Number", .protected_symbol },
     .{ "Symbol", .protected_symbol },
     .{ "Boolean", .protected_symbol },
+
+    // CAD Geometry Classes
+    .{ "Geometry", .protected_symbol },
+    .{ "CrossSection", .protected_symbol },
+    .{ "Solid", .protected_symbol },
+    .{ "Sketch2D", .protected_symbol },
     .{ "BoundingBox", .protected_symbol },
+
+    // System Modules
     .{ "Math", .protected_symbol },
     .{ "GC", .protected_symbol },
+    .{ "Kernel", .protected_symbol },
+    .{ "CAD", .protected_symbol },
 });
 
 pub const Compiler = struct {

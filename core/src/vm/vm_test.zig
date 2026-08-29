@@ -1689,7 +1689,7 @@ test "STL Exporter: exports valid Binary STL file with expected byte structure" 
     // 1. Run script exporting a 10x10x10 cube
     const source =
         \\part = cube(10)
-        \\export_stl("test_export_cube.stl", part)
+        \\part.export_stl("test_export_cube.stl")
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -7298,7 +7298,7 @@ test "VM: Export GLTF generates valid .glb file with extensions" {
 
     const test_path = "test_output.glb";
 
-    const source = "export_gltf(\"test_output.glb\", sphere(5).material(color: \"#0000FF\", transmission: 0.9))";
+    const source = "sphere(5).material(color: \"#0000FF\", transmission: 0.9).export_gltf(\"test_output.glb\")";
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
 
@@ -7332,7 +7332,7 @@ test "STL Importer: imports exported binary STL and evaluates valid volume" {
     const test_path = "import_test.stl";
 
     // Export a 10x10x10 cube (Volume = 1000)
-    const export_source = "export_stl(\"import_test.stl\", cube(10))";
+    const export_source = "cube(10).export_stl(\"import_test.stl\")";
     var doc_export = try Document.parse(testing.allocator, export_source);
     defer doc_export.deinit();
 
@@ -8647,4 +8647,129 @@ test "VM CAD: 2D CrossSection bounding boxes map correctly to Z=0 dimensions" {
     try comp.compile(doc.tree.root);
 
     _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+}
+
+test "VM: Solid and Sketch2D static class method execution" {
+    const alloc = testing.allocator;
+
+    const source =
+        \\s = Solid.cube(10.0)
+        \\c = Solid.cylinder(5.0, 20.0)
+        \\p = Solid.sphere(8.0)
+        \\sq = Sketch2D.square(15.0)
+        \\circ = Sketch2D.circle(6.0)
+        \\[s, c, p, sq, circ]
+    ;
+
+    var doc = try Document.parse(alloc, source);
+    defer doc.deinit();
+
+    var vm = try VM.init(alloc, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var exec_chunk = chunk.Chunk.init();
+    defer exec_chunk.free(alloc);
+
+    var comp = Compiler.init(alloc, &doc.tree, doc.symbols, doc.tokens.starts, &exec_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    // Execute with stack equilibrium validation
+    const result_val = try executeAndAssertStack(&vm, &exec_chunk, 1);
+
+    const result_arr = result_val.asArray();
+    try testing.expectEqual(@as(usize, 5), result_arr.items.items.len);
+
+    // 3D Solids
+    try testing.expect(result_arr.items.items[0].isGeometry());
+    try testing.expect(result_arr.items.items[1].isGeometry());
+    try testing.expect(result_arr.items.items[2].isGeometry());
+
+    // 2D Profiles
+    try testing.expect(result_arr.items.items[3].isCrossSection());
+    try testing.expect(result_arr.items.items[4].isCrossSection());
+}
+
+test "VM: Instance export methods on Solid and Geometry objects" {
+    const alloc = testing.allocator;
+    const test_stl = "vm_test_out.stl";
+    const test_glb = "vm_test_out.glb";
+
+    const cwd = std.Io.Dir.cwd();
+    defer cwd.deleteFile(testing.io, test_stl) catch {};
+    defer cwd.deleteFile(testing.io, test_glb) catch {};
+
+    const source =
+        \\part = Solid.cube(12.0)
+        \\part.export_stl("vm_test_out.stl")
+        \\part.export_gltf("vm_test_out.glb")
+        \\part
+    ;
+
+    var doc = try Document.parse(alloc, source);
+    defer doc.deinit();
+
+    var vm = try VM.init(alloc, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var exec_chunk = chunk.Chunk.init();
+    defer exec_chunk.free(alloc);
+
+    var comp = Compiler.init(alloc, &doc.tree, doc.symbols, doc.tokens.starts, &exec_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    // Execute with stack equilibrium validation
+    const result_val = try executeAndAssertStack(&vm, &exec_chunk, 1);
+
+    // Assert receiver remains intact on top of the stack
+    try testing.expect(result_val.isGeometry());
+
+    // --- Assert STL file was generated and has valid header ---
+    const stl_file = try cwd.openFile(vm.io, test_stl, .{});
+    defer stl_file.close(vm.io);
+
+    var stl_header: [84]u8 = undefined;
+    const stl_bytes_read = try stl_file.readStreaming(vm.io, &.{&stl_header});
+    try testing.expect(stl_bytes_read >= 84);
+
+    // --- Assert GLTF binary (.glb) file was generated with magic header ---
+    const glb_file = try cwd.openFile(vm.io, test_glb, .{});
+    defer glb_file.close(vm.io);
+
+    var glb_header: [12]u8 = undefined;
+    const glb_bytes_read = try glb_file.readStreaming(vm.io, &.{&glb_header});
+    try testing.expect(glb_bytes_read >= 12);
+
+    const magic = std.mem.readInt(u32, glb_header[0..4], .little);
+    try testing.expectEqual(@as(u32, 0x46546C67), magic); // "glTF"
+}
+
+test "VM: Method dispatch fails gracefully on unknown class methods" {
+    const alloc = testing.allocator;
+
+    const source = "Solid.non_existent_constructor(10)";
+
+    var doc = try Document.parse(alloc, source);
+    defer doc.deinit();
+
+    var vm = try VM.init(alloc, testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true; // Mute expected stderr during negative test
+    try registry.registerStandardLibrary(&vm);
+
+    var exec_chunk = chunk.Chunk.init();
+    defer exec_chunk.free(alloc);
+
+    var comp = Compiler.init(alloc, &doc.tree, doc.symbols, doc.tokens.starts, &exec_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&exec_chunk);
+    try testing.expectEqual(.runtime_error, result);
 }

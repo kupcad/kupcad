@@ -297,7 +297,7 @@ pub fn build(b: *std.Build) void {
         });
 
         const run_gen_grammar = b.addRunArtifact(gen_grammar_exe);
-        run_gen_grammar.addArg("../packages/vscode/syntaxes/kupcad.tmLanguage.json");
+        run_gen_grammar.addArg("../packages/kupcad-vscode/syntaxes/kupcad.tmLanguage.json");
 
         const gen_step = b.step("grammar", "Generate VS Code TextMate grammar JSON");
         gen_step.dependOn(&run_gen_grammar.step);

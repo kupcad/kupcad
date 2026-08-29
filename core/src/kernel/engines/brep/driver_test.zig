@@ -2,6 +2,7 @@ const std = @import("std");
 const driver = @import("driver.zig");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
+const step_exporter = @import("../../../exporters/3d/step.zig");
 
 test "Driver: End-to-End API Calls" {
     const cube_handle = driver.driver.cubeFn(10, 10, 10, true) orelse return error.CubeFailed;
@@ -292,4 +293,150 @@ test "Driver: 2D Polygon Even-Odd Area and Bounds" {
     // Outer bounding box is [-10, -10] to [10, 10]
     try std.testing.expectApproxEqAbs(-10.0, bounds.min[0], 1e-4);
     try std.testing.expectApproxEqAbs(10.0, bounds.max[0], 1e-4);
+}
+
+test "Driver: splitByPlane deeply clones arenas avoiding double-free corruption" {
+    const cube = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const pair = driver.driver.splitByPlaneFn(cube, 0.0, 0.0, 1.0, 0.0);
+    try std.testing.expect(pair.first != null);
+    try std.testing.expect(pair.second != null);
+
+    // Destroy second half immediately to trigger potential double-free
+    driver.driver.destructFn(pair.second.?);
+
+    const cutter = driver.driver.cubeFn(5.0, 5.0, 20.0, true) orelse return error.CutterFailed;
+    defer driver.driver.destructFn(cutter);
+
+    // Test that the remaining half can safely undergo further CSG boolean operations
+    const result = driver.driver.booleanFn(pair.first.?, cutter, .difference_op) orelse return error.BoolFailed;
+    defer driver.driver.destructFn(result);
+
+    const vol = driver.driver.volumeFn(result);
+    try std.testing.expect(vol > 0.0); // Assert graph is alive and computable
+}
+
+test "Isolation: Extrude Offset Polygon (hex_mount)" {
+    const alloc = std.testing.allocator;
+    var pts = [_][2]f64{ .{ -10, -17.32 }, .{ 10, -17.32 }, .{ 20, 0 }, .{ 10, 17.32 }, .{ -10, 17.32 }, .{ -20, 0 } };
+
+    // offsetFn and extrudeFn mutate the handle IN-PLACE.
+    // We only defer destruction on the final solid handle to prevent double-free segfaults.
+    const poly = driver.driver.polygonFn(alloc, &pts) orelse return error.Fail;
+    const offset_poly = driver.driver.offsetFn(poly, 1.5, 0) orelse return error.Fail;
+    const solid = driver.driver.extrudeFn(offset_poly, 6.0, 0, 0, 1, 1) orelse return error.Fail;
+    defer driver.driver.destructFn(solid);
+
+    try std.testing.expect(driver.driver.volumeFn(solid) > 0);
+}
+
+test "Isolation: Minkowski Sum + Split By Plane (flat_bumper)" {
+    const cube = driver.driver.cubeFn(4.0, 12.0, 6.0, true) orelse return error.Fail;
+    const sph = driver.driver.sphereFn(2.0) orelse return error.Fail;
+
+    // minkowskiFn merges sph into cube. It mutates cube in-place.
+    const bumper_soft = driver.driver.minkowskiFn(cube, sph) orelse return error.Fail;
+    defer driver.driver.destructFn(sph); // sph was merged, but its wrapper still exists
+
+    // splitByPlaneFn mutates bumper_soft (which is cube) into the first half.
+    // It allocates a completely new wrapper for the second half.
+    const split_parts = driver.driver.splitByPlaneFn(bumper_soft, 1.0, 0.0, 0.0, 1.0);
+    try std.testing.expect(split_parts.first != null);
+    try std.testing.expect(split_parts.second != null);
+
+    defer driver.driver.destructFn(split_parts.first.?); // Frees the `cube` wrapper
+    defer driver.driver.destructFn(split_parts.second.?); // Frees the newly cloned wrapper
+
+    try std.testing.expect(driver.driver.volumeFn(split_parts.first.?) > 0);
+}
+
+test "Isolation: Batch Hull Spheres (arm_body)" {
+    const alloc = std.testing.allocator;
+
+    const s1 = driver.driver.sphereFn(6.0) orelse return error.Fail;
+    defer driver.driver.destructFn(s1);
+
+    const s2 = driver.driver.sphereFn(4.0) orelse return error.Fail;
+    defer driver.driver.destructFn(s2);
+    _ = driver.driver.translateFn(s2, 50.0, 0.0, 0.0); // IN PLACE
+
+    const s3 = driver.driver.sphereFn(4.0) orelse return error.Fail;
+    defer driver.driver.destructFn(s3);
+    _ = driver.driver.translateFn(s3, 50.0, 10.0, 0.0); // IN PLACE
+
+    const handles = [_]geom.GeometryHandle{ s1, s2, s3 };
+    const arm_body = driver.driver.batchHullFn(alloc, &handles) orelse return error.Fail;
+    defer driver.driver.destructFn(arm_body); // Batch hull creates a NEW solid wrapper
+
+    try std.testing.expect(driver.driver.volumeFn(arm_body) > 0);
+}
+
+test "Isolation: Boolean Difference with Multiple Cylinders (mounting_holes)" {
+    const base = driver.driver.cubeFn(40.0, 40.0, 10.0, true) orelse return error.Fail;
+    defer driver.driver.destructFn(base);
+
+    const c1 = driver.driver.cylinderFn(1.6, 1.6, 20.0, true, 16) orelse return error.Fail;
+    defer driver.driver.destructFn(c1);
+    _ = driver.driver.translateFn(c1, 15.0, 0.0, 0.0); // IN PLACE
+
+    const c2 = driver.driver.cylinderFn(1.6, 1.6, 20.0, true, 16) orelse return error.Fail;
+    defer driver.driver.destructFn(c2);
+    _ = driver.driver.translateFn(c2, -15.0, 0.0, 0.0); // IN PLACE
+
+    // union_op merges c2 into c1, mutates c1 in-place.
+    const holes = driver.driver.booleanFn(c1, c2, .union_op) orelse return error.Fail;
+
+    // difference_op merges holes (which is c1) into base, mutates base in-place.
+    const result = driver.driver.booleanFn(base, holes, .difference_op) orelse return error.Fail;
+
+    try std.testing.expect(driver.driver.volumeFn(result) > 0);
+}
+
+test "Driver: STEP Export of CSG Boolean Result" {
+    const alloc = std.testing.allocator;
+
+    // 1. Create a cube with a hole in it
+    const base = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    defer driver.driver.destructFn(base);
+
+    const hole = driver.driver.cylinderFn(2.5, 2.5, 20.0, true, 16) orelse return error.CylFailed;
+    defer driver.driver.destructFn(hole);
+
+    const result = driver.driver.booleanFn(base, hole, .difference_op) orelse return error.BoolFailed;
+
+    // 2. Export to STEP
+    const handles = [_]geom.GeometryHandle{result};
+    const step_bytes = try step_exporter.buildStepBuffer(alloc, &handles);
+    defer alloc.free(step_bytes);
+
+    // 3. Verify ISO 10303-21 formatting and topology records
+    try std.testing.expect(std.mem.indexOf(u8, step_bytes, "ISO-10303-21;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, step_bytes, "MANIFOLD_SOLID_BREP") != null);
+    try std.testing.expect(std.mem.indexOf(u8, step_bytes, "CLOSED_SHELL") != null);
+    try std.testing.expect(std.mem.indexOf(u8, step_bytes, "ADVANCED_FACE") != null);
+    try std.testing.expect(std.mem.indexOf(u8, step_bytes, "EDGE_LOOP") != null);
+}
+
+test "Driver: Multiple Sequential Plane Trims" {
+    // Tests that the dynamic bounding boxes and deep-cloning hold up
+    // over multiple successive slicing operations without crashing or degrading the arena.
+    const cube = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    defer driver.driver.destructFn(cube);
+
+    // Trim +Z
+    _ = driver.driver.trimByPlaneFn(cube, 0.0, 0.0, 1.0, 2.0) orelse return error.TrimFailed;
+    // Trim +X
+    _ = driver.driver.trimByPlaneFn(cube, 1.0, 0.0, 0.0, 2.0) orelse return error.TrimFailed;
+    // Trim +Y
+    _ = driver.driver.trimByPlaneFn(cube, 0.0, 1.0, 0.0, 2.0) orelse return error.TrimFailed;
+
+    const bbox = driver.driver.boundingBoxFn(cube) orelse return error.BBoxFailed;
+
+    // Ensure bounds exist and graph traversals complete safely
+    try std.testing.expect(bbox.max[0] != std.math.inf(f64));
+    try std.testing.expect(bbox.max[1] != std.math.inf(f64));
+    try std.testing.expect(bbox.max[2] != std.math.inf(f64));
+
+    const vol = driver.driver.volumeFn(cube);
+    // Ensure the geometry graph survived the 3 sequential booleans and can compute a volume
+    try std.testing.expect(vol > 0.0);
 }

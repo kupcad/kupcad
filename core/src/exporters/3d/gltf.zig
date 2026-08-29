@@ -293,29 +293,19 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const g
     return try glb_payload.toOwnedSlice(allocator);
 }
 
-pub fn nativeExportGltf(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-
-    if (arg_count < 2 or !args[0].isString()) {
-        vm.reportError("ArgumentError: export_gltf expects (String path, target).\n", .{});
-        return error.RuntimeError;
-    }
-
-    const path = args[0].asString().chars;
-    const target = args[1];
-
-    // --- Dynamically extract geometries from either a direct handle, an Assembly, or an Array ---
+/// Method invocation variant (e.g. `my_part.export_gltf("out.glb")`)
+pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
     var handles = std.ArrayListUnmanaged(geom.GeometryHandle).empty;
     defer handles.deinit(vm.allocator);
 
-    if (target.isGeometry()) {
-        try handles.append(vm.allocator, try vm.ensureConcrete(target));
-    } else if (target.isAssembly()) {
-        for (target.asAssembly().parts.items.items) |part| {
+    if (receiver.isGeometry()) {
+        try handles.append(vm.allocator, try vm.ensureConcrete(receiver));
+    } else if (receiver.isAssembly()) {
+        for (receiver.asAssembly().parts.items.items) |part| {
             if (part.isGeometry()) try handles.append(vm.allocator, try vm.ensureConcrete(part));
         }
-    } else if (target.isArray()) {
-        for (target.asArray().items.items) |part| {
+    } else if (receiver.isArray()) {
+        for (receiver.asArray().items.items) |part| {
             if (part.isGeometry()) try handles.append(vm.allocator, try vm.ensureConcrete(part));
         }
     } else {
@@ -328,9 +318,14 @@ pub fn nativeExportGltf(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
 
     const cwd = std.Io.Dir.cwd();
     try cwd.writeFile(vm.io, .{
-        .sub_path = path,
+        .sub_path = filepath,
         .data = glb_bytes,
     });
 
-    return value.Value.initNil();
+    return receiver;
+}
+
+/// Global function fallback variant (e.g. `export_gltf("out.glb", my_part)`)
+pub fn nativeExportGltf(vm: *VM, path_str: []const u8, target: value.Value) !value.Value {
+    return meshExportGltf(vm, target, path_str);
 }

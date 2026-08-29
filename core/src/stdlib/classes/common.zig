@@ -15,6 +15,7 @@ pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
     if (T == value.Value) return val;
     if (T == f64) return if (val.isNumber()) val.asNumber() else error.RuntimeError;
     if (T == bool) return if (val.isBool()) val.asBool() else error.RuntimeError;
+    if (T == []const u8) return if (val.isString()) val.asString().chars else error.RuntimeError;
 
     if (T == *value.ObjString) return if (val.isObject() and val.asObj().obj_type == .string)
         @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", val.asObj())))

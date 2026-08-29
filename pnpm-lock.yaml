@@ -8,7 +8,7 @@ importers:
 
   .: {}
 
-  packages/vscode:
+  packages/kupcad-vscode:
     dependencies:
       vscode-languageclient:
         specifier: ^10.1.0

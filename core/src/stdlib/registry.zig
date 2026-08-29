@@ -1,10 +1,16 @@
 const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
 const value = @import("../core/value.zig");
+const common = @import("classes/common.zig");
+const primitives = @import("primitives.zig");
 const std_exceptions = @import("exceptions.zig");
 const core_classes = @import("core_classes.zig");
 const manifest = @import("manifest.zig");
+const io_mod = @import("io.zig");
+const diagnostics_mod = @import("diagnostics.zig");
+const debug_mod = @import("debug.zig");
 const object_mod = @import("classes/object.zig");
+const params_mod = @import("params.zig");
 const kernel = @import("../kernel/kernel.zig");
 
 fn defaultPrintHandler(vm: *VM, message: []const u8) void {
@@ -18,6 +24,11 @@ fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !
     const class_obj = try vm.gc.allocateClass(vm, name_str, superclass);
     try vm.globals.put(vm.allocator, name, value.Value.initObj(&class_obj.obj));
     return class_obj;
+}
+
+fn bindNativeClassMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
+    const native_obj = try vm.gc.allocateNative(vm, func);
+    try class.class_methods.put(vm.allocator, name, value.Value.initObj(&native_obj.obj));
 }
 
 fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
@@ -54,6 +65,35 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.bbox_class = try defineBuiltinClass(vm, "BoundingBox", vm.object_class);
     vm.geometry_class = try defineBuiltinClass(vm, "Geometry", vm.object_class);
     vm.cross_section_class = try defineBuiltinClass(vm, "CrossSection", vm.object_class);
+
+    // --- Formalize Kernel, Solid and Sketch2D Classes ---
+    const kernel_class = try defineBuiltinClass(vm, "Kernel", vm.object_class);
+    const solid_class = try defineBuiltinClass(vm, "Solid", vm.geometry_class);
+    const sketch2d_class = try defineBuiltinClass(vm, "Sketch2D", vm.cross_section_class);
+
+    // I/O & Debugging
+    try bindNativeClassMethod(vm, kernel_class, "puts", common.wrapGlobal(io_mod.nativePuts));
+    try bindNativeClassMethod(vm, kernel_class, "print", common.wrapGlobal(io_mod.nativePrint));
+    try bindNativeClassMethod(vm, kernel_class, "inspect", common.wrapGlobal(io_mod.nativeInspect));
+    try bindNativeClassMethod(vm, kernel_class, "debugger", common.wrapGlobal(debug_mod.nativeDebugger));
+    try bindNativeClassMethod(vm, kernel_class, "warn", common.wrapGlobal(diagnostics_mod.nativeWarn));
+    try bindNativeClassMethod(vm, kernel_class, "assert", common.wrapGlobal(diagnostics_mod.nativeAssert));
+    try bindNativeClassMethod(vm, kernel_class, "benchmark", common.wrapGlobal(diagnostics_mod.nativeBenchmark));
+    try bindNativeClassMethod(vm, kernel_class, "param", common.wrapGlobal(params_mod.nativeParam));
+
+    // Bind 3D Static Primitive Constructors to Solid
+    try bindNativeClassMethod(vm, solid_class, "cube", common.wrapGlobal(primitives.nativeCube));
+    try bindNativeClassMethod(vm, solid_class, "cylinder", common.wrapGlobal(primitives.nativeCylinder));
+    try bindNativeClassMethod(vm, solid_class, "sphere", common.wrapGlobal(primitives.nativeSphere));
+    try bindNativeClassMethod(vm, solid_class, "torus", common.wrapGlobal(primitives.nativeTorus));
+    try bindNativeClassMethod(vm, solid_class, "polyhedron", common.wrapGlobal(primitives.nativePolyhedron));
+
+    // Bind 2D Static Primitive Constructors to Sketch2D
+    try bindNativeClassMethod(vm, sketch2d_class, "square", common.wrapGlobal(primitives.nativeSquare));
+    try bindNativeClassMethod(vm, sketch2d_class, "circle", common.wrapGlobal(primitives.nativeCircle));
+    try bindNativeClassMethod(vm, sketch2d_class, "polygon", common.wrapGlobal(primitives.nativePolygon));
+    try bindNativeClassMethod(vm, sketch2d_class, "regular_polygon", common.wrapGlobal(primitives.nativeRegularPolygon));
+    try bindNativeClassMethod(vm, sketch2d_class, "text", common.wrapGlobal(primitives.nativeText));
 
     // Bind CAD methods natively to the classes
     for (manifest.mesh_methods) |def| {
