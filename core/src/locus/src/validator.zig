@@ -32,6 +32,7 @@ pub const ValidatorConfig = struct {
     check_linked_lists: bool = true,
     check_coincidence: bool = true,
     check_degenerates: bool = true,
+    mute_errors: bool = false,
 };
 
 pub const BRepSanitizer = struct {
@@ -148,9 +149,11 @@ pub const BRepSanitizer = struct {
             // Note: Genus > 0 (e.g., toruses or blocks with through-holes) will have Euler <= 0.
             // This strict check assumes simple Genus 0 manifold shells.
             if (euler != 2) {
-                std.log.warn("Euler Violation: V={d}, E={d}, F={d} -> V-E+F = {d} (Expected 2)\n", .{
-                    v, e, f_count, euler,
-                });
+                if (!config.mute_errors) {
+                    std.log.warn("Euler Violation: V={d}, E={d}, F={d} -> V-E+F = {d} (Expected 2)\n", .{
+                        v, e, f_count, euler,
+                    });
+                }
                 return error.EulerCharacteristicMismatch;
             }
         }

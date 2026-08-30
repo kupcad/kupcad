@@ -41,6 +41,7 @@ test "Validator: Catch Dangling Twin and Euler Violations" {
     // 3. Disable twin checks and expect Euler characteristic (V-E+F = 3 - 3 + 1 = 1 != 2) to trigger
     const euler_err = validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, 0, tol, .{
         .check_twins = false,
+        .mute_errors = true,
     });
     try std.testing.expectError(error.EulerCharacteristicMismatch, euler_err);
 }

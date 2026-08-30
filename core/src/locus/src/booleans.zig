@@ -57,6 +57,33 @@ const FaceTracker = struct {
     source_solid: topo.SolidId,
 };
 
+fn calculateFaceArea(t_arena: *const topo.TopologyArena, face_id: topo.FaceId) f64 {
+    const face = t_arena.faces.items[face_id];
+    var total_area: f64 = 0.0;
+
+    for (0..face.loops_len) |l_off| {
+        const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+        const loop = t_arena.loops.items[loop_id];
+
+        var curr_he = loop.first_half_edge;
+        var cross_sum = math.Vec3{ 0, 0, 0 };
+        var safety: usize = 0;
+
+        while (true) : (safety += 1) {
+            if (safety > 10_000) break;
+            const he = t_arena.half_edges.items[curr_he];
+            const v1 = t_arena.vertices.items[he.start_vertex].point;
+            const v2 = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
+
+            cross_sum = math.add(cross_sum, math.cross(v1, v2));
+            curr_he = he.next;
+            if (curr_he == loop.first_half_edge) break;
+        }
+        total_area += 0.5 * math.mag(cross_sum);
+    }
+    return total_area;
+}
+
 /// Numerical root-refinement solver to intersect an edge segment with quadric surfaces (.cylinder, .cone, .sphere, .torus)
 fn intersectSegmentSurface(
     allocator: std.mem.Allocator,
@@ -1005,7 +1032,9 @@ pub fn computeBoolean(
 
     var active_original_he: topo.HalfEdgeId = std.math.maxInt(u32);
     var current_sub_he: topo.HalfEdgeId = 0;
+    var last_split_pt: ?math.Vec3 = null;
     var face_piercings = std.AutoHashMap(topo.FaceId, std.ArrayListUnmanaged(topo.VertexId)).init(allocator);
+
     defer {
         var pit = face_piercings.iterator();
         while (pit.next()) |entry| entry.value_ptr.deinit(allocator);
@@ -1016,7 +1045,15 @@ pub fn computeBoolean(
         if (event.he_id != active_original_he) {
             active_original_he = event.he_id;
             current_sub_he = event.he_id;
+            last_split_pt = null;
         }
+
+        // Prevent coincident splitting on the same edge
+        if (last_split_pt) |last_pt| {
+            if (math.distSq(last_pt, event.pt) < tol.squared) continue;
+        }
+        last_split_pt = event.pt;
+
         const parent_face = t_arena.loops.items[t_arena.half_edges.items[current_sub_he].loop_id].face_id;
         const twin_id = t_arena.half_edges.items[current_sub_he].twin;
         const twin_face = if (twin_id != topo.NULL_ID) t_arena.loops.items[t_arena.half_edges.items[twin_id].loop_id].face_id else null;
@@ -1088,8 +1125,11 @@ pub fn computeBoolean(
         };
 
         if (keep) {
+            // CULL DEGENERATE SLIVERS (Fixes Euler & DegenerateEdge violations)
+            const area = calculateFaceArea(t_arena, face_id);
+            if (area < tol.squared) continue;
+
             if (s_id == solid_b and op == .difference) {
-                // Flip spatial normal and structurally reverse the linked list
                 t_arena.faces.items[face_id].forward = !t_arena.faces.items[face_id].forward;
                 try reverseFaceLoops(allocator, t_arena, face_id);
             }
@@ -2250,6 +2290,54 @@ pub fn weldSolidVertices(
                     }
                     curr_he = he.next;
                     if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+
+    // Post-Weld Cleanup: Safely bypass collapsed degenerate edges
+    for (0..solid.shells_len) |s_off| {
+        const shell_id = t_arena.solid_shells.items[solid.shells_start + s_off];
+        const shell = t_arena.shells.items[shell_id];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = t_arena.faces.items[face_id];
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+                const loop = &t_arena.loops.items[loop_id];
+
+                var removed_any = true;
+                var safety_outer: usize = 0;
+                while (removed_any) : (safety_outer += 1) {
+                    if (safety_outer > 1000) return error.TopologyCorrupted;
+                    removed_any = false;
+                    var curr_id = loop.first_half_edge;
+                    const start_id = curr_id;
+                    var safety: usize = 0;
+
+                    while (true) : (safety += 1) {
+                        if (safety > 10_000) return error.TopologyCorrupted;
+                        const he = t_arena.half_edges.items[curr_id];
+                        const next_id = he.next;
+                        const next_he = t_arena.half_edges.items[next_id];
+
+                        if (he.start_vertex == next_he.start_vertex) {
+                            if (next_id == curr_id) break; // Entirely degenerate 1-edge loop
+
+                            const prev_id = he.prev;
+                            t_arena.half_edges.items[prev_id].next = next_id;
+                            t_arena.half_edges.items[next_id].prev = prev_id;
+
+                            if (loop.first_half_edge == curr_id) {
+                                loop.first_half_edge = next_id;
+                            }
+                            curr_id = next_id;
+                            removed_any = true;
+                            break; // Restart loop evaluation safely
+                        }
+                        curr_id = next_id;
+                        if (curr_id == start_id) break;
+                    }
                 }
             }
         }
