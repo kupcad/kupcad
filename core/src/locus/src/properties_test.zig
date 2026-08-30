@@ -29,7 +29,7 @@ test "Properties: Volume, Surface Area, Bounding Box, and Genus" {
     try std.testing.expectApproxEqAbs(600.0, sa, 1e-4);
 
     // Topology Invariant: Genus of a solid cube must be 0
-    const g = prop.genus(&t_arena, cube_id);
+    const g = prop.genus(alloc, &t_arena, cube_id);
     try std.testing.expectEqual(@as(i32, 0), g);
 }
 

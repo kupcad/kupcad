@@ -10,18 +10,49 @@ pub const BoundingBox = struct {
 };
 
 /// Computes the B-Rep's exact structural genus (handles / holes) using Euler-Poincaré characteristics.
-pub fn genus(t_arena: *const topo.TopologyArena, solid_id: topo.SolidId) i32 {
+pub fn genus(allocator: std.mem.Allocator, t_arena: *const topo.TopologyArena, solid_id: topo.SolidId) i32 {
     const solid = t_arena.solids.items[solid_id];
-    // Euler Formula: V - E + F = 2(1 - g)
-    // To strictly bound this to the targeted solid rather than the whole arena,
-    // we would ideally isolate the counts. For a simplified MVP evaluation:
-    const v = @as(i32, @intCast(t_arena.vertices.items.len));
-    const e = @as(i32, @intCast(t_arena.half_edges.items.len / 2));
-    const f = @as(i32, @intCast(t_arena.faces.items.len));
+    var v_set = std.AutoHashMap(topo.VertexId, void).init(allocator);
+    defer v_set.deinit();
 
-    _ = solid; // Normally iterate specific shells
+    var he_count: usize = 0;
+    var f_count: usize = 0;
+    var l_count: usize = 0;
 
-    const euler = v - e + f;
+    // Strictly isolate traversal to the requested solid
+    for (0..solid.shells_len) |s_off| {
+        const shell_id = t_arena.solid_shells.items[solid.shells_start + s_off];
+        const shell = t_arena.shells.items[shell_id];
+        f_count += shell.faces_len;
+
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = t_arena.faces.items[face_id];
+            l_count += face.loops_len;
+
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+                const loop = t_arena.loops.items[loop_id];
+                var curr_he = loop.first_half_edge;
+                while (true) {
+                    const he = t_arena.half_edges.items[curr_he];
+                    he_count += 1;
+                    v_set.put(he.start_vertex, {}) catch {};
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+
+    const v = @as(i32, @intCast(v_set.count()));
+    const e = @as(i32, @intCast(he_count / 2));
+    const f = @as(i32, @intCast(f_count));
+    const l = @as(i32, @intCast(l_count));
+
+    // Euler Formula accounting for faces with multiple boundaries (holes):
+    // V - E + F - (L - F) = 2(1 - G)  ==> V - E + 2F - L
+    const euler = v - e + (2 * f) - l;
     return @divTrunc(2 - euler, 2);
 }
 

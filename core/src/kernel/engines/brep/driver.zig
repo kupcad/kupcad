@@ -446,7 +446,8 @@ fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
 fn genusImpl(handle: geom.GeometryHandle) i32 {
     if (@intFromPtr(handle.ptr) == 0) return 0;
     const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
-    return locus_prop.genus(&solid.t_arena, solid.solid_id);
+    // Pass the backend_allocator injected at the top of the driver
+    return locus_prop.genus(backend_allocator, &solid.t_arena, solid.solid_id);
 }
 
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {

@@ -5,6 +5,8 @@ const geom = @import("geometry.zig");
 const booleans = @import("booleans.zig");
 const math = @import("math.zig");
 const transforms = @import("transforms.zig");
+const validator = @import("validator.zig");
+const prop = @import("properties.zig");
 
 const test_tol = math.Tolerance{
     .absolute = 1e-5,
@@ -560,4 +562,35 @@ test "Projections: 2D Point Containment Boundary Precision" {
     try std.testing.expect(booleans.isPointInPolygon2D(.{ 0.0, 0.0 }, &polygon, tol));
     try std.testing.expect(booleans.isPointInPolygon2D(.{ 5.0, 0.0 }, &polygon, tol));
     try std.testing.expect(!booleans.isPointInPolygon2D(.{ 6.0, 0.0 }, &polygon, tol));
+}
+
+test "CSG Pipeline: Genus 1 Through-Hole Euler Validation" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Create a 2D profile with a hole (Outer 20x20 square, Inner 10x10 square)
+    const outer = [_][2]f64{ .{ -10, -10 }, .{ 10, -10 }, .{ 10, 10 }, .{ -10, 10 } };
+    const inner = [_][2]f64{ .{ -5, -5 }, .{ -5, 5 }, .{ 5, 5 }, .{ 5, -5 } };
+    const contours = [_][]const [2]f64{ &outer, &inner };
+
+    // Generate the multi-loop face and extrude it into a hollow prism (Genus 1)
+    const cs_id = try generators.generatePolygonsEvenOdd(alloc, &t_arena, &g_arena, &contours);
+    const sweeps = @import("sweeps.zig");
+    const result = try sweeps.extrudeFace(alloc, &t_arena, &g_arena, cs_id, .{ 0, 0, 10 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // Validate structural integrity and correct Euler evaluation for Genus 1
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, tol, .{
+        .check_euler = true,
+        .require_closed_shells = true,
+        .check_twins = true,
+    });
+
+    // Validate the actual Genus mathematically evaluates to 1
+    const g = prop.genus(alloc, &t_arena, result);
+    try std.testing.expectEqual(@as(i32, 1), g);
 }

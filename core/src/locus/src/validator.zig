@@ -144,14 +144,23 @@ pub const BRepSanitizer = struct {
         if (config.check_euler and f_count > 0 and config.require_closed_shells) {
             const v = visited_vertices.count();
             const e = he_count / 2;
-            const euler = @as(i32, @intCast(v)) - @as(i32, @intCast(e)) + @as(i32, @intCast(f_count));
 
-            // Genus 0 (spheres/cubes) = 2. Genus 1 (one hole) = 0. Genus 2 = -2.
+            // Calculate total loops across all faces in this shell
+            var l_count: usize = 0;
+            for (0..shell.faces_len) |f_off| {
+                const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+                l_count += t_arena.faces.items[face_id].loops_len;
+            }
+
+            // H = L - F
+            const holes = @as(i32, @intCast(l_count)) - @as(i32, @intCast(f_count));
+            const euler = @as(i32, @intCast(v)) - @as(i32, @intCast(e)) + @as(i32, @intCast(f_count)) - holes;
+
             // Valid orientable closed manifolds must have an even Euler characteristic <= 2.
             if (euler > 2 or @rem(euler, 2) != 0) {
                 if (!config.mute_errors) {
-                    std.log.warn("Euler Violation: V={d}, E={d}, F={d} -> V-E+F = {d} (Expected even number <= 2)\n", .{
-                        v, e, f_count, euler,
+                    std.log.warn("Euler Violation: V={d}, E={d}, F={d}, L={d} -> Euler = {d} (Expected even number <= 2)\n", .{
+                        v, e, f_count, l_count, euler,
                     });
                 }
                 return error.EulerCharacteristicMismatch;
