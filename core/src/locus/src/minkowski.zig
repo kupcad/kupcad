@@ -88,13 +88,24 @@ pub fn minkowskiSumConvex(
 
         if (face_v_ids.items.len < 3) continue;
 
-        // Push Plane geometry using the first vertex position as the local origin
+        // Push Plane geometry calculating true U and V axes from the triangle's vertices
         const plane_idx: u24 = @intCast(g_arena.planes.items.len);
         const p0_pos = t_arena.vertices.items[face_v_ids.items[0]].point;
+        const p1_pos = t_arena.vertices.items[face_v_ids.items[1]].point;
+        const p2_pos = t_arena.vertices.items[face_v_ids.items[2]].point;
+
+        const u_axis = math.normalize(math.sub(p1_pos, p0_pos));
+        var normal = math.normalize(math.cross(u_axis, math.sub(p2_pos, p0_pos)));
+
+        // Fallback to Quickhull's calculated normal if vertices are nearly degenerate
+        if (math.magSq(normal) < 1e-12) normal = hull_face.plane_normal;
+
+        const v_axis = math.normalize(math.cross(normal, u_axis));
+
         try g_arena.planes.append(allocator, .{
             .origin = p0_pos,
-            .u_axis = .{ 1, 0, 0 },
-            .v_axis = .{ 0, 1, 0 },
+            .u_axis = u_axis,
+            .v_axis = v_axis,
         });
 
         // Wire Half-Edges, Loops, and Face using the generator helper

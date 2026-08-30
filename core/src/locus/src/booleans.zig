@@ -1176,16 +1176,15 @@ pub fn computeBoolean(
         const validator = @import("validator.zig");
         validator.BRepSanitizer.validateSolid(allocator, t_arena, g_arena, new_solid_id, tol, .{
             .enable_checks = true,
-
             // STRICT TOPOLOGY ACTIVE
             .check_twins = true,
             .check_linked_lists = true,
-
             // DELAYED UNTIL NEXT REFACTOR
             .check_euler = false,
             .require_closed_shells = false,
-            .check_coincidence = false,
-            .check_degenerates = false, // Bypasses the DegenerateEdge failure
+            // GEOMETRY CHECKS ACTIVATED
+            .check_coincidence = true,
+            .check_degenerates = true,
         }) catch |err| {
             std.log.warn("BRepSanitizer failed after {s} operation: {s}", .{
                 @tagName(op), @errorName(err),
@@ -1484,6 +1483,7 @@ pub fn intersectSurfaces(
 fn intersectInfiniteLineSegment2D(line_o: [2]f64, line_d: [2]f64, p1: [2]f64, p2: [2]f64, tol: math.Tolerance) ?f64 {
     const seg_d = [2]f64{ p2[0] - p1[0], p2[1] - p1[1] };
     const denom = line_d[0] * seg_d[1] - line_d[1] * seg_d[0];
+
     if (@abs(denom) < math.MATH_EPSILON) return null; // Parallel
 
     const diff = [2]f64{ p1[0] - line_o[0], p1[1] - line_o[1] };

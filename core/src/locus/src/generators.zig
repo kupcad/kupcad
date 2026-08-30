@@ -1,7 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const math = @import("math.zig");
+const validator = @import("validator.zig");
 
 pub const GenError = error{OutOfMemory};
 
@@ -147,6 +149,17 @@ pub fn generateCube(
     try t_arena.solid_shells.append(allocator, shell_id);
     try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
 
+    // Validate base inputs are mathematically watertight before Booleans touch them
+    if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+        // Primitives have no floating point drift upon creation, static tolerance is safe
+        const base_tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+        validator.BRepSanitizer.validateSolid(allocator, t_arena, g_arena, solid_id, base_tol, .{
+            .require_closed_shells = true,
+            .check_euler = true,
+            .check_twins = true,
+        }) catch return error.OutOfMemory;
+    }
+
     return solid_id;
 }
 
@@ -226,6 +239,17 @@ pub fn generateCylinder(
     const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
     try t_arena.solid_shells.append(allocator, shell_id);
     try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
+
+    // Validate base inputs are mathematically watertight before Booleans touch them
+    if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+        // Primitives have no floating point drift upon creation, static tolerance is safe
+        const base_tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+        validator.BRepSanitizer.validateSolid(allocator, t_arena, g_arena, solid_id, base_tol, .{
+            .require_closed_shells = true,
+            .check_euler = true,
+            .check_twins = true,
+        }) catch return error.OutOfMemory;
+    }
 
     return solid_id;
 }
