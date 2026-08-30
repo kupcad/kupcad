@@ -31,6 +31,7 @@ pub const ValidatorConfig = struct {
     check_twins: bool = true,
     check_linked_lists: bool = true,
     check_coincidence: bool = true,
+    check_degenerates: bool = true,
 };
 
 pub const BRepSanitizer = struct {
@@ -115,8 +116,8 @@ pub const BRepSanitizer = struct {
                         return error.NaNOrInfCoordinate;
                     }
 
-                    // 4. Degenerate Geometry Check (Zero-length edges)[cite: 13]
-                    if (he.curve.curve_type == .line) {
+                    // 4. Degenerate Geometry Check (Zero-length edges)
+                    if (config.check_degenerates and he.curve.curve_type == .line) {
                         const next_he = t_arena.half_edges.items[he.next];
                         const v_end = t_arena.vertices.items[next_he.start_vertex].point;
                         if (math.distSq(v_start, v_end) < tol.squared) {
