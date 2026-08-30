@@ -275,6 +275,10 @@ pub const Handler = struct {
             .documentFormattingProvider = .{ .bool = true },
             .hoverProvider = .{ .bool = true },
             .inlayHintProvider = .{ .bool = true },
+            .completionProvider = .{
+                .triggerCharacters = &.{ ".", ":" },
+            },
+            .documentSymbolProvider = .{ .bool = true },
         };
 
         if (builtin.mode == .Debug) {
@@ -477,7 +481,7 @@ pub const Handler = struct {
     pub fn @"textDocument/inlayHint"(
         self: *Handler,
         arena: std.mem.Allocator,
-        params: lsp.types.InlayHint.Params, // ⚡ Updated from InlayHintParams
+        params: lsp.types.InlayHint.Params,
     ) !?[]const lsp.types.InlayHint {
         self.log("Inlay hints requested for {s}", .{params.textDocument.uri});
         const buf = self.files.get(params.textDocument.uri) orelse return null;
@@ -551,6 +555,139 @@ pub const Handler = struct {
         }
 
         return hints.items;
+    }
+
+    pub fn @"textDocument/completion"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.completion.Params,
+    ) !lsp.ResultType("textDocument/completion") {
+        self.log("Completion requested for {s}", .{params.textDocument.uri});
+
+        var items = std.ArrayListUnmanaged(lsp.types.completion.Item).empty;
+
+        // Safely fetch the current document source buffer
+        const doc_buf = self.files.get(params.textDocument.uri) orelse return .{ .completion_items = items.items };
+
+        // Find the exact byte index of the user's cursor
+        const cursor_offset = lsp.offsets.positionToIndex(doc_buf.source, params.position, self.offset_encoding);
+
+        var is_method_call = false;
+        var i = cursor_offset;
+
+        // Scan backwards through the source code from the cursor
+        while (i > 0) {
+            i -= 1;
+            const c = doc_buf.source[i];
+
+            // Skip over the characters of the word the user is currently typing (e.g. "tra")
+            if (std.ascii.isAlphanumeric(c) or c == '_' or c == '?' or c == '!') {
+                continue;
+            }
+
+            // We hit a boundary! If it's a dot, we are inside a method chain
+            if (c == '.') {
+                is_method_call = true;
+            }
+            break;
+        }
+
+        if (is_method_call) {
+            // CONTEXT: After a dot `.`
+            // Suggest strictly mesh methods
+            for (manifest.mesh_methods) |mm| {
+                try items.append(arena, .{
+                    .label = mm.name,
+                    .kind = .Method,
+                });
+            }
+        } else {
+            // CONTEXT: Standard Scope
+            // Suggest Classes, Global Functions, and Primitives
+            for (manifest.lsp_completions) |name| {
+                const is_class = name.len > 0 and std.ascii.isUpper(name[0]);
+                try items.append(arena, .{
+                    .label = name,
+                    .kind = if (is_class) .Class else .Function, // "Function" icon fits globals better
+                });
+            }
+        }
+
+        return .{ .completion_items = items.items };
+    }
+
+    pub fn @"textDocument/documentSymbol"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.DocumentSymbol.Params,
+    ) !lsp.ResultType("textDocument/documentSymbol") {
+        self.log("Document symbol requested for {s}", .{params.textDocument.uri});
+        const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
+        const doc = doc_buf.doc orelse return null;
+
+        var symbols = std.ArrayListUnmanaged(lsp.types.DocumentSymbol).empty;
+        var line_index = try api.LineIndex.init(arena, doc_buf.source);
+
+        // ⚡ Fix: Capture node by reference using `*node`
+        for (doc.tree.nodes.items, 0..) |*node, i| {
+            var sym_name: ?[]const u8 = null;
+            var sym_kind: lsp.types.SymbolKind = .Variable;
+
+            switch (node.tag) {
+                .def_stmt => {
+                    const ds = doc.tree.defStmt(node);
+                    if (ds.name != .none) sym_name = doc.tree.getString(ds.name);
+                    sym_kind = .Function;
+                },
+                .class_stmt => {
+                    const cs = doc.tree.classStmt(node);
+                    const name_node = doc.tree.getNode(cs.name);
+                    if (name_node != null and name_node.?.tag == .identifier) {
+                        sym_name = doc.tree.getString(@as(ast.StringId, @enumFromInt(name_node.?.data)));
+                    }
+                    sym_kind = .Class;
+                },
+                .module_stmt => {
+                    const ms = doc.tree.moduleStmt(node);
+                    if (ms.name != .none) sym_name = doc.tree.getString(ms.name);
+                    sym_kind = .Module;
+                },
+                .assignment => {
+                    if (doc.parents[i] == .none) {
+                        const assign = doc.tree.assignment(node);
+                        if (assign.name != .none) sym_name = doc.tree.getString(assign.name);
+                        sym_kind = .Variable;
+                    }
+                },
+                else => continue,
+            }
+
+            if (sym_name) |name| {
+                const start_offset = doc.tokens.starts[node.main_token];
+                const length = doc.tokens.lengths[node.main_token];
+                const end_offset = start_offset + length;
+
+                const start_pos = lsp.types.Position{
+                    .line = line_index.getLine(start_offset),
+                    .character = self.getColumn(&line_index, start_offset),
+                };
+                const end_pos = lsp.types.Position{
+                    .line = line_index.getLine(end_offset),
+                    .character = self.getColumn(&line_index, end_offset),
+                };
+
+                const range = lsp.types.Range{ .start = start_pos, .end = end_pos };
+
+                try symbols.append(arena, .{
+                    .name = name,
+                    .kind = sym_kind,
+                    .range = range,
+                    .selectionRange = range,
+                });
+            }
+        }
+
+        return .{ .document_symbols = symbols.items };
     }
 
     fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, source: []const u8) !void {

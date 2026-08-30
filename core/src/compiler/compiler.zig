@@ -7,6 +7,7 @@ const limits = @import("../vm/limits.zig");
 const resolver = @import("../core/resolver.zig");
 const verifier = @import("../vm/verifier.zig");
 const VM = @import("../vm/vm.zig").VM;
+const manifest = @import("../stdlib/manifest.zig");
 
 const scope_mod = @import("scope.zig");
 const emitter_mod = @import("emitter.zig");
@@ -26,62 +27,6 @@ pub const Local = scope_mod.Local;
 pub const LoopState = scope_mod.LoopState;
 const VarType = scope_mod.VarType;
 const ResolvedVar = scope_mod.ResolvedVar;
-
-const Intrinsic = enum {
-    raise_err,
-    block_given_chk,
-    yield_call,
-    defined_chk,
-    protected_symbol,
-};
-
-const compiler_intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
-    .{ "raise", .raise_err },
-    .{ "block_given?", .block_given_chk },
-    .{ "yield", .yield_call },
-    .{ "defined?", .defined_chk },
-    .{ "param", .protected_symbol },
-    // Protect the CLI injection map
-    .{ "params", .protected_symbol },
-
-    // IO & Debugging
-    .{ "puts", .protected_symbol },
-    .{ "print", .protected_symbol },
-    .{ "inspect", .protected_symbol },
-    .{ "debugger", .protected_symbol },
-
-    // 3D Primitives
-    .{ "cube", .protected_symbol },
-    .{ "cylinder", .protected_symbol },
-    .{ "sphere", .protected_symbol },
-
-    // 2D Primitives
-    .{ "square", .protected_symbol },
-    .{ "circle", .protected_symbol },
-    .{ "polygon", .protected_symbol },
-
-    // Core Data Classes
-    .{ "Object", .protected_symbol },
-    .{ "Array", .protected_symbol },
-    .{ "String", .protected_symbol },
-    .{ "Map", .protected_symbol },
-    .{ "Number", .protected_symbol },
-    .{ "Symbol", .protected_symbol },
-    .{ "Boolean", .protected_symbol },
-
-    // CAD Geometry Classes
-    .{ "Geometry", .protected_symbol },
-    .{ "CrossSection", .protected_symbol },
-    .{ "Solid", .protected_symbol },
-    .{ "Sketch2D", .protected_symbol },
-    .{ "BoundingBox", .protected_symbol },
-
-    // System Modules
-    .{ "Math", .protected_symbol },
-    .{ "GC", .protected_symbol },
-    .{ "Kernel", .protected_symbol },
-    .{ "CAD", .protected_symbol },
-});
 
 pub const Compiler = struct {
     allocator: std.mem.Allocator,
@@ -431,7 +376,7 @@ pub const Compiler = struct {
         const name_id = assign_payload.name;
         const name_str = self.tree.getString(name_id);
 
-        if (compiler_intrinsics.has(name_str)) {
+        if (manifest.compiler_intrinsics.has(name_str)) {
             return error.ProtectedSymbol;
         }
 
@@ -588,7 +533,7 @@ pub const Compiler = struct {
             const sym = self.symbols[@intFromEnum(node_idx)];
             if (self.enclosing == null or sym.kind == .global) {
                 const def_name_str = self.tree.getString(def_name_id);
-                if (compiler_intrinsics.has(def_name_str)) {
+                if (manifest.compiler_intrinsics.has(def_name_str)) {
                     return error.ProtectedSymbol;
                 }
 
@@ -1133,7 +1078,7 @@ pub const Compiler = struct {
         }
 
         // Intercept Compiler Intrinsics via O(1) lookup
-        if (compiler_intrinsics.get(func_name)) |intrinsic| {
+        if (manifest.compiler_intrinsics.get(func_name)) |intrinsic| {
             switch (intrinsic) {
                 .raise_err => {
                     const args = self.tree.getNamedArgs(mc.args);
@@ -1333,7 +1278,7 @@ pub const Compiler = struct {
         const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
         const name_str = self.tree.getString(name_id);
 
-        if (compiler_intrinsics.has(name_str)) {
+        if (manifest.compiler_intrinsics.has(name_str)) {
             return error.ProtectedSymbol;
         }
 

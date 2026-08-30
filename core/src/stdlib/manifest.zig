@@ -27,10 +27,42 @@ pub const Category = enum {
     brep_op,
 };
 
+pub const Intrinsic = enum {
+    raise_err,
+    block_given_chk,
+    yield_call,
+    defined_chk,
+    protected_symbol,
+};
+
 pub const GlobalFunction = struct {
     name: []const u8,
     func: value.NativeFn,
     category: Category,
+};
+
+// Strongly typed function pointer for Mesh methods
+pub const MeshMethodFn = *const fn (vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value;
+
+pub const MeshMethod = struct {
+    name: []const u8,
+    category: Category,
+    func: value.NativeFn,
+};
+
+pub const core_namespaces = [_][]const u8{
+    "Object",   "Array",        "String",    "Map",      "Number",      "Symbol", "Boolean",
+    "Geometry", "CrossSection", "Solid",     "Sketch2D", "BoundingBox", "Math",   "GC",
+    "Kernel",   "Diagnostics",  "Benchmark", "Param",    "CAD",
+};
+
+// Core language keywords and intrinsic system states
+pub const language_intrinsics = [_]struct { []const u8, Intrinsic }{
+    .{ "raise", .raise_err },
+    .{ "block_given?", .block_given_chk },
+    .{ "yield", .yield_call },
+    .{ "defined?", .defined_chk },
+    .{ "params", .protected_symbol }, // CLI injection map
 };
 
 pub const global_functions = [_]GlobalFunction{
@@ -60,15 +92,6 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "text", .func = common.wrapGlobal(primitives.nativeText), .category = .primitive_2d },
     .{ .name = "import_stl", .func = common.wrapGlobal(stl.nativeImportStl), .category = .file_io },
     .{ .name = "import_step", .func = common.wrapGlobal(step.nativeImportStep), .category = .file_io },
-};
-
-// Strongly typed function pointer for Mesh methods
-pub const MeshMethodFn = *const fn (vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value;
-
-pub const MeshMethod = struct {
-    name: []const u8,
-    category: Category,
-    func: value.NativeFn,
 };
 
 pub const mesh_methods = [_]MeshMethod{
@@ -112,15 +135,54 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "export_gltf", .category = .file_io, .func = common.wrapMethod(gltf.meshExportGltf) },
 };
 
-// Compile-time generated O(1) jump table
-pub const method_map = std.StaticStringMap(MeshMethodFn).initComptime(blk: {
-    const num_methods = mesh_methods.len;
-    var kvs: [num_methods]struct { []const u8, MeshMethodFn } = undefined;
-    for (mesh_methods, 0..) |m, i| {
-        kvs[i] = .{ m.name, m.func };
+// --- 2. Comptime Map for Compiler Protection ---
+fn buildCompilerIntrinsics() std.StaticStringMap(Intrinsic) {
+    const total_len = language_intrinsics.len + core_namespaces.len + global_functions.len;
+    var combined: [total_len]struct { []const u8, Intrinsic } = undefined;
+    var idx = 0;
+
+    for (language_intrinsics) |item| {
+        combined[idx] = item;
+        idx += 1;
     }
-    break :blk kvs;
-});
+    for (core_namespaces) |ns| {
+        combined[idx] = .{ ns, .protected_symbol };
+        idx += 1;
+    }
+    for (global_functions) |gf| {
+        combined[idx] = .{ gf.name, .protected_symbol };
+        idx += 1;
+    }
+
+    return std.StaticStringMap(Intrinsic).initComptime(combined);
+}
+
+/// Prevents users from overriding core classes and CAD globals.
+pub const compiler_intrinsics = buildCompilerIntrinsics();
+
+/// A flat array of all valid standard library names, methods, and classes for LSP.
+/// Automatically deduplicates overlapping names by leveraging the compiler_intrinsics map in O(N) time.
+fn buildLspCompletions() [core_namespaces.len + global_functions.len + mesh_methods.len][]const u8 {
+    var arr: [core_namespaces.len + global_functions.len + mesh_methods.len][]const u8 = undefined;
+    var idx: usize = 0;
+
+    for (core_namespaces) |ns| {
+        arr[idx] = ns;
+        idx += 1;
+    }
+    for (global_functions) |gf| {
+        arr[idx] = gf.name;
+        idx += 1;
+    }
+    for (mesh_methods) |mm| {
+        arr[idx] = mm.name;
+        idx += 1;
+    }
+
+    return arr;
+}
+
+pub const lsp_completions = buildLspCompletions();
 
 // The O(1) Dynamic Dispatcher (Now acts only as a pure Host Fallback)
 pub fn cadInvokeHandler(vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
