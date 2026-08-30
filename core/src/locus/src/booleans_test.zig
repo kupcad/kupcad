@@ -541,11 +541,11 @@ test "Booleans: Point Inclusion for Multi-Body Boundaries" {
     const tol = math.Tolerance{ .absolute = 1e-7, .parametric = 1e-7, .squared = 1e-14 };
 
     // Point inside left standoff
-    try std.testing.expect(booleans.isPointInsideSolidFaces(&t_arena, &g_arena, all_faces.items, .{ -10.0, 0.0, 0.0 }, tol));
+    try std.testing.expect(try booleans.isPointInsideSolidFaces(alloc, &t_arena, &g_arena, all_faces.items, .{ -10.0, 0.0, 0.0 }, tol));
     // Point inside right standoff
-    try std.testing.expect(booleans.isPointInsideSolidFaces(&t_arena, &g_arena, all_faces.items, .{ 10.0, 0.0, 0.0 }, tol));
+    try std.testing.expect(try booleans.isPointInsideSolidFaces(alloc, &t_arena, &g_arena, all_faces.items, .{ 10.0, 0.0, 0.0 }, tol));
     // Point outside between standoffs
-    try std.testing.expect(!booleans.isPointInsideSolidFaces(&t_arena, &g_arena, all_faces.items, .{ 0.0, 0.0, 0.0 }, tol));
+    try std.testing.expect(!(try booleans.isPointInsideSolidFaces(alloc, &t_arena, &g_arena, all_faces.items, .{ 0.0, 0.0, 0.0 }, tol)));
 }
 
 test "Projections: 2D Point Containment Boundary Precision" {

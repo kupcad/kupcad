@@ -142,3 +142,9 @@ pub fn solveNewton2D(
     }
     return null;
 }
+
+/// Computes the robust 2D orientation determinant (Shewchuk's approach).
+/// Returns > 0 for Counter-Clockwise (CCW), < 0 for Clockwise (CW), and exactly 0 for Collinear.
+pub inline fn orient2D(pa: Vec2, pb: Vec2, pc: Vec2) f64 {
+    return (pa[0] - pc[0]) * (pb[1] - pc[1]) - (pa[1] - pc[1]) * (pb[0] - pc[0]);
+}

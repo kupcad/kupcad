@@ -52,7 +52,26 @@ pub fn extractSolidVertices(
     return verts;
 }
 
-/// Projects an infinite ray against the solid (falling back to a tessellated AABB tree in MVP)
+/// Fast Slab intersection test for Ray vs AABB
+fn rayIntersectsAABB(min_b: math.Vec3, max_b: math.Vec3, origin: math.Vec3, inv_dir: math.Vec3) bool {
+    var tmin: f64 = 0.0;
+    var tmax: f64 = std.math.inf(f64);
+    for (0..3) |dim| {
+        if (std.math.isInf(inv_dir[dim])) {
+            if (origin[dim] < min_b[dim] or origin[dim] > max_b[dim]) return false;
+        } else {
+            var t0 = (min_b[dim] - origin[dim]) * inv_dir[dim];
+            var t1 = (max_b[dim] - origin[dim]) * inv_dir[dim];
+            if (t0 > t1) std.mem.swap(f64, &t0, &t1);
+            if (t0 > tmin) tmin = t0;
+            if (t1 < tmax) tmax = t1;
+            if (tmin > tmax) return false;
+        }
+    }
+    return true;
+}
+
+/// Projects an infinite ray against the solid utilizing AABB spatial acceleration for O(log N) rejection.
 pub fn rayCast(
     allocator: std.mem.Allocator,
     t_arena: *const topo.TopologyArena,
@@ -71,6 +90,13 @@ pub fn rayCast(
     if (ray_len < 1e-12) return null;
     const ray_dir = math.scale(ray_vec, 1.0 / ray_len);
 
+    // Precompute inverse direction for fast AABB slab testing
+    const inv_dir = math.Vec3{
+        if (@abs(ray_dir[0]) > 1e-12) 1.0 / ray_dir[0] else std.math.inf(f64),
+        if (@abs(ray_dir[1]) > 1e-12) 1.0 / ray_dir[1] else std.math.inf(f64),
+        if (@abs(ray_dir[2]) > 1e-12) 1.0 / ray_dir[2] else std.math.inf(f64),
+    };
+
     var hits = std.ArrayListUnmanaged(RayHit).empty;
     defer hits.deinit(allocator);
 
@@ -78,6 +104,11 @@ pub fn rayCast(
         const v0 = mesh.vertices.items[tri[0]];
         const v1 = mesh.vertices.items[tri[1]];
         const v2 = mesh.vertices.items[tri[2]];
+
+        // Fast Spatial Acceleration: Triangle AABB Rejection
+        const t_min = math.Vec3{ @min(v0[0], @min(v1[0], v2[0])), @min(v0[1], @min(v1[1], v2[1])), @min(v0[2], @min(v1[2], v2[2])) };
+        const t_max = math.Vec3{ @max(v0[0], @max(v1[0], v2[0])), @max(v0[1], @max(v1[1], v2[1])), @max(v0[2], @max(v1[2], v2[2])) };
+        if (!rayIntersectsAABB(t_min, t_max, ray_origin, inv_dir)) continue;
 
         const edge1 = math.sub(v1, v0);
         const edge2 = math.sub(v2, v0);

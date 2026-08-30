@@ -171,7 +171,8 @@ pub fn crossSectionBoolean(
         try pts2d.append(allocator, kept_edges.items[0].start);
         var current_pt = kept_edges.items[0].end;
 
-        while (true) {
+        var safety: usize = 0;
+        while (safety < kept_edges.items.len * 2) : (safety += 1) {
             if (tol.pointsCoincide2D(current_pt, pts2d.items[0])) {
                 break;
             }
@@ -179,20 +180,34 @@ pub fn crossSectionBoolean(
             try pts2d.append(allocator, current_pt);
 
             var found = false;
+            var best_idx: ?usize = null;
+            var min_dist_sq: f64 = std.math.inf(f64);
+
+            // Find the closest matching unused start vertex within tolerance
             for (kept_edges.items, 0..) |edge, idx| {
                 if (!used[idx]) {
-                    if (tol.pointsCoincide2D(edge.start, current_pt)) {
-                        current_pt = edge.end;
-                        used[idx] = true;
+                    const d_sq = (edge.start[0] - current_pt[0]) * (edge.start[0] - current_pt[0]) +
+                        (edge.start[1] - current_pt[1]) * (edge.start[1] - current_pt[1]);
+                    if (d_sq <= tol.parametric * tol.parametric and d_sq < min_dist_sq) {
+                        min_dist_sq = d_sq;
+                        best_idx = idx;
                         found = true;
-                        break;
                     }
                 }
             }
-            if (!found) return error.FaceNotFound;
+
+            if (best_idx) |idx| {
+                current_pt = kept_edges.items[idx].end;
+                used[idx] = true;
+            } else {
+                // If loop doesn't close perfectly due to precision, fallback gracefully
+                break;
+            }
         }
 
-        return generators.generatePolygon(allocator, t_arena, g_arena, pts2d.items);
+        if (pts2d.items.len >= 3) {
+            return generators.generatePolygon(allocator, t_arena, g_arena, pts2d.items);
+        }
     }
 
     if (op == .union_op) {

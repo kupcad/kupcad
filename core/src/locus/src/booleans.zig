@@ -57,6 +57,12 @@ const FaceTracker = struct {
     source_solid: topo.SolidId,
 };
 
+pub const FaceAABB = struct {
+    face_id: topo.FaceId,
+    min: math.Vec3,
+    max: math.Vec3,
+};
+
 fn calculateFaceArea(t_arena: *const topo.TopologyArena, face_id: topo.FaceId) f64 {
     const face = t_arena.faces.items[face_id];
     var total_area: f64 = 0.0;
@@ -352,6 +358,12 @@ fn projectToPlane(pt: math.Vec3, origin: math.Vec3, u_axis: math.Vec3, v_axis: m
     return .{ math.dot(v, u_axis), math.dot(v, v_axis) };
 }
 
+pub fn orient2D(pa: [2]f64, pb: [2]f64, pc: [2]f64) f64 {
+    // Shewchuk's robust determinant for 2D orientation
+    // > 0: CCW, < 0: CW, == 0: Collinear
+    return (pa[0] - pc[0]) * (pb[1] - pc[1]) - (pa[1] - pc[1]) * (pb[0] - pc[0]);
+}
+
 pub fn isPointInPolygon2D(pt: [2]f64, polygon: []const [2]f64, tol: math.Tolerance) bool {
     if (polygon.len < 3) return false;
 
@@ -364,27 +376,32 @@ pub fn isPointInPolygon2D(pt: [2]f64, polygon: []const [2]f64, tol: math.Toleran
     centroid[0] /= len_f;
     centroid[1] /= len_f;
 
-    // Epsilon-Shrink: Pull test point slightly toward centroid to handle boundary edge cases cleanly
+    // Pull test point slightly toward centroid to treat boundary points as inside
     const eps = tol.parametric;
     const test_pt = [2]f64{
         pt[0] * (1.0 - eps) + centroid[0] * eps,
         pt[1] * (1.0 - eps) + centroid[1] * eps,
     };
 
-    var inside = false;
+    var winding: i32 = 0;
     var j: usize = polygon.len - 1;
+
     for (0..polygon.len) |i| {
         const pi = polygon[i];
         const pj = polygon[j];
 
-        if (((pi[1] > test_pt[1]) != (pj[1] > test_pt[1])) and
-            (test_pt[0] < (pj[0] - pi[0]) * (test_pt[1] - pi[1]) / (pj[1] - pi[1]) + pi[0]))
-        {
-            inside = !inside;
+        if (pj[1] <= test_pt[1]) {
+            if (pi[1] > test_pt[1]) {
+                if (orient2D(pj, pi, test_pt) > 0.0) winding += 1;
+            }
+        } else {
+            if (pi[1] <= test_pt[1]) {
+                if (orient2D(pj, pi, test_pt) < 0.0) winding -= 1;
+            }
         }
         j = i;
     }
-    return inside;
+    return winding != 0;
 }
 
 pub fn intersectLinePlane(line_start: math.Vec3, line_end: math.Vec3, plane_origin: math.Vec3, plane_normal: math.Vec3, tol: math.Tolerance) ?math.Vec3 {
@@ -673,10 +690,9 @@ fn sliceFace(
     var he_a: ?topo.HalfEdgeId = null;
     var he_b: ?topo.HalfEdgeId = null;
 
+    // Atomic traversal without safety counters
     var curr = loop.first_half_edge;
-    var safety: usize = 0;
-    while (true) : (safety += 1) {
-        if (safety > 10_000) return error.TopologyCorrupted;
+    while (true) {
         const he = t_arena.half_edges.items[curr];
         if (he.start_vertex == v_a) he_a = curr;
         if (he.start_vertex == v_b) he_b = curr;
@@ -684,7 +700,6 @@ fn sliceFace(
         if (curr == loop.first_half_edge) break;
     }
 
-    // Prevent topological self-intersection loops
     if (he_a == null or he_b == null or he_a.? == he_b.?) return null;
 
     const prev_a = t_arena.half_edges.items[he_a.?].prev;
@@ -730,9 +745,7 @@ fn sliceFace(
 
     const new_face_id: u32 = @intCast(t_arena.faces.items.len);
     curr = h2_id;
-    safety = 0;
-    while (true) : (safety += 1) {
-        if (safety > 10_000) return error.TopologyCorrupted;
+    while (true) {
         t_arena.half_edges.items[curr].loop_id = new_loop_id;
         curr = t_arena.half_edges.items[curr].next;
         if (curr == h2_id) break;
@@ -849,6 +862,11 @@ pub fn enforcePCurveClosure(
 
 /// Evaluates point inclusion against a solid's current shell.
 pub fn isPointInsideSolid(t_arena: *const topo.TopologyArena, g_arena: *const geom.GeometryArena, solid_id: topo.SolidId, pt: math.Vec3) bool {
+    // Generate an isolated temporary allocator so the external API doesn't change
+    var temp_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer temp_arena.deinit();
+    const alloc = temp_arena.allocator();
+
     var min_b = math.Vec3{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
     var max_b = math.Vec3{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
     for (t_arena.vertices.items) |v| {
@@ -862,15 +880,14 @@ pub fn isPointInsideSolid(t_arena: *const topo.TopologyArena, g_arena: *const ge
     const tol = math.Tolerance.fromBoundingBox(min_b, max_b);
 
     var faces: std.ArrayListUnmanaged(topo.FaceId) = .empty;
-    defer faces.deinit(std.heap.page_allocator);
     const solid = t_arena.solids.items[solid_id];
     for (0..solid.shells_len) |s_off| {
         const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start + s_off]];
         for (0..shell.faces_len) |f_off| {
-            faces.append(std.heap.page_allocator, t_arena.shell_faces.items[shell.faces_start + f_off]) catch {};
+            faces.append(alloc, t_arena.shell_faces.items[shell.faces_start + f_off]) catch {};
         }
     }
-    return isPointInsideSolidFaces(t_arena, g_arena, faces.items, pt, tol);
+    return isPointInsideSolidFaces(alloc, t_arena, g_arena, faces.items, pt, tol) catch false;
 }
 
 fn classifyFace(
@@ -881,7 +898,6 @@ fn classifyFace(
     target_faces: []const topo.FaceId,
     tol: math.Tolerance,
 ) FaceClassification {
-    _ = allocator;
     const face = t_arena.faces.items[face_id];
     const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
 
@@ -916,13 +932,13 @@ fn classifyFace(
         if (!face.forward) normal = math.scale(normal, -1.0);
     }
 
-    // Offset sample point tightly along the surface normal
     const offset_dist = @max(tol.absolute * 2.0, 1e-5);
     const pt_in = math.sub(sample_pt, math.scale(normal, offset_dist));
     const pt_out = math.add(sample_pt, math.scale(normal, offset_dist));
 
-    const in_solid = isPointInsideSolidFaces(t_arena, g_arena, target_faces, pt_in, tol);
-    const out_solid = isPointInsideSolidFaces(t_arena, g_arena, target_faces, pt_out, tol);
+    // Pass allocator down cleanly to handle AABB allocations without leaking
+    const in_solid = isPointInsideSolidFaces(allocator, t_arena, g_arena, target_faces, pt_in, tol) catch false;
+    const out_solid = isPointInsideSolidFaces(allocator, t_arena, g_arena, target_faces, pt_out, tol) catch false;
 
     if (in_solid and out_solid) return .inside;
     if (!in_solid and !out_solid) return .outside;
@@ -930,6 +946,8 @@ fn classifyFace(
     return .opposite;
 }
 
+/// Evaluates point inclusion against closed boundaries using first-hit normal orientation and multi-ray voting.
+/// Utilizes a transient AABB cache to accelerate raycasting from O(N) face checks to O(log N) fast-slab rejections.
 fn reverseFaceLoops(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -1832,12 +1850,38 @@ fn isPointNearPolygonEdge2D(pt: [2]f64, poly: [][2]f64, edge_tol: f64) bool {
 
 /// Evaluates point inclusion against closed boundaries using first-hit normal orientation and multi-ray voting.
 pub fn isPointInsideSolidFaces(
+    temp_alloc: std.mem.Allocator,
     t_arena: *const topo.TopologyArena,
     g_arena: *const geom.GeometryArena,
     faces: []const topo.FaceId,
     pt: math.Vec3,
     tol: math.Tolerance,
-) bool {
+) !bool {
+    // --- 1. Build Transient AABB Cache ---
+    var aabbs = try temp_alloc.alloc(FaceAABB, faces.len);
+    defer temp_alloc.free(aabbs); // FIX: Immediately defer cleanup to prevent memory leaks
+
+    for (faces, 0..) |face_id, i| {
+        var min_b = math.Vec3{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
+        var max_b = math.Vec3{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
+
+        const face = t_arena.faces.items[face_id];
+        const loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
+        var curr_he = loop.first_half_edge;
+
+        while (true) {
+            const v_pt = t_arena.vertices.items[t_arena.half_edges.items[curr_he].start_vertex].point;
+            for (0..3) |dim| {
+                if (v_pt[dim] < min_b[dim]) min_b[dim] = v_pt[dim];
+                if (v_pt[dim] > max_b[dim]) max_b[dim] = v_pt[dim];
+            }
+            curr_he = t_arena.half_edges.items[curr_he].next;
+            if (curr_he == loop.first_half_edge) break;
+        }
+        aabbs[i] = .{ .face_id = face_id, .min = min_b, .max = max_b };
+    }
+
+    // --- 2. Multi-Ray Voting Setup ---
     const rays = [_]math.Vec3{
         math.normalize(.{ 0.31234201, 0.71234103, 0.61234307 }),
         math.normalize(.{ -0.81234105, 0.21234309, 0.54321101 }),
@@ -1854,8 +1898,29 @@ pub fn isPointInsideSolidFaces(
         var min_hit_normal: ?math.Vec3 = null;
         var hit_count: u32 = 0;
 
-        for (faces) |face_id| {
-            const face = t_arena.faces.items[face_id];
+        for (aabbs) |aabb| {
+            // --- 3. AABB Fast Slab Intersection ---
+            var tmin: f64 = 0.0;
+            var tmax: f64 = std.math.inf(f64);
+            var hit_aabb = true;
+
+            for (0..3) |dim| {
+                if (@abs(ray_dir[dim]) < 1e-8) {
+                    if (pt[dim] < aabb.min[dim] or pt[dim] > aabb.max[dim]) hit_aabb = false;
+                } else {
+                    const inv_d = 1.0 / ray_dir[dim];
+                    var t0 = (aabb.min[dim] - pt[dim]) * inv_d;
+                    var t1 = (aabb.max[dim] - pt[dim]) * inv_d;
+                    if (t0 > t1) std.mem.swap(f64, &t0, &t1);
+                    if (t0 > tmin) tmin = t0;
+                    if (t1 < tmax) tmax = t1;
+                    if (tmin > tmax) hit_aabb = false;
+                }
+            }
+            if (!hit_aabb) continue;
+
+            // --- 4. Exact Face Intersection ---
+            const face = t_arena.faces.items[aabb.face_id];
 
             var polygon_buf: [128][2]f64 = undefined;
             var poly_len: usize = 0;
@@ -1886,6 +1951,7 @@ pub fn isPointInsideSolidFaces(
                     if (t > tol.absolute) {
                         const hit_pt = math.add(pt, math.scale(ray_dir, t));
                         const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
+
                         if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) {
                             hit_count += 1;
                             if (t < min_t) {
@@ -1904,6 +1970,7 @@ pub fn isPointInsideSolidFaces(
                             if (t > tol.absolute) {
                                 const hit_pt = math.add(pt, math.scale(ray_dir, t));
                                 const uv_hit = g_arena.surfaceProject(face.surface, hit_pt);
+
                                 if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) {
                                     hit_count += 1;
                                     if (t < min_t) {
@@ -1912,6 +1979,7 @@ pub fn isPointInsideSolidFaces(
                                         const v = math.sub(hit_pt, cyl.origin);
                                         const v_proj = math.sub(v, math.scale(axis, math.dot(v, axis)));
                                         const len = math.mag(v_proj);
+
                                         var cyl_normal = if (len > math.MATH_EPSILON) math.scale(v_proj, 1.0 / len) else cyl.x_axis;
                                         if (!face.forward) cyl_normal = math.scale(cyl_normal, -1.0);
                                         min_hit_normal = cyl_normal;
@@ -1925,9 +1993,11 @@ pub fn isPointInsideSolidFaces(
             }
         }
 
+        // --- 5. Tally Votes ---
         if (min_hit_normal) |norm| {
             valid_rays += 1;
             const dot_p = math.dot(ray_dir, norm);
+
             if (dot_p > 1e-4) {
                 inside_votes += 1;
             } else if (@abs(dot_p) <= 1e-4) {

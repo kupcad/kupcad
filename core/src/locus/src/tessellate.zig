@@ -15,40 +15,15 @@ pub const Mesh = struct {
     }
 };
 
-const Node = struct {
-    i: u32,
-    x: f64,
-    y: f64,
-    prev: *Node,
-    next: *Node,
-};
-
-fn pointInTriangle(px: f64, py: f64, ax: f64, ay: f64, bx: f64, by: f64, cx: f64, cy: f64) bool {
+/// Exact Point-in-Triangle test used by the Earcut triangulator
+fn pointInTriangleExact(px: f64, py: f64, ax: f64, ay: f64, bx: f64, by: f64, cx: f64, cy: f64) bool {
     const c1 = (cx - bx) * (py - by) - (cy - by) * (px - bx);
     const c2 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx);
     const c3 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
     return (c1 >= 0 and c2 >= 0 and c3 >= 0) or (c1 <= 0 and c2 <= 0 and c3 <= 0);
 }
 
-fn isEar(node: *const Node) bool {
-    const a = node.prev;
-    const b = node;
-    const c = node.next;
-
-    // Must be convex (CCW orientation)
-    const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    if (cross <= 1e-9) return false;
-
-    // Check if any other remaining node lies inside triangle ABC
-    var p = c.next;
-    while (p != a) {
-        if (pointInTriangle(p.x, p.y, a.x, a.y, b.x, b.y, c.x, c.y)) return false;
-        p = p.next;
-    }
-    return true;
-}
-
-/// Robust 2D Polygon Triangulation using doubly-linked reflex/convex node ear-clipping
+/// Robust 2D Polygon Triangulation using a flat-array Earcut approach.
 pub fn triangulatePolygon(
     allocator: std.mem.Allocator,
     pts: []const math.Vec2,
@@ -57,60 +32,51 @@ pub fn triangulatePolygon(
     const n = pts.len;
     if (n < 3) return;
 
-    // Allocate continuous arena memory for linked list nodes
-    var nodes = try allocator.alloc(Node, n);
-    defer allocator.free(nodes);
+    var indices = try allocator.alloc(u32, n);
+    defer allocator.free(indices);
+    for (0..n) |i| indices[i] = @intCast(i);
 
-    for (0..n) |i| {
-        nodes[i] = .{
-            .i = @intCast(i),
-            .x = pts[i][0],
-            .y = pts[i][1],
-            .prev = undefined,
-            .next = undefined,
-        };
-    }
-
-    // Link circular doubly-linked list
-    for (0..n) |i| {
-        nodes[i].prev = &nodes[(i + n - 1) % n];
-        nodes[i].next = &nodes[(i + 1) % n];
-    }
-
-    var head: *Node = &nodes[0];
-    var stop_node: *Node = head;
     var remaining = n;
-
     while (remaining > 2) {
         var ear_found = false;
-        var curr: *Node = head;
 
-        while (true) {
-            if (isEar(curr)) {
-                // Emit triangle
-                try out_triangles.append(allocator, .{ curr.prev.i, curr.i, curr.next.i });
+        for (0..remaining) |i| {
+            const prev_idx = (i + remaining - 1) % remaining;
+            const next_idx = (i + 1) % remaining;
 
-                // Unlink current ear node from circular list
-                curr.prev.next = curr.next;
-                curr.next.prev = curr.prev;
+            const i_prev = indices[prev_idx];
+            const i_curr = indices[i];
+            const i_next = indices[next_idx];
 
-                head = curr.next;
-                stop_node = head;
+            const a = pts[i_prev];
+            const b = pts[i_curr];
+            const c = pts[i_next];
+
+            const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+            if (cross <= 1e-9) continue;
+
+            var is_ear = true;
+            for (0..remaining) |j| {
+                if (j == prev_idx or j == i or j == next_idx) continue;
+                const p = pts[indices[j]];
+                if (pointInTriangleExact(p[0], p[1], a[0], a[1], b[0], b[1], c[0], c[1])) {
+                    is_ear = false;
+                    break;
+                }
+            }
+
+            if (is_ear) {
+                try out_triangles.append(allocator, .{ i_prev, i_curr, i_next });
+                std.mem.copyForwards(u32, indices[i .. remaining - 1], indices[i + 1 .. remaining]);
                 remaining -= 1;
                 ear_found = true;
                 break;
             }
-
-            curr = curr.next;
-            if (curr == stop_node) break;
         }
 
-        // Fallback for self-intersecting or complex polygons: triangle fan
         if (!ear_found) {
-            var curr_fan = head.next;
-            while (curr_fan.next != head) {
-                try out_triangles.append(allocator, .{ head.i, curr_fan.i, curr_fan.next.i });
-                curr_fan = curr_fan.next;
+            for (1..remaining - 1) |i| {
+                try out_triangles.append(allocator, .{ indices[0], indices[i], indices[i + 1] });
             }
             break;
         }
@@ -214,7 +180,7 @@ pub fn tessellateSolid(
                 poly2d[i] = g_arena.surfaceProject(face.surface, pt);
             }
 
-            // 5. Triangulate (Doubly-Linked Ear-Clipping with Triangle Fan Fallback)
+            // 5. Triangulate (Flat-Array Ear-Clipping with Triangle Fan Fallback)
             var local_triangles = std.ArrayListUnmanaged([3]u32).empty;
             defer local_triangles.deinit(allocator);
 
