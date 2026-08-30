@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const math = @import("math.zig");
@@ -40,6 +41,7 @@ pub const BooleanError = error{
     OutOfMemory,
     DidNotConverge,
     SurfaceKindMismatch,
+    TopologyCorrupted,
 };
 
 pub const IntersectionEvent = struct {
@@ -645,7 +647,9 @@ fn sliceFace(
     var he_b: ?topo.HalfEdgeId = null;
 
     var curr = loop.first_half_edge;
-    while (true) {
+    var safety: usize = 0;
+    while (true) : (safety += 1) {
+        if (safety > 10_000) return error.TopologyCorrupted;
         const he = t_arena.half_edges.items[curr];
         if (he.start_vertex == v_a) he_a = curr;
         if (he.start_vertex == v_b) he_b = curr;
@@ -653,7 +657,8 @@ fn sliceFace(
         if (curr == loop.first_half_edge) break;
     }
 
-    if (he_a == null or he_b == null) return null;
+    // Prevent topological self-intersection loops
+    if (he_a == null or he_b == null or he_a.? == he_b.?) return null;
 
     const prev_a = t_arena.half_edges.items[he_a.?].prev;
     const prev_b = t_arena.half_edges.items[he_b.?].prev;
@@ -698,7 +703,9 @@ fn sliceFace(
 
     const new_face_id: u32 = @intCast(t_arena.faces.items.len);
     curr = h2_id;
-    while (true) {
+    safety = 0;
+    while (true) : (safety += 1) {
+        if (safety > 10_000) return error.TopologyCorrupted;
         t_arena.half_edges.items[curr].loop_id = new_loop_id;
         curr = t_arena.half_edges.items[curr].next;
         if (curr == h2_id) break;
@@ -1041,14 +1048,12 @@ pub fn computeBoolean(
 
         if (keep) {
             if (s_id == solid_b and op == .difference) {
-                var flipped_face = t_arena.faces.items[face_id];
-                flipped_face.forward = !flipped_face.forward;
-                const new_face_id: u32 = @intCast(t_arena.faces.items.len);
-                try t_arena.faces.append(allocator, flipped_face);
-                try selected_faces.append(allocator, new_face_id);
-            } else {
-                try selected_faces.append(allocator, face_id);
+                // FIX: Mutate the face in-place instead of creating a shallow clone.
+                // Because solid_b was deep-cloned into this arena earlier, mutating it is safe
+                // and preserves the loop.face_id == face_id invariants!
+                t_arena.faces.items[face_id].forward = !t_arena.faces.items[face_id].forward;
             }
+            try selected_faces.append(allocator, face_id);
         }
     }
 
@@ -1061,6 +1066,34 @@ pub fn computeBoolean(
     const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
     try t_arena.solid_shells.append(allocator, shell_start);
     try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
+
+    // --- WELD COINCIDENT VERTICES ---
+    try weldSolidVertices(allocator, t_arena, new_solid_id, tol);
+
+    // --- STITCH BOUNDARIES ---
+    try stitchSolidBoundaries(allocator, t_arena, new_solid_id);
+
+    // --- VALIDATION HOOK ---
+    if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+        const validator = @import("validator.zig");
+        validator.BRepSanitizer.validateSolid(allocator, t_arena, g_arena, new_solid_id, tol, .{
+            .enable_checks = true,
+
+            // --- ENABLE STRICT TOPOLOGY ---
+            .check_twins = true, // Validates Boundary Stitcher success
+            .check_linked_lists = true, // Validates Half-Edge loop structures
+
+            // --- DELAYED UNTIL NEXT REFACTOR ---
+            .check_euler = false, // Needs connected-component extraction for disjoint shells
+            .require_closed_shells = false, // Needs co-planar face merging
+            .check_coincidence = false, // Needs Degenerate Edge removal & True 3D Curves
+        }) catch |err| {
+            std.log.warn("BRepSanitizer failed after {s} operation: {s}", .{
+                @tagName(op), @errorName(err),
+            });
+            return error.TopologyCorrupted;
+        };
+    }
 
     return new_solid_id;
 }
@@ -1495,18 +1528,17 @@ fn getOrSplitVertexAtPoint(
 ) !?topo.VertexId {
     const loop = t_arena.loops.items[loop_id];
     var curr = loop.first_half_edge;
+    var safety: usize = 0;
 
-    while (true) {
+    while (true) : (safety += 1) {
+        if (safety > 10_000) return error.TopologyCorrupted;
+
         const he = t_arena.half_edges.items[curr];
         const v_start = he.start_vertex;
         const p_start = t_arena.vertices.items[v_start].point;
 
-        // 1. Check if the point is already an existing vertex
-        if (tol.pointsCoincide(p_start, pt)) {
-            return v_start;
-        }
+        if (tol.pointsCoincide(p_start, pt)) return v_start;
 
-        // 2. Check if the point lies strictly inside the half-edge
         const p_end = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
         const v_seg = math.sub(p_end, p_start);
         const len_sq = math.magSq(v_seg);
@@ -2093,4 +2125,144 @@ fn refineTorusCrossing(torus: geom.Torus, plane: geom.Plane, u: f64, v_a: f64, v
         }
     }
     return 0.5 * (lo + hi);
+}
+
+/// Welds coincident vertices within a solid to stitch topological seams.
+pub fn weldSolidVertices(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    solid_id: topo.SolidId,
+    tol: math.Tolerance,
+) !void {
+    const solid = t_arena.solids.items[solid_id];
+    var active_verts = std.AutoHashMap(topo.VertexId, void).init(allocator);
+    defer active_verts.deinit();
+
+    for (0..solid.shells_len) |s_off| {
+        const shell_id = t_arena.solid_shells.items[solid.shells_start + s_off];
+        const shell = t_arena.shells.items[shell_id];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = t_arena.faces.items[face_id];
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+                const loop = t_arena.loops.items[loop_id];
+                var curr_he = loop.first_half_edge;
+                var safety: usize = 0;
+                while (true) : (safety += 1) {
+                    if (safety > 10_000) return error.TopologyCorrupted;
+                    const he = t_arena.half_edges.items[curr_he];
+                    try active_verts.put(he.start_vertex, {});
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+
+    const VertexData = struct { id: topo.VertexId, rep: topo.VertexId };
+    var v_list = std.ArrayListUnmanaged(VertexData).empty;
+    defer v_list.deinit(allocator);
+
+    var it = active_verts.keyIterator();
+    while (it.next()) |v_id| {
+        try v_list.append(allocator, .{ .id = v_id.*, .rep = v_id.* });
+    }
+
+    for (0..v_list.items.len) |i| {
+        if (v_list.items[i].rep != v_list.items[i].id) continue;
+        const p1 = t_arena.vertices.items[v_list.items[i].id].point;
+
+        for (i + 1..v_list.items.len) |j| {
+            if (v_list.items[j].rep != v_list.items[j].id) continue;
+            const p2 = t_arena.vertices.items[v_list.items[j].id].point;
+
+            if (math.distSq(p1, p2) < tol.squared) {
+                v_list.items[j].rep = v_list.items[i].id;
+            }
+        }
+    }
+
+    var replacement_map = std.AutoHashMap(topo.VertexId, topo.VertexId).init(allocator);
+    defer replacement_map.deinit();
+    for (v_list.items) |vd| {
+        if (vd.id != vd.rep) try replacement_map.put(vd.id, vd.rep);
+    }
+    if (replacement_map.count() == 0) return;
+
+    for (0..solid.shells_len) |s_off| {
+        const shell_id = t_arena.solid_shells.items[solid.shells_start + s_off];
+        const shell = t_arena.shells.items[shell_id];
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = t_arena.faces.items[face_id];
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+                const loop = t_arena.loops.items[loop_id];
+                var curr_he = loop.first_half_edge;
+                var safety: usize = 0;
+                while (true) : (safety += 1) {
+                    if (safety > 10_000) return error.TopologyCorrupted;
+                    const he = &t_arena.half_edges.items[curr_he];
+                    if (replacement_map.get(he.start_vertex)) |new_id| {
+                        he.start_vertex = new_id;
+                    }
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+}
+
+/// Crawls a newly created shell and cross-links half-edge twin pointers across Boolean seams.
+pub fn stitchSolidBoundaries(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    solid_id: topo.SolidId,
+) !void {
+    const EdgeKey = struct { start: topo.VertexId, end: topo.VertexId };
+    var unmatched = std.AutoHashMap(EdgeKey, topo.HalfEdgeId).init(allocator);
+    defer unmatched.deinit();
+
+    const solid = t_arena.solids.items[solid_id];
+    for (0..solid.shells_len) |s_off| {
+        const shell_id = t_arena.solid_shells.items[solid.shells_start + s_off];
+        const shell = t_arena.shells.items[shell_id];
+
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = t_arena.faces.items[face_id];
+
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+                const loop = t_arena.loops.items[loop_id];
+
+                var curr_he = loop.first_half_edge;
+                var safety: usize = 0;
+                while (true) : (safety += 1) {
+                    if (safety > 10_000) return error.TopologyCorrupted;
+
+                    const he = &t_arena.half_edges.items[curr_he];
+                    const next_he = t_arena.half_edges.items[he.next];
+
+                    const v_start = he.start_vertex;
+                    const v_end = next_he.start_vertex;
+
+                    const opp_key = EdgeKey{ .start = v_end, .end = v_start };
+                    if (unmatched.get(opp_key)) |twin_id| {
+                        he.twin = twin_id;
+                        t_arena.half_edges.items[twin_id].twin = curr_he;
+                        _ = unmatched.remove(opp_key);
+                    } else {
+                        he.twin = topo.NULL_ID;
+                        try unmatched.put(EdgeKey{ .start = v_start, .end = v_end }, curr_he);
+                    }
+
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
 }

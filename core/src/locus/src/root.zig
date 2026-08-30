@@ -28,4 +28,5 @@ test {
     _ = @import("sweeps_test.zig");
     _ = @import("tessellate_test.zig");
     _ = @import("transforms_test.zig");
+    _ = @import("validator_test.zig");
 }
