@@ -135,6 +135,56 @@ pub fn nativeTap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
     return receiver;
 }
 
+pub fn nativeMethod(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    if (arg_count != 1) return error.RuntimeError;
+
+    const receiver = (args - 1)[0];
+    const name_val = args[0];
+
+    // Extract name
+    const method_name = if (name_val.isObject() and name_val.asObj().obj_type == .symbol)
+        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars
+    else if (name_val.isObject() and name_val.asObj().obj_type == .string)
+        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars
+    else
+        return error.RuntimeError;
+
+    var method_val: ?value.Value = null;
+
+    // Standard Class Lookup
+    if (receiver.isInstance()) {
+        method_val = vm.findMethod(receiver.asInstance().class, method_name);
+    } else if (receiver.isObject()) {
+        const class_obj = switch (receiver.asObj().obj_type) {
+            .string => vm.string_class,
+            .symbol => vm.symbol_class,
+            .array => vm.array_class,
+            .map => vm.map_class,
+            else => vm.object_class,
+        };
+        if (class_obj) |c| method_val = vm.findMethod(c, method_name);
+    } else if (receiver.isNumber()) {
+        if (vm.number_class) |c| method_val = vm.findMethod(c, method_name);
+    } else if (receiver.isBool()) {
+        if (vm.boolean_class) |c| method_val = vm.findMethod(c, method_name);
+    }
+
+    // CAD Mesh Method Lookup
+    if (method_val == null and (receiver.isGeometry() or receiver.isCrossSection() or receiver.isAssembly())) {
+        const manifest = @import("../manifest.zig");
+        if (manifest.getMeshMethod(method_name)) |mesh_fn| {
+            const native_obj = try vm.gc.allocateNative(vm, mesh_fn);
+            method_val = value.Value.initObj(&native_obj.obj);
+        }
+    }
+
+    if (method_val == null) return error.RuntimeError;
+
+    const bound = try vm.gc.allocateBoundMethod(vm, receiver, method_val.?);
+    return value.Value.initObj(&bound.obj);
+}
+
 /// Object#into { |obj| ... } -> Yields receiver to block, returns block result
 pub fn nativeInto(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     const vm: *VM = @ptrCast(@alignCast(vm_opaque));
@@ -161,6 +211,7 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "responds_to?", .func = nativeRespondsTo },
     .{ .name = "nil?", .func = nativeNilQ },
     .{ .name = "empty?", .func = nativeEmptyQ },
+    .{ .name = "method", .func = nativeMethod },
     .{ .name = "tap", .func = nativeTap },
     .{ .name = "into", .func = nativeInto },
     .{ .name = "dup", .func = nativeDup },

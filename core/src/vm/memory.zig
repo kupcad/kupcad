@@ -173,7 +173,7 @@ pub const GC = struct {
         return ptr;
     }
 
-    pub fn allocateBoundMethod(self: *GC, vm: *VM, receiver: value.Value, method: *value.ObjClosure) !*value.ObjBoundMethod {
+    pub fn allocateBoundMethod(self: *GC, vm: *VM, receiver: value.Value, method: value.Value) !*value.ObjBoundMethod {
         const ptr = try self.allocateObject(vm, value.ObjBoundMethod, &self.bound_methods, .bound_method);
         ptr.receiver = receiver;
         ptr.method = method;
@@ -464,7 +464,7 @@ pub const GC = struct {
             .bound_method => {
                 const bound_obj = @as(*value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj)));
                 self.markValue(bound_obj.receiver);
-                self.markObject(&bound_obj.method.obj);
+                self.markValue(bound_obj.method);
             },
             .assembly => {
                 const assembly = @as(*value.ObjAssembly, @alignCast(@fieldParentPtr("obj", obj)));

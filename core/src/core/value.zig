@@ -128,7 +128,7 @@ pub const ObjInstance = struct {
 pub const ObjBoundMethod = struct {
     obj: Obj,
     receiver: Value,
-    method: *ObjClosure,
+    method: Value,
 };
 
 pub const ObjRange = struct {
@@ -340,6 +340,9 @@ pub const Value = packed struct {
     pub inline fn isAssembly(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .assembly;
     }
+    pub inline fn isBoundMethod(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .bound_method;
+    }
 
     // --- Data Extractors ---
 
@@ -422,6 +425,11 @@ pub const Value = packed struct {
 
     pub inline fn asAssembly(self: Value) *ObjAssembly {
         std.debug.assert(self.isAssembly());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asBoundMethod(self: Value) *ObjBoundMethod {
+        std.debug.assert(self.isBoundMethod());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 

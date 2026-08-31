@@ -8773,3 +8773,159 @@ test "VM: Method dispatch fails gracefully on unknown class methods" {
     const result = vm.interpret(&exec_chunk);
     try testing.expectEqual(.runtime_error, result);
 }
+
+test "VM: Bound methods evaluate direct calls and .call() natively" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Calculator
+        \\  def add(a, b)
+        \\    a + b
+        \\  end
+        \\end
+        \\calc = Calculator.new
+        \\m = calc.method(:add)
+        \\[m(10, 20), m.call(15, 25)]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    const arr_obj = vm.stack[0].asArray();
+    try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 40.0), arr_obj.items.items[1].asNumber());
+}
+
+test "VM: Bound CAD methods retain ARC geometry correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\c = cube(10)
+        \\trans = c.method(:translate)
+        \\shifted = trans(5, 0, 0)
+        \\shifted.volume
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expectEqual(@as(f64, 1000.0), vm.stack[0].asNumber());
+}
+
+test "VM: Bound methods support inheritance and super" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Base
+        \\  def greet
+        \\    100
+        \\  end
+        \\end
+        \\class Derived < Base
+        \\  def greet
+        \\    super + 50
+        \\  end
+        \\end
+        \\
+        \\obj = Derived.new
+        \\m = obj.method(:greet)
+        \\m.call
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 150.0), vm.stack[0].asNumber());
+}
+
+test "VM: Bound methods retain receiver instance state" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Counter
+        \\  def set(val)
+        \\    @val = val
+        \\  end
+        \\  def inc(amount)
+        \\    @val = @val + amount
+        \\  end
+        \\end
+        \\
+        \\c = Counter.new
+        \\c.set(10)
+        \\m = c.method(:inc)
+        \\m(5)
+        \\m(5)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 20.0), vm.stack[0].asNumber());
+}
+
+test "VM: Bound methods can be passed as arguments" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Multiplier
+        \\  def mult(x)
+        \\    x * 3
+        \\  end
+        \\end
+        \\
+        \\def apply_func(func, val)
+        \\  func.call(val)
+        \\end
+        \\
+        \\obj = Multiplier.new
+        \\apply_func(obj.method(:mult), 10)
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 30.0), vm.stack[0].asNumber());
+}

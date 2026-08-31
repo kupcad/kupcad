@@ -50,6 +50,13 @@ pub const MeshMethod = struct {
     func: value.NativeFn,
 };
 
+pub fn getMeshMethod(name: []const u8) ?value.NativeFn {
+    for (mesh_methods) |m| {
+        if (std.mem.eql(u8, m.name, name)) return m.func;
+    }
+    return null;
+}
+
 pub const core_namespaces = [_][]const u8{
     "Object",   "Array",        "String",    "Map",      "Number",      "Symbol", "Boolean",
     "Geometry", "CrossSection", "Solid",     "Sketch2D", "BoundingBox", "Math",   "GC",

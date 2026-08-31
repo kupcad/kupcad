@@ -1731,6 +1731,24 @@ pub const VM = struct {
             }
         }
 
+        // --- Bound Method `.call()` Interceptor ---
+        if (receiver.isBoundMethod() and std.mem.eql(u8, method_name_str, "call")) {
+            const bound = receiver.asBoundMethod();
+            self.stack.ptr[base_slot] = bound.receiver;
+
+            if (bound.method.isClosure()) {
+                self.dispatchClosure(bound.method.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
+                return .ok;
+            } else if (bound.method.isNative()) {
+                const native_obj = bound.method.asNative();
+                const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
+                self.popAndRelease(arg_count + 1);
+                self.stack.ptr[self.stack_top] = result;
+                self.stack_top += 1;
+                return .ok;
+            }
+        }
+
         // --- 3. FALLBACK: NATIVE C++ KERNEL METHODS (Geometry) ---
         if (self.host.invoke_handler) |handler| {
             const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch {
@@ -2000,7 +2018,21 @@ pub const VM = struct {
         const base_slot = self.stack_top - 1 - arg_count;
         const callee = self.stack[base_slot];
 
-        if (callee.isNative()) {
+        if (callee.isBoundMethod()) {
+            const bound = callee.asBoundMethod();
+            self.stack.ptr[base_slot] = bound.receiver; // Load the actual receiver into the base slot
+
+            if (bound.method.isClosure()) {
+                self.dispatchClosure(bound.method.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
+            } else if (bound.method.isNative()) {
+                const native_obj = bound.method.asNative();
+                const args_ptr = self.stack.ptr + base_slot + 1;
+                const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
+                self.popAndRelease(arg_count + 1);
+                self.stack.ptr[self.stack_top] = result;
+                self.stack_top += 1;
+            }
+        } else if (callee.isNative()) {
             const args_ptr = self.stack.ptr + base_slot + 1;
             return self.executeNative(callee.asNative(), arg_count, args_ptr, "native_call");
         } else if (callee.isClosure()) {
