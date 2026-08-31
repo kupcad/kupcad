@@ -8950,3 +8950,93 @@ test "VM: Bound methods can be passed as arguments" {
     _ = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expectEqual(@as(f64, 30.0), vm.stack[0].asNumber());
 }
+
+test "VM CAD: helix sweeps a 2D profile with a twist" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.host.print_handler = null;
+
+    // Twist a 10x10 square 360 degrees over a 20mm extrusion
+    const source =
+        \\sq = square(10, center: true)
+        \\part = sq.helix(20, 360, 32)
+        \\part.volume
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isNumber());
+
+    // A twisted 10x10 square extruded by 20 should maintain a volume close to 2000
+    const vol = result.asNumber();
+    try testing.expect(vol > 1500.0 and vol < 2500.0);
+}
+
+test "VM CAD: loft skins two 2D profiles into a 3D solid" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.host.print_handler = null;
+
+    // Loft a 10x10 square up to a 5x5 square across 10mm of height
+    const source =
+        \\base = square(10, center: true)
+        \\top = square(5, center: true)
+        \\part = base.loft(top, 10)
+        \\part.volume
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isNumber());
+
+    // Exact volume of a square frustum: V = (h/3) * (A1 + A2 + sqrt(A1*A2))
+    // (10/3) * (100 + 25 + 50) = 583.33
+    const vol = result.asNumber();
+    try testing.expect(vol > 580.0 and vol < 590.0);
+}
+
+test "VM CAD: fillet_edges rounds 3D geometry via Minkowski sum" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.host.print_handler = null;
+
+    // Apply a 2mm fillet to a 10x10x10 cube
+    const source =
+        \\c = cube(10, center: true)
+        \\part = c.fillet_edges(2)
+        \\part.volume
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isNumber());
+
+    // Minkowski sum of 10x10x10 cube and r=2 sphere expands the base volume.
+    // Mathematical volume is ~2610.5.
+    const vol = result.asNumber();
+    try testing.expect(vol > 2400.0 and vol < 2800.0);
+}

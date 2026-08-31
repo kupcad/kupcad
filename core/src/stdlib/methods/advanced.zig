@@ -226,6 +226,25 @@ pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
     return value.Value.initObj(&arr_obj.obj);
 }
 
+pub fn meshFilletEdges(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
+    var radius: f64 = 1.0;
+
+    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+        const map = args[args.len - 1].asMap();
+        if (util.getKey(map, "r")) |v| if (v.isNumber()) {
+            radius = v.asNumber();
+        };
+    } else if (args.len > 0 and args[0].isNumber()) {
+        radius = args[0].asNumber();
+    }
+
+    // Generate tool and sum
+    const sphere_idx = try vm.dag_builder.addSphere(radius);
+    const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.dag_idx, sphere_idx);
+
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
 pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
     var tolerance: ?f64 = null;
 

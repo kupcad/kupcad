@@ -172,3 +172,104 @@ pub fn revolveFace(
 
     return generators.buildPolyhedron(allocator, out_t_arena, out_g_arena, all_pts.items, all_faces.items);
 }
+
+// Simple linear resampler to ensure topological parity between dissimilar profiles
+fn resamplePolygon(allocator: std.mem.Allocator, pts: []const [2]f64, target_len: usize) ![]const [2]f64 {
+    if (pts.len == target_len) return allocator.dupe([2]f64, pts);
+    var new_pts = try allocator.alloc([2]f64, target_len);
+    for (0..target_len) |i| {
+        const t = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(target_len));
+        const scaled = t * @as(f64, @floatFromInt(pts.len));
+        const idx = @as(usize, @intFromFloat(scaled));
+        const next_idx = (idx + 1) % pts.len;
+        const fract = scaled - @as(f64, @floatFromInt(idx));
+        new_pts[i] = .{
+            pts[idx][0] * (1.0 - fract) + pts[next_idx][0] * fract,
+            pts[idx][1] * (1.0 - fract) + pts[next_idx][1] * fract,
+        };
+    }
+    return new_pts;
+}
+
+pub fn loftPolygons(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    base_pts_in: []const [2]f64,
+    top_pts_in: []const [2]f64,
+    height: f64,
+) SweepError!topo.SolidId {
+    if (base_pts_in.len < 3 or top_pts_in.len < 3) return error.InvalidFace;
+    const n = @max(base_pts_in.len, top_pts_in.len);
+
+    // Resample both profiles to match the highest vertex count
+    const base_pts = resamplePolygon(allocator, base_pts_in, n) catch return error.OutOfMemory;
+    defer allocator.free(base_pts);
+    const top_pts = resamplePolygon(allocator, top_pts_in, n) catch return error.OutOfMemory;
+    defer allocator.free(top_pts);
+
+    var twin_map = std.AutoHashMap(generators.EdgeKey, topo.HalfEdgeId).init(allocator);
+    defer twin_map.deinit();
+
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
+    var num_side_faces: u32 = 0;
+
+    var bot_verts = allocator.alloc(topo.VertexId, n) catch return error.OutOfMemory;
+    defer allocator.free(bot_verts);
+    var top_verts = allocator.alloc(topo.VertexId, n) catch return error.OutOfMemory;
+    defer allocator.free(top_verts);
+
+    for (0..n) |i| {
+        bot_verts[i] = @intCast(t_arena.vertices.items.len);
+        t_arena.vertices.append(allocator, .{ .point = .{ base_pts[i][0], base_pts[i][1], 0.0 } }) catch return error.OutOfMemory;
+
+        top_verts[i] = @intCast(t_arena.vertices.items.len);
+        t_arena.vertices.append(allocator, .{ .point = .{ top_pts[i][0], top_pts[i][1], height } }) catch return error.OutOfMemory;
+    }
+
+    // Reverse bottom vertices to face outward (-Z)
+    var bot_rev = allocator.alloc(topo.VertexId, n) catch return error.OutOfMemory;
+    defer allocator.free(bot_rev);
+    for (0..n) |i| bot_rev[i] = bot_verts[n - 1 - i];
+
+    // Side Quads (Skinning)
+    for (0..n) |i| {
+        const next_i = (i + 1) % n;
+        const quad = [_]topo.VertexId{ bot_verts[i], bot_verts[next_i], top_verts[next_i], top_verts[i] };
+        const side_plane_idx: u24 = @intCast(g_arena.planes.items.len);
+        const p0 = t_arena.vertices.items[bot_verts[i]].point;
+        const p1 = t_arena.vertices.items[bot_verts[next_i]].point;
+        const p2 = t_arena.vertices.items[top_verts[next_i]].point;
+
+        const u_ax = math.normalize(math.sub(p1, p0));
+        var v_ax = math.normalize(math.sub(p2, p1));
+        if (math.magSq(v_ax) < 1e-6) v_ax = .{ 0, 0, 1 };
+
+        g_arena.planes.append(allocator, .{ .origin = p0, .u_axis = u_ax, .v_axis = v_ax }) catch return error.OutOfMemory;
+        const side_f = generators.addPolygonFace(allocator, t_arena, g_arena, &quad, .{ .index = side_plane_idx, .surface_type = .plane }, &twin_map) catch return error.OutOfMemory;
+        t_arena.shell_faces.append(allocator, side_f) catch return error.OutOfMemory;
+        num_side_faces += 1;
+    }
+
+    // Bottom Cap
+    const bot_plane_idx: u24 = @intCast(g_arena.planes.items.len);
+    g_arena.planes.append(allocator, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, -1, 0 } }) catch return error.OutOfMemory;
+    const bot_f = generators.addPolygonFace(allocator, t_arena, g_arena, bot_rev, .{ .index = bot_plane_idx, .surface_type = .plane }, &twin_map) catch return error.OutOfMemory;
+    t_arena.shell_faces.append(allocator, bot_f) catch return error.OutOfMemory;
+
+    // Top Cap
+    const top_plane_idx: u24 = @intCast(g_arena.planes.items.len);
+    g_arena.planes.append(allocator, .{ .origin = .{ 0, 0, height }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } }) catch return error.OutOfMemory;
+    const top_f = generators.addPolygonFace(allocator, t_arena, g_arena, top_verts, .{ .index = top_plane_idx, .surface_type = .plane }, &twin_map) catch return error.OutOfMemory;
+    t_arena.shell_faces.append(allocator, top_f) catch return error.OutOfMemory;
+
+    // Package into Solid
+    const shell_id: u32 = @intCast(t_arena.shells.items.len);
+    t_arena.shells.append(allocator, .{ .faces_start = sh_faces_start, .faces_len = num_side_faces + 2 }) catch return error.OutOfMemory;
+    const solid_id: u32 = @intCast(t_arena.solids.items.len);
+    const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
+    t_arena.solid_shells.append(allocator, shell_id) catch return error.OutOfMemory;
+    t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 }) catch return error.OutOfMemory;
+
+    return solid_id;
+}

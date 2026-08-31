@@ -23,6 +23,7 @@ pub const DAGTag = enum(u8) {
     project_op,
     mirror,
     hull,
+    loft,
     minkowski,
     trim_by_plane,
     transform_matrix,
@@ -53,6 +54,7 @@ pub const TranslatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f
 pub const RotatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
 pub const ScalePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
 pub const TransformPayload = struct { target: DAGNodeIndex, num_idx: u32 };
+pub const LoftPayload = struct { base: DAGNodeIndex, top: DAGNodeIndex, height: f64 };
 
 pub const DAGBuilder = struct {
     arena: std.heap.ArenaAllocator,
@@ -286,6 +288,21 @@ pub const DAGBuilder = struct {
         return node_idx;
     }
 
+    pub fn addLoft(self: *DAGBuilder, base: DAGNodeIndex, top: DAGNodeIndex, height: f64) !DAGNodeIndex {
+        const alloc = self.allocator();
+        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+
+        try self.extra_data.appendSlice(alloc, &.{ base, top, num_idx });
+        try self.numbers.append(alloc, height);
+
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+        const new_node = DAGNode{ .tag = .loft, .flags = 0, .data = extra_idx };
+        try self.appendNode(new_node);
+
+        return node_idx;
+    }
+
     pub fn addProject(self: *DAGBuilder, target: DAGNodeIndex) !DAGNodeIndex {
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
@@ -474,6 +491,12 @@ pub const DAGBuilder = struct {
     pub inline fn getHullPayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex } {
         return .{ .target = self.extra_data.items[node.data] };
     }
+    pub inline fn getLoftPayload(self: *const DAGBuilder, node: DAGNode) LoftPayload {
+        const base = self.extra_data.items[node.data];
+        const top = self.extra_data.items[node.data + 1];
+        const num_idx = self.extra_data.items[node.data + 2];
+        return .{ .base = base, .top = top, .height = self.numbers.items[num_idx] };
+    }
     pub inline fn getOffsetPayload(self: *const DAGBuilder, node: DAGNode) OffsetPayload {
         const target = self.extra_data.items[node.data];
         const num_idx = self.extra_data.items[node.data + 1];
@@ -653,6 +676,12 @@ pub const DAGBuilder = struct {
                 hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
                 hasher.update(std.mem.asBytes(&p.delta));
                 hasher.update(std.mem.asBytes(&p.join_type));
+            },
+            .loft => {
+                const p = self.getLoftPayload(node);
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.base]));
+                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.top]));
+                hasher.update(std.mem.asBytes(&p.height));
             },
             .slice_op => {
                 const p = self.getSlicePayload(node);

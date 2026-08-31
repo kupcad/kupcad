@@ -171,7 +171,7 @@
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {
-      "match": "(?<![\\\\w])(is_a?|responds_to?|nil?|empty?|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reduce|first|last|contains?|flatten|max|min|sum|keys|values|has_key?|delete|each|empty?|get|merge|symbolize_keys|stringify_keys|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|to_s|to_i|to_f|round|ceil|floor|abs|to_s|to_sym|to_s|inspect|to_i|to_f|invert|sin|cos|tan|asin|acos|atan2|sqrt|abs|round|ceil|floor|deg2rad|rad2deg|min|max|clamp|lerp|hypot|sign|collect|bytes_allocated)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(is_a?|responds_to?|nil?|empty?|method|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reduce|first|last|contains?|flatten|max|min|sum|keys|values|has_key?|delete|each|empty?|get|merge|symbolize_keys|stringify_keys|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|to_s|to_i|to_f|round|ceil|floor|abs|to_s|to_sym|to_s|inspect|to_i|to_f|invert|sin|cos|tan|asin|acos|atan2|sqrt|abs|round|ceil|floor|deg2rad|rad2deg|min|max|clamp|lerp|hypot|sign|collect|bytes_allocated)(?![\\\\w?!])",
       "name": "support.function.core.kupcad"
     },
     "primitives_3d": {
@@ -183,7 +183,7 @@
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|center|align|mirror|split_by_plane|decompose|simplify|extrude|revolve|hull|trim_by_plane|minkowski|offset|transform|repeat_linear|repeat_polar|material|highlight|ghost)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|center|align|mirror|split_by_plane|decompose|simplify|extrude|revolve|hull|helix|loft|fillet_edges|trim_by_plane|minkowski|offset|transform|repeat_linear|repeat_polar|material|highlight|ghost)(?![\\\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {

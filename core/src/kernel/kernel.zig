@@ -181,6 +181,13 @@ pub inline fn batchHull(allocator: std.mem.Allocator, objs: []const geom.Geometr
     }
 }
 
+pub inline fn loft(engine: geom.EngineType, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
+    switch (engine) {
+        .manifold => return manifold_driver.loftFn(a, b, height),
+        .brep_native => return brep_driver.loftFn(a, b, height),
+    }
+}
+
 pub inline fn decompose(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
     switch (handle.engine) {
         .manifold => return manifold_driver.decomposeFn(allocator, handle),
@@ -236,6 +243,7 @@ pub const GeometryKernel = struct {
     mirrorFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle,
     hullFn: *const fn (a: geom.GeometryHandle) ?geom.GeometryHandle,
     batchHullFn: *const fn (allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle,
+    loftFn: *const fn (a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle,
     decomposeFn: *const fn (allocator: std.mem.Allocator, a: geom.GeometryHandle) ?[]geom.GeometryHandle,
     minkowskiFn: *const fn (a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle,
     trimByPlaneFn: *const fn (a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?geom.GeometryHandle,

@@ -386,6 +386,29 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
     return buildHullFromHandles(objs);
 }
 
+fn loftImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
+    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
+
+    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
+
+    // Reuse the existing public extractor from booleans_2d
+    const pts_a = locus_bool2d.extractPolygon(backend_allocator, &solid_a.t_arena, solid_a.solid_id) catch return null;
+    defer backend_allocator.free(pts_a);
+
+    const pts_b = locus_bool2d.extractPolygon(backend_allocator, &solid_b.t_arena, solid_b.solid_id) catch return null;
+    defer backend_allocator.free(pts_b);
+
+    const out_solid = BrepSolid.create(backend_allocator) catch return null;
+
+    out_solid.solid_id = locus_sweeps.loftPolygons(backend_allocator, &out_solid.t_arena, &out_solid.g_arena, pts_a, pts_b, height) catch {
+        out_solid.destroy();
+        return null;
+    };
+
+    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(out_solid) };
+}
+
 fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
     var res = allocator.alloc(geom.GeometryHandle, 1) catch return null;
     res[0] = handle;
@@ -605,6 +628,7 @@ pub const driver = kernel.GeometryKernel{
     .mirrorFn = mirrorImpl,
     .hullFn = hullImpl,
     .batchHullFn = batchHullImpl,
+    .loftFn = loftImpl,
     .decomposeFn = decomposeImpl,
     .trimByPlaneFn = trimByPlaneImpl,
     .splitByPlaneFn = splitByPlaneImpl,

@@ -38,6 +38,12 @@ fn dumpDAG(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) void {
             std.debug.print(" (sweeping 2D target)\n", .{});
             dumpDAG(vm, p.target, depth + 1);
         },
+        .loft => {
+            const p = vm.dag_builder.getLoftPayload(node);
+            std.debug.print(" (height: {d})\n", .{p.height});
+            dumpDAG(vm, p.base, depth + 1);
+            dumpDAG(vm, p.top, depth + 1);
+        },
         .batch_union_op, .batch_hull_op => {
             const targets = vm.dag_builder.getBatchUnionPayload(node);
             std.debug.print(" (batch count: {d})\n", .{targets.len});
@@ -152,6 +158,12 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
 
             const result = kernel.batchHull(vm.allocator, handles) orelse return error.RuntimeError;
             return maybeSimplify(vm, result);
+        },
+        .loft => {
+            const p = vm.dag_builder.getLoftPayload(node);
+            const base_cs = try evaluateCrossSectionDAG(vm, p.base);
+            const top_cs = try evaluateCrossSectionDAG(vm, p.top);
+            return kernel.loft(engine, base_cs, top_cs, p.height) orelse return error.RuntimeError;
         },
         .minkowski => {
             const p = vm.dag_builder.getBinaryPayload(node);

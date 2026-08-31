@@ -82,3 +82,38 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     const new_idx = try vm.dag_builder.addRevolve(receiver.asCrossSection().dag_idx, segments, degrees);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
+
+pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isCrossSection()) return error.RuntimeError;
+
+    const HelixOpts = struct { h: f64 = 10.0, twist: f64 = 360.0, slices: i32 = 64 };
+    var opts = HelixOpts{};
+    var pos_count = args.len;
+
+    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+        const map = args[args.len - 1].asMap();
+        pos_count -= 1;
+        opts = util.parseKwargs(HelixOpts, map);
+    }
+
+    if (pos_count > 0 and args[0].isNumber()) opts.h = args[0].asNumber();
+    if (pos_count > 1 and args[1].isNumber()) opts.twist = args[1].asNumber();
+
+    // Re-use DAG's extrude with twist applied natively
+    const new_idx = try vm.dag_builder.addExtrude(receiver.asCrossSection().dag_idx, opts.h, opts.slices, opts.twist, 1.0, 1.0);
+    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+pub fn meshLoft(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isCrossSection()) return error.RuntimeError;
+    if (args.len < 2 or !args[0].isCrossSection() or !args[1].isNumber()) {
+        vm.reportError("ArgumentError: loft requires a target CrossSection and a z-height.\n", .{});
+        return error.RuntimeError;
+    }
+
+    const cs_top = args[0].asCrossSection();
+    const height = args[1].asNumber();
+
+    const dag_idx = try vm.dag_builder.addLoft(receiver.asCrossSection().dag_idx, cs_top.dag_idx, height);
+    return try vm.allocateGeometry(.{ .symbolic = dag_idx });
+}

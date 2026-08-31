@@ -11,7 +11,7 @@ const Edge2D = struct {
     is_a: bool,
 };
 
-fn extractPolygon(allocator: std.mem.Allocator, t_arena: *topo.TopologyArena, solid_id: topo.SolidId) ![]const [2]f64 {
+pub fn extractPolygon(allocator: std.mem.Allocator, t_arena: *topo.TopologyArena, solid_id: topo.SolidId) ![]const [2]f64 {
     var pts = std.ArrayListUnmanaged([2]f64).empty;
     const s = t_arena.solids.items[solid_id];
     const shell = t_arena.shells.items[t_arena.solid_shells.items[s.shells_start]];

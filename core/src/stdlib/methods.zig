@@ -22,6 +22,8 @@ pub const meshRepeatPolar = transforms.meshRepeatPolar;
 // sweeps
 pub const meshExtrude = sweeps.meshExtrude;
 pub const meshRevolve = sweeps.meshRevolve;
+pub const meshHelix = sweeps.meshHelix;
+pub const meshLoft = sweeps.meshLoft;
 // advanced
 pub const meshHull = advanced.meshHull;
 pub const meshMinkowski = advanced.meshMinkowski;
@@ -32,6 +34,7 @@ pub const meshProject = advanced.meshProject;
 pub const meshOnFace = advanced.meshOnFace;
 pub const meshSplitByPlane = advanced.meshSplitByPlane;
 pub const meshDecompose = advanced.meshDecompose;
+pub const meshFilletEdges = advanced.meshFilletEdges;
 pub const meshSimplify = advanced.meshSimplify;
 // inspect
 pub const meshBBox = inspect.meshBBox;

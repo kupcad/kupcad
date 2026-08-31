@@ -252,6 +252,27 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn loftImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold and b.engine == .manifold);
+    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
+
+    // MVP Loft: Extrude profiles minimally to create 3D sheets, position them, and wrap in a Hull
+    const m_a = manifold.extrude(@ptrCast(@alignCast(a.ptr)), 0.001, 0, 0.0, 1.0, 1.0) orelse return null;
+    defer manifold.destruct(m_a);
+
+    const m_b_flat = manifold.extrude(@ptrCast(@alignCast(b.ptr)), 0.001, 0, 0.0, 1.0, 1.0) orelse return null;
+    defer manifold.destruct(m_b_flat);
+
+    const m_b = manifold.translate(m_b_flat, 0.0, 0.0, height) orelse return null;
+    defer manifold.destruct(m_b);
+
+    // Pass the objects as a standard Zig slice to the public batchHull wrapper
+    const objs = [_]?*manifold.ManifoldObj{ m_a, m_b };
+    const hull_ptr = manifold.batchHull(&objs) orelse return null;
+
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(hull_ptr) };
+}
+
 fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
     if (@intFromPtr(handle.ptr) == 0) return null;
 
@@ -568,6 +589,7 @@ pub const driver = kernel.GeometryKernel{
     .projectFn = projectImpl,
     .mirrorFn = mirrorImpl,
     .hullFn = hullImpl,
+    .loftFn = loftImpl,
     .trimByPlaneFn = trimByPlaneImpl,
     .splitByPlaneFn = splitByPlaneImpl,
     .crossSectionBooleanFn = crossSectionBooleanImpl,
