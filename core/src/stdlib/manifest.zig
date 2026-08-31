@@ -53,7 +53,7 @@ pub const MeshMethod = struct {
 pub const core_namespaces = [_][]const u8{
     "Object",   "Array",        "String", "Map",      "Number",      "Symbol", "Boolean",
     "Geometry", "CrossSection", "Solid",  "Sketch2D", "BoundingBox", "Math",   "GC",
-    "Kernel",   "Param",        "CAD",
+    "Kernel",   "CAD",
 };
 
 // Core language keywords and intrinsic system states

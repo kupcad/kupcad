@@ -2713,6 +2713,27 @@ test "VM: Advanced Math (exponent, modulo) and nested String Interpolation" {
     try testing.expectEqualStrings("Result: 12!", str_obj.chars);
 }
 
+test "VM: String interpolation supports Numbers and Booleans" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source = "\"Test #{42} - #{true}\"";
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(vm.stack[0].isString());
+    try testing.expectEqualStrings("Test 42 - true", vm.stack[0].asString().chars);
+}
+
 test "VM: op_interpolate prevents memory leak on GC OOM" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
