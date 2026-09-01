@@ -7,6 +7,10 @@ const math = @import("math.zig");
 const transforms = @import("transforms.zig");
 const validator = @import("validator.zig");
 const prop = @import("properties.zig");
+const classify = @import("csg/classify.zig");
+const intersections = @import("csg/intersections.zig");
+const modifiers = @import("csg/modifiers.zig");
+const types = @import("csg/types.zig");
 
 const test_tol = math.Tolerance{
     .absolute = 1e-5,
@@ -139,7 +143,7 @@ test "March Intersection (Perpendicular Cylinders)" {
     const id_a = geom.SurfaceId{ .index = 0, .surface_type = .cylinder };
     const id_b = geom.SurfaceId{ .index = 1, .surface_type = .cylinder };
 
-    const curve_id = try booleans.marchIntersection(alloc, &g_arena, id_a, id_b, start_pt, 0.5, 10, test_tol);
+    const curve_id = try intersections.marchIntersection(alloc, &g_arena, id_a, id_b, start_pt, 0.5, 10, test_tol);
     try std.testing.expectEqual(@as(u32, 0), curve_id.index);
 }
 
@@ -192,7 +196,7 @@ test "CSG: Half-Edge Splitting" {
     });
 
     const split_pt = math.Vec3{ 5, 0, 0 };
-    const result = try booleans.splitHalfEdge(alloc, &t_arena, &g_arena, he_id, split_pt);
+    const result = try modifiers.splitHalfEdge(alloc, &t_arena, &g_arena, he_id, split_pt);
 
     try std.testing.expectEqual(@as(usize, 3), t_arena.vertices.items.len);
     try std.testing.expectEqual(v0, t_arena.half_edges.items[he_id].start_vertex);
@@ -227,10 +231,10 @@ test "CSG: 2D Point-in-Polygon Algorithm" {
         .{ 0.0, 10.0 },
     };
 
-    try std.testing.expectEqual(true, booleans.isPointInPolygon2D(.{ 2.0, 8.0 }, &polygon, test_tol));
-    try std.testing.expectEqual(true, booleans.isPointInPolygon2D(.{ 2.0, 2.0 }, &polygon, test_tol));
-    try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 7.0, 5.0 }, &polygon, test_tol));
-    try std.testing.expectEqual(false, booleans.isPointInPolygon2D(.{ 15.0, 5.0 }, &polygon, test_tol));
+    try std.testing.expectEqual(true, classify.isPointInPolygon2D(.{ 2.0, 8.0 }, &polygon, test_tol));
+    try std.testing.expectEqual(true, classify.isPointInPolygon2D(.{ 2.0, 2.0 }, &polygon, test_tol));
+    try std.testing.expectEqual(false, classify.isPointInPolygon2D(.{ 7.0, 5.0 }, &polygon, test_tol));
+    try std.testing.expectEqual(false, classify.isPointInPolygon2D(.{ 15.0, 5.0 }, &polygon, test_tol));
 }
 
 test "Curve Math: Arc vs Plane Intersection" {
@@ -251,7 +255,7 @@ test "Curve Math: Arc vs Plane Intersection" {
     const plane_normal = math.Vec3{ 1, 0, 0 };
 
     // 3. Perform Intersection
-    const hit_opt = booleans.intersectArcPlane(arc, v_start, v_end, plane_origin, plane_normal, true, test_tol);
+    const hit_opt = intersections.intersectArcPlane(arc, v_start, v_end, plane_origin, plane_normal, true, test_tol);
 
     try std.testing.expect(hit_opt != null);
     const hit = hit_opt.?;
@@ -281,7 +285,7 @@ test "Curve Math: NURBS vs Plane Intersection" {
     const plane_normal = math.Vec3{ 0, 0, 1 };
 
     // 3. Perform Intersection (Binary Search)
-    const hit_opt = booleans.intersectNurbsPlane(curve, plane_origin, plane_normal, test_tol);
+    const hit_opt = intersections.intersectNurbsPlane(curve, plane_origin, plane_normal, test_tol);
 
     try std.testing.expect(hit_opt != null);
     const hit = hit_opt.?;
@@ -296,7 +300,7 @@ test "Exact SSI: Plane vs Plane (Perpendicular)" {
     // XZ Plane
     const p2 = geom.Plane{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 0, 1 } };
 
-    const res = booleans.intersectPlanePlane(p1, p2, test_tol);
+    const res = intersections.intersectPlanePlane(p1, p2, test_tol);
 
     // The intersection of XY and XZ is the X-axis
     try std.testing.expect(res == .line);
@@ -311,7 +315,7 @@ test "Exact SSI: Plane vs Sphere (Through Center)" {
     // Sphere at Z=5, Radius 10
     const sphere = geom.Sphere{ .center = .{ 0, 0, 5 }, .radius = 10.0 };
 
-    const res = booleans.intersectPlaneSphere(plane, sphere, test_tol);
+    const res = intersections.intersectPlaneSphere(plane, sphere, test_tol);
 
     // Should be a perfect circle of radius 10 at Z=5
     try std.testing.expect(res == .circle);
@@ -330,7 +334,7 @@ test "Sampler SSI: Plane vs Cylinder (Perpendicular Circle)" {
         .radius = 5.0,
     };
 
-    const res = try booleans.intersectPlaneCylinder(alloc, plane, cyl, test_tol);
+    const res = try intersections.intersectPlaneCylinder(alloc, plane, cyl, test_tol);
     try std.testing.expect(res == .circle);
     try std.testing.expectApproxEqAbs(5.0, res.circle.radius, 1e-9);
     try std.testing.expectApproxEqAbs(10.0, res.circle.center[2], 1e-9);
@@ -348,7 +352,7 @@ test "Sampler SSI: Plane vs Cylinder (Oblique Ellipse Sampled)" {
         .radius = 5.0,
     };
 
-    const res = try booleans.intersectPlaneCylinder(alloc, plane, cyl, test_tol);
+    const res = try intersections.intersectPlaneCylinder(alloc, plane, cyl, test_tol);
     try std.testing.expect(res == .sampled);
     defer alloc.free(res.sampled);
 
@@ -372,13 +376,13 @@ test "Phase 4: Face Line Clipping (Infinite Line to Finite Segment)" {
 
     // 3. Define an infinite line slicing diagonally across the top face at Y=0
     // The cube goes from X=-5 to X=5.
-    const infinite_line = booleans.MathLine{
+    const infinite_line = types.MathLine{
         .origin = .{ 0, 0, 5 },
         .direction = .{ 1, 0, 0 },
     };
 
     // 4. Clip the infinite line to the bounds of the face
-    const segments = try booleans.clipMathLineToFace(alloc, &t_arena, &g_arena, top_face_id, infinite_line, test_tol);
+    const segments = try modifiers.clipMathLineToFace(alloc, &t_arena, &g_arena, top_face_id, infinite_line, test_tol);
     defer alloc.free(segments);
 
     // It should yield exactly one finite segment stretching from X=-5 to X=5
@@ -395,25 +399,25 @@ test "Phase 4: 3D Segment Overlap and Topological Slicing" {
     defer g_arena.deinit(alloc);
 
     // 1. Line passing along X-axis
-    const line = booleans.MathLine{
+    const line = types.MathLine{
         .origin = .{ 0, 0, 0 },
         .direction = .{ 1, 0, 0 },
     };
 
     // Segment A: [-10, 2]
-    const segs_a = [_]booleans.Segment3D{.{
+    const segs_a = [_]types.Segment3D{.{
         .start = .{ -10, 0, 0 },
         .end = .{ 2, 0, 0 },
     }};
 
     // Segment B: [-2, 10]
-    const segs_b = [_]booleans.Segment3D{.{
+    const segs_b = [_]types.Segment3D{.{
         .start = .{ -2, 0, 0 },
         .end = .{ 10, 0, 0 },
     }};
 
     // Overlap should be [-2, 2]
-    const overlap = try booleans.overlapSegments3D(alloc, line, &segs_a, &segs_b, test_tol);
+    const overlap = try modifiers.overlapSegments3D(alloc, line, &segs_a, &segs_b, test_tol);
     defer alloc.free(overlap);
 
     try std.testing.expectEqual(@as(usize, 1), overlap.len);
@@ -427,12 +431,12 @@ test "Phase 4: 3D Segment Overlap and Topological Slicing" {
     const top_face_id = t_arena.shell_faces.items[shell.faces_start + 1];
 
     // Slice top face (+Z) across Y=0 from X=-5 to X=5
-    const slice_seg = booleans.Segment3D{
+    const slice_seg = types.Segment3D{
         .start = .{ -5, 0, 5 },
         .end = .{ 5, 0, 5 },
     };
 
-    const new_face = try booleans.sliceFaceWithSegment(alloc, &t_arena, &g_arena, top_face_id, slice_seg, test_tol);
+    const new_face = try modifiers.sliceFaceWithSegment(alloc, &t_arena, &g_arena, top_face_id, slice_seg, test_tol);
     try std.testing.expect(new_face != null);
 }
 
@@ -478,7 +482,7 @@ test "Exact SSI: Plane vs Cone (Apex Cut Rulings)" {
         .half_angle = std.math.pi / 4.0,
     };
 
-    const res = try booleans.intersectPlaneCone(std.testing.allocator, plane, cone, test_tol);
+    const res = try intersections.intersectPlaneCone(std.testing.allocator, plane, cone, test_tol);
     try std.testing.expect(res == .two_lines);
 }
 
@@ -499,7 +503,7 @@ test "Exact SSI: Cylinder vs Cylinder (Steinmetz Curves)" {
         .radius = 5.0,
     };
 
-    const res = try booleans.intersectCylinderCylinder(alloc, cyl_a, cyl_b, test_tol);
+    const res = try intersections.intersectCylinderCylinder(alloc, cyl_a, cyl_b, test_tol);
     try std.testing.expect(res == .two_sampled);
     alloc.free(res.two_sampled[0]); // Indexed as array element 0
     alloc.free(res.two_sampled[1]); // Indexed as array element 1
@@ -517,7 +521,7 @@ test "Exact SSI: Plane vs Torus (Perpendicular Cut)" {
         .minor_radius = 3.0,
     };
 
-    const res = try booleans.intersectPlaneTorus(alloc, plane, torus, test_tol);
+    const res = try intersections.intersectPlaneTorus(alloc, plane, torus, test_tol);
     try std.testing.expect(res == .circle);
     try std.testing.expectApproxEqAbs(13.0, res.circle.radius, 1e-9);
 }
@@ -559,9 +563,9 @@ test "Projections: 2D Point Containment Boundary Precision" {
     };
     const tol = math.Tolerance{ .absolute = 1e-7, .parametric = 1e-7, .squared = 1e-14 };
 
-    try std.testing.expect(booleans.isPointInPolygon2D(.{ 0.0, 0.0 }, &polygon, tol));
-    try std.testing.expect(booleans.isPointInPolygon2D(.{ 5.0, 0.0 }, &polygon, tol));
-    try std.testing.expect(!booleans.isPointInPolygon2D(.{ 6.0, 0.0 }, &polygon, tol));
+    try std.testing.expect(classify.isPointInPolygon2D(.{ 0.0, 0.0 }, &polygon, tol));
+    try std.testing.expect(classify.isPointInPolygon2D(.{ 5.0, 0.0 }, &polygon, tol));
+    try std.testing.expect(!classify.isPointInPolygon2D(.{ 6.0, 0.0 }, &polygon, tol));
 }
 
 test "CSG Pipeline: Genus 1 Through-Hole Euler Validation" {
@@ -616,7 +620,7 @@ test "CSG TDD: Inject Closed Circular Seam" {
     const face_id = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &v_ids, .{ .index = 0, .surface_type = .plane }, &twin_map);
 
     // 2. Define a closed circular seam completely inside the face
-    const circle = booleans.MathCircle{
+    const circle = types.MathCircle{
         .center = .{ 0, 0, 0 },
         .radius = 5.0,
         .normal = .{ 0, 0, 1 },
@@ -626,7 +630,7 @@ test "CSG TDD: Inject Closed Circular Seam" {
 
     // 3. Attempt to inject the circle as a topological inner loop (hole)
     const new_tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
-    try booleans.injectCircularHole(alloc, &t_arena, &g_arena, face_id, circle, new_tol);
+    try modifiers.injectCircularHole(alloc, &t_arena, &g_arena, face_id, circle, new_tol);
 
     // 4. TDD Assertions
     const face = t_arena.faces.items[face_id];
@@ -655,27 +659,27 @@ test "CSG TDD: Multi-Loop Face Containment (Holes)" {
     const face_id = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &v_ids, .{ .index = 0, .surface_type = .plane }, &twin_map);
 
     // 2. Inject a radius 5 circular hole in the center
-    const circle = booleans.MathCircle{
+    const circle = types.MathCircle{
         .center = .{ 0, 0, 0 },
         .radius = 5.0,
         .normal = .{ 0, 0, 1 },
         .x_axis = .{ 1, 0, 0 },
         .y_axis = .{ 0, 1, 0 },
     };
-    try booleans.injectCircularHole(alloc, &t_arena, &g_arena, face_id, circle, test_tol);
+    try modifiers.injectCircularHole(alloc, &t_arena, &g_arena, face_id, circle, test_tol);
 
     // 3. TDD Assertions against the new multi-loop evaluator
 
     // Point A: Origin (0,0) -> Falls inside the hole. Should NOT be in the face.
-    const in_hole = try booleans.isPointInFaceUV(alloc, &t_arena, &g_arena, face_id, .{ 0.0, 0.0 }, test_tol);
+    const in_hole = try classify.isPointInFaceUV(alloc, &t_arena, &g_arena, face_id, .{ 0.0, 0.0 }, test_tol);
     try std.testing.expectEqual(false, in_hole);
 
     // Point B: (8,8) -> Inside the outer boundary, outside the hole. Should BE in the face.
-    const in_material = try booleans.isPointInFaceUV(alloc, &t_arena, &g_arena, face_id, .{ 8.0, 8.0 }, test_tol);
+    const in_material = try classify.isPointInFaceUV(alloc, &t_arena, &g_arena, face_id, .{ 8.0, 8.0 }, test_tol);
     try std.testing.expectEqual(true, in_material);
 
     // Point C: (20,20) -> Outside the outer boundary. Should NOT be in the face.
-    const completely_out = try booleans.isPointInFaceUV(alloc, &t_arena, &g_arena, face_id, .{ 20.0, 20.0 }, test_tol);
+    const completely_out = try classify.isPointInFaceUV(alloc, &t_arena, &g_arena, face_id, .{ 20.0, 20.0 }, test_tol);
     try std.testing.expectEqual(false, completely_out);
 }
 

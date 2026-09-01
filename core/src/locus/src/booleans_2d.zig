@@ -4,6 +4,7 @@ const geom = @import("geometry.zig");
 const booleans = @import("booleans.zig");
 const generators = @import("generators.zig");
 const math = @import("math.zig");
+const classify = @import("csg/classify.zig");
 
 const Edge2D = struct {
     start: [2]f64,
@@ -132,14 +133,14 @@ pub fn crossSectionBoolean(
         var keep = false;
 
         if (edge.is_a) {
-            const in_b = booleans.isPointInPolygon2D(mid, poly_b, tol);
+            const in_b = classify.isPointInPolygon2D(mid, poly_b, tol);
             keep = switch (op) {
                 .union_op => !in_b,
                 .difference => !in_b,
                 .intersection => in_b,
             };
         } else {
-            const in_a = booleans.isPointInPolygon2D(mid, poly_a, tol);
+            const in_a = classify.isPointInPolygon2D(mid, poly_a, tol);
             keep = switch (op) {
                 .union_op => !in_a,
                 .difference => in_a,

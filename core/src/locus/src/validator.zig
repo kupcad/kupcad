@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const math = @import("math.zig");
-const booleans = @import("booleans.zig");
+const classify = @import("csg/classify.zig");
 
 pub const ValidationError = error{
     // Topological Connectivity
@@ -128,7 +128,7 @@ pub const BRepSanitizer = struct {
 
                     // 5. Coincidence Check (Vertex rests exactly on Face Surface)[cite: 13]
                     if (config.check_coincidence) {
-                        const proj_pt = booleans.projectPointToSurface(g_arena, face.surface, v_start);
+                        const proj_pt = classify.projectPointToSurface(g_arena, face.surface, v_start);
                         if (math.distSq(v_start, proj_pt) > tol.squared * 4.0) {
                             return error.VertexNotOnSurface;
                         }
