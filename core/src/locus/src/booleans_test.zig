@@ -707,3 +707,65 @@ test "CSG Pipeline: 3D True Genus 1 Through-Hole Validation" {
     const g = prop.genus(alloc, &t_arena, result);
     try std.testing.expectEqual(@as(i32, 1), g);
 }
+
+test "CSG Pipeline: Coplanar Union (Touching Cubes)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Cube A: 10x10x10, spans X: [-5, 5]
+    const cube_a = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+
+    // Cube B: 10x10x10, translate to span X: [5, 15]
+    const cube_b = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube_b, 10.0, 0.0, 0.0);
+
+    // Union them. The shared faces at X=5 should completely annihilate.
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_a, cube_b, .union_op, .{});
+
+    // 1. Validation check
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, test_tol, .{
+        .check_twins = true,
+        .require_closed_shells = true,
+    });
+
+    // 2. Volume check: 1000 + 1000 = 2000
+    const vol = prop.volume(alloc, &t_arena, &g_arena, result);
+    try std.testing.expectApproxEqAbs(2000.0, vol, 1e-3);
+
+    // 3. The resulting shell should have exactly 10 faces (a 20x10x10 rectangular prism)
+    const s = t_arena.solids.items[result];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[s.shells_start]];
+    // 2 ends + 4 front/back/top/bottom split across the seam = 10 faces
+    try std.testing.expectEqual(@as(usize, 10), shell.faces_len);
+}
+
+test "CSG Pipeline: Blind Pocket (Partial Penetration)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Base: 10x10x10 cube, Z: [-5, 5]
+    const base = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+
+    // Cutter: 5x5x10 cube. Translated Z=+5 so it spans Z: [0, 10]
+    const cutter = try generators.generateCube(alloc, &t_arena, &g_arena, 5.0, 5.0, 10.0, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cutter, 0.0, 0.0, 5.0);
+
+    // Subtract cutter from base. This carves a 5x5 square pocket that is exactly 5 units deep.
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, cutter, .difference, .{});
+
+    // 1. Validation check
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, test_tol, .{
+        .check_twins = true,
+        .require_closed_shells = true,
+    });
+
+    // 2. Volume check: 1000 (base) - 125 (intersecting volume: 5x5x5) = 875
+    const vol = prop.volume(alloc, &t_arena, &g_arena, result);
+    try std.testing.expectApproxEqAbs(875.0, vol, 1e-3);
+}
