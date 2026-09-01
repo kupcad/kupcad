@@ -773,3 +773,64 @@ test "CSG Pipeline: Blind Pocket (Partial Penetration)" {
     const vol = prop.volume(alloc, &t_arena, &g_arena, result);
     try std.testing.expectApproxEqAbs(875.0, vol, 1e-3);
 }
+
+test "CSG TDD: Cylinder minus Octagonal Cylinder Through-Hole" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Outer cylinder: radius 4.1 (dia 8.2), height 25.0 (matching standoff sleeve)
+    const outer_cyl = try generators.generateCylinder(alloc, &t_arena, &g_arena, 4.1, 25.0, false);
+
+    // Inner octagonal hole: radius 2.6 (dia 5.2), height 27.0, translated Z = -1.0
+    const hole_cyl = try generators.generateCylinder(alloc, &t_arena, &g_arena, 2.6, 27.0, false);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, hole_cyl, 0.0, 0.0, -1.0);
+
+    // Perform Difference
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, outer_cyl, hole_cyl, .difference, .{});
+
+    // 1. Strict Manifold Validation
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, tol, .{
+        .check_twins = true,
+        .require_closed_shells = true,
+        .check_euler = true,
+    });
+
+    // 2. Physical Volume Verification
+    // Outer vol (~1320.8) - Octagonal hole vol (~478.0) = ~842.8
+    const vol = prop.volume(alloc, &t_arena, &g_arena, result);
+    try std.testing.expectApproxEqAbs(769.1937, vol, 1e-3);
+
+    // 3. Structural Genus must be 1
+    const g = prop.genus(alloc, &t_arena, result);
+    try std.testing.expectEqual(@as(i32, 1), g);
+}
+
+test "CSG TDD: Complex Rotated Subtraction (Angled Hole / Cut)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Base box 30x20x10
+    const base = try generators.generateCube(alloc, &t_arena, &g_arena, 30.0, 20.0, 10.0, true);
+
+    // Cutter cylinder rotated by 45 degrees across the body
+    const cutter = try generators.generateCylinder(alloc, &t_arena, &g_arena, 3.0, 30.0, true);
+    _ = try transforms.rotateSolid(alloc, &t_arena, &g_arena, cutter, 45.0, 0.0, 0.0);
+
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, cutter, .difference, .{});
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, tol, .{
+        .check_twins = true,
+        .require_closed_shells = true,
+    });
+
+    const g = prop.genus(alloc, &t_arena, result);
+    try std.testing.expectEqual(@as(i32, 1), g);
+}
