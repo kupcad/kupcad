@@ -157,12 +157,19 @@ inline fn isIdentChar(c: u8) bool {
     return utils.LexerUtils.isIdentChar(c, false);
 }
 
+pub const InterpState = struct {
+    brace_depth: u32,
+    open_delim: u8,
+    close_delim: u8,
+    string_nesting: u32,
+};
+
 pub const Lexer = struct {
     buffer: []const u8,
     index: usize,
     file_id: u32,
     brace_depth: u32 = 0,
-    interp_stack: [8]u32 = undefined,
+    interp_stack: [8]InterpState = undefined,
     interp_depth: usize = 0,
 
     pub fn init(buffer: []const u8, file_id: u32) Lexer {
@@ -204,10 +211,11 @@ pub const Lexer = struct {
                     return self.consumeChar(.r_brace, start_loc);
                 } else if (self.interp_depth > 0) {
                     self.interp_depth -= 1;
-                    self.brace_depth = self.interp_stack[self.interp_depth];
+                    const state = self.interp_stack[self.interp_depth];
+                    self.brace_depth = state.brace_depth;
                     self.advance(); // consume '}'
                     const content_loc = self.getLoc();
-                    return self.consumeStringBody(content_loc, false, '"');
+                    return self.consumeStringBody(content_loc, false, state.open_delim, state.close_delim, state.string_nesting);
                 } else {
                     return self.consumeChar(.r_brace, start_loc);
                 }
@@ -238,6 +246,16 @@ pub const Lexer = struct {
         utils.LexerUtils.skipWhitespace(self.buffer, &self.index, false);
     }
 
+    inline fn getClosingDelimiter(open_delim: u8) u8 {
+        return switch (open_delim) {
+            '[' => ']',
+            '{' => '}',
+            '(' => ')',
+            '<' => '>',
+            else => open_delim,
+        };
+    }
+
     fn consumePercentOrModulo(self: *Lexer, start_loc: common_token.Location) Token {
         const c2 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
         const c3 = if (self.index + 2 < self.buffer.len) self.buffer[self.index + 2] else 0;
@@ -246,11 +264,17 @@ pub const Lexer = struct {
         if ((c2 == 'w' or c2 == 'i') and c3 != 0 and !std.ascii.isAlphanumeric(c3) and !std.ascii.isWhitespace(c3)) {
             return self.consumePercentLiteral(start_loc, true);
         }
+
         // Bare %(...) or %!...
-        // Ensure c2 isn't '=' to avoid breaking modulo assignment (%=)
         if (c2 != 0 and c2 != '=' and !std.ascii.isAlphanumeric(c2) and !std.ascii.isWhitespace(c2)) {
-            return self.consumePercentLiteral(start_loc, false);
+            self.advance(); // %
+            const open_delim = self.peek();
+            self.advance();
+            const close_delim = getClosingDelimiter(open_delim);
+            const content_loc = self.getLoc();
+            return self.consumeStringBody(content_loc, true, open_delim, close_delim, 1);
         }
+
         return self.consumeOperator(start_loc);
     }
 
@@ -267,45 +291,35 @@ pub const Lexer = struct {
         const open_delim = self.peek();
         self.advance();
 
-        const inner_start = self.index;
+        const close_delim = getClosingDelimiter(open_delim);
 
-        const close_delim: u8 = switch (open_delim) {
-            '[' => ']',
-            '{' => '}',
-            '(' => ')',
-            '<' => '>',
-            else => open_delim,
-        };
+        const is_paired = (open_delim != close_delim);
+        var nesting_depth: u32 = 1;
 
-        // Safely parse the body, skipping escaped characters
         while (self.index < self.buffer.len) {
             const c = self.peek();
 
             if (c == '\\') {
-                self.advance(); // consume '\'
-                if (self.index < self.buffer.len) self.advance(); // consume the escaped character
+                self.advance();
+                if (self.index < self.buffer.len) self.advance();
                 continue;
             }
 
-            if (c == close_delim) {
-                break;
+            if (is_paired) {
+                if (c == open_delim) nesting_depth += 1;
+                if (c == close_delim) nesting_depth -= 1;
+                if (nesting_depth == 0) break;
+            } else {
+                if (c == close_delim) break;
             }
+
             self.advance();
         }
 
-        const inner_end = self.index;
         if (self.index < self.buffer.len) self.advance(); // consume close delim
 
-        if (!has_letter) {
-            // For bare percent strings, the parser expects exactly the inner content
-            var content_loc = start_loc;
-            content_loc.offset = @intCast(inner_start);
-            return .{ .tag = .string, .loc = content_loc, .lexeme = self.buffer[inner_start..inner_end] };
-        } else {
-            // %w and %i arrays are handled by the parser directly using the full lexeme string
-            const tag: Tag = if (kind == 'w') .percent_w else .percent_i;
-            return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[full_start..self.index] };
-        }
+        const tag: Tag = if (kind == 'w') .percent_w else .percent_i;
+        return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[full_start..self.index] };
     }
 
     fn consumeDotOrRange(self: *Lexer, start_loc: common_token.Location) Token {
@@ -416,7 +430,7 @@ pub const Lexer = struct {
         }
         self.advance();
         const content_loc = self.getLoc();
-        return self.consumeStringBody(content_loc, true, quote);
+        return self.consumeStringBody(content_loc, true, quote, quote, 1);
     }
 
     fn consumeSymbolOrColon(self: *Lexer, start_loc: common_token.Location) Token {
@@ -471,8 +485,11 @@ pub const Lexer = struct {
         return .{ .tag = .number, .loc = start_loc, .lexeme = lexeme };
     }
 
-    fn consumeStringBody(self: *Lexer, start_loc: common_token.Location, is_start: bool, quote: u8) Token {
+    fn consumeStringBody(self: *Lexer, start_loc: common_token.Location, is_start: bool, open_delim: u8, close_delim: u8, initial_nesting: u32) Token {
         const start = self.index;
+        const is_paired = open_delim != close_delim;
+        var nesting_depth = initial_nesting;
+
         while (self.index < self.buffer.len) {
             const c = self.peek();
 
@@ -481,7 +498,8 @@ pub const Lexer = struct {
                 if (self.index < self.buffer.len) self.advance();
                 continue;
             }
-            if (quote == '"' and c == '#' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '{') {
+
+            if (c == '#' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '{') {
                 const lexeme = self.buffer[start..self.index];
                 self.advance();
                 self.advance();
@@ -489,15 +507,31 @@ pub const Lexer = struct {
                 if (self.interp_depth >= self.interp_stack.len) {
                     return .{ .tag = .invalid, .loc = start_loc, .lexeme = "Interpolation depth exceeded" };
                 }
-                self.interp_stack[self.interp_depth] = self.brace_depth;
+                self.interp_stack[self.interp_depth] = .{
+                    .brace_depth = self.brace_depth,
+                    .open_delim = open_delim,
+                    .close_delim = close_delim,
+                    .string_nesting = nesting_depth,
+                };
                 self.interp_depth += 1;
                 self.brace_depth = 0;
                 return .{ .tag = if (is_start) .string_start else .string_mid, .loc = start_loc, .lexeme = lexeme };
             }
-            if (c == quote) {
-                const lexeme = self.buffer[start..self.index];
-                self.advance();
-                return .{ .tag = if (is_start) .string else .string_end, .loc = start_loc, .lexeme = lexeme };
+
+            if (is_paired) {
+                if (c == open_delim) nesting_depth += 1;
+                if (c == close_delim) nesting_depth -= 1;
+                if (nesting_depth == 0) {
+                    const lexeme = self.buffer[start..self.index];
+                    self.advance();
+                    return .{ .tag = if (is_start) .string else .string_end, .loc = start_loc, .lexeme = lexeme };
+                }
+            } else {
+                if (c == close_delim) {
+                    const lexeme = self.buffer[start..self.index];
+                    self.advance();
+                    return .{ .tag = if (is_start) .string else .string_end, .loc = start_loc, .lexeme = lexeme };
+                }
             }
             self.advance();
         }

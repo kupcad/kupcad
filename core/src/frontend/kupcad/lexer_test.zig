@@ -532,21 +532,6 @@ test "KupCAD Lexer: Bare Percent Strings" {
     });
 }
 
-test "KupCAD Lexer: Percent Literals with Identical Custom Delimiters" {
-    try expectTokens("list1 = %w!gear shaft!\nlist2 = %i|top bottom|", &.{
-        t(.ident, "list1"), t(.equal, "="), t(.percent_w, "%w!gear shaft!"), t(.newline, "\n"),
-        t(.ident, "list2"), t(.equal, "="), t(.percent_i, "%i|top bottom|"), t(.eof, ""),
-    });
-}
-
-test "KupCAD Lexer: Percent Literals with Mathematical Symbols as Delimiters" {
-    // Tests that symbols like '+' or '=' are not accidentally treated as operators
-    try expectTokens("list = %w+one two+\nvars = %i=x y z=", &.{
-        t(.ident, "list"), t(.equal, "="), t(.percent_w, "%w+one two+"), t(.newline, "\n"),
-        t(.ident, "vars"), t(.equal, "="), t(.percent_i, "%i=x y z="),   t(.eof, ""),
-    });
-}
-
 test "KupCAD Lexer: Percent Literals with Paired Bracket Delimiters" {
     // Verifies the switch fallback for [], {}, (), and <> remains completely intact
     try expectTokens("a = %w<one two>\nb = %i(admin guest)", &.{
@@ -563,10 +548,44 @@ test "KupCAD Lexer: Modulo Operator remains unaffected" {
     });
 }
 
+test "KupCAD Lexer: Bare Percent Strings with Interpolation" {
+    try expectTokens("%(Value: #{1 + 2})", &.{
+        t(.string_start, "Value: "),
+        t(.number, "1"),
+        t(.plus, "+"),
+        t(.number, "2"),
+        t(.string_end, ""),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Percent Literals with Unescaped Nested Pairs" {
+    // Verifies the "Ruby Trap": balanced pairs inside the string do not prematurely close the literal
+    try expectTokens("nested = %w( item_a (item_b) [item_c] )\nstr = %(hello (nested) world)", &.{
+        t(.ident, "nested"), t(.equal, "="), t(.percent_w, "%w( item_a (item_b) [item_c] )"), t(.newline, "\n"),
+        t(.ident, "str"),    t(.equal, "="), t(.string, "hello (nested) world"),              t(.eof, ""),
+    });
+}
+
 test "KupCAD Lexer: Percent Literals with Escaped Delimiters" {
     // Tests that \% escapes the delimiter from prematurely ending the string
     try expectTokens("x = %| do this \\| or this |\ny = %w( item_\\(1\\) )", &.{
         t(.ident, "x"), t(.equal, "="), t(.string, " do this \\| or this "), t(.newline, "\n"),
         t(.ident, "y"), t(.equal, "="), t(.percent_w, "%w( item_\\(1\\) )"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Percent Literals with Identical Custom Delimiters" {
+    try expectTokens("list1 = %w!gear shaft!\nlist2 = %i|top bottom|", &.{
+        t(.ident, "list1"), t(.equal, "="), t(.percent_w, "%w!gear shaft!"), t(.newline, "\n"),
+        t(.ident, "list2"), t(.equal, "="), t(.percent_i, "%i|top bottom|"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Percent Literals with Mathematical Symbols as Delimiters" {
+    // Tests that symbols like '+' or '=' are not accidentally treated as operators
+    try expectTokens("list = %w+one two+\nvars = %i=x y z=", &.{
+        t(.ident, "list"), t(.equal, "="), t(.percent_w, "%w+one two+"), t(.newline, "\n"),
+        t(.ident, "vars"), t(.equal, "="), t(.percent_i, "%i=x y z="),   t(.eof, ""),
     });
 }
