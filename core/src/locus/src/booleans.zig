@@ -765,17 +765,20 @@ fn sliceFace(
     return new_face_id;
 }
 
-fn punchHole(
+/// Replaces punchHole. Instead of destroying the face, this "imprints" the intersection.
+/// It creates a perfectly twinned Inner Plug face and Outer Hole boundary.
+fn imprintClosedLoop(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
     face_id: topo.FaceId,
     pts: []const topo.VertexId,
-) !?topo.FaceId {
+    faces_list: *std.ArrayListUnmanaged(topo.FaceId),
+) !void {
     const face = t_arena.faces.items[face_id];
-    if (face.surface.surface_type != .plane) return null;
-    const plane = g_arena.planes.items[face.surface.index];
+    if (face.surface.surface_type != .plane) return;
 
+    const plane = g_arena.planes.items[face.surface.index];
     var centroid_uv = [2]f64{ 0, 0 };
     for (pts) |v_id| {
         const uv = projectToPlane(t_arena.vertices.items[v_id].point, plane.origin, plane.u_axis, plane.v_axis);
@@ -788,50 +791,85 @@ fn punchHole(
     const SortPoint = struct { v_id: topo.VertexId, angle: f64 };
     var sorted = try allocator.alloc(SortPoint, pts.len);
     defer allocator.free(sorted);
-
     for (pts, 0..) |v_id, i| {
         const uv = projectToPlane(t_arena.vertices.items[v_id].point, plane.origin, plane.u_axis, plane.v_axis);
         sorted[i] = .{ .v_id = v_id, .angle = std.math.atan2(uv[1] - centroid_uv[1], uv[0] - centroid_uv[0]) };
     }
+
     std.mem.sort(SortPoint, sorted, {}, struct {
         fn lessThan(_: void, a: SortPoint, b: SortPoint) bool {
+            // Sort CCW for the plug (which makes the hole naturally CW)
             return a.angle < b.angle;
         }
     }.lessThan);
 
-    const loop_id: u32 = @intCast(t_arena.loops.items.len);
+    const plug_loop_id: u32 = @intCast(t_arena.loops.items.len);
+    const hole_loop_id: u32 = plug_loop_id + 1;
     const he_start: u32 = @intCast(t_arena.half_edges.items.len);
     const n = sorted.len;
 
+    // 1. Build the Inner Plug Face Boundary (CCW)
     for (0..n) |i| {
         const v_start = sorted[i].v_id;
         const v_end = sorted[(i + 1) % n].v_id;
-
         const line_idx: u24 = @intCast(g_arena.lines.items.len);
         try g_arena.lines.append(allocator, .{ .start = t_arena.vertices.items[v_start].point, .end = t_arena.vertices.items[v_end].point });
 
         try t_arena.half_edges.append(allocator, .{
             .start_vertex = v_start,
-            .twin = topo.NULL_ID,
+            .twin = he_start + @as(u32, @intCast(n + i)), // Twin to the hole edge!
             .next = he_start + @as(u32, @intCast((i + 1) % n)),
             .prev = he_start + @as(u32, @intCast((i + n - 1) % n)),
-            .loop_id = loop_id,
+            .loop_id = plug_loop_id,
             .curve = .{ .index = line_idx, .curve_type = .line },
             .forward = true,
         });
     }
 
-    const new_face_id: u32 = @intCast(t_arena.faces.items.len);
-    try t_arena.loops.append(allocator, .{ .face_id = new_face_id, .first_half_edge = he_start });
-    const new_fl_start: u32 = @intCast(t_arena.face_loops.items.len);
-    try t_arena.face_loops.append(allocator, loop_id);
+    // 2. Build the Parent Face's Hole Boundary (CW)
+    for (0..n) |i| {
+        const v_start = sorted[(i + 1) % n].v_id; // Reversed for CW
+
+        try t_arena.half_edges.append(allocator, .{
+            .start_vertex = v_start,
+            .twin = he_start + @as(u32, @intCast(i)), // Twin to the plug edge!
+            .next = he_start + @as(u32, @intCast(n + ((i + n - 1) % n))),
+            .prev = he_start + @as(u32, @intCast(n + ((i + 1) % n))),
+            .loop_id = hole_loop_id,
+            .curve = t_arena.half_edges.items[he_start + i].curve,
+            .forward = false,
+        });
+    }
+
+    // 3. Register the newly created Plug Face
+    const plug_face_id: u32 = @intCast(t_arena.faces.items.len);
+    try t_arena.loops.append(allocator, .{ .face_id = plug_face_id, .first_half_edge = he_start });
+    try t_arena.loops.append(allocator, .{ .face_id = face_id, .first_half_edge = he_start + @as(u32, @intCast(n)) });
+
+    const plug_fl_start: u32 = @intCast(t_arena.face_loops.items.len);
+    try t_arena.face_loops.append(allocator, plug_loop_id);
     try t_arena.faces.append(allocator, .{
         .surface = face.surface,
         .forward = face.forward,
-        .loops_start = new_fl_start,
+        .loops_start = plug_fl_start,
         .loops_len = 1,
     });
-    return new_face_id;
+    // Add the plug to the active tracking list so it gets ray-cast evaluated!
+    try faces_list.append(allocator, plug_face_id);
+
+    // 4. Mutate the Parent Face to absorb the new hole loop
+    var mutable_face = &t_arena.faces.items[face_id];
+    const old_start = mutable_face.loops_start;
+    const old_len = mutable_face.loops_len;
+    const new_start: u32 = @intCast(t_arena.face_loops.items.len);
+
+    for (0..old_len) |j| {
+        try t_arena.face_loops.append(allocator, t_arena.face_loops.items[old_start + j]);
+    }
+    try t_arena.face_loops.append(allocator, hole_loop_id);
+
+    mutable_face.loops_start = new_start;
+    mutable_face.loops_len = old_len + 1;
 }
 
 /// Verifies p-curve loop closure and forces endpoint snapping in UV domain
@@ -901,42 +939,74 @@ fn classifyFace(
     const face = t_arena.faces.items[face_id];
     const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
 
-    var centroid = math.Vec3{ 0, 0, 0 };
-    var v_count: f64 = 0.0;
-    var curr_he = outer_loop.first_half_edge;
-
-    while (true) {
-        const he = t_arena.half_edges.items[curr_he];
-        centroid = math.add(centroid, t_arena.vertices.items[he.start_vertex].point);
-        v_count += 1.0;
-        curr_he = he.next;
-        if (curr_he == outer_loop.first_half_edge) break;
-    }
-
-    const sample_pt = math.scale(centroid, 1.0 / v_count);
+    // 1. Calculate Face Normal first so we can use it to find the interior
     var normal = math.Vec3{ 0, 0, 1 };
-
     if (face.surface.surface_type == .plane) {
         const plane = g_arena.planes.items[face.surface.index];
         normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
         if (!face.forward) normal = math.scale(normal, -1.0);
     } else if (face.surface.surface_type == .cylinder) {
+        // Fallback approximation for cylinder normal at bounding box center
         const cyl = g_arena.cylinders.items[face.surface.index];
+        const pt_start = t_arena.vertices.items[t_arena.half_edges.items[outer_loop.first_half_edge].start_vertex].point;
         const axis = math.normalize(cyl.axis);
-        const v = math.sub(sample_pt, cyl.origin);
+        const v = math.sub(pt_start, cyl.origin);
         const v_proj = math.sub(v, math.scale(axis, math.dot(v, axis)));
         const len = math.mag(v_proj);
-        if (len > math.MATH_EPSILON) {
-            normal = math.scale(v_proj, 1.0 / len);
-        }
+        if (len > math.MATH_EPSILON) normal = math.scale(v_proj, 1.0 / len);
         if (!face.forward) normal = math.scale(normal, -1.0);
     }
 
-    const offset_dist = @max(tol.absolute * 2.0, 1e-5);
-    const pt_in = math.sub(sample_pt, math.scale(normal, offset_dist));
-    const pt_out = math.add(sample_pt, math.scale(normal, offset_dist));
+    // 2. Mathematically SAFE sample point generation (Resolves Centroid-in-the-Void)
+    var sample_pt: ?math.Vec3 = null;
+    var curr_he = outer_loop.first_half_edge;
+    while (true) {
+        const he = t_arena.half_edges.items[curr_he];
+        const p1 = t_arena.vertices.items[he.start_vertex].point;
+        const p2 = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
 
-    // Pass allocator down cleanly to handle AABB allocations without leaking
+        // Find the midpoint of the edge and its tangent
+        const mid = math.scale(math.add(p1, p2), 0.5);
+        const tangent = math.normalize(math.sub(p2, p1));
+
+        // Cross the normal and tangent to get a vector pointing strictly INWARD across the face
+        const inward = math.normalize(math.cross(normal, tangent));
+
+        // Nudge the midpoint slightly inward
+        const nudge_dist = @max(tol.absolute * 10.0, 1e-3);
+        const test_3d = math.add(mid, math.scale(inward, nudge_dist));
+
+        // Project to UV and verify it doesn't fall into a hole using our new evaluator!
+        const test_uv = g_arena.surfaceProject(face.surface, test_3d);
+        if (isPointInFaceUV(allocator, t_arena, g_arena, face_id, test_uv, tol) catch false) {
+            sample_pt = test_3d;
+            break;
+        }
+
+        curr_he = he.next;
+        if (curr_he == outer_loop.first_half_edge) break;
+    }
+
+    // Fallback to old centroid only if the face is a degenerate sliver where nudging fails
+    const final_sample = sample_pt orelse blk: {
+        var centroid = math.Vec3{ 0, 0, 0 };
+        var v_count: f64 = 0.0;
+        var c_he = outer_loop.first_half_edge;
+        while (true) {
+            const he = t_arena.half_edges.items[c_he];
+            centroid = math.add(centroid, t_arena.vertices.items[he.start_vertex].point);
+            v_count += 1.0;
+            c_he = he.next;
+            if (c_he == outer_loop.first_half_edge) break;
+        }
+        break :blk math.scale(centroid, 1.0 / v_count);
+    };
+
+    // 3. Perform the actual classification raycasts
+    const offset_dist = @max(tol.absolute * 2.0, 1e-5);
+    const pt_in = math.sub(final_sample, math.scale(normal, offset_dist));
+    const pt_out = math.add(final_sample, math.scale(normal, offset_dist));
+
     const in_solid = isPointInsideSolidFaces(allocator, t_arena, g_arena, target_faces, pt_in, tol) catch false;
     const out_solid = isPointInsideSolidFaces(allocator, t_arena, g_arena, target_faces, pt_out, tol) catch false;
 
@@ -1000,7 +1070,6 @@ pub fn computeBoolean(
 ) BooleanError!topo.SolidId {
     _ = config;
 
-    // Calculate global bounding box for the entire intersection process to establish adaptive tolerance
     var min_b = math.Vec3{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
     var max_b = math.Vec3{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
     for (t_arena.vertices.items) |v| {
@@ -1033,8 +1102,7 @@ pub fn computeBoolean(
         }
     }
 
-    intersectAndSplitFaces3D(allocator, t_arena, g_arena, solid_a, solid_b, &faces_a, &faces_b, tol) catch {};
-
+    // PHASE 1: COLLECT PIERCINGS (0D Nodes split 1D Edges)
     var intersection_events = std.ArrayListUnmanaged(IntersectionEvent).empty;
     defer intersection_events.deinit(allocator);
 
@@ -1059,6 +1127,7 @@ pub fn computeBoolean(
         face_piercings.deinit();
     }
 
+    // Inject points into edges
     for (intersection_events.items) |event| {
         if (event.he_id != active_original_he) {
             active_original_he = event.he_id;
@@ -1066,7 +1135,6 @@ pub fn computeBoolean(
             last_split_pt = null;
         }
 
-        // Prevent coincident splitting on the same edge
         if (last_split_pt) |last_pt| {
             if (math.distSq(last_pt, event.pt) < tol.squared) continue;
         }
@@ -1094,34 +1162,121 @@ pub fn computeBoolean(
         }
     }
 
+    // Process nodes into either Holes (Imprints) or Edge Slices
+    var face_it = face_piercings.iterator();
+    while (face_it.next()) |entry| {
+        const face_id = entry.key_ptr.*;
+        const pts = entry.value_ptr.items;
+
+        var source_solid: ?topo.SolidId = null;
+        var target_list: ?*std.ArrayListUnmanaged(topo.FaceId) = null;
+
+        // Find which solid this face belongs to
+        for (faces_a.items) |fa| {
+            if (fa == face_id) {
+                source_solid = solid_a;
+                target_list = &faces_a;
+                break;
+            }
+        }
+        if (source_solid == null) {
+            for (faces_b.items) |fb| {
+                if (fb == face_id) {
+                    source_solid = solid_b;
+                    target_list = &faces_b;
+                    break;
+                }
+            }
+        }
+        if (source_solid == null) continue;
+
+        if (pts.len >= 3) {
+            const face = t_arena.faces.items[face_id];
+            var coplanar = false;
+
+            // Check true mathematical coplanarity
+            if (face.surface.surface_type == .plane) {
+                const plane = g_arena.planes.items[face.surface.index];
+                coplanar = true;
+                const plane_normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
+                for (pts) |p_id| {
+                    const pt = t_arena.vertices.items[p_id].point;
+                    const dist = @abs(math.dot(plane_normal, math.sub(pt, plane.origin)));
+                    if (dist > 1e-3) {
+                        coplanar = false;
+                        break;
+                    }
+                }
+            }
+
+            if (coplanar) {
+                // It's a planar boundary face. Imprint the hole and plug.
+                imprintClosedLoop(allocator, t_arena, g_arena, face_id, pts, target_list.?) catch {};
+            } else {
+                // It is a perpendicular wall pierced multiple times. Group by Z-axis projection.
+                var z_groups = std.AutoHashMap(i64, std.ArrayListUnmanaged(topo.VertexId)).init(allocator);
+                const cyl = if (face.surface.surface_type == .cylinder) g_arena.cylinders.items[face.surface.index] else null;
+
+                for (pts) |p_id| {
+                    const p = t_arena.vertices.items[p_id].point;
+                    var axis_proj = p[2];
+                    if (cyl) |c| {
+                        axis_proj = math.dot(math.sub(p, c.origin), math.normalize(c.axis));
+                    }
+                    const z_key = @as(i64, @intFromFloat(@round(axis_proj * 1000.0)));
+                    var res = z_groups.getOrPut(z_key) catch continue;
+                    if (!res.found_existing) res.value_ptr.* = .empty;
+                    res.value_ptr.append(allocator, p_id) catch {};
+                }
+
+                // Track active sub-faces because sliceFace moves vertices to new face IDs
+                var active_sub_faces = std.ArrayListUnmanaged(topo.FaceId).empty;
+                defer active_sub_faces.deinit(allocator);
+                active_sub_faces.append(allocator, face_id) catch {};
+
+                var zit = z_groups.iterator();
+                while (zit.next()) |g| {
+                    if (g.value_ptr.items.len == 2) {
+                        const vA = g.value_ptr.items[0];
+                        const vB = g.value_ptr.items[1];
+                        var new_face_opt: ?topo.FaceId = null;
+
+                        for (active_sub_faces.items) |sub_face| {
+                            if (sliceFace(allocator, t_arena, g_arena, sub_face, vA, vB) catch null) |new_face| {
+                                new_face_opt = new_face;
+                                break;
+                            }
+                        }
+                        if (new_face_opt) |nf| {
+                            active_sub_faces.append(allocator, nf) catch {};
+                        }
+                    }
+                    g.value_ptr.deinit(allocator);
+                }
+                z_groups.deinit();
+
+                for (active_sub_faces.items) |sub_face| {
+                    if (sub_face != face_id) {
+                        target_list.?.append(allocator, sub_face) catch {};
+                    }
+                }
+            }
+        } else if (pts.len == 2) {
+            if (sliceFace(allocator, t_arena, g_arena, face_id, pts[0], pts[1]) catch null) |new_face_id| {
+                target_list.?.append(allocator, new_face_id) catch {};
+            }
+        }
+    }
+
+    // PHASE 2: INTERSECT FACES (1D SSI curves connect the 0D Nodes)
+    intersectAndSplitFaces3D(allocator, t_arena, g_arena, solid_a, solid_b, &faces_a, &faces_b, tol) catch {};
+
+    // PHASE 3: CLASSIFY SURVIVING FACES
     var faces_to_classify = std.ArrayListUnmanaged(FaceTracker).empty;
     defer faces_to_classify.deinit(allocator);
 
     for (faces_a.items) |fa| faces_to_classify.append(allocator, .{ .face = fa, .source_solid = solid_a }) catch {};
     for (faces_b.items) |fb| faces_to_classify.append(allocator, .{ .face = fb, .source_solid = solid_b }) catch {};
-
-    var face_it = face_piercings.iterator();
-    while (face_it.next()) |entry| {
-        const face_id = entry.key_ptr.*;
-        const pts = entry.value_ptr.items;
-        var source_solid: ?topo.SolidId = null;
-        for (faces_to_classify.items) |item| {
-            if (item.face == face_id) {
-                source_solid = item.source_solid;
-                break;
-            }
-        }
-        if (source_solid == null) continue;
-        if (pts.len >= 3) {
-            if (punchHole(allocator, t_arena, g_arena, face_id, pts) catch null) |new_face_id| {
-                faces_to_classify.append(allocator, .{ .face = new_face_id, .source_solid = source_solid.? }) catch {};
-            }
-        } else if (pts.len == 2) {
-            if (sliceFace(allocator, t_arena, g_arena, face_id, pts[0], pts[1]) catch null) |new_face_id| {
-                faces_to_classify.append(allocator, .{ .face = new_face_id, .source_solid = source_solid.? }) catch {};
-            }
-        }
-    }
 
     var selected_faces = std.ArrayListUnmanaged(topo.FaceId).empty;
     defer selected_faces.deinit(allocator);
@@ -1143,7 +1298,6 @@ pub fn computeBoolean(
         };
 
         if (keep) {
-            // CULL DEGENERATE SLIVERS (Fixes Euler & DegenerateEdge violations)
             const area = calculateFaceArea(t_arena, face_id);
             if (area < tol.squared) continue;
 
@@ -1165,30 +1319,21 @@ pub fn computeBoolean(
     try t_arena.solid_shells.append(allocator, shell_start);
     try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
 
-    // --- 1. WELD COINCIDENT VERTICES ---
     try weldSolidVertices(allocator, t_arena, new_solid_id, tol);
-
-    // --- 2. STITCH BOUNDARIES ---
     try stitchSolidBoundaries(allocator, t_arena, new_solid_id);
 
-    // --- 3. VALIDATION HOOK ---
     if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
         const validator = @import("validator.zig");
         validator.BRepSanitizer.validateSolid(allocator, t_arena, g_arena, new_solid_id, tol, .{
             .enable_checks = true,
-            // STRICT TOPOLOGY ACTIVE
             .check_twins = true,
             .check_linked_lists = true,
-            // DELAYED UNTIL NEXT REFACTOR
             .check_euler = false,
             .require_closed_shells = false,
-            // GEOMETRY CHECKS ACTIVATED
             .check_coincidence = true,
             .check_degenerates = true,
         }) catch |err| {
-            std.log.warn("BRepSanitizer failed after {s} operation: {s}", .{
-                @tagName(op), @errorName(err),
-            });
+            std.log.warn("BRepSanitizer failed after {s} operation: {s}", .{ @tagName(op), @errorName(err) });
             return error.TopologyCorrupted;
         };
     }
@@ -1771,20 +1916,8 @@ pub fn intersectAndSplitFaces3D(
                     try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[0], faces_a, faces_b, tol);
                     try processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[1], faces_a, faces_b, tol);
                 },
-                .circle => |circle| {
-                    try processCircleCollision(allocator, t_arena, g_arena, fa_id, fb_id, circle, faces_a, faces_b, tol);
-                },
-                .sampled => |pts| {
-                    defer allocator.free(pts);
-                    try processSampledCollision(allocator, t_arena, g_arena, fa_id, fb_id, pts, faces_a, faces_b, tol);
-                },
-                .two_sampled => |pts_pair| {
-                    defer allocator.free(pts_pair[0]);
-                    defer allocator.free(pts_pair[1]);
-                    try processSampledCollision(allocator, t_arena, g_arena, fa_id, fb_id, pts_pair[0], faces_a, faces_b, tol);
-                    try processSampledCollision(allocator, t_arena, g_arena, fa_id, fb_id, pts_pair[1], faces_a, faces_b, tol);
-                },
-                .empty, .point => {},
+                // Disabled: Let exact edge-piercing handle limits to prevent topological interference
+                else => {},
             }
         }
     }
@@ -1922,22 +2055,6 @@ pub fn isPointInsideSolidFaces(
             // --- 4. Exact Face Intersection ---
             const face = t_arena.faces.items[aabb.face_id];
 
-            var polygon_buf: [128][2]f64 = undefined;
-            var poly_len: usize = 0;
-            const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
-
-            var curr_he = outer_loop.first_half_edge;
-            while (true) {
-                const he = t_arena.half_edges.items[curr_he];
-                if (poly_len < polygon_buf.len) {
-                    const v_pt = t_arena.vertices.items[he.start_vertex].point;
-                    polygon_buf[poly_len] = g_arena.surfaceProject(face.surface, v_pt);
-                    poly_len += 1;
-                }
-                curr_he = he.next;
-                if (curr_he == outer_loop.first_half_edge) break;
-            }
-
             switch (face.surface.surface_type) {
                 .plane => {
                     const plane = g_arena.planes.items[face.surface.index];
@@ -1952,7 +2069,8 @@ pub fn isPointInsideSolidFaces(
                         const hit_pt = math.add(pt, math.scale(ray_dir, t));
                         const uv_hit = projectToPlane(hit_pt, plane.origin, plane.u_axis, plane.v_axis);
 
-                        if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) {
+                        // Use the robust multi-loop hole evaluator
+                        if (isPointInFaceUV(temp_alloc, t_arena, g_arena, aabb.face_id, uv_hit, tol) catch false) {
                             hit_count += 1;
                             if (t < min_t) {
                                 min_t = t;
@@ -1971,7 +2089,8 @@ pub fn isPointInsideSolidFaces(
                                 const hit_pt = math.add(pt, math.scale(ray_dir, t));
                                 const uv_hit = g_arena.surfaceProject(face.surface, hit_pt);
 
-                                if (isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) {
+                                // Use the robust multi-loop hole evaluator
+                                if (isPointInFaceUV(temp_alloc, t_arena, g_arena, aabb.face_id, uv_hit, tol) catch false) {
                                     hit_count += 1;
                                     if (t < min_t) {
                                         min_t = t;
@@ -2464,4 +2583,208 @@ pub fn stitchSolidBoundaries(
             }
         }
     }
+}
+
+/// Topologically injects a closed mathematical circle into an existing face as an inner boundary (hole).
+pub fn injectCircularHole(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    g_arena: *geom.GeometryArena,
+    face_id: topo.FaceId,
+    circle: MathCircle,
+    tol: math.Tolerance,
+) !void {
+    _ = tol;
+
+    // 1. Store the exact 3D geometry of the circular seam
+    const arc_idx: u24 = @intCast(g_arena.circle_arcs.items.len);
+    try g_arena.circle_arcs.append(allocator, .{
+        .center = circle.center,
+        .radius = circle.radius,
+        .x_axis = circle.x_axis,
+        .y_axis = circle.y_axis,
+    });
+    const curve_id = geom.CurveId{ .index = arc_idx, .curve_type = .circle_arc };
+
+    // 2. Break the continuous loop into two topological half-edges to form a valid manifold cycle.
+    // Vertex 1 at 0 degrees, Vertex 2 at 180 degrees.
+    const p1 = math.add(circle.center, math.scale(circle.x_axis, circle.radius));
+    const p2 = math.add(circle.center, math.scale(circle.x_axis, -circle.radius));
+
+    const v1_id: u32 = @intCast(t_arena.vertices.items.len);
+    try t_arena.vertices.append(allocator, .{ .point = p1 });
+
+    const v2_id: u32 = @intCast(t_arena.vertices.items.len);
+    try t_arena.vertices.append(allocator, .{ .point = p2 });
+
+    const loop_id: u32 = @intCast(t_arena.loops.items.len);
+    const he_start: u32 = @intCast(t_arena.half_edges.items.len);
+
+    // 3. Winding Order: Holes must be wound backward relative to the outer boundary.
+    // We set forward = false to designate this as a subtractive inner loop.
+    try t_arena.half_edges.append(allocator, .{
+        .start_vertex = v1_id,
+        .twin = topo.NULL_ID,
+        .next = he_start + 1,
+        .prev = he_start + 1,
+        .loop_id = loop_id,
+        .curve = curve_id,
+        .forward = false,
+    });
+
+    try t_arena.half_edges.append(allocator, .{
+        .start_vertex = v2_id,
+        .twin = topo.NULL_ID,
+        .next = he_start,
+        .prev = he_start,
+        .loop_id = loop_id,
+        .curve = curve_id,
+        .forward = false,
+    });
+
+    // 4. Register the new inner loop
+    try t_arena.loops.append(allocator, .{
+        .face_id = face_id,
+        .first_half_edge = he_start,
+    });
+
+    // 5. Safely attach the new loop to the existing Face.
+    // Because Face loop arrays are flat contiguous slices, we copy the old ones
+    // to the end of the arena and append the new one.
+    var mutable_face = &t_arena.faces.items[face_id];
+    const old_start = mutable_face.loops_start;
+    const old_len = mutable_face.loops_len;
+    const new_start: u32 = @intCast(t_arena.face_loops.items.len);
+
+    for (0..old_len) |i| {
+        try t_arena.face_loops.append(allocator, t_arena.face_loops.items[old_start + i]);
+    }
+    try t_arena.face_loops.append(allocator, loop_id);
+
+    mutable_face.loops_start = new_start;
+    mutable_face.loops_len = old_len + 1;
+}
+
+/// Evaluates if a 2D UV point lies strictly inside a Face by aggregating
+/// the topological winding numbers of its outer boundary and all inner holes.
+pub fn isPointInFaceUV(
+    allocator: std.mem.Allocator,
+    t_arena: *const topo.TopologyArena,
+    g_arena: *const geom.GeometryArena,
+    face_id: topo.FaceId,
+    pt_uv: [2]f64,
+    tol: math.Tolerance,
+) !bool {
+    const face = t_arena.faces.items[face_id];
+    var total_winding: i32 = 0;
+
+    // 1. Calculate global face centroid to slightly offset the test ray
+    // to prevent exact edge collinearity bugs.
+    var centroid = [2]f64{ 0, 0 };
+    var total_verts: f64 = 0;
+
+    for (0..face.loops_len) |l_off| {
+        const loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start + l_off]];
+        var curr_he = loop.first_half_edge;
+        while (true) {
+            const he = t_arena.half_edges.items[curr_he];
+            const pt3d = t_arena.vertices.items[he.start_vertex].point;
+            const uv = g_arena.surfaceProject(face.surface, pt3d);
+            centroid[0] += uv[0];
+            centroid[1] += uv[1];
+            total_verts += 1.0;
+            curr_he = he.next;
+            if (curr_he == loop.first_half_edge) break;
+        }
+    }
+
+    if (total_verts > 0) {
+        centroid[0] /= total_verts;
+        centroid[1] /= total_verts;
+    }
+
+    const eps = tol.parametric;
+    const test_pt = [2]f64{
+        pt_uv[0] * (1.0 - eps) + centroid[0] * eps,
+        pt_uv[1] * (1.0 - eps) + centroid[1] * eps,
+    };
+
+    // 2. Sample all boundary and hole loops to construct the continuous 2D UV polygons
+    for (0..face.loops_len) |l_off| {
+        const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+        const loop = t_arena.loops.items[loop_id];
+
+        var poly = std.ArrayListUnmanaged([2]f64).empty;
+        defer poly.deinit(allocator);
+
+        var curr_he = loop.first_half_edge;
+        while (true) {
+            const he = t_arena.half_edges.items[curr_he];
+            const pt3d = t_arena.vertices.items[he.start_vertex].point;
+
+            // Discretize curves to prevent the algorithm from collapsing 2-vertex holes
+            if (he.curve.curve_type == .circle_arc) {
+                const arc = g_arena.circle_arcs.items[he.curve.index];
+                const p1 = pt3d;
+                const p2 = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
+
+                const u_start = math.normalize(math.sub(p1, arc.center));
+                const u_end = math.normalize(math.sub(p2, arc.center));
+                var ang_start = std.math.atan2(math.dot(u_start, arc.y_axis), math.dot(u_start, arc.x_axis));
+                var ang_end = std.math.atan2(math.dot(u_end, arc.y_axis), math.dot(u_end, arc.x_axis));
+                if (ang_start < 0) ang_start += 2.0 * std.math.pi;
+                if (ang_end < 0) ang_end += 2.0 * std.math.pi;
+
+                var sweep = ang_end - ang_start;
+                if (@abs(sweep) < 1e-5) {
+                    sweep = if (he.forward) 2.0 * std.math.pi else -2.0 * std.math.pi;
+                } else if (he.forward) {
+                    if (sweep < 0) sweep += 2.0 * std.math.pi;
+                } else {
+                    if (sweep > 0) sweep -= 2.0 * std.math.pi;
+                }
+
+                const segments: usize = 16;
+                for (0..segments) |step| {
+                    const t = @as(f64, @floatFromInt(step)) / @as(f64, @floatFromInt(segments));
+                    const ang = ang_start + sweep * t;
+                    const radial = math.add(
+                        math.scale(arc.x_axis, arc.radius * @cos(ang)),
+                        math.scale(arc.y_axis, arc.radius * @sin(ang)),
+                    );
+                    const sampled_pt = math.add(arc.center, radial);
+                    const uv = g_arena.surfaceProject(face.surface, sampled_pt);
+                    try poly.append(allocator, .{ uv[0], uv[1] });
+                }
+            } else {
+                const uv = g_arena.surfaceProject(face.surface, pt3d);
+                try poly.append(allocator, .{ uv[0], uv[1] });
+            }
+
+            curr_he = he.next;
+            if (curr_he == loop.first_half_edge) break;
+        }
+
+        if (poly.items.len < 3) continue;
+
+        // 3. Aggregate winding number using robust ray-casting (Shewchuk determinant)
+        var j: usize = poly.items.len - 1;
+        for (0..poly.items.len) |i| {
+            const pi = poly.items[i];
+            const pj = poly.items[j];
+
+            if (pj[1] <= test_pt[1]) {
+                if (pi[1] > test_pt[1]) {
+                    if (orient2D(pj, pi, test_pt) > 0.0) total_winding += 1;
+                }
+            } else {
+                if (pi[1] <= test_pt[1]) {
+                    if (orient2D(pj, pi, test_pt) < 0.0) total_winding -= 1;
+                }
+            }
+            j = i;
+        }
+    }
+
+    return @rem(total_winding, 2) != 0;
 }

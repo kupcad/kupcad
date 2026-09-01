@@ -594,3 +594,116 @@ test "CSG Pipeline: Genus 1 Through-Hole Euler Validation" {
     const g = prop.genus(alloc, &t_arena, result);
     try std.testing.expectEqual(@as(i32, 1), g);
 }
+
+test "CSG TDD: Inject Closed Circular Seam" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // 1. Create a 20x20 square face on the XY plane
+    const v_start = t_arena.vertices.items.len;
+    const corners = [_]math.Vec3{ .{ -10, -10, 0 }, .{ 10, -10, 0 }, .{ 10, 10, 0 }, .{ -10, 10, 0 } };
+    for (corners) |c| try t_arena.vertices.append(alloc, .{ .point = c });
+
+    const gen = @import("generators.zig");
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    const v_ids = [_]topo.VertexId{ @intCast(v_start), @intCast(v_start + 1), @intCast(v_start + 2), @intCast(v_start + 3) };
+    const face_id = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &v_ids, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    // 2. Define a closed circular seam completely inside the face
+    const circle = booleans.MathCircle{
+        .center = .{ 0, 0, 0 },
+        .radius = 5.0,
+        .normal = .{ 0, 0, 1 },
+        .x_axis = .{ 1, 0, 0 },
+        .y_axis = .{ 0, 1, 0 },
+    };
+
+    // 3. Attempt to inject the circle as a topological inner loop (hole)
+    const new_tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try booleans.injectCircularHole(alloc, &t_arena, &g_arena, face_id, circle, new_tol);
+
+    // 4. TDD Assertions
+    const face = t_arena.faces.items[face_id];
+    // A successful injection means the face now has 2 loops (1 outer boundary, 1 inner hole)
+    try std.testing.expectEqual(@as(u32, 2), face.loops_len);
+}
+
+test "CSG TDD: Multi-Loop Face Containment (Holes)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // 1. Create a 20x20 square face on the XY plane
+    const v_start = t_arena.vertices.items.len;
+    const corners = [_]math.Vec3{ .{ -10, -10, 0 }, .{ 10, -10, 0 }, .{ 10, 10, 0 }, .{ -10, 10, 0 } };
+    for (corners) |c| try t_arena.vertices.append(alloc, .{ .point = c });
+
+    const gen = @import("generators.zig");
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    const v_ids = [_]topo.VertexId{ @intCast(v_start), @intCast(v_start + 1), @intCast(v_start + 2), @intCast(v_start + 3) };
+    const face_id = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &v_ids, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    // 2. Inject a radius 5 circular hole in the center
+    const circle = booleans.MathCircle{
+        .center = .{ 0, 0, 0 },
+        .radius = 5.0,
+        .normal = .{ 0, 0, 1 },
+        .x_axis = .{ 1, 0, 0 },
+        .y_axis = .{ 0, 1, 0 },
+    };
+    try booleans.injectCircularHole(alloc, &t_arena, &g_arena, face_id, circle, test_tol);
+
+    // 3. TDD Assertions against the new multi-loop evaluator
+
+    // Point A: Origin (0,0) -> Falls inside the hole. Should NOT be in the face.
+    const in_hole = try booleans.isPointInFaceUV(alloc, &t_arena, &g_arena, face_id, .{ 0.0, 0.0 }, test_tol);
+    try std.testing.expectEqual(false, in_hole);
+
+    // Point B: (8,8) -> Inside the outer boundary, outside the hole. Should BE in the face.
+    const in_material = try booleans.isPointInFaceUV(alloc, &t_arena, &g_arena, face_id, .{ 8.0, 8.0 }, test_tol);
+    try std.testing.expectEqual(true, in_material);
+
+    // Point C: (20,20) -> Outside the outer boundary. Should NOT be in the face.
+    const completely_out = try booleans.isPointInFaceUV(alloc, &t_arena, &g_arena, face_id, .{ 20.0, 20.0 }, test_tol);
+    try std.testing.expectEqual(false, completely_out);
+}
+
+test "CSG Pipeline: 3D True Genus 1 Through-Hole Validation" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Base cube 10x10x10
+    const cube = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+    // Cylinder radius 2, height 20 (longer than cube to punch entirely through)
+    const cyl = try generators.generateCylinder(alloc, &t_arena, &g_arena, 2.0, 20.0, true);
+
+    // Subtract the cylinder to create a through-hole (Genus 1)
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube, cyl, .difference, .{});
+
+    // Explicitly run the validator with Euler checks and Closed Shells enabled.
+    // It should pass because the Euler characteristic for Genus 1 is 0 (which is <= 2 and even).
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, tol, .{
+        .check_euler = true,
+        .require_closed_shells = true,
+        .check_twins = true,
+    });
+
+    // Validate the actual Genus evaluates to 1
+    const g = prop.genus(alloc, &t_arena, result);
+    try std.testing.expectEqual(@as(i32, 1), g);
+}
