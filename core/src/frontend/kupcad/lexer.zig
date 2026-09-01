@@ -260,9 +260,23 @@ pub const Lexer = struct {
         const c2 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
         const c3 = if (self.index + 2 < self.buffer.len) self.buffer[self.index + 2] else 0;
 
-        // %w[...] or %i[...]
-        if ((c2 == 'w' or c2 == 'i') and c3 != 0 and !std.ascii.isAlphanumeric(c3) and !std.ascii.isWhitespace(c3)) {
-            return self.consumePercentLiteral(start_loc, true);
+        if (c3 != 0 and !std.ascii.isAlphanumeric(c3) and !std.ascii.isWhitespace(c3)) {
+            // %w[...], %i[...], or %q[...] (No interpolation)
+            if (c2 == 'w' or c2 == 'i' or c2 == 'q') {
+                return self.consumePercentLiteral(start_loc, true);
+            }
+            // %Q[...] (Interpolated string literal)
+            if (c2 == 'Q') {
+                self.advance(); // %
+                self.advance(); // Q
+                const open_delim = self.peek();
+                self.advance();
+
+                const close_delim = getClosingDelimiter(open_delim);
+                const content_loc = self.getLoc();
+
+                return self.consumeStringBody(content_loc, true, open_delim, close_delim, 1);
+            }
         }
 
         // Bare %(...) or %!...
@@ -284,13 +298,14 @@ pub const Lexer = struct {
 
         var kind: u8 = 0;
         if (has_letter) {
-            kind = self.peek(); // w or i
+            kind = self.peek(); // w, i, or q
             self.advance();
         }
 
         const open_delim = self.peek();
         self.advance();
 
+        const inner_start = self.index;
         const close_delim = getClosingDelimiter(open_delim);
 
         const is_paired = (open_delim != close_delim);
@@ -316,10 +331,20 @@ pub const Lexer = struct {
             self.advance();
         }
 
+        const inner_end = self.index;
         if (self.index < self.buffer.len) self.advance(); // consume close delim
 
-        const tag: Tag = if (kind == 'w') .percent_w else .percent_i;
-        return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[full_start..self.index] };
+        const tag: Tag = if (!has_letter or kind == 'q') .string else if (kind == 'w') .percent_w else .percent_i;
+
+        if (!has_letter or kind == 'q') {
+            // For raw strings (%q), the parser expects exactly the inner content.
+            var content_loc = start_loc;
+            content_loc.offset = @intCast(inner_start);
+            return .{ .tag = tag, .loc = content_loc, .lexeme = self.buffer[inner_start..inner_end] };
+        } else {
+            // %w and %i arrays are handled by the parser directly using the full lexeme string
+            return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[full_start..self.index] };
+        }
     }
 
     fn consumeDotOrRange(self: *Lexer, start_loc: common_token.Location) Token {

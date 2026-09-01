@@ -597,3 +597,29 @@ test "KupCAD Lexer: Quoted Symbols with Escaped Quotes" {
         t(.r_brace, "}"),                  t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Percent Q (%Q) interpolates like double quotes" {
+    // Verifies that %Q correctly jumps into the interpolation stack
+    try expectTokens("str = %Q[Value: #{1 + 2}]", &.{
+        t(.ident, "str"),            t(.equal, "="),
+        t(.string_start, "Value: "), t(.number, "1"),
+        t(.plus, "+"),               t(.number, "2"),
+        t(.string_end, ""),          t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Percent q (%q) ignores interpolation like single quotes" {
+    // Verifies that %q treats '#{...}' purely as raw text
+    try expectTokens("str = %q[Value: #{1 + 2}]", &.{
+        t(.ident, "str"),              t(.equal, "="),
+        t(.string, "Value: #{1 + 2}"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Percent Q and q support identical delimiters and nesting" {
+    // Verifies that the Q/q modifiers safely inherit the pairing/nesting algorithms
+    try expectTokens("a = %Q|hello|\nb = %q(a (b) c)", &.{
+        t(.ident, "a"), t(.equal, "="), t(.string, "hello"),   t(.newline, "\n"),
+        t(.ident, "b"), t(.equal, "="), t(.string, "a (b) c"), t(.eof, ""),
+    });
+}
