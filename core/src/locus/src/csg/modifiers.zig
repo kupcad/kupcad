@@ -18,7 +18,24 @@ pub fn splitHalfEdge(
     split_pt: math.Vec3,
 ) !struct { v_mid: topo.VertexId, he_new: topo.HalfEdgeId } {
     const he = t_arena.half_edges.items[he_id];
-    const twin_id = he.twin;
+    var twin_id = he.twin;
+
+    // Dynamic twin lookup fallback if twins were not pre-stitched
+    if (twin_id == topo.NULL_ID) {
+        const v_start = he.start_vertex;
+        const v_end = t_arena.half_edges.items[he.next].start_vertex;
+        for (t_arena.half_edges.items, 0..) |other_he, other_idx| {
+            if (other_he.start_vertex == v_end) {
+                const other_next_v = t_arena.half_edges.items[other_he.next].start_vertex;
+                if (other_next_v == v_start) {
+                    twin_id = @intCast(other_idx);
+                    t_arena.half_edges.items[he_id].twin = twin_id;
+                    t_arena.half_edges.items[twin_id].twin = he_id;
+                    break;
+                }
+            }
+        }
+    }
 
     const v_mid_id: u32 = @intCast(t_arena.vertices.items.len);
     try t_arena.vertices.append(allocator, .{ .point = split_pt });
@@ -230,14 +247,28 @@ fn getOrSplitVertexAtPoint(
     var curr = loop.first_half_edge;
     var safety: usize = 0;
 
+    // 1. Strict spatial snapping pass to prevent degenerate micro-edges
+    var snap_curr = loop.first_half_edge;
+    var snap_safety: usize = 0;
+    while (true) : (snap_safety += 1) {
+        if (snap_safety > 10_000) return error.TopologyCorrupted;
+        const he = t_arena.half_edges.items[snap_curr];
+        const v_start = he.start_vertex;
+        const p_start = t_arena.vertices.items[v_start].point;
+
+        if (math.distSq(p_start, pt) < tol.absolute * tol.absolute) return v_start;
+
+        snap_curr = he.next;
+        if (snap_curr == loop.first_half_edge) break;
+    }
+
+    // 2. Projection and split pass
     while (true) : (safety += 1) {
         if (safety > 10_000) return error.TopologyCorrupted;
 
         const he = t_arena.half_edges.items[curr];
         const v_start = he.start_vertex;
         const p_start = t_arena.vertices.items[v_start].point;
-
-        if (tol.pointsCoincide(p_start, pt)) return v_start;
 
         const p_end = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
         const v_seg = math.sub(p_end, p_start);
@@ -247,7 +278,7 @@ fn getOrSplitVertexAtPoint(
             const proj = math.dot(math.sub(pt, p_start), v_seg) / len_sq;
             if (proj > tol.parametric and proj < 1.0 - tol.parametric) {
                 const closest = math.add(p_start, math.scale(v_seg, proj));
-                if (tol.pointsCoincide(pt, closest)) {
+                if (math.distSq(pt, closest) < tol.absolute * tol.absolute) {
                     const split = try splitHalfEdge(allocator, t_arena, g_arena, curr, pt);
                     return split.v_mid;
                 }
@@ -410,6 +441,7 @@ pub fn weldSolidVertices(
         try v_list.append(allocator, .{ .id = v_id.*, .rep = v_id.* });
     }
 
+    // RESTORED: Strict geometric tolerance to prevent VertexNotOnSurface errors
     for (0..v_list.items.len) |i| {
         if (v_list.items[i].rep != v_list.items[i].id) continue;
         const p1 = t_arena.vertices.items[v_list.items[i].id].point;
@@ -439,7 +471,7 @@ pub fn weldSolidVertices(
             const face = t_arena.faces.items[face_id];
             for (0..face.loops_len) |l_off| {
                 const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
-                const loop = t_arena.loops.items[loop_id];
+                const loop = &t_arena.loops.items[loop_id];
                 var curr_he = loop.first_half_edge;
                 var safety: usize = 0;
                 while (true) : (safety += 1) {
@@ -455,7 +487,6 @@ pub fn weldSolidVertices(
         }
     }
 
-    // Post-Weld Cleanup: Safely bypass collapsed degenerate edges
     for (0..solid.shells_len) |s_off| {
         const shell_id = t_arena.solid_shells.items[solid.shells_start + s_off];
         const shell = t_arena.shells.items[shell_id];
@@ -482,7 +513,7 @@ pub fn weldSolidVertices(
                         const next_he = t_arena.half_edges.items[next_id];
 
                         if (he.start_vertex == next_he.start_vertex) {
-                            if (next_id == curr_id) break; // Entirely degenerate 1-edge loop
+                            if (next_id == curr_id) break;
 
                             const prev_id = he.prev;
                             t_arena.half_edges.items[prev_id].next = next_id;
@@ -493,7 +524,7 @@ pub fn weldSolidVertices(
                             }
                             curr_id = next_id;
                             removed_any = true;
-                            break; // Restart loop evaluation safely
+                            break;
                         }
                         curr_id = next_id;
                         if (curr_id == start_id) break;
@@ -671,8 +702,33 @@ fn processSampledCollision(
     tol: math.Tolerance,
 ) !void {
     if (pts.len < 2) return;
-    for (0..pts.len - 1) |i| {
-        const seg = Segment3D{ .start = pts[i], .end = pts[i + 1] };
+
+    // Snap polyline vertices to any existing topological vertices within a loose
+    // bounding tolerance to bridge sampled SSI curves to exact analytical boundaries.
+    var snapped_pts = try allocator.alloc(math.Vec3, pts.len);
+    defer allocator.free(snapped_pts);
+
+    const snap_sq = 1.0; // 1.0mm sq radius to catch sampled ellipse endpoints
+
+    for (pts, 0..) |pt, i| {
+        var best_pt = pt;
+        var min_d_sq: f64 = snap_sq;
+
+        for (t_arena.vertices.items) |v| {
+            const d_sq = math.distSq(pt, v.point);
+            if (d_sq < min_d_sq) {
+                min_d_sq = d_sq;
+                best_pt = v.point;
+            }
+        }
+        snapped_pts[i] = best_pt;
+    }
+
+    for (0..snapped_pts.len - 1) |i| {
+        // Skip degenerate segments caused by snapping
+        if (math.distSq(snapped_pts[i], snapped_pts[i + 1]) < tol.squared) continue;
+
+        const seg = Segment3D{ .start = snapped_pts[i], .end = snapped_pts[i + 1] };
         if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fa_id, seg, tol)) |new_f| {
             try faces_a.append(allocator, new_f);
         }

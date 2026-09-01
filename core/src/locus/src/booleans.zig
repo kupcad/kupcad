@@ -35,23 +35,6 @@ fn collectPiercings(
             const face_id = t_arena.shell_faces.items[shell_f.faces_start + f_off];
             const face = t_arena.faces.items[face_id];
 
-            // Project 3D loop boundary into surface 2D UV domain
-            var polygon_buf: [128][2]f64 = undefined;
-            var poly_len: usize = 0;
-            const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
-
-            var curr_he = outer_loop.first_half_edge;
-            while (true) {
-                const he = t_arena.half_edges.items[curr_he];
-                if (poly_len < polygon_buf.len) {
-                    const pt3d = t_arena.vertices.items[he.start_vertex].point;
-                    polygon_buf[poly_len] = g_arena.surfaceProject(face.surface, pt3d);
-                    poly_len += 1;
-                }
-                curr_he = he.next;
-                if (curr_he == outer_loop.first_half_edge) break;
-            }
-
             for (0..s_edges.shells_len) |se_off| {
                 const shell_e = t_arena.shells.items[t_arena.solid_shells.items[s_edges.shells_start + se_off]];
                 for (0..shell_e.faces_len) |fe_off| {
@@ -93,7 +76,8 @@ fn collectPiercings(
 
                                 for (hit_pts) |hit_pt| {
                                     const uv_hit = g_arena.surfaceProject(face.surface, hit_pt);
-                                    if (classify.isPointInPolygon2D(uv_hit, polygon_buf[0..poly_len], tol)) {
+                                    // Test point inclusion against all loops (outer boundary + inner holes)
+                                    if (classify.isPointInFaceUV(allocator, t_arena, g_arena, face_id, uv_hit, tol) catch false) {
                                         const hit_vec = math.sub(hit_pt, v_start);
                                         try out_events.append(allocator, .{
                                             .he_id = target_he_id,
@@ -373,8 +357,23 @@ pub fn computeBoolean(
     var faces_to_classify = std.ArrayListUnmanaged(FaceTracker).empty;
     defer faces_to_classify.deinit(allocator);
 
-    for (faces_a.items) |fa| faces_to_classify.append(allocator, .{ .face = fa, .source_solid = solid_a }) catch {};
-    for (faces_b.items) |fb| faces_to_classify.append(allocator, .{ .face = fb, .source_solid = solid_b }) catch {};
+    var seen_a = std.AutoHashMap(topo.FaceId, void).init(allocator);
+    defer seen_a.deinit();
+    for (faces_a.items) |fa| {
+        if (!seen_a.contains(fa)) {
+            try seen_a.put(fa, {});
+            try faces_to_classify.append(allocator, .{ .face = fa, .source_solid = solid_a });
+        }
+    }
+
+    var seen_b = std.AutoHashMap(topo.FaceId, void).init(allocator);
+    defer seen_b.deinit();
+    for (faces_b.items) |fb| {
+        if (!seen_b.contains(fb)) {
+            try seen_b.put(fb, {});
+            try faces_to_classify.append(allocator, .{ .face = fb, .source_solid = solid_b });
+        }
+    }
 
     var selected_faces = std.ArrayListUnmanaged(topo.FaceId).empty;
     defer selected_faces.deinit(allocator);

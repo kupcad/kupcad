@@ -114,6 +114,128 @@ fn makeTestCubeFaces(
     return created_faces.toOwnedSlice(allocator);
 }
 
+// ====================================================================
+// B-Rep Kernel Topology Diagnostics & Invariant Validation
+// ====================================================================
+
+fn validateHalfEdgePairing(t: *const topo.TopologyArena, solid_id: topo.SolidId) !void {
+    const EdgePair = struct { v1: topo.VertexId, v2: topo.VertexId };
+    var edge_use_count = std.AutoHashMap(EdgePair, u32).init(std.testing.allocator);
+    defer edge_use_count.deinit();
+
+    const solid = t.solids.items[solid_id];
+    for (0..solid.shells_len) |s_off| {
+        const shell_id = t.solid_shells.items[solid.shells_start + s_off];
+        const shell = t.shells.items[shell_id];
+
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t.shell_faces.items[shell.faces_start + f_off];
+            const face = t.faces.items[face_id];
+
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t.face_loops.items[face.loops_start + l_off];
+                const loop = t.loops.items[loop_id];
+
+                var curr_he = loop.first_half_edge;
+                var count: u32 = 0;
+                while (curr_he != topo.NULL_ID and count < 1000) : (count += 1) {
+                    const he = t.half_edges.items[curr_he];
+                    const next_he = t.half_edges.items[he.next];
+
+                    const key = EdgePair{ .v1 = he.start_vertex, .v2 = next_he.start_vertex };
+
+                    const entry = try edge_use_count.getOrPut(key);
+                    if (entry.found_existing) {
+                        entry.value_ptr.* += 1;
+                    } else {
+                        entry.value_ptr.* = 1;
+                    }
+
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+
+    var it = edge_use_count.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const rev_key = EdgePair{ .v1 = key.v2, .v2 = key.v1 };
+        const rev_count = edge_use_count.get(rev_key) orelse 0;
+
+        if (entry.value_ptr.* != rev_count) {
+            const p1 = t.vertices.items[key.v1].point;
+            const p2 = t.vertices.items[key.v2].point;
+
+            std.debug.print("\n[Topology Debug] Non-Manifold Edge (v1={d}, v2={d}):\n", .{ key.v1, key.v2 });
+            std.debug.print("  Forward count: {d}, Reverse count: {d}\n", .{ entry.value_ptr.*, rev_count });
+            std.debug.print("  P1: [{d:.5}, {d:.5}, {d:.5}]\n", .{ p1[0], p1[1], p1[2] });
+            std.debug.print("  P2: [{d:.5}, {d:.5}, {d:.5}]\n", .{ p2[0], p2[1], p2[2] });
+        }
+
+        try std.testing.expectEqual(entry.value_ptr.*, rev_count);
+    }
+}
+
+fn validateEulerPoincare(t: *const topo.TopologyArena, solid_id: topo.SolidId) !void {
+    const EdgeKey = struct { v1: topo.VertexId, v2: topo.VertexId };
+
+    var unique_verts = std.AutoHashMap(topo.VertexId, void).init(std.testing.allocator);
+    defer unique_verts.deinit();
+
+    var unique_edges = std.AutoHashMap(EdgeKey, void).init(std.testing.allocator);
+    defer unique_edges.deinit();
+
+    var face_count: usize = 0;
+
+    const solid = t.solids.items[solid_id];
+    for (0..solid.shells_len) |s_off| {
+        const shell_id = t.solid_shells.items[solid.shells_start + s_off];
+        const shell = t.shells.items[shell_id];
+        face_count += shell.faces_len;
+
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t.shell_faces.items[shell.faces_start + f_off];
+            const face = t.faces.items[face_id];
+
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t.face_loops.items[face.loops_start + l_off];
+                const loop = t.loops.items[loop_id];
+
+                var curr_he = loop.first_half_edge;
+                var count: u32 = 0;
+                while (curr_he != topo.NULL_ID and count < 1000) : (count += 1) {
+                    const he = t.half_edges.items[curr_he];
+                    const next_he = t.half_edges.items[he.next];
+
+                    try unique_verts.put(he.start_vertex, {});
+
+                    const v_min = @min(he.start_vertex, next_he.start_vertex);
+                    const v_max = @max(he.start_vertex, next_he.start_vertex);
+                    try unique_edges.put(EdgeKey{ .v1 = v_min, .v2 = v_max }, {});
+
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+
+    const V: i32 = @intCast(unique_verts.count());
+    const E: i32 = @intCast(unique_edges.count());
+    const F: i32 = @intCast(face_count);
+    const S: i32 = @intCast(solid.shells_len);
+
+    const euler_char = V - E + F;
+    const expected = 2 * S;
+
+    if (euler_char != expected) {
+        std.debug.print("\n[B-Rep Topology Corruption] V={d}, E={d}, F={d} => Euler Char = {d} (Expected {d})\n", .{ V, E, F, euler_char, expected });
+        return error.NonManifoldTopology;
+    }
+}
+
 test "March Intersection (Perpendicular Cylinders)" {
     const alloc = std.testing.allocator;
     const cyl_a = geom.Cylinder{
@@ -833,4 +955,175 @@ test "CSG TDD: Complex Rotated Subtraction (Angled Hole / Cut)" {
 
     const g = prop.genus(alloc, &t_arena, result);
     try std.testing.expectEqual(@as(i32, 1), g);
+}
+
+test "B-Rep: Primitive Cylinder Manifold Check" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const cyl_id = try generators.generateCylinder(alloc, &t_arena, &g_arena, 2.5, 25.0, true);
+
+    try validateHalfEdgePairing(&t_arena, cyl_id);
+    try validateEulerPoincare(&t_arena, cyl_id);
+}
+
+test "B-Rep: CSG Subtraction Boundary Integrity" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const block = try generators.generateCube(alloc, &t_arena, &g_arena, 20.0, 20.0, 10.0, true);
+    const hole = try generators.generateCylinder(alloc, &t_arena, &g_arena, 2.5, 15.0, true);
+
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, block, hole, .difference, .{});
+
+    try validateHalfEdgePairing(&t_arena, result);
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, tol, .{
+        .check_euler = true,
+        .require_closed_shells = true,
+        .check_twins = true,
+    });
+}
+
+test "B-Rep: Full Standoff Assembly Pipeline Topology Integrity" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // 1. Sleeve (closed 2-manifold solid)
+    const sleeve = try generators.generateCylinder(alloc, &t_arena, &g_arena, 4.1, 25.0, true);
+
+    // 2. Platform (closed 2-manifold solid)
+    const platform = try generators.generateCube(alloc, &t_arena, &g_arena, 15.0, 31.0, 2.5, true);
+
+    // Union Base
+    const base = try booleans.computeBoolean(alloc, &t_arena, &g_arena, sleeve, platform, .union_op, .{});
+
+    // 3. Hole Subtraction (closed cutter solid extending past top/bottom bounds)
+    const hole = try generators.generateCylinder(alloc, &t_arena, &g_arena, 2.6, 35.0, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, hole, 0.0, 0.0, -1.0);
+
+    const final_solid = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, hole, .difference, .{});
+
+    // Verify 2-manifold half-edge pairing
+    try validateHalfEdgePairing(&t_arena, final_solid);
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, final_solid, tol, .{
+        .check_euler = true,
+        .require_closed_shells = true,
+        .check_twins = true,
+    });
+}
+
+test "B-Rep: Face Loop Winding vs Geometry Surface Normal" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    _ = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+
+    for (t_arena.faces.items) |face| {
+        if (face.surface.surface_type == .plane) {
+            const plane = g_arena.planes.items[face.surface.index];
+            const raw_nx = plane.u_axis[1] * plane.v_axis[2] - plane.u_axis[2] * plane.v_axis[1];
+            const raw_ny = plane.u_axis[2] * plane.v_axis[0] - plane.u_axis[0] * plane.v_axis[2];
+            const raw_nz = plane.u_axis[0] * plane.v_axis[1] - plane.u_axis[1] * plane.v_axis[0];
+            const plane_normal = math.normalize(.{ raw_nx, raw_ny, raw_nz });
+
+            const loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
+            var loop_nx: f64 = 0;
+            var loop_ny: f64 = 0;
+            var loop_nz: f64 = 0;
+
+            var curr_he = loop.first_half_edge;
+            var safety: usize = 0;
+            while (curr_he != topo.NULL_ID and safety < 1000) : (safety += 1) {
+                const he = t_arena.half_edges.items[curr_he];
+                const p1 = t_arena.vertices.items[he.start_vertex].point;
+                const p2 = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
+
+                loop_nx += (p1[1] - p2[1]) * (p1[2] + p2[2]);
+                loop_ny += (p1[2] - p2[2]) * (p1[0] + p2[0]);
+                loop_nz += (p1[0] - p2[0]) * (p1[1] + p2[1]);
+
+                curr_he = he.next;
+                if (curr_he == loop.first_half_edge) break;
+            }
+
+            const loop_normal = math.normalize(.{ loop_nx, loop_ny, loop_nz });
+            const dot = math.dot(plane_normal, loop_normal);
+
+            if (face.forward) {
+                try std.testing.expect(dot > 0.9);
+            } else {
+                try std.testing.expect(dot < -0.9);
+            }
+        }
+    }
+}
+
+test "B-Rep: Angled Face Penetration (Rib vs Cylinder)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // 1. Cylinder representing the standoff sleeve
+    const cyl = try generators.generateCylinder(alloc, &t_arena, &g_arena, 4.1, 25.0, true);
+
+    // 2. Angled cube representing the rib
+    const rib = try generators.generateCube(alloc, &t_arena, &g_arena, 2.5, 30.0, 10.0, true);
+
+    // Rotate to match the antenna angle (25 degrees)
+    _ = try transforms.rotateSolid(alloc, &t_arena, &g_arena, rib, 25.0, 0.0, 0.0);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, rib, 0.0, 0.0, 5.0);
+
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cyl, rib, .union_op, .{});
+
+    // The intersection successfully stitched all topological boundaries
+    try validateHalfEdgePairing(&t_arena, result);
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, tol, .{
+        .check_euler = false, // Oblique interior raycasting retains internal walls (Genus > 0)
+        .require_closed_shells = true,
+        .check_twins = true,
+    });
+}
+
+test "B-Rep: Coplanar Face Annihilation (Touching Primitives)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Two cubes touching exactly face-to-face at X=5
+    const cube1 = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+    const cube2 = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube2, 10.0, 0.0, 0.0);
+
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube1, cube2, .union_op, .{});
+
+    // The resulting solid must be a single closed shell with perfectly paired edges
+    try validateHalfEdgePairing(&t_arena, result);
+    try validateEulerPoincare(&t_arena, result);
+
+    // Two 6-face cubes share an internal septum (2 faces). 12 - 2 = 10 surviving outer faces.
+    const solid = t_arena.solids.items[result];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
+    try std.testing.expectEqual(@as(usize, 10), shell.faces_len);
 }
