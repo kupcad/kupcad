@@ -524,3 +524,49 @@ test "KupCAD Lexer: Semicolons as statement terminators" {
         t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Bare Percent Strings" {
+    try expectTokens("str1 = %(hello)\nstr2 = %!1/4\" Plate!", &.{
+        t(.ident, "str1"), t(.equal, "="), t(.string, "hello"),       t(.newline, "\n"),
+        t(.ident, "str2"), t(.equal, "="), t(.string, "1/4\" Plate"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Percent Literals with Identical Custom Delimiters" {
+    try expectTokens("list1 = %w!gear shaft!\nlist2 = %i|top bottom|", &.{
+        t(.ident, "list1"), t(.equal, "="), t(.percent_w, "%w!gear shaft!"), t(.newline, "\n"),
+        t(.ident, "list2"), t(.equal, "="), t(.percent_i, "%i|top bottom|"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Percent Literals with Mathematical Symbols as Delimiters" {
+    // Tests that symbols like '+' or '=' are not accidentally treated as operators
+    try expectTokens("list = %w+one two+\nvars = %i=x y z=", &.{
+        t(.ident, "list"), t(.equal, "="), t(.percent_w, "%w+one two+"), t(.newline, "\n"),
+        t(.ident, "vars"), t(.equal, "="), t(.percent_i, "%i=x y z="),   t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Percent Literals with Paired Bracket Delimiters" {
+    // Verifies the switch fallback for [], {}, (), and <> remains completely intact
+    try expectTokens("a = %w<one two>\nb = %i(admin guest)", &.{
+        t(.ident, "a"), t(.equal, "="), t(.percent_w, "%w<one two>"),     t(.newline, "\n"),
+        t(.ident, "b"), t(.equal, "="), t(.percent_i, "%i(admin guest)"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Modulo Operator remains unaffected" {
+    try expectTokens("val %= 5\nres = 10 % 2", &.{
+        t(.ident, "val"), t(.percent_equal, "%="), t(.number, "5"),  t(.newline, "\n"),
+        t(.ident, "res"), t(.equal, "="),          t(.number, "10"), t(.percent, "%"),
+        t(.number, "2"),  t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Percent Literals with Escaped Delimiters" {
+    // Tests that \% escapes the delimiter from prematurely ending the string
+    try expectTokens("x = %| do this \\| or this |\ny = %w( item_\\(1\\) )", &.{
+        t(.ident, "x"), t(.equal, "="), t(.string, " do this \\| or this "), t(.newline, "\n"),
+        t(.ident, "y"), t(.equal, "="), t(.percent_w, "%w( item_\\(1\\) )"), t(.eof, ""),
+    });
+}

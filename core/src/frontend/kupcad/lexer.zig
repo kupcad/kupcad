@@ -14,6 +14,7 @@ pub const Tag = enum {
     string_start,
     string_mid,
     string_end,
+    percent_string,
     symbol,
     docstring,
     comment,
@@ -240,19 +241,33 @@ pub const Lexer = struct {
     fn consumePercentOrModulo(self: *Lexer, start_loc: common_token.Location) Token {
         const c2 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
         const c3 = if (self.index + 2 < self.buffer.len) self.buffer[self.index + 2] else 0;
-        if ((c2 == 'w' or c2 == 'i') and (c3 == '[' or c3 == '{' or c3 == '(' or c3 == '<')) {
-            return self.consumePercentLiteral(start_loc);
+
+        // %w[...] or %i[...]
+        if ((c2 == 'w' or c2 == 'i') and c3 != 0 and !std.ascii.isAlphanumeric(c3) and !std.ascii.isWhitespace(c3)) {
+            return self.consumePercentLiteral(start_loc, true);
+        }
+        // Bare %(...) or %!...
+        // Ensure c2 isn't '=' to avoid breaking modulo assignment (%=)
+        if (c2 != 0 and c2 != '=' and !std.ascii.isAlphanumeric(c2) and !std.ascii.isWhitespace(c2)) {
+            return self.consumePercentLiteral(start_loc, false);
         }
         return self.consumeOperator(start_loc);
     }
 
-    fn consumePercentLiteral(self: *Lexer, start_loc: common_token.Location) Token {
-        const start = self.index;
+    fn consumePercentLiteral(self: *Lexer, start_loc: common_token.Location, has_letter: bool) Token {
+        const full_start = self.index;
         self.advance(); // %
-        const kind = self.peek(); // w or i
-        self.advance();
+
+        var kind: u8 = 0;
+        if (has_letter) {
+            kind = self.peek(); // w or i
+            self.advance();
+        }
+
         const open_delim = self.peek();
         self.advance();
+
+        const inner_start = self.index;
 
         const close_delim: u8 = switch (open_delim) {
             '[' => ']',
@@ -262,13 +277,35 @@ pub const Lexer = struct {
             else => open_delim,
         };
 
-        while (self.index < self.buffer.len and self.peek() != close_delim) {
+        // Safely parse the body, skipping escaped characters
+        while (self.index < self.buffer.len) {
+            const c = self.peek();
+
+            if (c == '\\') {
+                self.advance(); // consume '\'
+                if (self.index < self.buffer.len) self.advance(); // consume the escaped character
+                continue;
+            }
+
+            if (c == close_delim) {
+                break;
+            }
             self.advance();
         }
+
+        const inner_end = self.index;
         if (self.index < self.buffer.len) self.advance(); // consume close delim
 
-        const tag: Tag = if (kind == 'w') .percent_w else .percent_i;
-        return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+        if (!has_letter) {
+            // For bare percent strings, the parser expects exactly the inner content
+            var content_loc = start_loc;
+            content_loc.offset = @intCast(inner_start);
+            return .{ .tag = .string, .loc = content_loc, .lexeme = self.buffer[inner_start..inner_end] };
+        } else {
+            // %w and %i arrays are handled by the parser directly using the full lexeme string
+            const tag: Tag = if (kind == 'w') .percent_w else .percent_i;
+            return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[full_start..self.index] };
+        }
     }
 
     fn consumeDotOrRange(self: *Lexer, start_loc: common_token.Location) Token {
