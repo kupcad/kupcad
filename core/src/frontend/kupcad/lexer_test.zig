@@ -589,3 +589,11 @@ test "KupCAD Lexer: Percent Literals with Mathematical Symbols as Delimiters" {
         t(.ident, "vars"), t(.equal, "="), t(.percent_i, "%i=x y z="),   t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Quoted Symbols with Escaped Quotes" {
+    try expectTokens("map = { :\"complex \\\"key\\\"\" => 1 }", &.{
+        t(.ident, "map"),                  t(.equal, "="),  t(.l_brace, "{"),
+        t(.symbol, "complex \\\"key\\\""), t(.arrow, "=>"), t(.number, "1"),
+        t(.r_brace, "}"),                  t(.eof, ""),
+    });
+}

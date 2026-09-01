@@ -452,13 +452,21 @@ pub const Lexer = struct {
             const quote = self.peek();
             self.advance();
             const start = self.index;
-            while (self.index < self.buffer.len and self.peek() != quote) {
+
+            while (self.index < self.buffer.len) {
+                const c = self.peek();
+                if (c == '\\') {
+                    self.advance(); // consume '\'
+                    if (self.index < self.buffer.len) self.advance(); // consume escaped char
+                    continue;
+                }
+                if (c == quote) break;
                 self.advance();
             }
-            const lexeme = self.buffer[start..self.index];
-            if (self.index < self.buffer.len) self.advance();
 
-            // Shift the start offset forward so the AST maps to the inner content
+            const lexeme = self.buffer[start..self.index];
+            if (self.index < self.buffer.len) self.advance(); // consume quote
+
             var content_loc = start_loc;
             content_loc.offset = @intCast(start);
             return .{ .tag = .symbol, .loc = content_loc, .lexeme = lexeme };
