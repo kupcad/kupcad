@@ -76,6 +76,11 @@ fn collectPiercings(
 
                                 for (hit_pts) |hit_pt| {
                                     const uv_hit = g_arena.surfaceProject(face.surface, hit_pt);
+                                    // Evaluate exact grazing angle for fat-vertex tolerance
+                                    const edge_tangent = math.normalize(math.sub(v_end, v_start));
+                                    const face_normal = g_arena.surfaceNormal(face.surface, uv_hit[0], uv_hit[1]);
+                                    const sin_theta = @abs(math.dot(edge_tangent, face_normal));
+                                    const dynamic_tol = @max(tol.absolute, tol.absolute / @max(sin_theta, 1e-6));
                                     // Test point inclusion against all loops (outer boundary + inner holes)
                                     if (classify.isPointInFaceUV(allocator, t_arena, g_arena, face_id, uv_hit, tol) catch false) {
                                         const hit_vec = math.sub(hit_pt, v_start);
@@ -85,6 +90,7 @@ fn collectPiercings(
                                             .face_id = face_id,
                                             .pt = hit_pt,
                                             .t = math.magSq(hit_vec),
+                                            .dynamic_tol = dynamic_tol,
                                         });
                                     }
                                 }
@@ -226,7 +232,7 @@ pub fn computeBoolean(
         const twin_id = t_arena.half_edges.items[current_sub_he].twin;
         const twin_face = if (twin_id != topo.NULL_ID) t_arena.loops.items[t_arena.half_edges.items[twin_id].loop_id].face_id else null;
 
-        const split = modifiers.splitHalfEdge(allocator, t_arena, g_arena, current_sub_he, event.pt) catch continue;
+        const split = modifiers.splitHalfEdge(allocator, t_arena, g_arena, current_sub_he, event.pt, event.dynamic_tol) catch continue;
         current_sub_he = split.he_new;
 
         var res1 = face_piercings.getOrPut(event.face_id) catch continue;
@@ -416,7 +422,7 @@ pub fn computeBoolean(
     try t_arena.solid_shells.append(allocator, shell_start);
     try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
 
-    try modifiers.weldSolidVertices(allocator, t_arena, new_solid_id, tol);
+    try modifiers.weldSolidVertices(allocator, t_arena, new_solid_id);
     try modifiers.stitchSolidBoundaries(allocator, t_arena, new_solid_id);
 
     if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {

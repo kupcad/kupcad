@@ -318,7 +318,7 @@ test "CSG: Half-Edge Splitting" {
     });
 
     const split_pt = math.Vec3{ 5, 0, 0 };
-    const result = try modifiers.splitHalfEdge(alloc, &t_arena, &g_arena, he_id, split_pt);
+    const result = try modifiers.splitHalfEdge(alloc, &t_arena, &g_arena, he_id, split_pt, test_tol.absolute);
 
     try std.testing.expectEqual(@as(usize, 3), t_arena.vertices.items.len);
     try std.testing.expectEqual(v0, t_arena.half_edges.items[he_id].start_vertex);

@@ -174,7 +174,7 @@ pub fn crossSectionBoolean(
 
         var safety: usize = 0;
         while (safety < kept_edges.items.len * 2) : (safety += 1) {
-            if (tol.pointsCoincide2D(current_pt, pts2d.items[0])) {
+            if (math.pointsCoincide2D(current_pt, tol.parametric, pts2d.items[0], tol.parametric)) {
                 break;
             }
 

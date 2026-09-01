@@ -11,6 +11,33 @@ pub const Mat3 = [9]f64; // Row-major 3x3
 
 // --- Tolerances ---
 
+pub inline fn entitiesCoincide(p1: Vec3, tol1: f64, p2: Vec3, tol2: f64) bool {
+    const combined_tol = tol1 + tol2;
+    return distSq(p1, p2) <= (combined_tol * combined_tol);
+}
+
+/// Interval-aware point-to-edge coincidence
+pub inline fn pointOnEdgeFuzzy(pt: Vec3, pt_tol: f64, edge_start: Vec3, edge_end: Vec3, edge_tol: f64) bool {
+    const v_seg = sub(edge_end, edge_start);
+    const len_sq = magSq(v_seg);
+    if (len_sq < MATH_EPSILON) {
+        return entitiesCoincide(pt, pt_tol, edge_start, edge_tol);
+    }
+
+    const proj = dot(sub(pt, edge_start), v_seg) / len_sq;
+    const clamped_proj = @max(0.0, @min(1.0, proj));
+    const closest_pt = add(edge_start, scale(v_seg, clamped_proj));
+
+    return entitiesCoincide(pt, pt_tol, closest_pt, edge_tol);
+}
+
+pub inline fn pointsCoincide2D(p1: Vec2, tol1: f64, p2: Vec2, tol2: f64) bool {
+    const combined_tol = tol1 + tol2;
+    const dx = p1[0] - p2[0];
+    const dy = p1[1] - p2[1];
+    return (dx * dx + dy * dy) <= (combined_tol * combined_tol);
+}
+
 pub const Tolerance = struct {
     absolute: f64,
     squared: f64,
@@ -30,16 +57,6 @@ pub const Tolerance = struct {
             .squared = abs_tol * abs_tol,
             .parametric = 1.0e-5, // Fixed domain tolerance for [0, 1] parameter space
         };
-    }
-
-    pub inline fn pointsCoincide(self: Tolerance, p1: Vec3, p2: Vec3) bool {
-        return distSq(p1, p2) <= self.squared;
-    }
-
-    pub inline fn pointsCoincide2D(self: Tolerance, p1: Vec2, p2: Vec2) bool {
-        const dx = p1[0] - p2[0];
-        const dy = p1[1] - p2[1];
-        return (dx * dx + dy * dy) <= (self.parametric * self.parametric);
     }
 };
 

@@ -16,6 +16,7 @@ pub const NULL_ID: u32 = std.math.maxInt(u32);
 
 pub const Vertex = struct {
     point: math.Vec3,
+    tolerance: f64 = 1e-7, // Localized precision boundary
 };
 
 pub const HalfEdge = struct {
@@ -27,6 +28,7 @@ pub const HalfEdge = struct {
     curve: geom.CurveId, // 3D World Curve
     p_curve: ?geom.PCurveId = null, // 2D Parametric Surface UV Curve
     forward: bool,
+    tolerance: f64 = 1e-7, // Curve deviation tolerance
 };
 
 pub const Loop = struct {
@@ -39,6 +41,7 @@ pub const Face = struct {
     forward: bool,
     loops_start: u32,
     loops_len: u32,
+    tolerance: f64 = 1e-7, // Surface sag/deviation tolerance
 };
 
 pub const Shell = struct {

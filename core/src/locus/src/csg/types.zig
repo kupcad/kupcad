@@ -56,6 +56,7 @@ pub const IntersectionEvent = struct {
     face_id: topo.FaceId,
     pt: math.Vec3,
     t: f64,
+    dynamic_tol: f64,
 };
 
 pub const FaceTracker = struct {
@@ -67,4 +68,9 @@ pub const FaceAABB = struct {
     face_id: topo.FaceId,
     min: math.Vec3,
     max: math.Vec3,
+};
+
+pub const CurveSurfaceHit = struct {
+    point: math.Vec3,
+    sin_theta: f64,
 };

@@ -16,6 +16,7 @@ pub fn splitHalfEdge(
     g_arena: *geom.GeometryArena,
     he_id: topo.HalfEdgeId,
     split_pt: math.Vec3,
+    split_tol: f64,
 ) !struct { v_mid: topo.VertexId, he_new: topo.HalfEdgeId } {
     const he = t_arena.half_edges.items[he_id];
     var twin_id = he.twin;
@@ -38,7 +39,11 @@ pub fn splitHalfEdge(
     }
 
     const v_mid_id: u32 = @intCast(t_arena.vertices.items.len);
-    try t_arena.vertices.append(allocator, .{ .point = split_pt });
+    // Apply the fat vertex tolerance
+    try t_arena.vertices.append(allocator, .{
+        .point = split_pt,
+        .tolerance = split_tol,
+    });
 
     const end_pt = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
 
@@ -279,7 +284,7 @@ fn getOrSplitVertexAtPoint(
             if (proj > tol.parametric and proj < 1.0 - tol.parametric) {
                 const closest = math.add(p_start, math.scale(v_seg, proj));
                 if (math.distSq(pt, closest) < tol.absolute * tol.absolute) {
-                    const split = try splitHalfEdge(allocator, t_arena, g_arena, curr, pt);
+                    const split = try splitHalfEdge(allocator, t_arena, g_arena, curr, pt, tol.absolute);
                     return split.v_mid;
                 }
             }
@@ -404,7 +409,6 @@ pub fn weldSolidVertices(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     solid_id: topo.SolidId,
-    tol: math.Tolerance,
 ) !void {
     const solid = t_arena.solids.items[solid_id];
     var active_verts = std.AutoHashMap(topo.VertexId, void).init(allocator);
@@ -444,13 +448,13 @@ pub fn weldSolidVertices(
     // RESTORED: Strict geometric tolerance to prevent VertexNotOnSurface errors
     for (0..v_list.items.len) |i| {
         if (v_list.items[i].rep != v_list.items[i].id) continue;
-        const p1 = t_arena.vertices.items[v_list.items[i].id].point;
+        const v1 = t_arena.vertices.items[v_list.items[i].id];
 
         for (i + 1..v_list.items.len) |j| {
             if (v_list.items[j].rep != v_list.items[j].id) continue;
-            const p2 = t_arena.vertices.items[v_list.items[j].id].point;
+            const v2 = t_arena.vertices.items[v_list.items[j].id];
 
-            if (math.distSq(p1, p2) < tol.squared) {
+            if (math.entitiesCoincide(v1.point, v1.tolerance, v2.point, v2.tolerance)) {
                 v_list.items[j].rep = v_list.items[i].id;
             }
         }
