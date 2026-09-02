@@ -23,6 +23,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/setup@v2
         with:
+          version: '^11.25'
           runtime: node@24
           cache: true
           require-lockfile: true
