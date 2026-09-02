@@ -194,6 +194,7 @@ pub fn build(b: *std.Build) void {
 
     // Detect if target is WASM
     const is_wasm = target.result.cpu.arch == .wasm32;
+    const is_x86_64 = target.result.cpu.arch == .x86_64;
     const is_macos = target.result.os.tag == .macos;
 
     // Use WASI for WASM builds so Zig provides wasi-libc
@@ -274,9 +275,12 @@ pub fn build(b: *std.Build) void {
         mod.addIncludePath(b.path("vendor/oneTBB/include"));
         const tbb_flags: []const []const u8 = if (is_macos)
             &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE" }
+        else if (is_x86_64)
+            // Apply Intel-specific waitpkg only to x86_64 targets
+            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-mwaitpkg" }
         else
-            // Added -mwaitpkg to satisfy LLVM's target feature requirement on x86_64 runners
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-mwaitpkg" };
+            // Fallback for ARM Linux, Windows on ARM, etc.
+            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1" };
 
         mod.addCSourceFiles(.{
             .files = tbb_sources,
