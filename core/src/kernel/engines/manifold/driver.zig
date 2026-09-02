@@ -39,7 +39,7 @@ pub fn computeCentroid(v0: [3]f64, v1: [3]f64, v2: [3]f64) [3]f64 {
     };
 }
 
-fn materialPropFunc(new_prop: [*]f32, pos: manifold.ManifoldVec3, old_prop: [*]const f32, ctx: ?*anyopaque) callconv(.c) void {
+fn materialPropFunc(new_prop: [*]f64, pos: manifold.ManifoldVec3, old_prop: [*]const f64, ctx: ?*anyopaque) callconv(.c) void {
     _ = pos;
     _ = old_prop;
     const mat_id: u32 = @intCast(@intFromPtr(ctx));
