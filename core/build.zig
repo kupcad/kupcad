@@ -185,16 +185,8 @@ const draco_sources = &[_][]const u8{
 };
 
 pub fn build(b: *std.Build) void {
-    var target = b.standardTargetOptions(.{});
+    const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-
-    // oneTBB requires the 'waitpkg' LLVM target feature to compile
-    // pause intrinsics on modern Clang. We inject this feature directly into the Zig target.
-    if (target.result.cpu.arch == .x86_64 or target.result.cpu.arch == .x86) {
-        var query = target.query;
-        query.cpu_features_add.addFeature(@intFromEnum(std.Target.x86.Feature.waitpkg));
-        target = b.resolveTargetQuery(query);
-    }
 
     // --- Add tatfi dependency ---
     const tatfi_dep = b.dependency("tatfi", .{});
@@ -202,6 +194,7 @@ pub fn build(b: *std.Build) void {
 
     // Detect if target is WASM
     const is_wasm = target.result.cpu.arch == .wasm32;
+    const is_x86_64 = target.result.cpu.arch == .x86_64;
     const is_macos = target.result.os.tag == .macos;
 
     // Use WASI for WASM builds so Zig provides wasi-libc
@@ -283,9 +276,13 @@ pub fn build(b: *std.Build) void {
 
         const tbb_flags: []const []const u8 = if (is_macos)
             &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE" }
+        else if (is_x86_64)
+            // Safely pass waitpkg exclusively to the Clang C++ frontend.
+            // This satisfies oneTBB's internal macros without poisoning Manifold or the global Zig target
+            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-Xclang", "-target-feature", "-Xclang", "+waitpkg" }
         else
+            // Fallback for ARM Linux, Windows on ARM, etc.
             &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1" };
-
         mod.addCSourceFiles(.{
             .files = tbb_sources,
             .flags = tbb_flags,
