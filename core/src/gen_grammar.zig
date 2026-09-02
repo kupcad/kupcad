@@ -98,10 +98,26 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     defer allocator.free(joined_insp);
 
     // Helper to safely fallback, join, and wrap categories into TextMate Regex format
+    // Helper to safely fallback, deduplicate, join, and wrap categories into TextMate Regex format
     const buildMethodRegex = struct {
         fn apply(alloc: std.mem.Allocator, list: *std.ArrayListUnmanaged([]const u8), dummy: []const u8) ![]const u8 {
             if (list.items.len == 0) try list.append(alloc, dummy);
-            const joined = try std.mem.join(alloc, "|", list.items);
+
+            // Deduplicate the list using a StringHashMap as a Set
+            var seen = std.StringHashMap(void).init(alloc);
+            defer seen.deinit();
+
+            var unique_list = std.ArrayListUnmanaged([]const u8).empty;
+            defer unique_list.deinit(alloc);
+
+            for (list.items) |item| {
+                if (!seen.contains(item)) {
+                    try seen.put(item, {});
+                    try unique_list.append(alloc, item);
+                }
+            }
+
+            const joined = try std.mem.join(alloc, "|", unique_list.items);
             defer alloc.free(joined);
             return std.fmt.allocPrint(alloc, "(?<![\\\\w])({s})(?![\\\\w?!])", .{joined});
         }

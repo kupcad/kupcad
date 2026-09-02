@@ -204,15 +204,21 @@ pub const Formatter = struct {
             .double_splat_expr => try self.formatSplat(tree, tree.nodeIndex(node), "**"),
             .each_expr => try self.formatSplat(tree, tree.nodeIndex(node), "each "),
             .rescue_modifier => try self.formatRescueModifier(tree, tree.rescueModifier(node)),
-            .method_call => try self.formatMethodCall(tree, tree.methodCall(node), node_line),
+            .method_call => {
+                const mc = tree.methodCall(node);
+                const method_name = tree.getString(mc.method_name);
+
+                // Route `yield` back to its dedicated formatter
+                if (std.mem.eql(u8, method_name, "yield") and mc.receiver == .none) {
+                    try self.formatYield(tree, mc);
+                } else {
+                    try self.formatMethodCall(tree, mc, node_line);
+                }
+            },
             .super_call => try self.formatSuperCall(tree, tree.superCall(node), node_line),
             .return_stmt => try self.formatFlowControl(tree, "return", tree.nodeIndex(node)),
             .break_stmt => try self.formatFlowControl(tree, "break", tree.nodeIndex(node)),
             .next_stmt => try self.formatFlowControl(tree, "next", tree.nodeIndex(node)),
-            .yield_stmt => {
-                const y = tree.nodeSpan(node);
-                try self.formatYield(tree, tree.getNodes(y));
-            },
             .import_stmt => {
                 const is_stmt = tree.importStmt(node);
                 try self.formatImportExport(tree, "import", tree.getStringLists(is_stmt.symbols), tree.getString(is_stmt.path), is_stmt.attributes);
@@ -230,6 +236,7 @@ pub const Formatter = struct {
                 try self.out.append(self.allocator, ')');
             },
             .docstring => try self.formatDocString(tree, tree.docString(node)),
+            .yield_stmt => unreachable,
         }
     }
 
@@ -722,18 +729,40 @@ pub const Formatter = struct {
         try self.out.appendSlice(self.allocator, kw);
         if (val != .none) {
             try self.out.append(self.allocator, ' ');
-            try self.formatNode(tree, val);
+
+            const val_node = tree.getNode(val).?;
+            if (val_node.tag == .array_literal) {
+                // If multiple values were returned, they are packed in an Array.
+                // Format them as comma-separated values without the brackets.
+                const arr_elems = tree.getNodes(tree.nodeSpan(val_node));
+                for (arr_elems, 0..) |elem, idx| {
+                    if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+                    try self.formatNode(tree, elem);
+                }
+            } else {
+                try self.formatNode(tree, val);
+            }
         }
     }
 
-    fn formatYield(self: *Formatter, tree: *const ast.Tree, args: []const ast.NodeIndex) Error!void {
+    fn formatYield(self: *Formatter, tree: *const ast.Tree, mc: ast.MethodCall) Error!void {
         try self.out.appendSlice(self.allocator, "yield");
+
+        const args = tree.getNamedArgs(mc.args);
         if (args.len > 0) {
-            try self.out.append(self.allocator, ' ');
-            for (args, 0..) |expr, idx| {
+            try self.out.append(self.allocator, '(');
+            for (args, 0..) |arg, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                try self.formatNode(tree, expr);
+                if (arg.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
+
+                const arg_name = tree.getString(arg.name);
+                if (arg_name.len > 0) {
+                    try self.out.appendSlice(self.allocator, arg_name);
+                    try self.out.appendSlice(self.allocator, ": ");
+                }
+                try self.formatNode(tree, arg.value);
             }
+            try self.out.append(self.allocator, ')');
         }
     }
 

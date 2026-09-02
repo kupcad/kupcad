@@ -239,12 +239,12 @@ test "Formatter: Multi-Assignment and Indexing" {
 }
 
 test "Formatter: Flow control keywords (return, break, next, yield)" {
-    const source = "return  x,y\nbreak   42\nnext\nyield(  1,  2)";
+    const source = "return  x,y\nbreak   42\nnext\nyield(  1,  width: 50)";
     const expected =
-        \\return [x, y]
+        \\return x, y
         \\break 42
         \\next
-        \\yield(1, 2)
+        \\yield(1, width: 50)
         \\
     ;
     try expectFormat(source, expected);
