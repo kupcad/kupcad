@@ -9154,3 +9154,137 @@ test "VM: Array#reduce evaluates block cleanly via block-aware wrapMethod" {
     try testing.expectEqual(@as(f64, 16.0), arr_obj.items.items[0].asNumber()); // 10 + 1 + 2 + 3
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[1].asNumber()); // 1 + 2 + 3 + 4
 }
+
+test "VM: Heredoc strings evaluate and assign correctly" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\example_text = <<EOF
+        \\line 1
+        \\line 2
+        \\EOF
+        \\example_text
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try std.testing.expect(result.isString());
+    try std.testing.expectEqualStrings("line 1\nline 2\n", result.asString().chars);
+}
+
+test "VM: Array#sort and Array#reduce handle empty and single-element arrays safely" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\[
+        \\  [].sort,
+        \\  [42].sort,
+        \\  [].reduce(10) { |acc, x| acc + x },
+        \\  [].reduce { |acc, x| acc + x }
+        \\]
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = result.asArray();
+    try std.testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+
+    try std.testing.expectEqual(@as(usize, 0), arr_obj.items.items[0].asArray().items.items.len);
+    try std.testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[1].asArray().items.items[0].asNumber());
+    try std.testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[2].asNumber());
+    try std.testing.expect(arr_obj.items.items[3].isNil());
+}
+
+test "VM Edge Case: Array#sort safely throws if block yields non-number" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true; // Prevent console clutter
+
+    const source =
+        \\[1, 2, 3].sort { |a, b| "invalid" }
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try std.testing.expectEqual(.runtime_error, result);
+}
+
+test "VM: String#length and String#size evaluate correctly" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\["hello".length, "world".size, "".length]
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = result.asArray();
+    try std.testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+    try std.testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[0].asNumber());
+    try std.testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[1].asNumber());
+    try std.testing.expectEqual(@as(f64, 0.0), arr_obj.items.items[2].asNumber());
+}
+
+test "VM: Heredoc strings act as raw strings (no interpolation)" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Because it acts like a single-quoted string, `#{val}` should not be evaluated.
+    const source =
+        \\val = 42
+        \\example_text = <<EOF
+        \\The value is #{val}
+        \\EOF
+        \\example_text
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try std.testing.expect(result.isString());
+
+    // Asserts that the interpolation syntax was ignored and treated as raw text
+    try std.testing.expectEqualStrings("The value is #{val}\n", result.asString().chars);
+}
