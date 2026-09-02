@@ -97,7 +97,6 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     defer allocator.free(joined_wp);
     defer allocator.free(joined_insp);
 
-    // Helper to safely fallback, join, and wrap categories into TextMate Regex format
     // Helper to safely fallback, deduplicate, join, and wrap categories into TextMate Regex format
     const buildMethodRegex = struct {
         fn apply(alloc: std.mem.Allocator, list: *std.ArrayListUnmanaged([]const u8), dummy: []const u8) ![]const u8 {
