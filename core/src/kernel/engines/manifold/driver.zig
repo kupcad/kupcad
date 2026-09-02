@@ -1,7 +1,7 @@
 const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
-const manifold = @import("../../../bindings/manifold/manifold.zig");
+const manifold = @import("../../../bindings/manifold.zig");
 const ManifoldConfig = @import("../../../core/engine_config.zig").ManifoldConfig;
 
 pub fn vecDot(a: [3]f64, b: [3]f64) f64 {

@@ -97,6 +97,7 @@ pub fn buildModel(
     io: std.Io,
     source: []const u8,
     format: []const u8,
+    use_draco: bool,
     cli_params: ?std.StringHashMap(f64),
 ) ![]const u8 {
     var doc = try Document.parse(allocator, source);
@@ -211,7 +212,7 @@ pub fn buildModel(
             return error.NoGeometry;
         }
     } else if (std.mem.eql(u8, format, "glb") or std.mem.eql(u8, format, "gltf")) {
-        return gltf_exporter.buildGltfBuffer(allocator, &vm, export_handles.items);
+        return gltf_exporter.buildGltfBuffer(allocator, &vm, export_handles.items, use_draco);
     } else if (std.mem.eql(u8, format, "step")) {
         // Pass the entire slice of separate bodies natively
         return step_exporter.buildStepBuffer(allocator, export_handles.items);

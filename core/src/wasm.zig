@@ -83,8 +83,8 @@ fn inner_extract_params(allocator: std.mem.Allocator, source: []const u8) ![]con
     return try out.toOwnedSlice();
 }
 
-fn inner_build_model(allocator: std.mem.Allocator, source: []const u8, format: []const u8) ![]const u8 {
-    return try api.buildModel(allocator, undefined, source, format, null);
+fn inner_build_model(allocator: std.mem.Allocator, source: []const u8, format: []const u8, use_draco: bool) ![]const u8 {
+    return try api.buildModel(allocator, undefined, source, format, use_draco, null);
 }
 
 // --- WASM Export Boundaries ---
@@ -135,12 +135,13 @@ pub export fn build_model_wasm(
     source_len: usize,
     format_ptr: [*]const u8,
     format_len: usize,
+    use_draco: bool,
     out_len: *usize,
 ) ?[*]const u8 {
     const source = source_ptr[0..source_len];
     const format = format_ptr[0..format_len];
 
-    if (inner_build_model(std.heap.wasm_allocator, source, format)) |res| {
+    if (inner_build_model(std.heap.wasm_allocator, source, format, use_draco)) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |err| {

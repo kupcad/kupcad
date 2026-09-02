@@ -73,6 +73,117 @@ const tbb_sources = &[_][]const u8{
     "vendor/oneTBB/src/tbb/version.cpp",
 };
 
+const draco_sources = &[_][]const u8{
+    // --- Attributes ---
+    "vendor/draco/src/draco/attributes/attribute_octahedron_transform.cc",
+    "vendor/draco/src/draco/attributes/attribute_quantization_transform.cc",
+    "vendor/draco/src/draco/attributes/attribute_transform.cc",
+    "vendor/draco/src/draco/attributes/geometry_attribute.cc",
+    "vendor/draco/src/draco/attributes/point_attribute.cc",
+
+    // --- Compression: Attributes ---
+    "vendor/draco/src/draco/compression/attributes/attributes_decoder.cc",
+    "vendor/draco/src/draco/compression/attributes/attributes_encoder.cc",
+    "vendor/draco/src/draco/compression/attributes/kd_tree_attributes_decoder.cc",
+    "vendor/draco/src/draco/compression/attributes/kd_tree_attributes_encoder.cc",
+    "vendor/draco/src/draco/compression/attributes/sequential_attribute_decoder.cc",
+    "vendor/draco/src/draco/compression/attributes/sequential_attribute_decoders_controller.cc",
+    "vendor/draco/src/draco/compression/attributes/sequential_attribute_encoder.cc",
+    "vendor/draco/src/draco/compression/attributes/sequential_attribute_encoders_controller.cc",
+    "vendor/draco/src/draco/compression/attributes/sequential_integer_attribute_decoder.cc",
+    "vendor/draco/src/draco/compression/attributes/sequential_integer_attribute_encoder.cc",
+    "vendor/draco/src/draco/compression/attributes/sequential_normal_attribute_decoder.cc",
+    "vendor/draco/src/draco/compression/attributes/sequential_normal_attribute_encoder.cc",
+    "vendor/draco/src/draco/compression/attributes/sequential_quantization_attribute_decoder.cc",
+    "vendor/draco/src/draco/compression/attributes/sequential_quantization_attribute_encoder.cc",
+    "vendor/draco/src/draco/compression/attributes/prediction_schemes/prediction_scheme_encoder_factory.cc",
+
+    // --- Compression: Bit Coders ---
+    "vendor/draco/src/draco/compression/bit_coders/adaptive_rans_bit_decoder.cc",
+    "vendor/draco/src/draco/compression/bit_coders/adaptive_rans_bit_encoder.cc",
+    "vendor/draco/src/draco/compression/bit_coders/direct_bit_decoder.cc",
+    "vendor/draco/src/draco/compression/bit_coders/direct_bit_encoder.cc",
+    "vendor/draco/src/draco/compression/bit_coders/rans_bit_decoder.cc",
+    "vendor/draco/src/draco/compression/bit_coders/rans_bit_encoder.cc",
+    "vendor/draco/src/draco/compression/bit_coders/symbol_bit_decoder.cc",
+    "vendor/draco/src/draco/compression/bit_coders/symbol_bit_encoder.cc",
+
+    // --- Compression: Core, Entropy & Mesh ---
+    "vendor/draco/src/draco/compression/draco_compression_options.cc",
+    "vendor/draco/src/draco/compression/decode.cc",
+    "vendor/draco/src/draco/compression/encode.cc",
+    "vendor/draco/src/draco/compression/expert_encode.cc",
+    "vendor/draco/src/draco/compression/entropy/shannon_entropy.cc",
+    "vendor/draco/src/draco/compression/entropy/symbol_decoding.cc",
+    "vendor/draco/src/draco/compression/entropy/symbol_encoding.cc",
+    "vendor/draco/src/draco/compression/mesh/mesh_decoder.cc",
+    "vendor/draco/src/draco/compression/mesh/mesh_edgebreaker_decoder_impl.cc",
+    "vendor/draco/src/draco/compression/mesh/mesh_edgebreaker_decoder.cc",
+    "vendor/draco/src/draco/compression/mesh/mesh_edgebreaker_encoder_impl.cc",
+    "vendor/draco/src/draco/compression/mesh/mesh_edgebreaker_encoder.cc",
+    "vendor/draco/src/draco/compression/mesh/mesh_encoder.cc",
+    "vendor/draco/src/draco/compression/mesh/mesh_sequential_decoder.cc",
+    "vendor/draco/src/draco/compression/mesh/mesh_sequential_encoder.cc",
+
+    // --- Compression: Point Cloud ---
+    "vendor/draco/src/draco/compression/point_cloud/algorithms/dynamic_integer_points_kd_tree_decoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/algorithms/dynamic_integer_points_kd_tree_encoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/algorithms/float_points_tree_decoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/algorithms/float_points_tree_encoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/algorithms/integer_points_kd_tree_decoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/algorithms/integer_points_kd_tree_encoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/point_cloud_decoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/point_cloud_encoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/point_cloud_kd_tree_decoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/point_cloud_kd_tree_encoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/point_cloud_sequential_decoder.cc",
+    "vendor/draco/src/draco/compression/point_cloud/point_cloud_sequential_encoder.cc",
+
+    // --- Core ---
+    "vendor/draco/src/draco/core/bit_utils.cc",
+    "vendor/draco/src/draco/core/bounding_box.cc",
+    "vendor/draco/src/draco/core/cycle_timer.cc",
+    "vendor/draco/src/draco/core/data_buffer.cc",
+    "vendor/draco/src/draco/core/decoder_buffer.cc",
+    "vendor/draco/src/draco/core/divide.cc",
+    "vendor/draco/src/draco/core/draco_types.cc",
+    "vendor/draco/src/draco/core/encoder_buffer.cc",
+    "vendor/draco/src/draco/core/hash_utils.cc",
+    "vendor/draco/src/draco/core/options.cc",
+    "vendor/draco/src/draco/core/quantization_utils.cc",
+    "vendor/draco/src/draco/core/status.cc",
+
+    // --- Mesh ---
+    "vendor/draco/src/draco/mesh/corner_table.cc",
+    "vendor/draco/src/draco/mesh/mesh_are_equivalent.cc",
+    "vendor/draco/src/draco/mesh/mesh_attribute_corner_table.cc",
+    "vendor/draco/src/draco/mesh/mesh_cleanup.cc",
+    "vendor/draco/src/draco/mesh/mesh_features.cc",
+    "vendor/draco/src/draco/mesh/mesh_misc_functions.cc",
+    "vendor/draco/src/draco/mesh/mesh_splitter.cc",
+    "vendor/draco/src/draco/mesh/mesh_stripifier.cc",
+    "vendor/draco/src/draco/mesh/mesh_utils.cc",
+    "vendor/draco/src/draco/mesh/mesh.cc",
+    "vendor/draco/src/draco/mesh/triangle_soup_mesh_builder.cc",
+
+    // --- Point Cloud ---
+    "vendor/draco/src/draco/point_cloud/point_cloud.cc",
+    "vendor/draco/src/draco/point_cloud/point_cloud_builder.cc",
+
+    // --- Metadata ---
+    "vendor/draco/src/draco/metadata/geometry_metadata.cc",
+    "vendor/draco/src/draco/metadata/metadata.cc",
+    "vendor/draco/src/draco/metadata/metadata_decoder.cc",
+    "vendor/draco/src/draco/metadata/metadata_encoder.cc",
+    "vendor/draco/src/draco/metadata/property_attribute.cc",
+    "vendor/draco/src/draco/metadata/property_table.cc",
+    "vendor/draco/src/draco/metadata/structural_metadata.cc",
+    "vendor/draco/src/draco/metadata/structural_metadata_schema.cc",
+
+    // --- Bindings Wrapper ---
+    "src/bindings/draco_c.cpp",
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -140,6 +251,8 @@ pub fn build(b: *std.Build) void {
     mod.addIncludePath(b.path("vendor/manifold/include"));
     mod.addIncludePath(b.path("vendor/manifold/bindings/c"));
     mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
+    mod.addIncludePath(b.path("vendor/draco/src"));
+    mod.addIncludePath(b.path("src/bindings"));
     mod.addIncludePath(b.path("src"));
 
     const clipper_flags: []const []const u8 = if (is_wasm)
@@ -169,6 +282,16 @@ pub fn build(b: *std.Build) void {
             .flags = tbb_flags,
         });
     }
+
+    const drako_flags: []const []const u8 = if (is_wasm)
+        &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
+    else
+        &.{ "-std=c++17", "-fno-exceptions" };
+
+    mod.addCSourceFiles(.{
+        .files = draco_sources,
+        .flags = drako_flags,
+    });
 
     // ====================================================================
     // Targets

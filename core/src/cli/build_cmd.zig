@@ -7,6 +7,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     var input_path: ?[]const u8 = null;
     var output_path: ?[]const u8 = null;
     var format: []const u8 = "stl"; // Default format
+    var use_draco: bool = false; // Draco compression flag
 
     // Hold our parsed CLI parameters
     var cli_params = std.StringHashMap(f64).init(allocator);
@@ -33,16 +34,18 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             try cli_params.put(key, val);
         } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
             output_path = args_iter.next();
+        } else if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--draco")) {
+            use_draco = true;
         } else if (std.mem.eql(u8, arg, "-f") or std.mem.eql(u8, arg, "--format")) {
             format = args_iter.next() orelse {
                 std.debug.print("Error: Missing format after {s}\n", .{arg});
                 return;
             };
-            // FIX: Explicitly validate supported formats to fail fast!
+
             if (!std.mem.eql(u8, format, "stl") and
                 !std.mem.eql(u8, format, "glb") and
                 !std.mem.eql(u8, format, "gltf") and
-                !std.mem.eql(u8, format, "step")) // <-- SUPPORT STEP HERE
+                !std.mem.eql(u8, format, "step"))
             {
                 std.debug.print("Error: Unsupported format '{s}'. Allowed: stl, glb, gltf, step\n", .{format});
                 return;
@@ -75,7 +78,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer allocator.free(source);
 
     // Compile, Inject, and Evaluate
-    const output_bytes = api.buildModel(allocator, init.io, source, format, cli_params) catch |err| {
+    const output_bytes = api.buildModel(allocator, init.io, source, format, use_draco, cli_params) catch |err| {
         std.debug.print("Build failed: {}\n", .{err});
         return;
     };

@@ -7,3 +7,6 @@
 [submodule "core/vendor/oneTBB"]
 	path = core/vendor/oneTBB
 	url = https://github.com/oneapi-src/oneTBB
+[submodule "core/vendor/draco"]
+	path = core/vendor/draco
+	url = https://github.com/google/draco

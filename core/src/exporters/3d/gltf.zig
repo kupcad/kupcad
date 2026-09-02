@@ -3,6 +3,14 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
+const draco = @import("../../bindings/draco.zig");
+
+// --- GLTF & Draco Configuration Constants ---
+const GLTF_COMPONENT_TYPE_FLOAT = 5126;
+const GLTF_COMPONENT_TYPE_UNSIGNED_INT = 5125;
+const GLTF_TARGET_ARRAY_BUFFER = 34962;
+const GLTF_TARGET_ELEMENT_ARRAY_BUFFER = 34963;
+const DRACO_POSITION_QUANTIZATION_BITS = 14;
 
 // --- GLTF Struct Definitions for std.json ---
 const Pbr = struct {
@@ -24,13 +32,23 @@ const GltfMaterial = struct {
     doubleSided: bool = true,
     extras: ?GltfExtras = null,
 };
+
+const DracoExtension = struct {
+    bufferView: u32,
+    attributes: struct { POSITION: u32 = 0 },
+};
+const PrimitiveExtensions = struct {
+    KHR_draco_mesh_compression: DracoExtension,
+};
+
 const Primitive = struct {
     attributes: struct { POSITION: u32 },
     indices: u32,
     material: u32,
+    extensions: ?PrimitiveExtensions = null,
 };
 const Accessor = struct {
-    bufferView: u32,
+    bufferView: ?u32 = null,
     byteOffset: u32,
     componentType: u32,
     count: u32,
@@ -42,7 +60,7 @@ const BufferView = struct {
     buffer: u32,
     byteOffset: u32,
     byteLength: u32,
-    target: u32,
+    target: ?u32 = null,
 };
 
 fn parseHexColor(hex: []const u8, alpha: f64) [4]f64 {
@@ -64,17 +82,24 @@ fn parseHexColor(hex: []const u8, alpha: f64) [4]f64 {
 }
 
 /// Constructs and returns an owned slice of binary .GLB bytes directly in memory.
-/// Now supports multiple handles (combining the main CSG body and all display_list ghosts).
-pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const geom.GeometryHandle) ![]const u8 {
+/// Supports optional Draco geometry compression via `use_draco`.
+pub fn buildGltfBuffer(
+    allocator: std.mem.Allocator,
+    vm: *VM,
+    handles: []const geom.GeometryHandle,
+    use_draco: bool,
+) ![]const u8 {
     var vertex_buf: std.ArrayListUnmanaged(u8) = .empty;
-    var index_buf: std.ArrayListUnmanaged(u8) = .empty;
     defer vertex_buf.deinit(allocator);
-    defer index_buf.deinit(allocator);
 
-    var primitives: std.ArrayListUnmanaged(Primitive) = .empty;
-    var accessors: std.ArrayListUnmanaged(Accessor) = .empty;
-    defer primitives.deinit(allocator);
-    defer accessors.deinit(allocator);
+    var primitives_data: std.ArrayListUnmanaged(struct {
+        material: u32,
+        indices: std.ArrayListUnmanaged(u32),
+    }) = .empty;
+    defer {
+        for (primitives_data.items) |*p| p.indices.deinit(allocator);
+        primitives_data.deinit(allocator);
+    }
 
     var global_min = [3]f64{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
     var global_max = [3]f64{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
@@ -89,12 +114,13 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const g
         const vertex_count: u32 = @intCast(mesh.vert_props.len / mesh.num_prop);
         if (vertex_count == 0) continue;
 
-        // Offset new vertices by the total vertices already processed across previous meshes
         const base_vertex = total_vertices;
         total_vertices += vertex_count;
 
         // Group Triangles by Material ID
         var mat_indices = std.AutoHashMap(u32, std.ArrayListUnmanaged(u32)).init(allocator);
+        defer mat_indices.deinit();
+
         var i: usize = 0;
         while (i < mesh.tri_verts.len) : (i += 3) {
             const v_idx = mesh.tri_verts[i] * mesh.num_prop;
@@ -103,8 +129,11 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const g
             const gop = try mat_indices.getOrPut(mat_id);
             if (!gop.found_existing) gop.value_ptr.* = .empty;
 
-            // Append the 3 vertex indices for this triangle, offset by the current base vertex
-            try gop.value_ptr.appendSlice(allocator, &.{ mesh.tri_verts[i] + base_vertex, mesh.tri_verts[i + 1] + base_vertex, mesh.tri_verts[i + 2] + base_vertex });
+            try gop.value_ptr.appendSlice(allocator, &.{
+                mesh.tri_verts[i] + base_vertex,
+                mesh.tri_verts[i + 1] + base_vertex,
+                mesh.tri_verts[i + 2] + base_vertex,
+            });
         }
 
         // Push Raw Vertices and calculate global bounding box
@@ -126,71 +155,143 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const g
             try vertex_buf.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v + 2]));
         }
 
-        // Write Index Accessors and Primitives mapped to materials
         var mat_it = mat_indices.iterator();
         while (mat_it.next()) |entry| {
-            const mat_id = entry.key_ptr.*;
-            const indices = entry.value_ptr.items;
-            const current_index_byte_offset: u32 = @intCast(index_buf.items.len);
-
-            for (indices) |idx| {
-                try index_buf.appendSlice(allocator, std.mem.asBytes(&idx));
-            }
-
-            const accessor_id: u32 = @as(u32, @intCast(accessors.items.len)) + 1; // +1 because Accessor 0 is reserved for POSITION
-            try accessors.append(allocator, .{
-                .bufferView = 1,
-                .byteOffset = current_index_byte_offset,
-                .componentType = 5125, // UNSIGNED_INT
-                .count = @intCast(indices.len),
-                .type = "SCALAR",
+            try primitives_data.append(allocator, .{
+                .material = entry.key_ptr.*,
+                .indices = entry.value_ptr.*,
             });
-
-            try primitives.append(allocator, .{
-                .attributes = .{ .POSITION = 0 },
-                .indices = accessor_id,
-                .material = mat_id,
-            });
-            entry.value_ptr.deinit(allocator);
         }
-        mat_indices.deinit();
     }
 
     if (total_vertices == 0) return error.NoGeometry;
 
-    // --- Build Binary Data Chunk ---
-    // Prepend the global POSITION accessor at index 0 now that we have the global min/max
-    try accessors.insert(allocator, 0, .{
-        .bufferView = 0,
+    var primitives: std.ArrayListUnmanaged(Primitive) = .empty;
+    var accessors: std.ArrayListUnmanaged(Accessor) = .empty;
+    var bufferViews: std.ArrayListUnmanaged(BufferView) = .empty;
+    var bin_buf: std.ArrayListUnmanaged(u8) = .empty;
+
+    defer primitives.deinit(allocator);
+    defer accessors.deinit(allocator);
+    defer bufferViews.deinit(allocator);
+    defer bin_buf.deinit(allocator);
+
+    var extensionsUsed: std.ArrayListUnmanaged([]const u8) = .empty;
+    var extensionsRequired: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer extensionsUsed.deinit(allocator);
+    defer extensionsRequired.deinit(allocator);
+
+    // Position Accessor (Index 0)
+    try accessors.append(allocator, .{
+        .bufferView = if (use_draco) null else 0,
         .byteOffset = 0,
-        .componentType = 5126, // FLOAT
+        .componentType = GLTF_COMPONENT_TYPE_FLOAT,
         .count = total_vertices,
         .type = "VEC3",
         .min = global_min,
         .max = global_max,
     });
 
-    var bin_buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer bin_buf.deinit(allocator);
+    if (use_draco) {
+        try extensionsUsed.append(allocator, "KHR_draco_mesh_compression");
+        try extensionsRequired.append(allocator, "KHR_draco_mesh_compression");
 
-    try bin_buf.appendSlice(allocator, vertex_buf.items);
+        const raw_positions = @as([*]const f32, @ptrCast(@alignCast(vertex_buf.items.ptr)))[0 .. vertex_buf.items.len / 4];
 
-    const pos_byte_length: u32 = @intCast(vertex_buf.items.len);
-    const indices_start_offset: u32 = pos_byte_length;
-    const indices_byte_length: u32 = @intCast(index_buf.items.len);
+        for (primitives_data.items) |prim| {
+            const draco_bytes = try draco.encodeMesh(allocator, raw_positions, prim.indices.items, DRACO_POSITION_QUANTIZATION_BITS);
+            defer allocator.free(draco_bytes);
 
-    try bin_buf.appendSlice(allocator, index_buf.items);
+            const draco_offset: u32 = @intCast(bin_buf.items.len);
+            try bin_buf.appendSlice(allocator, draco_bytes);
+
+            while (bin_buf.items.len % 4 != 0) try bin_buf.append(allocator, 0);
+
+            const draco_bv_idx: u32 = @intCast(bufferViews.items.len);
+            try bufferViews.append(allocator, .{
+                .buffer = 0,
+                .byteOffset = draco_offset,
+                .byteLength = @intCast(draco_bytes.len),
+            });
+
+            const accessor_id: u32 = @intCast(accessors.items.len);
+            try accessors.append(allocator, .{
+                .bufferView = null,
+                .byteOffset = 0,
+                .componentType = GLTF_COMPONENT_TYPE_UNSIGNED_INT,
+                .count = @intCast(prim.indices.items.len),
+                .type = "SCALAR",
+            });
+
+            try primitives.append(allocator, .{
+                .attributes = .{ .POSITION = 0 },
+                .indices = accessor_id,
+                .material = prim.material,
+                .extensions = .{
+                    .KHR_draco_mesh_compression = .{
+                        .bufferView = draco_bv_idx,
+                        .attributes = .{ .POSITION = 0 },
+                    },
+                },
+            });
+        }
+    } else {
+        // --- Uncompressed GLTF Buffer Layout ---
+        try bin_buf.appendSlice(allocator, vertex_buf.items);
+
+        const pos_byte_length: u32 = @intCast(vertex_buf.items.len);
+        const indices_start_offset: u32 = pos_byte_length;
+
+        var index_buf: std.ArrayListUnmanaged(u8) = .empty;
+        defer index_buf.deinit(allocator);
+
+        for (primitives_data.items) |prim| {
+            const current_index_byte_offset: u32 = @intCast(index_buf.items.len);
+
+            for (prim.indices.items) |idx| {
+                try index_buf.appendSlice(allocator, std.mem.asBytes(&idx));
+            }
+
+            const accessor_id: u32 = @intCast(accessors.items.len);
+            try accessors.append(allocator, .{
+                .bufferView = 1,
+                .byteOffset = current_index_byte_offset,
+                .componentType = GLTF_COMPONENT_TYPE_UNSIGNED_INT,
+                .count = @intCast(prim.indices.items.len),
+                .type = "SCALAR",
+            });
+
+            try primitives.append(allocator, .{
+                .attributes = .{ .POSITION = 0 },
+                .indices = accessor_id,
+                .material = prim.material,
+            });
+        }
+
+        try bin_buf.appendSlice(allocator, index_buf.items);
+        const indices_byte_length: u32 = @intCast(index_buf.items.len);
+
+        try bufferViews.append(allocator, .{
+            .buffer = 0,
+            .byteOffset = 0,
+            .byteLength = pos_byte_length,
+            .target = GLTF_TARGET_ARRAY_BUFFER,
+        });
+        try bufferViews.append(allocator, .{
+            .buffer = 0,
+            .byteOffset = indices_start_offset,
+            .byteLength = indices_byte_length,
+            .target = GLTF_TARGET_ELEMENT_ARRAY_BUFFER,
+        });
+    }
 
     // --- Extract VM Materials & Setup Semantic Roles ---
     var gltf_materials: std.ArrayListUnmanaged(GltfMaterial) = .empty;
-    var extensionsUsed: std.ArrayListUnmanaged([]const u8) = .empty;
     defer gltf_materials.deinit(allocator);
-    defer extensionsUsed.deinit(allocator);
 
     var has_transmission = false;
 
     if (vm.materials.items.len == 0) {
-        // Fallback standard material if none provided
         try gltf_materials.append(allocator, .{
             .pbrMetallicRoughness = .{ .baseColorFactor = .{ 0.8, 0.8, 0.8, 1.0 }, .metallicFactor = 0.0, .roughnessFactor = 0.5 },
             .alphaMode = "OPAQUE",
@@ -201,11 +302,9 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const g
             var ext: ?MaterialExt = null;
             var alphaMode: []const u8 = if (mat.alpha < 1.0) "BLEND" else "OPAQUE";
 
-            // Semantic Tagging for the Frontend Viewer
             var extras: ?GltfExtras = null;
 
             if (mat.role == .ghost) {
-                // Ensure GLTF viewers know to blend it even if they ignore `extras`
                 alphaMode = "BLEND";
                 extras = .{ .kupcad_role = "ghost" };
             } else if (mat.role == .highlight) {
@@ -224,7 +323,7 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const g
                 .pbrMetallicRoughness = .{ .baseColorFactor = color, .metallicFactor = mat.metallic, .roughnessFactor = mat.roughness },
                 .extensions = ext,
                 .alphaMode = alphaMode,
-                .extras = extras, // Inject semantics
+                .extras = extras,
             });
         }
     }
@@ -235,21 +334,17 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const g
     }
 
     // --- Serialize JSON Hierarchy ---
-    var bufferViews = [_]BufferView{
-        .{ .buffer = 0, .byteOffset = 0, .byteLength = pos_byte_length, .target = 34962 },
-        .{ .buffer = 0, .byteOffset = indices_start_offset, .byteLength = indices_byte_length, .target = 34963 },
-    };
-
     const root_obj = .{
         .asset = .{ .version = "2.0", .generator = "KupCAD" },
         .extensionsUsed = if (extensionsUsed.items.len > 0) extensionsUsed.items else null,
+        .extensionsRequired = if (extensionsRequired.items.len > 0) extensionsRequired.items else null,
         .scene = 0,
         .scenes = [_]struct { nodes: [1]u32 }{.{ .nodes = .{0} }},
         .nodes = [_]struct { mesh: u32, rotation: [4]f64 }{.{ .mesh = 0, .rotation = .{ -0.7071067811865475, 0.0, 0.0, 0.7071067811865476 } }},
         .meshes = [_]struct { primitives: []Primitive }{.{ .primitives = primitives.items }},
         .materials = gltf_materials.items,
         .accessors = accessors.items,
-        .bufferViews = &bufferViews,
+        .bufferViews = bufferViews.items,
         .buffers = [_]struct { byteLength: usize }{.{ .byteLength = bin_buf.items.len }},
     };
 
@@ -269,7 +364,7 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const g
     const json_len: u32 = @intCast(json_out.items.len);
     const total_length: u32 = 12 + 8 + json_len + 8 + bin_len;
 
-    // --- 5. Assemble GLB Payload ---
+    // --- Assemble GLB Payload ---
     var glb_payload: std.ArrayListUnmanaged(u8) = .empty;
     errdefer glb_payload.deinit(allocator);
 
@@ -294,9 +389,11 @@ pub fn buildGltfBuffer(allocator: std.mem.Allocator, vm: *VM, handles: []const g
 }
 
 /// Method invocation variant (e.g. `my_part.export_gltf("out.glb")`)
-pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, draco_opt: ?bool) !value.Value {
     var handles = std.ArrayListUnmanaged(geom.GeometryHandle).empty;
     defer handles.deinit(vm.allocator);
+
+    const use_draco = draco_opt orelse false;
 
     if (receiver.isGeometry()) {
         try handles.append(vm.allocator, try vm.ensureConcrete(receiver));
@@ -313,7 +410,7 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8) !val
         return error.RuntimeError;
     }
 
-    const glb_bytes = try buildGltfBuffer(vm.allocator, vm, handles.items);
+    const glb_bytes = try buildGltfBuffer(vm.allocator, vm, handles.items, use_draco);
     defer vm.allocator.free(glb_bytes);
 
     const cwd = std.Io.Dir.cwd();
@@ -326,6 +423,6 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8) !val
 }
 
 /// Global function fallback variant (e.g. `export_gltf("out.glb", my_part)`)
-pub fn nativeExportGltf(vm: *VM, path_str: []const u8, target: value.Value) !value.Value {
-    return meshExportGltf(vm, target, path_str);
+pub fn nativeExportGltf(vm: *VM, path_str: []const u8, target: value.Value, draco_opt: ?bool) !value.Value {
+    return meshExportGltf(vm, target, path_str, draco_opt);
 }

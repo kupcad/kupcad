@@ -165,9 +165,9 @@ test "WASM Interop: build_model_wasm evaluates geometry and exports requested fo
     const stl_fmt = "stl";
     const glb_fmt = "glb";
 
-    // Test STL export via WASM
+    // Test STL export via WASM (use_draco: false)
     var stl_len: usize = 0;
-    const stl_ptr = wasm.build_model_wasm(src.ptr, src.len, stl_fmt.ptr, stl_fmt.len, &stl_len);
+    const stl_ptr = wasm.build_model_wasm(src.ptr, src.len, stl_fmt.ptr, stl_fmt.len, false, &stl_len);
 
     // The build should successfully yield a pointer to memory
     try testing.expect(stl_ptr != null);
@@ -183,9 +183,9 @@ test "WASM Interop: build_model_wasm evaluates geometry and exports requested fo
     // Ensure we don't leak memory in the test environment
     wasm.wasm_free(@constCast(stl_ptr.?), stl_len);
 
-    // Test GLB export via WASM
+    // Test GLB export via WASM (use_draco: false)
     var glb_len: usize = 0;
-    const glb_ptr = wasm.build_model_wasm(src.ptr, src.len, glb_fmt.ptr, glb_fmt.len, &glb_len);
+    const glb_ptr = wasm.build_model_wasm(src.ptr, src.len, glb_fmt.ptr, glb_fmt.len, false, &glb_len);
 
     try testing.expect(glb_ptr != null);
     try testing.expect(glb_len > 20);
