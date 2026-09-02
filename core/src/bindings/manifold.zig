@@ -128,7 +128,7 @@ extern fn manifold_cross_section_even_odd_polygons(mem: ?*ManifoldCrossSection, 
 extern fn manifold_simplify(mem: ?*ManifoldObj, manifold: *ManifoldObj, tolerance: f64) ?*ManifoldObj;
 
 // Callback signature uses f32 properties but f64 geometry
-extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumProp: c_int, propFunc: *const fn ([*]f32, ManifoldVec3, [*]const f32, ?*anyopaque) callconv(.c) void, ctx: ?*anyopaque) ?*ManifoldObj;
+extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumProp: c_int, propFunc: *const fn ([*]f64, ManifoldVec3, [*]const f64, ?*anyopaque) callconv(.c) void, ctx: ?*anyopaque) ?*ManifoldObj;
 
 // ==========================================
 // Zig Idiomatic Wrappers
@@ -261,7 +261,7 @@ pub fn crossSectionEvenOddPolygons(allocator: std.mem.Allocator, contours: []con
 pub fn setProperties(
     obj: ?*ManifoldObj,
     num_prop: i32,
-    prop_func: *const fn ([*]f32, ManifoldVec3, [*]const f32, ?*anyopaque) callconv(.c) void,
+    prop_func: *const fn ([*]f64, ManifoldVec3, [*]const f64, ?*anyopaque) callconv(.c) void,
     ctx: ?*anyopaque,
 ) ?*ManifoldObj {
     return manifold_set_properties(manifold_alloc_manifold(), obj, @intCast(num_prop), prop_func, ctx);
