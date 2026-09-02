@@ -127,7 +127,7 @@ extern fn manifold_cross_section_of_simple_polygon(mem: ?*ManifoldCrossSection, 
 extern fn manifold_cross_section_even_odd_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
 extern fn manifold_simplify(mem: ?*ManifoldObj, manifold: *ManifoldObj, tolerance: f64) ?*ManifoldObj;
 
-// Callback signature uses f32 properties but f64 geometry
+extern fn manifold_manifold_empty_vec(mem: ?*ManifoldVecObj) ?*ManifoldVecObj;
 extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumProp: c_int, propFunc: *const fn ([*]f64, ManifoldVec3, [*]const f64, ?*anyopaque) callconv(.c) void, ctx: ?*anyopaque) ?*ManifoldObj;
 
 // ==========================================
@@ -153,10 +153,14 @@ pub fn boolean(a: ?*ManifoldObj, b: ?*ManifoldObj, op: OpType) ?*ManifoldObj {
 pub fn batchBoolean(objs: []const ?*ManifoldObj, op: OpType) ?*ManifoldObj {
     if (objs.len == 0) return null;
 
-    const vec = manifold_alloc_manifold_vec();
+    // Allocate raw memory
+    const raw_mem = manifold_alloc_manifold_vec();
+    if (raw_mem == null) return null;
+
+    // Initialize C++ std::vector placement new
+    const vec = manifold_manifold_empty_vec(raw_mem);
     defer manifold_destruct_manifold_vec(vec);
 
-    // Safely guard against both unwrapped nulls AND address-0 pointers
     for (objs) |obj| {
         if (obj) |valid_ptr| {
             if (@intFromPtr(valid_ptr) != 0) {
@@ -191,10 +195,14 @@ pub fn hull(obj: ?*ManifoldObj) ?*ManifoldObj {
 pub fn batchHull(objs: []const ?*ManifoldObj) ?*ManifoldObj {
     if (objs.len == 0) return null;
 
-    const vec = manifold_alloc_manifold_vec();
+    // Allocate raw memory
+    const raw_mem = manifold_alloc_manifold_vec();
+    if (raw_mem == null) return null;
+
+    // Initialize C++ std::vector placement new
+    const vec = manifold_manifold_empty_vec(raw_mem);
     defer manifold_destruct_manifold_vec(vec);
 
-    // Safely guard against both unwrapped nulls AND address-0 pointers
     for (objs) |obj| {
         if (obj) |valid_ptr| {
             if (@intFromPtr(valid_ptr) != 0) {
