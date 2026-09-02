@@ -191,7 +191,13 @@ test "KupCAD Parser: Statement Modifiers (Yield Unless)" {
     const then_branch = pt.getNode(if_stmt.then_branch);
     const then_stmts = tree.getNodes(tree.block(then_branch).stmts);
     const inner_yield = pt.getNode(then_stmts[0]);
-    const yield_args = tree.getNodes(tree.nodeSpan(inner_yield));
+
+    // Validate it as a method call instead of a yield statement
+    try testing.expectEqual(ast.Tag.method_call, inner_yield.tag);
+    const mc = tree.methodCall(inner_yield);
+    try testing.expectEqualStrings("yield", tree.getString(mc.method_name));
+
+    const yield_args = tree.getNamedArgs(mc.args);
     try testing.expectEqual(@as(usize, 0), yield_args.len);
 }
 

@@ -999,23 +999,27 @@ pub const Parser = struct {
 
     fn parseYieldStatement(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.keyword_yield);
-        const s_len = self.scratch_nodes.items.len;
-        defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
+        var args_span: ast.Span = try self.b.addNamedArgs(&.{});
+
+        self.skipIgnored();
         if (self.tag(0) == .l_paren) {
-            self.advance();
-            while (self.tag(0) != .r_paren and self.tag(0) != .eof) {
-                try self.scratch_nodes.append(self.allocator, try self.parseExpression(.none));
-                if (self.tag(0) == .comma) self.advance() else break;
-            }
-            _ = try self.expect(.r_paren);
-        } else {
+            args_span = try self.parseParenArgs();
+        } else if (!self.isExprListEnd()) {
+            const s_len = self.scratch_named_args.items.len;
+            defer self.scratch_named_args.shrinkRetainingCapacity(s_len);
             while (!self.isExprListEnd()) {
-                try self.scratch_nodes.append(self.allocator, try self.parseExpression(.none));
-                if (self.tag(0) == .comma) self.advance() else break;
+                try self.scratch_named_args.append(self.allocator, try self.parseNamedArg());
+                if (self.tag(0) == .comma) {
+                    self.advance();
+                    self.skipIgnored();
+                } else break;
             }
+            args_span = try self.b.addNamedArgs(self.scratch_named_args.items[s_len..]);
         }
-        const span = try self.b.addNodes(self.scratch_nodes.items[s_len..]);
-        return self.b.yieldStmt(span, start_tok) catch ParseError.OutOfMemory;
+
+        const end_tok = self.tok_idx;
+        // Compiling yield as an intrinsic method call magically grants it full kwarg and splat support
+        return self.b.methodCall(.none, try self.b.intern("yield"), args_span, .none, false, end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseDocString(self: *Parser) ParseError!ast.NodeIndex {
@@ -1432,11 +1436,15 @@ pub const Parser = struct {
 
     fn parseGroupedExpression(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.l_paren);
+        self.skipIgnored(); // Allow newlines immediately after '('
+
         if (self.tag(0) == .r_paren) {
             self.advance();
             return self.b.nilNode(start_tok) catch ParseError.OutOfMemory;
         }
+
         const expr = try self.parseExpression(.none);
+        self.skipIgnored(); // Allow newlines immediately before ')'
         _ = try self.expect(.r_paren);
         return expr;
     }

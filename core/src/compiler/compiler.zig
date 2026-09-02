@@ -394,13 +394,7 @@ pub const Compiler = struct {
                 try self.emitInlineCacheIndex();
 
                 try self.compileNode(assign_payload.value);
-                switch (op) {
-                    .add => try self.emitOp(.op_add),
-                    .subtract => try self.emitOp(.op_subtract),
-                    .multiply => try self.emitOp(.op_multiply),
-                    .divide => try self.emitOp(.op_divide),
-                    else => return error.UnknownNode,
-                }
+                try self.emitAugmentedOp(op);
             } else {
                 try self.compileNode(assign_payload.value); // Stack: [self, new_val]
             }
@@ -434,13 +428,7 @@ pub const Compiler = struct {
         if (assign_payload.op) |op| {
             try self.emitVariableLoad(name_id, sym);
             try self.compileNode(assign_payload.value);
-            switch (op) {
-                .add => try self.emitOp(.op_add),
-                .subtract => try self.emitOp(.op_subtract),
-                .multiply => try self.emitOp(.op_multiply),
-                .divide => try self.emitOp(.op_divide),
-                else => return error.UnknownNode,
-            }
+            try self.emitAugmentedOp(op);
         } else {
             try self.compileNode(assign_payload.value);
         }
@@ -574,13 +562,7 @@ pub const Compiler = struct {
             try self.compileNode(ia.value);
             // Stack is now: [target, index, current_val, rhs_val]
 
-            switch (op) {
-                .add => try self.emitOp(.op_add),
-                .subtract => try self.emitOp(.op_subtract),
-                .multiply => try self.emitOp(.op_multiply),
-                .divide => try self.emitOp(.op_divide),
-                else => return error.UnknownNode,
-            }
+            try self.emitAugmentedOp(op);
             // Stack is now: [target, index, new_val]
         } else {
             try self.compileNode(ia.value); // Stack: [target, index, new_val]
@@ -1094,14 +1076,12 @@ pub const Compiler = struct {
                 },
                 .yield_call => {
                     const args = self.tree.getNamedArgs(mc.args);
-                    for (args) |arg| {
-                        if (arg.name != .none) return error.UnsupportedScope; // Kwargs to yield not yet supported
-                        try self.compileNode(arg.value);
-                    }
-                    if (args.len > limits.MAX_ARGS) return error.TooManyConstants;
+                    const actual_arg_count = try self.compileCallArguments(args);
+                    if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
+
                     try self.emitOp(.op_yield);
-                    try self.emitByte(@intCast(args.len));
-                    self.simulatePop(args.len); // Yield consumes the args
+                    try self.emitByte(@intCast(actual_arg_count));
+                    self.simulatePop(actual_arg_count); // Yield consumes the args
                     self.simulatePush(1); // Yield returns the block's result
                     return;
                 },
@@ -1637,13 +1617,7 @@ pub const Compiler = struct {
 
             try self.compileNode(pa.value); // Stack: [target, old_val, rhs_val]
 
-            switch (op) {
-                .add => try self.emitOp(.op_add),
-                .subtract => try self.emitOp(.op_subtract),
-                .multiply => try self.emitOp(.op_multiply),
-                .divide => try self.emitOp(.op_divide),
-                else => return error.UnknownNode,
-            }
+            try self.emitAugmentedOp(op);
             // Stack is now: [target, new_val]
         } else {
             try self.compileNode(pa.value); // Stack: [target, new_val]
@@ -1994,6 +1968,21 @@ pub const Compiler = struct {
         } else {
             // MUST reject invalid tuple parameters (like splats or defaults) natively
             return error.UnknownNode;
+        }
+    }
+
+    fn emitAugmentedOp(self: *Compiler, op: ast.BinaryOp) CompileError!void {
+        switch (op) {
+            .add => try self.emitOp(.op_add),
+            .subtract => try self.emitOp(.op_subtract),
+            .multiply => try self.emitOp(.op_multiply),
+            .divide => try self.emitOp(.op_divide),
+            .modulo => try self.emitOp(.op_modulo),
+            .exponent => try self.emitOp(.op_exponent),
+            .bitwise_and => try self.emitOp(.op_bitwise_and),
+            // Logical and shift augmented assignments are pending VM opcode support
+            .logical_or, .logical_and, .bitwise_or, .bitwise_xor, .shift_left, .shift_right => return error.UnknownNode,
+            else => return error.UnknownNode,
         }
     }
 

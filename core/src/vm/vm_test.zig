@@ -9288,3 +9288,89 @@ test "VM: Heredoc strings act as raw strings (no interpolation)" {
     // Asserts that the interpolation syntax was ignored and treated as raw text
     try std.testing.expectEqualStrings("The value is #{val}\n", result.asString().chars);
 }
+
+test "VM: Augmented assignments (%=, **=, &=) evaluate correctly" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\a = 11
+        \\a %= 3
+        \\b = 2
+        \\b **= 4
+        \\c = 3
+        \\c &= 1
+        \\[a, b, c]
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = result.asArray();
+    try std.testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+    try std.testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber());
+    try std.testing.expectEqual(@as(f64, 16.0), arr_obj.items.items[1].asNumber());
+    try std.testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[2].asNumber());
+}
+
+test "VM: yield securely passes keyword arguments to blocks" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def test_yield
+        \\  yield(10, width: 50, height: 100)
+        \\end
+        \\test_yield do |val, **kwargs|
+        \\  [val, kwargs[:width], kwargs[:height]]
+        \\end
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = result.asArray();
+    try std.testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+    try std.testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+    try std.testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[1].asNumber());
+    try std.testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[2].asNumber());
+}
+
+test "VM: Parentheses gracefully ignore internal newlines" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\val = (
+        \\  10 + 20
+        \\)
+        \\val
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    try std.testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try std.testing.expectEqual(@as(f64, 30.0), result.asNumber());
+}
