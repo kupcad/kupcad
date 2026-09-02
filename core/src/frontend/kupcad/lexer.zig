@@ -57,6 +57,7 @@ pub const Tag = enum {
     bang_equal,
     less_equal,
     greater_equal,
+    less_equal_greater,
     less,
     greater,
     and_and,
@@ -416,7 +417,70 @@ pub const Lexer = struct {
             '|' => if (c2 == '|' and c3 == '=') .or_or_equal else if (c2 == '|') .or_or else if (c2 == '=') .pipe_equal else .pipe,
             '&' => if (c2 == '&' and c3 == '=') .and_and_equal else if (c2 == '&') .and_and else if (c2 == '.') .ampersand_dot else if (c2 == '=') .ampersand_equal else .ampersand,
             '!' => if (c2 == '=') .bang_equal else .bang,
-            '<' => if (c2 == '=') .less_equal else if (c2 == '<' and c3 == '=') .less_less_equal else if (c2 == '<') .less_less else .less,
+            '<' => {
+                if (c2 == '=' and c3 == '>') {
+                    self.advance();
+                    self.advance();
+                    return .{ .tag = .less_equal_greater, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+                } else if (c2 == '=') {
+                    self.advance();
+                    return .{ .tag = .less_equal, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+                } else if (c2 == '<' and c3 == '=') {
+                    self.advance();
+                    self.advance();
+                    return .{ .tag = .less_less_equal, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+                } else if (c2 == '<') {
+                    const is_tilde = (c3 == '~');
+                    const is_dash = (c3 == '-');
+
+                    var term_start = self.index + 1;
+                    if (is_tilde or is_dash) term_start += 1;
+
+                    if (term_start < self.buffer.len and isIdentStart(self.buffer[term_start])) {
+                        var term_end = term_start;
+                        while (term_end < self.buffer.len and isIdentChar(self.buffer[term_end])) {
+                            term_end += 1;
+                        }
+
+                        const terminator = self.buffer[term_start..term_end];
+                        self.index = term_end; // Skip past the terminator declaration
+
+                        // Advance to the end of the current line
+                        while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
+                        if (self.index < self.buffer.len) self.advance(); // Consume '\n'
+
+                        const content_start = self.index;
+
+                        // Scan for the terminator on a new line
+                        while (self.index < self.buffer.len) {
+                            var line_start = self.index;
+
+                            // Allow leading whitespace to find the terminator
+                            while (line_start < self.buffer.len and (self.buffer[line_start] == ' ' or self.buffer[line_start] == '\t')) {
+                                line_start += 1;
+                            }
+
+                            const possible_term_end = line_start + terminator.len;
+                            if (possible_term_end <= self.buffer.len and std.mem.eql(u8, self.buffer[line_start..possible_term_end], terminator)) {
+                                // Make sure the terminator sits alone on the line
+                                if (possible_term_end == self.buffer.len or self.buffer[possible_term_end] == '\n' or self.buffer[possible_term_end] == '\r') {
+                                    const content_end = self.index; // End before the terminator line starts
+                                    self.index = possible_term_end;
+                                    return .{ .tag = .string, .loc = start_loc, .lexeme = self.buffer[content_start..content_end] };
+                                }
+                            }
+
+                            // Move to next line
+                            while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
+                            if (self.index < self.buffer.len) self.advance();
+                        }
+                    }
+
+                    self.advance();
+                    return .{ .tag = .less_less, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+                }
+                return .{ .tag = .less, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+            },
             '>' => if (c2 == '=') .greater_equal else if (c2 == '>' and c3 == '=') .greater_greater_equal else if (c2 == '>') .greater_greater else .greater,
             '?' => .question,
             '^' => if (c2 == '=') .caret_equal else .caret,
@@ -428,10 +492,10 @@ pub const Lexer = struct {
         if (tag == .star_star_equal or tag == .or_or_equal or tag == .and_and_equal or tag == .less_less_equal or tag == .greater_greater_equal) {
             self.advance();
             self.advance();
-        } else if (tag == .equal_equal or tag == .bang_equal or tag == .less_equal or
-            tag == .greater_equal or tag == .and_and or tag == .or_or or tag == .star_star or
+        } else if (tag == .equal_equal or tag == .bang_equal or tag == .greater_equal or
+            tag == .and_and or tag == .or_or or tag == .star_star or
             tag == .plus_equal or tag == .minus_equal or tag == .star_equal or tag == .slash_equal or
-            tag == .percent_equal or tag == .arrow or tag == .minus_greater or tag == .less_less or tag == .greater_greater or tag == .ampersand_dot or tag == .ampersand_equal or tag == .pipe_equal or tag == .caret_equal)
+            tag == .percent_equal or tag == .arrow or tag == .minus_greater or tag == .greater_greater or tag == .ampersand_dot or tag == .ampersand_equal or tag == .pipe_equal or tag == .caret_equal)
         {
             self.advance();
         }

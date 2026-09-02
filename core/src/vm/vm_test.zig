@@ -9040,3 +9040,117 @@ test "VM CAD: fillet_edges rounds 3D geometry via Minkowski sum" {
     const vol = result.asNumber();
     try testing.expect(vol > 2400.0 and vol < 2800.0);
 }
+
+test "VM: Spaceship Operator (<=>) natively compares types" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests: Number vs Number, String vs String, and fallback (nil)
+    const source =
+        \\[
+        \\  10 <=> 20,
+        \\  20 <=> 10,
+        \\  10 <=> 10,
+        \\  "apple" <=> "banana",
+        \\  "zebra" <=> "alpha",
+        \\  "same" <=> "same",
+        \\  10 <=> "10"
+        \\]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = result.asArray();
+
+    try testing.expectEqual(@as(usize, 7), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, -1.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 0.0), arr_obj.items.items[2].asNumber());
+    try testing.expectEqual(@as(f64, -1.0), arr_obj.items.items[3].asNumber());
+    try testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[4].asNumber());
+    try testing.expectEqual(@as(f64, 0.0), arr_obj.items.items[5].asNumber());
+    try testing.expect(arr_obj.items.items[6].isNil()); // Type mismatch
+}
+
+test "VM: Array#sort natively evaluates iterative QuickSort" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests both implicit native sorting and explicit custom block sorting
+    const source =
+        \\arr1 = [5, 1, 4, 2, 3].sort
+        \\arr2 = ["charlie", "alpha", "bravo"].sort
+        \\arr3 = [2, 5, 1].sort { |a, b| b <=> a } # Reverse sort
+        \\arr4 = ["a", "ccc", "bb"].sort { |a, b| a.length <=> b.length } # Sort by property
+        \\[arr1, arr2, arr3, arr4]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = result.asArray();
+    try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+
+    // arr1: [1, 2, 3, 4, 5]
+    const a1 = arr_obj.items.items[0].asArray().items.items;
+    try testing.expectEqual(@as(f64, 1.0), a1[0].asNumber());
+    try testing.expectEqual(@as(f64, 5.0), a1[4].asNumber());
+
+    // arr2: ["alpha", "bravo", "charlie"]
+    const a2 = arr_obj.items.items[1].asArray().items.items;
+    try testing.expectEqualStrings("alpha", a2[0].asString().chars);
+    try testing.expectEqualStrings("charlie", a2[2].asString().chars);
+
+    // arr3: [5, 2, 1]
+    const a3 = arr_obj.items.items[2].asArray().items.items;
+    try testing.expectEqual(@as(f64, 5.0), a3[0].asNumber());
+    try testing.expectEqual(@as(f64, 1.0), a3[2].asNumber());
+
+    // arr4: ["a", "bb", "ccc"]
+    const a4 = arr_obj.items.items[3].asArray().items.items;
+    try testing.expectEqualStrings("a", a4[0].asString().chars);
+    try testing.expectEqualStrings("ccc", a4[2].asString().chars);
+}
+
+test "VM: Array#reduce evaluates block cleanly via block-aware wrapMethod" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests reducing with and without an explicit initial value
+    const source =
+        \\res1 = [1, 2, 3].reduce(10) { |acc, x| acc + x }
+        \\res2 = [1, 2, 3, 4].reduce { |acc, x| acc + x }
+        \\[res1, res2]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = result.asArray();
+
+    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
+    try testing.expectEqual(@as(f64, 16.0), arr_obj.items.items[0].asNumber()); // 10 + 1 + 2 + 3
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[1].asNumber()); // 1 + 2 + 3 + 4
+}

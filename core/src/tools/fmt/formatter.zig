@@ -844,6 +844,7 @@ fn getBinaryOpStr(op: ast.BinaryOp) []const u8 {
         .bitwise_and => "&",
         .bitwise_or => "|",
         .bitwise_xor => "^",
+        .spaceship => "<=>",
     };
 }
 

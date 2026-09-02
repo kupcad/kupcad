@@ -46,6 +46,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         .op_equal,
         .op_greater,
         .op_less,
+        .op_cmp,
         .op_close_upvalue,
         .op_get_index,
         .op_set_index,

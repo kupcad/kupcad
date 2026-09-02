@@ -24,7 +24,7 @@ pub fn verifyChunk(c: *const chunk.Chunk) VerifierError!void {
 
         // Verify Operands based on OpCode definitions
         switch (op) {
-            .op_nil, .op_true, .op_false, .op_pop, .op_return, .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_bitwise_and, .op_equal, .op_case_equal, .op_less, .op_greater, .op_not, .op_negate, .op_dup, .op_dup_two, .op_array_push, .op_array_spread, .op_map_insert, .op_map_spread, .op_get_index, .op_set_index, .op_pop_rescue, .op_throw, .op_block_given, .op_is_nil, .op_is_instance, .op_close_upvalue, .op_inherit, .op_mixin, .op_break_block => {
+            .op_nil, .op_true, .op_false, .op_pop, .op_return, .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_bitwise_and, .op_equal, .op_case_equal, .op_less, .op_greater, .op_cmp, .op_not, .op_negate, .op_dup, .op_dup_two, .op_array_push, .op_array_spread, .op_map_insert, .op_map_spread, .op_get_index, .op_set_index, .op_pop_rescue, .op_throw, .op_block_given, .op_is_nil, .op_is_instance, .op_close_upvalue, .op_inherit, .op_mixin, .op_break_block => {
                 // No operands to verify
             },
 

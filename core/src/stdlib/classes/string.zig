@@ -105,6 +105,8 @@ pub fn stringToS(vm: *VM, str: *value.ObjString) !value.Value {
 
 /// String class method dispatch table
 pub const methods = [_]common.MethodDef{
+    .{ .name = "length", .func = common.wrapMethod(stringLength) },
+    .{ .name = "size", .func = common.wrapMethod(stringLength) },
     .{ .name = "upcase", .func = common.wrapMethod(stringUpcase) },
     .{ .name = "downcase", .func = common.wrapMethod(stringDowncase) },
     .{ .name = "split", .func = common.wrapMethod(stringSplit) },

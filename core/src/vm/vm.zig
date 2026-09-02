@@ -1186,6 +1186,29 @@ pub const VM = struct {
 
                     self.push(extracted);
                 },
+                .op_cmp => {
+                    const b = self.pop();
+                    const a = self.pop();
+
+                    if (a.isNumber() and b.isNumber()) {
+                        const an = a.asNumber();
+                        const bn = b.asNumber();
+                        const cmp: f64 = if (an < bn) -1.0 else if (an > bn) 1.0 else 0.0;
+                        self.push(value.Value.initNumber(cmp));
+                    } else if (a.isObject() and b.isObject() and a.asObj().obj_type == .string and b.asObj().obj_type == .string) {
+                        const a_str = a.asString().chars;
+                        const b_str = b.asString().chars;
+                        const order = std.mem.order(u8, a_str, b_str);
+                        const cmp: f64 = switch (order) {
+                            .lt => -1.0,
+                            .gt => 1.0,
+                            .eq => 0.0,
+                        };
+                        self.push(value.Value.initNumber(cmp));
+                    } else {
+                        self.push(value.Value.initNil()); // Incompatible types yield nil
+                    }
+                },
                 else => {
                     self.runtimeError("Runtime Error: Unhandled OpCode {}\n", .{op});
                     return .runtime_error;

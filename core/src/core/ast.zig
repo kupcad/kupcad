@@ -21,6 +21,7 @@ pub const BinaryOp = enum {
     less_equal, // <=
     greater, // >
     greater_equal, // >=
+    spaceship, // <=>
     logical_and, // &&
     logical_or, // ||
     shift_left, // <<

@@ -79,13 +79,14 @@ pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
 /// Wraps a strongly typed Zig method signature `fn(vm: *VM, receiver: ReceiverType, arg1: Arg1Type, ...) !value.Value`
 /// into KupCAD's raw `NativeFn` function pointer signature (`fn(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) ...`).
 pub fn wrapMethod(comptime func: anytype) value.NativeFn {
-    // Escape `fn` using @"fn" syntax
     const fn_info = @typeInfo(@TypeOf(func)).@"fn";
     const params = fn_info.params;
 
     if (params.len < 2) {
         @compileError("Native method function must take at least (vm: *VM, receiver: ReceiverType)");
     }
+
+    const has_block_param = params.len > 2 and params[params.len - 1].type.? == ?*value.ObjClosure;
 
     return struct {
         fn nativeWrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -95,21 +96,35 @@ pub fn wrapMethod(comptime func: anytype) value.NativeFn {
             call_args[0] = vm;
             call_args[1] = try unboxValue(params[1].type.?, vm.getReceiver(args), vm);
 
+            var effective_arg_count: usize = arg_count;
+            var block_val: ?*value.ObjClosure = null;
+
+            // Intercept the implicit trailing block so optional positionals don't consume it
+            if (has_block_param and arg_count > 0) {
+                const last_arg = args[arg_count - 1];
+                if (last_arg.isClosure()) {
+                    block_val = last_arg.asClosure();
+                    effective_arg_count -= 1;
+                }
+            }
+
             var arg_idx: usize = 0;
             inline for (params[2..], 2..) |param, i| {
                 const ParamType = param.type.?;
-                if (ParamType == []const value.Value) {
-                    call_args[i] = args[arg_idx..arg_count];
-                    arg_idx = arg_count;
+                if (has_block_param and i == params.len - 1) {
+                    call_args[i] = block_val;
+                } else if (ParamType == []const value.Value) {
+                    call_args[i] = args[arg_idx..effective_arg_count];
+                    arg_idx = effective_arg_count;
                 } else if (@typeInfo(ParamType) == .optional) {
-                    if (arg_idx < arg_count) {
+                    if (arg_idx < effective_arg_count) {
                         call_args[i] = try unboxValue(ParamType, args[arg_idx], vm);
                         arg_idx += 1;
                     } else {
                         call_args[i] = null;
                     }
                 } else {
-                    if (arg_idx >= arg_count) {
+                    if (arg_idx >= effective_arg_count) {
                         vm.runtimeError("Runtime Error: Not enough arguments.\n", .{});
                         return error.RuntimeError;
                     }
@@ -124,7 +139,6 @@ pub fn wrapMethod(comptime func: anytype) value.NativeFn {
 }
 
 pub fn wrapGlobal(comptime func: anytype) value.NativeFn {
-    // Escape `fn` using @"fn" syntax
     const fn_info = @typeInfo(@TypeOf(func)).@"fn";
     const params = fn_info.params;
 
@@ -132,27 +146,42 @@ pub fn wrapGlobal(comptime func: anytype) value.NativeFn {
         @compileError("Native global function must take at least (vm: *VM)");
     }
 
+    const has_block_param = params.len > 1 and params[params.len - 1].type.? == ?*value.ObjClosure;
+
     return struct {
         fn nativeWrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
             const vm: *VM = @ptrCast(@alignCast(vm_opaque));
             var call_args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
             call_args[0] = vm;
 
+            var effective_arg_count: usize = arg_count;
+            var block_val: ?*value.ObjClosure = null;
+
+            if (has_block_param and arg_count > 0) {
+                const last_arg = args[arg_count - 1];
+                if (last_arg.isClosure()) {
+                    block_val = last_arg.asClosure();
+                    effective_arg_count -= 1;
+                }
+            }
+
             var arg_idx: usize = 0;
             inline for (params[1..], 1..) |param, i| {
                 const ParamType = param.type.?;
-                if (ParamType == []const value.Value) {
-                    call_args[i] = args[arg_idx..arg_count];
-                    arg_idx = arg_count;
+                if (has_block_param and i == params.len - 1) {
+                    call_args[i] = block_val;
+                } else if (ParamType == []const value.Value) {
+                    call_args[i] = args[arg_idx..effective_arg_count];
+                    arg_idx = effective_arg_count;
                 } else if (@typeInfo(ParamType) == .optional) {
-                    if (arg_idx < arg_count) {
+                    if (arg_idx < effective_arg_count) {
                         call_args[i] = try unboxValue(ParamType, args[arg_idx], vm);
                         arg_idx += 1;
                     } else {
                         call_args[i] = null;
                     }
                 } else {
-                    if (arg_idx >= arg_count) {
+                    if (arg_idx >= effective_arg_count) {
                         vm.runtimeError("Runtime Error: Not enough arguments.\n", .{});
                         return error.RuntimeError;
                     }

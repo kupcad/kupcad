@@ -1237,7 +1237,7 @@ pub const Parser = struct {
             const op_tag = self.tag(0);
             left = switch (op_tag) {
                 .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => try self.parseAssignmentExpr(left),
-                .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or, .dot_dot, .dot_dot_dot, .less_less, .greater_greater, .keyword_and, .keyword_or, .ampersand, .pipe, .caret => try self.parseBinary(left),
+                .plus, .minus, .star, .slash, .percent, .star_star, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .less_equal_greater, .and_and, .or_or, .dot_dot, .dot_dot_dot, .less_less, .greater_greater, .keyword_and, .keyword_or, .ampersand, .pipe, .caret => try self.parseBinary(left),
                 .question => try self.parseTernary(left),
                 .dot => try self.parseMethodCall(left, false),
                 .ampersand_dot => try self.parseMethodCall(left, true),
@@ -1602,7 +1602,7 @@ pub const Parser = struct {
             .or_or, .keyword_or => .logical_or,
             .and_and, .keyword_and => .logical_and,
             .equal_equal, .bang_equal => .equality,
-            .less, .less_equal, .greater, .greater_equal => .comparison,
+            .less, .less_equal, .greater, .greater_equal, .less_equal_greater => .comparison,
             .pipe, .caret => .bitwise_or,
             .ampersand => .bitwise_and,
             .less_less, .greater_greater => .shift,
@@ -1636,6 +1636,7 @@ pub const Parser = struct {
             .ampersand => .bitwise_and,
             .pipe => .bitwise_or,
             .caret => .bitwise_xor,
+            .less_equal_greater => .spaceship,
             else => null,
         };
     }

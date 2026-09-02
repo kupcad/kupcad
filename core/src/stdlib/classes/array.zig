@@ -112,33 +112,25 @@ pub fn arrayMap(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !valu
 }
 
 /// Array#reduce(initial_val, block) / Array#reduce(block)
-/// (Keeps NativeFn signature due to variable arity 1 or 2)
-pub fn arrayReduce(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
+pub fn arrayReduce(vm: *VM, arr: *value.ObjArray, initial_val: ?value.Value, block: ?*value.ObjClosure) !value.Value {
+    if (block == null) {
+        _ = vm.throwDynamicError("Runtime Error: reduce requires a block.\n", .{});
+        return error.RuntimeError;
+    }
 
-    std.debug.assert(receiver.isObject() and receiver.asObj().obj_type == .array);
-    const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", receiver.asObj())));
-
-    var closure_val: value.Value = undefined;
     var acc_val: value.Value = undefined;
     var start_idx: usize = 0;
 
-    if (arg_count == 2) {
-        acc_val = args[0];
-        closure_val = args[1];
-    } else if (arg_count == 1) {
-        closure_val = args[0];
+    if (initial_val) |val| {
+        acc_val = val;
+    } else {
         if (arr.items.items.len == 0) return value.Value.initNil();
         acc_val = arr.items.items[0];
         start_idx = 1;
-    } else return error.RuntimeError;
-
-    if (!closure_val.isClosure()) return error.RuntimeError;
-    const closure = closure_val.asClosure();
+    }
 
     for (arr.items.items[start_idx..]) |item| {
-        acc_val = try vm.callClosureSync(closure, &.{ acc_val, item });
+        acc_val = try vm.callClosureSync(block.?, &.{ acc_val, item });
     }
     return acc_val;
 }
@@ -250,6 +242,109 @@ pub fn arraySum(vm: *VM, arr: *value.ObjArray) !value.Value {
     return value.Value.initNumber(sum);
 }
 
+/// Array#sort
+/// Sorts natively for Strings/Numbers, or uses a custom block
+pub fn arraySort(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !value.Value {
+    const items = arr.items.items;
+
+    // Allocate a NEW array to prevent in-place mutation
+    const new_arr = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&new_arr.obj)); // Protect from GC
+    try new_arr.items.appendSlice(vm.allocator, items);
+
+    const new_items = new_arr.items.items;
+
+    if (new_items.len <= 1) {
+        _ = vm.pop();
+        return value.Value.initObj(&new_arr.obj);
+    }
+
+    // Iterative QuickSort
+    var stack: [64]usize = undefined;
+    var top: usize = 0;
+
+    stack[top] = 0;
+    top += 1;
+    stack[top] = new_items.len - 1;
+    top += 1;
+
+    while (top > 0) {
+        top -= 1;
+        const high = stack[top];
+        top -= 1;
+        const low = stack[top];
+
+        // Partitioning phase
+        const pivot = new_items[high];
+        var i = low;
+
+        var j = low;
+        while (j < high) : (j += 1) {
+            var cmp_val: f64 = 0;
+
+            if (block) |b| {
+                const res = try vm.callClosureSync(b, &.{ new_items[j], pivot });
+                if (!res.isNumber()) {
+                    _ = vm.throwDynamicError("TypeError: sort block must return a Number (-1, 0, 1).\n", .{});
+                    return error.RuntimeError;
+                }
+                cmp_val = res.asNumber();
+            } else {
+                const a_val = new_items[j];
+                if (a_val.isNumber() and pivot.isNumber()) {
+                    const an = a_val.asNumber();
+                    const pn = pivot.asNumber();
+                    cmp_val = if (an < pn) -1.0 else if (an > pn) 1.0 else 0.0;
+                } else if (a_val.isString() and pivot.isString()) {
+                    const order = std.mem.order(u8, a_val.asString().chars, pivot.asString().chars);
+                    cmp_val = switch (order) {
+                        .lt => -1.0,
+                        .gt => 1.0,
+                        .eq => 0.0,
+                    };
+                } else {
+                    _ = vm.throwDynamicError("ArgumentError: Cannot natively sort disparate types. Provide a block.\n", .{});
+                    return error.RuntimeError;
+                }
+            }
+
+            // If current element is smaller than or equal to pivot
+            if (cmp_val <= 0) {
+                const temp = new_items[i];
+                new_items[i] = new_items[j];
+                new_items[j] = temp;
+                i += 1;
+            }
+        }
+
+        // Swap pivot to its final correct position
+        const temp = new_items[i];
+        new_items[i] = new_items[high];
+        new_items[high] = temp;
+
+        const p = i;
+
+        // Push left side to stack
+        if (p > 0 and p - 1 > low) {
+            stack[top] = low;
+            top += 1;
+            stack[top] = p - 1;
+            top += 1;
+        }
+
+        // Push right side to stack
+        if (p + 1 < high) {
+            stack[top] = p + 1;
+            top += 1;
+            stack[top] = high;
+            top += 1;
+        }
+    }
+
+    _ = vm.pop(); // Pop new_arr
+    return value.Value.initObj(&new_arr.obj);
+}
+
 /// Array class method dispatch table
 pub const methods = [_]common.MethodDef{
     .{ .name = "length", .func = common.wrapMethod(arrayLength) },
@@ -263,7 +358,7 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "each", .func = common.wrapMethod(arrayEach) },
     .{ .name = "map", .func = common.wrapMethod(arrayMap) },
     .{ .name = "filter", .func = common.wrapMethod(arrayFilter) },
-    .{ .name = "reduce", .func = arrayReduce },
+    .{ .name = "reduce", .func = common.wrapMethod(arrayReduce) },
     .{ .name = "first", .func = common.wrapMethod(arrayFirst) },
     .{ .name = "last", .func = common.wrapMethod(arrayLast) },
     .{ .name = "contains?", .func = common.wrapMethod(arrayContains) },
@@ -271,4 +366,5 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "max", .func = common.wrapMethod(arrayMax) },
     .{ .name = "min", .func = common.wrapMethod(arrayMin) },
     .{ .name = "sum", .func = common.wrapMethod(arraySum) },
+    .{ .name = "sort", .func = common.wrapMethod(arraySort) },
 };

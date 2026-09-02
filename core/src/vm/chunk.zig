@@ -94,6 +94,7 @@ pub const OpCode = enum(u8) {
     op_case_equal,
     op_greater,
     op_less,
+    op_cmp,
 
     // Control Flow
     op_jump,

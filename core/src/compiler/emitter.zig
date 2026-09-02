@@ -152,7 +152,7 @@ pub fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
 
         // --- Pops 2, Pushes 1 (Net: -1) ---
         // Binary operations that consume a left and right operand, and yield a single result.
-        .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_equal, .op_case_equal, .op_is_instance, .op_get_index, .op_set_property, .op_set_property_wide, .op_set_class_var, .op_set_class_var_wide => -1,
+        .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_equal, .op_case_equal, .op_is_instance, .op_get_index, .op_set_property, .op_set_property_wide, .op_set_class_var, .op_set_class_var_wide, .op_cmp => -1,
 
         // --- Pops 3, Pushes 1 (Net: -2) ---
         // Consumes a target, an index, and a value, yielding the assigned value back.

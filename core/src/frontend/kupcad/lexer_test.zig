@@ -623,3 +623,43 @@ test "KupCAD Lexer: Percent Q and q support identical delimiters and nesting" {
         t(.ident, "b"), t(.equal, "="), t(.string, "a (b) c"), t(.eof, ""),
     });
 }
+
+test "Lexer: Spaceship operator (<=>) parsing" {
+    try expectTokens("a <=> b\n 10<=>20", &.{
+        t(.ident, "a"),   t(.less_equal_greater, "<=>"), t(.ident, "b"),   t(.newline, "\n"),
+        t(.number, "10"), t(.less_equal_greater, "<=>"), t(.number, "20"), t(.eof, ""),
+    });
+}
+
+test "Lexer: Heredoc basic parsing (<<EOF)" {
+    const source =
+        \\text = <<EOF
+        \\This is a
+        \\multiline string
+        \\EOF
+        \\x = 10
+    ;
+    try expectTokens(source, &.{
+        t(.ident, "text"),                           t(.equal, "="),
+        t(.string, "This is a\nmultiline string\n"), t(.newline, "\n"),
+        t(.ident, "x"),                              t(.equal, "="),
+        t(.number, "10"),                            t(.eof, ""),
+    });
+}
+
+test "Lexer: Heredoc with dash and tilde modifiers (<<-TEXT, <<~TEXT)" {
+    const source =
+        \\a = <<-HTML
+        \\  <div></div>
+        \\HTML
+        \\b = <<~RUBY
+        \\  def foo
+        \\RUBY
+    ;
+    try expectTokens(source, &.{
+        t(.ident, "a"),                t(.equal, "="),
+        t(.string, "  <div></div>\n"), t(.newline, "\n"),
+        t(.ident, "b"),                t(.equal, "="),
+        t(.string, "  def foo\n"),     t(.eof, ""),
+    });
+}
