@@ -277,7 +277,7 @@ pub fn build(b: *std.Build) void {
             &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE" }
         else if (is_x86_64)
             // Apply Intel-specific waitpkg only to x86_64 targets
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-mwaitpkg" }
+            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D__TBB_WAITPKG_INTRINSICS_PRESENT=0", "-Wno-macro-redefined" }
         else
             // Fallback for ARM Linux, Windows on ARM, etc.
             &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1" };
