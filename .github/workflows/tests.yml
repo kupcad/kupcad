@@ -20,20 +20,17 @@ jobs:
           submodules: true
           persist-credentials: false
 
-      - name: Install Node.JS
-        uses: actions/setup-node@v6
+      - name: Install pnpm
+        uses: pnpm/setup@v2
         with:
-          check-latest: true
-          cache: 'pnpm'
-          node-version-file: '.tool-versions'
+          runtime: node@24
+          cache: true
+          require-lockfile: true
 
       - name: Install Zig
         uses: xyzzylabs/setup-zig@v1
         with:
           version: 0.16.0
-
-      - name: Install Javascript dependencies
-        run: pnpm ci
 
       - name: Run lib tests
         run: pnpm test:core
