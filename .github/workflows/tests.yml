@@ -1,0 +1,42 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Install Node.JS
+        uses: actions/setup-node@v6
+        with:
+          check-latest: true
+          cache: 'pnpm'
+          node-version-file: '.tool-versions'
+
+      - name: Install Zig
+        uses: xyzzylabs/setup-zig@v1
+        with:
+          version: 0.16.0
+
+      - name: Install Javascript dependencies
+        run: pnpm ci
+
+      - name: Run lib tests
+        run: pnpm test:core
+
+      - name: Run wasm tests
+        run: pnpm test:wasm
