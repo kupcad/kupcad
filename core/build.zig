@@ -273,9 +273,9 @@ pub fn build(b: *std.Build) void {
     if (enable_parallel and !is_wasm) {
         mod.addIncludePath(b.path("vendor/oneTBB/include"));
         const tbb_flags: []const []const u8 = if (is_macos)
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE" }
+            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE", "-D__TBB_WAITPKG_INTRINSICS_PRESENT=0" }
         else
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1" };
+            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D__TBB_WAITPKG_INTRINSICS_PRESENT=0" };
 
         mod.addCSourceFiles(.{
             .files = tbb_sources,
