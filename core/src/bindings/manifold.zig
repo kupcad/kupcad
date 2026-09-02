@@ -156,8 +156,13 @@ pub fn batchBoolean(objs: []const ?*ManifoldObj, op: OpType) ?*ManifoldObj {
     const vec = manifold_alloc_manifold_vec();
     defer manifold_destruct_manifold_vec(vec);
 
+    // Safely guard against both unwrapped nulls AND address-0 pointers
     for (objs) |obj| {
-        if (obj != null) manifold_manifold_vec_push_back(vec, obj);
+        if (obj) |valid_ptr| {
+            if (@intFromPtr(valid_ptr) != 0) {
+                manifold_manifold_vec_push_back(vec, valid_ptr);
+            }
+        }
     }
 
     return manifold_batch_boolean(manifold_alloc_manifold(), vec, op);
@@ -189,8 +194,13 @@ pub fn batchHull(objs: []const ?*ManifoldObj) ?*ManifoldObj {
     const vec = manifold_alloc_manifold_vec();
     defer manifold_destruct_manifold_vec(vec);
 
+    // Safely guard against both unwrapped nulls AND address-0 pointers
     for (objs) |obj| {
-        if (obj != null) manifold_manifold_vec_push_back(vec, obj);
+        if (obj) |valid_ptr| {
+            if (@intFromPtr(valid_ptr) != 0) {
+                manifold_manifold_vec_push_back(vec, valid_ptr);
+            }
+        }
     }
 
     return manifold_batch_hull(manifold_alloc_manifold(), vec);
