@@ -273,11 +273,13 @@ pub fn build(b: *std.Build) void {
 
     if (enable_parallel and !is_wasm) {
         mod.addIncludePath(b.path("vendor/oneTBB/include"));
+
         const tbb_flags: []const []const u8 = if (is_macos)
             &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE" }
         else if (is_x86_64)
-            // Apply Intel-specific waitpkg only to x86_64 targets
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D__TBB_WAITPKG_INTRINSICS_PRESENT=0", "-Wno-macro-redefined" }
+            // oneTBB forces waitpkg on modern Clang. We provide the target feature to
+            // appease LLVM. oneTBB guards actual execution with a runtime CPU check.
+            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-mwaitpkg" }
         else
             // Fallback for ARM Linux, Windows on ARM, etc.
             &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1" };
