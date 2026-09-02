@@ -1,4 +1,4 @@
-# Kupcad (Kup Computer-Aided Design)
+# Kupcad (Kup Computer-Aided Design) [![Tests](https://github.com/kupcad/kupcad/actions/workflows/tests.yml/badge.svg)](https://github.com/kupcad/kupcad/actions/workflows/tests.yml)
 
 ```
 kupcad/
