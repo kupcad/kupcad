@@ -5,6 +5,7 @@ const generators = @import("generators.zig");
 const transforms = @import("transforms.zig");
 const booleans = @import("booleans.zig");
 const slicing = @import("slicing.zig");
+const tessellate = @import("tessellate.zig");
 
 test "Fuzz: Geometry Generation, Transforms, and Raycasting" {
     const alloc = std.testing.allocator;
@@ -111,6 +112,76 @@ test "Fuzz: Plane Slicing and Boolean Stability" {
         // We use `catch continue` because incredibly thin micro-slices (e.g., cutting exactly 1e-7 units off a corner)
         // might trigger topological rejections. We are fuzzing to ensure the engine NEVER panics, loops infinitely, or leaks memory.
         if (slicing.splitByPlane(alloc, &t_arena, &g_arena, solid_id, nx, ny, nz, offset)) |_| {} else |_| {}
+
+        t_arena.clearRetainingCapacity();
+        g_arena.clearRetainingCapacity(alloc);
+    }
+}
+
+test "Fuzz: CDT Tessellation Stability" {
+    const alloc = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0xCD7CD7);
+    const random = prng.random();
+
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    for (0..100) |_| {
+        // 1. Generate distorted base shape
+        const is_cube = random.boolean();
+        const solid_id = if (is_cube)
+            try generators.generateCube(alloc, &t_arena, &g_arena, random.float(f64) * 40.0 + 1.0, random.float(f64) * 40.0 + 1.0, random.float(f64) * 40.0 + 1.0, true)
+        else
+            try generators.generateCylinder(alloc, &t_arena, &g_arena, random.float(f64) * 20.0 + 1.0, random.float(f64) * 40.0 + 1.0, true);
+
+        // 2. Apply extreme rotations and non-uniform scaling
+        _ = try transforms.rotateSolid(alloc, &t_arena, &g_arena, solid_id, random.float(f64) * 360.0, random.float(f64) * 360.0, random.float(f64) * 360.0);
+        _ = try transforms.scaleSolid(alloc, &t_arena, &g_arena, solid_id, random.float(f64) * 4.0 + 0.1, random.float(f64) * 4.0 + 0.1, random.float(f64) * 4.0 + 0.1);
+
+        var mesh = tessellate.Mesh{};
+        defer mesh.deinit(alloc);
+
+        // 3. Invariant: Tessellation MUST NOT panic, trap, or produce NaN vertices
+        if (tessellate.tessellateSolid(alloc, &t_arena, &g_arena, solid_id, &mesh, .{})) |_| {
+            for (mesh.vertices.items) |v| {
+                std.debug.assert(!std.math.isNan(v[0]) and !std.math.isNan(v[1]) and !std.math.isNan(v[2]));
+            }
+        } else |_| {}
+
+        t_arena.clearRetainingCapacity();
+        g_arena.clearRetainingCapacity(alloc);
+    }
+}
+
+test "Fuzz: Randomized 3D CSG Booleans" {
+    const alloc = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0xC56C56);
+    const random = prng.random();
+
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    for (0..30) |_| {
+        const s1 = try generators.generateCube(alloc, &t_arena, &g_arena, 20.0, 20.0, 20.0, true);
+        const s2 = try generators.generateCylinder(alloc, &t_arena, &g_arena, 10.0, 30.0, true);
+
+        // Translate cutter across the boundary to force intersecting half-edges
+        const offset_x = random.float(f64) * 20.0 - 10.0;
+        const offset_y = random.float(f64) * 20.0 - 10.0;
+        _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, s2, offset_x, offset_y, 0.0);
+
+        const op: booleans.BooleanOp = switch (random.uintLessThan(u8, 3)) {
+            0 => .union_op,
+            1 => .difference,
+            else => .intersection,
+        };
+
+        // Invariant: Booleans on randomized overlapping shapes must terminate without panicking or hanging
+        if (booleans.computeBoolean(alloc, &t_arena, &g_arena, s1, s2, op, .{})) |_| {} else |_| {}
 
         t_arena.clearRetainingCapacity();
         g_arena.clearRetainingCapacity(alloc);
