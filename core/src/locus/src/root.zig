@@ -27,6 +27,7 @@ test {
     _ = @import("projections_test.zig");
     _ = @import("queries_test.zig");
     _ = @import("slicing_test.zig");
+    _ = @import("stress_test.zig");
     _ = @import("sweeps_test.zig");
     _ = @import("tessellate_test.zig");
     _ = @import("tolerances_test.zig");
