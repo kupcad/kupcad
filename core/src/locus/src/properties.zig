@@ -2,6 +2,7 @@ const std = @import("std");
 const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const math = @import("math.zig");
+const parallel = @import("parallel.zig");
 const tessellate = @import("tessellate.zig");
 
 pub const BoundingBox = struct {
@@ -100,19 +101,33 @@ pub fn volume(
 
     tessellate.tessellateSolid(allocator, t_arena, g_arena, solid_id, &mesh, .{}) catch return 0.0;
 
-    var vol: f64 = 0.0;
-    for (mesh.triangles.items) |tri| {
-        const p0 = mesh.vertices.items[tri[0]];
-        const p1 = mesh.vertices.items[tri[1]];
-        const p2 = mesh.vertices.items[tri[2]];
+    const volumes = allocator.alloc(f64, mesh.triangles.items.len) catch return 0.0;
+    defer allocator.free(volumes);
 
-        const cross_x = p1[1] * p2[2] - p1[2] * p2[1];
-        const cross_y = p1[2] * p2[0] - p1[0] * p2[2];
-        const cross_z = p1[0] * p2[1] - p1[1] * p2[0];
+    const Ctx = struct {
+        mesh: *const tessellate.Mesh,
+        vols: []f64,
+    };
+    var ctx = Ctx{ .mesh = &mesh, .vols = volumes };
 
-        vol += (p0[0] * cross_x + p0[1] * cross_y + p0[2] * cross_z) / 6.0;
-    }
-    return @abs(vol);
+    parallel.parallelFor(0, mesh.triangles.items.len, Ctx, &ctx, struct {
+        fn doWork(i: usize, c: *Ctx) void {
+            const tri = c.mesh.triangles.items[i];
+            const p0 = c.mesh.vertices.items[tri[0]];
+            const p1 = c.mesh.vertices.items[tri[1]];
+            const p2 = c.mesh.vertices.items[tri[2]];
+
+            const cross_x = p1[1] * p2[2] - p1[2] * p2[1];
+            const cross_y = p1[2] * p2[0] - p1[0] * p2[2];
+            const cross_z = p1[0] * p2[1] - p1[1] * p2[0];
+
+            c.vols[i] = (p0[0] * cross_x + p0[1] * cross_y + p0[2] * cross_z) / 6.0;
+        }
+    }.doWork);
+
+    var total_vol: f64 = 0.0;
+    for (volumes) |v| total_vol += v;
+    return @abs(total_vol);
 }
 
 /// Evaluates total 3D surface area via triangle magnitude sums.

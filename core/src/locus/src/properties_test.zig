@@ -51,3 +51,19 @@ test "Properties: 2D Cross Section Area and Bounding Box" {
     try std.testing.expectApproxEqAbs(-10.0, bounds.min[1], 1e-4);
     try std.testing.expectApproxEqAbs(10.0, bounds.max[1], 1e-4);
 }
+
+test "Properties: High-Poly Parallel Volume (Sphere)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Generate a high-resolution sphere to stress the parallelFor loop
+    // (e.g., using the cylinder generator with high segment count as the sphere fallback)
+    const sphere_id = try gen.generateSphere(alloc, &t_arena, &g_arena, 10.0);
+
+    // Calculate volume concurrently
+    const vol = prop.volume(alloc, &t_arena, &g_arena, sphere_id);
+    try std.testing.expect(vol > 3000.0); // 4/3 * pi * r^3 ≈ 4188.7
+}
