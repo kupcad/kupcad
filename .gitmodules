@@ -12,4 +12,4 @@
 	url = https://github.com/google/draco
 [submodule "core/vendor/eigen"]
 	path = core/vendor/eigen
-	url = https://gitlab.com/libeigen/eigen
+	url = https://gitlab.com/libeigen/eigen.git/
