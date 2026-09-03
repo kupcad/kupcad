@@ -59,6 +59,8 @@ extern fn manifold_manifold_vec_push_back(ms: ?*ManifoldVecObj, m: ?*ManifoldObj
 extern fn manifold_manifold_vec_length(ms: ?*ManifoldVecObj) usize;
 extern fn manifold_manifold_vec_get(mem: ?*ManifoldObj, ms: ?*ManifoldVecObj, idx: usize) ?*ManifoldObj;
 
+extern fn manifold_alloc_rect() ?*ManifoldRect;
+extern fn manifold_delete_rect(r: ?*ManifoldRect) void;
 extern fn manifold_cube(mem: ?*ManifoldObj, x: f64, y: f64, z: f64, center: c_int) ?*ManifoldObj;
 extern fn manifold_cylinder(mem: ?*ManifoldObj, height: f64, radiusLow: f64, radiusHigh: f64, circularSegments: c_int, center: c_int) ?*ManifoldObj;
 extern fn manifold_sphere(mem: ?*ManifoldObj, radius: f64, circularSegments: c_int) ?*ManifoldObj;
@@ -83,7 +85,7 @@ extern fn manifold_cross_section_circle(mem: ?*ManifoldCrossSection, radius: f64
 extern fn manifold_cross_section_to_polygons(mem: ?*ManifoldPolygons, cs: ?*ManifoldCrossSection) ?*ManifoldPolygons;
 extern fn manifold_cross_section_of_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_area(cs: ?*const anyopaque) f64;
-extern fn manifold_cross_section_bounds(cs: ?*const anyopaque) ManifoldRect;
+extern fn manifold_cross_section_bounds(mem: ?*ManifoldRect, cs: ?*const anyopaque) ?*ManifoldRect;
 
 extern fn manifold_transform(mem: ?*ManifoldObj, m: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj;
 extern fn manifold_cross_section_transform(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) ?*ManifoldCrossSection;
@@ -297,7 +299,14 @@ pub fn crossSectionArea(cs: ?*const anyopaque) f64 {
 }
 
 pub fn crossSectionBounds(cs: ?*const anyopaque) ManifoldRect {
-    return manifold_cross_section_bounds(cs);
+    const rect_mem = manifold_alloc_rect();
+    defer manifold_delete_rect(rect_mem);
+
+    const ptr = manifold_cross_section_bounds(rect_mem, cs);
+    if (ptr == null) {
+        return .{ .min = .{ .x = 0.0, .y = 0.0 }, .max = .{ .x = 0.0, .y = 0.0 } };
+    }
+    return ptr.*;
 }
 
 pub fn extrude(cs: ?*ManifoldCrossSection, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?*ManifoldObj {
