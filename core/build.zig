@@ -184,7 +184,7 @@ const draco_sources = &[_][]const u8{
 const kupcad_bindings = &[_][]const u8{
     "src/bindings/manifold_c.cpp",
     "src/bindings/draco_c.cpp",
-    "src/bindings/eigen_c.cpp",
+    "src/locus/src/bindings/eigen_c.cpp",
     "src/locus/src/bindings/parallel_c.cpp",
 };
 
