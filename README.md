@@ -173,6 +173,7 @@ kupcad/
 ```
 brew install binaryen wabt wasmtime
 wasm-opt --all-features -Oz kupcad.wasm -o kupcad_min.wasm
+/opt/homebrew/opt/binaryen/bin/wasm-opt --all-features -Oz core/zig-out/bin/kupcad.wasm -o core/zig-out/bin/kupcad_min.wasm
 ```
 
 
