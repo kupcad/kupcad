@@ -132,7 +132,7 @@ extern fn manifold_simplify(mem: ?*ManifoldObj, manifold: *ManifoldObj, toleranc
 extern fn manifold_manifold_empty_vec(mem: ?*ManifoldVecObj) ?*ManifoldVecObj;
 extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumProp: c_int, propFunc: *const fn ([*]f64, ManifoldVec3, [*]const f64, ?*anyopaque) callconv(.c) void, ctx: ?*anyopaque) ?*ManifoldObj;
 
-extern fn manifold_warp(mem: ?*ManifoldObj, m: ?*ManifoldObj, fun: *const fn (f64, f64, f64, ?*anyopaque) callconv(.c) ManifoldVec3, ctx: ?*anyopaque) ?*ManifoldObj;
+extern fn manifold_transform_array(mem: ?*ManifoldObj, m: ?*ManifoldObj, mat: [*]const f64) ?*ManifoldObj;
 
 // ==========================================
 // Zig Idiomatic Wrappers
@@ -289,8 +289,8 @@ pub fn setProperties(
     return manifold_set_properties(manifold_alloc_manifold(), obj, @intCast(num_prop), prop_func, ctx);
 }
 
-pub fn transform(obj: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj {
-    return manifold_transform(manifold_alloc_manifold(), obj, x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4);
+pub fn transform(obj: ?*ManifoldObj, mat: *const [12]f64) ?*ManifoldObj {
+    return manifold_transform_array(manifold_alloc_manifold(), obj, mat);
 }
 pub fn crossSectionTransform(cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) ?*ManifoldCrossSection {
     return manifold_cross_section_transform(manifold_alloc_cross_section(), cs, x1, y1, x2, y2, x3, y3);
@@ -427,10 +427,6 @@ pub fn polygon(points: []const ManifoldVec2) ?*ManifoldCrossSection {
     const p = manifold_simple_polygon(manifold_alloc_simple_polygon(), points.ptr, points.len);
     defer manifold_delete_simple_polygon(p);
     return manifold_cross_section_of_simple_polygon(manifold_alloc_cross_section(), p);
-}
-
-pub fn warp(obj: ?*ManifoldObj, fun: *const fn (f64, f64, f64, ?*anyopaque) callconv(.c) ManifoldVec3, ctx: ?*anyopaque) ?*ManifoldObj {
-    return manifold_warp(manifold_alloc_manifold(), obj, fun, ctx);
 }
 
 pub fn destruct(m: ?*ManifoldObj) void {

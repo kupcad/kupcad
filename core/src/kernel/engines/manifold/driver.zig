@@ -289,17 +289,6 @@ fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]g
     return res;
 }
 
-// Callback applied to every vertex to safely bypass the Zig 14-argument float stack bug.
-fn transformWarpFunc(x: f64, y: f64, z: f64, ctx: ?*anyopaque) callconv(.c) manifold.ManifoldVec3 {
-    // Unwrap the optional ctx pointer safely
-    const mat: *const [12]f64 = @ptrCast(@alignCast(ctx.?));
-    return .{
-        .x = x * mat[0] + y * mat[3] + z * mat[6] + mat[9],
-        .y = x * mat[1] + y * mat[4] + z * mat[7] + mat[10],
-        .z = x * mat[2] + y * mat[5] + z * mat[8] + mat[11],
-    };
-}
-
 fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
     if (@intFromPtr(a.ptr) == 0) return null;
@@ -321,10 +310,8 @@ fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandl
         return scaleImpl(a, mat[0], mat[4], mat[8]);
     }
 
-    // Fallback: Complex transformations (Rotations/Shears)
-    // Passes a pointer to the matrix using `warp` to ensure we never trigger
-    // the Linux x86_64 float stack corruption bug across the C-ABI boundary.
-    const ptr = manifold.warp(@ptrCast(@alignCast(a.ptr)), transformWarpFunc, @constCast(&mat)) orelse return null;
+    // Native Transform via pointer array
+    const ptr = manifold.transform(@ptrCast(@alignCast(a.ptr)), &mat) orelse return null;
 
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }

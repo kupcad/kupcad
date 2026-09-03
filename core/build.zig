@@ -36,6 +36,8 @@ const manifold_sources = &[_][]const u8{
     "vendor/manifold/src/sort.cpp",
     "vendor/manifold/src/subdivision.cpp",
     "vendor/manifold/src/tree2d.cpp",
+    // own file
+    "src/bindings/manifold_c.cpp",
 };
 
 const tbb_sources = &[_][]const u8{
