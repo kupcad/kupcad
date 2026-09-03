@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
 const manifold = @import("../../../bindings/manifold.zig");
@@ -292,7 +293,41 @@ fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]g
 fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
     if (@intFromPtr(a.ptr) == 0) return null;
-    const ptr = manifold.transform(@ptrCast(@alignCast(a.ptr)), mat[0], mat[1], mat[2], mat[3], mat[4], mat[5], mat[6], mat[7], mat[8], mat[9], mat[10], mat[11]) orelse return null;
+
+    // Explicit scalar extraction avoids Zig x86_64 out-of-order array evaluation bugs
+    var x1: f64 = mat[0];
+    var y1: f64 = mat[1];
+    var z1: f64 = mat[2];
+    var x2: f64 = mat[3];
+    var y2: f64 = mat[4];
+    var z2: f64 = mat[5];
+    var x3: f64 = mat[6];
+    var y3: f64 = mat[7];
+    var z3: f64 = mat[8];
+    var x4: f64 = mat[9];
+    var y4: f64 = mat[10];
+    var z4: f64 = mat[11];
+
+    // Workaround for x86_64 SIMD vectorization transposition:
+    // C++ AVX matrix constructors erroneously load 12 discrete doubles in row-major order.
+    // We pre-transpose them here so they reconstruct correctly on the C++ side.
+    if (builtin.cpu.arch == .x86_64) {
+        x1 = mat[0];
+        y1 = mat[3];
+        z1 = mat[6];
+        x2 = mat[9];
+        y2 = mat[1];
+        z2 = mat[4];
+        x3 = mat[7];
+        y3 = mat[10];
+        z3 = mat[2];
+        x4 = mat[5];
+        y4 = mat[8];
+        z4 = mat[11];
+    }
+
+    const ptr = manifold.transform(@ptrCast(@alignCast(a.ptr)), x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4) orelse return null;
+
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -346,7 +381,26 @@ fn polyhedronImpl(allocator: std.mem.Allocator, points: []const [3]f64, faces: [
 fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
     std.debug.assert(cs.engine == .manifold);
     if (@intFromPtr(cs.ptr) == 0) return null;
-    const ptr = manifold.crossSectionTransform(@ptrCast(@alignCast(cs.ptr)), mat[0], mat[1], mat[2], mat[3], mat[4], mat[5]) orelse return null;
+
+    var x1: f64 = mat[0];
+    var y1: f64 = mat[1];
+    var x2: f64 = mat[2];
+    var y2: f64 = mat[3];
+    var x3: f64 = mat[4];
+    var y3: f64 = mat[5];
+
+    // Apply the same SIMD transposition workaround for 2D cross section matrices
+    if (builtin.cpu.arch == .x86_64) {
+        x1 = mat[0];
+        y1 = mat[2];
+        x2 = mat[4];
+        y2 = mat[1];
+        x3 = mat[3];
+        y3 = mat[5];
+    }
+
+    const ptr = manifold.crossSectionTransform(@ptrCast(@alignCast(cs.ptr)), x1, y1, x2, y2, x3, y3) orelse return null;
+
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
