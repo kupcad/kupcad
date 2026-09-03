@@ -294,9 +294,22 @@ fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandl
     std.debug.assert(a.engine == .manifold);
     if (@intFromPtr(a.ptr) == 0) return null;
 
+    std.debug.print("\n=== DEBUG 3D TRANSFORM ===\n", .{});
+    std.debug.print("Input Matrix Array: {any}\n", .{mat});
+
+    if (boundingBoxImpl(a)) |bbox| {
+        std.debug.print("BBox Before: min=[{d}, {d}, {d}] max=[{d}, {d}, {d}]\n", .{ bbox.min[0], bbox.min[1], bbox.min[2], bbox.max[0], bbox.max[1], bbox.max[2] });
+    }
+
     const ptr = manifold.transform(@ptrCast(@alignCast(a.ptr)), mat[0], mat[1], mat[2], mat[3], mat[4], mat[5], mat[6], mat[7], mat[8], mat[9], mat[10], mat[11]) orelse return null;
 
-    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+    const res_handle = geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+    if (boundingBoxImpl(res_handle)) |bbox| {
+        std.debug.print("BBox After: min=[{d}, {d}, {d}] max=[{d}, {d}, {d}]\n", .{ bbox.min[0], bbox.min[1], bbox.min[2], bbox.max[0], bbox.max[1], bbox.max[2] });
+    }
+    std.debug.print("==========================\n", .{});
+
+    return res_handle;
 }
 
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
@@ -349,6 +362,9 @@ fn polyhedronImpl(allocator: std.mem.Allocator, points: []const [3]f64, faces: [
 fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
     std.debug.assert(cs.engine == .manifold);
     if (@intFromPtr(cs.ptr) == 0) return null;
+
+    std.debug.print("\n=== DEBUG 2D TRANSFORM ===\n", .{});
+    std.debug.print("Input Matrix Array: {any}\n", .{mat});
 
     const ptr = manifold.crossSectionTransform(@ptrCast(@alignCast(cs.ptr)), mat[0], mat[1], mat[2], mat[3], mat[4], mat[5]) orelse return null;
 
