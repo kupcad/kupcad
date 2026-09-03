@@ -132,6 +132,8 @@ extern fn manifold_simplify(mem: ?*ManifoldObj, manifold: *ManifoldObj, toleranc
 extern fn manifold_manifold_empty_vec(mem: ?*ManifoldVecObj) ?*ManifoldVecObj;
 extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumProp: c_int, propFunc: *const fn ([*]f64, ManifoldVec3, [*]const f64, ?*anyopaque) callconv(.c) void, ctx: ?*anyopaque) ?*ManifoldObj;
 
+extern fn manifold_warp(mem: ?*ManifoldObj, m: ?*ManifoldObj, fun: *const fn (f64, f64, f64, ?*anyopaque) callconv(.c) ManifoldVec3, ctx: ?*anyopaque) ?*ManifoldObj;
+
 // ==========================================
 // Zig Idiomatic Wrappers
 // ==========================================
@@ -425,6 +427,10 @@ pub fn polygon(points: []const ManifoldVec2) ?*ManifoldCrossSection {
     const p = manifold_simple_polygon(manifold_alloc_simple_polygon(), points.ptr, points.len);
     defer manifold_delete_simple_polygon(p);
     return manifold_cross_section_of_simple_polygon(manifold_alloc_cross_section(), p);
+}
+
+pub fn warp(obj: ?*ManifoldObj, fun: *const fn (f64, f64, f64, ?*anyopaque) callconv(.c) ManifoldVec3, ctx: ?*anyopaque) ?*ManifoldObj {
+    return manifold_warp(manifold_alloc_manifold(), obj, fun, ctx);
 }
 
 pub fn destruct(m: ?*ManifoldObj) void {

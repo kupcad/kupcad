@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
 const manifold = @import("../../../bindings/manifold.zig");
@@ -290,26 +289,44 @@ fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]g
     return res;
 }
 
+// Callback applied to every vertex to safely bypass the Zig 14-argument float stack bug.
+fn transformWarpFunc(x: f64, y: f64, z: f64, ctx: ?*anyopaque) callconv(.c) manifold.ManifoldVec3 {
+    // Unwrap the optional ctx pointer safely
+    const mat: *const [12]f64 = @ptrCast(@alignCast(ctx.?));
+    return .{
+        .x = x * mat[0] + y * mat[3] + z * mat[6] + mat[9],
+        .y = x * mat[1] + y * mat[4] + z * mat[7] + mat[10],
+        .z = x * mat[2] + y * mat[5] + z * mat[8] + mat[11],
+    };
+}
+
 fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
     if (@intFromPtr(a.ptr) == 0) return null;
 
-    std.debug.print("\n=== DEBUG 3D TRANSFORM ===\n", .{});
-    std.debug.print("Input Matrix Array: {any}\n", .{mat});
-
-    if (boundingBoxImpl(a)) |bbox| {
-        std.debug.print("BBox Before: min=[{d}, {d}, {d}] max=[{d}, {d}, {d}]\n", .{ bbox.min[0], bbox.min[1], bbox.min[2], bbox.max[0], bbox.max[1], bbox.max[2] });
+    // Fast Path 1: Pure Translation
+    if (mat[0] == 1.0 and mat[1] == 0.0 and mat[2] == 0.0 and
+        mat[3] == 0.0 and mat[4] == 1.0 and mat[5] == 0.0 and
+        mat[6] == 0.0 and mat[7] == 0.0 and mat[8] == 1.0)
+    {
+        return translateImpl(a, mat[9], mat[10], mat[11]);
     }
 
-    const ptr = manifold.transform(@ptrCast(@alignCast(a.ptr)), mat[0], mat[1], mat[2], mat[3], mat[4], mat[5], mat[6], mat[7], mat[8], mat[9], mat[10], mat[11]) orelse return null;
-
-    const res_handle = geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
-    if (boundingBoxImpl(res_handle)) |bbox| {
-        std.debug.print("BBox After: min=[{d}, {d}, {d}] max=[{d}, {d}, {d}]\n", .{ bbox.min[0], bbox.min[1], bbox.min[2], bbox.max[0], bbox.max[1], bbox.max[2] });
+    // Fast Path 2: Pure Scale
+    if (mat[1] == 0.0 and mat[2] == 0.0 and
+        mat[3] == 0.0 and mat[5] == 0.0 and
+        mat[6] == 0.0 and mat[7] == 0.0 and
+        mat[9] == 0.0 and mat[10] == 0.0 and mat[11] == 0.0)
+    {
+        return scaleImpl(a, mat[0], mat[4], mat[8]);
     }
-    std.debug.print("==========================\n", .{});
 
-    return res_handle;
+    // Fallback: Complex transformations (Rotations/Shears)
+    // Passes a pointer to the matrix using `warp` to ensure we never trigger
+    // the Linux x86_64 float stack corruption bug across the C-ABI boundary.
+    const ptr = manifold.warp(@ptrCast(@alignCast(a.ptr)), transformWarpFunc, @constCast(&mat)) orelse return null;
+
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
@@ -363,9 +380,7 @@ fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.Cro
     std.debug.assert(cs.engine == .manifold);
     if (@intFromPtr(cs.ptr) == 0) return null;
 
-    std.debug.print("\n=== DEBUG 2D TRANSFORM ===\n", .{});
-    std.debug.print("Input Matrix Array: {any}\n", .{mat});
-
+    // Safe: 6 floats comfortably fit inside xmm0-xmm5 CPU registers, avoiding the bug.
     const ptr = manifold.crossSectionTransform(@ptrCast(@alignCast(cs.ptr)), mat[0], mat[1], mat[2], mat[3], mat[4], mat[5]) orelse return null;
 
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
