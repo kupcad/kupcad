@@ -36,8 +36,6 @@ const manifold_sources = &[_][]const u8{
     "vendor/manifold/src/sort.cpp",
     "vendor/manifold/src/subdivision.cpp",
     "vendor/manifold/src/tree2d.cpp",
-    // own file
-    "src/bindings/manifold_c.cpp",
 };
 
 const tbb_sources = &[_][]const u8{
@@ -181,9 +179,12 @@ const draco_sources = &[_][]const u8{
     "vendor/draco/src/draco/metadata/property_table.cc",
     "vendor/draco/src/draco/metadata/structural_metadata.cc",
     "vendor/draco/src/draco/metadata/structural_metadata_schema.cc",
+};
 
-    // --- Bindings Wrapper ---
+const kupcad_bindings = &[_][]const u8{
+    "src/bindings/manifold_c.cpp",
     "src/bindings/draco_c.cpp",
+    "src/bindings/eigen_c.cpp",
 };
 
 pub fn build(b: *std.Build) void {
@@ -255,6 +256,7 @@ pub fn build(b: *std.Build) void {
     mod.addIncludePath(b.path("vendor/manifold/bindings/c"));
     mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
     mod.addIncludePath(b.path("vendor/draco/src"));
+    mod.addIncludePath(b.path("vendor/eigen"));
     mod.addIncludePath(b.path("src/bindings"));
     mod.addIncludePath(b.path("src"));
 
@@ -299,6 +301,16 @@ pub fn build(b: *std.Build) void {
     mod.addCSourceFiles(.{
         .files = draco_sources,
         .flags = drako_flags,
+    });
+
+    const kupcad_flags: []const []const u8 = if (is_wasm)
+        &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
+    else
+        &.{ "-std=c++17", "-fno-exceptions" };
+
+    mod.addCSourceFiles(.{
+        .files = kupcad_bindings,
+        .flags = kupcad_flags,
     });
 
     // ====================================================================
