@@ -10,6 +10,12 @@ pub const SsiContext = struct {
     marching_tangent: math.Vec3,
 };
 
+pub const SsiSeam = struct {
+    points_3d: []math.Vec3,
+    uvs_a: []math.Vec2,
+    uvs_b: []math.Vec2,
+};
+
 fn evalSsiStep(ctx: *SsiContext, x: []const f64, fvec: []f64) i32 {
     const pt_a = ctx.surf_a.evaluate(x[0], x[1]);
     const pt_b = ctx.surf_b.evaluate(x[2], x[3]);
@@ -129,4 +135,67 @@ pub fn stepIntersection(
 
     if (!status.isSuccess()) return error.SolverFailed;
     return vars;
+}
+
+fn inBounds(uv: [4]f64, sa: *const geom.NurbsSurface, sb: *const geom.NurbsSurface) bool {
+    // Add a tiny epsilon tolerance to prevent premature termination due to float noise at edges
+    const eps = 1e-6;
+    return uv[0] >= sa.knots_u[0] - eps and uv[0] <= sa.knots_u[sa.knots_u.len - 1] + eps and
+        uv[1] >= sa.knots_v[0] - eps and uv[1] <= sa.knots_v[sa.knots_v.len - 1] + eps and
+        uv[2] >= sb.knots_u[0] - eps and uv[2] <= sb.knots_u[sb.knots_u.len - 1] + eps and
+        uv[3] >= sb.knots_v[0] - eps and uv[3] <= sb.knots_v[sb.knots_v.len - 1] + eps;
+}
+
+/// Traces the continuous intersection curve between two NURBS surfaces.
+/// Returns the 3D world seam and the 2D parametric p-curves for both faces.
+pub fn traceIntersectionCurve(
+    allocator: std.mem.Allocator,
+    surf_a: *const geom.NurbsSurface,
+    surf_b: *const geom.NurbsSurface,
+    seed_uv: [4]f64,
+    step_size: f64,
+) !SsiSeam {
+    var pts_3d: std.ArrayListUnmanaged(math.Vec3) = .empty;
+    var uvs_a: std.ArrayListUnmanaged(math.Vec2) = .empty;
+    var uvs_b: std.ArrayListUnmanaged(math.Vec2) = .empty;
+    errdefer {
+        pts_3d.deinit(allocator);
+        uvs_a.deinit(allocator);
+        uvs_b.deinit(allocator);
+    }
+
+    // 1. Trace Forward
+    var curr_uv = seed_uv;
+    while (inBounds(curr_uv, surf_a, surf_b)) {
+        try pts_3d.append(allocator, surf_a.evaluate(curr_uv[0], curr_uv[1]));
+        try uvs_a.append(allocator, .{ curr_uv[0], curr_uv[1] });
+        try uvs_b.append(allocator, .{ curr_uv[2], curr_uv[3] });
+
+        if (stepIntersection(surf_a, surf_b, curr_uv, step_size)) |next_uv| {
+            if (@abs(next_uv[0] - curr_uv[0]) < 1e-6 and @abs(next_uv[1] - curr_uv[1]) < 1e-6) break;
+            curr_uv = next_uv;
+        } else |_| break; // Solver stalled or hit singularity
+    }
+
+    // 2. Trace Backward (Reverse tangent projection via negative step size)
+    curr_uv = seed_uv;
+    if (stepIntersection(surf_a, surf_b, curr_uv, -step_size)) |first_back_uv| {
+        curr_uv = first_back_uv;
+        while (inBounds(curr_uv, surf_a, surf_b)) {
+            try pts_3d.insert(allocator, 0, surf_a.evaluate(curr_uv[0], curr_uv[1]));
+            try uvs_a.insert(allocator, 0, .{ curr_uv[0], curr_uv[1] });
+            try uvs_b.insert(allocator, 0, .{ curr_uv[2], curr_uv[3] });
+
+            if (stepIntersection(surf_a, surf_b, curr_uv, -step_size)) |next_uv| {
+                if (@abs(next_uv[0] - curr_uv[0]) < 1e-6 and @abs(next_uv[1] - curr_uv[1]) < 1e-6) break;
+                curr_uv = next_uv;
+            } else |_| break;
+        }
+    } else |_| {}
+
+    return SsiSeam{
+        .points_3d = try pts_3d.toOwnedSlice(allocator),
+        .uvs_a = try uvs_a.toOwnedSlice(allocator),
+        .uvs_b = try uvs_b.toOwnedSlice(allocator),
+    };
 }
