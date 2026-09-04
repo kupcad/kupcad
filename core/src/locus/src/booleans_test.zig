@@ -481,7 +481,7 @@ test "Sampler SSI: Plane vs Cylinder (Oblique Ellipse Sampled)" {
     try std.testing.expect(res.sampled.len >= 64);
 }
 
-test "Phase 4: Face Line Clipping (Infinite Line to Finite Segment)" {
+test "Face Line Clipping (Infinite Line to Finite Segment)" {
     const alloc = std.testing.allocator;
     var t_arena = topo.TopologyArena.init(alloc);
     defer t_arena.deinit(alloc);
@@ -513,7 +513,7 @@ test "Phase 4: Face Line Clipping (Infinite Line to Finite Segment)" {
     try std.testing.expectApproxEqAbs(5.0, segments[0].end[0], 1e-5);
 }
 
-test "Phase 4: 3D Segment Overlap and Topological Slicing" {
+test "3D Segment Overlap and Topological Slicing" {
     const alloc = std.testing.allocator;
     var t_arena = topo.TopologyArena.init(alloc);
     defer t_arena.deinit(alloc);
@@ -562,7 +562,7 @@ test "Phase 4: 3D Segment Overlap and Topological Slicing" {
     try std.testing.expect(new_face != null);
 }
 
-test "Phase 5: Full 3D SSI Pipeline (Intersecting Cube Faces)" {
+test "Full 3D SSI Pipeline (Intersecting Cube Faces)" {
     const alloc = std.testing.allocator;
     var t_arena = topo.TopologyArena.init(alloc);
     defer t_arena.deinit(alloc);

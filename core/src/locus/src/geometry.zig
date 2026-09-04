@@ -95,6 +95,8 @@ pub const GeometryArena = struct {
     lines_2d: std.ArrayListUnmanaged(Line2D) = .empty,
     circle_arcs: std.ArrayListUnmanaged(CircleArc) = .empty,
     nurbs_curves: std.ArrayListUnmanaged(NurbsCurve) = .empty,
+    nurbs_pcurves: std.ArrayListUnmanaged(NurbsCurve2D) = .empty,
+    nurbs_surfaces: std.ArrayListUnmanaged(NurbsSurface) = .empty,
     planes: std.ArrayListUnmanaged(Plane) = .empty,
     spheres: std.ArrayListUnmanaged(Sphere) = .empty,
     cylinders: std.ArrayListUnmanaged(Cylinder) = .empty,
@@ -110,12 +112,26 @@ pub const GeometryArena = struct {
         self.lines.deinit(allocator);
         self.lines_2d.deinit(allocator);
         self.circle_arcs.deinit(allocator);
-        // Free heap-allocated slices inside each NURBS curve before deallocating the list
+
         for (self.nurbs_curves.items) |nc| {
             allocator.free(nc.knots);
             allocator.free(nc.control_points);
         }
         self.nurbs_curves.deinit(allocator);
+
+        for (self.nurbs_pcurves.items) |nc| {
+            allocator.free(nc.knots);
+            allocator.free(nc.control_points);
+        }
+        self.nurbs_pcurves.deinit(allocator);
+
+        for (self.nurbs_surfaces.items) |ns| {
+            allocator.free(ns.knots_u);
+            allocator.free(ns.knots_v);
+            allocator.free(ns.control_points);
+        }
+        self.nurbs_surfaces.deinit(allocator);
+
         self.planes.deinit(allocator);
         self.spheres.deinit(allocator);
         self.cylinders.deinit(allocator);
@@ -356,5 +372,27 @@ pub const NurbsSurface = struct {
             return .{ pt[0] / pt[3], pt[1] / pt[3], pt[2] / pt[3] };
         }
         return .{ pt[0], pt[1], pt[2] };
+    }
+};
+
+pub const NurbsCurve2D = struct {
+    degree: usize,
+    knots: []const f64,
+    // Control points are stored as 3D homogeneous coordinates for 2D points: { x*w, y*w, w }
+    control_points: []const math.Vec3,
+
+    pub fn evaluate(self: NurbsCurve2D, u: f64) math.Vec2 {
+        var pt = math.Vec3{ 0, 0, 0 };
+        for (self.control_points, 0..) |cp, i| {
+            const nip = coxDeBoor(i, self.degree, u, self.knots);
+            pt[0] += nip * cp[0];
+            pt[1] += nip * cp[1];
+            pt[2] += nip * cp[2];
+        }
+
+        if (pt[2] > 1e-12) {
+            return .{ pt[0] / pt[2], pt[1] / pt[2] };
+        }
+        return .{ pt[0], pt[1] };
     }
 };
