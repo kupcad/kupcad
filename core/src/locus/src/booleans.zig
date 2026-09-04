@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const math = @import("math.zig");
+const nurbs_ssi = @import("nurbs_ssi.zig");
 const classify = @import("csg/classify.zig");
 const intersections = @import("csg/intersections.zig");
 const modifiers = @import("csg/modifiers.zig");
@@ -119,19 +120,52 @@ pub fn intersectAndSplitFaces3D(
 ) !void {
     _ = solid_a;
     _ = solid_b;
-
     var i_a: usize = 0;
     while (i_a < faces_a.items.len) : (i_a += 1) {
         var i_b: usize = 0;
         while (i_b < faces_b.items.len) : (i_b += 1) {
             const fa_id = faces_a.items[i_a];
             const fb_id = faces_b.items[i_b];
-
             const face_a = t_arena.faces.items[fa_id];
             const face_b = t_arena.faces.items[fb_id];
 
-            const res = try intersections.intersectSurfaces(allocator, g_arena, face_a.surface, face_b.surface, tol);
+            // --- FREEFORM NURBS FACE COLLISION PATH ---
+            if (face_a.surface.surface_type == .nurbs and face_b.surface.surface_type == .nurbs) {
+                const surf_a = &g_arena.nurbs_surfaces.items[face_a.surface.index];
+                const surf_b = &g_arena.nurbs_surfaces.items[face_b.surface.index];
 
+                const seams = nurbs_ssi.findAllIntersectionSeams(allocator, surf_a, surf_b, 0.5) catch continue;
+                defer {
+                    for (seams) |s| {
+                        allocator.free(s.points_3d);
+                        allocator.free(s.uvs_a);
+                        allocator.free(s.uvs_b);
+                    }
+                    allocator.free(seams);
+                }
+
+                for (seams) |seam| {
+                    if (seam.points_3d.len < 2) continue;
+
+                    // Slice face_a with seam.uvs_a and seam.points_3d
+                    const seg = types.Segment3D{
+                        .start = seam.points_3d[0],
+                        .end = seam.points_3d[seam.points_3d.len - 1],
+                    };
+
+                    if (modifiers.sliceFaceWithSegment(allocator, t_arena, g_arena, fa_id, seg, tol) catch null) |new_fa| {
+                        try faces_a.append(allocator, new_fa);
+                    }
+
+                    if (modifiers.sliceFaceWithSegment(allocator, t_arena, g_arena, fb_id, seg, tol) catch null) |new_fb| {
+                        try faces_b.append(allocator, new_fb);
+                    }
+                }
+                continue;
+            }
+
+            // --- ANALYTIC SURFACE COLLISION PATH ---
+            const res = try intersections.intersectSurfaces(allocator, g_arena, face_a.surface, face_b.surface, tol);
             switch (res) {
                 .line => |line| {
                     try modifiers.processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, line, faces_a, faces_b, tol);
@@ -140,7 +174,6 @@ pub fn intersectAndSplitFaces3D(
                     try modifiers.processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[0], faces_a, faces_b, tol);
                     try modifiers.processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[1], faces_a, faces_b, tol);
                 },
-                // Disabled: Let exact edge-piercing handle limits to prevent topological interference
                 else => {},
             }
         }
