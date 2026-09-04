@@ -4,7 +4,17 @@ const geom = @import("geometry.zig");
 const math = @import("math.zig");
 const generators = @import("generators.zig");
 
-pub const SweepError = error{ OutOfMemory, InvalidFace };
+pub const SweepError = error{
+    OutOfMemory,
+    InvalidFace,
+};
+
+pub const Frame = struct {
+    origin: math.Vec3,
+    tangent: math.Vec3,
+    normal: math.Vec3,
+    binormal: math.Vec3,
+};
 
 pub fn extrudeFace(
     allocator: std.mem.Allocator,
@@ -272,4 +282,160 @@ pub fn loftPolygons(
     t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 }) catch return error.OutOfMemory;
 
     return solid_id;
+}
+
+/// Evaluates a 3D point and its normalized tangent vector at parameter t.
+fn evaluateCurveAndTangent(g_arena: *const geom.GeometryArena, curve: geom.CurveId, t: f64) struct { pt: math.Vec3, tan: math.Vec3 } {
+    const eps = 1e-5;
+    var pt: math.Vec3 = undefined;
+    var tan: math.Vec3 = undefined;
+
+    switch (curve.curve_type) {
+        .line => {
+            const line = g_arena.lines.items[curve.index];
+            pt = math.add(line.start, math.scale(math.sub(line.end, line.start), t));
+            tan = math.normalize(math.sub(line.end, line.start));
+        },
+        .circle_arc => {
+            const arc = g_arena.circle_arcs.items[curve.index];
+            // Assuming t in [0, 1] sweeps a full circle for this primitive evaluation
+            const angle = t * 2.0 * std.math.pi;
+            const radial = math.add(math.scale(arc.x_axis, @cos(angle)), math.scale(arc.y_axis, @sin(angle)));
+            pt = math.add(arc.center, math.scale(radial, arc.radius));
+            tan = math.normalize(math.add(math.scale(arc.x_axis, -@sin(angle)), math.scale(arc.y_axis, @cos(angle))));
+        },
+        .nurbs => {
+            const n_curve = g_arena.nurbs_curves.items[curve.index];
+            pt = geom.evaluateNurbsCurve(n_curve, t);
+            const pt_next = geom.evaluateNurbsCurve(n_curve, @min(t + eps, 1.0));
+            const pt_prev = geom.evaluateNurbsCurve(n_curve, @max(t - eps, 0.0));
+            tan = math.normalize(math.sub(pt_next, pt_prev));
+        },
+    }
+    return .{ .pt = pt, .tan = tan };
+}
+
+/// Generates a twist-free continuous coordinate system along a curve
+/// using the Wang et al. Double Reflection Parallel Transport method.
+pub fn generateRMF(
+    allocator: std.mem.Allocator,
+    g_arena: *const geom.GeometryArena,
+    curve: geom.CurveId,
+    samples: usize,
+) ![]Frame {
+    var frames = try allocator.alloc(Frame, samples);
+    errdefer allocator.free(frames);
+
+    // 1. Initialize the first frame
+    const eval0 = evaluateCurveAndTangent(g_arena, curve, 0.0);
+    var init_normal = math.Vec3{ 1, 0, 0 };
+    if (@abs(math.dot(eval0.tan, init_normal)) > 0.99) {
+        init_normal = .{ 0, 1, 0 };
+    }
+    init_normal = math.normalize(math.cross(math.cross(eval0.tan, init_normal), eval0.tan));
+
+    frames[0] = .{
+        .origin = eval0.pt,
+        .tangent = eval0.tan,
+        .normal = init_normal,
+        .binormal = math.normalize(math.cross(eval0.tan, init_normal)),
+    };
+
+    // 2. Transport frame via Double Reflection
+    for (1..samples) |i| {
+        const t = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(samples - 1));
+        const eval = evaluateCurveAndTangent(g_arena, curve, t);
+        const x_prev = frames[i - 1].origin;
+        const t_prev = frames[i - 1].tangent;
+        const x_curr = eval.pt;
+        const t_curr = eval.tan;
+
+        // First reflection: Map previous frame to current origin
+        const v1 = math.sub(x_curr, x_prev);
+        const c1 = math.dot(v1, v1);
+        var n_L = frames[i - 1].normal;
+        var t_L = t_prev;
+
+        if (c1 > 1e-12) {
+            n_L = math.sub(n_L, math.scale(v1, 2.0 * math.dot(v1, n_L) / c1));
+            t_L = math.sub(t_L, math.scale(v1, 2.0 * math.dot(v1, t_L) / c1));
+        }
+
+        // Second reflection: Align tangents
+        const v2 = math.sub(t_curr, t_L);
+        const c2 = math.dot(v2, v2);
+        var n_curr = n_L;
+
+        if (c2 > 1e-12) {
+            n_curr = math.sub(n_curr, math.scale(v2, 2.0 * math.dot(v2, n_curr) / c2));
+        }
+
+        frames[i] = .{
+            .origin = x_curr,
+            .tangent = t_curr,
+            .normal = math.normalize(n_curr),
+            .binormal = math.normalize(math.cross(t_curr, n_curr)),
+        };
+    }
+
+    return frames;
+}
+
+/// Sweeps a 2D NURBS profile along a 3D rail curve to generate a mathematically exact NURBS Surface.
+pub fn sweepProfileAlongCurve(
+    allocator: std.mem.Allocator,
+    g_arena: *geom.GeometryArena,
+    profile: geom.NurbsCurve, // 2D profile assumed to be in XY plane, sweeping along Z
+    rail: geom.CurveId,
+    samples: usize, // Typically matching the degree complexity of the rail
+) !u32 {
+    const frames = try generateRMF(allocator, g_arena, rail, samples);
+    defer allocator.free(frames);
+
+    const num_cp_u = profile.control_points.len;
+    const num_cp_v = samples;
+    var surface_cps = try allocator.alloc(math.Vec4, num_cp_u * num_cp_v);
+    defer allocator.free(surface_cps);
+
+    // Transform profile control points into world space at each frame
+    for (frames, 0..) |frame, v| {
+        for (profile.control_points, 0..) |cp, u| {
+            // cp is (x, y, 0, w) where x aligns with Normal, y aligns with Binormal
+            const weight = cp[3];
+            const px = cp[0] / weight;
+            const py = cp[1] / weight;
+
+            const pt_world = math.add(frame.origin, math.add(math.scale(frame.normal, px), math.scale(frame.binormal, py)));
+
+            surface_cps[v * num_cp_u + u] = .{ pt_world[0] * weight, pt_world[1] * weight, pt_world[2] * weight, weight };
+        }
+    }
+
+    // Explicitly define as usize to prevent Zig's range analysis from inferring a u2,
+    // which would overflow when adding 1 in the loop bound below.
+    const degree_v: usize = @min(@as(usize, 3), num_cp_v - 1);
+
+    // Exact knot allocation (Control Points + Degree + 1)
+    var knots_v = try allocator.alloc(f64, num_cp_v + degree_v + 1);
+    defer allocator.free(knots_v);
+
+    // Clamped uniform knot generation
+    for (0..degree_v + 1) |i| knots_v[i] = 0.0;
+    for (degree_v + 1..num_cp_v) |i| {
+        knots_v[i] = @as(f64, @floatFromInt(i - degree_v)) / @as(f64, @floatFromInt(num_cp_v - degree_v));
+    }
+    for (num_cp_v..num_cp_v + degree_v + 1) |i| knots_v[i] = 1.0;
+
+    const surf_idx: u24 = @intCast(g_arena.nurbs_surfaces.items.len);
+    try g_arena.nurbs_surfaces.append(allocator, .{
+        .degree_u = profile.degree,
+        .degree_v = @intCast(degree_v),
+        .knots_u = try allocator.dupe(f64, profile.knots),
+        .knots_v = try allocator.dupe(f64, knots_v),
+        .num_cp_u = @intCast(num_cp_u),
+        .num_cp_v = @intCast(num_cp_v),
+        .control_points = try allocator.dupe(math.Vec4, surface_cps),
+    });
+
+    return surf_idx;
 }
