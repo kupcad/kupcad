@@ -22,6 +22,7 @@ test {
     _ = @import("nurbs_test.zig");
     _ = @import("nurbs_intersect_test.zig");
     _ = @import("nurbs_ssi_test.zig");
+    _ = @import("nurbs_tessellate_test.zig");
     _ = @import("generators_test.zig");
     _ = @import("geometry_test.zig");
     _ = @import("parallel_test.zig");
