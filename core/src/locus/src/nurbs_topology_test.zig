@@ -4,6 +4,7 @@ const geom = @import("geometry.zig");
 const math = @import("math.zig");
 const nurbs_ssi = @import("nurbs_ssi.zig");
 const tessellate = @import("tessellate.zig");
+const classify = @import("csg/classify.zig");
 
 test "Freeform B-Rep Trimmed Face Construction" {
     const alloc = std.testing.allocator;
@@ -306,4 +307,52 @@ test "Trimmed NURBS Surface with Inner Hole Tessellation" {
     }
 
     try std.testing.expectApproxEqAbs(75.0, total_area, 1e-3);
+}
+
+test "NURBS Face Classification" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const surf_cps = try alloc.dupe(math.Vec4, &[_]math.Vec4{
+        .{ 0, 0, 5, 1 },  .{ 10, 0, 5, 1 },
+        .{ 0, 10, 5, 1 }, .{ 10, 10, 5, 1 },
+    });
+    const knots_u = try alloc.dupe(f64, &[_]f64{ 0, 0, 1, 1 });
+    const knots_v = try alloc.dupe(f64, &[_]f64{ 0, 0, 1, 1 });
+    try g_arena.nurbs_surfaces.append(alloc, .{
+        .degree_u = 1,
+        .degree_v = 1,
+        .knots_u = knots_u,
+        .knots_v = knots_v,
+        .num_cp_u = 2,
+        .num_cp_v = 2,
+        .control_points = surf_cps,
+    });
+
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 5 } },
+        .{ .point = .{ 10, 0, 5 } },
+        .{ .point = .{ 10, 10, 5 } },
+        .{ .point = .{ 0, 10, 5 } },
+    });
+
+    const he_start = @as(u32, @intCast(t_arena.half_edges.items.len));
+    try t_arena.half_edges.appendSlice(alloc, &[_]topo.HalfEdge{
+        .{ .start_vertex = 0, .twin = topo.NULL_ID, .next = he_start + 1, .prev = he_start + 3, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .start_uv = .{ 0, 0 }, .forward = true },
+        .{ .start_vertex = 1, .twin = topo.NULL_ID, .next = he_start + 2, .prev = he_start, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .start_uv = .{ 1, 0 }, .forward = true },
+        .{ .start_vertex = 2, .twin = topo.NULL_ID, .next = he_start + 3, .prev = he_start + 1, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .start_uv = .{ 1, 1 }, .forward = true },
+        .{ .start_vertex = 3, .twin = topo.NULL_ID, .next = he_start, .prev = he_start + 2, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .start_uv = .{ 0, 1 }, .forward = true },
+    });
+
+    try t_arena.loops.append(alloc, .{ .face_id = 0, .first_half_edge = he_start });
+    try t_arena.face_loops.append(alloc, 0);
+    try t_arena.faces.append(alloc, .{ .surface = .{ .index = 0, .surface_type = .nurbs }, .forward = true, .loops_start = 0, .loops_len = 1 });
+
+    const proj = classify.projectPointToSurface(&g_arena, .{ .index = 0, .surface_type = .nurbs }, .{ 5, 5, 0 });
+    try std.testing.expectApproxEqAbs(5.0, proj[0], 1e-3);
+    try std.testing.expectApproxEqAbs(5.0, proj[1], 1e-3);
+    try std.testing.expectApproxEqAbs(5.0, proj[2], 1e-3);
 }

@@ -304,10 +304,7 @@ pub fn build(b: *std.Build) void {
         .flags = drako_flags,
     });
 
-    const kupcad_flags: []const []const u8 = if (is_wasm)
-        &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
-    else
-        &.{ "-std=c++17", "-fno-exceptions" };
+    const kupcad_flags: []const []const u8 = &.{ "-std=c++17", "-fno-exceptions" };
 
     mod.addCSourceFiles(.{
         .files = kupcad_bindings,

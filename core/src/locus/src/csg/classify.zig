@@ -57,14 +57,13 @@ pub fn classifyFace(
     const face = t_arena.faces.items[face_id];
     const outer_loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start]];
 
-    // 1. Calculate Face Normal first so we can use it to find the interior
+    // 1. Calculate Face Normal at the starting edge
     var normal = math.Vec3{ 0, 0, 1 };
     if (face.surface.surface_type == .plane) {
         const plane = g_arena.planes.items[face.surface.index];
         normal = math.normalize(math.cross(plane.u_axis, plane.v_axis));
         if (!face.forward) normal = math.scale(normal, -1.0);
     } else if (face.surface.surface_type == .cylinder) {
-        // Fallback approximation for cylinder normal at bounding box center
         const cyl = g_arena.cylinders.items[face.surface.index];
         const pt_start = t_arena.vertices.items[t_arena.half_edges.items[outer_loop.first_half_edge].start_vertex].point;
         const axis = math.normalize(cyl.axis);
@@ -73,9 +72,23 @@ pub fn classifyFace(
         const len = math.mag(v_proj);
         if (len > math.MATH_EPSILON) normal = math.scale(v_proj, 1.0 / len);
         if (!face.forward) normal = math.scale(normal, -1.0);
+    } else if (face.surface.surface_type == .nurbs) {
+        const surf = &g_arena.nurbs_surfaces.items[face.surface.index];
+        const uv = t_arena.getHalfEdgeStartUV(g_arena, outer_loop.first_half_edge);
+        const eps = 1e-5;
+        const p_u1 = surf.evaluate(uv[0] + eps, uv[1]);
+        const p_u0 = surf.evaluate(uv[0] - eps, uv[1]);
+        const p_v1 = surf.evaluate(uv[0], uv[1] + eps);
+        const p_v0 = surf.evaluate(uv[0], uv[1] - eps);
+        const du = math.sub(p_u1, p_u0);
+        const dv = math.sub(p_v1, p_v0);
+        const n = math.cross(du, dv);
+        const n_mag = math.mag(n);
+        if (n_mag > 1e-12) normal = math.scale(n, 1.0 / n_mag);
+        if (!face.forward) normal = math.scale(normal, -1.0);
     }
 
-    // 2. Mathematically SAFE sample point generation (Resolves Centroid-in-the-Void)
+    // 2. Generate interior sample point using edge-tangent inward cross-product
     var sample_pt: ?math.Vec3 = null;
     var curr_he = outer_loop.first_half_edge;
     while (true) {
@@ -83,29 +96,23 @@ pub fn classifyFace(
         const p1 = t_arena.vertices.items[he.start_vertex].point;
         const p2 = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
 
-        // Find the midpoint of the edge and its tangent
         const mid = math.scale(math.add(p1, p2), 0.5);
         const tangent = math.normalize(math.sub(p2, p1));
 
-        // Cross the normal and tangent to get a vector pointing strictly INWARD across the face
         const inward = math.normalize(math.cross(normal, tangent));
 
-        // Nudge the midpoint slightly inward
         const nudge_dist = @max(tol.absolute * 10.0, 1e-3);
         const test_3d = math.add(mid, math.scale(inward, nudge_dist));
 
-        // Project to UV and verify it doesn't fall into a hole using our new evaluator!
         const test_uv = g_arena.surfaceProject(face.surface, test_3d);
         if (isPointInFaceUV(allocator, t_arena, g_arena, face_id, test_uv, tol) catch false) {
             sample_pt = test_3d;
             break;
         }
-
         curr_he = he.next;
         if (curr_he == outer_loop.first_half_edge) break;
     }
 
-    // Fallback to old centroid only if the face is a degenerate sliver where nudging fails
     const final_sample = sample_pt orelse blk: {
         var centroid = math.Vec3{ 0, 0, 0 };
         var v_count: f64 = 0.0;
@@ -120,11 +127,10 @@ pub fn classifyFace(
         break :blk math.scale(centroid, 1.0 / v_count);
     };
 
-    // 3. Perform the actual classification raycasts
+    // 3. Raycast classification against target faces
     const offset_dist = @max(tol.absolute * 2.0, 1e-5);
     const pt_in = math.sub(final_sample, math.scale(normal, offset_dist));
     const pt_out = math.add(final_sample, math.scale(normal, offset_dist));
-
     const in_solid = isPointInsideSolidFaces(allocator, t_arena, g_arena, target_faces, pt_in, tol) catch false;
     const out_solid = isPointInsideSolidFaces(allocator, t_arena, g_arena, target_faces, pt_out, tol) catch false;
 
@@ -201,7 +207,34 @@ pub fn projectPointToSurface(g_arena: *const geom.GeometryArena, id: geom.Surfac
             if (to_pt_len < math.MATH_EPSILON) return tube_center;
             return math.add(tube_center, math.scale(to_pt, t.minor_radius / to_pt_len));
         },
-        .nurbs => return pt,
+        .nurbs => {
+            if (id.index >= g_arena.nurbs_surfaces.items.len) return pt;
+            const surf = &g_arena.nurbs_surfaces.items[id.index];
+
+            var best_uv = math.Vec2{ 0.5, 0.5 };
+            var min_d2: f64 = std.math.inf(f64);
+            const steps: usize = 8;
+            const u_min = surf.knots_u[0];
+            const u_max = surf.knots_u[surf.knots_u.len - 1];
+            const v_min = surf.knots_v[0];
+            const v_max = surf.knots_v[surf.knots_v.len - 1];
+            const du = (u_max - u_min) / @as(f64, @floatFromInt(steps));
+            const dv = (v_max - v_min) / @as(f64, @floatFromInt(steps));
+
+            for (0..steps + 1) |i| {
+                const u = u_min + @as(f64, @floatFromInt(i)) * du;
+                for (0..steps + 1) |j| {
+                    const v = v_min + @as(f64, @floatFromInt(j)) * dv;
+                    const eval_pt = surf.evaluate(u, v);
+                    const d2 = math.distSq(pt, eval_pt);
+                    if (d2 < min_d2) {
+                        min_d2 = d2;
+                        best_uv = .{ u, v };
+                    }
+                }
+            }
+            return surf.evaluate(best_uv[0], best_uv[1]);
+        },
     }
 }
 
