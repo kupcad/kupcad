@@ -3,6 +3,7 @@ const math = @import("math.zig");
 const geom = @import("geometry.zig");
 const eigen = @import("eigen.zig");
 const bvh = @import("bvh.zig");
+const parallel = @import("parallel.zig");
 
 pub const SsiContext = struct {
     surf_a: *const geom.NurbsSurface,
@@ -165,30 +166,37 @@ pub fn traceIntersectionCurve(
         uvs_b.deinit(allocator);
     }
 
+    const max_steps: usize = 200; // Hard safety limit against closed UV loops
+
     // 1. Trace Forward
     var curr_uv = seed_uv;
-    while (inBounds(curr_uv, surf_a, surf_b)) {
+    var steps: usize = 0;
+    while (inBounds(curr_uv, surf_a, surf_b) and steps < max_steps) : (steps += 1) {
         try pts_3d.append(allocator, surf_a.evaluate(curr_uv[0], curr_uv[1]));
         try uvs_a.append(allocator, .{ curr_uv[0], curr_uv[1] });
         try uvs_b.append(allocator, .{ curr_uv[2], curr_uv[3] });
 
         if (stepIntersection(surf_a, surf_b, curr_uv, step_size)) |next_uv| {
-            if (@abs(next_uv[0] - curr_uv[0]) < 1e-6 and @abs(next_uv[1] - curr_uv[1]) < 1e-6) break;
+            // Break if the step made virtually zero parametric progress
+            const du = @abs(next_uv[0] - curr_uv[0]) + @abs(next_uv[1] - curr_uv[1]);
+            if (du < 1e-6) break;
             curr_uv = next_uv;
-        } else |_| break; // Solver stalled or hit singularity
+        } else |_| break;
     }
 
-    // 2. Trace Backward (Reverse tangent projection via negative step size)
+    // 2. Trace Backward
     curr_uv = seed_uv;
+    steps = 0;
     if (stepIntersection(surf_a, surf_b, curr_uv, -step_size)) |first_back_uv| {
         curr_uv = first_back_uv;
-        while (inBounds(curr_uv, surf_a, surf_b)) {
+        while (inBounds(curr_uv, surf_a, surf_b) and steps < max_steps) : (steps += 1) {
             try pts_3d.insert(allocator, 0, surf_a.evaluate(curr_uv[0], curr_uv[1]));
             try uvs_a.insert(allocator, 0, .{ curr_uv[0], curr_uv[1] });
             try uvs_b.insert(allocator, 0, .{ curr_uv[2], curr_uv[3] });
 
             if (stepIntersection(surf_a, surf_b, curr_uv, -step_size)) |next_uv| {
-                if (@abs(next_uv[0] - curr_uv[0]) < 1e-6 and @abs(next_uv[1] - curr_uv[1]) < 1e-6) break;
+                const du = @abs(next_uv[0] - curr_uv[0]) + @abs(next_uv[1] - curr_uv[1]);
+                if (du < 1e-6) break;
                 curr_uv = next_uv;
             } else |_| break;
         }
@@ -208,51 +216,92 @@ pub fn findAllIntersectionSeams(
     surf_b: *const geom.NurbsSurface,
     step_size: f64,
 ) ![]SsiSeam {
-    const seeds = try bvh.generateSurfaceSurfaceSeeds(allocator, surf_a, surf_b, 8);
+    const seeds = try bvh.generateSurfaceSurfaceSeeds(allocator, surf_a, surf_b, 4);
     defer allocator.free(seeds);
 
-    var seams = std.ArrayListUnmanaged(SsiSeam).empty;
+    if (seeds.len == 0) return &[_]SsiSeam{};
+
+    const results = try allocator.alloc(?SsiSeam, seeds.len);
+    defer allocator.free(results);
+    @memset(results, null);
+
+    const ParallelCtx = struct {
+        main_alloc: std.mem.Allocator,
+        surf_a: *const geom.NurbsSurface,
+        surf_b: *const geom.NurbsSurface,
+        seeds: []const bvh.SurfaceSeed,
+        step_size: f64,
+        results: []?SsiSeam,
+    };
+
+    var ctx = ParallelCtx{
+        .main_alloc = allocator,
+        .surf_a = surf_a,
+        .surf_b = surf_b,
+        .seeds = seeds,
+        .step_size = step_size,
+        .results = results,
+    };
+
+    parallel.parallelFor(0, seeds.len, ParallelCtx, &ctx, struct {
+        fn doWork(i: usize, c: *ParallelCtx) void {
+            // Isolated arena per worker thread to prevent std.testing.allocator races
+            var thread_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer thread_arena.deinit();
+            const thread_alloc = thread_arena.allocator();
+
+            const seed = c.seeds[i];
+            const start_uv = [4]f64{ seed.u_a, seed.v_a, seed.u_b, seed.v_b };
+
+            if (traceIntersectionCurve(thread_alloc, c.surf_a, c.surf_b, start_uv, c.step_size)) |seam| {
+                if (seam.points_3d.len > 2) {
+                    // Deep-copy thread result to persistent allocator
+                    c.results[i] = SsiSeam{
+                        .points_3d = c.main_alloc.dupe(math.Vec3, seam.points_3d) catch return,
+                        .uvs_a = c.main_alloc.dupe(math.Vec2, seam.uvs_a) catch return,
+                        .uvs_b = c.main_alloc.dupe(math.Vec2, seam.uvs_b) catch return,
+                    };
+                }
+            } else |_| {}
+        }
+    }.doWork);
+
+    var final_seams = std.ArrayListUnmanaged(SsiSeam).empty;
     errdefer {
-        for (seams.items) |s| {
+        for (final_seams.items) |s| {
             allocator.free(s.points_3d);
             allocator.free(s.uvs_a);
             allocator.free(s.uvs_b);
         }
-        seams.deinit(allocator);
+        final_seams.deinit(allocator);
     }
 
-    for (seeds) |seed| {
-        // Optimization: Check if this seed is already covered by an existing traced seam
-        var already_found = false;
-        for (seams.items) |seam| {
-            for (seam.uvs_a) |uv_a| {
-                const du = uv_a[0] - seed.u_a;
-                const dv = uv_a[1] - seed.v_a;
+    for (results) |opt_seam| {
+        if (opt_seam) |seam| {
+            var is_duplicate = false;
+            for (final_seams.items) |existing| {
+                if (seam.points_3d.len == 0 or existing.points_3d.len == 0) continue;
 
-                // Relaxed tolerance to ~22% of parametric space. Safely absorbs BVH cell
-                // centers that sit between discrete marching steps.
-                if ((du * du + dv * dv) < 0.05) {
-                    already_found = true;
-                    break;
+                // Robust check: test if the midpoint of 'seam' lies near ANY point on 'existing'
+                const sample_pt = seam.points_3d[seam.points_3d.len / 2];
+                for (existing.points_3d) |eq| {
+                    if (math.distSq(sample_pt, eq) < 1.0) { // 1.0 unit squared distance threshold in 3D
+                        is_duplicate = true;
+                        break;
+                    }
                 }
+                if (is_duplicate) break;
             }
-            if (already_found) break;
-        }
-        if (already_found) continue;
 
-        const start_uv = [4]f64{ seed.u_a, seed.v_a, seed.u_b, seed.v_b };
-        if (traceIntersectionCurve(allocator, surf_a, surf_b, start_uv, step_size)) |seam| {
-            if (seam.points_3d.len > 2) {
-                try seams.append(allocator, seam);
-            } else {
+            if (is_duplicate) {
                 allocator.free(seam.points_3d);
                 allocator.free(seam.uvs_a);
                 allocator.free(seam.uvs_b);
+            } else {
+                try final_seams.append(allocator, seam);
             }
-        } else |_| {
-            // Seed failed to converge to a valid mathematical root; discard
         }
     }
 
-    return seams.toOwnedSlice(allocator);
+    return final_seams.toOwnedSlice(allocator);
 }
