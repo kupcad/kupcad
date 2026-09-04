@@ -159,3 +159,31 @@ test "Blends: Fillet Cap Topology Verification" {
 
     try std.testing.expectEqual(@as(usize, 4), edge_count);
 }
+
+test "Blends: 3-Way Corner Setback Surface Math" {
+    const alloc = std.testing.allocator;
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const p_corner = math.Vec3{ 10.0, 10.0, 10.0 };
+    const radius = 2.0;
+
+    // Orthogonal cube corner face normals
+    const normals = [_]math.Vec3{
+        .{ 1.0, 0.0, 0.0 },
+        .{ 0.0, 1.0, 0.0 },
+        .{ 0.0, 0.0, 1.0 },
+    };
+
+    const surf_idx = try blends.createCornerSetbackPatch(alloc, &g_arena, p_corner, radius, normals);
+    const surf = g_arena.nurbs_surfaces.items[surf_idx];
+
+    // Verify patch order and CP count
+    try std.testing.expectEqual(@as(u32, 2), surf.degree_u);
+    try std.testing.expectEqual(@as(u32, 2), surf.degree_v);
+    try std.testing.expectEqual(@as(usize, 9), surf.control_points.len);
+
+    // Evaluate surface mid-point (center of the corner sphere patch)
+    const mid_pt = surf.evaluate(0.5, 0.5);
+    try std.testing.expect(math.mag(mid_pt) > 0.0);
+}

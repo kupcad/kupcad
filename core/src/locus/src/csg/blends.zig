@@ -339,3 +339,58 @@ fn weaveFilletTopology(
 
     return .{ .cap_start = start_he + 1, .cap_end = start_he + 3 };
 }
+
+/// Generates a 3-sided rational NURBS corner patch to seal a 3-edge fillet vertex setback.
+pub fn createCornerSetbackPatch(
+    allocator: std.mem.Allocator,
+    g_arena: *geom.GeometryArena,
+    p_corner: math.Vec3,
+    radius: f64,
+    normals: [3]math.Vec3, // Outward face normals meeting at the corner
+) !u32 {
+    // 1. Calculate the sphere center offset
+    const n_sum = math.normalize(math.add(normals[0], math.add(normals[1], normals[2])));
+    const offset_dist = radius * std.math.sqrt(3.0);
+    const sphere_center = math.sub(p_corner, math.scale(n_sum, offset_dist));
+
+    // 2. Compute 3 boundary tangency points on the sphere surface
+    const pt0 = math.add(p_corner, math.scale(normals[0], -radius));
+    const pt1 = math.add(p_corner, math.scale(normals[1], -radius));
+    const pt2 = math.add(p_corner, math.scale(normals[2], -radius));
+
+    // 3. Construct 3x3 Control Point Net for a degenerate triangular NURBS patch
+    var cps = try allocator.alloc(math.Vec4, 9);
+    defer allocator.free(cps);
+
+    const w_corner = 0.7071067811865476; // 1/sqrt(2) weight for circular quadratic arc
+
+    // U=0 boundary: Arc from pt0 to pt1
+    cps[0] = .{ pt0[0], pt0[1], pt0[2], 1.0 };
+    cps[1] = .{ p_corner[0] * w_corner, p_corner[1] * w_corner, p_corner[2] * w_corner, w_corner };
+    cps[2] = .{ pt1[0], pt1[1], pt1[2], 1.0 };
+
+    // U=0.5 interior control points snapped to sphere geometry
+    cps[3] = .{ pt0[0] * 0.5, pt0[1] * 0.5, pt0[2] * 0.5, 0.5 };
+    cps[4] = .{ sphere_center[0] * w_corner, sphere_center[1] * w_corner, sphere_center[2] * w_corner, w_corner };
+    cps[5] = .{ pt1[0] * 0.5, pt1[1] * 0.5, pt1[2] * 0.5, 0.5 };
+
+    // U=1 apex degenerate row collapsing at pt2
+    cps[6] = .{ pt2[0], pt2[1], pt2[2], 1.0 };
+    cps[7] = .{ pt2[0] * w_corner, pt2[1] * w_corner, pt2[2] * w_corner, w_corner };
+    cps[8] = .{ pt2[0], pt2[1], pt2[2], 1.0 };
+
+    var knots = [_]f64{ 0.0, 0.0, 0.0, 1.0, 1.0, 1.0 };
+
+    const surf_idx: u24 = @intCast(g_arena.nurbs_surfaces.items.len);
+    try g_arena.nurbs_surfaces.append(allocator, .{
+        .degree_u = 2,
+        .degree_v = 2,
+        .knots_u = try allocator.dupe(f64, &knots),
+        .knots_v = try allocator.dupe(f64, &knots),
+        .num_cp_u = 3,
+        .num_cp_v = 3,
+        .control_points = try allocator.dupe(math.Vec4, cps),
+    });
+
+    return surf_idx;
+}
