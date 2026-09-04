@@ -15,6 +15,7 @@ pub const tessellate = @import("tessellate.zig");
 test {
     _ = @import("booleans_test.zig");
     _ = @import("booleans_2d_test.zig");
+    _ = @import("bvh_test.zig");
     _ = @import("eigen_test.zig");
     _ = @import("eigen_lm_test.zig");
     _ = @import("fuzz_test.zig");
