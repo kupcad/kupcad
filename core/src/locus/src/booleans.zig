@@ -456,7 +456,7 @@ pub fn computeBoolean(
     try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
 
     try modifiers.weldSolidVertices(allocator, t_arena, new_solid_id);
-    try modifiers.stitchSolidBoundaries(allocator, t_arena, new_solid_id);
+    try modifiers.stitchSolidBoundaries(allocator, t_arena, g_arena, new_solid_id);
 
     if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
         const validator = @import("validator.zig");

@@ -815,10 +815,12 @@ pub fn reverseFaceLoops(
     }
 }
 
-/// Crawls a newly created shell and cross-links half-edge twin pointers across Boolean seams.
+/// Crawls a newly created shell, cross-links half-edge twin pointers across Boolean seams,
+/// and locks exact UV parameters for freeform boundary evaluation.
 pub fn stitchSolidBoundaries(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
+    g_arena: *const geom.GeometryArena, // ADDED: Required for UV projection
     solid_id: topo.SolidId,
 ) !void {
     const EdgeKey = struct { start: topo.VertexId, end: topo.VertexId };
@@ -848,6 +850,12 @@ pub fn stitchSolidBoundaries(
 
                     const v_start = he.start_vertex;
                     const v_end = next_he.start_vertex;
+
+                    // PROJECT UV PARAMETERS:
+                    // Force the half-edge to lock its 2D p-curve coordinate based on the final welded 3D vertex.
+                    const pt3d = t_arena.vertices.items[v_start].point;
+                    const uv = g_arena.surfaceProject(face.surface, pt3d);
+                    he.start_uv = .{ uv[0], uv[1] };
 
                     const opp_key = EdgeKey{ .start = v_end, .end = v_start };
                     if (unmatched.get(opp_key)) |twin_id| {

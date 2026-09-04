@@ -1127,3 +1127,54 @@ test "B-Rep: Coplanar Face Annihilation (Touching Primitives)" {
     const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
     try std.testing.expectEqual(@as(usize, 10), shell.faces_len);
 }
+
+test "B-Rep: Boundary Stitching UV Projection Validation" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // 1. Create two overlapping solids
+    const cube_a = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+    const cube_b = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube_b, 5.0, 5.0, 0.0);
+
+    // 2. Perform boolean union (triggers weld and stitch)
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_a, cube_b, .union_op, .{});
+
+    // 3. Verify every resulting half-edge has perfectly accurate UV coordinates mapped to its face's surface
+    const solid = t_arena.solids.items[result];
+    for (0..solid.shells_len) |s_off| {
+        const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start + s_off]];
+        for (0..shell.faces_len) |f_off| {
+            const face = t_arena.faces.items[t_arena.shell_faces.items[shell.faces_start + f_off]];
+
+            for (0..face.loops_len) |l_off| {
+                const loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start + l_off]];
+
+                var curr_he = loop.first_half_edge;
+                var safety: usize = 0;
+                while (true) : (safety += 1) {
+                    if (safety > 10_000) return error.TopologyCorrupted;
+
+                    const he = t_arena.half_edges.items[curr_he];
+                    const pt3d = t_arena.vertices.items[he.start_vertex].point;
+
+                    // Manually project the final 3D vertex back to the surface
+                    const expected_uv = g_arena.surfaceProject(face.surface, pt3d);
+
+                    // Ensure the UV projection is populated
+                    try std.testing.expect(he.start_uv != null);
+
+                    // The HalfEdge's cached UV must strictly match the mathematical projection
+                    try std.testing.expectApproxEqAbs(expected_uv[0], he.start_uv.?[0], 1e-5);
+                    try std.testing.expectApproxEqAbs(expected_uv[1], he.start_uv.?[1], 1e-5);
+
+                    curr_he = he.next;
+                    if (curr_he == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+}

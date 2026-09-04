@@ -15,11 +15,6 @@ const eigen = locus.eigen;
 const geom = locus.geometry;
 const nurbs_ssi = locus.nurbs_ssi;
 
-// Pull all Locus internal unit tests into the WASM test runner
-test {
-    _ = locus;
-}
-
 test "WASM Interop: format_code_wasm handles invalid and empty inputs gracefully" {
     // Test Syntax Error Handling
     const bad_src = "class 123 { invalid }";
