@@ -3,29 +3,29 @@ const value = @import("../core/value.zig");
 const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;
 
-pub fn nativePuts(vm: *VM, args: []const value.Value) !value.Value {
+inline fn printShared(vm: *VM, args: []const value.Value, append_newline: bool) !value.Value {
     if (vm.host.print_handler) |print_handler| {
         for (args) |arg| {
             var out: std.Io.Writer.Allocating = .init(vm.allocator);
             defer out.deinit();
+
             try arg.stringify(false, &out.writer);
-            try out.writer.writeAll("\n");
+            if (append_newline) {
+                try out.writer.writeAll("\n");
+            }
+
             print_handler(vm, out.written());
         }
     }
     return value.Value.initNil();
 }
 
+pub fn nativePuts(vm: *VM, args: []const value.Value) !value.Value {
+    return printShared(vm, args, true);
+}
+
 pub fn nativePrint(vm: *VM, args: []const value.Value) !value.Value {
-    if (vm.host.print_handler) |print_handler| {
-        for (args) |arg| {
-            var out: std.Io.Writer.Allocating = .init(vm.allocator);
-            defer out.deinit();
-            try arg.stringify(false, &out.writer);
-            print_handler(vm, out.written());
-        }
-    }
-    return value.Value.initNil();
+    return printShared(vm, args, false);
 }
 
 pub fn nativeInspect(vm: *VM, args: []const value.Value) !value.Value {
