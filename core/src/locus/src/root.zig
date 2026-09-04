@@ -15,6 +15,7 @@ pub const eigen = @import("eigen.zig");
 pub const nurbs_ssi = @import("nurbs_ssi.zig");
 
 test {
+    _ = @import("blends_test.zig");
     _ = @import("booleans_test.zig");
     _ = @import("booleans_2d_test.zig");
     _ = @import("bvh_test.zig");
