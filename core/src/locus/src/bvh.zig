@@ -2,6 +2,19 @@ const std = @import("std");
 const math = @import("math.zig");
 const geom = @import("geometry.zig");
 
+pub const IntersectionSeed = struct {
+    t: f64,
+    u: f64,
+    v: f64,
+};
+
+pub const SurfaceSeed = struct {
+    u_a: f64,
+    v_a: f64,
+    u_b: f64,
+    v_b: f64,
+};
+
 pub const AABB = struct {
     min: math.Vec3,
     max: math.Vec3,
@@ -27,12 +40,6 @@ pub const AABB = struct {
             (self.min[1] <= other.max[1] and self.max[1] >= other.min[1]) and
             (self.min[2] <= other.max[2] and self.max[2] >= other.min[2]);
     }
-};
-
-pub const IntersectionSeed = struct {
-    t: f64,
-    u: f64,
-    v: f64,
 };
 
 /// Scans parametric space to find overlapping AABBs, generating seeds for the LM solver.
@@ -77,7 +84,7 @@ pub fn generateCurveSurfaceSeeds(
                 s_box.expand(surface.evaluate(u_val + du, v_val + dv));
 
                 if (c_box.intersects(s_box)) {
-                    // FIXED: Explicitly pass the allocator to append
+                    // Explicitly pass the allocator to append
                     try seeds.append(allocator, .{
                         .t = t_val + dt * 0.5,
                         .u = u_val + du * 0.5,
@@ -88,6 +95,57 @@ pub fn generateCurveSurfaceSeeds(
         }
     }
 
-    // FIXED: Explicitly pass the allocator to toOwnedSlice
+    // Explicitly pass the allocator to toOwnedSlice
+    return seeds.toOwnedSlice(allocator);
+}
+
+/// Scans parametric space to find overlapping AABBs between two NURBS surfaces.
+pub fn generateSurfaceSurfaceSeeds(
+    allocator: std.mem.Allocator,
+    surf_a: *const geom.NurbsSurface,
+    surf_b: *const geom.NurbsSurface,
+    spans: usize,
+) ![]SurfaceSeed {
+    var seeds: std.ArrayListUnmanaged(SurfaceSeed) = .empty;
+    errdefer seeds.deinit(allocator);
+
+    const du_a = (surf_a.knots_u[surf_a.knots_u.len - 1] - surf_a.knots_u[0]) / @as(f64, @floatFromInt(spans));
+    const dv_a = (surf_a.knots_v[surf_a.knots_v.len - 1] - surf_a.knots_v[0]) / @as(f64, @floatFromInt(spans));
+    const du_b = (surf_b.knots_u[surf_b.knots_u.len - 1] - surf_b.knots_u[0]) / @as(f64, @floatFromInt(spans));
+    const dv_b = (surf_b.knots_v[surf_b.knots_v.len - 1] - surf_b.knots_v[0]) / @as(f64, @floatFromInt(spans));
+
+    for (0..spans) |ia| {
+        const u_a = surf_a.knots_u[0] + @as(f64, @floatFromInt(ia)) * du_a;
+        for (0..spans) |ja| {
+            const v_a = surf_a.knots_v[0] + @as(f64, @floatFromInt(ja)) * dv_a;
+            var box_a = AABB.empty();
+            box_a.expand(surf_a.evaluate(u_a, v_a));
+            box_a.expand(surf_a.evaluate(u_a + du_a, v_a));
+            box_a.expand(surf_a.evaluate(u_a, v_a + dv_a));
+            box_a.expand(surf_a.evaluate(u_a + du_a, v_a + dv_a));
+
+            for (0..spans) |ib| {
+                const u_b = surf_b.knots_u[0] + @as(f64, @floatFromInt(ib)) * du_b;
+                for (0..spans) |jb| {
+                    const v_b = surf_b.knots_v[0] + @as(f64, @floatFromInt(jb)) * dv_b;
+                    var box_b = AABB.empty();
+                    box_b.expand(surf_b.evaluate(u_b, v_b));
+                    box_b.expand(surf_b.evaluate(u_b + du_b, v_b));
+                    box_b.expand(surf_b.evaluate(u_b, v_b + dv_b));
+                    box_b.expand(surf_b.evaluate(u_b + du_b, v_b + dv_b));
+
+                    if (box_a.intersects(box_b)) {
+                        try seeds.append(allocator, .{
+                            .u_a = u_a + du_a * 0.5,
+                            .v_a = v_a + dv_a * 0.5,
+                            .u_b = u_b + du_b * 0.5,
+                            .v_b = v_b + dv_b * 0.5,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     return seeds.toOwnedSlice(allocator);
 }

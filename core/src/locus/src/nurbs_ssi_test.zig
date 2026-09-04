@@ -102,3 +102,51 @@ test "NURBS SSI: Full Boundary-to-Boundary Seam Tracing" {
     try std.testing.expectApproxEqAbs(0.0, seam.points_3d[0][0], 1e-1);
     try std.testing.expectApproxEqAbs(10.0, seam.points_3d[seam.points_3d.len - 1][0], 1e-1);
 }
+
+test "NURBS SSI: Automated Multi-Seam Discovery" {
+    const alloc = std.testing.allocator;
+
+    const a_cps = [_]math.Vec4{
+        .{ 0, 0, 0, 1 },  .{ 10, 0, 0, 1 },
+        .{ 0, 10, 0, 1 }, .{ 10, 10, 0, 1 },
+    };
+    const b_cps = [_]math.Vec4{
+        .{ 0, 5, -5, 1 }, .{ 10, 5, -5, 1 },
+        .{ 0, 5, 5, 1 },  .{ 10, 5, 5, 1 },
+    };
+    const knots = [_]f64{ 0, 0, 1, 1 };
+
+    const surf_a = geom.NurbsSurface{
+        .degree_u = 1,
+        .degree_v = 1,
+        .knots_u = &knots,
+        .knots_v = &knots,
+        .num_cp_u = 2,
+        .num_cp_v = 2,
+        .control_points = &a_cps,
+    };
+    const surf_b = geom.NurbsSurface{
+        .degree_u = 1,
+        .degree_v = 1,
+        .knots_u = &knots,
+        .knots_v = &knots,
+        .num_cp_u = 2,
+        .num_cp_v = 2,
+        .control_points = &b_cps,
+    };
+
+    // Automatically locate the intersection without manually supplying a seed!
+    const seams = try nurbs_ssi.findAllIntersectionSeams(alloc, &surf_a, &surf_b, 1.0);
+    defer {
+        for (seams) |s| {
+            alloc.free(s.points_3d);
+            alloc.free(s.uvs_a);
+            alloc.free(s.uvs_b);
+        }
+        alloc.free(seams);
+    }
+
+    // Despite dozens of BVH seeds generating hits, the deduplicator must aggregate them into exactly 1 seam
+    try std.testing.expectEqual(@as(usize, 1), seams.len);
+    try std.testing.expect(seams[0].points_3d.len > 5);
+}

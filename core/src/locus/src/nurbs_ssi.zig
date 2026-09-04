@@ -2,6 +2,7 @@ const std = @import("std");
 const math = @import("math.zig");
 const geom = @import("geometry.zig");
 const eigen = @import("eigen.zig");
+const bvh = @import("bvh.zig");
 
 pub const SsiContext = struct {
     surf_a: *const geom.NurbsSurface,
@@ -198,4 +199,60 @@ pub fn traceIntersectionCurve(
         .uvs_a = try uvs_a.toOwnedSlice(allocator),
         .uvs_b = try uvs_b.toOwnedSlice(allocator),
     };
+}
+
+/// Automatically discovers and traces all continuous intersection seams between two NURBS surfaces.
+pub fn findAllIntersectionSeams(
+    allocator: std.mem.Allocator,
+    surf_a: *const geom.NurbsSurface,
+    surf_b: *const geom.NurbsSurface,
+    step_size: f64,
+) ![]SsiSeam {
+    const seeds = try bvh.generateSurfaceSurfaceSeeds(allocator, surf_a, surf_b, 8);
+    defer allocator.free(seeds);
+
+    var seams = std.ArrayListUnmanaged(SsiSeam).empty;
+    errdefer {
+        for (seams.items) |s| {
+            allocator.free(s.points_3d);
+            allocator.free(s.uvs_a);
+            allocator.free(s.uvs_b);
+        }
+        seams.deinit(allocator);
+    }
+
+    for (seeds) |seed| {
+        // Optimization: Check if this seed is already covered by an existing traced seam
+        var already_found = false;
+        for (seams.items) |seam| {
+            for (seam.uvs_a) |uv_a| {
+                const du = uv_a[0] - seed.u_a;
+                const dv = uv_a[1] - seed.v_a;
+
+                // Relaxed tolerance to ~22% of parametric space. Safely absorbs BVH cell
+                // centers that sit between discrete marching steps.
+                if ((du * du + dv * dv) < 0.05) {
+                    already_found = true;
+                    break;
+                }
+            }
+            if (already_found) break;
+        }
+        if (already_found) continue;
+
+        const start_uv = [4]f64{ seed.u_a, seed.v_a, seed.u_b, seed.v_b };
+        if (traceIntersectionCurve(allocator, surf_a, surf_b, start_uv, step_size)) |seam| {
+            if (seam.points_3d.len > 2) {
+                try seams.append(allocator, seam);
+            } else {
+                allocator.free(seam.points_3d);
+                allocator.free(seam.uvs_a);
+                allocator.free(seam.uvs_b);
+            }
+        } else |_| {
+            // Seed failed to converge to a valid mathematical root; discard
+        }
+    }
+
+    return seams.toOwnedSlice(allocator);
 }
