@@ -3,6 +3,7 @@ const topo = @import("topology.zig");
 const geom = @import("geometry.zig");
 const math = @import("math.zig");
 const eigen = @import("eigen.zig");
+const nurbs_tessellate = @import("nurbs_tessellate.zig");
 
 pub const Mesh = struct {
     vertices: std.ArrayListUnmanaged(math.Vec3) = .empty,
@@ -313,11 +314,11 @@ pub fn tessellateSolid(
     out_mesh: *Mesh,
     config: anytype,
 ) !void {
-    _ = g_arena;
     _ = config;
 
     const solid = t_arena.solids.items[solid_id];
 
+    // Preload all exact topological vertices into the global mesh
     for (t_arena.vertices.items) |v| {
         try out_mesh.vertices.append(allocator, v.point);
         try out_mesh.normals.append(allocator, .{ 0, 0, 1 });
@@ -332,6 +333,140 @@ pub fn tessellateSolid(
             const face = t_arena.faces.items[face_id];
             if (face.loops_len == 0) continue;
 
+            // ====================================================================
+            // FREEFORM NURBS TESSELLATION PATH
+            // ====================================================================
+            if (face.surface.surface_type == .nurbs) {
+                var unique_pts = std.ArrayListUnmanaged(math.Vec2).empty;
+                defer unique_pts.deinit(allocator);
+
+                var loops_indices = std.ArrayListUnmanaged([]u32).empty;
+                defer {
+                    for (loops_indices.items) |l| allocator.free(l);
+                    loops_indices.deinit(allocator);
+                }
+
+                // 1. Gather exact UV boundaries from the topological Half-Edges
+                for (0..face.loops_len) |l_off| {
+                    const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+                    const loop = t_arena.loops.items[loop_id];
+                    var l_idx = std.ArrayListUnmanaged(u32).empty;
+                    var curr_he = loop.first_half_edge;
+
+                    while (true) {
+                        const uv = t_arena.getHalfEdgeStartUV(g_arena, curr_he);
+                        var found: ?u32 = null;
+
+                        // Deduplicate 2D UV points to prevent CDT meshing crashes
+                        for (unique_pts.items, 0..) |up, j| {
+                            const dx = uv[0] - up[0];
+                            const dy = uv[1] - up[1];
+                            if ((dx * dx + dy * dy) < 1e-10) {
+                                found = @intCast(j);
+                                break;
+                            }
+                        }
+
+                        if (found) |idx| {
+                            try l_idx.append(allocator, idx);
+                        } else {
+                            try l_idx.append(allocator, @intCast(unique_pts.items.len));
+                            try unique_pts.append(allocator, uv);
+                        }
+
+                        curr_he = t_arena.half_edges.items[curr_he].next;
+                        if (curr_he == loop.first_half_edge) break;
+                    }
+                    try loops_indices.append(allocator, try l_idx.toOwnedSlice(allocator));
+                }
+
+                const num_original_pts = unique_pts.items.len;
+                var local_triangles = std.ArrayListUnmanaged([3]u32).empty;
+                defer local_triangles.deinit(allocator);
+
+                // 2. Mesh the flat 2D UV Domain using Constrained Delaunay Triangulation
+                try delaunayTriangulate(allocator, &unique_pts, &local_triangles);
+                recoverBoundaries(unique_pts.items, loops_indices.items, &local_triangles);
+                optimizeDelaunay(unique_pts.items, loops_indices.items, local_triangles.items);
+
+                var boundaries2d = std.ArrayListUnmanaged([]math.Vec2).empty;
+                defer {
+                    for (boundaries2d.items) |b| allocator.free(b);
+                    boundaries2d.deinit(allocator);
+                }
+                for (loops_indices.items) |l_idx| {
+                    var b2d = try allocator.alloc(math.Vec2, l_idx.len);
+                    for (l_idx, 0..) |idx, k| b2d[k] = unique_pts.items[idx];
+                    try boundaries2d.append(allocator, b2d);
+                }
+
+                var valid_uv_tris = std.ArrayListUnmanaged(nurbs_tessellate.UvTriangle).empty;
+                defer valid_uv_tris.deinit(allocator);
+
+                // 3. Filter degenerate/exterior triangles using Even/Odd winding rule
+                for (local_triangles.items) |tri| {
+                    // Ignore triangles connected to the bounding super-triangle
+                    if (tri[0] >= num_original_pts or tri[1] >= num_original_pts or tri[2] >= num_original_pts) continue;
+
+                    const p0 = unique_pts.items[tri[0]];
+                    const p1 = unique_pts.items[tri[1]];
+                    const p2 = unique_pts.items[tri[2]];
+                    const centroid = math.Vec2{ (p0[0] + p1[0] + p2[0]) / 3.0, (p0[1] + p1[1] + p2[1]) / 3.0 };
+
+                    var winding: i32 = 0;
+                    for (boundaries2d.items) |boundary| {
+                        var j: usize = boundary.len - 1;
+                        for (0..boundary.len) |i| {
+                            const pi = boundary[i];
+                            const pj = boundary[j];
+                            if (pj[1] <= centroid[1]) {
+                                if (pi[1] > centroid[1]) {
+                                    if (eigen.orient2D(pj, pi, centroid) > 0.0) winding += 1;
+                                }
+                            } else {
+                                if (pi[1] <= centroid[1]) {
+                                    if (eigen.orient2D(pj, pi, centroid) < 0.0) winding -= 1;
+                                }
+                            }
+                            j = i;
+                        }
+                    }
+
+                    // Keep valid interior triangles, respecting topological face inversion
+                    if (@abs(winding) % 2 != 0) {
+                        if (face.forward) {
+                            try valid_uv_tris.append(allocator, .{ .uv1 = p0, .uv2 = p1, .uv3 = p2 });
+                        } else {
+                            try valid_uv_tris.append(allocator, .{ .uv1 = p0, .uv2 = p2, .uv3 = p1 });
+                        }
+                    }
+                }
+
+                // 4. Evaluate the flat 2D UV mesh across the 3D surface parameters
+                const surface = &g_arena.nurbs_surfaces.items[face.surface.index];
+                var patch_mesh = try nurbs_tessellate.projectUvMeshTo3D(allocator, surface, valid_uv_tris.items);
+                defer patch_mesh.deinit(allocator);
+
+                // 5. Append generated 3D vertices to the global rendering mesh
+                const v_offset = @as(u32, @intCast(out_mesh.vertices.items.len));
+                try out_mesh.vertices.appendSlice(allocator, patch_mesh.vertices.items);
+
+                // Add placeholder normals (these can be updated via geometry evaluations later if required)
+                for (patch_mesh.vertices.items) |_| {
+                    try out_mesh.normals.append(allocator, .{ 0, 0, 1 });
+                }
+
+                // Append the localized face indices into the global mesh index buffer
+                for (patch_mesh.indices.items) |tri| {
+                    try out_mesh.triangles.append(allocator, .{ tri[0] + v_offset, tri[1] + v_offset, tri[2] + v_offset });
+                }
+
+                continue;
+            }
+
+            // ====================================================================
+            // ANALYTIC PROJECTION PATH
+            // ====================================================================
             var loops_verts = std.ArrayListUnmanaged([]u32).empty;
             defer {
                 for (loops_verts.items) |l| allocator.free(l);
@@ -358,7 +493,7 @@ pub fn tessellateSolid(
 
             if (face_verts.items.len < 3) continue;
 
-            // Newell's Method Projection
+            // Newell's Method Projection for calculating the best-fit 3D plane
             var loop_nx: f64 = 0;
             var loop_ny: f64 = 0;
             var loop_nz: f64 = 0;
