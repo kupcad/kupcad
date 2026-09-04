@@ -11,6 +11,8 @@ pub const booleans = @import("booleans.zig");
 pub const booleans_2d = @import("booleans_2d.zig");
 pub const slicing = @import("slicing.zig");
 pub const tessellate = @import("tessellate.zig");
+pub const eigen = @import("eigen.zig");
+pub const nurbs_ssi = @import("nurbs_ssi.zig");
 
 test {
     _ = @import("booleans_test.zig");

@@ -1,4 +1,9 @@
 pub const api = @import("api.zig");
+pub const wasm = @import("wasm.zig");
+pub const vm = @import("vm/vm.zig");
+pub const chunk = @import("vm/chunk.zig");
+pub const value = @import("core/value.zig");
+pub const locus = @import("locus/src/root.zig");
 pub const manifest = @import("stdlib/manifest.zig");
 
 pub const formatCode = api.formatCode;
