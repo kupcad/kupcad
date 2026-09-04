@@ -78,3 +78,84 @@ test "Blends: Apply Edge Blend Topological Trimming" {
     const surf = g_arena.nurbs_surfaces.items[fillet_face.surface.index];
     try std.testing.expectEqual(@as(u32, 2), surf.degree_u);
 }
+
+test "Blends: Full Edge Blend Topology Rewiring" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // 1. Generate a Base Cube
+    const cube_id = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+
+    // 2. Select an Edge with a valid twin
+    var target_he: topo.HalfEdgeId = 0;
+    for (t_arena.half_edges.items, 0..) |he, i| {
+        if (he.twin != topo.NULL_ID) {
+            target_he = @intCast(i);
+            break;
+        }
+    }
+
+    // 3. Apply the Edge Blend
+    const radius = 2.0;
+    const result = try blends.applyEdgeBlend(alloc, &t_arena, &g_arena, cube_id, target_he, radius);
+
+    // 4. Validate Shell Faces Count
+    const solid = t_arena.solids.items[result.new_solid];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
+
+    // Original cube = 6 faces.
+    // Slicing 2 adjacent faces yields +2 faces.
+    // Deleting the 2 sharp corner strips yields -2 faces.
+    // Inserting the filleted NURBS wrapper yields +1 face.
+    // Total = 7 closed faces.
+    try std.testing.expectEqual(@as(usize, 7), shell.faces_len);
+
+    // 5. Run Strict B-Rep Validation
+    const validator = @import("validator.zig");
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // The sanitizer verifies half-edge pairing, pointer integrity, and the Euler characteristic
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result.new_solid, tol, .{
+        .check_euler = true,
+        .require_closed_shells = true,
+        .check_twins = true,
+    });
+}
+
+test "Blends: Fillet Cap Topology Verification" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const cube_id = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+
+    var target_he: topo.HalfEdgeId = 0;
+    for (t_arena.half_edges.items, 0..) |he, i| {
+        if (he.twin != topo.NULL_ID) {
+            target_he = @intCast(i);
+            break;
+        }
+    }
+
+    const radius = 2.0;
+    const result = try blends.applyEdgeBlend(alloc, &t_arena, &g_arena, cube_id, target_he, radius);
+
+    // Verify the newly allocated Fillet Face has exactly 4 boundary edges
+    const fillet_face = t_arena.faces.items[result.fillet_face];
+    const loop = t_arena.loops.items[t_arena.face_loops.items[fillet_face.loops_start]];
+
+    var edge_count: usize = 0;
+    var curr = loop.first_half_edge;
+    while (true) {
+        edge_count += 1;
+        curr = t_arena.half_edges.items[curr].next;
+        if (curr == loop.first_half_edge) break;
+    }
+
+    try std.testing.expectEqual(@as(usize, 4), edge_count);
+}

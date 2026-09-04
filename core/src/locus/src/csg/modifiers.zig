@@ -954,3 +954,83 @@ pub fn injectCircularHole(
     mutable_face.loops_start = new_start;
     mutable_face.loops_len = old_len + 1;
 }
+
+/// Scans the shell for the sharp corner vertex, verifies it is flanked by the fillet's
+/// cap vertices, severs the 90-degree corner, and sews a transversal arc matching the fillet.
+pub fn trimOrthogonalCap(
+    allocator: std.mem.Allocator,
+    t_arena: *topo.TopologyArena,
+    solid_id: topo.SolidId,
+    v_corner: topo.VertexId,
+    caps: [2]topo.HalfEdgeId,
+) !void {
+    const solid = t_arena.solids.items[solid_id];
+    const shell_id = t_arena.solid_shells.items[solid.shells_start];
+    const shell = t_arena.shells.items[shell_id];
+
+    for (caps) |cap_he| {
+        const cap_v_start = t_arena.half_edges.items[cap_he].start_vertex;
+        const cap_v_end = t_arena.half_edges.items[t_arena.half_edges.items[cap_he].next].start_vertex;
+
+        for (0..shell.faces_len) |f_off| {
+            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+            const face = t_arena.faces.items[face_id];
+
+            for (0..face.loops_len) |l_off| {
+                const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+                const loop = &t_arena.loops.items[loop_id];
+
+                var curr = loop.first_half_edge;
+                var safety: usize = 0;
+                while (true) : (safety += 1) {
+                    if (safety > 10_000) return error.TopologyCorrupted;
+
+                    const he = t_arena.half_edges.items[curr];
+
+                    // If we found the sharp corner vertex, check its immediate neighbors
+                    if (he.start_vertex == v_corner) {
+                        const he_prev = t_arena.half_edges.items[he.prev];
+                        const prev_v = he_prev.start_vertex;
+
+                        const he_next = t_arena.half_edges.items[he.next];
+                        const next_v = he_next.start_vertex;
+
+                        // Check if the adjacent vertices match our cap's endpoints
+                        if ((prev_v == cap_v_start and next_v == cap_v_end) or
+                            (prev_v == cap_v_end and next_v == cap_v_start))
+                        {
+                            const new_he_id: u32 = @intCast(t_arena.half_edges.items.len);
+
+                            // Bridge the gap, bypassing the sharp corner
+                            try t_arena.half_edges.append(allocator, .{
+                                .start_vertex = he_prev.start_vertex,
+                                .twin = cap_he,
+                                .next = he.next,
+                                .prev = he_prev.prev,
+                                .loop_id = loop_id,
+                                .curve = t_arena.half_edges.items[cap_he].curve,
+                                .forward = !t_arena.half_edges.items[cap_he].forward,
+                            });
+
+                            t_arena.half_edges.items[he_prev.prev].next = new_he_id;
+                            t_arena.half_edges.items[he.next].prev = new_he_id;
+
+                            t_arena.half_edges.items[cap_he].twin = new_he_id;
+
+                            if (loop.first_half_edge == curr or loop.first_half_edge == he.prev) {
+                                loop.first_half_edge = new_he_id;
+                            }
+
+                            return; // Successfully trimmed
+                        }
+                    }
+
+                    curr = he.next;
+                    if (curr == loop.first_half_edge) break;
+                }
+            }
+        }
+    }
+
+    return error.TopologyCorrupted;
+}
