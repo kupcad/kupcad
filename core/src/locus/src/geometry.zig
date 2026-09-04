@@ -53,12 +53,6 @@ pub const CircleArc = struct {
     y_axis: math.Vec3,
 };
 
-pub const NurbsCurve = struct {
-    degree: u32,
-    knots: []const f64,
-    control_points: []const math.Vec4, // Pre-weighted homogeneous coordinates (wx, wy, wz, w)
-};
-
 pub const Plane = struct {
     origin: math.Vec3,
     u_axis: math.Vec3,
@@ -278,3 +272,89 @@ pub fn evaluateNurbsCurve(curve: NurbsCurve, t: f64) math.Vec3 {
     }
     return .{ cw[0], cw[1], cw[2] };
 }
+
+/// Evaluates the Cox-de Boor basis function N_{i,p}(u) recursively.
+pub fn coxDeBoor(i: usize, p: usize, u: f64, knots: []const f64) f64 {
+    if (p == 0) {
+        // Special case: upper bound inclusion for the last valid knot span
+        if (u == knots[knots.len - 1] and u == knots[i + 1] and knots[i] != knots[i + 1]) {
+            return 1.0;
+        }
+        if (u >= knots[i] and u < knots[i + 1]) {
+            return 1.0;
+        }
+        return 0.0;
+    }
+
+    const denom1 = knots[i + p] - knots[i];
+    const term1 = if (denom1 > 1e-12) ((u - knots[i]) / denom1) * coxDeBoor(i, p - 1, u, knots) else 0.0;
+
+    const denom2 = knots[i + p + 1] - knots[i + 1];
+    const term2 = if (denom2 > 1e-12) ((knots[i + p + 1] - u) / denom2) * coxDeBoor(i + 1, p - 1, u, knots) else 0.0;
+
+    return term1 + term2;
+}
+
+pub const NurbsCurve = struct {
+    degree: usize,
+    knots: []const f64,
+    // Control points are stored as 4D homogeneous coordinates: { x*w, y*w, z*w, w }
+    control_points: []const math.Vec4,
+
+    /// Evaluates the curve exactly at parameter u.
+    pub fn evaluate(self: NurbsCurve, u: f64) math.Vec3 {
+        var pt = math.Vec4{ 0, 0, 0, 0 };
+        for (self.control_points, 0..) |cp, i| {
+            const nip = coxDeBoor(i, self.degree, u, self.knots);
+            pt[0] += nip * cp[0];
+            pt[1] += nip * cp[1];
+            pt[2] += nip * cp[2];
+            pt[3] += nip * cp[3]; // Weight accumulation
+        }
+
+        if (pt[3] > 1e-12) {
+            return .{ pt[0] / pt[3], pt[1] / pt[3], pt[2] / pt[3] };
+        }
+        return .{ pt[0], pt[1], pt[2] };
+    }
+};
+
+pub const NurbsSurface = struct {
+    degree_u: usize,
+    degree_v: usize,
+    knots_u: []const f64,
+    knots_v: []const f64,
+    num_cp_u: usize,
+    num_cp_v: usize,
+    // Stored as a flat array: row-major (u changes fastest)
+    control_points: []const math.Vec4,
+
+    /// Evaluates the surface exactly at parametric coordinates (u, v).
+    pub fn evaluate(self: NurbsSurface, u: f64, v: f64) math.Vec3 {
+        var pt = math.Vec4{ 0, 0, 0, 0 };
+
+        for (0..self.num_cp_v) |j| {
+            const njq = coxDeBoor(j, self.degree_v, v, self.knots_v);
+            if (njq < 1e-12) continue; // Optimization: skip empty V spans
+
+            for (0..self.num_cp_u) |i| {
+                const nip = coxDeBoor(i, self.degree_u, u, self.knots_u);
+                if (nip < 1e-12) continue;
+
+                const basis = nip * njq;
+                const idx = j * self.num_cp_u + i;
+                const cp = self.control_points[idx];
+
+                pt[0] += basis * cp[0];
+                pt[1] += basis * cp[1];
+                pt[2] += basis * cp[2];
+                pt[3] += basis * cp[3];
+            }
+        }
+
+        if (pt[3] > 1e-12) {
+            return .{ pt[0] / pt[3], pt[1] / pt[3], pt[2] / pt[3] };
+        }
+        return .{ pt[0], pt[1], pt[2] };
+    }
+};

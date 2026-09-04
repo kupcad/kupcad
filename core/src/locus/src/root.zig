@@ -18,6 +18,7 @@ test {
     _ = @import("eigen_test.zig");
     _ = @import("eigen_lm_test.zig");
     _ = @import("fuzz_test.zig");
+    _ = @import("nurbs_test.zig");
     _ = @import("generators_test.zig");
     _ = @import("geometry_test.zig");
     _ = @import("parallel_test.zig");
