@@ -523,3 +523,102 @@ test "Healing: Complex Multiple-Seam Merge (U-Shape + Inner Block)" {
     // and gracefully aborts the merge, leaving the graph safely uncorrupted with its 11 boolean faces.
     try std.testing.expectEqual(@as(usize, 11), shell.faces_len);
 }
+
+test "Healing: Graceful Exit on Empty Solid" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Create a mathematically valid solid container with 0 shells
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 0 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // Engine MUST safely exit without panicking on out-of-bounds shell indices
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+
+    try std.testing.expectEqual(@as(usize, 0), t_arena.solids.items[0].shells_len);
+}
+
+test "Healing: Rejects Near-Coplanar Faces Outside Angular Tolerance" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Plane 1: Flat on Z (Normal 0,0,1)
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+
+    // Plane 2: Tilted on the Y axis obviously beyond the 1e-5 tolerance (Slope 0.1)
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 10, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 0.995, 0.1 } });
+
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } },
+        .{ .point = .{ 10, 10, 0 } },
+        .{ .point = .{ 0, 10, 0 } },
+        .{ .point = .{ 10, 20, 1.0 } }, // Tilted up substantially to Z=1.0
+        .{ .point = .{ 0, 20, 1.0 } },
+    });
+
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    // The two faces share the edge (2, 3), but their normals are definitively distinct
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2, 3 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f2 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 3, 2, 4, 5 }, .{ .index = 1, .surface_type = .plane }, &twin_map);
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{ f1, f2 });
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 2 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+
+    // The island clustering phase must recognize the angular difference and refuse to merge them.
+    const solid = t_arena.solids.items[0];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
+    try std.testing.expectEqual(@as(usize, 2), shell.faces_len);
+}
+
+test "Healing: Disjoint Faces on Same Plane Remain Separate Islands" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        // Face 1 (X: 0 to 10)
+        .{ .point = .{ 0, 0, 0 } },  .{ .point = .{ 10, 0, 0 } }, .{ .point = .{ 10, 10, 0 } }, .{ .point = .{ 0, 10, 0 } },
+        // Face 2 (X: 20 to 30) - Completely physically separated
+        .{ .point = .{ 20, 0, 0 } }, .{ .point = .{ 30, 0, 0 } }, .{ .point = .{ 30, 10, 0 } }, .{ .point = .{ 20, 10, 0 } },
+    });
+
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    // Both faces share the exact same underlying surface_index (0)
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2, 3 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f2 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 4, 5, 6, 7 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{ f1, f2 });
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 2 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+
+    // Because they share no boundary twin edges, the BFS traversal cannot cross the gap.
+    // They form 2 distinct islands of size 1 and cannot be merged. Face count remains 2.
+    const solid = t_arena.solids.items[0];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
+    try std.testing.expectEqual(@as(usize, 2), shell.faces_len);
+}
