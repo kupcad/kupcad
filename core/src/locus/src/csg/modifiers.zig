@@ -962,75 +962,75 @@ pub fn trimOrthogonalCap(
     t_arena: *topo.TopologyArena,
     solid_id: topo.SolidId,
     v_corner: topo.VertexId,
-    caps: [2]topo.HalfEdgeId,
+    cap_he: topo.HalfEdgeId,
 ) !void {
     const solid = t_arena.solids.items[solid_id];
     const shell_id = t_arena.solid_shells.items[solid.shells_start];
     const shell = t_arena.shells.items[shell_id];
 
-    for (caps) |cap_he| {
-        const cap_v_start = t_arena.half_edges.items[cap_he].start_vertex;
-        const cap_v_end = t_arena.half_edges.items[t_arena.half_edges.items[cap_he].next].start_vertex;
+    const cap_v_start = t_arena.half_edges.items[cap_he].start_vertex;
+    const cap_v_end = t_arena.half_edges.items[t_arena.half_edges.items[cap_he].next].start_vertex;
 
-        for (0..shell.faces_len) |f_off| {
-            const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
-            const face = t_arena.faces.items[face_id];
+    var corner_found_in_shell = false;
 
-            for (0..face.loops_len) |l_off| {
-                const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
-                const loop = &t_arena.loops.items[loop_id];
+    for (0..shell.faces_len) |f_off| {
+        const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
+        const face = t_arena.faces.items[face_id];
 
-                var curr = loop.first_half_edge;
-                var safety: usize = 0;
-                while (true) : (safety += 1) {
-                    if (safety > 10_000) return error.TopologyCorrupted;
+        for (0..face.loops_len) |l_off| {
+            const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+            const loop = &t_arena.loops.items[loop_id];
 
-                    const he = t_arena.half_edges.items[curr];
+            var curr = loop.first_half_edge;
+            var safety: usize = 0;
+            while (true) : (safety += 1) {
+                if (safety > 10_000) return error.TopologyCorrupted;
 
-                    // If we found the sharp corner vertex, check its immediate neighbors
-                    if (he.start_vertex == v_corner) {
-                        const he_prev = t_arena.half_edges.items[he.prev];
-                        const prev_v = he_prev.start_vertex;
+                const he = t_arena.half_edges.items[curr];
 
-                        const he_next = t_arena.half_edges.items[he.next];
-                        const next_v = he_next.start_vertex;
+                if (he.start_vertex == v_corner) {
+                    corner_found_in_shell = true;
 
-                        // Check if the adjacent vertices match our cap's endpoints
-                        if ((prev_v == cap_v_start and next_v == cap_v_end) or
-                            (prev_v == cap_v_end and next_v == cap_v_start))
-                        {
-                            const new_he_id: u32 = @intCast(t_arena.half_edges.items.len);
+                    const he_prev = t_arena.half_edges.items[he.prev];
+                    const prev_v = he_prev.start_vertex;
 
-                            // Bridge the gap, bypassing the sharp corner
-                            try t_arena.half_edges.append(allocator, .{
-                                .start_vertex = he_prev.start_vertex,
-                                .twin = cap_he,
-                                .next = he.next,
-                                .prev = he_prev.prev,
-                                .loop_id = loop_id,
-                                .curve = t_arena.half_edges.items[cap_he].curve,
-                                .forward = !t_arena.half_edges.items[cap_he].forward,
-                            });
+                    const he_next = t_arena.half_edges.items[he.next];
+                    const next_v = he_next.start_vertex;
 
-                            t_arena.half_edges.items[he_prev.prev].next = new_he_id;
-                            t_arena.half_edges.items[he.next].prev = new_he_id;
+                    if ((prev_v == cap_v_start and next_v == cap_v_end) or
+                        (prev_v == cap_v_end and next_v == cap_v_start))
+                    {
+                        const new_he_id: u32 = @intCast(t_arena.half_edges.items.len);
 
-                            t_arena.half_edges.items[cap_he].twin = new_he_id;
+                        try t_arena.half_edges.append(allocator, .{
+                            .start_vertex = he_prev.start_vertex,
+                            .twin = cap_he,
+                            .next = he.next,
+                            .prev = he_prev.prev,
+                            .loop_id = loop_id,
+                            .curve = t_arena.half_edges.items[cap_he].curve,
+                            .forward = !t_arena.half_edges.items[cap_he].forward,
+                        });
 
-                            if (loop.first_half_edge == curr or loop.first_half_edge == he.prev) {
-                                loop.first_half_edge = new_he_id;
-                            }
+                        t_arena.half_edges.items[he_prev.prev].next = new_he_id;
+                        t_arena.half_edges.items[he.next].prev = new_he_id;
+                        t_arena.half_edges.items[cap_he].twin = new_he_id;
 
-                            return; // Successfully trimmed
+                        if (loop.first_half_edge == curr or loop.first_half_edge == he.prev) {
+                            loop.first_half_edge = new_he_id;
                         }
-                    }
 
-                    curr = he.next;
-                    if (curr == loop.first_half_edge) break;
+                        return;
+                    }
                 }
+
+                curr = he.next;
+                if (curr == loop.first_half_edge) break;
             }
         }
     }
 
-    return error.TopologyCorrupted;
+    if (corner_found_in_shell) {
+        return error.TopologyCorrupted;
+    }
 }
