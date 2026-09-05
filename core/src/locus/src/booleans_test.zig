@@ -666,14 +666,19 @@ test "Booleans: Point Inclusion for Multi-Body Boundaries" {
     try all_faces.appendSlice(alloc, left_faces);
     try all_faces.appendSlice(alloc, right_faces);
 
+    // Pre-compute AABBs for the spatial acceleration raycaster
+    var aabbs = try alloc.alloc(types.FaceAABB, all_faces.items.len);
+    defer alloc.free(aabbs);
+    for (all_faces.items, 0..) |f_id, i| aabbs[i] = classify.computeFaceAABB(&t_arena, f_id);
+
     const tol = math.Tolerance{ .absolute = 1e-7, .parametric = 1e-7, .squared = 1e-14 };
 
     // Point inside left standoff
-    try std.testing.expect(try booleans.isPointInsideSolidFaces(alloc, &t_arena, &g_arena, all_faces.items, .{ -10.0, 0.0, 0.0 }, tol));
+    try std.testing.expect(try booleans.isPointInsideSolidFaces(alloc, &t_arena, &g_arena, aabbs, .{ -10.0, 0.0, 0.0 }, tol));
     // Point inside right standoff
-    try std.testing.expect(try booleans.isPointInsideSolidFaces(alloc, &t_arena, &g_arena, all_faces.items, .{ 10.0, 0.0, 0.0 }, tol));
+    try std.testing.expect(try booleans.isPointInsideSolidFaces(alloc, &t_arena, &g_arena, aabbs, .{ 10.0, 0.0, 0.0 }, tol));
     // Point outside between standoffs
-    try std.testing.expect(!(try booleans.isPointInsideSolidFaces(alloc, &t_arena, &g_arena, all_faces.items, .{ 0.0, 0.0, 0.0 }, tol)));
+    try std.testing.expect(!(try booleans.isPointInsideSolidFaces(alloc, &t_arena, &g_arena, aabbs, .{ 0.0, 0.0, 0.0 }, tol)));
 }
 
 test "Projections: 2D Point Containment Boundary Precision" {
@@ -1177,4 +1182,33 @@ test "B-Rep: Boundary Stitching UV Projection Validation" {
             }
         }
     }
+}
+
+test "Booleans Sub-Method: intersectAndSplitFaces3D Queue Stability" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Face A: Flat on XY plane
+    const sq_a = try generators.generateSquare(alloc, &t_arena, &g_arena, 10.0, 10.0, true);
+
+    // Face B: Vertical on XZ plane (Rotate 90 deg around X)
+    const sq_b_temp = try generators.generateSquare(alloc, &t_arena, &g_arena, 10.0, 10.0, true);
+    const sq_b = try transforms.rotateSolid(alloc, &t_arena, &g_arena, sq_b_temp, 90.0, 0.0, 0.0);
+
+    var faces_a = std.ArrayListUnmanaged(topo.FaceId).empty;
+    defer faces_a.deinit(alloc);
+    try faces_a.append(alloc, t_arena.shell_faces.items[t_arena.shells.items[t_arena.solid_shells.items[t_arena.solids.items[sq_a].shells_start]].faces_start]);
+
+    var faces_b = std.ArrayListUnmanaged(topo.FaceId).empty;
+    defer faces_b.deinit(alloc);
+    try faces_b.append(alloc, t_arena.shell_faces.items[t_arena.shells.items[t_arena.solid_shells.items[t_arena.solids.items[sq_b].shells_start]].faces_start]);
+
+    // This MUST cleanly terminate and yield 2 faces each (split down the middle)
+    try booleans.intersectAndSplitFaces3D(alloc, &t_arena, &g_arena, sq_a, sq_b, &faces_a, &faces_b, test_tol);
+
+    try std.testing.expectEqual(@as(usize, 2), faces_a.items.len);
+    try std.testing.expectEqual(@as(usize, 2), faces_b.items.len);
 }

@@ -21,7 +21,6 @@ pub fn splitHalfEdge(
     const he = t_arena.half_edges.items[he_id];
     var twin_id = he.twin;
 
-    // Dynamic twin lookup fallback if twins were not pre-stitched
     if (twin_id == topo.NULL_ID) {
         const v_start = he.start_vertex;
         const v_end = t_arena.half_edges.items[he.next].start_vertex;
@@ -39,7 +38,6 @@ pub fn splitHalfEdge(
     }
 
     const v_mid_id: u32 = @intCast(t_arena.vertices.items.len);
-    // Apply the fat vertex tolerance
     try t_arena.vertices.append(allocator, .{
         .point = split_pt,
         .tolerance = split_tol,
@@ -134,25 +132,43 @@ pub fn sliceFace(
     v_b: topo.VertexId,
 ) !?topo.FaceId {
     const face = t_arena.faces.items[face_id];
-    if (face.loops_len != 1) return null;
-
-    const loop_id = t_arena.face_loops.items[face.loops_start];
-    const loop = t_arena.loops.items[loop_id];
-
     var he_a: ?topo.HalfEdgeId = null;
     var he_b: ?topo.HalfEdgeId = null;
+    var target_loop_id: ?topo.LoopId = null;
 
-    // Atomic traversal without safety counters
-    var curr = loop.first_half_edge;
-    while (true) {
-        const he = t_arena.half_edges.items[curr];
-        if (he.start_vertex == v_a) he_a = curr;
-        if (he.start_vertex == v_b) he_b = curr;
-        curr = he.next;
-        if (curr == loop.first_half_edge) break;
+    for (0..face.loops_len) |l_off| {
+        const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
+        const loop = t_arena.loops.items[loop_id];
+        var curr = loop.first_half_edge;
+        var safety: usize = 0;
+        var found_a = false;
+        var found_b = false;
+
+        while (true) : (safety += 1) {
+            if (safety > 10_000) return error.TopologyCorrupted;
+            const he = t_arena.half_edges.items[curr];
+            if (he.start_vertex == v_a) {
+                he_a = curr;
+                found_a = true;
+            }
+            if (he.start_vertex == v_b) {
+                he_b = curr;
+                found_b = true;
+            }
+            curr = he.next;
+            if (curr == loop.first_half_edge) break;
+        }
+
+        if (found_a and found_b) {
+            target_loop_id = loop_id;
+            break;
+        } else {
+            he_a = null;
+            he_b = null;
+        }
     }
 
-    if (he_a == null or he_b == null or he_a.? == he_b.?) return null;
+    if (he_a == null or he_b == null or he_a.? == he_b.? or target_loop_id == null) return null;
 
     const prev_a = t_arena.half_edges.items[he_a.?].prev;
     const prev_b = t_arena.half_edges.items[he_b.?].prev;
@@ -173,7 +189,7 @@ pub fn sliceFace(
         .twin = h2_id,
         .next = he_b.?,
         .prev = prev_a,
-        .loop_id = loop_id,
+        .loop_id = target_loop_id.?,
         .curve = curve_id,
         .forward = true,
     });
@@ -196,8 +212,10 @@ pub fn sliceFace(
     t_arena.half_edges.items[he_a.?].prev = h2_id;
 
     const new_face_id: u32 = @intCast(t_arena.faces.items.len);
-    curr = h2_id;
-    while (true) {
+    var curr = h2_id;
+    var safety: usize = 0;
+    while (true) : (safety += 1) {
+        if (safety > 10_000) return error.TopologyCorrupted;
         t_arena.half_edges.items[curr].loop_id = new_loop_id;
         curr = t_arena.half_edges.items[curr].next;
         if (curr == h2_id) break;
@@ -213,11 +231,10 @@ pub fn sliceFace(
         .loops_start = new_fl_start,
         .loops_len = 1,
     });
-    t_arena.loops.items[loop_id].first_half_edge = h1_id;
+    t_arena.loops.items[target_loop_id.?].first_half_edge = h1_id;
     return new_face_id;
 }
 
-/// Slices a face along a finite 3D line segment by splitting boundary edges and calling sliceFace.
 pub fn sliceFaceWithSegment(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -227,7 +244,7 @@ pub fn sliceFaceWithSegment(
     tol: math.Tolerance,
 ) !?topo.FaceId {
     const face = t_arena.faces.items[face_id];
-    if (face.loops_len != 1) return null; // Single loop faces only for now
+    if (face.loops_len != 1) return null;
 
     const loop_id = t_arena.face_loops.items[face.loops_start];
 
@@ -239,7 +256,6 @@ pub fn sliceFaceWithSegment(
     return try sliceFace(allocator, t_arena, g_arena, face_id, v_a, v_b);
 }
 
-/// Finds an existing vertex or splits a half-edge at a given 3D point along a loop.
 fn getOrSplitVertexAtPoint(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -249,10 +265,7 @@ fn getOrSplitVertexAtPoint(
     tol: math.Tolerance,
 ) !?topo.VertexId {
     const loop = t_arena.loops.items[loop_id];
-    var curr = loop.first_half_edge;
-    var safety: usize = 0;
 
-    // 1. Strict spatial snapping pass to prevent degenerate micro-edges
     var snap_curr = loop.first_half_edge;
     var snap_safety: usize = 0;
     while (true) : (snap_safety += 1) {
@@ -267,7 +280,8 @@ fn getOrSplitVertexAtPoint(
         if (snap_curr == loop.first_half_edge) break;
     }
 
-    // 2. Projection and split pass
+    var curr = loop.first_half_edge;
+    var safety: usize = 0;
     while (true) : (safety += 1) {
         if (safety > 10_000) return error.TopologyCorrupted;
 
@@ -297,8 +311,6 @@ fn getOrSplitVertexAtPoint(
     return null;
 }
 
-/// Replaces punchHole. Instead of destroying the face, this "imprints" the intersection.
-/// It creates a perfectly twinned Inner Plug face and Outer Hole boundary.
 pub fn imprintClosedLoop(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -330,7 +342,6 @@ pub fn imprintClosedLoop(
 
     std.mem.sort(SortPoint, sorted, {}, struct {
         fn lessThan(_: void, a: SortPoint, b: SortPoint) bool {
-            // Sort CCW for the plug (which makes the hole naturally CW)
             return a.angle < b.angle;
         }
     }.lessThan);
@@ -340,7 +351,6 @@ pub fn imprintClosedLoop(
     const he_start: u32 = @intCast(t_arena.half_edges.items.len);
     const n = sorted.len;
 
-    // 1. Build the Inner Plug Face Boundary (CCW)
     for (0..n) |i| {
         const v_start = sorted[i].v_id;
         const v_end = sorted[(i + 1) % n].v_id;
@@ -349,7 +359,7 @@ pub fn imprintClosedLoop(
 
         try t_arena.half_edges.append(allocator, .{
             .start_vertex = v_start,
-            .twin = he_start + @as(u32, @intCast(n + i)), // Twin to the hole edge!
+            .twin = he_start + @as(u32, @intCast(n + i)),
             .next = he_start + @as(u32, @intCast((i + 1) % n)),
             .prev = he_start + @as(u32, @intCast((i + n - 1) % n)),
             .loop_id = plug_loop_id,
@@ -358,13 +368,12 @@ pub fn imprintClosedLoop(
         });
     }
 
-    // 2. Build the Parent Face's Hole Boundary (CW)
     for (0..n) |i| {
-        const v_start = sorted[(i + 1) % n].v_id; // Reversed for CW
+        const v_start = sorted[(i + 1) % n].v_id;
 
         try t_arena.half_edges.append(allocator, .{
             .start_vertex = v_start,
-            .twin = he_start + @as(u32, @intCast(i)), // Twin to the plug edge!
+            .twin = he_start + @as(u32, @intCast(i)),
             .next = he_start + @as(u32, @intCast(n + ((i + n - 1) % n))),
             .prev = he_start + @as(u32, @intCast(n + ((i + 1) % n))),
             .loop_id = hole_loop_id,
@@ -373,7 +382,6 @@ pub fn imprintClosedLoop(
         });
     }
 
-    // 3. Register the newly created Plug Face
     const plug_face_id: u32 = @intCast(t_arena.faces.items.len);
     try t_arena.loops.append(allocator, .{ .face_id = plug_face_id, .first_half_edge = he_start });
     try t_arena.loops.append(allocator, .{ .face_id = face_id, .first_half_edge = he_start + @as(u32, @intCast(n)) });
@@ -386,10 +394,8 @@ pub fn imprintClosedLoop(
         .loops_start = plug_fl_start,
         .loops_len = 1,
     });
-    // Add the plug to the active tracking list so it gets ray-cast evaluated!
     try faces_list.append(allocator, plug_face_id);
 
-    // 4. Mutate the Parent Face to absorb the new hole loop
     var mutable_face = &t_arena.faces.items[face_id];
     const old_start = mutable_face.loops_start;
     const old_len = mutable_face.loops_len;
@@ -404,7 +410,6 @@ pub fn imprintClosedLoop(
     mutable_face.loops_len = old_len + 1;
 }
 
-/// Welds coincident vertices within a solid to stitch topological seams.
 pub fn weldSolidVertices(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -426,45 +431,40 @@ pub fn weldSolidVertices(
                 var curr_he = loop.first_half_edge;
                 var safety: usize = 0;
                 while (true) : (safety += 1) {
-                    if (safety > 10_000) return error.TopologyCorrupted;
-                    const he = t_arena.half_edges.items[curr_he];
-                    try active_verts.put(he.start_vertex, {});
-                    curr_he = he.next;
+                    if (safety > 10_000 or curr_he >= t_arena.half_edges.items.len) return error.TopologyCorrupted;
+                    try active_verts.put(t_arena.half_edges.items[curr_he].start_vertex, {});
+                    curr_he = t_arena.half_edges.items[curr_he].next;
                     if (curr_he == loop.first_half_edge) break;
                 }
             }
         }
     }
 
-    const VertexData = struct { id: topo.VertexId, rep: topo.VertexId };
-    var v_list = std.ArrayListUnmanaged(VertexData).empty;
+    var v_list = std.ArrayListUnmanaged(topo.VertexId).empty;
     defer v_list.deinit(allocator);
-
     var it = active_verts.keyIterator();
-    while (it.next()) |v_id| {
-        try v_list.append(allocator, .{ .id = v_id.*, .rep = v_id.* });
-    }
+    while (it.next()) |v_id| try v_list.append(allocator, v_id.*);
 
-    // RESTORED: Strict geometric tolerance to prevent VertexNotOnSurface errors
+    var replacement_map = std.AutoHashMap(topo.VertexId, topo.VertexId).init(allocator);
+    defer replacement_map.deinit();
+
     for (0..v_list.items.len) |i| {
-        if (v_list.items[i].rep != v_list.items[i].id) continue;
-        const v1 = t_arena.vertices.items[v_list.items[i].id];
+        const target_id = v_list.items[i];
+        if (replacement_map.contains(target_id)) continue;
+
+        const target_v = t_arena.vertices.items[target_id];
 
         for (i + 1..v_list.items.len) |j| {
-            if (v_list.items[j].rep != v_list.items[j].id) continue;
-            const v2 = t_arena.vertices.items[v_list.items[j].id];
+            const candidate_id = v_list.items[j];
+            if (replacement_map.contains(candidate_id)) continue;
 
-            if (math.entitiesCoincide(v1.point, v1.tolerance, v2.point, v2.tolerance)) {
-                v_list.items[j].rep = v_list.items[i].id;
+            const candidate_v = t_arena.vertices.items[candidate_id];
+            if (math.entitiesCoincide(target_v.point, target_v.tolerance, candidate_v.point, candidate_v.tolerance)) {
+                try replacement_map.put(candidate_id, target_id);
             }
         }
     }
 
-    var replacement_map = std.AutoHashMap(topo.VertexId, topo.VertexId).init(allocator);
-    defer replacement_map.deinit();
-    for (v_list.items) |vd| {
-        if (vd.id != vd.rep) try replacement_map.put(vd.id, vd.rep);
-    }
     if (replacement_map.count() == 0) return;
 
     for (0..solid.shells_len) |s_off| {
@@ -479,7 +479,7 @@ pub fn weldSolidVertices(
                 var curr_he = loop.first_half_edge;
                 var safety: usize = 0;
                 while (true) : (safety += 1) {
-                    if (safety > 10_000) return error.TopologyCorrupted;
+                    if (safety > 10_000 or curr_he >= t_arena.half_edges.items.len) return error.TopologyCorrupted;
                     const he = &t_arena.half_edges.items[curr_he];
                     if (replacement_map.get(he.start_vertex)) |new_id| {
                         he.start_vertex = new_id;
@@ -511,9 +511,10 @@ pub fn weldSolidVertices(
                     var safety: usize = 0;
 
                     while (true) : (safety += 1) {
-                        if (safety > 10_000) return error.TopologyCorrupted;
+                        if (safety > 10_000 or curr_id >= t_arena.half_edges.items.len) return error.TopologyCorrupted;
                         const he = t_arena.half_edges.items[curr_id];
                         const next_id = he.next;
+                        if (next_id >= t_arena.half_edges.items.len) return error.TopologyCorrupted;
                         const next_he = t_arena.half_edges.items[next_id];
 
                         if (he.start_vertex == next_he.start_vertex) {
@@ -539,8 +540,6 @@ pub fn weldSolidVertices(
     }
 }
 
-/// Projects an infinite 3D line into the 2D surface of a Face and clips it against the boundary loops.
-/// Returns a list of finite 3D segments that represent exactly where the line sits inside the face.
 pub fn clipMathLineToFace(
     allocator: std.mem.Allocator,
     t_arena: *const topo.TopologyArena,
@@ -550,13 +549,9 @@ pub fn clipMathLineToFace(
     tol: math.Tolerance,
 ) ![]Segment3D {
     const face = t_arena.faces.items[face_id];
-
-    // Fallback: we only clip planar faces for now.
     if (face.surface.surface_type != .plane) return &[_]Segment3D{};
 
     const plane = g_arena.planes.items[face.surface.index];
-
-    // Project infinite 3D line down to a 2D line on the plane
     const o_2d = classify.projectToPlane(line.origin, plane.origin, plane.u_axis, plane.v_axis);
     const pt2_2d = classify.projectToPlane(math.add(line.origin, line.direction), plane.origin, plane.u_axis, plane.v_axis);
     const d_2d = [2]f64{ pt2_2d[0] - o_2d[0], pt2_2d[1] - o_2d[1] };
@@ -564,12 +559,13 @@ pub fn clipMathLineToFace(
     var t_vals: std.ArrayListUnmanaged(f64) = .empty;
     defer t_vals.deinit(allocator);
 
-    // Cast the infinite line against every bounding half-edge of the face
     for (0..face.loops_len) |l_off| {
         const loop_id = t_arena.face_loops.items[face.loops_start + l_off];
         const loop = t_arena.loops.items[loop_id];
         var curr_he = loop.first_half_edge;
-        while (true) {
+        var safety: usize = 0;
+        while (true) : (safety += 1) {
+            if (safety > 10_000) return error.TopologyCorrupted;
             const he = t_arena.half_edges.items[curr_he];
             const p1 = t_arena.vertices.items[he.start_vertex].point;
             const p2 = t_arena.vertices.items[t_arena.half_edges.items[he.next].start_vertex].point;
@@ -588,14 +584,12 @@ pub fn clipMathLineToFace(
 
     if (t_vals.items.len < 2) return &[_]Segment3D{};
 
-    // Sort crossing points by distance along the line
     std.mem.sort(f64, t_vals.items, {}, struct {
         fn lessThan(_: void, a: f64, b: f64) bool {
             return a < b;
         }
     }.lessThan);
 
-    // Deduplicate identical hits (e.g., ray passed exactly through a vertex sharing two edges)
     var deduped: std.ArrayListUnmanaged(f64) = .empty;
     defer deduped.deinit(allocator);
     for (t_vals.items) |t| {
@@ -604,7 +598,6 @@ pub fn clipMathLineToFace(
         }
     }
 
-    // Pair up entry/exit points to create finite internal segments
     var segments: std.ArrayListUnmanaged(Segment3D) = .empty;
     var i: usize = 0;
     while (i + 1 < deduped.items.len) : (i += 2) {
@@ -619,7 +612,6 @@ pub fn clipMathLineToFace(
     return segments.toOwnedSlice(allocator);
 }
 
-/// Computes the 3D sub-segments where two sets of 3D segments overlap along an infinite line.
 pub fn overlapSegments3D(
     allocator: std.mem.Allocator,
     line: MathLine,
@@ -658,14 +650,13 @@ pub fn overlapSegments3D(
     return common.toOwnedSlice(allocator);
 }
 
-/// Helper to clip a 3D MathLine against two faces and slice them along any overlapping segments.
 pub fn processLineCollision(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
     g_arena: *geom.GeometryArena,
     fa_id: topo.FaceId,
     fb_id: topo.FaceId,
-    line: MathLine,
+    line: types.MathLine,
     faces_a: *std.ArrayListUnmanaged(topo.FaceId),
     faces_b: *std.ArrayListUnmanaged(topo.FaceId),
     tol: math.Tolerance,
@@ -680,100 +671,54 @@ pub fn processLineCollision(
     defer allocator.free(overlaps);
 
     if (overlaps.len > 0) {
+        var active_fa = std.ArrayListUnmanaged(topo.FaceId).empty;
+        defer active_fa.deinit(allocator);
+        try active_fa.append(allocator, fa_id);
+
+        var active_fb = std.ArrayListUnmanaged(topo.FaceId).empty;
+        defer active_fb.deinit(allocator);
+        try active_fb.append(allocator, fb_id);
+
         for (segs_a) |sa| {
-            if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fa_id, sa, tol)) |new_f| {
-                try faces_a.append(allocator, new_f);
+            var new_fa_opt: ?topo.FaceId = null;
+            for (0..active_fa.items.len) |idx| {
+                const sub_fa = active_fa.items[idx];
+                if (sliceFaceWithSegment(allocator, t_arena, g_arena, sub_fa, sa, tol) catch null) |new_f| {
+                    new_fa_opt = new_f;
+                    break;
+                }
+            }
+            if (new_fa_opt) |nf| {
+                try active_fa.append(allocator, nf);
             }
         }
+
+        // Return ALL surviving pieces of Face A (including the mutated original)
+        if (active_fa.items.len > 1) {
+            try faces_a.appendSlice(allocator, active_fa.items);
+        }
+
         for (segs_b) |sb| {
-            if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fb_id, sb, tol)) |new_f| {
-                try faces_b.append(allocator, new_f);
+            var new_fb_opt: ?topo.FaceId = null;
+            for (0..active_fb.items.len) |idx| {
+                const sub_fb = active_fb.items[idx];
+                if (sliceFaceWithSegment(allocator, t_arena, g_arena, sub_fb, sb, tol) catch null) |new_f| {
+                    new_fb_opt = new_f;
+                    break;
+                }
+            }
+            if (new_fb_opt) |nf| {
+                try active_fb.append(allocator, nf);
             }
         }
-    }
-}
 
-/// Slices faces along 3D polyline curves resulting from surface intersections
-fn processSampledCollision(
-    allocator: std.mem.Allocator,
-    t_arena: *topo.TopologyArena,
-    g_arena: *geom.GeometryArena,
-    fa_id: topo.FaceId,
-    fb_id: topo.FaceId,
-    pts: []const math.Vec3,
-    faces_a: *std.ArrayListUnmanaged(topo.FaceId),
-    faces_b: *std.ArrayListUnmanaged(topo.FaceId),
-    tol: math.Tolerance,
-) !void {
-    if (pts.len < 2) return;
-
-    // Snap polyline vertices to any existing topological vertices within a loose
-    // bounding tolerance to bridge sampled SSI curves to exact analytical boundaries.
-    var snapped_pts = try allocator.alloc(math.Vec3, pts.len);
-    defer allocator.free(snapped_pts);
-
-    const snap_sq = 1.0; // 1.0mm sq radius to catch sampled ellipse endpoints
-
-    for (pts, 0..) |pt, i| {
-        var best_pt = pt;
-        var min_d_sq: f64 = snap_sq;
-
-        for (t_arena.vertices.items) |v| {
-            const d_sq = math.distSq(pt, v.point);
-            if (d_sq < min_d_sq) {
-                min_d_sq = d_sq;
-                best_pt = v.point;
-            }
-        }
-        snapped_pts[i] = best_pt;
-    }
-
-    for (0..snapped_pts.len - 1) |i| {
-        // Skip degenerate segments caused by snapping
-        if (math.distSq(snapped_pts[i], snapped_pts[i + 1]) < tol.squared) continue;
-
-        const seg = Segment3D{ .start = snapped_pts[i], .end = snapped_pts[i + 1] };
-        if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fa_id, seg, tol)) |new_f| {
-            try faces_a.append(allocator, new_f);
-        }
-        if (try sliceFaceWithSegment(allocator, t_arena, g_arena, fb_id, seg, tol)) |new_f| {
-            try faces_b.append(allocator, new_f);
+        // Return ALL surviving pieces of Face B
+        if (active_fb.items.len > 1) {
+            try faces_b.appendSlice(allocator, active_fb.items);
         }
     }
 }
 
-/// Discretizes a 3D intersection circle into a polyline and slices colliding faces
-fn processCircleCollision(
-    allocator: std.mem.Allocator,
-    t_arena: *topo.TopologyArena,
-    g_arena: *geom.GeometryArena,
-    fa_id: topo.FaceId,
-    fb_id: topo.FaceId,
-    circle: MathCircle,
-    faces_a: *std.ArrayListUnmanaged(topo.FaceId),
-    faces_b: *std.ArrayListUnmanaged(topo.FaceId),
-    tol: math.Tolerance,
-) !void {
-    const samples: usize = 32;
-    var pts = try allocator.alloc(math.Vec3, samples + 1);
-    defer allocator.free(pts);
-
-    const tau = 2.0 * std.math.pi;
-    for (0..samples) |i| {
-        const theta = tau * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(samples));
-        const radial = math.add(
-            math.scale(circle.x_axis, circle.radius * @cos(theta)),
-            math.scale(circle.y_axis, circle.radius * @sin(theta)),
-        );
-        pts[i] = math.add(circle.center, radial);
-    }
-    pts[samples] = pts[0]; // Close circle loop
-
-    try processSampledCollision(allocator, t_arena, g_arena, fa_id, fb_id, pts, faces_a, faces_b, tol);
-}
-
-/// Evaluates point inclusion against closed boundaries using first-hit normal orientation and multi-ray voting.
-/// Utilizes a transient AABB cache to accelerate raycasting from O(N) face checks to O(log N) fast-slab rejections.
 pub fn reverseFaceLoops(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -788,7 +733,9 @@ pub fn reverseFaceLoops(
         var edges = std.ArrayListUnmanaged(topo.HalfEdgeId).empty;
         defer edges.deinit(allocator);
 
-        while (true) {
+        var safety: usize = 0;
+        while (true) : (safety += 1) {
+            if (safety > 10_000 or curr >= t_arena.half_edges.items.len) return error.TopologyCorrupted;
             try edges.append(allocator, curr);
             curr = t_arena.half_edges.items[curr].next;
             if (curr == loop.first_half_edge) break;
@@ -803,24 +750,22 @@ pub fn reverseFaceLoops(
         const n = edges.items.len;
         for (0..n) |i| {
             const e = edges.items[i];
-            const prev_e = edges.items[(i + 1) % n]; // Old next becomes new prev
-            const next_e = edges.items[(i + n - 1) % n]; // Old prev becomes new next
+            const prev_e = edges.items[(i + 1) % n];
+            const next_e = edges.items[(i + n - 1) % n];
 
             var he = &t_arena.half_edges.items[e];
             he.next = next_e;
             he.prev = prev_e;
-            he.start_vertex = verts.items[(i + 1) % n]; // Shift start vertex forward
+            he.start_vertex = verts.items[(i + 1) % n];
             he.forward = !he.forward;
         }
     }
 }
 
-/// Crawls a newly created shell, cross-links half-edge twin pointers across Boolean seams,
-/// and locks exact UV parameters for freeform boundary evaluation.
 pub fn stitchSolidBoundaries(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
-    g_arena: *const geom.GeometryArena, // ADDED: Required for UV projection
+    g_arena: *const geom.GeometryArena,
     solid_id: topo.SolidId,
 ) !void {
     const EdgeKey = struct { start: topo.VertexId, end: topo.VertexId };
@@ -843,16 +788,15 @@ pub fn stitchSolidBoundaries(
                 var curr_he = loop.first_half_edge;
                 var safety: usize = 0;
                 while (true) : (safety += 1) {
-                    if (safety > 10_000) return error.TopologyCorrupted;
+                    if (safety > 10_000 or curr_he >= t_arena.half_edges.items.len) return error.TopologyCorrupted;
 
                     const he = &t_arena.half_edges.items[curr_he];
+                    if (he.next >= t_arena.half_edges.items.len) return error.TopologyCorrupted;
                     const next_he = t_arena.half_edges.items[he.next];
 
                     const v_start = he.start_vertex;
                     const v_end = next_he.start_vertex;
 
-                    // PROJECT UV PARAMETERS:
-                    // Force the half-edge to lock its 2D p-curve coordinate based on the final welded 3D vertex.
                     const pt3d = t_arena.vertices.items[v_start].point;
                     const uv = g_arena.surfaceProject(face.surface, pt3d);
                     he.start_uv = .{ uv[0], uv[1] };
@@ -875,7 +819,6 @@ pub fn stitchSolidBoundaries(
     }
 }
 
-/// Topologically injects a closed mathematical circle into an existing face as an inner boundary (hole).
 pub fn injectCircularHole(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -885,8 +828,6 @@ pub fn injectCircularHole(
     tol: math.Tolerance,
 ) !void {
     _ = tol;
-
-    // 1. Store the exact 3D geometry of the circular seam
     const arc_idx: u24 = @intCast(g_arena.circle_arcs.items.len);
     try g_arena.circle_arcs.append(allocator, .{
         .center = circle.center,
@@ -896,8 +837,6 @@ pub fn injectCircularHole(
     });
     const curve_id = geom.CurveId{ .index = arc_idx, .curve_type = .circle_arc };
 
-    // 2. Break the continuous loop into two topological half-edges to form a valid manifold cycle.
-    // Vertex 1 at 0 degrees, Vertex 2 at 180 degrees.
     const p1 = math.add(circle.center, math.scale(circle.x_axis, circle.radius));
     const p2 = math.add(circle.center, math.scale(circle.x_axis, -circle.radius));
 
@@ -910,8 +849,6 @@ pub fn injectCircularHole(
     const loop_id: u32 = @intCast(t_arena.loops.items.len);
     const he_start: u32 = @intCast(t_arena.half_edges.items.len);
 
-    // 3. Winding Order: Holes must be wound backward relative to the outer boundary.
-    // We set forward = false to designate this as a subtractive inner loop.
     try t_arena.half_edges.append(allocator, .{
         .start_vertex = v1_id,
         .twin = topo.NULL_ID,
@@ -932,15 +869,11 @@ pub fn injectCircularHole(
         .forward = false,
     });
 
-    // 4. Register the new inner loop
     try t_arena.loops.append(allocator, .{
         .face_id = face_id,
         .first_half_edge = he_start,
     });
 
-    // 5. Safely attach the new loop to the existing Face.
-    // Because Face loop arrays are flat contiguous slices, we copy the old ones
-    // to the end of the arena and append the new one.
     var mutable_face = &t_arena.faces.items[face_id];
     const old_start = mutable_face.loops_start;
     const old_len = mutable_face.loops_len;
@@ -955,8 +888,6 @@ pub fn injectCircularHole(
     mutable_face.loops_len = old_len + 1;
 }
 
-/// Scans the shell for the sharp corner vertex, verifies it is flanked by the fillet's
-/// cap vertices, severs the 90-degree corner, and sews a transversal arc matching the fillet.
 pub fn trimOrthogonalCap(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,

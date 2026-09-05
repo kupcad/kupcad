@@ -12,6 +12,9 @@ pub const SolidId = u32;
 
 pub const NULL_ID: u32 = std.math.maxInt(u32);
 
+pub const MAX_FACE_ITERS: usize = 10_000;
+pub const MAX_EDGE_ITERS: usize = 100_000;
+
 // --- Topological Primitives ---
 
 pub const Vertex = struct {

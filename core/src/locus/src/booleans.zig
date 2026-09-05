@@ -5,6 +5,8 @@ const geom = @import("geometry.zig");
 const math = @import("math.zig");
 const nurbs_ssi = @import("nurbs_ssi.zig");
 const classify = @import("csg/classify.zig");
+const healing = @import("csg/healing.zig");
+const parallel = @import("parallel.zig");
 const intersections = @import("csg/intersections.zig");
 const modifiers = @import("csg/modifiers.zig");
 const types = @import("csg/types.zig");
@@ -120,64 +122,76 @@ pub fn intersectAndSplitFaces3D(
 ) !void {
     _ = solid_a;
     _ = solid_b;
-    var i_a: usize = 0;
-    while (i_a < faces_a.items.len) : (i_a += 1) {
-        var i_b: usize = 0;
-        while (i_b < faces_b.items.len) : (i_b += 1) {
-            const fa_id = faces_a.items[i_a];
-            const fb_id = faces_b.items[i_b];
-            const face_a = t_arena.faces.items[fa_id];
-            const face_b = t_arena.faces.items[fb_id];
 
-            // --- FREEFORM NURBS FACE COLLISION PATH ---
-            if (face_a.surface.surface_type == .nurbs and face_b.surface.surface_type == .nurbs) {
-                const surf_a = &g_arena.nurbs_surfaces.items[face_a.surface.index];
-                const surf_b = &g_arena.nurbs_surfaces.items[face_b.surface.index];
+    var qa = std.ArrayListUnmanaged(topo.FaceId).empty;
+    defer qa.deinit(allocator);
+    try qa.appendSlice(allocator, faces_a.items);
+    faces_a.clearRetainingCapacity();
 
-                const seams = nurbs_ssi.findAllIntersectionSeams(allocator, surf_a, surf_b, 0.5) catch continue;
-                defer {
-                    for (seams) |s| {
-                        allocator.free(s.points_3d);
-                        allocator.free(s.uvs_a);
-                        allocator.free(s.uvs_b);
-                    }
-                    allocator.free(seams);
-                }
+    var qb = std.ArrayListUnmanaged(topo.FaceId).empty;
+    defer qb.deinit(allocator);
+    try qb.appendSlice(allocator, faces_b.items);
+    faces_b.clearRetainingCapacity();
 
-                for (seams) |seam| {
-                    if (seam.points_3d.len < 2) continue;
+    var i: usize = 0;
+    while (i < qa.items.len) {
+        const fa_id = qa.items[i];
+        var a_was_split = false;
+        const aabb_a = classify.computeFaceAABB(t_arena, fa_id);
 
-                    // Slice face_a with seam.uvs_a and seam.points_3d
-                    const seg = types.Segment3D{
-                        .start = seam.points_3d[0],
-                        .end = seam.points_3d[seam.points_3d.len - 1],
-                    };
+        var j: usize = 0;
+        while (j < qb.items.len) {
+            const fb_id = qb.items[j];
+            const aabb_b = classify.computeFaceAABB(t_arena, fb_id);
 
-                    if (modifiers.sliceFaceWithSegment(allocator, t_arena, g_arena, fa_id, seg, tol) catch null) |new_fa| {
-                        try faces_a.append(allocator, new_fa);
-                    }
-
-                    if (modifiers.sliceFaceWithSegment(allocator, t_arena, g_arena, fb_id, seg, tol) catch null) |new_fb| {
-                        try faces_b.append(allocator, new_fb);
-                    }
-                }
+            const eps = tol.absolute * 10.0;
+            if (aabb_a.min[0] > aabb_b.max[0] + eps or aabb_a.max[0] < aabb_b.min[0] - eps or
+                aabb_a.min[1] > aabb_b.max[1] + eps or aabb_a.max[1] < aabb_b.min[1] - eps or
+                aabb_a.min[2] > aabb_b.max[2] + eps or aabb_a.max[2] < aabb_b.min[2] - eps)
+            {
+                j += 1;
                 continue;
             }
 
-            // --- ANALYTIC SURFACE COLLISION PATH ---
-            const res = try intersections.intersectSurfaces(allocator, g_arena, face_a.surface, face_b.surface, tol);
+            const res = try intersections.intersectSurfaces(allocator, g_arena, t_arena.faces.items[fa_id].surface, t_arena.faces.items[fb_id].surface, tol);
+
+            var new_fa = std.ArrayListUnmanaged(topo.FaceId).empty;
+            defer new_fa.deinit(allocator);
+            var new_fb = std.ArrayListUnmanaged(topo.FaceId).empty;
+            defer new_fb.deinit(allocator);
+
             switch (res) {
-                .line => |line| {
-                    try modifiers.processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, line, faces_a, faces_b, tol);
-                },
+                .line => |line| try modifiers.processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, line, &new_fa, &new_fb, tol),
                 .two_lines => |lines| {
-                    try modifiers.processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[0], faces_a, faces_b, tol);
-                    try modifiers.processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[1], faces_a, faces_b, tol);
+                    try modifiers.processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[0], &new_fa, &new_fb, tol);
+                    try modifiers.processLineCollision(allocator, t_arena, g_arena, fa_id, fb_id, lines[1], &new_fa, &new_fb, tol);
                 },
                 else => {},
             }
+
+            if (new_fa.items.len > 0 or new_fb.items.len > 0) {
+                if (new_fb.items.len > 0) {
+                    _ = qb.swapRemove(j);
+                    try qb.appendSlice(allocator, new_fb.items);
+                }
+                if (new_fa.items.len > 0) {
+                    a_was_split = true;
+                    _ = qa.swapRemove(i);
+                    try qa.appendSlice(allocator, new_fa.items);
+                    break; // Face A no longer exists, exit the J-loop to test its new sub-faces
+                } else {
+                    continue; // Face B split, but A survived. Do not advance J so we test A against the newly swapped B piece.
+                }
+            }
+            j += 1;
+        }
+
+        if (!a_was_split) {
+            try faces_a.append(allocator, fa_id);
+            i += 1;
         }
     }
+    try faces_b.appendSlice(allocator, qb.items);
 }
 
 pub fn computeBoolean(
@@ -190,6 +204,7 @@ pub fn computeBoolean(
     config: anytype,
 ) BooleanError!topo.SolidId {
     _ = config;
+    // const mute_errors = if (@hasField(@TypeOf(config), "mute_errors")) config.mute_errors else false;
 
     var min_b = math.Vec3{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
     var max_b = math.Vec3{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
@@ -392,7 +407,15 @@ pub fn computeBoolean(
     // PHASE 2: INTERSECT FACES (1D SSI curves connect the 0D Nodes)
     intersectAndSplitFaces3D(allocator, t_arena, g_arena, solid_a, solid_b, &faces_a, &faces_b, tol) catch {};
 
-    // PHASE 3: CLASSIFY SURVIVING FACES
+    // PHASE 3: CLASSIFY SURVIVING FACES (MULTI-THREADED)
+    var aabbs_a = try allocator.alloc(types.FaceAABB, faces_a.items.len);
+    defer allocator.free(aabbs_a);
+    for (faces_a.items, 0..) |f_id, i| aabbs_a[i] = classify.computeFaceAABB(t_arena, f_id);
+
+    var aabbs_b = try allocator.alloc(types.FaceAABB, faces_b.items.len);
+    defer allocator.free(aabbs_b);
+    for (faces_b.items, 0..) |f_id, i| aabbs_b[i] = classify.computeFaceAABB(t_arena, f_id);
+
     var faces_to_classify = std.ArrayListUnmanaged(FaceTracker).empty;
     defer faces_to_classify.deinit(allocator);
 
@@ -414,34 +437,74 @@ pub fn computeBoolean(
         }
     }
 
+    // Allocate thread-safe flag map for Phase 3 parallel classifications
+    const keep_flags = try allocator.alloc(bool, faces_to_classify.items.len);
+    defer allocator.free(keep_flags);
+    @memset(keep_flags, false);
+
+    const ClassifyCtx = struct {
+        t_arena: *const topo.TopologyArena,
+        g_arena: *const geom.GeometryArena,
+        faces_to_classify: []const FaceTracker,
+        aabbs_a: []const types.FaceAABB,
+        aabbs_b: []const types.FaceAABB,
+        solid_a: topo.SolidId,
+        op: BooleanOp,
+        tol: math.Tolerance,
+        keep_flags: []bool,
+    };
+
+    var ctx = ClassifyCtx{
+        .t_arena = t_arena,
+        .g_arena = g_arena,
+        .faces_to_classify = faces_to_classify.items,
+        .aabbs_a = aabbs_a,
+        .aabbs_b = aabbs_b,
+        .solid_a = solid_a,
+        .op = op,
+        .tol = tol,
+        .keep_flags = keep_flags,
+    };
+
+    // Execute heavy raycasting distributed across OS threads / oneTBB instances
+    parallel.parallelFor(0, faces_to_classify.items.len, ClassifyCtx, &ctx, struct {
+        fn doWork(idx: usize, c: *ClassifyCtx) void {
+            // Instantiate an isolated arena to safely manage memory across concurrent threads
+            var thread_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer thread_arena.deinit();
+            const temp_alloc = thread_arena.allocator();
+
+            const item = c.faces_to_classify[idx];
+            const target_aabbs = if (item.source_solid == c.solid_a) c.aabbs_b else c.aabbs_a;
+
+            const class = classify.classifyFace(temp_alloc, c.t_arena, c.g_arena, item.face, target_aabbs, c.tol);
+
+            c.keep_flags[idx] = if (item.source_solid == c.solid_a) switch (c.op) {
+                .union_op => class == .outside or class == .same,
+                .difference => class == .outside or class == .opposite,
+                .intersection => class == .inside or class == .same,
+            } else switch (c.op) {
+                .union_op => class == .outside,
+                .difference => class == .inside,
+                .intersection => class == .inside,
+            };
+        }
+    }.doWork);
+
     var selected_faces = std.ArrayListUnmanaged(topo.FaceId).empty;
     defer selected_faces.deinit(allocator);
 
-    for (faces_to_classify.items) |item| {
-        const face_id = item.face;
-        const s_id = item.source_solid;
-        const target_faces = if (s_id == solid_a) faces_b.items else faces_a.items;
-        const class = classify.classifyFace(allocator, t_arena, g_arena, face_id, target_faces, tol);
-
-        const keep = if (s_id == solid_a) switch (op) {
-            .union_op => class == .outside or class == .same,
-            .difference => class == .outside or class == .opposite,
-            .intersection => class == .inside or class == .same,
-        } else switch (op) {
-            .union_op => class == .outside,
-            .difference => class == .inside,
-            .intersection => class == .inside,
-        };
-
-        if (keep) {
-            const area = classify.calculateFaceArea(t_arena, face_id);
+    // Sequential append based on populated thread results
+    for (faces_to_classify.items, 0..) |item, idx| {
+        if (keep_flags[idx]) {
+            const area = classify.calculateFaceArea(t_arena, item.face);
             if (area < tol.squared) continue;
 
-            if (s_id == solid_b and op == .difference) {
-                t_arena.faces.items[face_id].forward = !t_arena.faces.items[face_id].forward;
-                try modifiers.reverseFaceLoops(allocator, t_arena, face_id);
+            if (item.source_solid == solid_b and op == .difference) {
+                t_arena.faces.items[item.face].forward = !t_arena.faces.items[item.face].forward;
+                try modifiers.reverseFaceLoops(allocator, t_arena, item.face);
             }
-            try selected_faces.append(allocator, face_id);
+            try selected_faces.append(allocator, item.face);
         }
     }
 
@@ -457,6 +520,9 @@ pub fn computeBoolean(
 
     try modifiers.weldSolidVertices(allocator, t_arena, new_solid_id);
     try modifiers.stitchSolidBoundaries(allocator, t_arena, g_arena, new_solid_id);
+
+    // Apply the topological healing pass to dissolve boolean seams
+    // try healing.healSolidEx(allocator, t_arena, g_arena, new_solid_id, tol, .{ .mute_errors = mute_errors });
 
     if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
         const validator = @import("validator.zig");
