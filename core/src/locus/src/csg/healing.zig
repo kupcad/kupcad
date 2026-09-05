@@ -182,6 +182,7 @@ pub fn extractIslandBoundary(
         start_v_map.deinit();
     }
 
+    // 1. Isolate edge classification
     for (island) |f_id| {
         const face = t.faces.items[f_id];
         for (0..face.loops_len) |l_off| {
@@ -212,18 +213,50 @@ pub fn extractIslandBoundary(
     var next_map = std.AutoHashMap(topo.HalfEdgeId, topo.HalfEdgeId).init(allocator);
     defer next_map.deinit();
 
+    // 2. Map virtual connections
     for (boundary_edges.items) |he_id| {
         const he = t.half_edges.items[he_id];
         const end_v = t.half_edges.items[he.next].start_vertex;
 
-        var list = start_v_map.getPtr(end_v) orelse return error.TopologyCorrupted;
-        if (list.items.len == 0) return error.TopologyCorrupted;
+        const list = start_v_map.getPtr(end_v) orelse return error.TopologyCorrupted;
 
-        const next_bnd = list.items[list.items.len - 1];
-        list.shrinkRetainingCapacity(list.items.len - 1);
+        // Strict Manifold Invariant: A valid boundary loop must have exactly ONE
+        // outgoing boundary edge per vertex. >1 is a Bowtie, 0 is a Dangling Tail.
+        if (list.items.len != 1) return error.TopologyCorrupted;
+
+        const next_bnd = list.items[0];
         try next_map.put(he_id, next_bnd);
     }
 
+    // 3. TRANSACTIONAL VALIDATION PHASE (No mutations yet)
+    var visited_bounds = std.AutoHashMap(topo.HalfEdgeId, void).init(allocator);
+    defer visited_bounds.deinit();
+
+    var temp_loops = std.ArrayListUnmanaged(topo.HalfEdgeId).empty;
+    defer temp_loops.deinit(allocator);
+
+    for (boundary_edges.items) |he_id| {
+        if (visited_bounds.contains(he_id)) continue;
+        try temp_loops.append(allocator, he_id);
+
+        var curr = he_id;
+        var safety: usize = 0;
+        while (true) : (safety += 1) {
+            if (safety > topo.MAX_EDGE_ITERS) return error.TopologyCorrupted;
+            try visited_bounds.put(curr, {});
+
+            curr = next_map.get(curr) orelse return error.TopologyCorrupted;
+            if (curr == he_id) break;
+        }
+    }
+
+    // If the virtual map failed to cleanly consume every single boundary edge into closed loops,
+    // we abort immediately. The graph remains 100% untouched and safe!
+    if (visited_bounds.count() != boundary_edges.items.len) {
+        return error.TopologyCorrupted;
+    }
+
+    // 4. SAFE MUTATION PHASE
     var it = next_map.iterator();
     while (it.next()) |entry| {
         const he = entry.key_ptr.*;
@@ -236,29 +269,20 @@ pub fn extractIslandBoundary(
         t.half_edges.items[seam_id].twin = topo.NULL_ID;
     }
 
-    var visited_bounds = std.AutoHashMap(topo.HalfEdgeId, void).init(allocator);
-    defer visited_bounds.deinit();
-
+    const target_face_id = island[0];
     var new_loops = std.ArrayListUnmanaged(topo.LoopId).empty;
     defer new_loops.deinit(allocator);
 
-    const target_face_id = island[0];
-
-    for (boundary_edges.items) |he_id| {
-        if (visited_bounds.contains(he_id)) continue;
-
+    for (temp_loops.items) |first_he| {
         const loop_id: u32 = @intCast(t.loops.items.len);
-        try t.loops.append(allocator, .{ .face_id = target_face_id, .first_half_edge = he_id });
+        try t.loops.append(allocator, .{ .face_id = target_face_id, .first_half_edge = first_he });
         try new_loops.append(allocator, loop_id);
 
-        var curr = he_id;
-        var safety: usize = 0;
-        while (true) : (safety += 1) {
-            if (safety > topo.MAX_EDGE_ITERS) return error.TopologyCorrupted;
-            try visited_bounds.put(curr, {});
+        var curr = first_he;
+        while (true) {
             t.half_edges.items[curr].loop_id = loop_id;
-            curr = t.half_edges.items[curr].next;
-            if (curr == he_id) break;
+            curr = next_map.get(curr).?;
+            if (curr == first_he) break;
         }
     }
 
