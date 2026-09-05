@@ -670,3 +670,325 @@ test "Healing: Coplanar Faces Forming a Hole Preserve Multiple Loops" {
     // The resulting face must have exactly 2 loops (1 outer boundary, 1 inner hole).
     try std.testing.expectEqual(@as(usize, 2), merged_face.loops_len);
 }
+
+test "Healing: Hang Test - Zero Length Micro-Edge Collapse" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // V1 and V2 are at the exact same physical coordinate.
+    // This creates a zero-length edge between them.
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } }, // Duplicate!
+        .{ .point = .{ 0, 10, 0 } },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2, 3 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{f1});
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 1 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    // If the healer's edge-collapse logic fails to properly advance pointers, it will hang here.
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+}
+
+test "Healing: Hang Test - Two-Edge Degenerate Ribbon" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+
+    // A face constructed of only 2 edges that just trace back and forth
+    try t_arena.half_edges.appendSlice(alloc, &[_]topo.HalfEdge{
+        .{ .start_vertex = 0, .twin = topo.NULL_ID, .next = 1, .prev = 1, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .forward = true },
+        .{ .start_vertex = 1, .twin = topo.NULL_ID, .next = 0, .prev = 0, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .forward = true },
+    });
+
+    try t_arena.loops.append(alloc, .{ .face_id = 0, .first_half_edge = 0 });
+    try t_arena.face_loops.append(alloc, 0);
+    try t_arena.faces.append(alloc, .{ .surface = .{ .index = 0, .surface_type = .plane }, .forward = true, .loops_start = 0, .loops_len = 1 });
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{0});
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 1 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    // If the healer gets stuck trying to process a face with no area/valid loop, it hangs here.
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+}
+
+test "Healing: Hang Test - Collinear Zero-Area Face" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Three vertices, but they lie perfectly on the same X-axis line.
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 5, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{f1});
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 1 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    // If the collinear-vertex removal logic loops infinitely when the face flattens out, it hangs here.
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+}
+
+test "Healing: Hang Test - Coplanar Bowtie Retry Loop" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Create a bowtie (non-manifold at vertex 0)
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 10, 10, 0 } },
+        .{ .point = .{ 0, 10, 0 } },
+        .{ .point = .{ 10, -10, 0 } },
+        .{ .point = .{ 0, -10, 0 } },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f2 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 3, 4 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{ f1, f2 });
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 2 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // If healSolidEx catches the TopologyCorrupted error from extractIslandBoundary
+    // but forgets to mark these faces as "processed", its outer loop will hang right here.
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+}
+
+test "Healing: Hang Test - Perfectly Overlapping Identical Faces" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } },
+        .{ .point = .{ 10, 10, 0 } },
+        .{ .point = .{ 0, 10, 0 } },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    // Two identical faces occupying the exact same space (classic Boolean artifact)
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2, 3 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f2 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2, 3 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{ f1, f2 });
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 2 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // If the island boundary tracer gets trapped in a cycle mapping overlapping boundary edges
+    // without advancing, it hangs here.
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+}
+
+test "Healing: Hang Test - Inverted Overlapping Faces (Zero-Volume Void)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } },
+        .{ .point = .{ 10, 10, 0 } },
+        .{ .point = .{ 0, 10, 0 } },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    // Face 1 is Normal CCW. Face 2 is reversed CW.
+    // They share a plane but have inverted winding orders.
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2, 3 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f2 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 3, 2, 1 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{ f1, f2 });
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 2 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // If the healer ignores normal vectors when clustering, it will try to merge inverted faces
+    // and fail to resolve the boundary, causing a hang.
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+}
+
+test "Healing: Hang Test - BFS Self-Twinning Face (Internal Slit)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Create a square with an internal slit (a zero-width cut stopping in the middle)
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } },
+        .{ .point = .{ 10, 10, 0 } },
+        .{ .point = .{ 0, 10, 0 } },
+        .{ .point = .{ 5, 5, 0 } }, // The end of the slit
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+
+    // The slit is formed by two half-edges that twin with *each other* inside the *same* face.
+    try t_arena.half_edges.appendSlice(alloc, &[_]topo.HalfEdge{
+        .{ .start_vertex = 0, .twin = topo.NULL_ID, .next = 1, .prev = 5, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .forward = true },
+        .{ .start_vertex = 1, .twin = topo.NULL_ID, .next = 2, .prev = 0, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .forward = true },
+        .{ .start_vertex = 2, .twin = 3, .next = 3, .prev = 1, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .forward = true }, // Slit In
+        .{ .start_vertex = 4, .twin = 2, .next = 4, .prev = 2, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .forward = true }, // Slit Out
+        .{ .start_vertex = 2, .twin = topo.NULL_ID, .next = 5, .prev = 3, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .forward = true },
+        .{ .start_vertex = 3, .twin = topo.NULL_ID, .next = 0, .prev = 4, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .forward = true },
+    });
+
+    try t_arena.loops.append(alloc, .{ .face_id = 0, .first_half_edge = 0 });
+    try t_arena.face_loops.append(alloc, 0);
+    try t_arena.faces.append(alloc, .{ .surface = .{ .index = 0, .surface_type = .plane }, .forward = true, .loops_start = 0, .loops_len = 1 });
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{0});
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 1 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // If the healer's BFS twin-crawler doesn't properly track visited faces or skips
+    // self-referential twins, it will enqueue Face 0 infinitely and hang here.
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+}
+
+test "Healing: Hang Test - BFS Asymmetric Twin Cycle" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } }, .{ .point = .{ 10, 0, 0 } }, .{ .point = .{ 0, 10, 0 } },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+
+    // Corrupted Boolean state: 3 edges that form a cyclic twin loop (0.twin=1, 1.twin=2, 2.twin=0)
+    // instead of standard symmetric twins (0.twin=1, 1.twin=0).
+    try t_arena.half_edges.appendSlice(alloc, &[_]topo.HalfEdge{
+        .{ .start_vertex = 0, .twin = 1, .next = 0, .prev = 0, .loop_id = 0, .curve = .{ .index = 0, .curve_type = .line }, .forward = true },
+        .{ .start_vertex = 0, .twin = 2, .next = 1, .prev = 1, .loop_id = 1, .curve = .{ .index = 0, .curve_type = .line }, .forward = true },
+        .{ .start_vertex = 0, .twin = 0, .next = 2, .prev = 2, .loop_id = 2, .curve = .{ .index = 0, .curve_type = .line }, .forward = true },
+    });
+
+    try t_arena.loops.appendSlice(alloc, &[_]topo.Loop{
+        .{ .face_id = 0, .first_half_edge = 0 },
+        .{ .face_id = 1, .first_half_edge = 1 },
+        .{ .face_id = 2, .first_half_edge = 2 },
+    });
+    try t_arena.face_loops.appendSlice(alloc, &[_]topo.LoopId{ 0, 1, 2 });
+    try t_arena.faces.appendSlice(alloc, &[_]topo.Face{
+        .{ .surface = .{ .index = 0, .surface_type = .plane }, .forward = true, .loops_start = 0, .loops_len = 1 },
+        .{ .surface = .{ .index = 0, .surface_type = .plane }, .forward = true, .loops_start = 1, .loops_len = 1 },
+        .{ .surface = .{ .index = 0, .surface_type = .plane }, .forward = true, .loops_start = 2, .loops_len = 1 },
+    });
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{ 0, 1, 2 });
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 3 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // If BFS traversal blindly trusts twins without a visited set, it will spin A->B->C->A forever.
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+}
+
+test "Healing: Hang Test - Nested Coplanar Islands (Concentric Rings)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    // Create a 30x30 outer face, a 20x20 middle face, and a 10x10 inner face.
+    // They are all completely coplanar and overlapping. The boundary extractor will attempt to merge them.
+    const f1 = try gen.generateSquare(alloc, &t_arena, &g_arena, 30.0, 30.0, false);
+    const f2 = try gen.generateSquare(alloc, &t_arena, &g_arena, 20.0, 20.0, false);
+    const f3 = try gen.generateSquare(alloc, &t_arena, &g_arena, 10.0, 10.0, false);
+
+    // Merge them into one shell
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{
+        t_arena.shell_faces.items[t_arena.shells.items[t_arena.solid_shells.items[t_arena.solids.items[f1].shells_start]].faces_start],
+        t_arena.shell_faces.items[t_arena.shells.items[t_arena.solid_shells.items[t_arena.solids.items[f2].shells_start]].faces_start],
+        t_arena.shell_faces.items[t_arena.shells.items[t_arena.solid_shells.items[t_arena.solids.items[f3].shells_start]].faces_start],
+    });
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 3 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // If the boundary algorithm cannot resolve deeply nested boundaries,
+    // it will loop indefinitely trying to link the nested loops together.
+    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+}

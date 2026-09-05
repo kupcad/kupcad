@@ -408,3 +408,91 @@ test "Modifiers: Diagonal Slice Correctly Bisects Face" {
     try std.testing.expectApproxEqAbs(50.0, area1, 1e-3);
     try std.testing.expectApproxEqAbs(50.0, area2, 1e-3);
 }
+
+test "Modifiers: Hang Test - Slice Face With Zero-Length Segment" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const sq_id = try gen.generateSquare(alloc, &t_arena, &g_arena, 10.0, 10.0, false);
+    const solid = t_arena.solids.items[sq_id];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
+    const face_id = t_arena.shell_faces.items[shell.faces_start];
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // A segment where start == end.
+    // If the slicer's ray-edge intersection logic divides by zero or fails to advance
+    // when it can't find a distinct entry/exit point, it will hang here.
+    const seg = types.Segment3D{ .start = .{ 5, 5, 0 }, .end = .{ 5, 5, 0 } };
+
+    const new_face = modifiers.sliceFaceWithSegment(alloc, &t_arena, &g_arena, face_id, seg, tol) catch null;
+
+    // Should gracefully reject the zero-length slice
+    try std.testing.expectEqual(@as(?topo.FaceId, null), new_face);
+}
+
+test "Modifiers: Hang Test - Slice Exactly Collinear to Existing Edge" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const sq_id = try gen.generateSquare(alloc, &t_arena, &g_arena, 10.0, 10.0, false);
+    const solid = t_arena.solids.items[sq_id];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
+    const face_id = t_arena.shell_faces.items[shell.faces_start];
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // A segment that exactly overlaps the bottom edge of the square (Y=0, X:0->10).
+    // If the slicer's vertex-snapping loop walks along the collinear edge and doesn't
+    // correctly detect that it never entered the face interior, it will loop infinitely.
+    const seg = types.Segment3D{ .start = .{ 0, 0, 0 }, .end = .{ 10, 0, 0 } };
+
+    const new_face = modifiers.sliceFaceWithSegment(alloc, &t_arena, &g_arena, face_id, seg, tol) catch null;
+
+    // Should gracefully reject because it doesn't cross the interior
+    try std.testing.expectEqual(@as(?topo.FaceId, null), new_face);
+}
+
+test "Modifiers: Hang Test - Slice Passing Exactly Through Vertex" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Create a triangle: (0,0,0) -> (10,0,0) -> (5,10,0)
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } },
+        .{ .point = .{ 5, 10, 0 } },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{f1});
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 1 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // A slice that starts exactly at the top vertex (5,10) and cuts straight down to (5,0).
+    // If the raycaster expects the line to cleanly cross two distinct edges but hits a vertex
+    // exactly on the first intersection, its edge-traversal while-loop might spin infinitely
+    // trying to figure out which adjacent edge to walk.
+    const seg = types.Segment3D{ .start = .{ 5, 10, 0 }, .end = .{ 5, 0, 0 } };
+
+    const new_face = modifiers.sliceFaceWithSegment(alloc, &t_arena, &g_arena, f1, seg, tol) catch null;
+
+    // This should actually succeed and return a valid split face ID, but most importantly, it shouldn't hang.
+    try std.testing.expect(new_face != null);
+}
