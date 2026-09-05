@@ -410,13 +410,17 @@ pub fn build(b: *std.Build) void {
             run_cmd.addArgs(args);
         }
 
+        const test_filters = b.option([]const []const u8, "test-filter", "Filter tests by name") orelse &.{};
+
         const mod_tests = b.addTest(.{
             .root_module = mod,
+            .filters = test_filters,
         });
         const run_mod_tests = b.addRunArtifact(mod_tests);
 
         const exe_tests = b.addTest(.{
             .root_module = exe.root_module,
+            .filters = test_filters,
         });
         const run_exe_tests = b.addRunArtifact(exe_tests);
 
