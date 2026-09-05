@@ -622,3 +622,51 @@ test "Healing: Disjoint Faces on Same Plane Remain Separate Islands" {
     const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
     try std.testing.expectEqual(@as(usize, 2), shell.faces_len);
 }
+
+test "Healing: Coplanar Faces Forming a Hole Preserve Multiple Loops" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Create a 30x30 square frame composed of 4 trapezoidal faces.
+    // Outer boundary is 30x30. Inner boundary is a 10x10 hole in the center.
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } }, // 0 (Outer BL)
+        .{ .point = .{ 30, 0, 0 } }, // 1 (Outer BR)
+        .{ .point = .{ 30, 30, 0 } }, // 2 (Outer TR)
+        .{ .point = .{ 0, 30, 0 } }, // 3 (Outer TL)
+        .{ .point = .{ 10, 10, 0 } }, // 4 (Inner BL)
+        .{ .point = .{ 20, 10, 0 } }, // 5 (Inner BR)
+        .{ .point = .{ 20, 20, 0 } }, // 6 (Inner TR)
+        .{ .point = .{ 10, 20, 0 } }, // 7 (Inner TL)
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    // 4 faces forming the frame in CCW orientation
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 5, 4 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f2 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 1, 2, 6, 5 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f3 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 2, 3, 7, 6 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f4 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 3, 0, 4, 7 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    var island_set = std.AutoHashMap(topo.FaceId, void).init(alloc);
+    defer island_set.deinit();
+    try island_set.put(f1, {});
+    try island_set.put(f2, {});
+    try island_set.put(f3, {});
+    try island_set.put(f4, {});
+
+    const island = [_]topo.FaceId{ f1, f2, f3, f4 };
+
+    // Extract the island. The boundary tracer MUST identify that there are two distinct loops
+    // (the outer square and the inner square) and assign them both to the new merged face.
+    const merged_face_id = try healing.extractIslandBoundary(alloc, &t_arena, &island, &island_set);
+    const merged_face = t_arena.faces.items[merged_face_id];
+
+    // The resulting face must have exactly 2 loops (1 outer boundary, 1 inner hole).
+    try std.testing.expectEqual(@as(usize, 2), merged_face.loops_len);
+}

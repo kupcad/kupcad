@@ -330,3 +330,81 @@ test "Modifiers: Redundant Segment Slicing Rejection" {
     const duplicate_slice = try modifiers.sliceFaceWithSegment(alloc, &t_arena, &g_arena, face_id, seg, tol);
     try std.testing.expectEqual(@as(?topo.FaceId, null), duplicate_slice);
 }
+
+test "Modifiers: weldSolidVertices Enables Subsequent Stitching" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    // Create 2 faces that are separated by a microscopic gap (1e-7)
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 }, .tolerance = 1e-5 },
+        .{ .point = .{ 10, 0, 0 }, .tolerance = 1e-5 },
+        .{ .point = .{ 10, 10, 0 }, .tolerance = 1e-5 },
+        .{ .point = .{ 0, 10, 0 }, .tolerance = 1e-5 },
+        // Face 2 starts slightly detached
+        .{ .point = .{ 10.0000001, 0, 0 }, .tolerance = 1e-5 },
+        .{ .point = .{ 20, 0, 0 }, .tolerance = 1e-5 },
+        .{ .point = .{ 20, 10, 0 }, .tolerance = 1e-5 },
+        .{ .point = .{ 10.0000001, 10, 0 }, .tolerance = 1e-5 },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2, 3 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f2 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 4, 5, 6, 7 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    try t_arena.shell_faces.appendSlice(alloc, &[_]topo.FaceId{ f1, f2 });
+    try t_arena.shells.append(alloc, .{ .faces_start = 0, .faces_len = 2 });
+    try t_arena.solid_shells.append(alloc, 0);
+    try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
+
+    // 1. Weld vertices. It must snap vertices 4->1 and 7->2.
+    try modifiers.weldSolidVertices(alloc, &t_arena, 0);
+
+    // 2. Stitch boundaries. Now that vertices match exactly, it must twin the shared edge.
+    try modifiers.stitchSolidBoundaries(alloc, &t_arena, &g_arena, 0);
+
+    // Verify the inner seam has successfully twinned
+    var twin_found = false;
+    for (t_arena.half_edges.items) |he| {
+        if (he.twin != topo.NULL_ID) {
+            twin_found = true;
+            break;
+        }
+    }
+
+    try std.testing.expect(twin_found);
+}
+
+test "Modifiers: Diagonal Slice Correctly Bisects Face" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const sq_id = try gen.generateSquare(alloc, &t_arena, &g_arena, 10.0, 10.0, false);
+    const solid = t_arena.solids.items[sq_id];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
+    const face_id = t_arena.shell_faces.items[shell.faces_start];
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+
+    // Slice exactly diagonally from (0,0) to (10,10)
+    const seg = types.Segment3D{ .start = .{ 0, 0, 0 }, .end = .{ 10, 10, 0 } };
+
+    const new_face = try modifiers.sliceFaceWithSegment(alloc, &t_arena, &g_arena, face_id, seg, tol);
+    try std.testing.expect(new_face != null);
+
+    // The original 100-area square should now be split into two 50-area triangles
+    const area1 = @import("classify.zig").calculateFaceArea(&t_arena, face_id);
+    const area2 = @import("classify.zig").calculateFaceArea(&t_arena, new_face.?);
+
+    try std.testing.expectApproxEqAbs(50.0, area1, 1e-3);
+    try std.testing.expectApproxEqAbs(50.0, area2, 1e-3);
+}
