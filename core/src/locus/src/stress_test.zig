@@ -35,7 +35,6 @@ test "Stress: Chained CSG Booleans (10 Sequential Subtractions)" {
             current_solid,
             cutter,
             .difference,
-            .{},
         );
         x_offset += 8.0;
     }
@@ -75,7 +74,14 @@ test "Stress: High-Genus Perforated Plate Grid (3x3 Matrix)" {
     for (positions) |pos| {
         const hole = try gen.generateCube(alloc, &t_arena, &g_arena, 4.0, 4.0, 10.0, true);
         _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, hole, pos[0], pos[1], 0.0);
-        plate = try booleans.computeBoolean(alloc, &t_arena, &g_arena, plate, hole, .difference, .{});
+        plate = try booleans.computeBoolean(
+            alloc,
+            &t_arena,
+            &g_arena,
+            plate,
+            hole,
+            .difference,
+        );
     }
 
     // Volume Check: 3,600 - 9*(4 * 4 * 4) = 3,600 - 576 = 3,024
@@ -104,7 +110,14 @@ test "Stress: Non-Uniform Scaling & Oblique CSG Cutting" {
     const cutter = try gen.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 40.0, true);
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cutter, 10.0, 0.0, 0.0);
 
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube, cutter, .difference, .{});
+    const result = try booleans.computeBoolean(
+        alloc,
+        &t_arena,
+        &g_arena,
+        cube,
+        cutter,
+        .difference,
+    );
 
     // Subtracted volume is 5 (overlapping X) * 5 (full Y) * 30 (full Z) = 750
     // Expected Net Volume = 3,000 - 750 = 2,250
@@ -126,7 +139,14 @@ test "Stress: Concentric Hollow Shell Void (Internal Cavity)" {
     const inner = try gen.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
 
     // Subtracting an enclosed inner cube forms an internal void shell (2 total shells)
-    const hollow_box = try booleans.computeBoolean(alloc, &t_arena, &g_arena, outer, inner, .difference, .{});
+    const hollow_box = try booleans.computeBoolean(
+        alloc,
+        &t_arena,
+        &g_arena,
+        outer,
+        inner,
+        .difference,
+    );
 
     // Net Volume = 8,000 - 1,000 = 7,000
     const vol = prop.volume(alloc, &t_arena, &g_arena, hollow_box);

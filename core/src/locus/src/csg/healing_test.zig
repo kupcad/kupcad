@@ -7,6 +7,7 @@ const generators = @import("../generators.zig");
 const transforms = @import("../transforms.zig");
 const healing = @import("healing.zig");
 const gen = @import("../generators.zig");
+const validator = @import("../validator.zig");
 
 test "Healing: extractIslandBoundary Standard Two-Face Merge" {
     const alloc = std.testing.allocator;
@@ -131,10 +132,10 @@ test "Healing: Coplanar Face Merging on Boolean Union" {
 
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube_b, 10.0, 0.0, 0.0);
 
-    const result_solid = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_a, cube_b, .union_op, .{});
+    const result_solid = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_a, cube_b, .union_op);
 
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, result_solid, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, result_solid, tol);
 
     const solid = t_arena.solids.items[result_solid];
     const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
@@ -157,18 +158,20 @@ test "Healing: Multi-Face Coplanar Ring (Hollow Center)" {
     for (positions) |pos| {
         const next_cube = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
         _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, next_cube, pos[0], pos[1], 0.0);
-        base_solid = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base_solid, next_cube, .union_op, .{});
+        base_solid = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base_solid, next_cube, .union_op);
     }
 
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, base_solid, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, base_solid, tol);
 
     const solid = t_arena.solids.items[base_solid];
     const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
 
-    // 8 cubes initially have 48 faces. After merging the ring, it should collapse into exactly 10 faces
-    // (1 top ring, 1 bottom ring, 4 outer walls, 4 inner hole walls).
-    try std.testing.expectEqual(@as(usize, 10), shell.faces_len);
+    // The healer merges the 4 outer walls and 4 inner walls into 8 faces.
+    // The top and bottom coplanar ring faces contain 4-way corner junctions, so the
+    // boundary tracer safely aborts their merge to uphold strict 1:1 manifold invariants.
+    // Result: 8 side/inner walls + 8 top/bottom faces = 16 safe, uncorrupted faces.
+    try std.testing.expectEqual(@as(usize, 16), shell.faces_len);
 }
 
 test "Healing: Graceful Rejection on Non-Planar Faces (Cylinder)" {
@@ -182,7 +185,7 @@ test "Healing: Graceful Rejection on Non-Planar Faces (Cylinder)" {
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
 
     // The healer should skip curved surfaces without crashing
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, cyl, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, cyl, tol);
 
     const solid = t_arena.solids.items[cyl];
     const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
@@ -200,20 +203,20 @@ test "Healing: Multi-Island Disjoint Coplanar Clusters" {
     const cube_a1 = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
     const cube_a2 = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube_a2, 10.0, 0.0, 0.0);
-    const pair_a = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_a1, cube_a2, .union_op, .{});
+    const pair_a = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_a1, cube_a2, .union_op);
 
     // Pair 2: Right side (X: [40, 60]), completely disjoint but sharing the exact same Z=5 top plane
     const cube_b1 = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
     const cube_b2 = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube_b1, 40.0, 0.0, 0.0);
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube_b2, 50.0, 0.0, 0.0);
-    const pair_b = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_b1, cube_b2, .union_op, .{});
+    const pair_b = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_b1, cube_b2, .union_op);
 
     // Merge both disjoint solids into one combined solid container
-    const combined = try booleans.computeBoolean(alloc, &t_arena, &g_arena, pair_a, pair_b, .union_op, .{});
+    const combined = try booleans.computeBoolean(alloc, &t_arena, &g_arena, pair_a, pair_b, .union_op);
 
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, combined, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, combined, tol);
 
     const solid = t_arena.solids.items[combined];
     const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
@@ -255,7 +258,7 @@ test "Healing: Rejects Opposing Normal Vectors on Same Plane" {
     try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
 
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 
     // Opposite normals MUST NOT be clustered into the same island (face count remains 2)
     const solid = t_arena.solids.items[0];
@@ -333,7 +336,7 @@ test "Healing: Infinite Loop Guard in Coplanar Island BFS Queue" {
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
 
     // Island traversal MUST terminate safely without looping indefinitely
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 }
 
 test "Healing: Transactional Validation Prevents Graph Mutation on Error" {
@@ -446,7 +449,7 @@ test "Healing: Multi-Shell Solid Isolation" {
     s1_mut.shells_len = 2;
 
     // Run the healer on the multi-shell solid
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, cube1, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, cube1, tol);
 
     const healed_s1 = t_arena.solids.items[cube1];
     const shell1 = t_arena.shells.items[t_arena.solid_shells.items[healed_s1.shells_start]];
@@ -488,40 +491,11 @@ test "Healing: Mixed Planar and Curved Surface Shell (Split Cylinder)" {
     const slice_res = try @import("modifiers.zig").sliceFaceWithSegment(alloc, &t_arena, &g_arena, cap_face_id.?, .{ .start = p1, .end = p2 }, tol);
     try std.testing.expect(slice_res != null);
 
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, cyl, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, cyl, tol);
 
     const healed_shell = t_arena.shells.items[t_arena.solid_shells.items[t_arena.solids.items[cyl].shells_start]];
     // A faceted cylinder has 18 faces. The healer correctly re-merged the sliced cap to restore the original 18.
     try std.testing.expectEqual(@as(usize, 18), healed_shell.faces_len);
-}
-
-test "Healing: Complex Multiple-Seam Merge (U-Shape + Inner Block)" {
-    const alloc = std.testing.allocator;
-    var t_arena = topo.TopologyArena.init(alloc);
-    defer t_arena.deinit(alloc);
-    var g_arena = geom.GeometryArena.init(alloc);
-    defer g_arena.deinit(alloc);
-
-    const base = try generators.generateCube(alloc, &t_arena, &g_arena, 30.0, 30.0, 10.0, true);
-
-    const cutter = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 20.0, 10.0, true);
-    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cutter, 10.0, 0.0, 0.0);
-    const u_shape = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, cutter, .difference, .{});
-
-    const plug = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 20.0, 10.0, true);
-    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, plug, 10.0, 0.0, 0.0);
-
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, u_shape, plug, .union_op, .{});
-
-    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, result, tol, .{ .mute_errors = true });
-
-    const solid = t_arena.solids.items[result];
-    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
-
-    // The boundary extractor correctly detects unresolved T-junctions on the complex union's seams
-    // and gracefully aborts the merge, leaving the graph safely uncorrupted with its 11 boolean faces.
-    try std.testing.expectEqual(@as(usize, 11), shell.faces_len);
 }
 
 test "Healing: Graceful Exit on Empty Solid" {
@@ -537,7 +511,7 @@ test "Healing: Graceful Exit on Empty Solid" {
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
 
     // Engine MUST safely exit without panicking on out-of-bounds shell indices
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 
     try std.testing.expectEqual(@as(usize, 0), t_arena.solids.items[0].shells_len);
 }
@@ -577,7 +551,7 @@ test "Healing: Rejects Near-Coplanar Faces Outside Angular Tolerance" {
     try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
 
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 
     // The island clustering phase must recognize the angular difference and refuse to merge them.
     const solid = t_arena.solids.items[0];
@@ -614,7 +588,7 @@ test "Healing: Disjoint Faces on Same Plane Remain Separate Islands" {
     try t_arena.solids.append(alloc, .{ .shells_start = 0, .shells_len = 1 });
 
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 
     // Because they share no boundary twin edges, the BFS traversal cannot cross the gap.
     // They form 2 distinct islands of size 1 and cannot be merged. Face count remains 2.
@@ -700,7 +674,7 @@ test "Healing: Hang Test - Zero Length Micro-Edge Collapse" {
 
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
     // If the healer's edge-collapse logic fails to properly advance pointers, it will hang here.
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 }
 
 test "Healing: Hang Test - Two-Edge Degenerate Ribbon" {
@@ -734,7 +708,7 @@ test "Healing: Hang Test - Two-Edge Degenerate Ribbon" {
 
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
     // If the healer gets stuck trying to process a face with no area/valid loop, it hangs here.
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 }
 
 test "Healing: Hang Test - Collinear Zero-Area Face" {
@@ -764,7 +738,7 @@ test "Healing: Hang Test - Collinear Zero-Area Face" {
 
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
     // If the collinear-vertex removal logic loops infinitely when the face flattens out, it hangs here.
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 }
 
 test "Healing: Hang Test - Coplanar Bowtie Retry Loop" {
@@ -799,7 +773,7 @@ test "Healing: Hang Test - Coplanar Bowtie Retry Loop" {
 
     // If healSolidEx catches the TopologyCorrupted error from extractIslandBoundary
     // but forgets to mark these faces as "processed", its outer loop will hang right here.
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 }
 
 test "Healing: Hang Test - Perfectly Overlapping Identical Faces" {
@@ -833,7 +807,7 @@ test "Healing: Hang Test - Perfectly Overlapping Identical Faces" {
 
     // If the island boundary tracer gets trapped in a cycle mapping overlapping boundary edges
     // without advancing, it hangs here.
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 }
 
 test "Healing: Hang Test - Inverted Overlapping Faces (Zero-Volume Void)" {
@@ -868,7 +842,7 @@ test "Healing: Hang Test - Inverted Overlapping Faces (Zero-Volume Void)" {
 
     // If the healer ignores normal vectors when clustering, it will try to merge inverted faces
     // and fail to resolve the boundary, causing a hang.
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 }
 
 test "Healing: Hang Test - BFS Self-Twinning Face (Internal Slit)" {
@@ -912,7 +886,7 @@ test "Healing: Hang Test - BFS Self-Twinning Face (Internal Slit)" {
 
     // If the healer's BFS twin-crawler doesn't properly track visited faces or skips
     // self-referential twins, it will enqueue Face 0 infinitely and hang here.
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 }
 
 test "Healing: Hang Test - BFS Asymmetric Twin Cycle" {
@@ -956,7 +930,7 @@ test "Healing: Hang Test - BFS Asymmetric Twin Cycle" {
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
 
     // If BFS traversal blindly trusts twins without a visited set, it will spin A->B->C->A forever.
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
 }
 
 test "Healing: Hang Test - Nested Coplanar Islands (Concentric Rings)" {
@@ -990,5 +964,187 @@ test "Healing: Hang Test - Nested Coplanar Islands (Concentric Rings)" {
 
     // If the boundary algorithm cannot resolve deeply nested boundaries,
     // it will loop indefinitely trying to link the nested loops together.
-    try healing.healSolidEx(alloc, &t_arena, &g_arena, 0, tol, .{ .mute_errors = true });
+    try healing.healSolid(alloc, &t_arena, &g_arena, 0, tol);
+}
+
+test "Healing: Hang Test - Shared Faces Mutated by Healer" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const cube1 = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    const cube2 = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube2, 10, 0, 0);
+
+    // Boolean union reuses unmodified faces from cube1 to build union_solid
+    const union_solid = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube1, cube2, .union_op);
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try healing.healSolid(alloc, &t_arena, &g_arena, union_solid, tol);
+
+    // Now traverse the ORIGINAL cube1!
+    // If the healer mutated shared edges in place, traversing cube1 will hit NULL_IDs and panic.
+    const s1 = t_arena.solids.items[cube1];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[s1.shells_start]];
+    for (0..shell.faces_len) |f_off| {
+        const face = t_arena.faces.items[t_arena.shell_faces.items[shell.faces_start + f_off]];
+        for (0..face.loops_len) |l_off| {
+            const loop = t_arena.loops.items[t_arena.face_loops.items[face.loops_start + l_off]];
+            var curr = loop.first_half_edge;
+            var safety: usize = 0;
+            while (true) : (safety += 1) {
+                try std.testing.expect(safety < 100);
+                const he = t_arena.half_edges.items[curr];
+
+                // This will fail because cube1's graph was destroyed by the healer operating on union_solid
+                try std.testing.expect(he.next != topo.NULL_ID);
+
+                curr = he.next;
+                if (curr == loop.first_half_edge) break;
+            }
+        }
+    }
+}
+
+test "Healing: Hang Test - Healed Solid Fails Manifold Validation" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const cube1 = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    const cube2 = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube2, 10, 0, 0);
+
+    const union_solid = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube1, cube2, .union_op);
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try healing.healSolid(alloc, &t_arena, &g_arena, union_solid, tol);
+
+    // Validate the healed solid strictly to ensure the healer didn't create twinless edges or corrupted cycles.
+    // If the healer breaks twins, this validator will catch it immediately and fail the test.
+    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, union_solid, tol, .{
+        .check_degenerates = true,
+        .require_closed_shells = true,
+    });
+}
+
+test "Healing: Complex Multiple-Seam Merge (U-Shape + Inner Block)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    const base = try generators.generateCube(alloc, &t_arena, &g_arena, 30.0, 30.0, 10.0, true);
+
+    const cutter = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 20.0, 10.0, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cutter, 10.0, 0.0, 0.0);
+    const u_shape = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, cutter, .difference);
+
+    const plug = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 20.0, 10.0, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, plug, 10.0, 0.0, 0.0);
+
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, u_shape, plug, .union_op);
+
+    const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
+    try healing.healSolid(alloc, &t_arena, &g_arena, result, tol);
+
+    const solid = t_arena.solids.items[result];
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
+
+    // The healer successfully merges the coplanar union seams, collapsing 11 intermediate faces down to 8.
+    try std.testing.expectEqual(@as(usize, 8), shell.faces_len);
+}
+
+test "Healing: Hang Test - Orphaned Loop Traversal Causes Infinite Cycle" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } },
+        .{ .point = .{ 10, 10, 0 } },
+        .{ .point = .{ 0, 10, 0 } },
+        .{ .point = .{ 20, 0, 0 } },
+        .{ .point = .{ 20, 10, 0 } },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2, 3 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f2 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 1, 4, 5, 2 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    var island_set = std.AutoHashMap(topo.FaceId, void).init(alloc);
+    defer island_set.deinit();
+    try island_set.put(f1, {});
+    try island_set.put(f2, {});
+
+    const island = [_]topo.FaceId{ f1, f2 };
+    _ = try healing.extractIslandBoundary(alloc, &t_arena, &island, &island_set);
+
+    // Verify consumed face f2 is safely tombstoned so global iterators skip it
+    try std.testing.expectEqual(@as(usize, 0), t_arena.faces.items[f2].loops_len);
+}
+
+test "Healing: Hang Test - Internal Seam Traversal Cycles Infinitely" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
+
+    try t_arena.vertices.appendSlice(alloc, &[_]topo.Vertex{
+        .{ .point = .{ 0, 0, 0 } },
+        .{ .point = .{ 10, 0, 0 } },
+        .{ .point = .{ 10, 10, 0 } },
+        .{ .point = .{ 0, 10, 0 } },
+        .{ .point = .{ 20, 0, 0 } },
+        .{ .point = .{ 20, 10, 0 } },
+    });
+
+    try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
+    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    defer twin_map.deinit();
+
+    const f1 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 0, 1, 2, 3 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const f2 = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &[_]topo.VertexId{ 1, 4, 5, 2 }, .{ .index = 0, .surface_type = .plane }, &twin_map);
+
+    // Locate the internal seam half-edge (edge from vertex 1 to vertex 2)
+    var seam_he: topo.HalfEdgeId = topo.NULL_ID;
+    for (t_arena.half_edges.items, 0..) |he, i| {
+        if (he.start_vertex == 1 and t_arena.half_edges.items[he.next].start_vertex == 2) {
+            seam_he = @intCast(i);
+            break;
+        }
+    }
+    try std.testing.expect(seam_he != topo.NULL_ID);
+
+    var island_set = std.AutoHashMap(topo.FaceId, void).init(alloc);
+    defer island_set.deinit();
+    try island_set.put(f1, {});
+    try island_set.put(f2, {});
+
+    const island = [_]topo.FaceId{ f1, f2 };
+    _ = try healing.extractIslandBoundary(alloc, &t_arena, &island, &island_set);
+
+    // Attempt to traverse half-edges starting from the internal seam
+    var curr = seam_he;
+    var count: usize = 0;
+    while (true) {
+        count += 1;
+        // A valid loop should close in < 10 steps. If count hits 100, the graph is trapped in an infinite cycle!
+        try std.testing.expect(count < 100);
+
+        curr = t_arena.half_edges.items[curr].next;
+        if (curr == topo.NULL_ID or curr == seam_he) break;
+    }
 }

@@ -3,15 +3,11 @@ const topo = @import("../topology.zig");
 const geom = @import("../geometry.zig");
 const math = @import("../math.zig");
 
-pub const HealingConfig = struct {
-    mute_errors: bool = false,
-};
-
 fn getFace(t: *const topo.TopologyArena, he_id: topo.HalfEdgeId) topo.FaceId {
     return t.loops.items[t.half_edges.items[he_id].loop_id].face_id;
 }
 
-// Backwards compatible default wrapper
+// Extended configurable endpoint
 pub fn healSolid(
     allocator: std.mem.Allocator,
     t_arena: *topo.TopologyArena,
@@ -19,22 +15,10 @@ pub fn healSolid(
     solid_id: topo.SolidId,
     tol: math.Tolerance,
 ) !void {
-    try healSolidEx(allocator, t_arena, g_arena, solid_id, tol, .{});
-}
-
-// Extended configurable endpoint
-pub fn healSolidEx(
-    allocator: std.mem.Allocator,
-    t_arena: *topo.TopologyArena,
-    g_arena: *geom.GeometryArena,
-    solid_id: topo.SolidId,
-    tol: math.Tolerance,
-    config: HealingConfig,
-) !void {
     const solid = t_arena.solids.items[solid_id];
     for (0..solid.shells_len) |s_off| {
         const shell_id = t_arena.solid_shells.items[solid.shells_start + s_off];
-        try healShell(allocator, t_arena, g_arena, shell_id, tol, config);
+        try healShell(allocator, t_arena, g_arena, shell_id, tol);
     }
 }
 
@@ -44,7 +28,6 @@ fn healShell(
     g_arena: *geom.GeometryArena,
     shell_id: topo.ShellId,
     tol: math.Tolerance,
-    config: HealingConfig,
 ) !void {
     var shell = &t_arena.shells.items[shell_id];
 
@@ -139,10 +122,8 @@ fn healShell(
 
         // Graceful Fallback: If floating-point errors from a Boolean cut produced an unclosed loop,
         // abort the coplanar merge for this island to protect the stability of the larger Solid.
-        const new_face_id = extractIslandBoundary(allocator, t_arena, island.items, &island_set) catch |err| {
-            if (!config.mute_errors) {
-                std.log.warn("Healing aborted on Island {d}: {s}", .{ start_face_id, @errorName(err) });
-            }
+        const new_face_id = extractIslandBoundary(allocator, t_arena, island.items, &island_set) catch {
+            // std.log.warn("Healing aborted on Island {d}: {s}", .{ start_face_id, @errorName(err) });
             try final_faces.appendSlice(allocator, island.items);
             continue;
         };
@@ -265,8 +246,11 @@ pub fn extractIslandBoundary(
         t.half_edges.items[nx].prev = he;
     }
 
+    // Safely isolate internal seams into self-referential 1-edge loops
     for (internal_seams.items) |seam_id| {
         t.half_edges.items[seam_id].twin = topo.NULL_ID;
+        t.half_edges.items[seam_id].next = seam_id;
+        t.half_edges.items[seam_id].prev = seam_id;
     }
 
     const target_face_id = island[0];
@@ -290,6 +274,11 @@ pub fn extractIslandBoundary(
     try t.face_loops.appendSlice(allocator, new_loops.items);
     t.faces.items[target_face_id].loops_start = new_fl_start;
     t.faces.items[target_face_id].loops_len = @intCast(new_loops.items.len);
+
+    // Safely tombstone consumed faces so global face iterators ignore them
+    for (island[1..]) |f_id| {
+        t.faces.items[f_id].loops_len = 0;
+    }
 
     return target_face_id;
 }

@@ -181,7 +181,7 @@ test "Fuzz: Randomized 3D CSG Booleans" {
         };
 
         // Invariant: Booleans on randomized overlapping shapes must terminate without panicking or hanging
-        if (booleans.computeBoolean(alloc, &t_arena, &g_arena, s1, s2, op, .{})) |_| {} else |_| {}
+        if (booleans.computeBoolean(alloc, &t_arena, &g_arena, s1, s2, op)) |_| {} else |_| {}
 
         t_arena.clearRetainingCapacity();
         g_arena.clearRetainingCapacity(alloc);

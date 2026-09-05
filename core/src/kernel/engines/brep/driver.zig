@@ -298,7 +298,8 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
     };
 
     const merged_b_id = locus_merger.mergeSolidArenas(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id) catch return a;
-    solid_a.solid_id = locus_bool.computeBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, merged_b_id, locus_op, .{}) catch return a;
+
+    solid_a.solid_id = locus_bool.computeBoolean(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, merged_b_id, locus_op) catch return a;
 
     return a;
 }

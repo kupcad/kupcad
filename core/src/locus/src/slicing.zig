@@ -124,7 +124,7 @@ pub fn trimByPlane(
     const box_size = @max(bbox.maxSpan() * 2.0 + 10.0, 100.0);
 
     const half_space = try generateHalfSpace(allocator, t_arena, g_arena, nx, ny, nz, offset, box_size, false);
-    return try booleans.computeBoolean(allocator, t_arena, g_arena, target_solid, half_space, .intersection, .{});
+    return try booleans.computeBoolean(allocator, t_arena, g_arena, target_solid, half_space, .intersection);
 }
 
 pub const SolidPair = struct {
@@ -149,8 +149,8 @@ pub fn splitByPlane(
     const space_neg = try generateHalfSpace(allocator, t_arena, g_arena, nx, ny, nz, offset, box_size, false);
     const space_pos = try generateHalfSpace(allocator, t_arena, g_arena, nx, ny, nz, offset, box_size, true);
 
-    const solid_neg = try booleans.computeBoolean(allocator, t_arena, g_arena, target_solid, space_neg, .intersection, .{});
-    const solid_pos = try booleans.computeBoolean(allocator, t_arena, g_arena, target_solid, space_pos, .intersection, .{});
+    const solid_neg = try booleans.computeBoolean(allocator, t_arena, g_arena, target_solid, space_neg, .intersection);
+    const solid_pos = try booleans.computeBoolean(allocator, t_arena, g_arena, target_solid, space_pos, .intersection);
 
     return .{ .first = solid_pos, .second = solid_neg };
 }

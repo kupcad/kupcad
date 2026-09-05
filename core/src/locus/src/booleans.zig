@@ -201,10 +201,7 @@ pub fn computeBoolean(
     solid_a: topo.SolidId,
     solid_b: topo.SolidId,
     op: BooleanOp,
-    config: anytype,
 ) BooleanError!topo.SolidId {
-    _ = config;
-    // const mute_errors = if (@hasField(@TypeOf(config), "mute_errors")) config.mute_errors else false;
 
     var min_b = math.Vec3{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
     var max_b = math.Vec3{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
@@ -522,7 +519,7 @@ pub fn computeBoolean(
     try modifiers.stitchSolidBoundaries(allocator, t_arena, g_arena, new_solid_id);
 
     // Apply the topological healing pass to dissolve boolean seams
-    // try healing.healSolidEx(allocator, t_arena, g_arena, new_solid_id, tol, .{ .mute_errors = mute_errors });
+    try healing.healSolid(allocator, t_arena, g_arena, new_solid_id, tol);
 
     if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
         const validator = @import("validator.zig");

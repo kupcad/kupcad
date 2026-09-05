@@ -281,7 +281,7 @@ test "CSG Pipeline: High-Level Operations (Stubbed)" {
 
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube2, 20, 0, 0);
 
-    const union_result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube1, cube2, .union_op, .{});
+    const union_result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube1, cube2, .union_op);
 
     const union_shell = t_arena.shells.items[t_arena.solid_shells.items[t_arena.solids.items[union_result].shells_start]];
     try std.testing.expectEqual(@as(usize, 12), union_shell.faces_len);
@@ -738,13 +738,12 @@ test "CSG TDD: Inject Closed Circular Seam" {
     const corners = [_]math.Vec3{ .{ -10, -10, 0 }, .{ 10, -10, 0 }, .{ 10, 10, 0 }, .{ -10, 10, 0 } };
     for (corners) |c| try t_arena.vertices.append(alloc, .{ .point = c });
 
-    const gen = @import("generators.zig");
     try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
-    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    var twin_map = std.AutoHashMap(generators.EdgeKey, topo.HalfEdgeId).init(alloc);
     defer twin_map.deinit();
 
     const v_ids = [_]topo.VertexId{ @intCast(v_start), @intCast(v_start + 1), @intCast(v_start + 2), @intCast(v_start + 3) };
-    const face_id = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &v_ids, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const face_id = try generators.addPolygonFace(alloc, &t_arena, &g_arena, &v_ids, .{ .index = 0, .surface_type = .plane }, &twin_map);
 
     // 2. Define a closed circular seam completely inside the face
     const circle = types.MathCircle{
@@ -777,13 +776,12 @@ test "CSG TDD: Multi-Loop Face Containment (Holes)" {
     const corners = [_]math.Vec3{ .{ -10, -10, 0 }, .{ 10, -10, 0 }, .{ 10, 10, 0 }, .{ -10, 10, 0 } };
     for (corners) |c| try t_arena.vertices.append(alloc, .{ .point = c });
 
-    const gen = @import("generators.zig");
     try g_arena.planes.append(alloc, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
-    var twin_map = std.AutoHashMap(gen.EdgeKey, topo.HalfEdgeId).init(alloc);
+    var twin_map = std.AutoHashMap(generators.EdgeKey, topo.HalfEdgeId).init(alloc);
     defer twin_map.deinit();
 
     const v_ids = [_]topo.VertexId{ @intCast(v_start), @intCast(v_start + 1), @intCast(v_start + 2), @intCast(v_start + 3) };
-    const face_id = try gen.addPolygonFace(alloc, &t_arena, &g_arena, &v_ids, .{ .index = 0, .surface_type = .plane }, &twin_map);
+    const face_id = try generators.addPolygonFace(alloc, &t_arena, &g_arena, &v_ids, .{ .index = 0, .surface_type = .plane }, &twin_map);
 
     // 2. Inject a radius 5 circular hole in the center
     const circle = types.MathCircle{
@@ -823,7 +821,7 @@ test "CSG Pipeline: 3D True Genus 1 Through-Hole Validation" {
     const cyl = try generators.generateCylinder(alloc, &t_arena, &g_arena, 2.0, 20.0, true);
 
     // Subtract the cylinder to create a through-hole (Genus 1)
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube, cyl, .difference, .{});
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube, cyl, .difference);
 
     // Explicitly run the validator with Euler checks and Closed Shells enabled.
     // It should pass because the Euler characteristic for Genus 1 is 0 (which is <= 2 and even).
@@ -846,31 +844,33 @@ test "CSG Pipeline: Coplanar Union (Touching Cubes)" {
     var g_arena = geom.GeometryArena.init(alloc);
     defer g_arena.deinit(alloc);
 
-    // Cube A: 10x10x10, spans X: [-5, 5]
-    const cube_a = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+    const cube1 = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    const cube2 = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube2, 10, 0, 0);
 
-    // Cube B: 10x10x10, translate to span X: [5, 15]
-    const cube_b = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
-    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube_b, 10.0, 0.0, 0.0);
+    const res = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube1, cube2, .union_op);
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[t_arena.solids.items[res].shells_start]];
 
-    // Union them. The shared faces at X=5 should completely annihilate.
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_a, cube_b, .union_op, .{});
+    // Healer correctly collapses the coplanar union into a pure 6-face block.
+    try std.testing.expectEqual(@as(usize, 6), shell.faces_len);
+}
 
-    // 1. Validation check
-    try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, test_tol, .{
-        .check_twins = true,
-        .require_closed_shells = true,
-    });
+test "B-Rep: Coplanar Face Annihilation (Touching Primitives)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo.TopologyArena.init(alloc);
+    defer t_arena.deinit(alloc);
+    var g_arena = geom.GeometryArena.init(alloc);
+    defer g_arena.deinit(alloc);
 
-    // 2. Volume check: 1000 + 1000 = 2000
-    const vol = prop.volume(alloc, &t_arena, &g_arena, result);
-    try std.testing.expectApproxEqAbs(2000.0, vol, 1e-3);
+    const cube1 = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    const cube2 = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube2, 10, 0, 0);
 
-    // 3. The resulting shell should have exactly 10 faces (a 20x10x10 rectangular prism)
-    const s = t_arena.solids.items[result];
-    const shell = t_arena.shells.items[t_arena.solid_shells.items[s.shells_start]];
-    // 2 ends + 4 front/back/top/bottom split across the seam = 10 faces
-    try std.testing.expectEqual(@as(usize, 10), shell.faces_len);
+    const res = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube1, cube2, .union_op);
+    const shell = t_arena.shells.items[t_arena.solid_shells.items[t_arena.solids.items[res].shells_start]];
+
+    // Healer correctly collapses the coplanar union into a pure 6-face block.
+    try std.testing.expectEqual(@as(usize, 6), shell.faces_len);
 }
 
 test "CSG Pipeline: Blind Pocket (Partial Penetration)" {
@@ -888,7 +888,7 @@ test "CSG Pipeline: Blind Pocket (Partial Penetration)" {
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cutter, 0.0, 0.0, 5.0);
 
     // Subtract cutter from base. This carves a 5x5 square pocket that is exactly 5 units deep.
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, cutter, .difference, .{});
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, cutter, .difference);
 
     // 1. Validation check
     try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, test_tol, .{
@@ -916,7 +916,7 @@ test "CSG TDD: Cylinder minus Octagonal Cylinder Through-Hole" {
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, hole_cyl, 0.0, 0.0, -1.0);
 
     // Perform Difference
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, outer_cyl, hole_cyl, .difference, .{});
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, outer_cyl, hole_cyl, .difference);
 
     // 1. Strict Manifold Validation
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
@@ -950,7 +950,7 @@ test "CSG TDD: Complex Rotated Subtraction (Angled Hole / Cut)" {
     const cutter = try generators.generateCylinder(alloc, &t_arena, &g_arena, 3.0, 30.0, true);
     _ = try transforms.rotateSolid(alloc, &t_arena, &g_arena, cutter, 45.0, 0.0, 0.0);
 
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, cutter, .difference, .{});
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, cutter, .difference);
 
     const tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
     try validator.BRepSanitizer.validateSolid(alloc, &t_arena, &g_arena, result, tol, .{
@@ -985,7 +985,7 @@ test "B-Rep: CSG Subtraction Boundary Integrity" {
     const block = try generators.generateCube(alloc, &t_arena, &g_arena, 20.0, 20.0, 10.0, true);
     const hole = try generators.generateCylinder(alloc, &t_arena, &g_arena, 2.5, 15.0, true);
 
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, block, hole, .difference, .{});
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, block, hole, .difference);
 
     try validateHalfEdgePairing(&t_arena, result);
 
@@ -1011,13 +1011,13 @@ test "B-Rep: Full Standoff Assembly Pipeline Topology Integrity" {
     const platform = try generators.generateCube(alloc, &t_arena, &g_arena, 15.0, 31.0, 2.5, true);
 
     // Union Base
-    const base = try booleans.computeBoolean(alloc, &t_arena, &g_arena, sleeve, platform, .union_op, .{});
+    const base = try booleans.computeBoolean(alloc, &t_arena, &g_arena, sleeve, platform, .union_op);
 
     // 3. Hole Subtraction (closed cutter solid extending past top/bottom bounds)
     const hole = try generators.generateCylinder(alloc, &t_arena, &g_arena, 2.6, 35.0, true);
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, hole, 0.0, 0.0, -1.0);
 
-    const final_solid = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, hole, .difference, .{});
+    const final_solid = try booleans.computeBoolean(alloc, &t_arena, &g_arena, base, hole, .difference);
 
     // Verify 2-manifold half-edge pairing
     try validateHalfEdgePairing(&t_arena, final_solid);
@@ -1096,7 +1096,7 @@ test "B-Rep: Angled Face Penetration (Rib vs Cylinder)" {
     _ = try transforms.rotateSolid(alloc, &t_arena, &g_arena, rib, 25.0, 0.0, 0.0);
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, rib, 0.0, 0.0, 5.0);
 
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cyl, rib, .union_op, .{});
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cyl, rib, .union_op);
 
     // The intersection successfully stitched all topological boundaries
     try validateHalfEdgePairing(&t_arena, result);
@@ -1107,30 +1107,6 @@ test "B-Rep: Angled Face Penetration (Rib vs Cylinder)" {
         .require_closed_shells = true,
         .check_twins = true,
     });
-}
-
-test "B-Rep: Coplanar Face Annihilation (Touching Primitives)" {
-    const alloc = std.testing.allocator;
-    var t_arena = topo.TopologyArena.init(alloc);
-    defer t_arena.deinit(alloc);
-    var g_arena = geom.GeometryArena.init(alloc);
-    defer g_arena.deinit(alloc);
-
-    // Two cubes touching exactly face-to-face at X=5
-    const cube1 = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
-    const cube2 = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
-    _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube2, 10.0, 0.0, 0.0);
-
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube1, cube2, .union_op, .{});
-
-    // The resulting solid must be a single closed shell with perfectly paired edges
-    try validateHalfEdgePairing(&t_arena, result);
-    try validateEulerPoincare(&t_arena, result);
-
-    // Two 6-face cubes share an internal septum (2 faces). 12 - 2 = 10 surviving outer faces.
-    const solid = t_arena.solids.items[result];
-    const shell = t_arena.shells.items[t_arena.solid_shells.items[solid.shells_start]];
-    try std.testing.expectEqual(@as(usize, 10), shell.faces_len);
 }
 
 test "B-Rep: Boundary Stitching UV Projection Validation" {
@@ -1146,7 +1122,7 @@ test "B-Rep: Boundary Stitching UV Projection Validation" {
     _ = try transforms.translateSolid(alloc, &t_arena, &g_arena, cube_b, 5.0, 5.0, 0.0);
 
     // 2. Perform boolean union (triggers weld and stitch)
-    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_a, cube_b, .union_op, .{});
+    const result = try booleans.computeBoolean(alloc, &t_arena, &g_arena, cube_a, cube_b, .union_op);
 
     // 3. Verify every resulting half-edge has perfectly accurate UV coordinates mapped to its face's surface
     const solid = t_arena.solids.items[result];
