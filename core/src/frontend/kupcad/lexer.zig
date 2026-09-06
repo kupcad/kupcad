@@ -233,6 +233,21 @@ pub const Lexer = struct {
         utils.LexerUtils.skipWhitespace(self.buffer, &self.index, false);
     }
 
+    inline fn advanceLine(self: *Lexer) void {
+        while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
+        if (self.index < self.buffer.len) self.advance(); // Consume '\n'
+    }
+
+    inline fn consumePercentInterpolated(self: *Lexer) Token {
+        if (self.index >= self.buffer.len) return self.makeToken(.eof);
+
+        const open_delim = self.peek();
+        self.advance();
+        const close_delim = getClosingDelimiter(open_delim);
+        const content_loc = self.getLoc();
+        return self.consumeStringBody(content_loc, true, open_delim, close_delim, 1);
+    }
+
     inline fn getClosingDelimiter(open_delim: u8) u8 {
         return switch (open_delim) {
             '[' => ']',
@@ -286,13 +301,7 @@ pub const Lexer = struct {
             if (c2 == 'Q') {
                 self.advance(); // %
                 self.advance(); // Q
-                if (self.index >= self.buffer.len) return self.makeToken(.eof);
-                const open_delim = self.peek();
-                self.advance();
-
-                const close_delim = getClosingDelimiter(open_delim);
-                const content_loc = self.getLoc();
-                return self.consumeStringBody(content_loc, true, open_delim, close_delim, 1);
+                return self.consumePercentInterpolated();
             }
         }
 
@@ -326,13 +335,7 @@ pub const Lexer = struct {
 
             if (!is_expr_end) {
                 self.advance(); // %
-                if (self.index >= self.buffer.len) return self.makeToken(.eof);
-
-                const open_delim = self.peek();
-                self.advance();
-                const close_delim = getClosingDelimiter(open_delim);
-                const content_loc = self.getLoc();
-                return self.consumeStringBody(content_loc, true, open_delim, close_delim, 1);
+                return self.consumePercentInterpolated();
             }
         }
 
@@ -425,8 +428,11 @@ pub const Lexer = struct {
         var i: usize = 1; // Start after '#'
         while (i < first_line.len and (first_line[i] == ' ' or first_line[i] == '\t')) i += 1;
 
+        var tag: Tag = .comment;
+
         // Check if this is a YARD/Lookbook docstring annotation (@tag)
         if (i < first_line.len and first_line[i] == '@') {
+            tag = .docstring;
             const base_indent = i - 1; // Number of spaces between '#' and '@'
             while (self.index < self.buffer.len) {
                 if (self.index >= self.buffer.len or self.peek() != '\n') break;
@@ -451,17 +457,12 @@ pub const Lexer = struct {
                 }
                 break;
             }
-
-            // Trim trailing \r from the final docstring lexeme
-            var end_idx = self.index;
-            if (end_idx > start and self.buffer[end_idx - 1] == '\r') end_idx -= 1;
-            return .{ .tag = .docstring, .loc = start_loc, .lexeme = self.buffer[start..end_idx] };
         }
 
-        // Trim trailing \r from the final standard comment lexeme
+        // Trim trailing \r from the final docstring or comment lexeme
         var end_idx = self.index;
         if (end_idx > start and self.buffer[end_idx - 1] == '\r') end_idx -= 1;
-        return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..end_idx] };
+        return .{ .tag = tag, .loc = start_loc, .lexeme = self.buffer[start..end_idx] };
     }
 
     fn consumeOperator(self: *Lexer, start_loc: common_token.Location) Token {
@@ -535,10 +536,8 @@ pub const Lexer = struct {
             const terminator = self.buffer[term_start..term_end];
             self.index = term_end; // Skip past the terminator declaration
 
-            // Advance to the end of the current line
-            while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
-
-            if (self.index < self.buffer.len) self.advance(); // Consume '\n'
+            // Advance to the end of the current line and consume newline
+            self.advanceLine();
 
             const content_start = self.index;
 
@@ -564,9 +563,7 @@ pub const Lexer = struct {
                 }
 
                 // Move to next line
-                while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
-
-                if (self.index < self.buffer.len) self.advance(); // Consume '\n'
+                self.advanceLine();
             }
 
             // Unclosed Heredoc EOF recovery
@@ -617,25 +614,11 @@ pub const Lexer = struct {
         // Quoted Symbols (e.g. :"key name")
         if (is_symbol and self.index < self.buffer.len and (self.peek() == '"' or self.peek() == '\'')) {
             const quote = self.peek();
-            self.advance();
-            const start = self.index;
-
-            while (self.index < self.buffer.len) {
-                const c = self.peek();
-                if (c == '\\') {
-                    self.advance();
-                    if (self.index < self.buffer.len) self.advance();
-                    continue;
-                }
-                if (c == quote) break;
-                self.advance();
-            }
-
-            const lexeme = self.buffer[start..self.index];
-            if (self.index < self.buffer.len) self.advance();
+            const content_offset = self.index + 1; // skip quote in AST offset
+            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, quote);
 
             var content_loc = start_loc;
-            content_loc.offset = @intCast(start);
+            content_loc.offset = @intCast(content_offset);
             return .{ .tag = .symbol, .loc = content_loc, .lexeme = lexeme };
         }
 
