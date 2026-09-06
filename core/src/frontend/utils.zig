@@ -134,6 +134,15 @@ pub const LexerUtils = struct {
                 }
             }
         }
+
+        // Allow exactly one '?' or '!' strictly as a terminal identifier suffix
+        if (!is_openscad and index.* < buffer.len) {
+            const c = buffer[index.*];
+            if (c == '?' or c == '!') {
+                index.* += 1;
+            }
+        }
+
         return buffer[start..index.*];
     }
 

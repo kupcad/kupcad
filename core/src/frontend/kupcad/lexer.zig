@@ -274,53 +274,66 @@ pub const Lexer = struct {
     }
 
     fn consumePercentOrModulo(self: *Lexer, start_loc: common_token.Location) Token {
-        // Disambiguate binary modulo vs percent string literal:
-        // If % is preceded by an expression (digit, ident, closing bracket/quote),
-        // it must be a binary modulo operator (e.g., 10 % (2 + 3) or x % (y)).
-        var is_expr_end = false;
-        if (self.index > 0) {
-            var prev_i = self.index;
-            while (prev_i > 0 and (self.buffer[prev_i - 1] == ' ' or self.buffer[prev_i - 1] == '\t')) : (prev_i -= 1) {}
-            if (prev_i > 0) {
-                const prev = self.buffer[prev_i - 1];
-                is_expr_end = isIdentChar(prev) or std.ascii.isDigit(prev) or prev == ')' or prev == ']' or prev == '}' or prev == '"' or prev == '\'';
-            }
-        }
-
-        if (is_expr_end) {
-            return self.consumeOperator(start_loc);
-        }
-
         const c2 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
         const c3 = if (self.index + 2 < self.buffer.len) self.buffer[self.index + 2] else 0;
 
+        // Explicit percent literals (%w, %W, %i, %I, %q, %Q) are ALWAYS literals
         if (c3 != 0 and !std.ascii.isAlphanumeric(c3) and !std.ascii.isWhitespace(c3)) {
-            // %w[...], %W[...], %i[...], %I[...], or %q[...] (No interpolation)
             if (c2 == 'w' or c2 == 'W' or c2 == 'i' or c2 == 'I' or c2 == 'q') {
                 return self.consumePercentLiteral(start_loc, true);
             }
-            // %Q[...] (Interpolated string literal)
+
             if (c2 == 'Q') {
                 self.advance(); // %
                 self.advance(); // Q
+                if (self.index >= self.buffer.len) return self.makeToken(.eof);
                 const open_delim = self.peek();
                 self.advance();
 
                 const close_delim = getClosingDelimiter(open_delim);
                 const content_loc = self.getLoc();
-
                 return self.consumeStringBody(content_loc, true, open_delim, close_delim, 1);
             }
         }
 
-        // Bare %(...) or %!...
+        // Bare %(...) or %!... (Disambiguate against binary modulo x % (y) or width % (2+3))
         if (c2 != 0 and c2 != '=' and !std.ascii.isAlphanumeric(c2) and !std.ascii.isWhitespace(c2)) {
-            self.advance(); // %
-            const open_delim = self.peek();
-            self.advance();
-            const close_delim = getClosingDelimiter(open_delim);
-            const content_loc = self.getLoc();
-            return self.consumeStringBody(content_loc, true, open_delim, close_delim, 1);
+            var is_expr_end = false;
+            if (self.index > 0) {
+                var prev_i = self.index;
+                while (prev_i > 0 and (self.buffer[prev_i - 1] == ' ' or self.buffer[prev_i - 1] == '\t')) : (prev_i -= 1) {}
+                if (prev_i > 0) {
+                    const prev = self.buffer[prev_i - 1];
+                    if (std.ascii.isDigit(prev) or prev == ')' or prev == ']' or prev == '}' or prev == '"' or prev == '\'') {
+                        is_expr_end = true;
+                    } else if (isIdentChar(prev)) {
+                        // Extract the preceding word to check if it is a statement keyword
+                        var word_start = prev_i - 1;
+                        while (word_start > 0 and isIdentChar(self.buffer[word_start - 1])) : (word_start -= 1) {}
+                        const word = self.buffer[word_start..prev_i];
+
+                        const is_stmt_kw = std.mem.eql(u8, word, "return") or
+                            std.mem.eql(u8, word, "yield") or
+                            std.mem.eql(u8, word, "break") or
+                            std.mem.eql(u8, word, "next");
+
+                        if (!is_stmt_kw) {
+                            is_expr_end = true;
+                        }
+                    }
+                }
+            }
+
+            if (!is_expr_end) {
+                self.advance(); // %
+                if (self.index >= self.buffer.len) return self.makeToken(.eof);
+
+                const open_delim = self.peek();
+                self.advance();
+                const close_delim = getClosingDelimiter(open_delim);
+                const content_loc = self.getLoc();
+                return self.consumeStringBody(content_loc, true, open_delim, close_delim, 1);
+            }
         }
 
         return self.consumeOperator(start_loc);
@@ -404,14 +417,20 @@ pub const Lexer = struct {
         // Consume the initial comment line
         while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
 
-        const first_line = self.buffer[start..self.index];
+        // Identify the end of the first line, stripping \r for tag parsing
+        var first_line_end = self.index;
+        if (first_line_end > start and self.buffer[first_line_end - 1] == '\r') first_line_end -= 1;
+
+        const first_line = self.buffer[start..first_line_end];
         var i: usize = 1; // Start after '#'
         while (i < first_line.len and (first_line[i] == ' ' or first_line[i] == '\t')) i += 1;
 
         // Check if this is a YARD/Lookbook docstring annotation (@tag)
         if (i < first_line.len and first_line[i] == '@') {
             const base_indent = i - 1; // Number of spaces between '#' and '@'
-            while (self.index < self.buffer.len and self.peek() == '\n') {
+            while (self.index < self.buffer.len) {
+                if (self.index >= self.buffer.len or self.peek() != '\n') break;
+
                 var lookahead = self.index + 1;
                 // Skip horizontal whitespace leading up to '#'
                 while (lookahead < self.buffer.len and (self.buffer[lookahead] == ' ' or self.buffer[lookahead] == '\t')) : (lookahead += 1) {}
@@ -426,7 +445,6 @@ pub const Lexer = struct {
                     // Must have strictly MORE spaces after '#' than the tag line AND must NOT start a new '@' tag
                     if (spaces_after_hash > base_indent and lookahead < self.buffer.len and self.buffer[lookahead] != '@') {
                         self.advance(); // consume '\n'
-
                         while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
                         continue;
                     }
@@ -434,10 +452,16 @@ pub const Lexer = struct {
                 break;
             }
 
-            return .{ .tag = .docstring, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+            // Trim trailing \r from the final docstring lexeme
+            var end_idx = self.index;
+            if (end_idx > start and self.buffer[end_idx - 1] == '\r') end_idx -= 1;
+            return .{ .tag = .docstring, .loc = start_loc, .lexeme = self.buffer[start..end_idx] };
         }
 
-        return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+        // Trim trailing \r from the final standard comment lexeme
+        var end_idx = self.index;
+        if (end_idx > start and self.buffer[end_idx - 1] == '\r') end_idx -= 1;
+        return .{ .tag = .comment, .loc = start_loc, .lexeme = self.buffer[start..end_idx] };
     }
 
     fn consumeOperator(self: *Lexer, start_loc: common_token.Location) Token {
@@ -636,6 +660,7 @@ pub const Lexer = struct {
             content_loc.offset = @intCast(start);
             return .{ .tag = .symbol, .loc = content_loc, .lexeme = self.buffer[start..self.index] };
         }
+
         return .{ .tag = .colon, .loc = start_loc, .lexeme = ":" };
     }
 

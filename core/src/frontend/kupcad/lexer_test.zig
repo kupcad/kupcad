@@ -743,3 +743,166 @@ test "KupCAD Lexer: Symbols with predicate and bang suffixes" {
         t(.r_bracket, "]"),     t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Percent array literals after statement keywords" {
+    try expectTokens("def build\n  return %w[box cylinder]\nend", &.{
+        t(.keyword_def, "def"),       t(.ident, "build"),                t(.newline, "\n"),
+        t(.keyword_return, "return"), t(.percent_w, "%w[box cylinder]"), t(.newline, "\n"),
+        t(.keyword_end, "end"),       t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Multi-line Docstring with Windows CRLF line endings" {
+    const source = "# @label Outer shell\r\n#   Continuation line\r\nwidth = 10";
+    try expectTokens(source, &.{
+        t(.docstring, "# @label Outer shell\r\n#   Continuation line"), t(.newline, "\n"),
+        t(.ident, "width"),                                             t(.equal, "="),
+        t(.number, "10"),                                               t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Modulo operator following variable identifiers" {
+    try expectTokens("width%(2 + 3)\nx % (y)", &.{
+        t(.ident, "width"), t(.percent, "%"), t(.l_paren, "("), t(.number, "2"),
+        t(.plus, "+"),      t(.number, "3"),  t(.r_paren, ")"), t(.newline, "\n"),
+        t(.ident, "x"),     t(.percent, "%"), t(.l_paren, "("), t(.ident, "y"),
+        t(.r_paren, ")"),   t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Symbol token location offset alignment" {
+    const source = ":top";
+    var lexer = Lexer.init(source, 0);
+
+    const tok = lexer.next();
+    try testing.expectEqual(.symbol, tok.tag);
+    try testing.expectEqualStrings("top", tok.lexeme);
+    // Location offset must point to 't' (1), not ':' (0)
+    try testing.expectEqual(@as(u32, 1), tok.loc.offset);
+    try testing.expectEqual(@as(u32, 4), tok.endOffset());
+}
+
+test "KupCAD Lexer: Class variables and Global variables" {
+    try expectTokens("@@class_count += 1\n$GLOBAL_CONF = true", &.{
+        t(.ident, "@@class_count"), t(.plus_equal, "+="), t(.number, "1"),          t(.newline, "\n"),
+        t(.ident, "$GLOBAL_CONF"),  t(.equal, "="),       t(.keyword_true, "true"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Identifiers sharing keyword prefixes" {
+    // Verifies that 'do', 'if', etc., act as keywords, but 'do_it!', 'if?', or 'class_name'
+    // correctly parse as identifiers without getting prematurely truncated.
+    try expectTokens("do_it! if? class_name return_val", &.{
+        t(.ident, "do_it!"),
+        t(.ident, "if?"),
+        t(.ident, "class_name"),
+        t(.ident, "return_val"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Compact symbols and rockets without spaces" {
+    // Ensures the lexer doesn't merge symbols into operators when spaces are omitted.
+    try expectTokens("{:a=>:b,c: :d}", &.{
+        t(.l_brace, "{"),
+        t(.symbol, "a"),
+        t(.arrow, "=>"),
+        t(.symbol, "b"),
+        t(.comma, ","),
+        t(.ident, "c"),
+        t(.colon, ":"),
+        t(.symbol, "d"),
+        t(.r_brace, "}"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Numbers vs Method calls on numbers" {
+    // Verifies that '3.14' parses as a float, but the second '.' parses as a method call,
+    // and '..' correctly parses as a range operator without breaking the number.
+    try expectTokens("3.14.round\n10..20", &.{
+        t(.number, "3.14"), t(.dot, "."),      t(.ident, "round"), t(.newline, "\n"),
+        t(.number, "10"),   t(.dot_dot, ".."), t(.number, "20"),   t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Multiple consecutive string literals" {
+    try expectTokens("\"first\" \"second\"", &.{
+        t(.string, "first"),
+        t(.string, "second"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Edge case operator combinations" {
+    // Verifies operators don't merge incorrectly (e.g. `! =` vs `!=`)
+    try expectTokens("x! = 10\ny != 20", &.{
+        t(.ident, "x!"), t(.equal, "="),       t(.number, "10"), t(.newline, "\n"),
+        t(.ident, "y"),  t(.bang_equal, "!="), t(.number, "20"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Advanced Scientific Notation variants" {
+    try expectTokens("1e10 2.5E-4 0e+0", &.{
+        t(.number, "1e10"),
+        t(.number, "2.5E-4"),
+        t(.number, "0e+0"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Dense operator chaining without spaces" {
+    try expectTokens("a&&=b||c**=2", &.{
+        t(.ident, "a"),  t(.and_and_equal, "&&="), t(.ident, "b"),
+        t(.or_or, "||"), t(.ident, "c"),           t(.star_star_equal, "**="),
+        t(.number, "2"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Safe navigation operator (&.)" {
+    try expectTokens("obj&.call_method", &.{
+        t(.ident, "obj"),
+        t(.ampersand_dot, "&."),
+        t(.ident, "call_method"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: EOF truncation on comments" {
+    // Tests that a comment ending exactly at EOF without a newline doesn't crash or drop characters
+    var lexer = Lexer.init("# terminal comment", 0);
+    try testing.expectEqualStrings("# terminal comment", lexer.next().lexeme);
+    try testing.expectEqual(.eof, lexer.next().tag);
+}
+
+test "KupCAD Lexer: UTF-8 characters inside string literals" {
+    // Verifies that multi-byte strings are consumed natively and safely
+    try expectTokens("greeting = \"Привет, \xE2\x8A\x97 world!\"", &.{
+        t(.ident, "greeting"), t(.equal, "="),
+        t(.string, "Привет, \xE2\x8A\x97 world!"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Heredoc terminator with mixed leading whitespace" {
+    const source = "str = <<~END\n  content\n \t END\n";
+    try expectTokens(source, &.{
+        t(.ident, "str"),          t(.equal, "="),
+        t(.string, "  content\n"), t(.newline, "\n"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Interpolation containing nested curly braces" {
+    // Verifies that standard curly braces inside an interpolation do not prematurely close the #{...} block
+    try expectTokens("\"Data: #{ { key: 1 } }\"", &.{
+        t(.string_start, "Data: "),
+        t(.l_brace, "{"),
+        t(.ident, "key"),
+        t(.colon, ":"),
+        t(.number, "1"),
+        t(.r_brace, "}"),
+        t(.string_end, ""),
+        t(.eof, ""),
+    });
+}
