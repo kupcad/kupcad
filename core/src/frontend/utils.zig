@@ -71,7 +71,7 @@ pub const LexerUtils = struct {
                 // Avoid range operator `..`
                 if (index.* + 1 < buffer.len and buffer[index.* + 1] == '.') break;
 
-                // Only consume '.' as a decimal point IF the next character is a digit!
+                // Only consume '.' as a decimal point IF the next character is a digit
                 // If it is followed by an identifier (e.g., `3.14159.round`), leave the dot for method dispatch
                 if (index.* + 1 < buffer.len and std.ascii.isDigit(buffer[index.* + 1])) {
                     index.* += 1;

@@ -663,3 +663,83 @@ test "Lexer: Heredoc with dash and tilde modifiers (<<-TEXT, <<~TEXT)" {
         t(.string, "  def foo\n"),     t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: Unclosed Heredoc at EOF does not panic" {
+    const source =
+        \\val = <<EOF
+        \\Line 1
+        \\Line 2
+    ;
+    try expectTokens(source, &.{
+        t(.ident, "val"),             t(.equal, "="),
+        t(.string, "Line 1\nLine 2"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Symbols with underscores and UTF-8 characters" {
+    try expectTokens("opts = { :_private => 1, :θ_angle => 90 }", &.{
+        t(.ident, "opts"),      t(.equal, "="),   t(.l_brace, "{"),
+        t(.symbol, "_private"), t(.arrow, "=>"),  t(.number, "1"),
+        t(.comma, ","),
+        t(.symbol, "θ_angle"),
+        t(.arrow, "=>"),        t(.number, "90"), t(.r_brace, "}"),
+        t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Range operators (inclusive and exclusive)" {
+    try expectTokens("1..10\n0...len", &.{
+        t(.number, "1"), t(.dot_dot, ".."),      t(.number, "10"), t(.newline, "\n"),
+        t(.number, "0"), t(.dot_dot_dot, "..."), t(.ident, "len"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Escaped interpolation sequence in string" {
+    try expectTokens("\"Hello \\#{name}\"", &.{
+        t(.string, "Hello \\#{name}"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Invalid character recovery" {
+    var lexer = Lexer.init("x @#$", 0);
+    try testing.expectEqual(.ident, lexer.next().tag); // x (@ is consumed as ident prefix if connected, but space isolates x)
+    try testing.expectEqual(.ident, lexer.next().tag); // @#$ consumed as special identifier lexeme
+}
+
+test "KupCAD Lexer: lexAll batch token extraction" {
+    var lexer = Lexer.init("a = 1", 0);
+    const tokens = try lexer.lexAll(testing.allocator);
+    defer testing.allocator.free(tokens.tags);
+    defer testing.allocator.free(tokens.starts);
+    defer testing.allocator.free(tokens.lengths);
+
+    try testing.expectEqual(@as(usize, 4), tokens.tags.len); // a, =, 1, eof
+    try testing.expectEqual(lexer_mod.Tag.ident, tokens.tags[0]);
+    try testing.expectEqual(lexer_mod.Tag.equal, tokens.tags[1]);
+    try testing.expectEqual(lexer_mod.Tag.number, tokens.tags[2]);
+    try testing.expectEqual(lexer_mod.Tag.eof, tokens.tags[3]);
+}
+
+test "KupCAD Lexer: Modulo operator with parenthesized expressions" {
+    try expectTokens("10 % (2 + 3)\nx % (y)", &.{
+        t(.number, "10"), t(.percent, "%"), t(.l_paren, "("), t(.number, "2"),
+        t(.plus, "+"),    t(.number, "3"),  t(.r_paren, ")"), t(.newline, "\n"),
+        t(.ident, "x"),   t(.percent, "%"), t(.l_paren, "("), t(.ident, "y"),
+        t(.r_paren, ")"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Uppercase percent array literals (%W and %I)" {
+    try expectTokens("a = %W[one two]\nb = %I(x y)", &.{
+        t(.ident, "a"), t(.equal, "="), t(.percent_w, "%W[one two]"), t(.newline, "\n"),
+        t(.ident, "b"), t(.equal, "="), t(.percent_i, "%I(x y)"),     t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Symbols with predicate and bang suffixes" {
+    try expectTokens("[:valid?, :destroy!, :width=]", &.{
+        t(.l_bracket, "["),     t(.symbol, "valid?"), t(.comma, ","),
+        t(.symbol, "destroy!"), t(.comma, ","),       t(.symbol, "width="),
+        t(.r_bracket, "]"),     t(.eof, ""),
+    });
+}
