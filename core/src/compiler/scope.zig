@@ -1,7 +1,7 @@
 const std = @import("std");
 const ast = @import("../core/ast.zig");
 const resolver = @import("../core/resolver.zig");
-const limits = @import("../vm/limits.zig");
+const limits = @import("../core/limits.zig");
 const Compiler = @import("compiler.zig").Compiler;
 const CompileError = @import("compiler.zig").CompileError;
 

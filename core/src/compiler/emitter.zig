@@ -1,7 +1,7 @@
 const std = @import("std");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
-const limits = @import("../vm/limits.zig");
+const limits = @import("../core/limits.zig");
 const Compiler = @import("compiler.zig").Compiler;
 const CompileError = @import("compiler.zig").CompileError;
 

@@ -3,7 +3,7 @@ const macros = @import("macros.zig");
 const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
-const limits = @import("../vm/limits.zig");
+const limits = @import("../core/limits.zig");
 const resolver = @import("../core/resolver.zig");
 const verifier = @import("../vm/verifier.zig");
 const VM = @import("../vm/vm.zig").VM;
@@ -155,10 +155,7 @@ pub const Compiler = struct {
 
         // AST Depth Breaker
         self.ast_depth += 1;
-        if (self.ast_depth > limits.MAX_AST_DEPTH) {
-            self.vm.reportError("CompileError: AST nesting too deep. Expression is too complex.\n", .{});
-            return error.UnsupportedScope;
-        }
+        std.debug.assert(self.ast_depth <= limits.MAX_AST_DEPTH);
         defer self.ast_depth -= 1;
 
         // Track where we started

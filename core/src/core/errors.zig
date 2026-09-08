@@ -2,6 +2,7 @@ const std = @import("std");
 const token = @import("token.zig");
 
 pub const ParseError = error{
+    AstTooDeep,
     UnexpectedToken,
     InvalidExpression,
     OutOfMemory,

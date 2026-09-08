@@ -1,16 +1,16 @@
 const std = @import("std");
 const lexer_mod = @import("lexer.zig");
+const limits = @import("../../core/limits.zig");
+const ast = @import("../../core/ast.zig");
+const common_token = @import("../../core/token.zig");
+const common_errors = @import("../../core/errors.zig");
+const docstring = @import("docstring.zig");
+
 const Lexer = lexer_mod.Lexer;
 const Tag = lexer_mod.Tag;
 const Token = lexer_mod.Token;
-const ast = @import("../../core/ast.zig");
-const common_token = @import("../../core/token.zig");
 const Node = ast.Node;
-const common_errors = @import("../../core/errors.zig");
-const docstring = @import("docstring.zig");
 const Diagnostics = common_errors.Diagnostics;
-
-const MULTI_ASSIGN_LOOKAHEAD_LIMIT = 256;
 
 const RescueEnsurePayload = struct {
     rescues: ast.Span,
@@ -55,6 +55,7 @@ pub const Parser = struct {
     comments: std.ArrayListUnmanaged(common_token.Comment) = .empty,
     in_block_params: bool = false,
     scope_depth: u32 = 0,
+    ast_depth: usize = 0,
 
     // --- Zero-Waste Scratch Buffers ---
     scratch_nodes: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
@@ -368,15 +369,19 @@ pub const Parser = struct {
 
             while (self.tag(0) != .newline and self.tag(0) != .semicolon and self.tag(0) != .eof and self.tag(0) != .keyword_then) {
                 if (isAssignmentOp(self.tag(0))) break;
+
                 var mod: ?ast.ArgModifier = null;
+
                 if (self.tag(0) == .star) {
                     mod = .splat;
                     self.advance();
                 }
+
                 if (self.tag(0) == .ident or self.tag(0) == .constant) {
                     try self.scratch_lhs_exprs.append(self.allocator, .{ .name = try self.b.intern(self.lexeme(0)), .modifier = mod });
                     self.advance();
                 } else return ParseError.UnexpectedToken;
+
                 if (self.tag(0) == .comma) {
                     self.advance();
                 } else break;
@@ -985,7 +990,7 @@ pub const Parser = struct {
         var expect_ident = true;
 
         // Hard boundary prevents catastrophic backtracking on massive lines
-        while (temp_idx - self.tok_idx < MULTI_ASSIGN_LOOKAHEAD_LIMIT) {
+        while (temp_idx - self.tok_idx < limits.MAX_ARGS) {
             const curr = if (temp_idx < self.tokens.tags.len) self.tokens.tags[temp_idx] else .eof;
 
             if (curr == .newline or curr == .semicolon or curr == .eof) return false;
@@ -1207,6 +1212,13 @@ pub const Parser = struct {
     }
 
     pub fn parseExpression(self: *Parser, precedence: Precedence) ParseError!ast.NodeIndex {
+        self.ast_depth += 1;
+        defer self.ast_depth -= 1;
+        if (self.ast_depth > limits.MAX_AST_DEPTH) {
+            self.reportError(self.getLoc(self.tok_idx), "Maximum AST depth exceeded", .{});
+            return ParseError.AstTooDeep;
+        }
+
         self.skipIgnored();
         const start_tok = self.tok_idx;
         const start_tag = self.tag(0);

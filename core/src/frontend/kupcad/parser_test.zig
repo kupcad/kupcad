@@ -3712,3 +3712,61 @@ test "KupCAD: Unary Minus vs Method Call Precedence" {
     try testing.expectEqual(ast.Tag.method_call, operand.tag);
     try testing.expectEqualStrings("abs", tree.getString(tree.methodCall(operand).method_name));
 }
+
+test "KupCAD Parser Guardrail: AST Depth Limit Prevention" {
+    // We simulate exceeding the limit. If MAX_AST_DEPTH is 1500, we nest 1501 times.
+    const depth: usize = 1505;
+    var source_buf = std.ArrayListUnmanaged(u8).empty;
+    defer source_buf.deinit(testing.allocator);
+
+    for (0..depth) |_| try source_buf.append(testing.allocator, '(');
+    try source_buf.appendSlice(testing.allocator, "1");
+    for (0..depth) |_| try source_buf.append(testing.allocator, ')');
+
+    var pt = try KTest.init(source_buf.items);
+    defer pt.deinit();
+
+    const result = pt.parser.parseExpression(.none);
+
+    // The parser MUST gracefully reject this, not crash with a stack overflow.
+    try testing.expectError(error.AstTooDeep, result);
+    try testing.expect(pt.parser.diagnostics.list.items.len > 0);
+    try testing.expect(std.mem.indexOf(u8, pt.parser.diagnostics.list.items[0].message, "Maximum AST depth") != null);
+}
+
+test "KupCAD Parser Edge Case: Empty File and Only Comments" {
+    const source =
+        \\# Just a comment
+        \\# And another
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    // Should gracefully return an empty block
+    const root_idx = try pt.parser.parseProgram();
+    const root = pt.getNode(root_idx);
+
+    try testing.expectEqual(ast.Tag.block, root.tag);
+    const stmts = tree.getNodes(tree.block(root).stmts);
+    try testing.expectEqual(@as(usize, 0), stmts.len);
+
+    // Ensure comments were still captured for the LSP side-table
+    try testing.expectEqual(@as(usize, 2), pt.parser.comments.items.len);
+}
+
+test "KupCAD Parser Edge Case: Malformed Empty Collections" {
+    const source =
+        \\arr = [,]
+        \\obj = {,}
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    // The parser should synchronize and flag Unexpected Tokens without crashing
+    _ = pt.parser.parseStatement() catch {}; // arr = [,]
+    pt.parser.synchronize();
+    _ = pt.parser.parseStatement() catch {}; // obj = {,}
+
+    try testing.expect(pt.parser.diagnostics.list.items.len >= 2);
+}
