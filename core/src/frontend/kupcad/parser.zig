@@ -10,6 +10,8 @@ const common_errors = @import("../../core/errors.zig");
 const docstring = @import("docstring.zig");
 const Diagnostics = common_errors.Diagnostics;
 
+const MULTI_ASSIGN_LOOKAHEAD_LIMIT = 256;
+
 const RescueEnsurePayload = struct {
     rescues: ast.Span,
     ensure_body: ast.NodeIndex,
@@ -35,6 +37,12 @@ pub const Precedence = enum(u8) {
     unary = 14, // ! -
     exponent = 15, // **
     call = 16, // . &. () [] ::
+};
+
+const CallSuffix = struct {
+    args: ast.Span,
+    block: ast.NodeIndex,
+    end_token: u32,
 };
 
 pub const Parser = struct {
@@ -886,63 +894,84 @@ pub const Parser = struct {
     }
 
     fn parseCallOnExpr(self: *Parser, receiver_expr: ast.NodeIndex) ParseError!ast.NodeIndex {
-        const args = try self.parseParenArgs();
-        var block_node: ast.NodeIndex = .none;
-        if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) block_node = try self.parseBlockClosure();
+        // This is triggered in the Pratt parser when an expression is followed by a parenthesis.
+        // By calling parseCallSuffix, it naturally falls into the `.l_paren` branch and gathers the block.
+        const suffix = try self.parseCallSuffix();
+
         const rec_node = self.b.tree.getNode(receiver_expr) orelse return ParseError.InvalidExpression;
         const rec_main_token = rec_node.main_token;
         const rec_tag = rec_node.tag;
         const rec_data = rec_node.data;
-        const end_tok = self.tok_idx;
+
+        // If the receiver was just an identifier, we "upgrade" it into a method call.
+        // The identifier string becomes the method_name, and the receiver becomes `.none`.
         if (rec_tag == .identifier) {
-            return self.b.methodCall(.none, @as(ast.StringId, @enumFromInt(rec_data)), args, block_node, false, end_tok, rec_main_token) catch ParseError.OutOfMemory;
+            const method_name = @as(ast.StringId, @enumFromInt(rec_data));
+            return self.b.methodCall(.none, method_name, suffix.args, suffix.block, false, suffix.end_token, rec_main_token) catch ParseError.OutOfMemory;
         } else {
-            return self.b.methodCall(receiver_expr, try self.b.intern(""), args, block_node, false, end_tok, rec_main_token) catch ParseError.OutOfMemory;
+            // If the receiver is a complex expression (e.g., a lambda or proc being called),
+            // it acts as the receiver itself, and we use an empty string for the method name.
+            const empty_name = try self.b.intern("");
+            return self.b.methodCall(receiver_expr, empty_name, suffix.args, suffix.block, false, suffix.end_token, rec_main_token) catch ParseError.OutOfMemory;
         }
+    }
+
+    fn parseCallSuffix(self: *Parser) ParseError!CallSuffix {
+        var args: ast.Span = try self.b.addNamedArgs(&.{});
+        var block_node: ast.NodeIndex = .none;
+        var end_tok = self.tok_idx;
+
+        if (self.tag(0) == .l_paren) {
+            args = try self.parseParenArgs();
+            end_tok = self.tok_idx;
+            if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) {
+                block_node = try self.parseBlockClosure();
+                end_tok = self.tok_idx;
+            }
+        } else if (self.isCommandCallStart()) {
+            const cmd = try self.parseCommandArgsAndBlock();
+            args = cmd.args;
+            block_node = cmd.block orelse .none;
+            end_tok = self.tok_idx;
+        }
+
+        return .{ .args = args, .block = block_node, .end_token = end_tok };
     }
 
     fn parseMethodCall(self: *Parser, receiver: ast.NodeIndex, is_safe: bool) ParseError!ast.NodeIndex {
         if (self.tag(0) == .dot or self.tag(0) == .ampersand_dot) self.advance();
         const method_idx = try self.expect(.ident);
         const rec_main_token = self.b.tree.getNode(receiver).?.main_token;
-        if (self.tag(0) == .l_paren) {
-            const args = try self.parseParenArgs();
-            var block_node: ast.NodeIndex = .none;
-            if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) block_node = try self.parseBlockClosure();
-            const end_tok = self.tok_idx;
-            return self.b.methodCall(receiver, try self.b.intern(self.tokens.lexeme(self.source, method_idx)), args, block_node, is_safe, end_tok, rec_main_token) catch ParseError.OutOfMemory;
-        }
-        if (self.isCommandCallStart()) {
-            const cmd = try self.parseCommandArgsAndBlock();
-            const end_tok = self.tok_idx;
-            return self.b.methodCall(receiver, try self.b.intern(self.tokens.lexeme(self.source, method_idx)), cmd.args, cmd.block orelse .none, is_safe, end_tok, rec_main_token) catch ParseError.OutOfMemory;
-        }
-        const end_tok = self.tok_idx;
-        return self.b.methodCall(receiver, try self.b.intern(self.tokens.lexeme(self.source, method_idx)), try self.b.addNamedArgs(&.{}), .none, is_safe, end_tok, rec_main_token) catch ParseError.OutOfMemory;
+
+        const suffix = try self.parseCallSuffix();
+
+        return self.b.methodCall(receiver, try self.b.intern(self.tokens.lexeme(self.source, method_idx)), suffix.args, suffix.block, is_safe, suffix.end_token, rec_main_token) catch ParseError.OutOfMemory;
     }
 
     fn parseIdentifierOrCall(self: *Parser) ParseError!ast.NodeIndex {
         const tok_idx = self.tok_idx;
         const tok_tag = self.tag(0);
+
+        // 1. Validate we are starting with an identifier or constant
         if (tok_tag != .ident and tok_tag != .constant) {
             self.reportError(self.getLoc(tok_idx), "Expected identifier or constant", .{});
             return ParseError.UnexpectedToken;
         }
         self.advance();
-        if (self.tag(0) == .l_paren) {
-            const args = try self.parseParenArgs();
-            var block_node: ast.NodeIndex = .none;
-            if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) {
-                block_node = try self.parseBlockClosure();
-            }
-            const end_tok = self.tok_idx;
-            return self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, tok_idx)), args, block_node, false, end_tok, tok_idx) catch ParseError.OutOfMemory;
+
+        // 2. Check if this identifier is actually the start of a method call.
+        // It's a method call if it's followed by parenthesis args `()` or command-style args `foo x: 1`.
+        if (self.tag(0) == .l_paren or self.isCommandCallStart()) {
+            // Delegate argument and block extraction to the shared suffix parser
+            const suffix = try self.parseCallSuffix();
+            const method_name = try self.b.intern(self.tokens.lexeme(self.source, tok_idx));
+
+            return self.b.methodCall(.none, // Implicit receiver (e.g., `cube()` instead of `self.cube()`)
+                method_name, suffix.args, suffix.block, false, // Command/Bare calls are never safe-navigation calls
+                suffix.end_token, tok_idx) catch ParseError.OutOfMemory;
         }
-        if (self.isCommandCallStart()) {
-            const cmd = try self.parseCommandArgsAndBlock();
-            const end_tok = self.tok_idx;
-            return self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, tok_idx)), cmd.args, cmd.block orelse .none, false, end_tok, tok_idx) catch ParseError.OutOfMemory;
-        }
+
+        // 3. Otherwise, it is just a standalone identifier (local variable or a bare method with no args)
         return self.b.identifierNode(self.tokens.lexeme(self.source, tok_idx), tok_idx) catch ParseError.OutOfMemory;
     }
 
@@ -953,18 +982,32 @@ pub const Parser = struct {
     fn isMultipleAssignmentStatement(self: *Parser) bool {
         var temp_idx = self.tok_idx;
         var has_comma = false;
-        while (true) {
-            const curr = if (temp_idx < self.tokens.tags.len) self.tokens.tags[temp_idx] else .eof;
-            if (curr == .newline or curr == .semicolon or curr == .eof) break;
+        var expect_ident = true;
 
+        // Hard boundary prevents catastrophic backtracking on massive lines
+        while (temp_idx - self.tok_idx < MULTI_ASSIGN_LOOKAHEAD_LIMIT) {
+            const curr = if (temp_idx < self.tokens.tags.len) self.tokens.tags[temp_idx] else .eof;
+
+            if (curr == .newline or curr == .semicolon or curr == .eof) return false;
             if (isAssignmentOp(curr)) return has_comma;
 
-            if (curr == .comma) {
-                has_comma = true;
-            } else if (curr != .ident and curr != .constant and curr != .star) {
-                return false;
+            if (expect_ident) {
+                if (curr == .star) {
+                    temp_idx += 1;
+                    const next = if (temp_idx < self.tokens.tags.len) self.tokens.tags[temp_idx] else .eof;
+                    if (next != .ident and next != .constant) return false;
+                } else if (curr != .ident and curr != .constant) {
+                    return false;
+                }
+                expect_ident = false;
+            } else {
+                if (curr == .comma) {
+                    has_comma = true;
+                    expect_ident = true;
+                } else {
+                    return false; // Strictly expect alternating commas
+                }
             }
-
             temp_idx += 1;
         }
         return false;

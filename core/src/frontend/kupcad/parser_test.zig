@@ -3571,3 +3571,144 @@ test "KupCAD Parser: Compiles single-line empty class and def stubs" {
     const stmt2 = pt.getNode(stmt2_idx);
     try testing.expectEqual(ast.Tag.def_stmt, stmt2.tag);
 }
+
+test "KupCAD Parser: Deep Workplane Nesting and Scope Depth" {
+    const source =
+        \\part.on_face(:top) do |face|
+        \\  grid(2, 2) do |x, y|
+        \\    circle(d: 5).extrude(10)
+        \\  end
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    const mc = tree.methodCall(stmt);
+    try testing.expectEqualStrings("on_face", tree.getString(mc.method_name));
+
+    // Level 1 Block
+    const block1 = pt.getNode(mc.block);
+    const params1 = tree.getNodes(tree.block(block1).params);
+    try testing.expectEqualStrings("face", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(params1[0]).data))));
+
+    // Level 2 Block
+    const stmts1 = tree.getNodes(tree.block(block1).stmts);
+    const inner_mc = tree.methodCall(pt.getNode(stmts1[0]));
+    try testing.expectEqualStrings("grid", tree.getString(inner_mc.method_name));
+
+    const block2 = pt.getNode(inner_mc.block);
+    const params2 = tree.getNodes(tree.block(block2).params);
+    try testing.expectEqualStrings("y", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(params2[1]).data))));
+
+    // Deepest Node
+    const stmts2 = tree.getNodes(tree.block(block2).stmts);
+    const extrude_mc = tree.methodCall(pt.getNode(stmts2[0]));
+    try testing.expectEqualStrings("extrude", tree.getString(extrude_mc.method_name));
+}
+
+test "KupCAD Parser: Malformed Default Parameters Synchronization" {
+    const source =
+        \\def build(width: , height: = 10)
+        \\  cube()
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    _ = pt.parser.parseStatement() catch blk: {
+        pt.parser.synchronize();
+        break :blk pt.parser.parseStatement() catch unreachable;
+    };
+
+    try testing.expect(pt.parser.diagnostics.list.items.len > 0);
+    const diag = pt.parser.diagnostics.list.items[0];
+
+    try testing.expect(std.mem.indexOf(u8, diag.message, "Invalid expression") != null);
+}
+
+test "KupCAD: CSG Operator Precedence (+ vs &)" {
+    // Should parse as: (box + sphere) & cylinder
+    const source = "box + sphere & cylinder";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseExpression(.none);
+    const stmt = pt.getNode(stmt_idx);
+
+    // The root should be the Intersection (&)
+    try testing.expectEqual(ast.Tag.binary_op, stmt.tag);
+    const root_bin = tree.binaryExpr(stmt);
+    try testing.expectEqual(ast.BinaryOp.bitwise_and, root_bin.op);
+
+    // The left side should be the Union (+)
+    const left_node = pt.getNode(root_bin.left);
+    try testing.expectEqual(ast.Tag.binary_op, left_node.tag);
+    try testing.expectEqual(ast.BinaryOp.add, tree.binaryExpr(left_node).op);
+}
+
+test "KupCAD: Method Chaining immediately after a block" {
+    const source =
+        \\part.on_face(:top) do
+        \\  circle
+        \\end.debug
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+
+    // The root statement should be the `.debug()` call
+    try testing.expectEqual(ast.Tag.method_call, stmt.tag);
+    const debug_call = tree.methodCall(stmt);
+    try testing.expectEqualStrings("debug", tree.getString(debug_call.method_name));
+
+    // The receiver of `.debug()` should be `.on_face(:top) do...end`
+    const receiver = pt.getNode(debug_call.receiver);
+    const on_face_call = tree.methodCall(receiver);
+    try testing.expectEqualStrings("on_face", tree.getString(on_face_call.method_name));
+    try testing.expect(on_face_call.block != .none);
+}
+
+test "KupCAD: Default Import for 3D Assets" {
+    const source = "import bearing from \"./assets/608_bearing.kup\"";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+
+    try testing.expectEqual(ast.Tag.import_stmt, stmt.tag);
+    const is_stmt = tree.importStmt(stmt);
+    try testing.expectEqualStrings("./assets/608_bearing.kup", tree.getString(is_stmt.path));
+
+    const symbols = tree.getStringLists(is_stmt.symbols);
+    try testing.expectEqual(@as(usize, 1), symbols.len);
+    try testing.expectEqualStrings("bearing", tree.getString(symbols[0]));
+}
+
+test "KupCAD: Unary Minus vs Method Call Precedence" {
+    const source = "-10.abs";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseExpression(.none);
+    const stmt = pt.getNode(stmt_idx);
+
+    // Root should be negate (-)
+    try testing.expectEqual(ast.Tag.unary_op, stmt.tag);
+    const unary = tree.unaryExpr(stmt);
+    try testing.expectEqual(ast.UnaryOp.negate, unary.op);
+
+    // Operand should be the method call (10.abs())
+    const operand = pt.getNode(unary.operand);
+    try testing.expectEqual(ast.Tag.method_call, operand.tag);
+    try testing.expectEqualStrings("abs", tree.getString(tree.methodCall(operand).method_name));
+}
