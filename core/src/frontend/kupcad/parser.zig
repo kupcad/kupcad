@@ -506,9 +506,9 @@ pub const Parser = struct {
         }
 
         self.scope_depth += 1;
+        defer self.scope_depth -= 1;
         const end_tags: []const Tag = if (is_brace) &.{.r_brace} else &.{.keyword_end};
         const block_node_idx = try self.parseBlock(end_tags);
-        self.scope_depth -= 1;
 
         const end_tok = self.tok_idx;
 
