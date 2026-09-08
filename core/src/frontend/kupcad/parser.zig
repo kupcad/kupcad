@@ -763,8 +763,8 @@ pub const Parser = struct {
 
             // Increment scope_depth so endless method expressions can't trigger top-level imports/exports
             self.scope_depth += 1;
+            defer self.scope_depth -= 1;
             const expr = try self.parseExprOrMultiAssign();
-            self.scope_depth -= 1;
 
             const end_tok = self.tok_idx;
 
@@ -782,9 +782,9 @@ pub const Parser = struct {
         // --- TRADITIONAL MULTI-LINE METHOD ---
         // Increment scope_depth to prevent top-level imports/exports inside the method body
         self.scope_depth += 1;
+        defer self.scope_depth -= 1;
         const body_node = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
         const payload = try self.parseRescueAndEnsure();
-        self.scope_depth -= 1;
 
         const end_tok = self.tok_idx;
         _ = try self.expect(.keyword_end);
@@ -805,8 +805,8 @@ pub const Parser = struct {
         self.skipIgnored();
 
         self.scope_depth += 1;
+        defer self.scope_depth -= 1;
         const body = try self.parseBlock(&.{.keyword_end});
-        self.scope_depth -= 1;
 
         const end_tok = self.tok_idx;
         _ = try self.expect(.keyword_end);
@@ -847,8 +847,8 @@ pub const Parser = struct {
 
             // Increment scope_depth to prevent top-level imports/exports inside the singleton block
             self.scope_depth += 1;
+            defer self.scope_depth -= 1;
             const body = try self.parseBlock(&.{.keyword_end});
-            self.scope_depth -= 1;
 
             _ = try self.expect(.keyword_end);
             return self.b.singletonClass(target, body, start_tok) catch ParseError.OutOfMemory;
@@ -865,8 +865,8 @@ pub const Parser = struct {
 
         // Increment scope_depth to prevent top-level imports/exports inside the class body
         self.scope_depth += 1;
+        defer self.scope_depth -= 1;
         const body = try self.parseBlock(&.{.keyword_end});
-        self.scope_depth -= 1;
 
         const end_tok = self.tok_idx;
         _ = try self.expect(.keyword_end);
