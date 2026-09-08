@@ -3770,3 +3770,81 @@ test "KupCAD Parser Edge Case: Malformed Empty Collections" {
 
     try testing.expect(pt.parser.diagnostics.list.items.len >= 2);
 }
+
+test "KupCAD Parser: Parametric UI DSL Extraction" {
+    const source = "param(:width, type: Number, default: 20, min: 10)";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+
+    // Verify it parses as a top-level method call
+    try testing.expectEqual(ast.Tag.method_call, stmt.tag);
+    const mc = tree.methodCall(stmt);
+    try testing.expectEqualStrings("param", tree.getString(mc.method_name));
+
+    const args = tree.getNamedArgs(mc.args);
+    try testing.expectEqual(@as(usize, 4), args.len);
+
+    // Verify first argument is a positional symbol
+    try testing.expectEqual(ast.StringId.none, args[0].name);
+    try testing.expectEqualStrings("width", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(args[0].value).data))));
+
+    // Verify subsequent keyword arguments
+    try testing.expectEqualStrings("type", tree.getString(args[1].name));
+    try testing.expectEqualStrings("Number", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(args[1].value).data))));
+    try testing.expectEqualStrings("default", tree.getString(args[2].name));
+    try testing.expectEqual(@as(f64, 20.0), tree.number(pt.getNode(args[2].value)));
+}
+
+test "KupCAD Parser Guardrail: Scope depth recovery after syntax error" {
+    const source =
+        \\class BrokenGeometry
+        \\  def build
+        \\    x = 10 + } # Syntax error!
+        \\  end
+        \\end
+        \\export { BrokenGeometry } from "./bad.kup"
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const result_idx = try pt.parser.parseProgram();
+    const result = pt.getNode(result_idx);
+    const stmts = tree.getNodes(tree.block(result).stmts);
+
+    // The parser should recover and parse BOTH the broken class and the valid export
+    try testing.expectEqual(@as(usize, 2), stmts.len);
+
+    // Verify the export statement parsed correctly at the top level
+    const export_stmt = pt.getNode(stmts[1]);
+    try testing.expectEqual(ast.Tag.export_stmt, export_stmt.tag);
+    try testing.expectEqualStrings("./bad.kup", tree.getString(tree.exportStmt(export_stmt).path));
+
+    // Confirm the syntax error was still caught
+    try testing.expect(pt.parser.diagnostics.list.items.len > 0);
+}
+
+test "KupCAD Parser: Manufacturing Metadata (BOM) Chaining" {
+    const source = "Cylinder.new(d: 3).meta(part_number: \"M3-10-HEX\", cost: 0.12)";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+
+    const meta_call = tree.methodCall(stmt);
+    try testing.expectEqualStrings("meta", tree.getString(meta_call.method_name));
+
+    const meta_args = tree.getNamedArgs(meta_call.args);
+    try testing.expectEqual(@as(usize, 2), meta_args.len);
+    try testing.expectEqualStrings("part_number", tree.getString(meta_args[0].name));
+    try testing.expectEqualStrings("cost", tree.getString(meta_args[1].name));
+
+    const new_call = tree.methodCall(pt.getNode(meta_call.receiver));
+    try testing.expectEqualStrings("new", tree.getString(new_call.method_name));
+}

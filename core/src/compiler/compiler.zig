@@ -145,7 +145,7 @@ pub const Compiler = struct {
 
         // Verify bytecode integrity before allowing execution
         verifier.verifyChunk(self.current_chunk) catch {
-            return error.CorruptedBytecode; // Or create a dedicated CompilerError.CorruptedBytecode
+            return error.CorruptedBytecode;
         };
     }
 
@@ -155,8 +155,8 @@ pub const Compiler = struct {
 
         // AST Depth Breaker
         self.ast_depth += 1;
-        std.debug.assert(self.ast_depth <= limits.MAX_AST_DEPTH);
         defer self.ast_depth -= 1;
+        std.debug.assert(self.ast_depth <= limits.MAX_AST_DEPTH);
 
         // Track where we started
         const expected_entry_depth = self.current_stack_depth;
