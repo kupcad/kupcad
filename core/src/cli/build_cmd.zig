@@ -6,7 +6,7 @@ const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     var input_path: ?[]const u8 = null;
     var output_path: ?[]const u8 = null;
-    var format: []const u8 = "stl"; // Default format
+    var format: []const u8 = "glb"; // Default format
     var use_draco: bool = false; // Draco compression flag
 
     // Hold our parsed CLI parameters
