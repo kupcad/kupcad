@@ -1628,10 +1628,14 @@ pub const VM = struct {
             self.push(str_val);
             return .ok;
         } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .array and b_val.asObj().obj_type == .array) {
+            self.push(a_val);
+            self.push(b_val);
+
             const a_arr = a_val.asArray();
             const b_arr = b_val.asArray();
             const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
             const new_val = value.Value.initObj(&new_arr.obj);
+
             new_arr.items.ensureTotalCapacity(self.allocator, a_arr.items.items.len + b_arr.items.items.len) catch return .runtime_error;
             for (a_arr.items.items) |item| {
                 new_arr.items.appendAssumeCapacity(item);
@@ -1639,6 +1643,10 @@ pub const VM = struct {
             for (b_arr.items.items) |item| {
                 new_arr.items.appendAssumeCapacity(item);
             }
+
+            // Un-root the old arrays and push the new one
+            _ = self.pop(); // Pop b_val
+            _ = self.pop(); // Pop a_val
             self.push(new_val);
             return .ok;
         } else if (self.host.binary_handler) |handler| {
@@ -1817,7 +1825,8 @@ pub const VM = struct {
         const post_count = exec_chunk.code.items[frame.ip + 1];
         frame.ip += 2;
 
-        const val = self.pop();
+        // Peek instead of Pop to keep the target rooted during allocations
+        const val = self.stack[self.stack_top - 1];
 
         if (val.isObject() and val.asObj().obj_type == .array) {
             const arr = val.asArray();
@@ -1829,7 +1838,7 @@ pub const VM = struct {
 
             const splat_arr = self.gc.allocateArray(self) catch return .runtime_error;
             const splat_val = value.Value.initObj(&splat_arr.obj);
-            self.push(splat_val);
+            self.push(splat_val); // Protect the splat array
 
             if (total > pre_count + post_count) {
                 const splat_size = total - pre_count - post_count;
@@ -1841,7 +1850,19 @@ pub const VM = struct {
                 }
             }
 
-            _ = self.pop();
+            _ = self.pop(); // Pop the protected splat array
+
+            // Now we can safely remove the target array we peeked at earlier
+            const base_slot = self.stack_top - pre_count - 1;
+
+            // Shift the pre_count values down one slot to overwrite the original array
+            if (pre_count > 0) {
+                const src = self.stack[base_slot + 1 .. base_slot + 1 + pre_count];
+                const dest = self.stack[base_slot .. base_slot + pre_count];
+                std.mem.copyForwards(value.Value, dest, src);
+            }
+            self.stack_top -= 1; // Physically shrink the stack to finalize the pop
+
             self.push(splat_val);
 
             for (0..post_count) |i| {
@@ -1853,7 +1874,8 @@ pub const VM = struct {
                 }
             }
         } else {
-            // Fallback: If not array, splat gets empty array, first var gets the value
+            // Fallback for non-arrays
+            _ = self.pop(); // Pop the value manually
             if (pre_count > 0) {
                 self.push(val);
                 for (1..pre_count) |_| self.push(value.Value.initNil());
@@ -1939,6 +1961,10 @@ pub const VM = struct {
             const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
             self.push(value.Value.initObj(&range_obj.obj));
         } else if (start_val.isObject() and start_val.asObj().obj_type == .string and end_val.isObject() and end_val.asObj().obj_type == .string) {
+            // Re-root the strings to prevent GC sweep
+            self.push(start_val);
+            self.push(end_val);
+
             const s_str = start_val.asString().chars;
             const e_str = end_val.asString().chars;
 
@@ -1955,6 +1981,12 @@ pub const VM = struct {
                     const char_str = self.allocateString(char_slice) catch return .runtime_error;
                     arr_obj.items.append(self.allocator, char_str) catch return .runtime_error;
                 }
+
+                // Cleanup the protected values
+                _ = self.pop(); // Pop arr_val
+                _ = self.pop(); // Pop end_val
+                _ = self.pop(); // Pop start_val
+                self.push(arr_val);
             } else {
                 self.runtimeError("Runtime Error: String ranges must be single characters.\n", .{});
                 return .runtime_error;

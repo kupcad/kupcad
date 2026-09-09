@@ -9773,3 +9773,78 @@ test "VM Edge Case: Raising and rescuing a custom non-Exception object" {
     try testing.expect(result.isNumber());
     try testing.expectEqual(@as(f64, 42.0), result.asNumber());
 }
+
+test "VM: Array Concatenation roots operands safely" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source = "[1, 2] + [3, 4]";
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isArray());
+    const arr = result.asArray();
+    try testing.expectEqual(@as(usize, 4), arr.items.items.len);
+    try testing.expectEqual(@as(f64, 4.0), arr.items.items[3].asNumber());
+}
+
+test "VM: Splat unpacking roots arrays safely" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // The splat operation forces an array allocation midway through unpacking
+    const source =
+        \\begin
+        \\  a, *b, c = [1, 2, 3, 4]
+        \\  b
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isArray());
+    const arr = result.asArray();
+    try testing.expectEqual(@as(usize, 2), arr.items.items.len); // Should contain [2, 3]
+    try testing.expectEqual(@as(f64, 2.0), arr.items.items[0].asNumber());
+}
+
+test "VM: String ranges root boundary strings safely" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Evaluates "a", evaluates "c", then allocates an array to hold the range
+    const source = "('a'..'c')";
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isArray());
+    const arr = result.asArray();
+    try testing.expectEqual(@as(usize, 3), arr.items.items.len); // ["a", "b", "c"]
+
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr.items.items[2].asObj())));
+    try testing.expectEqualStrings("c", str_obj.chars);
+}
