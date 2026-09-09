@@ -201,10 +201,22 @@ pub fn build(b: *std.Build) void {
     const is_x86_64 = target.result.cpu.arch == .x86_64;
     const is_macos = target.result.os.tag == .macos;
 
+    const wasm_threads = b.option(
+        bool,
+        "wasm_threads",
+        "Enable Wasm threads (SharedArrayBuffer, Atomics, Bulk Memory)",
+    ) orelse false;
+
+    const wasm_features = if (is_wasm and wasm_threads)
+        std.Target.wasm.featureSet(&.{ .atomics, .bulk_memory })
+    else
+        std.Target.wasm.featureSet(&.{});
+
     // Use WASI for WASM builds so Zig provides wasi-libc
     const wasm_target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
         .os_tag = .wasi,
+        .cpu_features_add = wasm_features,
     });
 
     const active_target = if (is_wasm) wasm_target else target;
@@ -220,19 +232,19 @@ pub fn build(b: *std.Build) void {
     // ====================================================================
     const wasm_stub_header = b.path("src/wasm_stubs.h").getPath(b);
     const manifold_flags: []const []const u8 = if (is_wasm)
-        &.{
-            "-std=c++17",
-            "-fno-exceptions",
-            "-fno-rtti", // Removes RTTI overhead
-            "-fno-sanitize=undefined", // Prevents UBSan helper generation
-            "-DNDEBUG", // Disables debug/assert machinery
-            "-DMANIFOLD_NO_IOSTREAM",
-            "-DMANIFOLD_NO_FILESYSTEM",
-            "-DMANIFOLD_PAR=-1",
-            "-fvisibility=hidden", // Hides all internal Manifold C/C++ symbols
-            "-include",
-            wasm_stub_header,
-        }
+        if (wasm_threads)
+            &.{
+                "-std=c++17",          "-fno-exceptions",        "-fno-rtti",                "-fno-sanitize=undefined",
+                "-DNDEBUG",            "-DMANIFOLD_NO_IOSTREAM", "-DMANIFOLD_NO_FILESYSTEM", "-DMANIFOLD_PAR=-1",
+                "-fvisibility=hidden", "-include",               wasm_stub_header,           "-matomics",
+                "-mbulk-memory",       "-pthread",
+            }
+        else
+            &.{
+                "-std=c++17",          "-fno-exceptions",        "-fno-rtti",                "-fno-sanitize=undefined",
+                "-DNDEBUG",            "-DMANIFOLD_NO_IOSTREAM", "-DMANIFOLD_NO_FILESYSTEM", "-DMANIFOLD_PAR=-1",
+                "-fvisibility=hidden", "-include",               wasm_stub_header,
+            }
     else if (enable_parallel)
         &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=1" }
     else
@@ -340,6 +352,11 @@ pub fn build(b: *std.Build) void {
         wasm.max_memory = 4294967296;
         wasm.stack_size = 67108864;
 
+        if (wasm_threads) {
+            wasm.shared_memory = true;
+            wasm.import_memory = true; // JS host will provide the WebAssembly.Memory object
+        }
+
         b.installArtifact(wasm);
 
         // tests
@@ -361,7 +378,20 @@ pub fn build(b: *std.Build) void {
         wasm_test.max_memory = 4294967296;
         wasm_test.stack_size = 67108864;
 
-        const run_wasm_test = b.addSystemCommand(&.{ "wasmtime", "--dir=.", "--" });
+        if (wasm_threads) {
+            wasm_test.shared_memory = true;
+            wasm_test.import_memory = false;
+        }
+
+        const run_wasm_test = b.addSystemCommand(&.{ "wasmtime", "--dir=." });
+
+        // Wasmtime requires a flag to enable thread support in testing BEFORE the '--'
+        if (wasm_threads) {
+            run_wasm_test.addArgs(&.{ "-W", "threads=y,shared-memory=y" });
+        }
+
+        // Now add the separator and the emitted binary
+        run_wasm_test.addArg("--");
         run_wasm_test.addFileArg(wasm_test.getEmittedBin());
 
         const test_wasm_step = b.step("test-wasm", "Run WASM tests");

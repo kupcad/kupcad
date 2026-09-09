@@ -18,25 +18,29 @@ const nurbs_ssi = locus.nurbs_ssi;
 test "WASM Interop: format_code_wasm handles invalid and empty inputs gracefully" {
     // Test Syntax Error Handling
     const bad_src = "class 123 { invalid }";
-    const res_bad = wasm.format_code_wasm(bad_src.ptr, bad_src.len);
+    var out_len: usize = 0;
+    const res_bad = wasm.format_code_wasm(bad_src.ptr, bad_src.len, &out_len);
 
     // Formatter should fail and return null
     try testing.expect(res_bad == null);
 
-    // Retrieve and verify the last error message
+    // Retrieve and verify the last error message (which is still a null-terminated constant)
     const err_ptr = wasm.get_last_error();
     const err_slice = std.mem.sliceTo(err_ptr, 0);
     try testing.expectEqualStrings("Syntax Error", err_slice);
 
     // Test Zero-Length / Empty Input
     const empty_src = "";
-    const res_empty = wasm.format_code_wasm(empty_src.ptr, empty_src.len);
+    var empty_len: usize = 0;
+    const res_empty = wasm.format_code_wasm(empty_src.ptr, empty_src.len, &empty_len);
 
-    // Depending on the exact Formatter implementation, an empty file might
-    // succeed with an empty string, or throw a Syntax Error. We handle both gracefully.
     if (res_empty) |ptr| {
-        const empty_slice = std.mem.sliceTo(ptr, 0);
+        // Safely construct the slice using the explicit length
+        const empty_slice = ptr[0..empty_len];
         try testing.expectEqualStrings("", empty_slice);
+
+        // Prevent memory leaks in the test environment
+        wasm.wasm_free(@constCast(ptr), empty_len);
     } else {
         const err_ptr2 = wasm.get_last_error();
         const err_slice2 = std.mem.sliceTo(err_ptr2, 0);
@@ -47,28 +51,33 @@ test "WASM Interop: format_code_wasm handles invalid and empty inputs gracefully
 test "WASM Interop: check_code_wasm returns valid JSON on syntax errors" {
     // Test Syntax Error Handling
     const bad_src = "def !invalid";
-    const res_bad = wasm.check_code_wasm(bad_src.ptr, bad_src.len);
+    var out_len: usize = 0;
+    const res_bad = wasm.check_code_wasm(bad_src.ptr, bad_src.len, &out_len);
 
-    // The linter captures syntax errors natively and returns them as diagnostics!
-    // Therefore, it should NOT return null, but a valid JSON array.
     try testing.expect(res_bad != null);
 
-    const bad_slice = std.mem.sliceTo(res_bad.?, 0);
+    // Construct the slice precisely
+    const bad_slice = res_bad.?[0..out_len];
 
     // Verify it is a valid JSON array structure
     try testing.expect(bad_slice.len >= 2);
     try testing.expect(bad_slice[0] == '[');
     try testing.expect(bad_slice[bad_slice.len - 1] == ']');
 
+    wasm.wasm_free(@constCast(res_bad.?), out_len);
+
     // Test Zero-Length / Empty Input
     const empty_src = "";
-    const res_empty = wasm.check_code_wasm(empty_src.ptr, empty_src.len);
+    var empty_len: usize = 0;
+    const res_empty = wasm.check_code_wasm(empty_src.ptr, empty_src.len, &empty_len);
 
     try testing.expect(res_empty != null);
-    const empty_slice = std.mem.sliceTo(res_empty.?, 0);
+    const empty_slice = res_empty.?[0..empty_len];
 
     // An empty file has no diagnostics, so it should return an empty JSON array
     try testing.expectEqualStrings("[]", empty_slice);
+
+    wasm.wasm_free(@constCast(res_empty.?), empty_len);
 }
 
 test "VM: Character ranges evaluate to an Array of Strings" {
