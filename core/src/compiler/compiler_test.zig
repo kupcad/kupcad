@@ -1207,3 +1207,43 @@ test "Compiler Guardrail: Method call exceeding MAX_ARGS triggers error" {
     // Validate the compiler rejected the oversized payload
     try testing.expectError(error.TooManyArguments, result);
 }
+
+test "Compiler Edge Case: Hash literals with > 255 entries emit op_build_map_wide" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    var entries: std.ArrayListUnmanaged(ast.HashEntry) = .empty;
+    defer entries.deinit(testing.allocator);
+
+    // Generate a hash with 300 entries (exceeds 255 1-byte limit)
+    const val = try b.number("1", 0);
+    for (0..300) |i| {
+        var buf: [10]u8 = undefined;
+        const key_str = try std.fmt.bufPrint(&buf, "k{d}", .{i});
+        const key = try b.stringNode(key_str, 0);
+        try entries.append(testing.allocator, .{ .key = key, .value = val });
+    }
+
+    const span = try b.addHashEntries(entries.items);
+    const map_node = try b.hashLiteral(span, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(map_node);
+
+    // Verify op_build_map_wide is present in the bytecode!
+    var found_wide = false;
+    for (out_chunk.code.items) |byte| {
+        if (byte == @intFromEnum(chunk.OpCode.op_build_map_wide)) found_wide = true;
+    }
+
+    // If it fell back to the standard op_build_map, this will fail
+    try testing.expect(found_wide);
+}

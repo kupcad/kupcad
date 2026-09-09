@@ -86,6 +86,10 @@ pub const VM = struct {
     static_false: ?*value.ObjString = null,
     static_nil: ?*value.ObjString = null,
 
+    // --- Track stack state to prevent native FFI corruption ---
+    unwind_stack_top: usize = 0,
+    unwind_err_val: ?value.Value = null,
+
     config_stack: std.ArrayListUnmanaged(EngineConfig) = .empty,
 
     // safety for infinite loops
@@ -141,6 +145,8 @@ pub const VM = struct {
             .static_true = null,
             .static_false = null,
             .static_nil = null,
+            .unwind_stack_top = 0,
+            .unwind_err_val = null,
             .instruction_count = 0,
             .instruction_limit = limits.DEFAULT_INSTRUCTION_LIMIT,
         };
@@ -1015,6 +1021,11 @@ pub const VM = struct {
                             if (self.frames.items.len == target_depth) return .ok;
                             continue;
                         }
+                        if (err == error.Unwind) {
+                            // The stack has been forcefully unwound past this frame.
+                            // Continue the run loop to either execute the rescue handler or terminate natively.
+                            continue;
+                        }
                         return .runtime_error;
                     };
 
@@ -1534,7 +1545,11 @@ pub const VM = struct {
         if (res == .execution_limit_exceeded) return error.ExecutionLimitExceeded;
         if (res == .block_break) return error.BlockBreak;
         if (res == .runtime_error) return error.FatalError;
-        if (self.frames.items.len < target_depth) return error.Unwind; // A rescue block ate our frame
+
+        // If the stack top shrunk BELOW our base slot, it means a rescue block
+        // OUTSIDE of this native call caught an exception and unwound the stack past us
+        if (self.stack_top < base_slot + 1) return error.Unwind;
+
         if (res != .ok) return error.FatalError;
 
         return self.pop();
@@ -2092,7 +2107,14 @@ pub const VM = struct {
         const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
             if (self.profiler) |p| p.exitFrame() catch {};
             if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
-            if (err == error.Unwind) return .ok;
+            if (err == error.Unwind) {
+                // --- Restore Stack corrupted by Native Defers ---
+                if (self.unwind_err_val) |err_val| {
+                    self.stack_top = self.unwind_stack_top;
+                    self.push(err_val);
+                }
+                return .ok;
+            }
             if (err == error.FatalError) return .runtime_error;
             return self.throwDynamicError("Runtime Error: Native Execution Error", .{});
         };
@@ -2107,9 +2129,48 @@ pub const VM = struct {
     }
 
     pub fn executeThrow(self: *VM) InterpretResult {
-        const err_val = self.pop();
+        var err_val = self.pop();
+
+        // --- Auto-wrap primitives in RuntimeError ---
+        if (!err_val.isInstance() and !err_val.isClass()) {
+            if (self.globals.get("RuntimeError")) |rt_class_val| {
+                if (rt_class_val.isClass()) {
+                    // FIX: Append `catch null` to unwrap the error union into an optional
+                    if (self.gc.allocateInstance(self, rt_class_val.asClass()) catch null) |inst| {
+                        var str_val: ?value.Value = null;
+
+                        // If it's already a string, use it directly!
+                        if (err_val.isObject() and err_val.asObj().obj_type == .string) {
+                            str_val = err_val;
+                        } else {
+                            // Otherwise, stringify the primitive (number, boolean, etc.)
+                            const scratch_alloc = self.scratch_arena.allocator();
+                            var out: std.Io.Writer.Allocating = .init(scratch_alloc);
+                            err_val.stringify(false, &out.writer) catch {};
+                            str_val = self.allocateString(out.written()) catch null;
+                        }
+
+                        if (str_val) |s_val| {
+                            self.push(value.Value.initObj(&inst.obj));
+                            self.setInstanceField(inst, "message", s_val, null) catch {};
+
+                            // --- EAGER BACKTRACE CAPTURE ---
+                            if (self.buildBacktrace() catch null) |bt_arr| {
+                                self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
+                                self.setInstanceField(inst, "backtrace", value.Value.initObj(&bt_arr.obj), null) catch {};
+                                _ = self.pop();
+                            }
+
+                            _ = self.pop();
+                            err_val = value.Value.initObj(&inst.obj); // Overwrite the thrown value!
+                        }
+                    }
+                }
+            }
+        }
+
         if (self.rescue_frames.items.len == 0) {
-            // We removed the [Uncaught Exception] header!
+            // We removed the [Uncaught Exception] header
             if (err_val.isObject() and err_val.asObj().obj_type == .string) {
                 const str = err_val.asString().chars;
                 self.reportError("\nRuntimeError: {s}\n", .{str});
@@ -2167,6 +2228,10 @@ pub const VM = struct {
         self.shrinkStack(r_frame.stack_top);
         self.push(err_val);
         self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
+
+        // --- Save Unwind State for Native FFI Restoration ---
+        self.unwind_stack_top = r_frame.stack_top;
+        self.unwind_err_val = err_val;
 
         return .ok;
     }

@@ -9410,3 +9410,366 @@ test "VM: Bitwise and shift operators evaluate correctly" {
     try testing.expectEqual(@as(f64, 40.0), arr_obj.items.items[2].asNumber());
     try testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[3].asNumber());
 }
+
+test "VM Edge Case: Exceptions inside blocks passed to Native methods safely unwind" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Native Array#map iterates 3 times. On the second iteration, the KupCAD block violently aborts.
+    const source =
+        \\begin
+        \\  [1, 2, 3].map do |x|
+        \\    if x == 2
+        \\      raise("Abort")
+        \\    end
+        \\    x * 10
+        \\  end
+        \\rescue => e
+        \\  e
+        \\end
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // The rescue block should gracefully catch the error and maintain stack equilibrium
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // Verify the exception was safely unwound and auto-wrapped into an instance
+    try std.testing.expect(result.isInstance());
+    const inst = result.asInstance();
+    try std.testing.expectEqualStrings("RuntimeError", inst.class.name.chars);
+
+    // Extract the 'message' field natively using the DOD instance layout map
+    const msg_idx = inst.class.instance_layout.get("message").?;
+    const msg_val = inst.fields.items[msg_idx];
+
+    try std.testing.expect(msg_val.isObject() and msg_val.asObj().obj_type == .string);
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj())));
+
+    // Proves the stack unwound, auto-wrapped the primitive string, and populated the instance field!
+    try std.testing.expectEqualStrings("Abort", str_obj.chars);
+}
+
+test "VM: Deep inheritance chain properly shares and mutates class variables" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\class Root
+        \\  def initialize
+        \\    @@shared = 10
+        \\  end
+        \\  def read_root
+        \\    @@shared
+        \\  end
+        \\end
+        \\
+        \\class Middle < Root
+        \\end
+        \\
+        \\class Leaf < Middle
+        \\  def mutate
+        \\    @@shared += 42
+        \\  end
+        \\end
+        \\
+        \\r = Root.new
+        \\l = Leaf.new
+        \\l.mutate
+        \\r.read_root
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // The Leaf successfully mutated the Root's variable (10 + 42 = 52)
+    try testing.expectEqual(@as(f64, 52.0), result.asNumber());
+}
+
+test "VM: raise auto-wraps primitive types in RuntimeError" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Proves that throwing a raw Number correctly stringifies into a RuntimeError
+    const source =
+        \\begin
+        \\  raise(42)
+        \\rescue RuntimeError => e
+        \\  [e.is_a?(RuntimeError), e.message]
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isArray());
+    const arr_obj = result.asArray();
+
+    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
+
+    const msg_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj())));
+    try testing.expectEqualStrings("42", msg_obj.chars);
+}
+
+test "VM Edge Case: raise auto-wraps Array primitives into RuntimeError with stringified message" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Raise an array. The auto-wrapper should inherently call .stringify() on it.
+    const source =
+        \\begin
+        \\  raise([1, 2, 3])
+        \\rescue RuntimeError => e
+        \\  e # Return the error instance natively
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // The rescue block catches the error and maintains stack equilibrium
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // Assert it successfully wrapped into an instance of RuntimeError
+    try testing.expect(result.isInstance());
+    const inst = result.asInstance();
+    try testing.expectEqualStrings("RuntimeError", inst.class.name.chars);
+
+    // Extract the 'message' field natively using the DOD instance layout map
+    const msg_idx = inst.class.instance_layout.get("message").?;
+    const msg_val = inst.fields.items[msg_idx];
+
+    // Assert the message is a valid string
+    try testing.expect(msg_val.isObject() and msg_val.asObj().obj_type == .string);
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj())));
+
+    // Verify the Array stringification resolved perfectly
+    try testing.expectEqualStrings("[1, 2, 3]", str_obj.chars);
+}
+
+test "VM Edge Case: raise auto-wraps Map primitives into RuntimeError with stringified message" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Raise a map. The auto-wrapper should inherently call .stringify() on it.
+    const source =
+        \\begin
+        \\  raise({ "error_code" => 404 })
+        \\rescue RuntimeError => e
+        \\  e # Return the error instance natively
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // The rescue block catches the error and maintains stack equilibrium
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // Assert it successfully wrapped into an instance of RuntimeError
+    try testing.expect(result.isInstance());
+    const inst = result.asInstance();
+    try testing.expectEqualStrings("RuntimeError", inst.class.name.chars);
+
+    // Extract the 'message' field natively using the DOD instance layout map
+    const msg_idx = inst.class.instance_layout.get("message").?;
+    const msg_val = inst.fields.items[msg_idx];
+
+    // Assert the message is a valid string
+    try testing.expect(msg_val.isObject() and msg_val.asObj().obj_type == .string);
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj())));
+
+    // Map stringification order can be unpredictable depending on the underlying hash,
+    // so we verify that the formatted contents exist securely within the output.
+    try testing.expect(std.mem.indexOf(u8, str_obj.chars, "404") != null);
+    try testing.expect(std.mem.indexOf(u8, str_obj.chars, "error_code") != null);
+}
+
+test "VM Edge Case: Exception raised inside a rescue block is caught by outer rescue" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests that the rescue frame stack is properly maintained when an exception
+    // is thrown while currently inside an active rescue handler.
+    const source =
+        \\begin
+        \\  begin
+        \\    raise("First Error")
+        \\  rescue => e1
+        \\    raise("Second Error")
+        \\  end
+        \\rescue => e2
+        \\  e2.message
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(result.isObject() and result.asObj().obj_type == .string);
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    try testing.expectEqualStrings("Second Error", str_obj.chars);
+}
+
+test "VM Edge Case: Exception raised inside a constructor unwinds safely" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests that op_call to .new cleanly drops the partially-initialized instance
+    // and correctly unwinds the frame if initialize() throws an error.
+    const source =
+        \\class BrokenWidget
+        \\  def initialize
+        \\    raise("Init Failed")
+        \\  end
+        \\end
+        \\
+        \\begin
+        \\  w = BrokenWidget.new
+        \\  "Success"
+        \\rescue => e
+        \\  e.message
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(result.isObject() and result.asObj().obj_type == .string);
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    try testing.expectEqualStrings("Init Failed", str_obj.chars);
+}
+
+test "VM Edge Case: Exception unwinds cleanly through multiple closure call frames" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Tests that executeThrow correctly shrinks `self.frames` by multiple levels
+    // to reach the exact frame count where the rescue handler resides.
+    const source =
+        \\def layer3
+        \\  raise("Deep Error")
+        \\end
+        \\def layer2
+        \\  layer3
+        \\end
+        \\def layer1
+        \\  layer2
+        \\end
+        \\
+        \\begin
+        \\  layer1
+        \\rescue => e
+        \\  e.message
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try testing.expect(result.isObject() and result.asObj().obj_type == .string);
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    try testing.expectEqualStrings("Deep Error", str_obj.chars);
+}
+
+test "VM Edge Case: Raising and rescuing a custom non-Exception object" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Proves that `executeThrow` recognizes native instances, bypasses the primitive
+    // RuntimeError auto-wrapper, and allows `rescue` to filter by any arbitrary class!
+    const source =
+        \\class CustomPayload
+        \\  attr_accessor :data
+        \\  def initialize(d)
+        \\    @data = d
+        \\  end
+        \\end
+        \\
+        \\begin
+        \\  raise(CustomPayload.new(42))
+        \\rescue CustomPayload => e
+        \\  e.data
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // The thrown payload was seamlessly bypassed, caught, and unpacked[cite: 26]
+    try testing.expect(result.isNumber());
+    try testing.expectEqual(@as(f64, 42.0), result.asNumber());
+}
