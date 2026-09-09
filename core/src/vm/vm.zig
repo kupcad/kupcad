@@ -2161,13 +2161,13 @@ pub const VM = struct {
     }
 
     pub fn executeThrow(self: *VM) InterpretResult {
-        var err_val = self.pop();
+        // PEEK instead of POP to protect the thrown error from the GC
+        var err_val = self.stack[self.stack_top - 1];
 
         // --- Auto-wrap primitives in RuntimeError ---
         if (!err_val.isInstance() and !err_val.isClass()) {
             if (self.globals.get("RuntimeError")) |rt_class_val| {
                 if (rt_class_val.isClass()) {
-                    // FIX: Append `catch null` to unwrap the error union into an optional
                     if (self.gc.allocateInstance(self, rt_class_val.asClass()) catch null) |inst| {
                         var str_val: ?value.Value = null;
 
@@ -2200,6 +2200,9 @@ pub const VM = struct {
                 }
             }
         }
+
+        // Now pop it safely to complete the conceptual op_throw
+        _ = self.pop();
 
         if (self.rescue_frames.items.len == 0) {
             // We removed the [Uncaught Exception] header
@@ -2418,32 +2421,36 @@ pub const VM = struct {
         // Try to instantiate a real `RuntimeError` object so it can be rescued natively
         if (self.globals.get("RuntimeError")) |rt_class_val| {
             if (rt_class_val.isClass()) {
-                if (self.gc.allocateInstance(self, rt_class_val.asClass())) |inst| {
-                    if (self.allocateString(msg)) |str_val| {
-                        self.push(value.Value.initObj(&inst.obj));
+                if (self.gc.allocateInstance(self, rt_class_val.asClass()) catch null) |inst| {
+
+                    // Root the newly allocated instance IMMEDIATELY
+                    self.push(value.Value.initObj(&inst.obj));
+
+                    if (self.allocateString(msg) catch null) |str_val| {
                         self.setInstanceField(inst, "message", str_val, null) catch {};
 
                         // --- EAGER BACKTRACE CAPTURE ---
-                        if (self.buildBacktrace()) |bt_arr| {
+                        if (self.buildBacktrace() catch null) |bt_arr| {
                             self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
                             self.setInstanceField(inst, "backtrace", value.Value.initObj(&bt_arr.obj), null) catch {};
                             _ = self.pop();
-                        } else |_| {}
+                        }
 
-                        _ = self.pop();
-
-                        self.push(value.Value.initObj(&inst.obj));
+                        // inst is already safely on the top of the stack, call executeThrow to bubble it
                         return self.executeThrow();
-                    } else |_| {}
-                } else |_| {}
+                    }
+
+                    // Cleanup if string alloc failed
+                    _ = self.pop();
+                }
             }
         }
 
         // Fallback to string if the standard library isn't loaded yet
-        if (self.allocateString(msg)) |err_val| {
+        if (self.allocateString(msg) catch null) |err_val| {
             self.push(err_val);
             return self.executeThrow();
-        } else |_| {
+        } else {
             self.runtimeError("Fatal: OOM while throwing exception.\n", .{});
             return .runtime_error;
         }

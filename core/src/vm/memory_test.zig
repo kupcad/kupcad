@@ -154,3 +154,51 @@ test "GC Stress: High volume allocations and segmented sweeps" {
     try testing.expectEqual(rooted_amount + 3, vm.gc.strings.items.len);
     try testing.expectEqual(rooted_amount, vm.gc.arrays.items.len);
 }
+
+test "GC: Nested objects (Arrays) survive sweep if parent is rooted" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const parent_arr = try vm.gc.allocateArray(&vm);
+    vm.push(value.Value.initObj(&parent_arr.obj)); // Root the parent array
+
+    const child_str = try vm.gc.allocateString(&vm, "child_string");
+    // Do NOT push child_str to the stack. Add it directly to the array.
+    try parent_arr.items.append(testing.allocator, value.Value.initObj(&child_str.obj));
+
+    const count_before = countObjects(&vm.gc);
+    vm.gc.collectGarbage(&vm, false);
+    const count_after = countObjects(&vm.gc);
+
+    // Both the array and the string inside it must survive because `blackenObject` traces nested items
+    try testing.expectEqual(count_before, count_after);
+    try testing.expectEqual(@as(usize, 4), vm.gc.strings.items.len); // 3 statics + 1 child_string
+}
+
+test "GC: String interning prevents duplicate allocations" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const str1 = try vm.gc.allocateString(&vm, "intern_me");
+    const str2 = try vm.gc.allocateString(&vm, "intern_me");
+
+    // Must return the exact same memory pointer from the VM's StringHashMap
+    try testing.expectEqual(str1, str2);
+
+    // Only 1 string should be physically allocated (+ the static true/false/nil strings)
+    try testing.expectEqual(@as(usize, 4), vm.gc.strings.items.len);
+}
+
+test "GC Sandbox: Enforces max_memory_limit strictly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Set limit extremely tight (just current allocation footprint + 5 bytes)
+    vm.gc.max_memory_limit = vm.gc.bytes_allocated + 5;
+
+    // Attempting to allocate a large string should hit the sandbox threshold immediately
+    const result = vm.gc.allocateString(&vm, "this is way too large for the sandbox");
+
+    // The allocator should intercept it and yield an error to halt the VM
+    try testing.expectError(error.OutOfMemory, result);
+}

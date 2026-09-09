@@ -73,3 +73,13 @@ test "Value: NaN-tagging packs and unpacks Object pointers losslessly" {
     try testing.expectEqual(&dummy_obj, unpacked_ptr);
     try testing.expectEqual(value.ObjType.string, unpacked_ptr.obj_type);
 }
+
+test "Value: Map ValueContext hashes identically for equal values" {
+    const ctx = value.ValueContext{};
+    const num1 = value.Value.initNumber(100.5);
+    const num2 = value.Value.initNumber(100.5);
+
+    // IEEE-754 equal numbers must yield the exact same hash for Map keys
+    try testing.expectEqual(ctx.hash(num1), ctx.hash(num2));
+    try testing.expect(ctx.eql(num1, num2, 0));
+}

@@ -9848,3 +9848,24 @@ test "VM: String ranges root boundary strings safely" {
     const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr.items.items[2].asObj())));
     try testing.expectEqualStrings("c", str_obj.chars);
 }
+
+test "VM: Value.stringify recursively handles nested arrays and primitives" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const arr = try vm.gc.allocateArray(&vm);
+    vm.push(value.Value.initObj(&arr.obj)); // Root it
+
+    try arr.items.append(testing.allocator, value.Value.initNumber(42));
+    try arr.items.append(testing.allocator, value.Value.initBool(false));
+    try arr.items.append(testing.allocator, value.Value.initNil());
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+
+    try value.Value.initObj(&arr.obj).stringify(false, &out.writer);
+
+    // Proves stringify successfully jumps through the union payload into the Array items
+    try testing.expectEqualStrings("[42, false, nil]", out.written());
+    _ = vm.pop();
+}
