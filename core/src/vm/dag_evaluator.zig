@@ -58,6 +58,12 @@ fn dumpDAG(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) void {
 }
 
 pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHandle {
+    // Graceful bounds checking to prevent host panics
+    if (node_idx >= vm.dag_builder.nodes.items.len) {
+        vm.reportError("Runtime Error: DAG Node Index {d} out of bounds.\n", .{node_idx});
+        return error.RuntimeError;
+    }
+
     const node = vm.dag_builder.nodes.items[node_idx];
 
     // Extract the active engine from the config stack!
@@ -210,6 +216,12 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
 }
 
 pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.CrossSectionHandle {
+    // Graceful bounds checking
+    if (node_idx >= vm.dag_builder.nodes.items.len) {
+        vm.reportError("Runtime Error: DAG Node Index {d} out of bounds.\n", .{node_idx});
+        return error.RuntimeError;
+    }
+
     const node = vm.dag_builder.nodes.items[node_idx];
     const config = vm.config_stack.items[vm.config_stack.items.len - 1];
     const engine = config.engine;

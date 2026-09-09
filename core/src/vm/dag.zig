@@ -64,6 +64,10 @@ pub const DAGBuilder = struct {
     poly_points: std.ArrayListUnmanaged([3]f64) = .empty,
     poly_faces: std.ArrayListUnmanaged([3]u32) = .empty,
 
+    // CSE Deduplication
+    node_hashes: std.ArrayListUnmanaged(u64) = .empty,
+    dedup_map: std.AutoHashMapUnmanaged(u64, DAGNodeIndex) = .empty,
+
     pub fn init(child_allocator: std.mem.Allocator) DAGBuilder {
         return .{ .arena = std.heap.ArenaAllocator.init(child_allocator) };
     }
@@ -78,9 +82,22 @@ pub const DAGBuilder = struct {
 
     // --- Adders ---
 
-    fn appendNode(self: *DAGBuilder, new_node: DAGNode) !void {
+    fn appendNode(self: *DAGBuilder, new_node: DAGNode) !DAGNodeIndex {
+        const hash = self.computeNodeHash(new_node);
+
+        // O(1) Common Subexpression Elimination
+        if (self.dedup_map.get(hash)) |existing_idx| {
+            return existing_idx;
+        }
+
         const alloc = self.allocator();
+        const node_idx: u32 = @intCast(self.nodes.items.len);
+
         try self.nodes.append(alloc, new_node);
+        try self.node_hashes.append(alloc, hash);
+        try self.dedup_map.put(alloc, hash, node_idx);
+
+        return node_idx;
     }
 
     pub fn addBinary(self: *DAGBuilder, tag: DAGTag, left: DAGNodeIndex, right: DAGNodeIndex) !DAGNodeIndex {
@@ -89,12 +106,9 @@ pub const DAGBuilder = struct {
         try self.extra_data.append(alloc, left);
         try self.extra_data.append(alloc, right);
 
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = tag, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addBatchUnion(self: *DAGBuilder, targets: []const DAGNodeIndex) !DAGNodeIndex {
@@ -105,72 +119,53 @@ pub const DAGBuilder = struct {
         try self.extra_data.append(alloc, @intCast(targets.len));
         try self.extra_data.appendSlice(alloc, targets);
 
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .batch_union_op, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addCube(self: *DAGBuilder, x: f64, y: f64, z: f64, center: bool) !DAGNodeIndex {
         const alloc = self.allocator();
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.numbers.appendSlice(alloc, &.{ x, y, z });
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .cube, .flags = if (center) 1 else 0, .data = num_idx };
-
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addCylinder(self: *DAGBuilder, r1: f64, r2: f64, height: f64, center: bool, segments: i32) !DAGNodeIndex {
         const alloc = self.allocator();
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.numbers.appendSlice(alloc, &.{ r1, r2, height, @as(f64, @floatFromInt(segments)) });
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .cylinder, .flags = if (center) 1 else 0, .data = num_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addSphere(self: *DAGBuilder, radius: f64) !DAGNodeIndex {
         const alloc = self.allocator();
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.numbers.append(alloc, radius);
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .sphere, .flags = 0, .data = num_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addSquare(self: *DAGBuilder, x: f64, y: f64, center: bool) !DAGNodeIndex {
         const alloc = self.allocator();
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.numbers.appendSlice(alloc, &.{ x, y });
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .square, .flags = if (center) 1 else 0, .data = num_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addCircle(self: *DAGBuilder, radius: f64, segments: i32) !DAGNodeIndex {
         const alloc = self.allocator();
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.numbers.appendSlice(alloc, &.{ radius, @floatFromInt(segments) });
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .circle, .flags = 0, .data = num_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addTransform(self: *DAGBuilder, tag: DAGTag, target: DAGNodeIndex, x: f64, y: f64, z: f64) !DAGNodeIndex {
@@ -179,12 +174,9 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &.{ x, y, z });
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = tag, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addPolyhedron(self: *DAGBuilder, pts: []const [3]f64, faces: []const [3]u32) !DAGNodeIndex {
@@ -203,12 +195,9 @@ pub const DAGBuilder = struct {
         try self.extra_data.append(alloc, faces_start);
         try self.extra_data.append(alloc, @intCast(faces.len));
 
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .polyhedron_op, .flags = 0, .data = data_offset };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addPolygonsEvenOdd(self: *DAGBuilder, contours: []const []const [2]f64) !DAGNodeIndex {
@@ -230,24 +219,18 @@ pub const DAGBuilder = struct {
             try self.extra_data.append(alloc, @intCast(contour.len));
         }
 
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .polygons_even_odd, .flags = 0, .data = data_offset };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addSetMaterial(self: *DAGBuilder, target: DAGNodeIndex, material_id: u32) !DAGNodeIndex {
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.appendSlice(alloc, &.{ target, material_id });
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .set_material, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addTranslate(self: *DAGBuilder, target: DAGNodeIndex, x: f64, y: f64, z: f64) !DAGNodeIndex {
@@ -267,12 +250,9 @@ pub const DAGBuilder = struct {
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.append(alloc, target);
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .hull, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addBatchHull(self: *DAGBuilder, targets: []const DAGNodeIndex) !DAGNodeIndex {
@@ -280,12 +260,9 @@ pub const DAGBuilder = struct {
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.append(alloc, @intCast(targets.len));
         try self.extra_data.appendSlice(alloc, targets);
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .batch_hull_op, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addLoft(self: *DAGBuilder, base: DAGNodeIndex, top: DAGNodeIndex, height: f64) !DAGNodeIndex {
@@ -296,23 +273,18 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, &.{ base, top, num_idx });
         try self.numbers.append(alloc, height);
 
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .loft, .flags = 0, .data = extra_idx };
-        try self.appendNode(new_node);
 
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addProject(self: *DAGBuilder, target: DAGNodeIndex) !DAGNodeIndex {
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.append(alloc, target);
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .project_op, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addSlice(self: *DAGBuilder, target: DAGNodeIndex, height: f64) !DAGNodeIndex {
@@ -321,12 +293,9 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.append(alloc, height);
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .slice_op, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addTrimByPlane(self: *DAGBuilder, target: DAGNodeIndex, nx: f64, ny: f64, nz: f64, offset: f64) !DAGNodeIndex {
@@ -335,12 +304,9 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &.{ nx, ny, nz, offset });
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .trim_by_plane, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addExtrude(self: *DAGBuilder, target: DAGNodeIndex, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) !DAGNodeIndex {
@@ -351,12 +317,9 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &.{ height, @as(f64, @floatFromInt(slices)), twist_degrees, scale_x, scale_y });
 
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .extrude, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addOffset(self: *DAGBuilder, target: DAGNodeIndex, delta: f64, join_type: u8) !DAGNodeIndex {
@@ -365,12 +328,9 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.append(alloc, delta);
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .offset, .flags = join_type, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addRevolve(self: *DAGBuilder, target: DAGNodeIndex, segments: i32, degrees: f64) !DAGNodeIndex {
@@ -381,12 +341,9 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &.{ @as(f64, @floatFromInt(segments)), degrees });
 
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .revolve, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addTransformMatrix(self: *DAGBuilder, target: DAGNodeIndex, mat: [12]f64) !DAGNodeIndex {
@@ -395,12 +352,9 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &mat);
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .transform_matrix, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addCrossSectionTransform(self: *DAGBuilder, target: DAGNodeIndex, mat: [6]f64) !DAGNodeIndex {
@@ -409,12 +363,9 @@ pub const DAGBuilder = struct {
         const num_idx: u32 = @intCast(self.numbers.items.len);
         try self.extra_data.appendSlice(alloc, &.{ target, num_idx });
         try self.numbers.appendSlice(alloc, &mat);
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .cs_transform, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     pub fn addPolygon(self: *DAGBuilder, pts: [][2]f64) !DAGNodeIndex {
@@ -426,12 +377,9 @@ pub const DAGBuilder = struct {
         }
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.appendSlice(alloc, &.{ num_idx, @intCast(pts.len) });
-        const node_idx: u32 = @intCast(self.nodes.items.len);
         const new_node = DAGNode{ .tag = .polygon, .flags = 0, .data = extra_idx };
 
-        try self.appendNode(new_node);
-
-        return node_idx;
+        return try self.appendNode(new_node);
     }
 
     // --- Unpackers for JIT Materialization ---
