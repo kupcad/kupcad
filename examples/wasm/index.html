@@ -139,7 +139,13 @@ end
 
       let outputText = "";
       if (resultPtr === 0) {
-        outputText = "Error occurred. Check console.";
+        // Read the null-terminated error string from Zig
+        const errPtr = wasmInstance.exports.get_last_error();
+        const mem = new Uint8Array(activeMemory());
+        let endPtr = errPtr;
+        while (mem[endPtr] !== 0) endPtr++;
+
+        outputText = "Error: " + new TextDecoder().decode(mem.subarray(errPtr, endPtr));
       } else {
         // .slice() copies bytes into a non-shared ArrayBuffer so TextDecoder accepts it
         const rawBytes = new Uint8Array(activeMemory(), resultPtr, outLen).slice();
