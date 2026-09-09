@@ -359,7 +359,7 @@ pub const VM = struct {
                     frame.ip += 2;
                     self.setLocal(frame, (high << 8) | low, self.stack[self.stack_top - 1]);
                 },
-                .op_add, .op_subtract, .op_bitwise_and => {
+                .op_add, .op_subtract, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right => {
                     const res = self.executeBinaryArithmetic(op);
                     if (res != .ok) return res;
                 },
@@ -1583,12 +1583,20 @@ pub const VM = struct {
         const b_val = self.pop();
         const a_val = self.pop();
         if (a_val.isNumber() and b_val.isNumber()) {
+            const a_int: i64 = @intFromFloat(a_val.asNumber());
+            const b_int: i64 = @intFromFloat(b_val.asNumber());
+
             const res = switch (op) {
                 .op_add => a_val.asNumber() + b_val.asNumber(),
                 .op_subtract => a_val.asNumber() - b_val.asNumber(),
                 .op_bitwise_and => @as(f64, @floatFromInt(@as(i64, @intFromFloat(a_val.asNumber())) & @as(i64, @intFromFloat(b_val.asNumber())))),
+                .op_bitwise_or => @as(f64, @floatFromInt(a_int | b_int)),
+                .op_bitwise_xor => @as(f64, @floatFromInt(a_int ^ b_int)),
+                .op_shift_left => @as(f64, @floatFromInt(a_int << @as(u6, @intCast(b_int & 63)))),
+                .op_shift_right => @as(f64, @floatFromInt(a_int >> @as(u6, @intCast(b_int & 63)))),
                 else => unreachable,
             };
+
             self.push(value.Value.initNumber(res));
             return .ok;
         } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .string and b_val.asObj().obj_type == .string) {

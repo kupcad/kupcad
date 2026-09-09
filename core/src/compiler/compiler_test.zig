@@ -1122,3 +1122,88 @@ test "Compiler: Deep spatial tuple destructuring emits recursive unpacks" {
     }
     try testing.expectEqual(@as(usize, 2), unpack_count);
 }
+
+test "Compiler: compiles bitwise and shift operators" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: 10 << 2
+    const left = try b.number("10", 0);
+    const right = try b.number("2", 0);
+    const bin_node = try b.binary(.shift_left, left, right, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(bin_node);
+
+    // Verify correct mapping
+    try testing.expectEqual(chunk.OpCode.op_shift_left, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+}
+
+test "Compiler: Logical OR short-circuit stack equilibrium" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: true || false
+    const left = try b.booleanNode(true, 0);
+    const right = try b.booleanNode(false, 0);
+    const or_node = try b.binary(.logical_or, left, right, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(or_node);
+
+    // The compilation of the entire script pushes exactly 1 boolean onto the stack,
+    // but the `comp.compile(or_node)` method implicitly emits an `op_return` which pops it.
+    // Thus, the net stack tracking effect should be exactly 0.
+    try testing.expectEqual(@as(usize, 0), comp.current_stack_depth);
+    try testing.expectEqual(@as(usize, 1), out_chunk.max_stack_slots);
+}
+
+test "Compiler Guardrail: Method call exceeding MAX_ARGS triggers error" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const call_name = try b.intern("heavy_method");
+    var args = std.ArrayListUnmanaged(ast.NamedArg).empty;
+    defer args.deinit(testing.allocator);
+
+    const val = try b.number("1", 0);
+    // Push 256 arguments (VM limits MAX_ARGS to 255)
+    for (0..256) |_| {
+        try args.append(testing.allocator, .{ .name = .none, .value = val, .modifier = null });
+    }
+
+    const args_span = try b.addNamedArgs(args.items);
+    const call_node = try b.methodCall(.none, call_name, args_span, .none, false, 0, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    const result = comp.compile(call_node);
+
+    // Validate the compiler rejected the oversized payload
+    try testing.expectError(error.TooManyArguments, result);
+}

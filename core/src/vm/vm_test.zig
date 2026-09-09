@@ -9374,3 +9374,39 @@ test "VM: Parentheses gracefully ignore internal newlines" {
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try std.testing.expectEqual(@as(f64, 30.0), result.asNumber());
 }
+
+test "VM: Bitwise and shift operators evaluate correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // 10 | 2 = 10 (1010 | 0010 = 1010)
+    // 10 ^ 2 = 8  (1010 ^ 0010 = 1000)
+    // 10 << 2 = 40
+    // 10 >> 1 = 5
+    const source =
+        \\[ 10 | 2, 10 ^ 2, 10 << 2, 10 >> 1 ]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Run execution and verify stack equilibrium
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // Validate results array
+    const arr_obj = result.asArray();
+    try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+
+    try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 8.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 40.0), arr_obj.items.items[2].asNumber());
+    try testing.expectEqual(@as(f64, 5.0), arr_obj.items.items[3].asNumber());
+}

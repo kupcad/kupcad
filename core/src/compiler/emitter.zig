@@ -144,7 +144,7 @@ pub fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
 
         // --- Pops 1 (Net: -1) ---
         // These operations consume exactly one value from the stack without pushing anything back.
-        .op_pop, .op_return, .op_close_upvalue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_switch_wide, .op_inherit, .op_class_method, .op_class_method_wide, .op_mixin, .op_method, .op_method_wide, .op_define_global, .op_define_global_wide, .op_bitwise_and, .op_break_block => -1,
+        .op_pop, .op_return, .op_close_upvalue, .op_throw, .op_array_push, .op_array_spread, .op_map_spread, .op_switch, .op_switch_wide, .op_inherit, .op_class_method, .op_class_method_wide, .op_mixin, .op_method, .op_method_wide, .op_define_global, .op_define_global_wide, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right, .op_break_block => -1,
 
         // --- Pops 2 (Net: -2) ---
         // Consumes two values (e.g. key and value) without replacing them.

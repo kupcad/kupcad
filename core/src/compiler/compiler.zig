@@ -17,6 +17,7 @@ pub const CompileError = error{
     UnknownNode,
     TooManyConstants,
     TooManyLocals,
+    TooManyArguments,
     UnsupportedScope,
     ProtectedSymbol,
     CorruptedBytecode,
@@ -52,6 +53,10 @@ pub const Compiler = struct {
     upvalues: std.ArrayListUnmanaged(Upvalue) = .empty,
     locals: std.ArrayListUnmanaged(Local) = .empty,
     loops: std.ArrayListUnmanaged(LoopState) = .empty,
+
+    // --- DOD Zero-Waste Compilation Buffers ---
+    scratch_ops: std.ArrayListUnmanaged(ast.BinaryOp) = .empty,
+    scratch_rights: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
 
     current_stack_depth: usize = 0,
     max_stack_depth: usize = 0,
@@ -112,6 +117,8 @@ pub const Compiler = struct {
             .upvalues = .empty,
             .locals = .empty,
             .loops = .empty,
+            .scratch_ops = .empty,
+            .scratch_rights = .empty,
             .current_stack_depth = 0,
             .max_stack_depth = 0,
             .ast_depth = 0,
@@ -128,6 +135,8 @@ pub const Compiler = struct {
             loop.exit_jumps.deinit(self.allocator);
         }
         self.loops.deinit(self.allocator);
+        self.scratch_ops.deinit(self.allocator);
+        self.scratch_rights.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
     }
 
@@ -304,7 +313,8 @@ pub const Compiler = struct {
         for (args) |arg| {
             try self.compileNode(arg);
         }
-        if (args.len > limits.MAX_ARGS) return error.TooManyConstants;
+        if (args.len > limits.MAX_ARGS) return error.TooManyArguments;
+
         try self.emitOp(.op_yield);
         try self.emitByte(@intCast(args.len));
         self.simulatePop(args.len); // Yield consumes args
@@ -580,10 +590,12 @@ pub const Compiler = struct {
     }
 
     fn compileBinaryOp(self: *Compiler, start_node_idx: ast.NodeIndex) CompileError!void {
-        var ops = std.ArrayListUnmanaged(ast.BinaryOp).empty;
-        var rights = std.ArrayListUnmanaged(ast.NodeIndex).empty;
-        defer ops.deinit(self.allocator);
-        defer rights.deinit(self.allocator);
+        const initial_ops_len = self.scratch_ops.items.len;
+        const initial_rights_len = self.scratch_rights.items.len;
+        defer {
+            self.scratch_ops.shrinkRetainingCapacity(initial_ops_len);
+            self.scratch_rights.shrinkRetainingCapacity(initial_rights_len);
+        }
 
         var curr_idx = start_node_idx;
         var curr_node = self.tree.getNode(curr_idx).?;
@@ -611,8 +623,8 @@ pub const Compiler = struct {
                 break;
             }
 
-            try ops.append(self.allocator, bin_expr.op);
-            try rights.append(self.allocator, bin_expr.right);
+            try self.scratch_ops.append(self.allocator, bin_expr.op);
+            try self.scratch_rights.append(self.allocator, bin_expr.right);
 
             curr_idx = bin_expr.left;
             if (curr_idx == .none) break;
@@ -625,12 +637,12 @@ pub const Compiler = struct {
         }
 
         // Unwind the explicit stack, compiling the right nodes and emitting operators bottom-up
-        var i: usize = rights.items.len;
-        while (i > 0) {
+        var i: usize = self.scratch_rights.items.len;
+        while (i > initial_rights_len) {
             i -= 1;
-            try self.compileNode(rights.items[i]);
+            try self.compileNode(self.scratch_rights.items[i]);
 
-            switch (ops.items[i]) {
+            switch (self.scratch_ops.items[i]) {
                 .add => try self.emitOp(.op_add),
                 .subtract => try self.emitOp(.op_subtract),
                 .multiply => try self.emitOp(.op_multiply),
@@ -653,6 +665,10 @@ pub const Compiler = struct {
                     try self.emitOp(.op_not);
                 },
                 .bitwise_and => try self.emitOp(.op_bitwise_and),
+                .bitwise_or => try self.emitOp(.op_bitwise_or),
+                .bitwise_xor => try self.emitOp(.op_bitwise_xor),
+                .shift_left => try self.emitOp(.op_shift_left),
+                .shift_right => try self.emitOp(.op_shift_right),
                 .spaceship => try self.emitOp(.op_cmp),
                 else => return error.UnknownNode,
             }
@@ -679,14 +695,7 @@ pub const Compiler = struct {
         if (use_static_build) {
             for (elements) |elem| try self.compileNode(elem);
 
-            if (elements.len <= limits.MAX_SHORT_CONSTANTS) {
-                try self.emitOp(.op_build_array);
-                try self.emitByte(@intCast(elements.len));
-            } else {
-                try self.emitOp(.op_build_array_wide);
-                try self.emitByte(@intCast((elements.len >> 8) & 0xff));
-                try self.emitByte(@intCast(elements.len & 0xff));
-            }
+            try self.emitOpWithOperand(.op_build_array, .op_build_array_wide, elements.len);
 
             self.simulatePop(elements.len);
             self.simulatePush(1);
@@ -738,14 +747,7 @@ pub const Compiler = struct {
 
             if (entries.len > limits.MAX_HASH_ENTRIES) return error.TooManyConstants;
 
-            if (entries.len <= limits.MAX_SHORT_CONSTANTS) {
-                try self.emitOp(.op_build_map);
-                try self.emitByte(@intCast(entries.len));
-            } else {
-                try self.emitOp(.op_build_map_wide);
-                try self.emitByte(@intCast((entries.len >> 8) & 0xff));
-                try self.emitByte(@intCast(entries.len & 0xff));
-            }
+            try self.emitOpWithOperand(.op_build_map, .op_build_map_wide, entries.len);
 
             self.simulatePop(entries.len * 2);
             self.simulatePush(1);
@@ -1074,7 +1076,7 @@ pub const Compiler = struct {
                 .yield_call => {
                     const args = self.tree.getNamedArgs(mc.args);
                     const actual_arg_count = try self.compileCallArguments(args);
-                    if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
+                    if (actual_arg_count > limits.MAX_ARGS) return error.TooManyArguments; // Changed
 
                     try self.emitOp(.op_yield);
                     try self.emitByte(@intCast(actual_arg_count));
@@ -1131,7 +1133,7 @@ pub const Compiler = struct {
             actual_arg_count += 1;
         }
 
-        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
+        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyArguments; // Changed
 
         // 4. Execute Invocation
         if (mc.receiver == .none) {
@@ -1383,7 +1385,7 @@ pub const Compiler = struct {
             }
         }
 
-        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyConstants;
+        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyArguments; // Changed
 
         try self.emitOp(.op_super_invoke);
         try self.emitByte(@intCast(actual_arg_count));
@@ -1860,14 +1862,7 @@ pub const Compiler = struct {
 
         // Pack Keyword Arguments into a trailing Map
         if (kw_count > 0) {
-            if (kw_count <= limits.MAX_SHORT_CONSTANTS) {
-                try self.emitOp(.op_build_map);
-                try self.emitByte(@intCast(kw_count));
-            } else {
-                try self.emitOp(.op_build_map_wide);
-                try self.emitByte(@intCast((kw_count >> 8) & 0xff));
-                try self.emitByte(@intCast(kw_count & 0xff));
-            }
+            try self.emitOpWithOperand(.op_build_map, .op_build_map_wide, kw_count);
 
             self.simulatePop(kw_count * 2);
             self.simulatePush(1);
@@ -1977,8 +1972,10 @@ pub const Compiler = struct {
             .modulo => try self.emitOp(.op_modulo),
             .exponent => try self.emitOp(.op_exponent),
             .bitwise_and => try self.emitOp(.op_bitwise_and),
-            // Logical and shift augmented assignments are pending VM opcode support
-            .logical_or, .logical_and, .bitwise_or, .bitwise_xor, .shift_left, .shift_right => return error.UnknownNode,
+            .bitwise_or => try self.emitOp(.op_bitwise_or),
+            .bitwise_xor => try self.emitOp(.op_bitwise_xor),
+            .shift_left => try self.emitOp(.op_shift_left),
+            .shift_right => try self.emitOp(.op_shift_right),
             else => return error.UnknownNode,
         }
     }
@@ -2041,6 +2038,8 @@ pub const Compiler = struct {
             .upvalues = .empty,
             .locals = .empty,
             .loops = .empty,
+            .scratch_ops = .empty,
+            .scratch_rights = .empty,
             .current_stack_depth = 0,
             .max_stack_depth = 0,
             .current_source_offset = self.current_source_offset,
@@ -2076,12 +2075,10 @@ pub const Compiler = struct {
         }
 
         var virtual_slot: u8 = @intCast(positional_count + 2);
-        var num_virtuals: usize = 0;
         for (params) |param| {
             if (param.is_keyword) {
                 try child_compiler.addLocal(param.name, virtual_slot);
                 virtual_slot += 1;
-                num_virtuals += 1;
             }
         }
 
@@ -2111,6 +2108,7 @@ pub const Compiler = struct {
                         try child_compiler.emitOp(.op_pop);
                         try child_compiler.compileNode(param.default_value);
 
+                        // The landing zone for the jump
                         child_compiler.patchJump(skip_default_jump);
                     }
 
