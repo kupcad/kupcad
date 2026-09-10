@@ -10,14 +10,17 @@ pub const ValidationError = error{
     BrokenLinkedList,
     DanglingTwin,
     AsymmetricTwin,
+    AntiParallelTwin,
     UnclosedLoop,
     LoopFaceMismatch,
     OpenBoundaryInClosedShell,
+    InvalidWindingOrder,
 
     // Geometric Integrity
     DegenerateEdge,
     VertexNotOnSurface,
     NaNOrInfCoordinate,
+    UvDrift,
 
     // Global Manifold
     EulerCharacteristicMismatch,
@@ -32,6 +35,8 @@ pub const ValidatorConfig = struct {
     check_linked_lists: bool = true,
     check_coincidence: bool = true,
     check_degenerates: bool = true,
+    check_uv_sync: bool = true,
+    check_winding: bool = false,
     mute_errors: bool = false,
 };
 
@@ -81,11 +86,13 @@ pub const BRepSanitizer = struct {
 
                 var curr_he_id = loop.first_half_edge;
                 var steps: usize = 0;
+                var parametric_area2d: f64 = 0.0;
 
                 while (true) : (steps += 1) {
                     if (steps > 10_000) return error.UnclosedLoop;
 
                     const he = t_arena.half_edges.items[curr_he_id];
+                    const next_he = t_arena.half_edges.items[he.next];
                     he_count += 1;
 
                     try visited_vertices.put(he.start_vertex, {});
@@ -97,12 +104,14 @@ pub const BRepSanitizer = struct {
                         if (he.loop_id != loop_id) return error.LoopFaceMismatch;
                     }
 
-                    // 2. Twin Reciprocity & Manifold Closure
+                    // 2. Twin Reciprocity & Orientation
                     if (config.check_twins) {
                         if (he.twin != topo.NULL_ID) {
                             if (he.twin >= t_arena.half_edges.items.len) return error.DanglingTwin;
                             const twin_he = t_arena.half_edges.items[he.twin];
+
                             if (twin_he.twin != curr_he_id) return error.AsymmetricTwin;
+                            if (twin_he.start_vertex != next_he.start_vertex) return error.AntiParallelTwin;
                         } else if (config.require_closed_shells) {
                             return error.OpenBoundaryInClosedShell;
                         }
@@ -117,16 +126,15 @@ pub const BRepSanitizer = struct {
                         return error.NaNOrInfCoordinate;
                     }
 
-                    // 4. Degenerate Geometry Check (Zero-length edges)
+                    // 4. Degenerate Geometry Check
                     if (config.check_degenerates and he.curve.curve_type == .line) {
-                        const next_he = t_arena.half_edges.items[he.next];
                         const v_end = t_arena.vertices.items[next_he.start_vertex].point;
                         if (math.distSq(v_start, v_end) < tol.squared) {
                             return error.DegenerateEdge;
                         }
                     }
 
-                    // 5. Coincidence Check (Vertex rests exactly on Face Surface)[cite: 13]
+                    // 5. Coincidence Check
                     if (config.check_coincidence) {
                         const proj_pt = classify.projectPointToSurface(g_arena, face.surface, v_start);
                         if (math.distSq(v_start, proj_pt) > tol.squared * 4.0) {
@@ -134,32 +142,55 @@ pub const BRepSanitizer = struct {
                         }
                     }
 
+                    // 6. UV Drift Synchronization Check
+                    if (config.check_uv_sync and face.surface.surface_type == .nurbs) {
+                        if (he.start_uv) |uv| {
+                            const surf = g_arena.nurbs_surfaces.items[face.surface.index];
+                            const pt3d = surf.evaluate(uv[0], uv[1]);
+                            if (math.distSq(v_start, pt3d) > tol.squared * 4.0) {
+                                return error.UvDrift;
+                            }
+                        }
+                    }
+
+                    if (config.check_winding) {
+                        const uv1 = t_arena.getHalfEdgeStartUV(g_arena, curr_he_id);
+                        const uv2 = t_arena.getHalfEdgeEndUV(g_arena, curr_he_id);
+                        parametric_area2d += (uv1[0] * uv2[1] - uv2[0] * uv1[1]);
+                    }
+
                     curr_he_id = he.next;
                     if (curr_he_id == loop.first_half_edge) break;
+                }
+
+                // 7. Winding Order Check (Outer = CCW, Inner = CW)
+                if (config.check_winding and @abs(parametric_area2d) > 1e-7) {
+                    const is_outer_loop = (l_off == 0);
+                    const effective_area = if (face.forward) parametric_area2d else -parametric_area2d;
+
+                    if (is_outer_loop and effective_area < 0.0) return error.InvalidWindingOrder;
+                    if (!is_outer_loop and effective_area > 0.0) return error.InvalidWindingOrder;
                 }
             }
         }
 
-        // 6. Euler-Poincaré Characteristic (V - E + F = 2 - 2G)
+        // 8. Euler-Poincaré Characteristic (V - E + F = 2 - 2G)
         if (config.check_euler and f_count > 0 and config.require_closed_shells) {
             const v = visited_vertices.count();
             const e = he_count / 2;
 
-            // Calculate total loops across all faces in this shell
             var l_count: usize = 0;
             for (0..shell.faces_len) |f_off| {
                 const face_id = t_arena.shell_faces.items[shell.faces_start + f_off];
                 l_count += t_arena.faces.items[face_id].loops_len;
             }
 
-            // H = L - F
             const holes = @as(i32, @intCast(l_count)) - @as(i32, @intCast(f_count));
             const euler = @as(i32, @intCast(v)) - @as(i32, @intCast(e)) + @as(i32, @intCast(f_count)) - holes;
 
-            // Valid orientable closed manifolds must have an even Euler characteristic <= 2.
             if (euler > 2 or @rem(euler, 2) != 0) {
                 if (!config.mute_errors) {
-                    std.log.warn("Euler Violation: V={d}, E={d}, F={d}, L={d} -> Euler = {d} (Expected even number <= 2)\n", .{
+                    std.log.warn("Euler Violation: V={d}, E={d}, F={d}, L={d} -> Euler = {d}\n", .{
                         v, e, f_count, l_count, euler,
                     });
                 }
