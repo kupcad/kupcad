@@ -1,5 +1,6 @@
 const std = @import("std");
 const api = @import("api.zig");
+const Vfs = @import("core/vfs.zig").Vfs;
 
 // Use the thread-safe C allocator provided by wasi-libc
 // This prevents spinlock deadlocks in multi-threaded wasm and gracefully
@@ -8,6 +9,9 @@ const allocator = std.heap.c_allocator;
 
 // --- Global Error State ---
 var last_error_msg: [*]const u8 = "None".ptr;
+
+// --- Global VFS State ---
+var global_vfs: Vfs = Vfs.initMemory();
 
 pub export fn get_last_error() [*]const u8 {
     return last_error_msg;
@@ -20,6 +24,37 @@ pub export fn wasm_alloc(len: usize) ?[*]u8 {
 
 pub export fn wasm_free(ptr: [*]u8, len: usize) void {
     allocator.free(ptr[0..len]);
+}
+
+pub export fn clear_vfs_wasm() void {
+    global_vfs.deinit(allocator);
+    global_vfs = Vfs.initMemory();
+}
+
+pub export fn put_file_wasm(
+    path_ptr: [*]const u8,
+    path_len: usize,
+    content_ptr: [*]const u8,
+    content_len: usize,
+) bool {
+    const path = path_ptr[0..path_len];
+    const content = content_ptr[0..content_len];
+
+    // We must dupe the memory because the JavaScript Garbage Collector
+    // might free or overwrite the linear memory buffer after this call completes.
+    const path_dupe = allocator.dupe(u8, path) catch return false;
+    const content_dupe = allocator.dupe(u8, content) catch {
+        allocator.free(path_dupe);
+        return false;
+    };
+
+    global_vfs.putMemoryFile(allocator, path_dupe, content_dupe) catch {
+        allocator.free(path_dupe);
+        allocator.free(content_dupe);
+        return false;
+    };
+
+    return true;
 }
 
 // --- Inner Zig Native Functions ---
@@ -74,7 +109,7 @@ fn inner_extract_params(source: []const u8) ![]const u8 {
 }
 
 fn inner_build_model(source: []const u8, format: []const u8, use_draco: bool) ![]const u8 {
-    return try api.buildModel(allocator, undefined, source, format, use_draco, null);
+    return try api.buildModel(allocator, undefined, source, format, use_draco, null, global_vfs);
 }
 
 // --- WASM Export Boundaries ---
