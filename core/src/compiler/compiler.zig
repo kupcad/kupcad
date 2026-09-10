@@ -485,13 +485,28 @@ pub const Compiler = struct {
         const path_str = self.tree.getString(is_stmt.path);
         const symbols = self.tree.getStringLists(is_stmt.symbols);
 
-        // --- Phase 3: Asset Interception ---
-        if (std.mem.endsWith(u8, path_str, ".stl") or std.mem.endsWith(u8, path_str, ".step")) {
-            const func_name = if (std.mem.endsWith(u8, path_str, ".stl")) "import_stl" else "import_step";
+        // --- Phase 5: Package Cache Resolution ---
+        var final_path_str: []const u8 = path_str;
+        var allocated_path: ?[]u8 = null;
+
+        // This safely frees the string at the end of the scope ONLY if we allocated it
+        defer if (allocated_path) |p| self.allocator.free(p);
+
+        if (std.mem.startsWith(u8, path_str, "github.com/") or std.mem.startsWith(u8, path_str, "gitlab.com/")) {
+            if (@import("builtin").target.os.tag != .freestanding and @import("builtin").target.os.tag != .wasi) {
+                // Native execution: Read from the local project cache
+                allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad_cache/{s}", .{path_str});
+                final_path_str = allocated_path.?;
+            }
+        }
+
+        // --- Asset Interception ---
+        if (std.mem.endsWith(u8, final_path_str, ".stl") or std.mem.endsWith(u8, final_path_str, ".step")) {
+            const func_name = if (std.mem.endsWith(u8, final_path_str, ".stl")) "import_stl" else "import_step";
             const func_idx = try self.makeStringConstant(func_name);
             try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, func_idx);
 
-            const path_val = try self.vm.allocateString(path_str);
+            const path_val = try self.vm.allocateString(final_path_str);
             self.vm.push(path_val);
             const path_idx = try self.makeConstant(path_val);
             _ = self.vm.pop();
@@ -516,8 +531,8 @@ pub const Compiler = struct {
             return;
         }
 
-        // --- Phase 2: Standard Module Import & Destructuring ---
-        const path_val = try self.vm.allocateString(path_str);
+        // --- Standard Module Import & Destructuring ---
+        const path_val = try self.vm.allocateString(final_path_str);
         self.vm.push(path_val);
         const path_idx = try self.makeConstant(path_val);
         _ = self.vm.pop();
