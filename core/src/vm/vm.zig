@@ -12,6 +12,8 @@ const dag_evaluator = @import("dag_evaluator.zig");
 const profiler_mod = @import("profiler.zig");
 const material_mod = @import("../core/material.zig");
 const Vfs = @import("../core/vfs.zig").Vfs;
+const Document = @import("../core/document.zig").Document;
+const Compiler = @import("../compiler/compiler.zig").Compiler;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
@@ -54,6 +56,7 @@ pub const VM = struct {
     debugger_step_handler: ?*const fn (vm: *VM) void = null,
 
     globals: std.StringHashMapUnmanaged(value.Value),
+    modules: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
     symbols: std.StringHashMapUnmanaged(*value.ObjSymbol),
 
@@ -128,6 +131,7 @@ pub const VM = struct {
             .vfs = Vfs.initNative(),
             .gc = memory.GC.init(allocator),
             .globals = .empty,
+            .modules = .empty,
             .strings = .empty,
             .symbols = .empty,
             .open_upvalues = null,
@@ -171,6 +175,7 @@ pub const VM = struct {
 
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
+        self.modules.deinit(self.allocator);
         self.strings.deinit(self.allocator);
         self.symbols.deinit(self.allocator);
         self.frames.deinit(self.allocator);
@@ -665,15 +670,74 @@ pub const VM = struct {
                 .op_import, .op_import_wide => {
                     const path_idx = self.readOperand(exec_chunk, frame, op == .op_import_wide);
                     const path_val = exec_chunk.constants.items[path_idx];
+                    const path_str = path_val.asString().chars;
 
-                    if (self.host.import_handler) |handler| {
-                        const str_obj = path_val.asString();
-                        const module_obj = handler(self, str_obj.chars) catch return .runtime_error;
-                        self.push(module_obj);
-                    } else {
-                        // Fallback if no Host import handler is bound
-                        self.push(value.Value.initNil());
+                    // 1. Check Module Cache
+                    if (self.modules.get(path_str)) |cached_mod| {
+                        self.push(cached_mod);
+                        continue;
                     }
+
+                    // 2. Fetch from VFS
+                    const source = self.vfs.readFile(self.allocator, self.io, path_str) catch {
+                        // Fallback to Host handler for native plugins if VFS fails
+                        if (self.host.import_handler) |handler| {
+                            const module_obj = handler(self, path_str) catch return .runtime_error;
+                            self.modules.put(self.allocator, path_str, module_obj) catch return .runtime_error;
+                            self.push(module_obj);
+                            continue;
+                        }
+                        if (self.throwDynamicError("ImportError: Could not read module '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        continue;
+                    };
+                    defer self.allocator.free(source);
+
+                    // 3. Parse Document
+                    var doc = Document.parse(self.allocator, source) catch {
+                        if (self.throwDynamicError("ImportError: Parse error in '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        continue;
+                    };
+                    defer doc.deinit();
+
+                    if (doc.diagnostics.len > 0) {
+                        if (self.throwDynamicError("ImportError: Syntax errors in '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        continue;
+                    }
+
+                    // 4. Compile recursively
+                    const heap_chunk = self.allocator.create(chunk.Chunk) catch return .runtime_error;
+                    heap_chunk.* = chunk.Chunk.init();
+                    errdefer {
+                        heap_chunk.free(self.allocator);
+                        self.allocator.destroy(heap_chunk);
+                    }
+
+                    var comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, heap_chunk, self);
+                    defer comp.deinit();
+
+                    comp.compile(doc.tree.root) catch {
+                        if (self.throwDynamicError("ImportError: Compilation failed for '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        continue;
+                    };
+
+                    // 5. Setup Closure
+                    const func = self.gc.allocateFunction(self) catch return .runtime_error;
+                    func.chunk = heap_chunk;
+                    func.owns_chunk = true;
+                    func.local_count = heap_chunk.local_count;
+
+                    const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
+
+                    // 6. Execute synchronously
+                    const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
+                        if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
+                        if (err == error.Unwind) return .ok; // Stack safely unwound by inner exception
+                        return .runtime_error;
+                    };
+
+                    // 7. Cache and yield result
+                    self.modules.put(self.allocator, path_str, res) catch return .runtime_error;
+                    self.push(res);
                 },
                 .op_get_upvalue => {
                     const slot = exec_chunk.code.items[frame.ip];

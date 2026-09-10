@@ -483,25 +483,87 @@ pub const Compiler = struct {
     fn compileImportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const is_stmt = self.tree.importStmt(node);
         const path_str = self.tree.getString(is_stmt.path);
+        const symbols = self.tree.getStringLists(is_stmt.symbols);
 
+        // --- Phase 3: Asset Interception ---
+        if (std.mem.endsWith(u8, path_str, ".stl") or std.mem.endsWith(u8, path_str, ".step")) {
+            const func_name = if (std.mem.endsWith(u8, path_str, ".stl")) "import_stl" else "import_step";
+            const func_idx = try self.makeStringConstant(func_name);
+            try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, func_idx);
+
+            const path_val = try self.vm.allocateString(path_str);
+            self.vm.push(path_val);
+            const path_idx = try self.makeConstant(path_val);
+            _ = self.vm.pop();
+            try self.emitOpWithOperand(.op_constant, .op_constant_wide, path_idx);
+
+            try self.emitOp(.op_call);
+            try self.emitByte(1);
+            self.simulatePop(2);
+            self.simulatePush(1);
+
+            if (symbols.len > 0) {
+                const sym_id = symbols[0];
+                if (self.enclosing != null and self.resolveLocal(sym_id) == null and (try self.resolveUpvalue(sym_id)) == null and !self.isScriptGlobal(sym_id)) {
+                    const slot = self.getNextLocalSlot();
+                    try self.addLocal(sym_id, slot);
+                }
+                const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
+                try self.emitVariableStore(sym_id, dummy_sym);
+            }
+            try self.emitOp(.op_pop); // Discard geometry from stack
+            try self.emitOp(.op_nil); // Yield nil for statement
+            return;
+        }
+
+        // --- Phase 2: Standard Module Import & Destructuring ---
         const path_val = try self.vm.allocateString(path_str);
-        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
         self.vm.push(path_val);
         const path_idx = try self.makeConstant(path_val);
         _ = self.vm.pop();
-
         try self.emitOpWithOperand(.op_import, .op_import_wide, path_idx);
 
-        // MVP: Standard import for side-effects. Ignore returned module.
-        // Destructuring explicit symbols will be implemented in future phases.
-        try self.emitOp(.op_pop);
+        if (symbols.len == 0) {
+            try self.emitOp(.op_pop); // Discard module
+            try self.emitOp(.op_nil);
+            return;
+        }
+
+        for (symbols) |sym_id| {
+            try self.emitOp(.op_dup); // Duplicate module for property extraction
+            const name_str = self.tree.getString(sym_id);
+            const name_idx = try self.makeStringConstant(name_str);
+            try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+            try self.emitInlineCacheIndex();
+
+            if (self.enclosing != null and self.resolveLocal(sym_id) == null and (try self.resolveUpvalue(sym_id)) == null and !self.isScriptGlobal(sym_id)) {
+                const slot = self.getNextLocalSlot();
+                try self.addLocal(sym_id, slot);
+            }
+            const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
+            try self.emitVariableStore(sym_id, dummy_sym);
+            try self.emitOp(.op_pop); // Pop the assigned value
+        }
+
+        try self.emitOp(.op_pop); // Pop the module
         try self.emitOp(.op_nil);
     }
 
     fn compileExportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
-        _ = node;
-        // MVP: Yields nil. Real exporting requires writing to the VM's active export Map.
-        try self.emitOp(.op_nil);
+        const ex_stmt = self.tree.exportStmt(node);
+        const symbols = self.tree.getStringLists(ex_stmt.symbols);
+
+        const mod_name = try self.makeStringConstant("exports");
+        try self.emitOpWithOperand(.op_module, .op_module_wide, mod_name);
+
+        for (symbols) |sym_id| {
+            try self.emitVariableLoad(sym_id, null); // Load the local/global value
+            const name_str = self.tree.getString(sym_id);
+            const name_idx = try self.makeStringConstant(name_str);
+            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
+            try self.emitOp(.op_pop); // Pop the assigned value, leaving the module rooted
+        }
+        // Stack ends with the Module object, which natively becomes the return value of the script
     }
 
     fn compileDefStmt(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
