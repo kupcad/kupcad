@@ -413,11 +413,8 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
     const glb_bytes = try buildGltfBuffer(vm.allocator, vm, handles.items, use_draco);
     defer vm.allocator.free(glb_bytes);
 
-    const cwd = std.Io.Dir.cwd();
-    try cwd.writeFile(vm.io, .{
-        .sub_path = filepath,
-        .data = glb_bytes,
-    });
+    // Swap to VFS
+    try vm.vfs.writeFile(vm.io, filepath, glb_bytes);
 
     return receiver;
 }

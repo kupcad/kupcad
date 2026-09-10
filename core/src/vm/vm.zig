@@ -11,6 +11,7 @@ const geom = @import("../kernel/geometry_handle.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const profiler_mod = @import("profiler.zig");
 const material_mod = @import("../core/material.zig");
+const Vfs = @import("../core/vfs.zig").Vfs;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
@@ -46,6 +47,7 @@ pub const VM = struct {
     stack_top: usize,
     frames: std.ArrayListUnmanaged(CallFrame),
 
+    vfs: Vfs,
     gc: memory.GC,
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
     profiler: ?*profiler_mod.Profiler = null, // First-class tracing profiler
@@ -123,6 +125,7 @@ pub const VM = struct {
             .stack = initial_stack,
             .stack_top = 0,
             .frames = frames,
+            .vfs = Vfs.initNative(),
             .gc = memory.GC.init(allocator),
             .globals = .empty,
             .strings = .empty,
@@ -162,6 +165,7 @@ pub const VM = struct {
     pub fn deinit(self: *VM) void {
         self.resetStack();
 
+        self.vfs.deinit(self.allocator);
         self.gc.collectGarbage(self, true);
         self.dag_builder.deinit();
 

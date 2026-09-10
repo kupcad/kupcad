@@ -703,8 +703,8 @@ pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !val
     };
     defer vm.allocator.free(step_bytes);
 
-    const cwd = std.Io.Dir.cwd();
-    try cwd.writeFile(vm.io, .{ .sub_path = filepath, .data = step_bytes });
+    // Swap to VFS
+    try vm.vfs.writeFile(vm.io, filepath, step_bytes);
 
     return receiver;
 }

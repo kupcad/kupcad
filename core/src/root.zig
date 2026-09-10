@@ -33,6 +33,7 @@ test {
     _ = @import("core/value_test.zig");
     _ = @import("core/params/params_test.zig");
     _ = @import("core/text_test.zig");
+    _ = @import("core/vfs_test.zig");
 
     // Frontends
     _ = @import("frontend/kupcad/docstring_test.zig");

@@ -177,13 +177,9 @@ pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
     const stl_bytes = try buildStlBuffer(vm.allocator, handle);
     defer vm.allocator.free(stl_bytes);
 
-    const cwd = std.Io.Dir.cwd();
-    try cwd.writeFile(vm.io, .{
-        .sub_path = filepath,
-        .data = stl_bytes,
-    });
+    // Swap to VFS
+    try vm.vfs.writeFile(vm.io, filepath, stl_bytes);
 
-    // Return receiver to support method chaining
     return receiver;
 }
 
@@ -194,43 +190,20 @@ pub fn nativeExportStl(vm: *VM, path_str: []const u8, target: value.Value) !valu
     const stl_bytes = try buildStlBuffer(vm.allocator, handle);
     defer vm.allocator.free(stl_bytes);
 
-    const cwd = std.Io.Dir.cwd();
-    try cwd.writeFile(vm.io, .{
-        .sub_path = path_str,
-        .data = stl_bytes,
-    });
+    // Swap to VFS
+    try vm.vfs.writeFile(vm.io, path_str, stl_bytes);
 
     return target;
 }
 
 /// Strongly typed global import (e.g. `import_stl("in.stl")`)
 pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {
-    const cwd = std.Io.Dir.cwd();
-
-    const file = cwd.openFile(vm.io, path_str, .{}) catch |err| {
-        vm.reportError("IOError: Failed to open STL file '{s}': {}\n", .{ path_str, err });
-        return error.RuntimeError;
-    };
-    defer file.close(vm.io);
-
-    const stat = file.stat(vm.io) catch |err| {
-        vm.reportError("IOError: Failed to stat STL file '{s}': {}\n", .{ path_str, err });
-        return error.RuntimeError;
-    };
-
-    const file_size: usize = std.math.cast(usize, stat.size) orelse {
-        vm.reportError("IOError: STL file '{s}' is too large for 32-bit address space.\n", .{path_str});
-        return error.OutOfMemory;
-    };
-
-    const file_buf = vm.allocator.alloc(u8, file_size) catch return error.OutOfMemory;
-    defer vm.allocator.free(file_buf);
-
-    const bytes_read = file.readStreaming(vm.io, &.{file_buf}) catch |err| {
+    // Completely replaces direct std.Io.cwd().openFile() logic
+    const file_buf = vm.vfs.readFile(vm.allocator, vm.io, path_str) catch |err| {
         vm.reportError("IOError: Failed to read STL file '{s}': {}\n", .{ path_str, err });
         return error.RuntimeError;
     };
-    if (bytes_read != file_size) return error.RuntimeError;
+    defer vm.allocator.free(file_buf);
 
     var stl_mesh = parseStlBuffer(vm.allocator, file_buf) catch |err| {
         vm.reportError("ParseError: Failed to parse STL file '{s}': {}\n", .{ path_str, err });
