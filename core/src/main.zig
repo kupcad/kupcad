@@ -21,7 +21,7 @@ pub fn main(init: std.process.Init) !void {
     // Route to the appropriate CLI command module
     if (std.mem.eql(u8, cmd, "build")) {
         try build_cmd.execute(init, allocator, &args_iter);
-    } else if (std.mem.eql(u8, cmd, "add")) {
+    } else if (std.mem.eql(u8, cmd, "pkg")) {
         try pkg_cmd.execute(init, allocator, &args_iter);
     } else if (std.mem.eql(u8, cmd, "fmt")) {
         try fmt_cmd.execute(init, allocator, &args_iter);
