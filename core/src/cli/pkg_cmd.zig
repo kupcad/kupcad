@@ -1,61 +1,138 @@
 const std = @import("std");
 
-/// Resolves the latest commit hash for a GitHub repository using system curl
+const LOCKFILE_VERSION = "1.0.0";
+
+const LockFile = struct {
+    dependencies: std.StringHashMapUnmanaged([]const u8),
+};
+
+/// A recursive directory builder using Zig 0.16.0 native std.Io capabilities.
+fn ensurePath(io: std.Io, path: []const u8) !void {
+    const cwd = std.Io.Dir.cwd();
+    var end: usize = 0;
+    while (end < path.len) {
+        end += 1;
+        if (end == path.len or path[end] == '/') {
+            const sub = path[0..end];
+            if (sub.len > 0 and !std.mem.eql(u8, sub, ".") and !std.mem.eql(u8, sub, "..")) {
+                cwd.createDir(io, sub, .default_dir) catch |err| switch (err) {
+                    error.PathAlreadyExists => continue,
+                    else => return err,
+                };
+            }
+        }
+    }
+}
+
+/// A stable HTTP GET request using the core Zig 0.16.0 HTTP primitives.
+fn fetchHttpNative(allocator: std.mem.Allocator, io: std.Io, url: []const u8) ![]u8 {
+    var client = std.http.Client{ .allocator = allocator, .io = io };
+    defer client.deinit();
+
+    var req = try client.request(.GET, try std.Uri.parse(url), .{
+        .extra_headers = &[_]std.http.Header{
+            .{ .name = "User-Agent", .value = "kupcad" },
+        },
+    });
+    defer req.deinit();
+
+    try req.sendBodiless();
+
+    var redirect_buf: [8192]u8 = undefined;
+    var response = try req.receiveHead(&redirect_buf);
+
+    if (response.head.status != .ok) return error.InvalidResponse;
+
+    var transfer_buf: [8192]u8 = undefined;
+    const reader = response.reader(&transfer_buf);
+
+    var out = std.array_list.Managed(u8).init(allocator);
+    errdefer out.deinit();
+
+    var buf: [8192]u8 = undefined;
+    while (true) {
+        const n = try reader.readSliceShort(&buf);
+        if (n == 0) break;
+        try out.appendSlice(buf[0..n]);
+    }
+    return try out.toOwnedSlice();
+}
+
+/// Resolves the latest commit hash for a GitHub repository
 fn fetchLatestCommit(allocator: std.mem.Allocator, io: std.Io, repo_path: []const u8) ![]const u8 {
     const api_url = try std.fmt.allocPrint(allocator, "https://api.github.com/repos/{s}/commits/main", .{repo_path[11..]});
     defer allocator.free(api_url);
 
-    const result = try std.process.run(allocator, io, .{
-        .argv = &.{ "curl", "-s", "-H", "User-Agent: kupcad", api_url },
-    });
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
+    const body = try fetchHttpNative(allocator, io, api_url);
+    defer allocator.free(body);
 
-    if (result.term != .exited or result.term.exited != 0) return error.InvalidResponse;
-
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, result.stdout, .{});
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
     defer parsed.deinit();
 
     const sha = parsed.value.object.get("sha") orelse return error.InvalidResponse;
     return allocator.dupe(u8, sha.string);
 }
 
-/// Downloads and extracts the tarball into the local .kupcad_cache/ directory
+fn stripFirstComponent(path: []const u8) []const u8 {
+    if (std.mem.indexOfScalar(u8, path, '/')) |idx| {
+        return path[idx + 1 ..];
+    }
+    return "";
+}
+
+/// Downloads, decompresses, and extracts the tarball completely natively in memory
 fn downloadAndExtract(allocator: std.mem.Allocator, io: std.Io, repo_path: []const u8, commit_sha: []const u8) !void {
     const cache_dir_path = try std.fmt.allocPrint(allocator, ".kupcad_cache/{s}/{s}", .{ repo_path, commit_sha });
     defer allocator.free(cache_dir_path);
 
-    const mkdir_res = try std.process.run(allocator, io, .{
-        .argv = &.{ "mkdir", "-p", cache_dir_path },
-    });
-    defer allocator.free(mkdir_res.stdout);
-    defer allocator.free(mkdir_res.stderr);
+    try ensurePath(io, cache_dir_path);
 
     const tarball_url = try std.fmt.allocPrint(allocator, "https://{s}/archive/{s}.tar.gz", .{ repo_path, commit_sha });
     defer allocator.free(tarball_url);
 
-    const tarball_path = try std.fmt.allocPrint(allocator, ".kupcad_cache/{s}.tar.gz", .{commit_sha});
-    defer allocator.free(tarball_path);
+    const tarball_data = try fetchHttpNative(allocator, io, tarball_url);
+    defer allocator.free(tarball_data);
 
-    // Download the tarball securely using Zig 0.16.0 process execution
-    const curl_res = try std.process.run(allocator, io, .{
-        .argv = &.{ "curl", "-sL", tarball_url, "-o", tarball_path },
+    var in_stream: std.Io.Reader = .fixed(tarball_data);
+    const decompress: std.compress.flate.Decompress = .init(&in_stream, .gzip, &.{});
+
+    const cwd_io = std.Io.Dir.cwd();
+    var file_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var link_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+
+    var tar_iter: std.tar.Iterator = .init(@constCast(&decompress.reader), .{
+        .file_name_buffer = &file_name_buffer,
+        .link_name_buffer = &link_name_buffer,
     });
-    defer allocator.free(curl_res.stdout);
-    defer allocator.free(curl_res.stderr);
 
-    if (curl_res.term != .exited or curl_res.term.exited != 0) return error.DownloadFailed;
+    // Extract files block by block
+    while (try tar_iter.next()) |file| {
+        const stripped_name = stripFirstComponent(file.name);
+        if (stripped_name.len == 0) {
+            continue;
+        }
 
-    // Extract the tarball into the cache directory
-    const tar_res = try std.process.run(allocator, io, .{
-        .argv = &.{ "tar", "-xzf", tarball_path, "-C", cache_dir_path, "--strip-components=1" },
-    });
-    defer allocator.free(tar_res.stdout);
-    defer allocator.free(tar_res.stderr);
+        const out_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ cache_dir_path, stripped_name });
+        defer allocator.free(out_path);
 
-    // Clean up the zipped archive natively
-    const cwd = std.Io.Dir.cwd();
-    cwd.deleteFile(io, tarball_path) catch {};
+        if (file.kind == .directory) {
+            try ensurePath(io, out_path);
+        } else if (file.kind == .file) {
+            if (std.fs.path.dirname(out_path)) |parent| {
+                try ensurePath(io, parent);
+            }
+
+            const file_size: usize = @intCast(file.size);
+            const content = try allocator.alloc(u8, file_size);
+            defer allocator.free(content);
+
+            // Extract the tar payload natively into the allocated buffer
+            var fw: std.Io.Writer = .fixed(content);
+            try tar_iter.streamRemaining(file, &fw);
+
+            cwd_io.writeFile(io, .{ .sub_path = out_path, .data = content }) catch {};
+        }
+    }
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
@@ -84,7 +161,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     const cwd = std.Io.Dir.cwd();
 
-    // Read and parse existing kupcad.lock using dynamic std.json.Value
+    // Read and parse existing kupcad.lock safely
     if (cwd.openFile(init.io, "kupcad.lock", .{})) |file| {
         defer file.close(init.io);
         if (file.stat(init.io)) |stat| {
@@ -128,11 +205,13 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     const new_val = try allocator.dupe(u8, commit_sha);
     try lock_map.put(allocator, new_key, new_val);
 
-    // Format lockfile JSON
+    // Format lockfile JSON manually to include metadata and version
     var out_str = std.array_list.Managed(u8).init(allocator);
     defer out_str.deinit();
 
-    try out_str.appendSlice("{\n  \"dependencies\": {\n");
+    try out_str.appendSlice("{\n  \"metadata\": {\n    \"version\": \"");
+    try out_str.appendSlice(LOCKFILE_VERSION);
+    try out_str.appendSlice("\"\n  },\n  \"dependencies\": {\n");
     var it = lock_map.iterator();
     var first = true;
     while (it.next()) |entry| {
