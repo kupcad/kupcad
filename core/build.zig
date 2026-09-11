@@ -270,6 +270,7 @@ pub fn build(b: *std.Build) void {
     mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
     mod.addIncludePath(b.path("vendor/draco/src"));
     mod.addIncludePath(b.path("vendor/eigen"));
+    mod.addIncludePath(b.path("vendor/sqlite"));
     mod.addIncludePath(b.path("src/bindings"));
     mod.addIncludePath(b.path("src"));
 
@@ -305,6 +306,21 @@ pub fn build(b: *std.Build) void {
             .flags = tbb_flags,
         });
     }
+
+    const sqlite_flags: []const []const u8 = if (is_wasm)
+        &.{
+            "-std=c99",
+            "-DNDEBUG",
+            "-DSQLITE_OMIT_LOAD_EXTENSION",
+            "-DSQLITE_OS_OTHER=1", // Tells SQLite not to use POSIX/Windows OS calls on WASM
+        }
+    else
+        &.{ "-std=c99", "-DNDEBUG", "-DSQLITE_THREADSAFE=1", "-DSQLITE_OMIT_LOAD_EXTENSION" };
+
+    mod.addCSourceFile(.{
+        .file = b.path("vendor/sqlite/sqlite3.c"),
+        .flags = sqlite_flags,
+    });
 
     const drako_flags: []const []const u8 = if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
