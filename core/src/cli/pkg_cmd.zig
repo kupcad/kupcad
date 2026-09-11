@@ -7,7 +7,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         return;
     };
 
-    var manager = try PackageManager.init(allocator, init.io);
+    // Pass the pre-parsed environment map natively
+    var manager = try PackageManager.init(allocator, init.io, init.environ_map);
     defer manager.deinit();
 
     try manager.addPackage(repo_url);

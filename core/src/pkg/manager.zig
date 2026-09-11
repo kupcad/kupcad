@@ -11,13 +11,13 @@ pub const PackageManager = struct {
     store: Store,
     global_store_path: []const u8,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io) !PackageManager {
-        const home_dir = try paths.getHomeDir(allocator);
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, env_map: *std.process.Environ.Map) !PackageManager {
+        // Pass env_map down to the paths resolution
+        const home_dir = try paths.getHomeDir(allocator, env_map);
         defer allocator.free(home_dir);
 
         const global_store_path = try std.fmt.allocPrint(allocator, "{s}/.kupcad/pkg", .{home_dir});
 
-        // Ensure global directory exists before opening DB
         const cwd = std.Io.Dir.cwd();
         cwd.createDirPath(io, global_store_path) catch {};
 
