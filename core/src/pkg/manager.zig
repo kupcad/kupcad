@@ -198,7 +198,104 @@ pub const PackageManager = struct {
         }
 
         try self.updateLockfile(repo_url, commit_sha);
+        try self.updateManifest(repo_url);
         std.debug.print("Added successfully!\n", .{});
+    }
+
+    fn updateManifest(self: *PackageManager, repo_url: []const u8) !void {
+        var existing_deps = std.StringHashMapUnmanaged([]const u8){};
+        defer {
+            var it = existing_deps.iterator();
+            while (it.next()) |entry| {
+                self.allocator.free(entry.key_ptr.*);
+                self.allocator.free(entry.value_ptr.*);
+            }
+            existing_deps.deinit(self.allocator);
+        }
+
+        var project_name: []const u8 = "my-project";
+        var project_version: []const u8 = "0.1.0";
+        var name_duped = false;
+        var version_duped = false;
+
+        const cwd = std.Io.Dir.cwd();
+        if (cwd.openFile(self.io, "kupcad.json", .{})) |file| {
+            defer file.close(self.io);
+            if (file.stat(self.io)) |stat| {
+                if (std.math.cast(usize, stat.size)) |file_size| {
+                    if (file_size > 0) {
+                        const content = try self.allocator.alloc(u8, file_size);
+                        defer self.allocator.free(content);
+
+                        if ((try file.readStreaming(self.io, &.{content})) == file_size) {
+                            var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, content, .{}) catch null;
+                            if (parsed) |*p| {
+                                defer p.deinit();
+                                if (p.value == .object) {
+                                    if (p.value.object.get("name")) |n| if (n == .string) {
+                                        project_name = try self.allocator.dupe(u8, n.string);
+                                        name_duped = true;
+                                    };
+                                    if (p.value.object.get("version")) |v| if (v == .string) {
+                                        project_version = try self.allocator.dupe(u8, v.string);
+                                        version_duped = true;
+                                    };
+                                    if (p.value.object.get("dependencies")) |deps| {
+                                        if (deps == .object) {
+                                            var it = deps.object.iterator();
+                                            while (it.next()) |entry| {
+                                                if (entry.value_ptr.* == .string) {
+                                                    const k = try self.allocator.dupe(u8, entry.key_ptr.*);
+                                                    const v = try self.allocator.dupe(u8, entry.value_ptr.string);
+                                                    try existing_deps.put(self.allocator, k, v);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else |_| {}
+        } else |_| {}
+
+        defer {
+            if (name_duped) self.allocator.free(project_name);
+            if (version_duped) self.allocator.free(project_version);
+        }
+
+        // Upsert the new dependency tracking "main" (or future requested versions)
+        if (existing_deps.fetchRemove(repo_url)) |kv| {
+            self.allocator.free(kv.key);
+            self.allocator.free(kv.value);
+        }
+        const new_key = try self.allocator.dupe(u8, repo_url);
+        const new_val = try self.allocator.dupe(u8, "main");
+        try existing_deps.put(self.allocator, new_key, new_val);
+
+        // Serialize the JSON manually to control formatting
+        var out_str = std.array_list.Managed(u8).init(self.allocator);
+        defer out_str.deinit();
+
+        try out_str.appendSlice("{\n  \"name\": \"");
+        try out_str.appendSlice(project_name);
+        try out_str.appendSlice("\",\n  \"version\": \"");
+        try out_str.appendSlice(project_version);
+        try out_str.appendSlice("\",\n  \"dependencies\": {\n");
+
+        var it = existing_deps.iterator();
+        var first = true;
+        while (it.next()) |entry| {
+            if (!first) try out_str.appendSlice(",\n");
+            first = false;
+            const line = try std.fmt.allocPrint(self.allocator, "    \"{s}\": \"{s}\"", .{ entry.key_ptr.*, entry.value_ptr.* });
+            defer self.allocator.free(line);
+            try out_str.appendSlice(line);
+        }
+        try out_str.appendSlice("\n  }\n}\n");
+
+        try cwd.writeFile(self.io, .{ .sub_path = "kupcad.json", .data = out_str.items });
     }
 
     fn updateLockfile(self: *PackageManager, repo_url: []const u8, commit_sha: []const u8) !void {
