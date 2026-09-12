@@ -485,35 +485,21 @@ pub const Compiler = struct {
         const path_str = self.tree.getString(is_stmt.path);
         const symbols = self.tree.getStringLists(is_stmt.symbols);
 
-        // --- Phase 5: Package Cache Resolution ---
-        var final_path_str: []const u8 = path_str;
-        var allocated_path: ?[]u8 = null;
-
-        // This safely frees the string at the end of the scope ONLY if we allocated it
-        defer if (allocated_path) |p| self.allocator.free(p);
-
-        if (std.mem.startsWith(u8, path_str, "github.com/") or std.mem.startsWith(u8, path_str, "gitlab.com/")) {
-            if (@import("builtin").target.os.tag != .freestanding and @import("builtin").target.os.tag != .wasi) {
-                // Native execution: Read from the local project cache
-                allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad_cache/{s}", .{path_str});
-                final_path_str = allocated_path.?;
-            }
-        }
-
-        // --- Asset Interception ---
-        if (std.mem.endsWith(u8, final_path_str, ".stl") or std.mem.endsWith(u8, final_path_str, ".step")) {
-            const func_name = if (std.mem.endsWith(u8, final_path_str, ".stl")) "import_stl" else "import_step";
+        // --- 1. Asset Interception ---
+        if (std.mem.endsWith(u8, path_str, ".stl") or std.mem.endsWith(u8, path_str, ".step")) {
+            const func_name = if (std.mem.endsWith(u8, path_str, ".stl")) "import_stl" else "import_step";
             const func_idx = try self.makeStringConstant(func_name);
             try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, func_idx);
 
-            const path_val = try self.vm.allocateString(final_path_str);
+            const path_val = try self.vm.allocateString(path_str);
             self.vm.push(path_val);
             const path_idx = try self.makeConstant(path_val);
             _ = self.vm.pop();
-            try self.emitOpWithOperand(.op_constant, .op_constant_wide, path_idx);
 
+            try self.emitOpWithOperand(.op_constant, .op_constant_wide, path_idx);
             try self.emitOp(.op_call);
             try self.emitByte(1);
+
             self.simulatePop(2);
             self.simulatePush(1);
 
@@ -526,16 +512,37 @@ pub const Compiler = struct {
                 const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
                 try self.emitVariableStore(sym_id, dummy_sym);
             }
+
             try self.emitOp(.op_pop); // Discard geometry from stack
             try self.emitOp(.op_nil); // Yield nil for statement
             return;
         }
 
-        // --- Standard Module Import & Destructuring ---
+        // --- 2. Package Cache Resolution ---
+        var final_path_str: []const u8 = path_str;
+        var allocated_path: ?[]u8 = null;
+        defer if (allocated_path) |p| self.allocator.free(p);
+
+        // If the import is not a local relative path, route it to the new Package Manager VFS workspace
+        const is_local_path = std.mem.startsWith(u8, path_str, "./") or std.mem.startsWith(u8, path_str, "../") or std.mem.startsWith(u8, path_str, "/");
+        if (!is_local_path) {
+            if (@import("builtin").target.os.tag != .freestanding and @import("builtin").target.os.tag != .wasi) {
+                // Route to the symlinked package workspace created by Resolver.linkWorkspace()
+                if (std.mem.endsWith(u8, path_str, ".kup")) {
+                    allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/{s}", .{path_str});
+                } else {
+                    allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/{s}/main.kup", .{path_str});
+                }
+                final_path_str = allocated_path.?;
+            }
+        }
+
+        // --- 3. Standard Module Import & Destructuring ---
         const path_val = try self.vm.allocateString(final_path_str);
         self.vm.push(path_val);
         const path_idx = try self.makeConstant(path_val);
         _ = self.vm.pop();
+
         try self.emitOpWithOperand(.op_import, .op_import_wide, path_idx);
 
         if (symbols.len == 0) {
@@ -546,6 +553,7 @@ pub const Compiler = struct {
 
         for (symbols) |sym_id| {
             try self.emitOp(.op_dup); // Duplicate module for property extraction
+
             const name_str = self.tree.getString(sym_id);
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
@@ -557,6 +565,7 @@ pub const Compiler = struct {
             }
             const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
             try self.emitVariableStore(sym_id, dummy_sym);
+
             try self.emitOp(.op_pop); // Pop the assigned value
         }
 

@@ -9,6 +9,7 @@ const parameters = @import("../core/parameters.zig");
 const kernel_mod = @import("../kernel/kernel.zig");
 const host_mod = @import("host.zig");
 const geom = @import("../kernel/geometry_handle.zig");
+const registry = @import("../stdlib/registry.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const profiler_mod = @import("profiler.zig");
 const material_mod = @import("../core/material.zig");
@@ -737,12 +738,28 @@ pub const VM = struct {
 
                     const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
 
-                    // 6. Execute synchronously
+                    // 6. --- ENCAPSULATION: Swap the Globals Environment ---
+                    const previous_globals = self.globals;
+                    // Clone the environment so the package has access to the stdlib and built-ins.
+                    // Any new globals it defines will stay in this clone.
+                    self.globals = previous_globals.clone(self.allocator) catch return .runtime_error;
+
+                    // Execute synchronously
                     const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
+                        // Ensure we always restore the parent environment on failure
+                        self.globals.deinit(self.allocator);
+                        self.globals = previous_globals;
+
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
                         if (err == error.Unwind) return .ok; // Stack safely unwound by inner exception
                         return .runtime_error;
                     };
+
+                    // Clean up the isolated globals, destroying any un-exported package variables
+                    self.globals.deinit(self.allocator);
+
+                    // Restore the parent's environment securely
+                    self.globals = previous_globals;
 
                     // 7. Cache and yield result
                     self.modules.put(self.allocator, path_str, res) catch return .runtime_error;
