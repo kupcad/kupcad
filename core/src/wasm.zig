@@ -1,6 +1,7 @@
 const std = @import("std");
 const api = @import("api.zig");
-const Vfs = @import("core/vfs.zig").Vfs;
+const Vfs = @import("vfs/vfs.zig").Vfs;
+const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 
 // Use the thread-safe C allocator provided by wasi-libc
 // This prevents spinlock deadlocks in multi-threaded wasm and gracefully
@@ -11,7 +12,16 @@ const allocator = std.heap.c_allocator;
 var last_error_msg: [*]const u8 = "None".ptr;
 
 // --- Global VFS State ---
-var global_vfs: Vfs = Vfs.initMemory();
+var global_mem_vfs: MemoryVfs = undefined;
+var vfs_initialized: bool = false;
+
+fn getMemVfs() *MemoryVfs {
+    if (!vfs_initialized) {
+        global_mem_vfs = MemoryVfs.init(allocator);
+        vfs_initialized = true;
+    }
+    return &global_mem_vfs;
+}
 
 pub export fn get_last_error() [*]const u8 {
     return last_error_msg;
@@ -27,8 +37,11 @@ pub export fn wasm_free(ptr: [*]u8, len: usize) void {
 }
 
 pub export fn clear_vfs_wasm() void {
-    global_vfs.deinit(allocator);
-    global_vfs = Vfs.initMemory();
+    if (vfs_initialized) {
+        global_mem_vfs.deinit();
+    }
+    global_mem_vfs = MemoryVfs.init(allocator);
+    vfs_initialized = true;
 }
 
 pub export fn put_file_wasm(
@@ -40,20 +53,8 @@ pub export fn put_file_wasm(
     const path = path_ptr[0..path_len];
     const content = content_ptr[0..content_len];
 
-    // We must dupe the memory because the JavaScript Garbage Collector
-    // might free or overwrite the linear memory buffer after this call completes.
-    const path_dupe = allocator.dupe(u8, path) catch return false;
-    const content_dupe = allocator.dupe(u8, content) catch {
-        allocator.free(path_dupe);
-        return false;
-    };
-
-    global_vfs.putMemoryFile(allocator, path_dupe, content_dupe) catch {
-        allocator.free(path_dupe);
-        allocator.free(content_dupe);
-        return false;
-    };
-
+    // MemoryVfs internally dupes the memory, making it safe from JS GC sweeps
+    getMemVfs().vfs().writeFile(path, content) catch return false;
     return true;
 }
 
@@ -109,12 +110,11 @@ fn inner_extract_params(source: []const u8) ![]const u8 {
 }
 
 fn inner_build_model(source: []const u8, format: []const u8, use_draco: bool) ![]const u8 {
-    return try api.buildModel(allocator, undefined, source, format, use_draco, null, global_vfs);
+    return try api.buildModel(allocator, undefined, source, format, use_draco, null, getMemVfs().vfs());
 }
 
 // --- WASM Export Boundaries ---
 
-// FIX: Added out_len parameter so JS knows exactly how many bytes to free
 pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize, out_len: *usize) ?[*]const u8 {
     std.debug.assert(@intFromPtr(source_ptr) != 0);
 

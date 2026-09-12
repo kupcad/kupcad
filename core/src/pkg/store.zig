@@ -1,161 +1,230 @@
 const std = @import("std");
+
 const c = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const StoreError = error{
-    DatabaseOpenFailed,
-    QueryExecutionFailed,
-    PrepareStatementFailed,
-    BindParameterFailed,
-    StepFailed,
+pub const Db = struct {
+    handle: ?*c.sqlite3,
+
+    pub fn exec(self: Db, sql: []const u8, args: anytype, options: anytype) !void {
+        _ = options;
+        const sql_z = try std.heap.page_allocator.dupeZ(u8, sql);
+        defer std.heap.page_allocator.free(sql_z);
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const rc_prep = c.sqlite3_prepare_v2(self.handle, sql_z, -1, &stmt, null);
+        if (rc_prep != c.SQLITE_OK or stmt == null) return error.SqliteError;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        const ArgsType = @TypeOf(args);
+        const args_info = @typeInfo(ArgsType);
+        if (args_info == .@"struct" and args_info.@"struct".is_tuple) {
+            inline for (args, 1..) |arg, idx| {
+                const ArgType = @TypeOf(arg);
+                if (ArgType == []const u8) {
+                    _ = c.sqlite3_bind_text(stmt, @intCast(idx), arg.ptr, @intCast(arg.len), null);
+                } else if (ArgType == i64 or ArgType == i32 or ArgType == usize) {
+                    _ = c.sqlite3_bind_int64(stmt, @intCast(idx), @intCast(arg));
+                }
+            }
+        }
+
+        const rc = c.sqlite3_step(stmt);
+        if (rc != c.SQLITE_DONE and rc != c.SQLITE_ROW) return error.SqliteError;
+    }
+
+    pub fn prepare(self: Db, sql: []const u8) !Stmt {
+        const sql_z = try std.heap.page_allocator.dupeZ(u8, sql);
+        defer std.heap.page_allocator.free(sql_z);
+
+        var stmt_handle: ?*c.sqlite3_stmt = null;
+        const rc = c.sqlite3_prepare_v2(self.handle, sql_z, -1, &stmt_handle, null);
+        if (rc != c.SQLITE_OK or stmt_handle == null) return error.SqliteError;
+
+        return Stmt{ .handle = stmt_handle.? };
+    }
+
+    pub fn deinit(self: *Db) void {
+        if (self.handle) |h| {
+            _ = c.sqlite3_close(h);
+            self.handle = null;
+        }
+    }
+};
+
+pub const Stmt = struct {
+    handle: *c.sqlite3_stmt,
+
+    pub fn deinit(self: Stmt) void {
+        _ = c.sqlite3_finalize(self.handle);
+    }
+
+    pub fn one(self: Stmt, comptime T: type, args: anytype, options: anytype) !?T {
+        _ = args;
+        _ = options;
+        _ = c.sqlite3_reset(self.handle);
+        const rc = c.sqlite3_step(self.handle);
+        if (rc == c.SQLITE_ROW) {
+            var result: T = undefined;
+            inline for (std.meta.fields(T), 0..) |field, i| {
+                if (field.type == []const u8) {
+                    const ptr = c.sqlite3_column_text(self.handle, @intCast(i));
+                    const len = c.sqlite3_column_bytes(self.handle, @intCast(i));
+                    @field(result, field.name) = if (ptr != null) ptr[0..@intCast(len)] else "";
+                } else if (field.type == i32 or field.type == i64) {
+                    @field(result, field.name) = @intCast(c.sqlite3_column_int64(self.handle, @intCast(i)));
+                }
+            }
+            return result;
+        }
+        return null;
+    }
+
+    pub fn iterator(self: Stmt, comptime T: type, args: anytype) !Iterator(T) {
+        _ = args;
+        _ = c.sqlite3_reset(self.handle);
+        return Iterator(T){ .stmt = self };
+    }
+
+    pub fn Iterator(comptime T: type) type {
+        return struct {
+            stmt: Stmt,
+
+            pub fn next(self: *@This()) !?T {
+                const rc = c.sqlite3_step(self.stmt.handle);
+                if (rc == c.SQLITE_ROW) {
+                    var result: T = undefined;
+                    inline for (std.meta.fields(T), 0..) |field, i| {
+                        if (field.type == []const u8) {
+                            const ptr = c.sqlite3_column_text(self.stmt.handle, @intCast(i));
+                            const len = c.sqlite3_column_bytes(self.stmt.handle, @intCast(i));
+                            @field(result, field.name) = if (ptr != null) ptr[0..@intCast(len)] else "";
+                        } else if (field.type == i32 or field.type == i64) {
+                            @field(result, field.name) = @intCast(c.sqlite3_column_int64(self.stmt.handle, @intCast(i)));
+                        }
+                    }
+                    return result;
+                }
+                return null;
+            }
+        };
+    }
 };
 
 pub const Store = struct {
-    db: *c.sqlite3,
+    db: Db,
+    io: std.Io,
 
-    /// Opens the SQLite database at the given path and initializes the CAFS schema.
-    pub fn init(db_path: [:0]const u8) StoreError!Store {
-        var db: ?*c.sqlite3 = null;
+    pub fn init(io: std.Io, db_path: []const u8) !Store {
+        const db_path_z = try std.heap.page_allocator.dupeZ(u8, db_path);
+        defer std.heap.page_allocator.free(db_path_z);
 
-        // Open the database (creates it if it doesn't exist)
-        if (c.sqlite3_open(db_path.ptr, &db) != c.SQLITE_OK) {
-            std.debug.print("Failed to open database: {s}\n", .{c.sqlite3_errmsg(db)});
-            return error.DatabaseOpenFailed;
+        var handle: ?*c.sqlite3 = null;
+        const rc = c.sqlite3_open(db_path_z, &handle);
+        if (rc != c.SQLITE_OK or handle == null) return error.DatabaseCorrupted;
+
+        const db = Db{ .handle = handle };
+        var store = Store{ .db = db, .io = io };
+
+        const integrity_stmt = try db.prepare("PRAGMA quick_check");
+        defer integrity_stmt.deinit();
+        const integrity_res = try integrity_stmt.one(struct { result: []const u8 }, .{}, .{});
+        if (integrity_res) |res| {
+            if (!std.mem.eql(u8, res.result, "ok")) {
+                std.debug.print("CRITICAL: SQLite database is corrupted! Self-healing triggered...\n", .{});
+                return error.DatabaseCorrupted;
+            }
         }
 
-        const self = Store{ .db = db.? };
-
-        // Enable Foreign Keys and Write-Ahead Logging (WAL) for performance
-        try self.execute(
-            \\ PRAGMA foreign_keys = ON;
-            \\ PRAGMA journal_mode = WAL;
-            \\ PRAGMA synchronous = NORMAL;
-        );
-
-        // Initialize the CAFS Schema
-        try self.execute(
-            \\ CREATE TABLE IF NOT EXISTS files (
-            \\     hash TEXT PRIMARY KEY,
-            \\     size INTEGER NOT NULL,
-            \\     is_executable BOOLEAN NOT NULL DEFAULT 0
-            \\ );
-            \\
-            \\ CREATE TABLE IF NOT EXISTS packages (
-            \\     id INTEGER PRIMARY KEY AUTOINCREMENT,
-            \\     repo_url TEXT NOT NULL,
-            \\     commit_sha TEXT NOT NULL,
-            \\     UNIQUE(repo_url, commit_sha)
-            \\ );
-            \\
-            \\ CREATE TABLE IF NOT EXISTS package_files (
-            \\     package_id INTEGER NOT NULL,
-            \\     file_hash TEXT NOT NULL,
-            \\     file_path TEXT NOT NULL,
-            \\     FOREIGN KEY(package_id) REFERENCES packages(id) ON DELETE CASCADE,
-            \\     FOREIGN KEY(file_hash) REFERENCES files(hash) ON DELETE CASCADE,
-            \\     UNIQUE(package_id, file_path)
-            \\ );
-        );
-
-        return self;
+        try store.runMigrations();
+        return store;
     }
 
-    /// Closes the database connection safely.
     pub fn deinit(self: *Store) void {
-        _ = c.sqlite3_close(self.db);
+        self.db.deinit();
     }
 
-    /// Executes a raw SQL query (useful for schema creation or PRAGMAs).
-    pub fn execute(self: Store, query: [:0]const u8) StoreError!void {
-        var errmsg: [*c]u8 = null;
-        if (c.sqlite3_exec(self.db, query.ptr, null, null, &errmsg) != c.SQLITE_OK) {
-            std.debug.print("Query execution failed: {s}\n", .{errmsg});
-            c.sqlite3_free(errmsg);
-            return error.QueryExecutionFailed;
+    fn runMigrations(self: *Store) !void {
+        const version_stmt = try self.db.prepare("PRAGMA user_version");
+        defer version_stmt.deinit();
+        const current_version_row = try version_stmt.one(struct { user_version: i32 }, .{}, .{});
+        const current_version = if (current_version_row) |row| row.user_version else 0;
+        const TARGET_VERSION: i32 = 1;
+
+        if (current_version < TARGET_VERSION) {
+            std.debug.print("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, TARGET_VERSION });
+            try self.db.exec("BEGIN TRANSACTION", .{}, .{});
+            if (current_version < 1) {
+                try self.db.exec(
+                    \\CREATE TABLE IF NOT EXISTS packages (
+                    \\    id TEXT PRIMARY KEY,
+                    \\    commit_sha TEXT NOT NULL,
+                    \\    provider TEXT NOT NULL,
+                    \\    created_at INTEGER NOT NULL
+                    \\);
+                    \\CREATE TABLE IF NOT EXISTS files (
+                    \\    hash TEXT PRIMARY KEY,
+                    \\    size INTEGER NOT NULL,
+                    \\    created_at INTEGER NOT NULL
+                    \\);
+                    \\CREATE TABLE IF NOT EXISTS package_files (
+                    \\    package_id TEXT NOT NULL,
+                    \\    commit_sha TEXT NOT NULL,
+                    \\    file_path TEXT NOT NULL,
+                    \\    file_hash TEXT NOT NULL,
+                    \\    PRIMARY KEY (package_id, commit_sha, file_path),
+                    \\    FOREIGN KEY (file_hash) REFERENCES files(hash)
+                    \\);
+                    \\CREATE TABLE IF NOT EXISTS meta (
+                    \\    key TEXT PRIMARY KEY,
+                    \\    value TEXT NOT NULL
+                    \\);
+                , .{}, .{});
+            }
+            const update_pragma = try std.fmt.allocPrint(std.heap.page_allocator, "PRAGMA user_version = {d}", .{TARGET_VERSION});
+            defer std.heap.page_allocator.free(update_pragma);
+            try self.db.exec(update_pragma, .{}, .{});
+            try self.db.exec("COMMIT", .{}, .{});
         }
     }
 
-    /// Registers a unique file in the global CAFS.
-    pub fn insertFile(self: Store, hash: [:0]const u8, size: usize, is_executable: bool) StoreError!void {
-        const query = "INSERT OR IGNORE INTO files (hash, size, is_executable) VALUES (?1, ?2, ?3)";
-        var stmt: ?*c.sqlite3_stmt = null;
+    pub fn registerPackage(
+        self: *Store,
+        pkg_id: []const u8,
+        commit_sha: []const u8,
+        provider_name: []const u8,
+        files_map: *std.StringHashMap([]const u8),
+    ) !void {
+        try self.db.exec("BEGIN TRANSACTION", .{}, .{});
+        errdefer self.db.exec("ROLLBACK", .{}, .{}) catch {};
 
-        if (c.sqlite3_prepare_v2(self.db, query, -1, &stmt, null) != c.SQLITE_OK) {
-            return error.PrepareStatementFailed;
+        const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
+        const now = @divTrunc(now_ns, std.time.ns_per_s);
+
+        const pkg_stmt =
+            \\INSERT OR IGNORE INTO packages (id, commit_sha, provider, created_at)
+            \\VALUES (?, ?, ?, ?)
+        ;
+        try self.db.exec(pkg_stmt, .{ pkg_id, commit_sha, provider_name, now }, .{});
+
+        var files_it = files_map.iterator();
+        while (files_it.next()) |entry| {
+            const file_path = entry.key_ptr.*;
+            const file_hash = entry.value_ptr.*;
+
+            const file_stmt =
+                \\INSERT OR IGNORE INTO files (hash, size, created_at)
+                \\VALUES (?, 0, ?)
+            ;
+            try self.db.exec(file_stmt, .{ file_hash, now }, .{});
+
+            const mapping_stmt =
+                \\INSERT OR IGNORE INTO package_files (package_id, commit_sha, file_path, file_hash)
+                \\VALUES (?, ?, ?, ?)
+            ;
+            try self.db.exec(mapping_stmt, .{ pkg_id, commit_sha, file_path, file_hash }, .{});
         }
-        defer _ = c.sqlite3_finalize(stmt);
-
-        if (c.sqlite3_bind_text(stmt, 1, hash.ptr, @intCast(hash.len), c.SQLITE_STATIC) != c.SQLITE_OK or
-            c.sqlite3_bind_int64(stmt, 2, @intCast(size)) != c.SQLITE_OK or
-            c.sqlite3_bind_int(stmt, 3, if (is_executable) 1 else 0) != c.SQLITE_OK)
-        {
-            return error.BindParameterFailed;
-        }
-
-        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
-            return error.StepFailed;
-        }
-    }
-
-    /// Registers a package commit and returns its database ID.
-    pub fn insertPackage(self: Store, repo_url: [:0]const u8, commit_sha: [:0]const u8) StoreError!i64 {
-        const query = "INSERT OR IGNORE INTO packages (repo_url, commit_sha) VALUES (?1, ?2)";
-        var stmt: ?*c.sqlite3_stmt = null;
-
-        if (c.sqlite3_prepare_v2(self.db, query, -1, &stmt, null) != c.SQLITE_OK) {
-            return error.PrepareStatementFailed;
-        }
-        defer _ = c.sqlite3_finalize(stmt);
-
-        if (c.sqlite3_bind_text(stmt, 1, repo_url.ptr, @intCast(repo_url.len), c.SQLITE_STATIC) != c.SQLITE_OK or
-            c.sqlite3_bind_text(stmt, 2, commit_sha.ptr, @intCast(commit_sha.len), c.SQLITE_STATIC) != c.SQLITE_OK)
-        {
-            return error.BindParameterFailed;
-        }
-
-        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
-            return error.StepFailed;
-        }
-
-        // Fetch the ID (whether newly inserted or existing)
-        const select_query = "SELECT id FROM packages WHERE repo_url = ?1 AND commit_sha = ?2";
-        var select_stmt: ?*c.sqlite3_stmt = null;
-
-        if (c.sqlite3_prepare_v2(self.db, select_query, -1, &select_stmt, null) != c.SQLITE_OK) {
-            return error.PrepareStatementFailed;
-        }
-        defer _ = c.sqlite3_finalize(select_stmt);
-
-        _ = c.sqlite3_bind_text(select_stmt, 1, repo_url.ptr, @intCast(repo_url.len), c.SQLITE_STATIC);
-        _ = c.sqlite3_bind_text(select_stmt, 2, commit_sha.ptr, @intCast(commit_sha.len), c.SQLITE_STATIC);
-
-        if (c.sqlite3_step(select_stmt) == c.SQLITE_ROW) {
-            return c.sqlite3_column_int64(select_stmt, 0);
-        }
-
-        return error.StepFailed;
-    }
-
-    /// Links a specific file hash to a package at a given path.
-    pub fn linkPackageFile(self: Store, package_id: i64, file_hash: [:0]const u8, file_path: [:0]const u8) StoreError!void {
-        const query = "INSERT OR IGNORE INTO package_files (package_id, file_hash, file_path) VALUES (?1, ?2, ?3)";
-        var stmt: ?*c.sqlite3_stmt = null;
-
-        if (c.sqlite3_prepare_v2(self.db, query, -1, &stmt, null) != c.SQLITE_OK) {
-            return error.PrepareStatementFailed;
-        }
-        defer _ = c.sqlite3_finalize(stmt);
-
-        if (c.sqlite3_bind_int64(stmt, 1, package_id) != c.SQLITE_OK or
-            c.sqlite3_bind_text(stmt, 2, file_hash.ptr, @intCast(file_hash.len), c.SQLITE_STATIC) != c.SQLITE_OK or
-            c.sqlite3_bind_text(stmt, 3, file_path.ptr, @intCast(file_path.len), c.SQLITE_STATIC) != c.SQLITE_OK)
-        {
-            return error.BindParameterFailed;
-        }
-
-        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
-            return error.StepFailed;
-        }
+        try self.db.exec("COMMIT", .{}, .{});
     }
 };

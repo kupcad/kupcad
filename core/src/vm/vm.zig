@@ -11,7 +11,8 @@ const geom = @import("../kernel/geometry_handle.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const profiler_mod = @import("profiler.zig");
 const material_mod = @import("../core/material.zig");
-const Vfs = @import("../core/vfs.zig").Vfs;
+const Vfs = @import("../vfs/vfs.zig").Vfs;
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
@@ -49,6 +50,7 @@ pub const VM = struct {
     stack_top: usize,
     frames: std.ArrayListUnmanaged(CallFrame),
 
+    native_vfs_ptr: *NativeVfs,
     vfs: Vfs,
     gc: memory.GC,
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
@@ -122,13 +124,18 @@ pub const VM = struct {
         var rescue_frames = std.ArrayListUnmanaged(RescueFrame).empty;
         try rescue_frames.ensureTotalCapacity(allocator, 256);
 
+        // Dynamically allocate the NativeVfs so its memory address stays valid
+        const native_vfs = try allocator.create(NativeVfs);
+        native_vfs.* = NativeVfs.init(io);
+
         var vm = VM{
             .allocator = allocator,
             .io = io,
             .stack = initial_stack,
             .stack_top = 0,
             .frames = frames,
-            .vfs = Vfs.initNative(),
+            .native_vfs_ptr = native_vfs,
+            .vfs = native_vfs.vfs(),
             .gc = memory.GC.init(allocator),
             .globals = .empty,
             .modules = .empty,
@@ -169,9 +176,10 @@ pub const VM = struct {
     pub fn deinit(self: *VM) void {
         self.resetStack();
 
-        self.vfs.deinit(self.allocator);
         self.gc.collectGarbage(self, true);
         self.dag_builder.deinit();
+
+        self.allocator.destroy(self.native_vfs_ptr);
 
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
@@ -679,7 +687,7 @@ pub const VM = struct {
                     }
 
                     // 2. Fetch from VFS
-                    const source = self.vfs.readFile(self.allocator, self.io, path_str) catch {
+                    const source = self.vfs.readFile(self.allocator, path_str) catch {
                         // Fallback to Host handler for native plugins if VFS fails
                         if (self.host.import_handler) |handler| {
                             const module_obj = handler(self, path_str) catch return .runtime_error;

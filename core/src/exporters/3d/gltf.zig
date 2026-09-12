@@ -81,8 +81,6 @@ fn parseHexColor(hex: []const u8, alpha: f64) [4]f64 {
     return .{ r, g, b, alpha };
 }
 
-/// Constructs and returns an owned slice of binary .GLB bytes directly in memory.
-/// Supports optional Draco geometry compression via `use_draco`.
 pub fn buildGltfBuffer(
     allocator: std.mem.Allocator,
     vm: *VM,
@@ -105,7 +103,6 @@ pub fn buildGltfBuffer(
     var global_max = [3]f64{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
     var total_vertices: u32 = 0;
 
-    // --- Process All Meshes (Main + Ghosts) ---
     for (handles) |handle| {
         const mesh = kernel.getMesh(allocator, handle) orelse continue;
         defer allocator.free(mesh.vert_props);
@@ -117,7 +114,6 @@ pub fn buildGltfBuffer(
         const base_vertex = total_vertices;
         total_vertices += vertex_count;
 
-        // Group Triangles by Material ID
         var mat_indices = std.AutoHashMap(u32, std.ArrayListUnmanaged(u32)).init(allocator);
         defer mat_indices.deinit();
 
@@ -136,7 +132,6 @@ pub fn buildGltfBuffer(
             });
         }
 
-        // Push Raw Vertices and calculate global bounding box
         var v: usize = 0;
         while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
             const x: f64 = @floatCast(mesh.vert_props[v + 0]);
@@ -181,7 +176,6 @@ pub fn buildGltfBuffer(
     defer extensionsUsed.deinit(allocator);
     defer extensionsRequired.deinit(allocator);
 
-    // Position Accessor (Index 0)
     try accessors.append(allocator, .{
         .bufferView = if (use_draco) null else 0,
         .byteOffset = 0,
@@ -236,7 +230,6 @@ pub fn buildGltfBuffer(
             });
         }
     } else {
-        // --- Uncompressed GLTF Buffer Layout ---
         try bin_buf.appendSlice(allocator, vertex_buf.items);
 
         const pos_byte_length: u32 = @intCast(vertex_buf.items.len);
@@ -285,7 +278,6 @@ pub fn buildGltfBuffer(
         });
     }
 
-    // --- Extract VM Materials & Setup Semantic Roles ---
     var gltf_materials: std.ArrayListUnmanaged(GltfMaterial) = .empty;
     defer gltf_materials.deinit(allocator);
 
@@ -333,7 +325,6 @@ pub fn buildGltfBuffer(
         try extensionsUsed.append(allocator, "KHR_materials_ior");
     }
 
-    // --- Serialize JSON Hierarchy ---
     const root_obj = .{
         .asset = .{ .version = "2.0", .generator = "KupCAD" },
         .extensionsUsed = if (extensionsUsed.items.len > 0) extensionsUsed.items else null,
@@ -356,7 +347,6 @@ pub fn buildGltfBuffer(
     defer json_out.deinit(allocator);
     try json_out.appendSlice(allocator, json_writer.written());
 
-    // GLB chunks must be aligned to 4-byte boundaries
     while (json_out.items.len % 4 != 0) try json_out.append(allocator, ' ');
     while (bin_buf.items.len % 4 != 0) try bin_buf.append(allocator, 0);
 
@@ -364,7 +354,6 @@ pub fn buildGltfBuffer(
     const json_len: u32 = @intCast(json_out.items.len);
     const total_length: u32 = 12 + 8 + json_len + 8 + bin_len;
 
-    // --- Assemble GLB Payload ---
     var glb_payload: std.ArrayListUnmanaged(u8) = .empty;
     errdefer glb_payload.deinit(allocator);
 
@@ -388,7 +377,6 @@ pub fn buildGltfBuffer(
     return try glb_payload.toOwnedSlice(allocator);
 }
 
-/// Method invocation variant (e.g. `my_part.export_gltf("out.glb")`)
 pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, draco_opt: ?bool) !value.Value {
     var handles = std.ArrayListUnmanaged(geom.GeometryHandle).empty;
     defer handles.deinit(vm.allocator);
@@ -413,13 +401,11 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
     const glb_bytes = try buildGltfBuffer(vm.allocator, vm, handles.items, use_draco);
     defer vm.allocator.free(glb_bytes);
 
-    // Swap to VFS
-    try vm.vfs.writeFile(vm.io, filepath, glb_bytes);
+    try vm.vfs.writeFile(filepath, glb_bytes);
 
     return receiver;
 }
 
-/// Global function fallback variant (e.g. `export_gltf("out.glb", my_part)`)
 pub fn nativeExportGltf(vm: *VM, path_str: []const u8, target: value.Value, draco_opt: ?bool) !value.Value {
     return meshExportGltf(vm, target, path_str, draco_opt);
 }

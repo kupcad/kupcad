@@ -33,7 +33,6 @@ test {
     _ = @import("core/value_test.zig");
     _ = @import("core/params/params_test.zig");
     _ = @import("core/text_test.zig");
-    _ = @import("core/vfs_test.zig");
 
     // Frontends
     _ = @import("frontend/kupcad/docstring_test.zig");
@@ -71,6 +70,9 @@ test {
     _ = @import("tools/lint/rules/unreachable_code_test.zig");
     _ = @import("tools/lint/rules/self_subtraction_test.zig");
     _ = @import("tools/lint/rules/param_order_test.zig");
+
+    // VFS
+    _ = @import("vfs/vfs_test.zig");
 
     // VM
     _ = @import("vm/chunk_test.zig");

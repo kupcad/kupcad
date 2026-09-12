@@ -20,9 +20,7 @@ const PointKey = struct {
     z: u32,
 };
 
-/// Parses raw STL bytes (Binary or ASCII) into vertex points and triangle face indices.
 pub fn parseStlBuffer(allocator: std.mem.Allocator, data: []const u8) !StlMesh {
-    // Binary STL check: Header is 80 bytes + 4 bytes count
     if (data.len >= 84) {
         const num_tris = std.mem.readInt(u32, data[80..84], .little);
         const expected_len = 84 + @as(usize, num_tris) * 50;
@@ -30,7 +28,6 @@ pub fn parseStlBuffer(allocator: std.mem.Allocator, data: []const u8) !StlMesh {
             return parseBinaryStl(allocator, data, num_tris);
         }
     }
-    // Fallback to ASCII STL parser
     return parseAsciiStl(allocator, data);
 }
 
@@ -45,7 +42,7 @@ fn parseBinaryStl(allocator: std.mem.Allocator, data: []const u8, num_tris: u32)
 
     var offset: usize = 84;
     for (0..num_tris) |i| {
-        offset += 12; // Skip Normal vector (3x f32)
+        offset += 12;
 
         var tri_indices: [3]u32 = undefined;
         for (0..3) |v| {
@@ -69,7 +66,7 @@ fn parseBinaryStl(allocator: std.mem.Allocator, data: []const u8, num_tris: u32)
             }
             tri_indices[v] = gop.value_ptr.*;
         }
-        offset += 2; // Skip attribute byte count
+        offset += 2;
 
         faces[i] = tri_indices;
     }
@@ -131,7 +128,6 @@ fn parseAsciiStl(allocator: std.mem.Allocator, data: []const u8) !StlMesh {
     };
 }
 
-/// Generates an STL binary buffer in memory.
 pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ![]const u8 {
     const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
     defer allocator.free(mesh.vert_props);
@@ -140,21 +136,17 @@ pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(allocator);
 
-    // STL Header (80 bytes)
     try out.appendNTimes(allocator, 0, 80);
-    // Triangle Count (4 bytes)
     const tri_count: u32 = @intCast(mesh.tri_verts.len / 3);
     try out.appendSlice(allocator, std.mem.asBytes(&tri_count));
 
     var i: usize = 0;
     while (i < mesh.tri_verts.len) : (i += 3) {
-        // Normal vector (dummy 0.0, 0.0, 0.0)
         const zero: f32 = 0.0;
         try out.appendSlice(allocator, std.mem.asBytes(&zero));
         try out.appendSlice(allocator, std.mem.asBytes(&zero));
         try out.appendSlice(allocator, std.mem.asBytes(&zero));
 
-        // 3 Vertices (x, y, z floats)
         for (0..3) |v| {
             const idx = mesh.tri_verts[i + v];
             const v_idx = idx * mesh.num_prop;
@@ -163,7 +155,6 @@ pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
             try out.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v_idx + 2]));
         }
 
-        // Attribute byte count (2 bytes)
         const attr_count: u16 = 0;
         try out.appendSlice(allocator, std.mem.asBytes(&attr_count));
     }
@@ -177,29 +168,24 @@ pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
     const stl_bytes = try buildStlBuffer(vm.allocator, handle);
     defer vm.allocator.free(stl_bytes);
 
-    // Swap to VFS
-    try vm.vfs.writeFile(vm.io, filepath, stl_bytes);
+    try vm.vfs.writeFile(filepath, stl_bytes);
 
     return receiver;
 }
 
-/// Global function fallback variant (e.g. `export_stl("out.stl", my_part)`)
 pub fn nativeExportStl(vm: *VM, path_str: []const u8, target: value.Value) !value.Value {
     const handle = try vm.ensureConcrete(target);
 
     const stl_bytes = try buildStlBuffer(vm.allocator, handle);
     defer vm.allocator.free(stl_bytes);
 
-    // Swap to VFS
-    try vm.vfs.writeFile(vm.io, path_str, stl_bytes);
+    try vm.vfs.writeFile(path_str, stl_bytes);
 
     return target;
 }
 
-/// Strongly typed global import (e.g. `import_stl("in.stl")`)
 pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {
-    // Completely replaces direct std.Io.cwd().openFile() logic
-    const file_buf = vm.vfs.readFile(vm.allocator, vm.io, path_str) catch |err| {
+    const file_buf = vm.vfs.readFile(vm.allocator, path_str) catch |err| {
         vm.reportError("IOError: Failed to read STL file '{s}': {}\n", .{ path_str, err });
         return error.RuntimeError;
     };
