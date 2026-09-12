@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const VM = @import("vm.zig").VM;
 const chunk = @import("chunk.zig");
+const value = @import("../core/value.zig");
 const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
@@ -544,4 +545,129 @@ test "VM: op_import allows exporting aliased primitives and references" {
 
     const app_name = vm.globals.get("app_name") orelse return error.MissingResult;
     try testing.expectEqualStrings("KupCAD Plugin", app_name.asString().chars);
+}
+
+test "VM: op_import resolves non-relative package imports from workspace" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Simulated package installed at `.kupcad/pkg/cad-helpers/main.kup`
+    const pkg_source =
+        \\def calculate_area(w, h)
+        \\  w * h
+        \\end
+        \\export calculate_area
+    ;
+    // Path matches compiler workspace path without leading ./
+    try mem_vfs.vfs().writeFile(".kupcad/pkg/cad-helpers/main.kup", pkg_source);
+
+    // Non-relative import syntax: "cad-helpers"
+    const main_source =
+        \\import { calculate_area } from "cad-helpers"
+        \\result = calculate_area(4, 5)
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 20.0), result_val.asNumber());
+}
+
+test "VM: op_import routes STL asset imports to native handler" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    const main_source =
+        \\import mesh from "./bracket.stl"
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    // Register a mock `import_stl` kernel function with `*anyopaque`
+    const mock_import_stl = struct {
+        fn call(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) !value.Value {
+            _ = v_ptr;
+            _ = arg_count;
+            _ = args;
+            return value.Value.initNumber(777.0); // Mock Mesh Object ID
+        }
+    }.call;
+
+    try vm.defineNative("import_stl", mock_import_stl);
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const mesh_val = vm.globals.get("mesh") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 777.0), mesh_val.asNumber());
+}
+
+test "VM: op_import supports nested namespace re-exports" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Core Module
+    const core_source =
+        \\module Core
+        \\  def self.version
+        \\    "1.0.0"
+        \\  end
+        \\end
+        \\export Core
+    ;
+    try mem_vfs.vfs().writeFile("./core_math.kup", core_source);
+
+    // Facade file re-exporting Core
+    const facade_source =
+        \\import { Core } from "./core_math.kup"
+        \\export Core
+    ;
+    try mem_vfs.vfs().writeFile("./facade.kup", facade_source);
+
+    // Consumer file importing Core from Facade
+    const main_source =
+        \\import { Core } from "./facade.kup"
+        \\ver = Core.version
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const ver_val = vm.globals.get("ver") orelse return error.MissingResult;
+    try testing.expectEqualStrings("1.0.0", ver_val.asString().chars);
 }
