@@ -41,3 +41,26 @@ test "Lockfile: saves deterministic JSON to VFS" {
     try testing.expect(std.mem.indexOf(u8, content, "\"github.com-kupcad-std\"") != null);
     try testing.expect(std.mem.indexOf(u8, content, "\"geom\": \"github.com/user/geom\"") != null);
 }
+
+test "Lockfile: gracefully handles missing lockfiles by returning empty defaults" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Attempting to load from an empty file system
+    var lockfile = try Lockfile.load(testing.allocator, mem_vfs.vfs());
+    defer lockfile.deinit();
+
+    // Should yield a pristine v1.0.0 lockfile rather than crashing
+    try testing.expectEqualStrings("1.0.0", lockfile.version);
+    try testing.expectEqual(@as(usize, 0), lockfile.packages.count());
+}
+
+test "Lockfile: rejects malformed JSON payloads safely" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    try mem_vfs.vfs().writeFile("kupcad.lock", "{ broken_json: true ");
+
+    const result = Lockfile.load(testing.allocator, mem_vfs.vfs());
+    try testing.expectError(error.UnexpectedToken, result);
+}

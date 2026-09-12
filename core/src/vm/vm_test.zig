@@ -9740,7 +9740,7 @@ test "VM Edge Case: Raising and rescuing a custom non-Exception object" {
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    // The thrown payload was seamlessly bypassed, caught, and unpacked[cite: 26]
+    // The thrown payload was seamlessly bypassed, caught, and unpacked
     try testing.expect(result.isNumber());
     try testing.expectEqual(@as(f64, 42.0), result.asNumber());
 }

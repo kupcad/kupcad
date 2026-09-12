@@ -50,6 +50,81 @@ pub const Lockfile = struct {
         self.packages.deinit();
     }
 
+    pub fn load(allocator: std.mem.Allocator, fs: Vfs) !Lockfile {
+        const content = fs.readFile(allocator, "kupcad.lock") catch |err| switch (err) {
+            error.FileNotFound => return Lockfile.init(allocator),
+            else => return err,
+        };
+        defer allocator.free(content);
+
+        // Catch parse errors and safely map them to UnexpectedToken as expected by tests
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch {
+            return error.UnexpectedToken;
+        };
+        defer parsed.deinit();
+
+        const root = parsed.value;
+        if (root != .object) return error.UnexpectedToken;
+
+        var lockfile = Lockfile.init(allocator);
+        errdefer lockfile.deinit();
+
+        if (root.object.get("version")) |v| {
+            if (v == .string) {
+                allocator.free(lockfile.version);
+                lockfile.version = try allocator.dupe(u8, v.string);
+            }
+        }
+
+        if (root.object.get("packages")) |pkgs| {
+            if (pkgs == .object) {
+                var it = pkgs.object.iterator();
+                while (it.next()) |entry| {
+                    const pkg_id = entry.key_ptr.*;
+                    const pkg_val = entry.value_ptr.*;
+
+                    if (pkg_val != .object) continue;
+
+                    var resolved: []const u8 = "";
+                    var ref: []const u8 = "";
+                    var deps = StringMap.init(allocator);
+                    errdefer deps.deinit();
+
+                    if (pkg_val.object.get("resolved")) |r| {
+                        if (r == .string) resolved = try allocator.dupe(u8, r.string);
+                    }
+                    if (pkg_val.object.get("ref")) |r| {
+                        if (r == .string) ref = try allocator.dupe(u8, r.string);
+                    }
+
+                    if (pkg_val.object.get("dependencies")) |d| {
+                        if (d == .object) {
+                            var dep_it = d.object.iterator();
+                            while (dep_it.next()) |dep_entry| {
+                                if (dep_entry.value_ptr.* == .string) {
+                                    const d_key = try allocator.dupe(u8, dep_entry.key_ptr.*);
+                                    const d_val = try allocator.dupe(u8, dep_entry.value_ptr.*.string);
+                                    try deps.put(d_key, d_val);
+                                }
+                            }
+                        }
+                    }
+
+                    const locked_pkg = LockedPackage{
+                        .resolved = resolved,
+                        .ref = ref,
+                        .dependencies = deps,
+                    };
+
+                    const key_dupe = try allocator.dupe(u8, pkg_id);
+                    try lockfile.packages.put(key_dupe, locked_pkg);
+                }
+            }
+        }
+
+        return lockfile;
+    }
+
     pub fn save(self: *Lockfile, fs: Vfs) !void {
         var out_str: std.ArrayListUnmanaged(u8) = .empty;
         defer out_str.deinit(self.allocator);

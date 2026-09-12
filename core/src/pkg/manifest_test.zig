@@ -42,3 +42,49 @@ test "Manifest: returns ManifestNotFound for missing kupcad.json" {
     const result = Manifest.load(testing.allocator, mem_vfs.vfs());
     try testing.expectError(error.ManifestNotFound, result);
 }
+
+test "Manifest: gracefully rejects corrupted JSON files" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    const fs = mem_vfs.vfs();
+
+    // Write a deliberately broken JSON payload (missing quotes and braces)
+    const bad_json =
+        \\{
+        \\  "name": "broken-app,
+        \\  "version: 1.0.0
+        \\
+    ;
+    try fs.writeFile("kupcad.json", bad_json);
+
+    // Attempt to load the corrupted manifest
+    const result = Manifest.load(testing.allocator, fs);
+
+    // std.json returns SyntaxError for malformed payloads
+    try testing.expectError(error.SyntaxError, result);
+}
+
+test "Manifest: forward compatibility (ignores unknown JSON fields)" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    const fs = mem_vfs.vfs();
+
+    // JSON payload with unknown future fields (e.g., "license", "authors")
+    const future_json =
+        \\{
+        \\  "name": "future-app",
+        \\  "version": "2.0.0",
+        \\  "license": "MIT",
+        \\  "authors": ["Alice"],
+        \\  "dependencies": {}
+        \\}
+    ;
+    try fs.writeFile("kupcad.json", future_json);
+
+    // The parser should safely ignore the extra fields
+    var manifest = try Manifest.load(testing.allocator, fs);
+    defer manifest.deinit();
+
+    try testing.expectEqualStrings("future-app", manifest.name);
+    try testing.expectEqualStrings("2.0.0", manifest.version);
+}

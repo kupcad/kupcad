@@ -738,28 +738,12 @@ pub const VM = struct {
 
                     const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
 
-                    // 6. --- ENCAPSULATION: Swap the Globals Environment ---
-                    const previous_globals = self.globals;
-                    // Clone the environment so the package has access to the stdlib and built-ins.
-                    // Any new globals it defines will stay in this clone.
-                    self.globals = previous_globals.clone(self.allocator) catch return .runtime_error;
-
-                    // Execute synchronously
+                    // 6. Execute synchronously (No Clean Room hack)
                     const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
-                        // Ensure we always restore the parent environment on failure
-                        self.globals.deinit(self.allocator);
-                        self.globals = previous_globals;
-
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
                         if (err == error.Unwind) return .ok; // Stack safely unwound by inner exception
                         return .runtime_error;
                     };
-
-                    // Clean up the isolated globals, destroying any un-exported package variables
-                    self.globals.deinit(self.allocator);
-
-                    // Restore the parent's environment securely
-                    self.globals = previous_globals;
 
                     // 7. Cache and yield result
                     self.modules.put(self.allocator, path_str, res) catch return .runtime_error;
@@ -1830,8 +1814,13 @@ pub const VM = struct {
             // Fallback to Object methods (so Class.responds_to? works)
             if (method_val == null and self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_str);
         } else if (receiver.isModule()) {
-            // Fallback to Object methods for modules
-            if (self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_str);
+            // Check the module's own methods first
+            if (receiver.asModule().methods.get(method_name_str)) |m| {
+                method_val = m;
+            } else if (self.object_class != null) {
+                // Fallback to Object methods for modules
+                method_val = self.findMethod(self.object_class.?, method_name_str);
+            }
         } else if (class_obj) |c| {
             const resolved = self.findMethodWithPrivacy(c, method_name_str, ic);
             method_val = resolved.method;
