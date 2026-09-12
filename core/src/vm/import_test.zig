@@ -671,3 +671,124 @@ test "VM: op_import supports nested namespace re-exports" {
     const ver_val = vm.globals.get("ver") orelse return error.MissingResult;
     try testing.expectEqualStrings("1.0.0", ver_val.asString().chars);
 }
+
+test "VM: op_import detects multi-level circular dependencies (A -> B -> C -> A)" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // 3-way cyclic dependency loop
+    try mem_vfs.vfs().writeFile("./a.kup", "import \"./b.kup\"");
+    try mem_vfs.vfs().writeFile("./b.kup", "import \"./c.kup\"");
+    try mem_vfs.vfs().writeFile("./c.kup", "import \"./a.kup\"");
+
+    const main_source = "import \"./a.kup\"";
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    vm.mute_errors = true;
+    const res = vm.interpret(&out_chunk);
+
+    // Sentinel must catch the cycle gracefully across arbitrary depth
+    try testing.expect(res == .runtime_error or res == .execution_limit_exceeded);
+}
+
+test "VM: op_import supports cross-file class inheritance hierarchy" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Base shape library
+    const base_source =
+        \\class Shape
+        \\  def area
+        \\    0
+        \\  end
+        \\end
+        \\export Shape
+    ;
+    try mem_vfs.vfs().writeFile("./shape.kup", base_source);
+
+    // Child shape library extending imported base class
+    const square_source =
+        \\import { Shape } from "./shape.kup"
+        \\class Square < Shape
+        \\  def area
+        \\    16
+        \\  end
+        \\end
+        \\export Square
+    ;
+    try mem_vfs.vfs().writeFile("./square.kup", square_source);
+
+    const main_source =
+        \\import { Square } from "./square.kup"
+        \\sq = Square.new
+        \\result = sq.area
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 16.0), result_val.asNumber());
+}
+
+test "VM: op_import supports barrel re-exports from multiple files" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    try mem_vfs.vfs().writeFile("./part1.kup", "def val1()\n 10\nend\nexport val1");
+    try mem_vfs.vfs().writeFile("./part2.kup", "def val2()\n 20\nend\nexport val2");
+
+    // Barrel index file bundling multiple sub-modules
+    const index_source =
+        \\import { val1 } from "./part1.kup"
+        \\import { val2 } from "./part2.kup"
+        \\export val1, val2
+    ;
+    try mem_vfs.vfs().writeFile("./index.kup", index_source);
+
+    const main_source =
+        \\import { val1, val2 } from "./index.kup"
+        \\result = val1 + val2
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 30.0), result_val.asNumber());
+}
