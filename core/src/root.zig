@@ -51,6 +51,9 @@ test {
     _ = @import("cli/walker_test.zig");
 
     // Package Manager & Registry
+    _ = @import("pkg/manifest_test.zig");
+    _ = @import("pkg/lockfile_test.zig");
+    _ = @import("pkg/paths_test.zig");
     _ = @import("pkg/cafs_test.zig");
     _ = @import("pkg/gc_test.zig");
     _ = @import("pkg/health_test.zig");
