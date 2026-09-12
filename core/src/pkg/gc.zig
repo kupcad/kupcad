@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Cafs = @import("cafs.zig").Cafs;
 const Store = @import("store.zig").Store;
 
@@ -58,7 +59,9 @@ pub const GarbageCollector = struct {
             try self.store.db.exec(delete_stmt, .{}, .{});
         }
 
-        std.debug.print("Pruned {d} files, freeing {d} bytes.\n", .{ pruned_count, bytes_freed });
+        if (!builtin.is_test) {
+            std.debug.print("Pruned {d} files, freeing {d} bytes.\n", .{ pruned_count, bytes_freed });
+        }
 
         // Update last_prune_time in meta table (Unix epoch seconds)
         const now_sec = @divFloor(now_ts.nanoseconds, std.time.ns_per_s);

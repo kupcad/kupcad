@@ -154,7 +154,7 @@ pub const Store = struct {
         const TARGET_VERSION: i32 = 1;
 
         if (current_version < TARGET_VERSION) {
-            if (!@import("builtin").is_test) {
+            if (!builtin.is_test) {
                 std.debug.print("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, TARGET_VERSION });
             }
 
