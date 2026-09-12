@@ -369,3 +369,179 @@ test "VM: op_import supports destructuring multiple exports perfectly" {
     const result_val = vm.globals.get("result") orelse return error.MissingResult;
     try testing.expectEqual(@as(f64, 3.0), result_val.asNumber());
 }
+
+test "VM: op_import supports exporting Classes and Modules securely" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Package defines a Class and a Module
+    const pkg_source =
+        \\class CustomBox
+        \\  def build
+        \\    100
+        \\  end
+        \\end
+        \\
+        \\module MathUtils
+        \\  def self.pi
+        \\    3.14
+        \\  end
+        \\end
+        \\
+        \\export CustomBox, MathUtils
+    ;
+    try mem_vfs.vfs().writeFile("./complex_pkg.kup", pkg_source);
+
+    const main_source =
+        \\import { CustomBox, MathUtils } from "./complex_pkg.kup"
+        \\
+        \\box = CustomBox.new
+        \\result = box.build + MathUtils.pi
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 103.14), result_val.asNumber());
+}
+
+test "VM: op_import closures maintain upvalues to private package state" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    const pkg_source =
+        \\def create_counter
+        \\  counter = 0
+        \\  def inc
+        \\    counter = counter + 1
+        \\    counter
+        \\  end
+        \\  inc
+        \\end
+        \\
+        \\increment = create_counter
+        \\export increment
+    ;
+    try mem_vfs.vfs().writeFile("./stateful_pkg.kup", pkg_source);
+
+    const main_source =
+        \\import { increment } from "./stateful_pkg.kup"
+        \\
+        \\result = increment + increment # Invoked without ()
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 3.0), result_val.asNumber());
+
+    try testing.expect(!vm.globals.contains("counter"));
+}
+
+test "VM: op_import merges multiple sequential export statements" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    const pkg_source =
+        \\def m1
+        \\ 10
+        \\end
+        \\
+        \\def m2
+        \\  20
+        \\end
+        \\
+        \\export m1
+        \\export m2
+    ;
+    try mem_vfs.vfs().writeFile("./seq_pkg.kup", pkg_source);
+
+    const main_source =
+        \\import { m1, m2 } from "./seq_pkg.kup"
+        \\result = m1 + m2
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 30.0), result_val.asNumber());
+}
+
+test "VM: op_import allows exporting aliased primitives and references" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Package dynamically reassigns and exports an array and a string
+    const pkg_source =
+        \\my_list = [10, 20]
+        \\app_name = "KupCAD Plugin"
+        \\export my_list, app_name
+    ;
+    try mem_vfs.vfs().writeFile("./alias_pkg.kup", pkg_source);
+
+    const main_source =
+        \\import { my_list, app_name } from "./alias_pkg.kup"
+        \\
+        \\list_val = my_list[1]
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const list_val = vm.globals.get("list_val") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 20.0), list_val.asNumber());
+
+    const app_name = vm.globals.get("app_name") orelse return error.MissingResult;
+    try testing.expectEqualStrings("KupCAD Plugin", app_name.asString().chars);
+}

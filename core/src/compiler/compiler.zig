@@ -47,6 +47,7 @@ pub const Compiler = struct {
     function: ?*value.ObjFunction = null,
     is_method: bool = false,
     active_namespaces: usize = 0,
+    has_export_module: bool = false,
     // Lexical Scope tracking
     namespace_stack: std.ArrayListUnmanaged(ast.StringId) = .empty,
 
@@ -113,6 +114,7 @@ pub const Compiler = struct {
             .enclosing = null,
             .function = null,
             .is_method = false,
+            .has_export_module = false,
             .namespace_stack = .empty,
             .upvalues = .empty,
             .locals = .empty,
@@ -563,8 +565,14 @@ pub const Compiler = struct {
                 const slot = self.getNextLocalSlot();
                 try self.addLocal(sym_id, slot);
             }
-            const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
-            try self.emitVariableStore(sym_id, dummy_sym);
+            if (self.enclosing == null) {
+                // Define top-level imported symbols directly to enable parenthesis-free invocation
+                try self.emitOp(.op_dup);
+                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+            } else {
+                const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
+                try self.emitVariableStore(sym_id, dummy_sym);
+            }
 
             try self.emitOp(.op_pop); // Pop the assigned value
         }
@@ -577,17 +585,26 @@ pub const Compiler = struct {
         const ex_stmt = self.tree.exportStmt(node);
         const symbols = self.tree.getStringLists(ex_stmt.symbols);
 
-        const mod_name = try self.makeStringConstant("exports");
-        try self.emitOpWithOperand(.op_module, .op_module_wide, mod_name);
+        const mod_name = try self.makeStringConstant("__exports__");
+
+        if (!self.has_export_module) {
+            const export_str_idx = try self.makeStringConstant("exports");
+            try self.emitOpWithOperand(.op_module, .op_module_wide, export_str_idx);
+            try self.emitOp(.op_dup);
+            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, mod_name);
+            self.has_export_module = true;
+        } else {
+            try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, mod_name);
+        }
 
         for (symbols) |sym_id| {
-            try self.emitVariableLoad(sym_id, null); // Load the local/global value
+            try self.emitVariableLoad(sym_id, null); // Stack: [ObjModule, Value]
+
             const name_str = self.tree.getString(sym_id);
             const name_idx = try self.makeStringConstant(name_str);
-            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
-            try self.emitOp(.op_pop); // Pop the assigned value, leaving the module rooted
+            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx); // Stack: [ObjModule, Value]
+            try self.emitOp(.op_pop); // Stack: [ObjModule]
         }
-        // Stack ends with the Module object, which natively becomes the return value of the script
     }
 
     fn compileDefStmt(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
@@ -2119,6 +2136,7 @@ pub const Compiler = struct {
             .enclosing = self,
             .function = func,
             .is_method = is_method,
+            .has_export_module = false,
             .active_namespaces = self.active_namespaces,
             .namespace_stack = try self.namespace_stack.clone(self.allocator), // Inherit lexical scope dynamically
             .upvalues = .empty,

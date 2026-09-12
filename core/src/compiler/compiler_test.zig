@@ -1016,14 +1016,10 @@ test "Compiler: compiles export statement natively yielding module" {
 
     // Expected Bytecode:
     // 0: op_module ("exports")
-    // 2: op_get_global ("x")  <- Loaded from environment
-    // 4: op_set_member ("x")  <- Attached to module
-    // 6: op_pop               <- Pop value, keep module on stack!
-    // 7: op_return
+    // 2: op_dup
+    // 3: op_define_global ("__exports__")
     try testing.expectEqual(chunk.OpCode.op_module, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_set_member, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
 }
 
 test "Compiler: compiles STL asset import interception" {

@@ -754,9 +754,16 @@ pub const VM = struct {
                         return .runtime_error;
                     };
 
+                    // Extract the __exports__ module if built by export statements
+                    var final_res = res;
+                    if (self.globals.get("__exports__")) |exp_mod| {
+                        final_res = exp_mod;
+                        _ = self.globals.remove("__exports__");
+                    }
+
                     // 7. Cache the actual finalized module and yield result
-                    self.modules.put(self.allocator, path_str, res) catch return .runtime_error;
-                    self.push(res);
+                    self.modules.put(self.allocator, path_str, final_res) catch return .runtime_error;
+                    self.push(final_res);
                 },
                 .op_get_upvalue => {
                     const slot = exec_chunk.code.items[frame.ip];
@@ -2218,6 +2225,9 @@ pub const VM = struct {
                 self.runtimeError("Runtime Error: Expected 0 args for default constructor.\n", .{});
                 return .runtime_error;
             }
+        } else if (arg_count == 0) {
+            // Bare identifier evaluation of a non-callable value: leave value on stack
+            return .ok;
         } else {
             return self.throwDynamicError("Runtime Error: Can only call functions and classes.", .{});
         }
