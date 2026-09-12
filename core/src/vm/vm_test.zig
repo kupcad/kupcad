@@ -326,7 +326,6 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
 test "VM Edge Case: Uncaught exceptions halt gracefully without panicking" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.mute_errors = true;
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -348,7 +347,6 @@ test "VM Edge Case: Uncaught exceptions halt gracefully without panicking" {
 test "VM Edge Case: Gracefully handles method calls on raw primitives" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.mute_errors = true;
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -565,7 +563,6 @@ test "VM: Gas limit prevents infinite loops and throws specific error" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     vm.instruction_limit = 50;
-    vm.mute_errors = true;
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -1326,7 +1323,6 @@ test "VM: executes ternary operator with short-circuiting" {
 test "VM Edge Case: Out of bounds array indexing returns runtime error" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.mute_errors = true; // Prevent the error from cluttering test output
 
     const source =
         \\arr = [10, 20, 30]
@@ -2183,8 +2179,6 @@ test "VM Edge Case: Safe casting prevents panics on invalid CAD arguments" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    vm.mute_errors = true; // Prevent the error from cluttering test output
-
     // Attempt to translate a geometry using a String instead of a Number
     const source =
         \\c = cube(10)
@@ -2212,8 +2206,6 @@ test "VM Edge Case: Native C++ FFI failures are safely caught by rescue blocks" 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-
-    vm.mute_errors = true; // Prevent the error string from cluttering test output
 
     // Attempt to translate a geometry using an invalid String instead of a Number.
     // In, this caused a fatal process panic. Now it should gracefully throw to rescue!
@@ -2738,8 +2730,6 @@ test "VM: op_interpolate prevents memory leak on GC OOM" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    vm.mute_errors = true;
-
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
@@ -2956,7 +2946,6 @@ test "VM Edge Case: CSG operations across mixed 2D/3D types throw runtime error"
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-    vm.mute_errors = true; // Don't pollute terminal output
 
     // Attempt to Union (+) a 3D Cube with a 2D Square
     const source =
@@ -3262,7 +3251,6 @@ test "VM: ARC references are safely released when receivers are discarded" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-    vm.mute_errors = true;
 
     const baseline_memory = vm.gc.bytes_allocated;
 
@@ -3479,7 +3467,6 @@ test "VM: param validation halts execution on max bounds violation" {
     try registry.registerStandardLibrary(&vm);
 
     // Mute the console error output so it doesn't clutter the test runner
-    vm.mute_errors = true;
 
     // The default is 200, but the max is strictly 100!
     const source =
@@ -3505,7 +3492,6 @@ test "VM: param validation halts execution on min bounds violation" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-    vm.mute_errors = true;
 
     // The default is 5, but the min is strictly 10!
     const source =
@@ -3529,7 +3515,6 @@ test "VM: param getter halts execution if parameter is undefined" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-    vm.mute_errors = true;
 
     // Fetching a parameter before it is defined
     const source =
@@ -3622,7 +3607,6 @@ test "VM: Parameter validation failure halts script execution with runtime_error
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-    vm.mute_errors = true; // Prevent stdout error logs during intentional failure test
 
     // Default value 150 exceeds max of 100
     const source =
@@ -3683,7 +3667,6 @@ test "VM: Parameter choice validation (in: [...]) enforces allowed discrete opti
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-    vm.mute_errors = true;
 
     // Value "huge" is not in ["small", "medium", "large"]
     const source =
@@ -4725,7 +4708,6 @@ test "VM ARC: Stack unwinds and frees Geometry safely during Exceptions" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-    vm.mute_errors = true;
 
     // Creates a geometry, pushes it to the stack, then raises an error.
     // If the VM's `executeThrow` unwinder doesn't release dead stack slots, it will leak.
@@ -4756,7 +4738,6 @@ test "VM ARC: Native Operator exceptions prevent double-free and leaks" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-    vm.mute_errors = true;
 
     // Mixed 3D and 2D triggers a native RuntimeError inside cadBinaryHandler.
     // If executeBinaryArithmetic mismanages `releaseValue`, this will either leak or ABRT crash.
@@ -4862,7 +4843,6 @@ test "VM GC: Workplanes successfully trace and keep their parent Geometry alive"
 test "VM GC: CAD object allocations respect Sandbox memory limits" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.mute_errors = true;
 
     // Capture the static 84-byte initialization memory
     const baseline_mem = vm.gc.bytes_allocated;
@@ -5347,7 +5327,6 @@ test "VM: Gas limit perfectly triggers inside deeply nested loop contexts, preve
 
     // Set a strict gas limit
     vm.instruction_limit = 100;
-    vm.mute_errors = true; // Don't pollute test logs
 
     // Deeply nested infinite loop to test the bounds of the interpreter's safety constraints
     const source =
@@ -5386,7 +5365,6 @@ test "VM: Gas limit triggers securely through native op_yield re-entrancy" {
     try registry.registerStandardLibrary(&vm);
 
     vm.instruction_limit = 50;
-    vm.mute_errors = true;
 
     const source =
         \\def infinite_yielder
@@ -6322,7 +6300,6 @@ test "VM: Private inline modifiers encapsulate methods correctly" {
 test "VM: Direct external access to private methods throws runtime error" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.mute_errors = true; // Prevent test console clutter
 
     const source =
         \\class SecretData
@@ -6397,7 +6374,6 @@ test "VM: attr_accessor, attr_reader, attr_writer macro expansion" {
 test "VM: Private method called on different instance of same class fails" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.mute_errors = true;
 
     const source =
         \\class Account
@@ -6459,7 +6435,6 @@ test "VM: Private class methods encapsulated on class object" {
 test "VM: Direct external call to private class method throws error" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.mute_errors = true;
 
     const source =
         \\class Vault
@@ -7635,7 +7610,6 @@ test "VM CAD Edge Case: on_face gracefully throws RuntimeError on missing faces 
     try registry.registerStandardLibrary(&vm);
 
     // Mute errors to prevent test console clutter
-    vm.mute_errors = true;
 
     // 1. Vector [1, 1, 1] on a standard cube will not match any single face normal.
     // 2. Symbol :invalid_dir is not a valid predefined shortcut.
@@ -8171,7 +8145,6 @@ test "VM: throwDynamicError does not truncate massive error messages" {
     defer vm.deinit();
 
     // Mute errors so the massive string doesn't spam the test runner output
-    vm.mute_errors = true;
 
     // Create a 300 character string
     var massive_buf: [300]u8 = undefined;
@@ -8780,7 +8753,6 @@ test "VM: Method dispatch fails gracefully on unknown class methods" {
 
     var vm = try VM.init(alloc, testing.io);
     defer vm.deinit();
-    vm.mute_errors = true; // Mute expected stderr during negative test
     try registry.registerStandardLibrary(&vm);
 
     var exec_chunk = chunk.Chunk.init();
@@ -9217,7 +9189,6 @@ test "VM Edge Case: Array#sort safely throws if block yields non-number" {
     var vm = try VM.init(std.testing.allocator, std.testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-    vm.mute_errors = true; // Prevent console clutter
 
     const source =
         \\[1, 2, 3].sort { |a, b| "invalid" }
@@ -9769,7 +9740,7 @@ test "VM Edge Case: Raising and rescuing a custom non-Exception object" {
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    // The thrown payload was seamlessly bypassed, caught, and unpacked[cite: 26]
+    // The thrown payload was seamlessly bypassed, caught, and unpacked
     try testing.expect(result.isNumber());
     try testing.expectEqual(@as(f64, 42.0), result.asNumber());
 }

@@ -993,14 +993,16 @@ test "Compiler: compiles unary NOT operator gracefully" {
     try testing.expectEqual(chunk.OpCode.op_not, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[1])));
 }
 
-test "Compiler: compiles export statement natively yielding nil" {
+test "Compiler: compiles export statement natively yielding module" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    // AST: export { x } (Currently implemented as a stub yielding nil in MVP)
-    const export_node = try b.createNode(.export_stmt, 0, 0);
+    // AST: export { x }
+    const x_sym = try b.intern("x");
+    const symbols = try b.addStringLists(&.{x_sym});
+    const export_node = try b.exportStmt(symbols, .none, .none, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1009,9 +1011,47 @@ test "Compiler: compiles export statement natively yielding nil" {
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
+
     try comp.compile(export_node);
 
-    try testing.expectEqual(chunk.OpCode.op_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    // Expected Bytecode:
+    // 0: op_module ("exports")
+    // 2: op_dup
+    // 3: op_define_global ("__exports__")
+    try testing.expectEqual(chunk.OpCode.op_module, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+}
+
+test "Compiler: compiles STL asset import interception" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // AST: import { shape } from "model.stl"
+    const path_str = try b.intern("model.stl");
+    const shape_sym = try b.intern("shape");
+    const symbols = try b.addStringLists(&.{shape_sym});
+    const import_node = try b.importStmt(symbols, path_str, .none, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(import_node);
+
+    // Asset extensions bypass 'op_import' and generate a native function call
+    // 0: op_get_global ("import_stl")
+    // 2: op_constant ("model.stl")
+    // 4: op_call (1 arg)
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_call, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+    try testing.expectEqual(@as(u8, 1), out_chunk.code.items[5]); // 1 argument
 }
 
 test "Compiler: Local variable names are exported to chunk metadata for REPL introspection" {

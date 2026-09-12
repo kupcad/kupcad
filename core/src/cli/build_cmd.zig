@@ -78,7 +78,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer allocator.free(source);
 
     // Compile, Inject, and Evaluate
-    const output_bytes = api.buildModel(allocator, init.io, source, format, use_draco, cli_params) catch |err| {
+    const output_bytes = api.buildModel(allocator, init.io, source, format, use_draco, cli_params, null) catch |err| {
         std.debug.print("Build failed: {}\n", .{err});
         return;
     };

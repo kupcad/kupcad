@@ -48,7 +48,6 @@ const FullCircleEntry = struct {
     ec2: u32,
 };
 
-/// Computes the exact 3D plane normal and origin directly from a loop's vertices using Newell's method.
 fn computeLoopNormalAndOrigin(
     t: *const topo.TopologyArena,
     loop: topo.Loop,
@@ -90,7 +89,6 @@ fn computeLoopNormalAndOrigin(
     return .{ .origin = p0, .normal = n_ax };
 }
 
-/// Helper to fetch or create a straight LINE EDGE_CURVE for shared internal diagonal edges during triangulation.
 fn getOrCreateLineEdge(
     s: *StepSerializer,
     t: *const topo.TopologyArena,
@@ -128,12 +126,10 @@ fn getOrCreateLineEdge(
     return edge_curve_id;
 }
 
-/// Generates a valid ISO 10303-21 STEP file buffer supporting Multi-Solid Assemblies.
 pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const u8 {
     var s = StepSerializer.init(allocator);
     errdefer s.out.deinit(allocator);
 
-    // 1. Pre-Allocate IDs for MANIFOLD_SOLID_BREP components in the assembly
     var solid_rep_ids = std.ArrayListUnmanaged(u32).empty;
     defer solid_rep_ids.deinit(allocator);
 
@@ -153,7 +149,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
         try rep_list_str.appendSlice(allocator, try std.fmt.bufPrint(&tmp, "#{d}", .{id}));
     }
 
-    // 2. Write AP214 Header with Multi-Solid shape representations
     try s.out.appendSlice(allocator,
         \\ISO-10303-21;
         \\HEADER;
@@ -186,7 +181,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
         \\
     );
 
-    // 3. Serialize Geometry per Component
     var valid_idx: usize = 0;
     for (handles) |handle| {
         if (handle.engine != .brep_native) continue;
@@ -251,7 +245,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
             try vertex_map.put(@intCast(i), try s.emit("VERTEX_POINT('',#{d})", .{pt_id}));
         }
 
-        // Deterministic Canonical Edge Mapping
         var edge_map = std.AutoHashMap(EdgeKey, u32).init(allocator);
         defer edge_map.deinit();
 
@@ -319,7 +312,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
                             const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ center_id, z_axis_id, x_axis_id });
                             curve_entity_id = try s.emit("CIRCLE('',#{d},{d:.6})", .{ axis2, arc.radius });
 
-                            // Check arc tangent direction vs v_min -> v_max chord
                             const radial = locus_math.sub(p1, arc.center);
                             const z_norm = locus_math.normalize(.{ nx, ny, nz });
                             const tangent = locus_math.cross(z_norm, radial);
@@ -426,7 +418,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
 
             var emitted_face_ids = std.ArrayListUnmanaged(u32).empty;
 
-            // Check if planar face is a warped quad/polygon from hull()
             const outer_loop_id = t.face_loops.items[face.loops_start];
             const outer_loop = t.loops.items[outer_loop_id];
 
@@ -447,7 +438,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
             const loop_data = try computeLoopNormalAndOrigin(t, outer_loop);
 
             if (face.surface.surface_type == .plane and face.loops_len == 1 and loop_verts.items.len >= 4) {
-                // Check max distance of vertices from Newell plane
                 for (loop_verts.items) |v_id| {
                     const p = t.vertices.items[v_id].point;
                     const dist = @abs(locus_math.dot(locus_math.sub(p, loop_data.origin), loop_data.normal));
@@ -459,7 +449,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
             }
 
             if (is_warped) {
-                // Split warped quad/polygon into planar 3-vertex triangles
                 const v0_id = loop_verts.items[0];
                 const p0 = t.vertices.items[v0_id].point;
 
@@ -471,7 +460,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
                     const pj = t.vertices.items[vj_id].point;
                     const pj1 = t.vertices.items[vj1_id].point;
 
-                    // Triangle plane
                     const tri_normal = locus_math.normalize(locus_math.cross(locus_math.sub(pj, p0), locus_math.sub(pj1, p0)));
                     var tri_u: locus_math.Vec3 = undefined;
                     if (@abs(tri_normal[0]) < 0.9) {
@@ -486,7 +474,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
                     const axis2 = try s.emit("AXIS2_PLACEMENT_3D('',#{d},#{d},#{d})", .{ origin_id, z_axis_id, x_axis_id });
                     const tri_plane_id = try s.emit("PLANE('',#{d})", .{axis2});
 
-                    // 3 Oriented Edges for Triangle (v0 -> vj -> vj1 -> v0)
                     const ec1 = try getOrCreateLineEdge(&s, t, &vertex_map, &edge_map, v0_id, vj_id);
                     const oe1 = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{ ec1, if (v0_id < vj_id) "T" else "F" });
 
@@ -508,7 +495,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
 
                 switch (face.surface.surface_type) {
                     .cylinder => {
-                        // Quadrics use g_arena surface and face.forward orientation
                         face_orientation = if (face.forward) "T" else "F";
                         if (face.surface.index >= g.cylinders.items.len) return error.CorruptTopology;
                         const cyl = g.cylinders.items[face.surface.index];
@@ -596,7 +582,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
                         surface_record_id = try s.emit("TOROIDAL_SURFACE('',#{d},{d:.6},{d:.6})", .{ axis2, tor.major_radius, tor.minor_radius });
                     },
                     else => {
-                        // Planar faces calculate exact loop normal; orientation is ALWAYS "T"
                         face_orientation = "T";
                         const n_ax = loop_data.normal;
                         var u_ax: locus_math.Vec3 = undefined;
@@ -680,7 +665,6 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.Geome
     return try s.out.toOwnedSlice(allocator);
 }
 
-/// Method invocation variant (e.g. `my_part.export_step("out.step")`)
 pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
     var export_handles = std.ArrayListUnmanaged(geom.GeometryHandle).empty;
     defer export_handles.deinit(vm.allocator);
@@ -703,18 +687,15 @@ pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !val
     };
     defer vm.allocator.free(step_bytes);
 
-    const cwd = std.Io.Dir.cwd();
-    try cwd.writeFile(vm.io, .{ .sub_path = filepath, .data = step_bytes });
+    try vm.vfs.writeFile(filepath, step_bytes);
 
     return receiver;
 }
 
-/// Global function fallback variant (e.g. `export_step("out.step", my_part)`)
 pub fn nativeExportStep(vm: *VM, path_str: []const u8, target: value.Value) !value.Value {
     return meshExportStep(vm, target, path_str);
 }
 
-/// Strongly typed global import (e.g. `import_step("in.step")`)
 pub fn nativeImportStep(vm: *VM, path_str: []const u8) !value.Value {
     _ = path_str;
     vm.reportError("Runtime Error: import_step not yet supported for native B-Rep engine.\n", .{});

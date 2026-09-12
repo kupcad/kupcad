@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
 const dag = @import("dag.zig");
@@ -8,9 +9,14 @@ const parameters = @import("../core/parameters.zig");
 const kernel_mod = @import("../kernel/kernel.zig");
 const host_mod = @import("host.zig");
 const geom = @import("../kernel/geometry_handle.zig");
+const registry = @import("../stdlib/registry.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const profiler_mod = @import("profiler.zig");
 const material_mod = @import("../core/material.zig");
+const Vfs = @import("../vfs/vfs.zig").Vfs;
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const Document = @import("../core/document.zig").Document;
+const Compiler = @import("../compiler/compiler.zig").Compiler;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
@@ -46,12 +52,15 @@ pub const VM = struct {
     stack_top: usize,
     frames: std.ArrayListUnmanaged(CallFrame),
 
+    native_vfs_ptr: *NativeVfs,
+    vfs: Vfs,
     gc: memory.GC,
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
     profiler: ?*profiler_mod.Profiler = null, // First-class tracing profiler
     debugger_step_handler: ?*const fn (vm: *VM) void = null,
 
     globals: std.StringHashMapUnmanaged(value.Value),
+    modules: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
     symbols: std.StringHashMapUnmanaged(*value.ObjSymbol),
 
@@ -117,14 +126,21 @@ pub const VM = struct {
         var rescue_frames = std.ArrayListUnmanaged(RescueFrame).empty;
         try rescue_frames.ensureTotalCapacity(allocator, 256);
 
+        // Dynamically allocate the NativeVfs so its memory address stays valid
+        const native_vfs = try allocator.create(NativeVfs);
+        native_vfs.* = NativeVfs.init(io);
+
         var vm = VM{
             .allocator = allocator,
             .io = io,
             .stack = initial_stack,
             .stack_top = 0,
             .frames = frames,
+            .native_vfs_ptr = native_vfs,
+            .vfs = native_vfs.vfs(),
             .gc = memory.GC.init(allocator),
             .globals = .empty,
+            .modules = .empty,
             .strings = .empty,
             .symbols = .empty,
             .open_upvalues = null,
@@ -140,7 +156,7 @@ pub const VM = struct {
             .materials = .empty,
             .display_list = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
-            .mute_errors = false,
+            .mute_errors = builtin.is_test,
             .scratch_arena = std.heap.ArenaAllocator.init(allocator),
             .static_true = null,
             .static_false = null,
@@ -165,8 +181,11 @@ pub const VM = struct {
         self.gc.collectGarbage(self, true);
         self.dag_builder.deinit();
 
+        self.allocator.destroy(self.native_vfs_ptr);
+
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
+        self.modules.deinit(self.allocator);
         self.strings.deinit(self.allocator);
         self.symbols.deinit(self.allocator);
         self.frames.deinit(self.allocator);
@@ -661,15 +680,90 @@ pub const VM = struct {
                 .op_import, .op_import_wide => {
                     const path_idx = self.readOperand(exec_chunk, frame, op == .op_import_wide);
                     const path_val = exec_chunk.constants.items[path_idx];
+                    const path_str = path_val.asString().chars;
 
-                    if (self.host.import_handler) |handler| {
-                        const str_obj = path_val.asString();
-                        const module_obj = handler(self, str_obj.chars) catch return .runtime_error;
-                        self.push(module_obj);
-                    } else {
-                        // Fallback if no Host import handler is bound
-                        self.push(value.Value.initNil());
+                    // 1. Check Module Cache
+                    if (self.modules.get(path_str)) |cached_mod| {
+                        if (cached_mod.isNil()) {
+                            if (self.throwDynamicError("ImportError: Circular dependency detected for '{s}'", .{path_str}) != .ok) return .runtime_error;
+                            continue;
+                        }
+                        self.push(cached_mod);
+                        continue;
                     }
+
+                    // 2. Fetch from VFS
+                    const source = self.vfs.readFile(self.allocator, path_str) catch {
+                        if (self.host.import_handler) |handler| {
+                            const module_obj = handler(self, path_str) catch return .runtime_error;
+                            self.modules.put(self.allocator, path_str, module_obj) catch return .runtime_error;
+                            self.push(module_obj);
+                            continue;
+                        }
+                        if (self.throwDynamicError("ImportError: Could not read module '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        continue;
+                    };
+                    defer self.allocator.free(source);
+
+                    // 3. Parse Document
+                    var doc = Document.parse(self.allocator, source) catch {
+                        if (self.throwDynamicError("ImportError: Parse error in '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        continue;
+                    };
+                    defer doc.deinit();
+
+                    if (doc.diagnostics.len > 0) {
+                        if (self.throwDynamicError("ImportError: Syntax errors in '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        continue;
+                    }
+
+                    // 4. Compile recursively
+                    const heap_chunk = self.allocator.create(chunk.Chunk) catch return .runtime_error;
+                    heap_chunk.* = chunk.Chunk.init();
+                    errdefer {
+                        heap_chunk.free(self.allocator);
+                        self.allocator.destroy(heap_chunk);
+                    }
+
+                    var comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, heap_chunk, self);
+                    defer comp.deinit();
+
+                    comp.compile(doc.tree.root) catch {
+                        if (self.throwDynamicError("ImportError: Compilation failed for '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        continue;
+                    };
+
+                    // 5. Setup Closure
+                    const func = self.gc.allocateFunction(self) catch return .runtime_error;
+                    func.chunk = heap_chunk;
+                    func.owns_chunk = true;
+                    func.local_count = heap_chunk.local_count;
+
+                    const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
+
+                    // --- CIRCULAR DEPENDENCY FIX: Register Sentinel ---
+                    self.modules.put(self.allocator, path_str, value.Value.initNil()) catch return .runtime_error;
+
+                    // 6. Execute synchronously
+                    const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
+                        // Clean up the sentinel on failure so it can be retried later if caught
+                        _ = self.modules.remove(path_str);
+
+                        if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
+                        if (err == error.Unwind) return .ok; // Stack safely unwound by inner exception
+                        return .runtime_error;
+                    };
+
+                    // Extract the __exports__ module if built by export statements
+                    var final_res = res;
+                    if (self.globals.get("__exports__")) |exp_mod| {
+                        final_res = exp_mod;
+                        _ = self.globals.remove("__exports__");
+                    }
+
+                    // 7. Cache the actual finalized module and yield result
+                    self.modules.put(self.allocator, path_str, final_res) catch return .runtime_error;
+                    self.push(final_res);
                 },
                 .op_get_upvalue => {
                     const slot = exec_chunk.code.items[frame.ip];
@@ -1736,8 +1830,13 @@ pub const VM = struct {
             // Fallback to Object methods (so Class.responds_to? works)
             if (method_val == null and self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_str);
         } else if (receiver.isModule()) {
-            // Fallback to Object methods for modules
-            if (self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_str);
+            // Check the module's own methods first
+            if (receiver.asModule().methods.get(method_name_str)) |m| {
+                method_val = m;
+            } else if (self.object_class != null) {
+                // Fallback to Object methods for modules
+                method_val = self.findMethod(self.object_class.?, method_name_str);
+            }
         } else if (class_obj) |c| {
             const resolved = self.findMethodWithPrivacy(c, method_name_str, ic);
             method_val = resolved.method;
@@ -2126,6 +2225,9 @@ pub const VM = struct {
                 self.runtimeError("Runtime Error: Expected 0 args for default constructor.\n", .{});
                 return .runtime_error;
             }
+        } else if (arg_count == 0) {
+            // Bare identifier evaluation of a non-callable value: leave value on stack
+            return .ok;
         } else {
             return self.throwDynamicError("Runtime Error: Can only call functions and classes.", .{});
         }

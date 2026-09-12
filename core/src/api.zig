@@ -8,6 +8,7 @@ const kernel = @import("kernel/kernel.zig");
 const extractor = @import("tools/doc/extractor.zig");
 const profiler_mod = @import("vm/profiler.zig");
 const geom = @import("kernel/geometry_handle.zig");
+const Vfs = @import("vfs/vfs.zig").Vfs;
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const Linter = @import("tools/lint/linter.zig").Linter;
 const stl_exporter = @import("exporters/3d/stl.zig");
@@ -99,12 +100,18 @@ pub fn buildModel(
     format: []const u8,
     use_draco: bool,
     cli_params: ?std.StringHashMap(f64),
+    vfs_override: ?Vfs,
 ) ![]const u8 {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
 
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
+
+    // Override default NativeFS with MemoryFS if provided by WASM
+    if (vfs_override) |vfs| {
+        vm.vfs = vfs;
+    }
 
     vm.line_index = &doc.line_index;
     try registry.registerStandardLibrary(&vm);

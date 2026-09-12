@@ -50,6 +50,15 @@ test {
     _ = @import("cli/options_test.zig");
     _ = @import("cli/walker_test.zig");
 
+    // Package Manager & Registry
+    _ = @import("pkg/manifest_test.zig");
+    _ = @import("pkg/lockfile_test.zig");
+    _ = @import("pkg/paths_test.zig");
+    _ = @import("pkg/cafs_test.zig");
+    _ = @import("pkg/gc_test.zig");
+    _ = @import("pkg/health_test.zig");
+    _ = @import("pkg/store_test.zig");
+
     // Stdlib
     _ = @import("stdlib/stdlib_test.zig");
 
@@ -71,10 +80,14 @@ test {
     _ = @import("tools/lint/rules/self_subtraction_test.zig");
     _ = @import("tools/lint/rules/param_order_test.zig");
 
+    // VFS
+    _ = @import("vfs/vfs_test.zig");
+
     // VM
     _ = @import("vm/chunk_test.zig");
     _ = @import("vm/dag_evaluator_test.zig");
     _ = @import("vm/memory_test.zig");
+    _ = @import("vm/import_test.zig");
     _ = @import("vm/host_test.zig");
     _ = @import("vm/profiler_test.zig");
     _ = @import("vm/validation_test.zig");

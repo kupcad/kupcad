@@ -1,5 +1,7 @@
 const std = @import("std");
 const api = @import("api.zig");
+const Vfs = @import("vfs/vfs.zig").Vfs;
+const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 
 // Use the thread-safe C allocator provided by wasi-libc
 // This prevents spinlock deadlocks in multi-threaded wasm and gracefully
@@ -8,6 +10,18 @@ const allocator = std.heap.c_allocator;
 
 // --- Global Error State ---
 var last_error_msg: [*]const u8 = "None".ptr;
+
+// --- Global VFS State ---
+var global_mem_vfs: MemoryVfs = undefined;
+var vfs_initialized: bool = false;
+
+fn getMemVfs() *MemoryVfs {
+    if (!vfs_initialized) {
+        global_mem_vfs = MemoryVfs.init(allocator);
+        vfs_initialized = true;
+    }
+    return &global_mem_vfs;
+}
 
 pub export fn get_last_error() [*]const u8 {
     return last_error_msg;
@@ -20,6 +34,28 @@ pub export fn wasm_alloc(len: usize) ?[*]u8 {
 
 pub export fn wasm_free(ptr: [*]u8, len: usize) void {
     allocator.free(ptr[0..len]);
+}
+
+pub export fn clear_vfs_wasm() void {
+    if (vfs_initialized) {
+        global_mem_vfs.deinit();
+    }
+    global_mem_vfs = MemoryVfs.init(allocator);
+    vfs_initialized = true;
+}
+
+pub export fn put_file_wasm(
+    path_ptr: [*]const u8,
+    path_len: usize,
+    content_ptr: [*]const u8,
+    content_len: usize,
+) bool {
+    const path = path_ptr[0..path_len];
+    const content = content_ptr[0..content_len];
+
+    // MemoryVfs internally dupes the memory, making it safe from JS GC sweeps
+    getMemVfs().vfs().writeFile(path, content) catch return false;
+    return true;
 }
 
 // --- Inner Zig Native Functions ---
@@ -74,12 +110,11 @@ fn inner_extract_params(source: []const u8) ![]const u8 {
 }
 
 fn inner_build_model(source: []const u8, format: []const u8, use_draco: bool) ![]const u8 {
-    return try api.buildModel(allocator, undefined, source, format, use_draco, null);
+    return try api.buildModel(allocator, undefined, source, format, use_draco, null, getMemVfs().vfs());
 }
 
 // --- WASM Export Boundaries ---
 
-// FIX: Added out_len parameter so JS knows exactly how many bytes to free
 pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize, out_len: *usize) ?[*]const u8 {
     std.debug.assert(@intFromPtr(source_ptr) != 0);
 

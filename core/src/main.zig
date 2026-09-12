@@ -4,6 +4,7 @@ const fmt_cmd = @import("cli/fmt.zig");
 const check_cmd = @import("cli/check.zig");
 const lsp_cmd = @import("cli/lsp.zig");
 const doc_cmd = @import("cli/doc.zig");
+const pkg_cmd = @import("cli/pkg_cmd.zig");
 const dev_cmd = @import("cli/dev.zig");
 
 pub fn main(init: std.process.Init) !void {
@@ -20,6 +21,8 @@ pub fn main(init: std.process.Init) !void {
     // Route to the appropriate CLI command module
     if (std.mem.eql(u8, cmd, "build")) {
         try build_cmd.execute(init, allocator, &args_iter);
+    } else if (std.mem.eql(u8, cmd, "pkg")) {
+        try pkg_cmd.execute(init, allocator, &args_iter);
     } else if (std.mem.eql(u8, cmd, "fmt")) {
         try fmt_cmd.execute(init, allocator, &args_iter);
     } else if (std.mem.eql(u8, cmd, "check")) {
