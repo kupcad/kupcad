@@ -98,7 +98,6 @@ test "DAG Evaluator: correctly evaluates 2D extrusion to 3D" {
 test "DAG Evaluator: bounds checking prevents infinite recursion or crashes" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.mute_errors = true;
 
     try registry.registerStandardLibrary(&vm);
 

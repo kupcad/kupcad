@@ -11,7 +11,6 @@ fn expectRuntimeError(source: []const u8) !void {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    vm.mute_errors = true;
     try registry.registerStandardLibrary(&vm);
 
     var doc = try Document.parse(testing.allocator, source);

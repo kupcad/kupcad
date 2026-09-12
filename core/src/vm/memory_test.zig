@@ -192,7 +192,6 @@ test "GC: String interning prevents duplicate allocations" {
 test "GC Sandbox: Enforces max_memory_limit strictly" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.mute_errors = true;
 
     // Set limit extremely tight (just current allocation footprint + 5 bytes)
     vm.gc.max_memory_limit = vm.gc.bytes_allocated + 5;

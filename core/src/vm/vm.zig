@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
 const dag = @import("dag.zig");
@@ -154,7 +155,7 @@ pub const VM = struct {
             .materials = .empty,
             .display_list = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
-            .mute_errors = false,
+            .mute_errors = builtin.is_test,
             .scratch_arena = std.heap.ArenaAllocator.init(allocator),
             .static_true = null,
             .static_false = null,
