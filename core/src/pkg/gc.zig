@@ -1,7 +1,7 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const Cafs = @import("cafs.zig").Cafs;
 const Store = @import("store.zig").Store;
+const log = @import("log.zig");
 
 pub const GarbageCollector = struct {
     allocator: std.mem.Allocator,
@@ -59,9 +59,7 @@ pub const GarbageCollector = struct {
             try self.store.db.exec(delete_stmt, .{}, .{});
         }
 
-        if (!builtin.is_test) {
-            std.debug.print("Pruned {d} files, freeing {d} bytes.\n", .{ pruned_count, bytes_freed });
-        }
+        log.print("Pruned {d} files, freeing {d} bytes.\n", .{ pruned_count, bytes_freed });
 
         // Update last_prune_time in meta table (Unix epoch seconds)
         const now_sec = @divFloor(now_ts.nanoseconds, std.time.ns_per_s);
@@ -85,7 +83,7 @@ pub const GarbageCollector = struct {
         const seven_days_sec: i64 = 7 * 24 * 60 * 60;
 
         if (now_sec - last_prune > seven_days_sec) {
-            std.debug.print("Running scheduled background cleanup...\n", .{});
+            log.print("Running scheduled background cleanup...\n", .{});
             try self.prune(false);
         }
     }
