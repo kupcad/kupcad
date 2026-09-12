@@ -204,3 +204,168 @@ test "VM: op_import destructuring throws RuntimeError for missing exports" {
     const res = vm.interpret(&out_chunk);
     try testing.expectEqual(.runtime_error, res);
 }
+
+test "VM: op_import safely aborts on missing package files" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Import a file that was never written to the VFS
+    const main_source = "import \"./does_not_exist.kup\"";
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    vm.mute_errors = true;
+    const res = vm.interpret(&out_chunk);
+
+    // Must gracefully yield a runtime error (ImportError) without panicking
+    try testing.expectEqual(.runtime_error, res);
+}
+
+test "VM: op_import destructuring a primitive export throws RuntimeError" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Package exports a raw number instead of a Module/Class
+    try mem_vfs.vfs().writeFile("./prim.kup", "export 42");
+
+    // Parent attempts to destructure the number, which lacks properties
+    const main_source = "import { x } from \"./prim.kup\"";
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    vm.mute_errors = true;
+    const res = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.runtime_error, res);
+}
+
+test "VM: op_import safely aborts on infinite circular dependencies" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Ping imports Pong, Pong imports Ping
+    try mem_vfs.vfs().writeFile("./ping.kup", "import \"./pong.kup\"");
+    try mem_vfs.vfs().writeFile("./pong.kup", "import \"./ping.kup\"");
+
+    const main_source = "import \"./ping.kup\"";
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    vm.mute_errors = true;
+    const res = vm.interpret(&out_chunk);
+
+    // The VM's call stack tracking or gas limit must catch the runaway recursion
+    try testing.expect(res == .runtime_error or res == .execution_limit_exceeded);
+}
+
+test "VM: op_import caches by reference allowing cross-file state sharing" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Shared State Module exports an Array (Reference Type)
+    const state_source =
+        \\shared_list = [1, 2, 3]
+        \\export shared_list
+    ;
+    try mem_vfs.vfs().writeFile("./state.kup", state_source);
+
+    // Mutator Module modifies the array by reference
+    const mutator_source =
+        \\import { shared_list } from "./state.kup"
+        \\shared_list[0] = 99
+    ;
+    try mem_vfs.vfs().writeFile("./mutator.kup", mutator_source);
+
+    // Main script verifies the mutation persisted across the cache
+    const main_source =
+        \\import "./mutator.kup"
+        \\import { shared_list } from "./state.kup"
+        \\result = shared_list[0]
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    // If the cache works, index 0 is 99 (mutated), not 1 (original)
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 99.0), result_val.asNumber());
+}
+
+test "VM: op_import supports destructuring multiple exports perfectly" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // Exporting local functions uses the comma-separated list syntax (no braces)
+    const pkg_source =
+        \\def func_one() 1 end
+        \\def func_two() 2 end
+        \\export func_one, func_two
+    ;
+    try mem_vfs.vfs().writeFile("./multi.kup", pkg_source);
+
+    // Destructuring imports DO use braces
+    const main_source =
+        \\import { func_one, func_two } from "./multi.kup"
+        \\result = func_one() + func_two()
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 3.0), result_val.asNumber());
+}

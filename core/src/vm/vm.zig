@@ -684,13 +684,16 @@ pub const VM = struct {
 
                     // 1. Check Module Cache
                     if (self.modules.get(path_str)) |cached_mod| {
+                        if (cached_mod.isNil()) {
+                            if (self.throwDynamicError("ImportError: Circular dependency detected for '{s}'", .{path_str}) != .ok) return .runtime_error;
+                            continue;
+                        }
                         self.push(cached_mod);
                         continue;
                     }
 
                     // 2. Fetch from VFS
                     const source = self.vfs.readFile(self.allocator, path_str) catch {
-                        // Fallback to Host handler for native plugins if VFS fails
                         if (self.host.import_handler) |handler| {
                             const module_obj = handler(self, path_str) catch return .runtime_error;
                             self.modules.put(self.allocator, path_str, module_obj) catch return .runtime_error;
@@ -738,14 +741,20 @@ pub const VM = struct {
 
                     const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
 
-                    // 6. Execute synchronously (No Clean Room hack)
+                    // --- CIRCULAR DEPENDENCY FIX: Register Sentinel ---
+                    self.modules.put(self.allocator, path_str, value.Value.initNil()) catch return .runtime_error;
+
+                    // 6. Execute synchronously
                     const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
+                        // Clean up the sentinel on failure so it can be retried later if caught
+                        _ = self.modules.remove(path_str);
+
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
                         if (err == error.Unwind) return .ok; // Stack safely unwound by inner exception
                         return .runtime_error;
                     };
 
-                    // 7. Cache and yield result
+                    // 7. Cache the actual finalized module and yield result
                     self.modules.put(self.allocator, path_str, res) catch return .runtime_error;
                     self.push(res);
                 },
