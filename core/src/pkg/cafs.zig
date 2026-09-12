@@ -10,15 +10,18 @@ pub const Cafs = struct {
     fs: Vfs,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, global_dir_path: []const u8, fs: Vfs) !Cafs {
-        try fs.makePath(global_dir_path);
+        const cwd = std.Io.Dir.cwd();
+
+        // Use native I/O for the global CAFS directories
+        cwd.createDirPath(io, global_dir_path) catch {};
 
         const files_path = try std.fmt.allocPrint(allocator, "{s}/files", .{global_dir_path});
         defer allocator.free(files_path);
-        try fs.makePath(files_path);
+        cwd.createDirPath(io, files_path) catch {};
 
         const tmp_path = try std.fmt.allocPrint(allocator, "{s}/tmp", .{global_dir_path});
         defer allocator.free(tmp_path);
-        try fs.makePath(tmp_path);
+        cwd.createDirPath(io, tmp_path) catch {};
 
         return .{
             .allocator = allocator,
@@ -38,9 +41,20 @@ pub const Cafs = struct {
         defer self.allocator.free(source_path);
 
         self.fs.hardLink(source_path, dest_path) catch |err| switch (err) {
-            error.CrossDeviceLink => {
-                const content = try self.fs.readFile(self.allocator, source_path);
+            error.CrossDeviceLink, error.FileNotFound => {
+                // Fallback: Read physically from CAFS since VFS might be strictly in-memory
+                const cwd = std.Io.Dir.cwd();
+                var file = try cwd.openFile(self.io, source_path, .{});
+                defer file.close(self.io);
+
+                const stat = try file.stat(self.io);
+                const size = std.math.cast(usize, stat.size) orelse return error.FileTooBig;
+                const content = try self.allocator.alloc(u8, size);
                 defer self.allocator.free(content);
+
+                _ = try file.readPositionalAll(self.io, content, 0);
+
+                // Write to the destination VFS natively
                 try self.fs.writeFile(dest_path, content);
             },
             else => return err,

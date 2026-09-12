@@ -50,6 +50,10 @@ test {
     _ = @import("cli/options_test.zig");
     _ = @import("cli/walker_test.zig");
 
+    // Package Manager & Registry
+    _ = @import("pkg/store_test.zig");
+    _ = @import("pkg/cafs_test.zig");
+
     // Stdlib
     _ = @import("stdlib/stdlib_test.zig");
 

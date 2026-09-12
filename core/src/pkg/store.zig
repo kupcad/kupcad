@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const c = @cImport({
     @cInclude("sqlite3.h");
@@ -153,7 +154,10 @@ pub const Store = struct {
         const TARGET_VERSION: i32 = 1;
 
         if (current_version < TARGET_VERSION) {
-            std.debug.print("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, TARGET_VERSION });
+            if (!@import("builtin").is_test) {
+                std.debug.print("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, TARGET_VERSION });
+            }
+
             try self.db.exec("BEGIN TRANSACTION", .{}, .{});
             if (current_version < 1) {
                 try self.db.exec(
@@ -162,12 +166,16 @@ pub const Store = struct {
                     \\    commit_sha TEXT NOT NULL,
                     \\    provider TEXT NOT NULL,
                     \\    created_at INTEGER NOT NULL
-                    \\);
+                    \\)
+                , .{}, .{});
+                try self.db.exec(
                     \\CREATE TABLE IF NOT EXISTS files (
                     \\    hash TEXT PRIMARY KEY,
                     \\    size INTEGER NOT NULL,
                     \\    created_at INTEGER NOT NULL
-                    \\);
+                    \\)
+                , .{}, .{});
+                try self.db.exec(
                     \\CREATE TABLE IF NOT EXISTS package_files (
                     \\    package_id TEXT NOT NULL,
                     \\    commit_sha TEXT NOT NULL,
@@ -175,11 +183,13 @@ pub const Store = struct {
                     \\    file_hash TEXT NOT NULL,
                     \\    PRIMARY KEY (package_id, commit_sha, file_path),
                     \\    FOREIGN KEY (file_hash) REFERENCES files(hash)
-                    \\);
+                    \\)
+                , .{}, .{});
+                try self.db.exec(
                     \\CREATE TABLE IF NOT EXISTS meta (
                     \\    key TEXT PRIMARY KEY,
                     \\    value TEXT NOT NULL
-                    \\);
+                    \\)
                 , .{}, .{});
             }
             const update_pragma = try std.fmt.allocPrint(std.heap.page_allocator, "PRAGMA user_version = {d}", .{TARGET_VERSION});
@@ -199,8 +209,9 @@ pub const Store = struct {
         try self.db.exec("BEGIN TRANSACTION", .{}, .{});
         errdefer self.db.exec("ROLLBACK", .{}, .{}) catch {};
 
+        // Explicitly cast the i96 duration to i64 for SQLite bindings
         const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
-        const now = @divTrunc(now_ns, std.time.ns_per_s);
+        const now: i64 = @intCast(@divTrunc(now_ns, std.time.ns_per_s));
 
         const pkg_stmt =
             \\INSERT OR IGNORE INTO packages (id, commit_sha, provider, created_at)
