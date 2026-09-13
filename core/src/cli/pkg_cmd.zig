@@ -6,6 +6,7 @@ const Resolver = @import("../pkg/resolver.zig").Resolver;
 const Cafs = @import("../pkg/cafs.zig").Cafs;
 const Store = @import("../pkg/store.zig").Store;
 const GC = @import("../pkg/gc.zig").GarbageCollector;
+const ParsedPackage = @import("../pkg/providers/provider.zig").ParsedPackage;
 const paths = @import("../pkg/paths.zig");
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 
@@ -27,7 +28,6 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         return;
     }
 
-    // Pass init.environ_map directly as it is already a pointer
     const global_dir = try paths.getGlobalDir(allocator, init.environ_map);
     defer allocator.free(global_dir);
 
@@ -72,14 +72,26 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         const alias = split_iter.next() orelse return error.InvalidSyntax;
         const url = split_iter.next() orelse return error.InvalidSyntax;
 
+        // Eagerly validate the URL and print the detected SemVer constraint
+        const parsed = ParsedPackage.parse(url) catch {
+            std.debug.print("Error: Invalid package URL format '{s}'\n", .{url});
+            return;
+        };
+
         try manifest.dependencies.put(try allocator.dupe(u8, alias), try allocator.dupe(u8, url));
         try manifest.save(fs);
-        std.debug.print("Added {s} to kupcad.json. Running install...\n", .{alias});
+
+        if (parsed.constraint) |c| {
+            std.debug.print("Added {s} with constraint {s}{d}.{d}.{d}. Running concurrent install...\n", .{ alias, @tagName(c.op), c.version.major, c.version.minor, c.version.patch });
+        } else {
+            std.debug.print("Added {s} at reference '{s}'. Running concurrent install...\n", .{ alias, parsed.ref });
+        }
     }
 
     // -- install -- (or fallthrough from add)
     if (std.mem.eql(u8, command, "install") or std.mem.eql(u8, command, "add")) {
         var resolver = Resolver.init(allocator, init.io, &cafs, &store, &manifest, &lockfile);
+
         try resolver.resolve();
         try resolver.linkWorkspace(fs);
 
