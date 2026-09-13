@@ -68,9 +68,7 @@ pub const Constraint = struct {
             .greater_equal => return self.version.compare(target) != .gt,
             .caret => {
                 // Caret (^): Allows changes that do not modify the left-most non-zero digit
-                // ^1.2.3  =>  >= 1.2.3, < 2.0.0
-                // ^0.2.3  =>  >= 0.2.3, < 0.3.0
-                if (self.version.compare(target) == .gt) return false; // Target is older
+                if (self.version.compare(target) == .gt) return false;
                 if (self.version.major == 0) {
                     return target.major == 0 and target.minor == self.version.minor;
                 }
@@ -78,7 +76,6 @@ pub const Constraint = struct {
             },
             .tilde => {
                 // Tilde (~): Allows patch-level changes if minor is specified
-                // ~1.2.3  =>  >= 1.2.3, < 1.3.0
                 if (self.version.compare(target) == .gt) return false;
                 return target.major == self.version.major and target.minor == self.version.minor;
             },

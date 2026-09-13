@@ -4,7 +4,7 @@ const semver = @import("../../core/semver.zig");
 pub const ProviderType = enum {
     github,
     gitlab,
-    gitea, // Covers Codeberg and self-hosted Forgejo/Gitea
+    gitea,
     http,
     local,
 };
@@ -17,31 +17,15 @@ pub const ParsedPackage = struct {
     ref: []const u8, // branch, tag, or SHA (default: "main")
     constraint: ?semver.Constraint = null, // Extracted SemVer criteria
 
-    /// Parses a URL string into a structured package identifier
     pub fn parse(requested_url: []const u8) !ParsedPackage {
-        // Handle local paths first
         if (std.mem.startsWith(u8, requested_url, "file:")) {
-            return .{
-                .provider = .local,
-                .domain = "",
-                .user = "",
-                .repo = requested_url[5..],
-                .ref = "",
-            };
+            return .{ .provider = .local, .domain = "", .user = "", .repo = requested_url[5..], .ref = "" };
         }
 
-        // Handle direct HTTP archives
         if (std.mem.endsWith(u8, requested_url, ".tar.gz") or std.mem.endsWith(u8, requested_url, ".zip")) {
-            return .{
-                .provider = .http,
-                .domain = "",
-                .user = "",
-                .repo = requested_url,
-                .ref = "",
-            };
+            return .{ .provider = .http, .domain = "", .user = "", .repo = requested_url, .ref = "" };
         }
 
-        // Handle Git-based providers
         var base_url = requested_url;
         var ref: []const u8 = "main";
         var constraint: ?semver.Constraint = null;
@@ -50,9 +34,9 @@ pub const ParsedPackage = struct {
             base_url = requested_url[0..idx];
             ref = requested_url[idx + 1 ..];
 
-            // Attempt to parse the reference as a SemVer constraint
-            if (semver.Constraint.parse(ref)) |parsed_constraint| {
-                constraint = parsed_constraint;
+            // Attempt to parse the reference as a strict SemVer constraint
+            if (semver.Constraint.parse(ref)) |parsed| {
+                constraint = parsed;
             } else |_| {} // Fall back to treating it as a raw branch/SHA
         }
 
@@ -68,7 +52,7 @@ pub const ParsedPackage = struct {
         else if (std.mem.eql(u8, domain, "codeberg.org"))
             .gitea
         else
-            .gitea; // Fallback assumes self-hosted Gitea/Forgejo if unknown domain
+            .gitea;
 
         return .{
             .provider = provider_type,

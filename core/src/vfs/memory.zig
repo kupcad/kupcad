@@ -55,7 +55,11 @@ pub const MemoryVfs = struct {
 
     fn makePath(ptr: *anyopaque, path: []const u8) anyerror!void {
         const self: *MemoryVfs = @ptrCast(@alignCast(ptr));
+        if (self.nodes.contains(path)) return;
+
         const path_dup = try self.allocator.dupe(u8, path);
+        errdefer self.allocator.free(path_dup);
+
         try self.nodes.put(path_dup, .{ .kind = .directory });
     }
 

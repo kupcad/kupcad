@@ -61,10 +61,27 @@ pub const Stmt = struct {
         _ = c.sqlite3_finalize(self.handle);
     }
 
+    fn bindArgs(self: Stmt, args: anytype) void {
+        const ArgsType = @TypeOf(args);
+        const args_info = @typeInfo(ArgsType);
+        if (args_info == .@"struct" and args_info.@"struct".is_tuple) {
+            inline for (args, 1..) |arg, idx| {
+                const ArgType = @TypeOf(arg);
+                if (ArgType == []const u8) {
+                    _ = c.sqlite3_bind_text(self.handle, @intCast(idx), arg.ptr, @intCast(arg.len), null);
+                } else if (ArgType == i64 or ArgType == i32 or ArgType == usize) {
+                    _ = c.sqlite3_bind_int64(self.handle, @intCast(idx), @intCast(arg));
+                }
+            }
+        }
+    }
+
     pub fn one(self: Stmt, comptime T: type, args: anytype, options: anytype) !?T {
-        _ = args;
         _ = options;
         _ = c.sqlite3_reset(self.handle);
+        _ = c.sqlite3_clear_bindings(self.handle);
+        self.bindArgs(args);
+
         const rc = c.sqlite3_step(self.handle);
         if (rc == c.SQLITE_ROW) {
             var result: T = undefined;
@@ -83,8 +100,10 @@ pub const Stmt = struct {
     }
 
     pub fn iterator(self: Stmt, comptime T: type, args: anytype) !Iterator(T) {
-        _ = args;
         _ = c.sqlite3_reset(self.handle);
+        _ = c.sqlite3_clear_bindings(self.handle);
+        self.bindArgs(args);
+
         return Iterator(T){ .stmt = self };
     }
 
@@ -152,7 +171,6 @@ pub const Store = struct {
         const current_version_row = try version_stmt.one(struct { user_version: i32 }, .{}, .{});
         const current_version = if (current_version_row) |row| row.user_version else 0;
 
-        // Bumped to v2 for integrity constraints
         const TARGET_VERSION: i32 = 2;
 
         if (current_version < TARGET_VERSION) {

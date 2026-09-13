@@ -35,13 +35,18 @@ pub const Cafs = struct {
         self.allocator.free(self.global_dir_path);
     }
 
+    /// Resolves the absolute physical path of a blob within the CAFS based on its hash
+    pub fn blobPath(self: *Cafs, hash_hex: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(self.allocator, "{s}/files/{s}", .{ self.global_dir_path, hash_hex });
+    }
+
     /// Hard links a file from CAFS to the local project store via VFS
     pub fn linkBlob(self: *Cafs, hash_hex: []const u8, dest_path: []const u8) !void {
-        const source_path = try std.fmt.allocPrint(self.allocator, "{s}/files/{s}", .{ self.global_dir_path, hash_hex });
+        const source_path = try self.blobPath(hash_hex);
         defer self.allocator.free(source_path);
 
         self.fs.hardLink(source_path, dest_path) catch |err| switch (err) {
-            error.CrossDeviceLink, error.FileNotFound => {
+            error.CrossDeviceLink, error.FileNotFound, error.OperationUnsupported => {
                 // Fallback: Read physically from CAFS since VFS might be strictly in-memory
                 const cwd = std.Io.Dir.cwd();
                 var file = try cwd.openFile(self.io, source_path, .{});
