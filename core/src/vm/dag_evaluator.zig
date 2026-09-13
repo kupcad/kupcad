@@ -4,6 +4,8 @@ const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
 
+const MAX_DAG_DEPTH: usize = 256;
+
 fn dumpDAG(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) void {
     if (depth > 20) {
         std.debug.print("... [max depth reached]\n", .{});
@@ -58,15 +60,21 @@ fn dumpDAG(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) void {
 }
 
 pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHandle {
-    // Graceful bounds checking to prevent host panics
+    return evaluateDAGInternal(vm, node_idx, 0);
+}
+
+fn evaluateDAGInternal(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) anyerror!geom.GeometryHandle {
+    if (depth > MAX_DAG_DEPTH) {
+        vm.reportError("Runtime Error: CSG Tree exceeds maximum recursion depth of {d}.\n", .{MAX_DAG_DEPTH});
+        return error.RuntimeError;
+    }
+
     if (node_idx >= vm.dag_builder.nodes.items.len) {
         vm.reportError("Runtime Error: DAG Node Index {d} out of bounds.\n", .{node_idx});
         return error.RuntimeError;
     }
 
     const node = vm.dag_builder.nodes.items[node_idx];
-
-    // Extract the active engine from the config stack!
     const config = vm.config_stack.items[vm.config_stack.items.len - 1];
     const engine = config.engine;
 
@@ -89,10 +97,8 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
         },
         .union_op, .difference_op, .intersection_op => {
             const payload = vm.dag_builder.getBinaryPayload(node);
-            const left_handle = try evaluateDAG(vm, payload.left);
-            const right_handle = try evaluateDAG(vm, payload.right);
-            std.debug.assert(@intFromPtr(left_handle.ptr) != 0);
-            std.debug.assert(@intFromPtr(right_handle.ptr) != 0);
+            const left_handle = try evaluateDAGInternal(vm, payload.left, depth + 1);
+            const right_handle = try evaluateDAGInternal(vm, payload.right, depth + 1);
 
             const op: kernel.BooleanOp = switch (node.tag) {
                 .union_op => .union_op,
@@ -108,58 +114,56 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
             const targets = vm.dag_builder.getBatchUnionPayload(node);
             if (targets.len == 0) return error.RuntimeError;
 
-            // Allocate a temporary slice of resolved handles
             var handles = try vm.allocator.alloc(geom.GeometryHandle, targets.len);
             defer vm.allocator.free(handles);
 
             for (targets, 0..) |target_idx, i| {
-                handles[i] = try evaluateDAG(vm, target_idx);
+                handles[i] = try evaluateDAGInternal(vm, target_idx, depth + 1);
             }
 
-            // Hand the array over to the kernel
             const result = kernel.batchBoolean(vm.allocator, handles, .union_op) orelse return error.RuntimeError;
             return maybeSimplify(vm, result);
         },
         .translate => {
             const p = vm.dag_builder.getTranslatePayload(node);
-            const target_handle = try evaluateDAG(vm, p.target);
+            const target_handle = try evaluateDAGInternal(vm, p.target, depth + 1);
             return kernel.translate(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
         },
         .rotate => {
             const p = vm.dag_builder.getRotatePayload(node);
-            const target_handle = try evaluateDAG(vm, p.target);
+            const target_handle = try evaluateDAGInternal(vm, p.target, depth + 1);
             return kernel.rotate(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
         },
         .scale => {
             const p = vm.dag_builder.getScalePayload(node);
-            const target_handle = try evaluateDAG(vm, p.target);
+            const target_handle = try evaluateDAGInternal(vm, p.target, depth + 1);
             return kernel.scale(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
         },
         .mirror => {
             const p = vm.dag_builder.getMirrorPayload(node);
-            const target_handle = try evaluateDAG(vm, p.target);
+            const target_handle = try evaluateDAGInternal(vm, p.target, depth + 1);
             return kernel.mirror(target_handle, p.x, p.y, p.z) orelse return error.RuntimeError;
         },
         .trim_by_plane => {
             const p = vm.dag_builder.getTrimByPlanePayload(node);
-            const target_handle = try evaluateDAG(vm, p.target);
+            const target_handle = try evaluateDAGInternal(vm, p.target, depth + 1);
             return kernel.trimByPlane(target_handle, p.nx, p.ny, p.nz, p.offset) orelse return error.RuntimeError;
         },
         .hull => {
             const p = vm.dag_builder.getHullPayload(node);
-            const target_handle = try evaluateDAG(vm, p.target);
+            const target_handle = try evaluateDAGInternal(vm, p.target, depth + 1);
             const result = kernel.hull(target_handle) orelse return error.RuntimeError;
             return maybeSimplify(vm, result);
         },
         .batch_hull_op => {
-            const targets = vm.dag_builder.getBatchUnionPayload(node); // Payload layout is identical
+            const targets = vm.dag_builder.getBatchUnionPayload(node);
             if (targets.len == 0) return error.RuntimeError;
 
             var handles = try vm.allocator.alloc(geom.GeometryHandle, targets.len);
             defer vm.allocator.free(handles);
 
             for (targets, 0..) |target_idx, i| {
-                handles[i] = try evaluateDAG(vm, target_idx);
+                handles[i] = try evaluateDAGInternal(vm, target_idx, depth + 1);
             }
 
             const result = kernel.batchHull(vm.allocator, handles) orelse return error.RuntimeError;
@@ -167,56 +171,56 @@ pub fn evaluateDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHa
         },
         .loft => {
             const p = vm.dag_builder.getLoftPayload(node);
-            const base_cs = try evaluateCrossSectionDAG(vm, p.base);
-            const top_cs = try evaluateCrossSectionDAG(vm, p.top);
+            const base_cs = try evaluateCrossSectionDAGInternal(vm, p.base, depth + 1);
+            const top_cs = try evaluateCrossSectionDAGInternal(vm, p.top, depth + 1);
             return kernel.loft(engine, base_cs, top_cs, p.height) orelse return error.RuntimeError;
         },
         .minkowski => {
             const p = vm.dag_builder.getBinaryPayload(node);
-            const left_handle = try evaluateDAG(vm, p.left);
-            const right_handle = try evaluateDAG(vm, p.right);
+            const left_handle = try evaluateDAGInternal(vm, p.left, depth + 1);
+            const right_handle = try evaluateDAGInternal(vm, p.right, depth + 1);
             const result = kernel.minkowski(left_handle, right_handle) orelse return error.RuntimeError;
             return maybeSimplify(vm, result);
         },
         .extrude => {
             const p = vm.dag_builder.getExtrudePayload(node);
-            const cs = try evaluateCrossSectionDAG(vm, p.target);
+            const cs = try evaluateCrossSectionDAGInternal(vm, p.target, depth + 1);
             return kernel.extrude(cs, p.height, p.slices, p.twist_degrees, p.scale_x, p.scale_y) orelse return error.RuntimeError;
         },
         .revolve => {
             const p = vm.dag_builder.getRevolvePayload(node);
-            const cs = try evaluateCrossSectionDAG(vm, p.target);
+            const cs = try evaluateCrossSectionDAGInternal(vm, p.target, depth + 1);
             return kernel.revolve(cs, p.segments, p.degrees) orelse return error.RuntimeError;
         },
         .transform_matrix => {
             const p = vm.dag_builder.getTransformPayload(node);
-            const target = try evaluateDAG(vm, p.target);
+            const target = try evaluateDAGInternal(vm, p.target, depth + 1);
             var mat: [12]f64 = undefined;
             std.mem.copyForwards(f64, &mat, vm.dag_builder.numbers.items[p.num_idx .. p.num_idx + 12]);
             return kernel.transformMatrix(target, mat) orelse return error.RuntimeError;
         },
         .set_material => {
             const p = vm.dag_builder.getMaterialPayload(node);
-            const target = try evaluateDAG(vm, p.target);
+            const target = try evaluateDAGInternal(vm, p.target, depth + 1);
             return kernel.setMaterial(target, p.material_id) orelse return error.RuntimeError;
         },
         else => {
-            std.debug.print("\n========================================\n", .{});
-            std.debug.print("🔥 DAG EVALUATION CRASH DETECTED 🔥\n", .{});
-            std.debug.print("Failed at Node Index: {d} | Invalid Tag: '{s}'\n", .{ node_idx, @tagName(node.tag) });
-            std.debug.print("----------------------------------------\n", .{});
-            std.debug.print("DAG Hierarchy Tree:\n", .{});
-            dumpDAG(vm, node_idx, 0);
-            std.debug.print("========================================\n\n", .{});
-
-            vm.reportError("Runtime Error: Expected 3D Geometry node in DAG (found '{s}' at Node #{d}).\n", .{ @tagName(node.tag), node_idx });
+            vm.reportError("Runtime Error: Expected 3D Geometry node in DAG.\n", .{});
             return error.RuntimeError;
         },
     }
 }
 
 pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geom.CrossSectionHandle {
-    // Graceful bounds checking
+    return evaluateCrossSectionDAGInternal(vm, node_idx, 0);
+}
+
+fn evaluateCrossSectionDAGInternal(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) anyerror!geom.CrossSectionHandle {
+    if (depth > MAX_DAG_DEPTH) {
+        vm.reportError("Runtime Error: CSG Tree exceeds maximum recursion depth of {d}.\n", .{MAX_DAG_DEPTH});
+        return error.RuntimeError;
+    }
+
     if (node_idx >= vm.dag_builder.nodes.items.len) {
         vm.reportError("Runtime Error: DAG Node Index {d} out of bounds.\n", .{node_idx});
         return error.RuntimeError;
@@ -237,22 +241,22 @@ pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geo
         },
         .slice_op => {
             const p = vm.dag_builder.getSlicePayload(node);
-            const target = try evaluateDAG(vm, p.target);
+            const target = try evaluateDAGInternal(vm, p.target, depth + 1);
             return kernel.slice(target, p.height) orelse return error.RuntimeError;
         },
         .project_op => {
             const p = vm.dag_builder.getProjectPayload(node);
-            const target = try evaluateDAG(vm, p.target);
+            const target = try evaluateDAGInternal(vm, p.target, depth + 1);
             return kernel.project(target) orelse return error.RuntimeError;
         },
         .offset => {
             const p = vm.dag_builder.getOffsetPayload(node);
-            const target = try evaluateCrossSectionDAG(vm, p.target);
+            const target = try evaluateCrossSectionDAGInternal(vm, p.target, depth + 1);
             return kernel.offset(target, p.delta, p.join_type) orelse return error.RuntimeError;
         },
         .cs_transform => {
             const p = vm.dag_builder.getTransformPayload(node);
-            const target = try evaluateCrossSectionDAG(vm, p.target);
+            const target = try evaluateCrossSectionDAGInternal(vm, p.target, depth + 1);
             var mat: [6]f64 = undefined;
             std.mem.copyForwards(f64, &mat, vm.dag_builder.numbers.items[p.num_idx .. p.num_idx + 6]);
             return kernel.crossSectionTransform(target, mat) orelse return error.RuntimeError;
@@ -292,8 +296,8 @@ pub fn evaluateCrossSectionDAG(vm: *VM, node_idx: dag.DAGNodeIndex) anyerror!geo
         },
         .cs_union_op, .cs_difference_op, .cs_intersection_op => {
             const payload = vm.dag_builder.getBinaryPayload(node);
-            const left_handle = try evaluateCrossSectionDAG(vm, payload.left);
-            const right_handle = try evaluateCrossSectionDAG(vm, payload.right);
+            const left_handle = try evaluateCrossSectionDAGInternal(vm, payload.left, depth + 1);
+            const right_handle = try evaluateCrossSectionDAGInternal(vm, payload.right, depth + 1);
             const op: kernel.BooleanOp = switch (node.tag) {
                 .cs_union_op => .union_op,
                 .cs_difference_op => .difference_op,

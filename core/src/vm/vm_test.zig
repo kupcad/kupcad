@@ -9885,3 +9885,75 @@ test "VM: Case statement executes fast-path jump table for primitives" {
     const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
     try testing.expectEqualStrings("two", str_obj.chars);
 }
+
+test "VM: Open upvalues do not dangle after stack reallocation" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Bind a native function that artificially forces the VM stack to move in memory
+    const force_realloc = struct {
+        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+            _ = arg_count;
+            _ = args;
+            const v: *VM = @ptrCast(@alignCast(vm_opaque));
+
+            // Force the allocator to move the stack array to a completely new memory address
+            try v.ensureStackCapacity(v.stack.len * 2 + 1000);
+            return value.Value.initNil();
+        }
+    }.run;
+    try vm.defineNative("force_realloc", force_realloc);
+
+    // Script creates an open upvalue `x`, forcefully moves the stack, and tries to read `x`
+    const source =
+        \\x = 42
+        \\closure = ->() { x }
+        \\force_realloc() # BOOM: Stack moves, closure's upvalue pointer is now dangling!
+        \\closure()       # Read from freed memory
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // If the bug exists, this will either segfault or trigger a use-after-free panic
+    // from the Zig testing allocator!
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+}
+
+test "VM: DAG Evaluator prevents C-stack overflow on deep recursion" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Script builds a heavily unbalanced, deeply nested CSG tree (2,500 levels deep),
+    // and then forces the DAG evaluator to materialize it via `.bbox()`.
+    const source =
+        \\c = cube(10)
+        \\i = 0
+        \\while i < 2500
+        \\  c = c + cube(10)
+        \\  i = i + 1
+        \\end
+        \\c.bbox()
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // If the bug exists, this will violently crash the Zig test runner with a Segmentation Fault!
+    // Once fixed, it should gracefully return InterpretResult.runtime_error.
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
+}

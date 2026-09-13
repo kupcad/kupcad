@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
+const dag = @import("dag.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const registry = @import("../stdlib/registry.zig");
 
@@ -186,4 +187,34 @@ test "DAG Builder: Dynamic array payloads (Polygons) hash correctly" {
     try testing.expectEqual(p1, p2);
     // Altered coordinate must break the hash collision
     try testing.expect(p1 != p3);
+}
+
+test "DAG: Builder cleans up payload arrays on OutOfMemory" {
+    // Use a FixedBufferAllocator so we can reliably OOM the Arena
+    var buffer: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buffer);
+    var builder = dag.DAGBuilder.init(fba.allocator());
+    defer builder.deinit();
+
+    var i: f64 = 0;
+    var last_good_extra: usize = 0;
+
+    while (true) : (i += 1.0) {
+        // Create a unique cube node each loop so CSE deduplication does not short-circuit
+        const c = builder.addCube(i, 10.0, 10.0, true) catch |err| {
+            try testing.expectEqual(error.OutOfMemory, err);
+            break;
+        };
+
+        const dummy_targets = [_]dag.DAGNodeIndex{c} ** 20;
+        last_good_extra = builder.extra_data.items.len;
+
+        _ = builder.addBatchUnion(&dummy_targets) catch |err| {
+            // Assert that we successfully triggered an OOM
+            try testing.expectEqual(error.OutOfMemory, err);
+            // Verify that extra_data was rolled back to its exact pre-call length
+            try testing.expectEqual(last_good_extra, builder.extra_data.items.len);
+            break;
+        };
+    }
 }

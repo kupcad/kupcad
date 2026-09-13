@@ -239,7 +239,20 @@ pub const VM = struct {
             new_capacity *= STACK_GROW_FACTOR;
         }
 
+        const old_ptr = self.stack.ptr;
         self.stack = try self.allocator.realloc(self.stack, new_capacity);
+
+        // If the allocator moved the stack to a new memory address,
+        // we MUST patch all open upvalues, or they will point to freed memory
+        if (self.stack.ptr != old_ptr) {
+            var upvalue = self.open_upvalues;
+            while (upvalue) |u| {
+                // Calculate the byte offset from the old pointer and apply it to the new pointer
+                const offset = @intFromPtr(u.location) - @intFromPtr(old_ptr);
+                u.location = @as(*value.Value, @ptrFromInt(@intFromPtr(self.stack.ptr) + offset));
+                upvalue = u.next;
+            }
+        }
     }
 
     // --- Execution Core ---
