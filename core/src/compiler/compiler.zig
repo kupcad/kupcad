@@ -87,6 +87,7 @@ pub const Compiler = struct {
     pub const emitInlineCacheIndex = emitter_mod.emitInlineCacheIndex;
     pub const emitByte = emitter_mod.emitByte;
     pub const emitOp = emitter_mod.emitOp;
+    pub const emitBinaryOp = emitter_mod.emitBinaryOp;
     pub const makeConstant = emitter_mod.makeConstant;
     pub const emitConstant = emitter_mod.emitConstant;
     pub const emitJump = emitter_mod.emitJump;
@@ -408,7 +409,7 @@ pub const Compiler = struct {
                 try self.emitInlineCacheIndex();
 
                 try self.compileNode(assign_payload.value);
-                try self.emitAugmentedOp(op);
+                try self.emitBinaryOp(op);
             } else {
                 try self.compileNode(assign_payload.value); // Stack: [self, new_val]
             }
@@ -442,7 +443,7 @@ pub const Compiler = struct {
         if (assign_payload.op) |op| {
             try self.emitVariableLoad(name_id, sym);
             try self.compileNode(assign_payload.value);
-            try self.emitAugmentedOp(op);
+            try self.emitBinaryOp(op);
         } else {
             try self.compileNode(assign_payload.value);
         }
@@ -692,7 +693,7 @@ pub const Compiler = struct {
             try self.compileNode(ia.value);
             // Stack is now: [target, index, current_val, rhs_val]
 
-            try self.emitAugmentedOp(op);
+            try self.emitBinaryOp(op);
             // Stack is now: [target, index, new_val]
         } else {
             try self.compileNode(ia.value); // Stack: [target, index, new_val]
@@ -764,37 +765,7 @@ pub const Compiler = struct {
         while (i > initial_rights_len) {
             i -= 1;
             try self.compileNode(self.scratch_rights.items[i]);
-
-            switch (self.scratch_ops.items[i]) {
-                .add => try self.emitOp(.op_add),
-                .subtract => try self.emitOp(.op_subtract),
-                .multiply => try self.emitOp(.op_multiply),
-                .divide => try self.emitOp(.op_divide),
-                .modulo => try self.emitOp(.op_modulo),
-                .exponent => try self.emitOp(.op_exponent),
-                .equal => try self.emitOp(.op_equal),
-                .not_equal => {
-                    try self.emitOp(.op_equal);
-                    try self.emitOp(.op_not);
-                },
-                .less => try self.emitOp(.op_less),
-                .greater => try self.emitOp(.op_greater),
-                .less_equal => {
-                    try self.emitOp(.op_greater);
-                    try self.emitOp(.op_not);
-                },
-                .greater_equal => {
-                    try self.emitOp(.op_less);
-                    try self.emitOp(.op_not);
-                },
-                .bitwise_and => try self.emitOp(.op_bitwise_and),
-                .bitwise_or => try self.emitOp(.op_bitwise_or),
-                .bitwise_xor => try self.emitOp(.op_bitwise_xor),
-                .shift_left => try self.emitOp(.op_shift_left),
-                .shift_right => try self.emitOp(.op_shift_right),
-                .spaceship => try self.emitOp(.op_cmp),
-                else => return error.UnknownNode,
-            }
+            try self.emitBinaryOp(self.scratch_ops.items[i]);
         }
     }
 
@@ -1739,7 +1710,7 @@ pub const Compiler = struct {
 
             try self.compileNode(pa.value); // Stack: [target, old_val, rhs_val]
 
-            try self.emitAugmentedOp(op);
+            try self.emitBinaryOp(op);
             // Stack is now: [target, new_val]
         } else {
             try self.compileNode(pa.value); // Stack: [target, new_val]

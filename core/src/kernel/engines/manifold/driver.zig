@@ -172,7 +172,7 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
-pub fn crossSectionAreaFn(handle: geom.CrossSectionHandle) f64 {
+fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
     if (@intFromPtr(handle.ptr) == 0) return 0.0;
     const cs: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(handle.ptr));
     const temp_3d = manifold.extrude(cs, 1.0, 1, 0.0, 1.0, 1.0) orelse return 0.0;
@@ -180,7 +180,7 @@ pub fn crossSectionAreaFn(handle: geom.CrossSectionHandle) f64 {
     return manifold.volume(temp_3d);
 }
 
-pub fn crossSectionBoundsFn(handle: geom.CrossSectionHandle) geom.Rect2D {
+fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
     if (@intFromPtr(handle.ptr) == 0) return .{ .min = .{ 0.0, 0.0 }, .max = .{ 0.0, 0.0 } };
     const cs: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(handle.ptr));
     const temp_3d = manifold.extrude(cs, 1.0, 1, 0.0, 1.0, 1.0) orelse return .{ .min = .{ 0.0, 0.0 }, .max = .{ 0.0, 0.0 } };
@@ -591,49 +591,49 @@ fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandl
 
 // --- Static Dispatch Table ---
 
-pub const driver = kernel.GeometryKernel{
-    .cubeFn = cubeImpl,
-    .cylinderFn = cylinderImpl,
-    .sphereFn = sphereImpl,
-    .booleanFn = booleanImpl,
-    .batchBooleanFn = batchBooleanImpl,
-    .batchHullFn = batchHullImpl,
-    .decomposeFn = decomposeImpl,
-    .translateFn = translateImpl,
-    .rotateFn = rotateImpl,
-    .scaleFn = scaleImpl,
-    .squareFn = squareImpl,
-    .circleFn = circleImpl,
-    .polyhedronFn = polyhedronImpl,
-    .polygonsEvenOddFn = polygonsEvenOddImpl,
-    .extrudeFn = extrudeImpl,
-    .revolveFn = revolveImpl,
-    .sliceFn = sliceImpl,
-    .projectFn = projectImpl,
-    .mirrorFn = mirrorImpl,
-    .hullFn = hullImpl,
-    .loftFn = loftImpl,
-    .trimByPlaneFn = trimByPlaneImpl,
-    .splitByPlaneFn = splitByPlaneImpl,
-    .crossSectionBooleanFn = crossSectionBooleanImpl,
-    .genusFn = genusImpl,
-    .minkowskiFn = minkowskiImpl,
-    .offsetFn = offsetImpl,
-    .transformMatrixFn = transformMatrixImpl,
-    .crossSectionTransformFn = crossSectionTransformImpl,
-    .boundingBoxFn = boundingBoxImpl,
-    .crossSectionAreaFn = crossSectionAreaFn,
-    .crossSectionBoundsFn = crossSectionBoundsFn,
-    .queryFacesFn = queryFacesImpl,
-    .volumeFn = volumeImpl,
-    .surfaceAreaFn = surfaceAreaImpl,
-    .getMeshFn = getMeshImpl,
-    .containsPointFn = containsPointImpl,
-    .minGapFn = minGapImpl,
-    .rayCastFn = rayCastImpl,
-    .polygonFn = polygonImpl,
-    .simplifyFn = simplifyImpl,
-    .setMaterialFn = setMaterialImpl,
-    .destructFn = destructImpl,
-    .destructCrossSectionFn = destructCrossSectionImpl,
+pub const driver = struct {
+    pub const cubeFn = cubeImpl;
+    pub const cylinderFn = cylinderImpl;
+    pub const sphereFn = sphereImpl;
+    pub const booleanFn = booleanImpl;
+    pub const batchBooleanFn = batchBooleanImpl;
+    pub const batchHullFn = batchHullImpl;
+    pub const decomposeFn = decomposeImpl;
+    pub const translateFn = translateImpl;
+    pub const rotateFn = rotateImpl;
+    pub const scaleFn = scaleImpl;
+    pub const squareFn = squareImpl;
+    pub const circleFn = circleImpl;
+    pub const polyhedronFn = polyhedronImpl;
+    pub const polygonsEvenOddFn = polygonsEvenOddImpl;
+    pub const extrudeFn = extrudeImpl;
+    pub const revolveFn = revolveImpl;
+    pub const sliceFn = sliceImpl;
+    pub const projectFn = projectImpl;
+    pub const mirrorFn = mirrorImpl;
+    pub const hullFn = hullImpl;
+    pub const loftFn = loftImpl;
+    pub const trimByPlaneFn = trimByPlaneImpl;
+    pub const splitByPlaneFn = splitByPlaneImpl;
+    pub const crossSectionBooleanFn = crossSectionBooleanImpl;
+    pub const genusFn = genusImpl;
+    pub const minkowskiFn = minkowskiImpl;
+    pub const offsetFn = offsetImpl;
+    pub const transformMatrixFn = transformMatrixImpl;
+    pub const crossSectionTransformFn = crossSectionTransformImpl;
+    pub const boundingBoxFn = boundingBoxImpl;
+    pub const crossSectionAreaFn = crossSectionAreaImpl;
+    pub const crossSectionBoundsFn = crossSectionBoundsImpl;
+    pub const queryFacesFn = queryFacesImpl;
+    pub const volumeFn = volumeImpl;
+    pub const surfaceAreaFn = surfaceAreaImpl;
+    pub const getMeshFn = getMeshImpl;
+    pub const containsPointFn = containsPointImpl;
+    pub const minGapFn = minGapImpl;
+    pub const rayCastFn = rayCastImpl;
+    pub const polygonFn = polygonImpl;
+    pub const simplifyFn = simplifyImpl;
+    pub const setMaterialFn = setMaterialImpl;
+    pub const destructFn = destructImpl;
+    pub const destructCrossSectionFn = destructCrossSectionImpl;
 };

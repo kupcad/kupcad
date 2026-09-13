@@ -2,6 +2,7 @@ const std = @import("std");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const limits = @import("../core/limits.zig");
+const ast = @import("../core/ast.zig");
 const Compiler = @import("compiler.zig").Compiler;
 const CompileError = @import("compiler.zig").CompileError;
 
@@ -132,6 +133,39 @@ pub fn writeJumpOffset(self: *Compiler, target_index: usize, offset: usize) void
     self.current_chunk.code.items[target_index + 1] = @intCast((offset >> 16) & 0xFF);
     self.current_chunk.code.items[target_index + 2] = @intCast((offset >> 8) & 0xFF);
     self.current_chunk.code.items[target_index + 3] = @intCast(offset & 0xFF);
+}
+
+pub fn emitBinaryOp(self: *Compiler, op: ast.BinaryOp) CompileError!void {
+    switch (op) {
+        .add => try self.emitOp(.op_add),
+        .subtract => try self.emitOp(.op_subtract),
+        .multiply => try self.emitOp(.op_multiply),
+        .divide => try self.emitOp(.op_divide),
+        .modulo => try self.emitOp(.op_modulo),
+        .exponent => try self.emitOp(.op_exponent),
+        .bitwise_and => try self.emitOp(.op_bitwise_and),
+        .bitwise_or => try self.emitOp(.op_bitwise_or),
+        .bitwise_xor => try self.emitOp(.op_bitwise_xor),
+        .shift_left => try self.emitOp(.op_shift_left),
+        .shift_right => try self.emitOp(.op_shift_right),
+        .equal => try self.emitOp(.op_equal),
+        .not_equal => {
+            try self.emitOp(.op_equal);
+            try self.emitOp(.op_not);
+        },
+        .less => try self.emitOp(.op_less),
+        .greater => try self.emitOp(.op_greater),
+        .less_equal => {
+            try self.emitOp(.op_greater);
+            try self.emitOp(.op_not);
+        },
+        .greater_equal => {
+            try self.emitOp(.op_less);
+            try self.emitOp(.op_not);
+        },
+        .spaceship => try self.emitOp(.op_cmp),
+        else => return error.UnknownNode,
+    }
 }
 
 /// Returns the net stack effect of an OpCode.
