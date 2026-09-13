@@ -1248,6 +1248,10 @@ pub const Compiler = struct {
     }
 
     fn compileMultipleAssignment(self: *Compiler, node: *const ast.Node) CompileError!void {
+        // Save simulator state to prevent stack corruption on TooManyConstants aborts
+        const saved_depth = self.current_stack_depth;
+        errdefer self.current_stack_depth = saved_depth;
+
         const ma = self.tree.multipleAssignment(node);
         const lhs = self.tree.getLhsExprs(ma.lhs);
         for (lhs) |l| {
@@ -1794,7 +1798,6 @@ pub const Compiler = struct {
                     var i: usize = self.namespace_stack.items.len;
                     while (i > 0) {
                         const fq_name = try self.buildFullyQualifiedPath(name_str, i);
-                        defer self.allocator.free(fq_name);
 
                         const fq_idx = try self.makeStringConstant(fq_name);
 
@@ -1807,6 +1810,9 @@ pub const Compiler = struct {
 
                         self.patchJump(skip_jump);
                         try self.emitOp(.op_pop); // pop false
+
+                        // Explicitly free inside the loop
+                        self.allocator.free(fq_name);
                         i -= 1;
                     }
 
@@ -2029,6 +2035,10 @@ pub const Compiler = struct {
 
     // Helper function to handle nested array destructuring
     fn compileDestructureNode(self: *Compiler, target_node_idx: ast.NodeIndex) CompileError!void {
+        // Save simulator state to prevent stack corruption on TooManyConstants aborts
+        const saved_depth = self.current_stack_depth;
+        errdefer self.current_stack_depth = saved_depth;
+
         const node = self.tree.getNode(target_node_idx) orelse return error.UnknownNode;
 
         if (node.tag == .identifier) {
