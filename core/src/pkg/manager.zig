@@ -1,6 +1,7 @@
 const std = @import("std");
 const Store = @import("store.zig").Store;
 const paths = @import("paths.zig");
+const http_client = @import("http_client.zig");
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const LOCKFILE_VERSION = "1.0.0";
@@ -63,9 +64,7 @@ pub const PackageManager = struct {
         var client = std.http.Client{ .allocator = self.allocator, .io = self.io };
         defer client.deinit();
 
-        var req = try client.request(.GET, try std.Uri.parse(url), .{
-            .extra_headers = &[_]std.http.Header{.{ .name = "User-Agent", .value = "kupcad" }},
-        });
+        var req = try http_client.request(&client, .GET, try std.Uri.parse(url), .{});
         defer req.deinit();
 
         try req.sendBodiless();

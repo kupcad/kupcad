@@ -1,6 +1,7 @@
 const std = @import("std");
 const provider = @import("provider.zig");
 const Cafs = @import("../cafs.zig").Cafs;
+const http_client = @import("../http_client.zig");
 
 pub const Fetcher = struct {
     allocator: std.mem.Allocator,
@@ -8,13 +9,11 @@ pub const Fetcher = struct {
     client: std.http.Client,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) Fetcher {
+        const client = std.http.Client{ .allocator = allocator, .io = io };
         return .{
             .allocator = allocator,
             .io = io,
-            .client = .{
-                .allocator = allocator,
-                .io = io,
-            },
+            .client = client,
         };
     }
 
@@ -30,11 +29,7 @@ pub const Fetcher = struct {
             pkg.ref;
 
         const uri = try std.Uri.parse(url_str);
-        var req = try self.client.request(.GET, uri, .{
-            .extra_headers = &.{
-                .{ .name = "User-Agent", .value = "KupCAD/1.0" },
-            },
-        });
+        var req = try http_client.request(&self.client, .GET, uri, .{});
         defer req.deinit();
 
         try req.sendBodiless();
@@ -59,11 +54,7 @@ pub const Fetcher = struct {
 
     pub fn downloadArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs) !std.StringHashMap([]const u8) {
         const uri = try std.Uri.parse(url_str);
-        var req = try self.client.request(.GET, uri, .{
-            .extra_headers = &.{
-                .{ .name = "User-Agent", .value = "KupCAD/1.0" },
-            },
-        });
+        var req = try http_client.request(&self.client, .GET, uri, .{});
         defer req.deinit();
 
         try req.sendBodiless();

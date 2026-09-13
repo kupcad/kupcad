@@ -8,9 +8,10 @@ const resolver = @import("../core/resolver.zig");
 const verifier = @import("../vm/verifier.zig");
 const VM = @import("../vm/vm.zig").VM;
 const manifest = @import("../stdlib/manifest.zig");
-
 const scope_mod = @import("scope.zig");
 const emitter_mod = @import("emitter.zig");
+
+const DEFAULT_IMPORT_ENDPOINT = "main.kup";
 
 pub const CompileError = error{
     OutOfMemory,
@@ -533,7 +534,7 @@ pub const Compiler = struct {
                 if (std.mem.endsWith(u8, path_str, ".kup")) {
                     allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/{s}", .{path_str});
                 } else {
-                    allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/{s}/main.kup", .{path_str});
+                    allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/{s}/{s}", .{ path_str, DEFAULT_IMPORT_ENDPOINT });
                 }
                 final_path_str = allocated_path.?;
             }
