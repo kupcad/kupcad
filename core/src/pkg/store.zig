@@ -151,7 +151,9 @@ pub const Store = struct {
         defer version_stmt.deinit();
         const current_version_row = try version_stmt.one(struct { user_version: i32 }, .{}, .{});
         const current_version = if (current_version_row) |row| row.user_version else 0;
-        const TARGET_VERSION: i32 = 1;
+
+        // Bumped to v2 for integrity constraints
+        const TARGET_VERSION: i32 = 2;
 
         if (current_version < TARGET_VERSION) {
             log.print("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, TARGET_VERSION });
@@ -190,6 +192,9 @@ pub const Store = struct {
                     \\)
                 , .{}, .{});
             }
+            if (current_version < 2) {
+                try self.db.exec("ALTER TABLE packages ADD COLUMN integrity TEXT NOT NULL DEFAULT ''", .{}, .{});
+            }
             const update_pragma = try std.fmt.allocPrint(std.heap.page_allocator, "PRAGMA user_version = {d}", .{TARGET_VERSION});
             defer std.heap.page_allocator.free(update_pragma);
             try self.db.exec(update_pragma, .{}, .{});
@@ -197,25 +202,54 @@ pub const Store = struct {
         }
     }
 
+    /// Computes a deterministic Merkle-style checksum of extracted package files
+    pub fn computeIntegrity(allocator: std.mem.Allocator, files_map: *const std.StringHashMap([]const u8)) ![]const u8 {
+        var paths = std.ArrayListUnmanaged([]const u8).empty;
+        defer paths.deinit(allocator);
+
+        var it = files_map.keyIterator();
+        while (it.next()) |k| try paths.append(allocator, k.*);
+
+        // Deterministic sorting ensures the hash is identical across environments
+        std.mem.sort([]const u8, paths.items, {}, struct {
+            pub fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.order(u8, a, b) == .lt;
+            }
+        }.lessThan);
+
+        var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+        for (paths.items) |path| {
+            const hash = files_map.get(path).?;
+            hasher.update(path);
+            hasher.update(hash);
+        }
+
+        var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+        hasher.final(&digest);
+
+        const hex = std.fmt.bytesToHex(digest, .lower);
+        return std.fmt.allocPrint(allocator, "sha256-{s}", .{hex});
+    }
+
     pub fn registerPackage(
         self: *Store,
         pkg_id: []const u8,
         commit_sha: []const u8,
         provider_name: []const u8,
+        integrity: []const u8,
         files_map: *std.StringHashMap([]const u8),
     ) !void {
         try self.db.exec("BEGIN TRANSACTION", .{}, .{});
         errdefer self.db.exec("ROLLBACK", .{}, .{}) catch {};
 
-        // Explicitly cast the i96 duration to i64 for SQLite bindings
         const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
         const now: i64 = @intCast(@divTrunc(now_ns, std.time.ns_per_s));
 
         const pkg_stmt =
-            \\INSERT OR IGNORE INTO packages (id, commit_sha, provider, created_at)
-            \\VALUES (?, ?, ?, ?)
+            \\INSERT OR IGNORE INTO packages (id, commit_sha, provider, integrity, created_at)
+            \\VALUES (?, ?, ?, ?, ?)
         ;
-        try self.db.exec(pkg_stmt, .{ pkg_id, commit_sha, provider_name, now }, .{});
+        try self.db.exec(pkg_stmt, .{ pkg_id, commit_sha, provider_name, integrity, now }, .{});
 
         var files_it = files_map.iterator();
         while (files_it.next()) |entry| {

@@ -13,11 +13,13 @@ const SortUtil = struct {
 pub const LockedPackage = struct {
     resolved: []const u8,
     ref: []const u8,
+    integrity: []const u8,
     dependencies: StringMap,
 
     pub fn deinit(self: *LockedPackage, allocator: std.mem.Allocator) void {
         allocator.free(self.resolved);
         allocator.free(self.ref);
+        allocator.free(self.integrity);
         var it = self.dependencies.iterator();
         while (it.next()) |entry| {
             allocator.free(entry.key_ptr.*);
@@ -57,7 +59,6 @@ pub const Lockfile = struct {
         };
         defer allocator.free(content);
 
-        // Catch parse errors and safely map them to UnexpectedToken as expected by tests
         var parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch {
             return error.UnexpectedToken;
         };
@@ -87,6 +88,7 @@ pub const Lockfile = struct {
 
                     var resolved: []const u8 = "";
                     var ref: []const u8 = "";
+                    var integrity: []const u8 = "";
                     var deps = StringMap.init(allocator);
                     errdefer deps.deinit();
 
@@ -95,6 +97,9 @@ pub const Lockfile = struct {
                     }
                     if (pkg_val.object.get("ref")) |r| {
                         if (r == .string) ref = try allocator.dupe(u8, r.string);
+                    }
+                    if (pkg_val.object.get("integrity")) |i| {
+                        if (i == .string) integrity = try allocator.dupe(u8, i.string);
                     }
 
                     if (pkg_val.object.get("dependencies")) |d| {
@@ -113,6 +118,7 @@ pub const Lockfile = struct {
                     const locked_pkg = LockedPackage{
                         .resolved = resolved,
                         .ref = ref,
+                        .integrity = integrity,
                         .dependencies = deps,
                     };
 
@@ -146,7 +152,7 @@ pub const Lockfile = struct {
                 const locked_pkg = self.packages.get(pkg_id).?;
                 const comma1 = if (i < pkg_keys.items.len - 1) "," else "";
 
-                const pkg_header = try std.fmt.allocPrint(self.allocator, "    \"{s}\": {{\n      \"resolved\": \"{s}\",\n      \"ref\": \"{s}\"", .{ pkg_id, locked_pkg.resolved, locked_pkg.ref });
+                const pkg_header = try std.fmt.allocPrint(self.allocator, "    \"{s}\": {{\n      \"resolved\": \"{s}\",\n      \"ref\": \"{s}\",\n      \"integrity\": \"{s}\"", .{ pkg_id, locked_pkg.resolved, locked_pkg.ref, locked_pkg.integrity });
                 defer self.allocator.free(pkg_header);
                 try out_str.appendSlice(self.allocator, pkg_header);
 

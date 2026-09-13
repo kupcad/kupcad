@@ -128,7 +128,7 @@ pub const VM = struct {
 
         // Dynamically allocate the NativeVfs so its memory address stays valid
         const native_vfs = try allocator.create(NativeVfs);
-        native_vfs.* = NativeVfs.init(io);
+        native_vfs.* = NativeVfs.init(io, std.Io.Dir.cwd());
 
         var vm = VM{
             .allocator = allocator,

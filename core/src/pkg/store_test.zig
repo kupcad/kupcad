@@ -3,7 +3,6 @@ const testing = std.testing;
 const Store = @import("store.zig").Store;
 
 test "Store: initializes and runs SQLite migrations in-memory" {
-    // ":memory:" forces SQLite to use a volatile RAM database, bypassing the disk entirely
     var store = try Store.init(testing.io, ":memory:");
     defer store.deinit();
 
@@ -12,7 +11,7 @@ test "Store: initializes and runs SQLite migrations in-memory" {
     const row = try stmt.one(struct { user_version: i32 }, .{}, .{});
 
     try testing.expect(row != null);
-    try testing.expectEqual(@as(i32, 1), row.?.user_version);
+    try testing.expectEqual(@as(i32, 2), row.?.user_version); // Expect V2
 }
 
 test "Store: registers package and maps associated file hashes" {
@@ -23,14 +22,15 @@ test "Store: registers package and maps associated file hashes" {
     defer files.deinit();
     try files.put("math.kup", "aabbccddeeff");
 
-    try store.registerPackage("test-pkg", "commit123", "github", &files);
+    try store.registerPackage("test-pkg", "commit123", "github", "sha256-mockhash", &files);
 
-    const pkg_stmt = try store.db.prepare("SELECT provider, created_at FROM packages WHERE id = 'test-pkg'");
+    const pkg_stmt = try store.db.prepare("SELECT provider, integrity, created_at FROM packages WHERE id = 'test-pkg'");
     defer pkg_stmt.deinit();
-    const pkg_row = try pkg_stmt.one(struct { provider: []const u8, created_at: i64 }, .{}, .{});
+    const pkg_row = try pkg_stmt.one(struct { provider: []const u8, integrity: []const u8, created_at: i64 }, .{}, .{});
 
     try testing.expect(pkg_row != null);
     try testing.expectEqualStrings("github", pkg_row.?.provider);
+    try testing.expectEqualStrings("sha256-mockhash", pkg_row.?.integrity);
 
     const file_stmt = try store.db.prepare("SELECT file_hash FROM package_files WHERE file_path = 'math.kup'");
     defer file_stmt.deinit();
@@ -48,11 +48,9 @@ test "Store: registerPackage is idempotent and safely ignores duplicates" {
     defer files.deinit();
     try files.put("main.kup", "hash123");
 
-    // Register the same package twice
-    try store.registerPackage("pkg-a", "commit-a", "git", &files);
-    try store.registerPackage("pkg-a", "commit-a", "git", &files); // Should not crash!
+    try store.registerPackage("pkg-a", "commit-a", "git", "sha256-mock", &files);
+    try store.registerPackage("pkg-a", "commit-a", "git", "sha256-mock", &files);
 
-    // Verify it only exists once
     const stmt = try store.db.prepare("SELECT COUNT(*) as count FROM packages WHERE id = 'pkg-a'");
     defer stmt.deinit();
 
@@ -68,8 +66,7 @@ test "Store: gracefully handles packages with zero files" {
     var empty_files = std.StringHashMap([]const u8).init(testing.allocator);
     defer empty_files.deinit();
 
-    // Registering an empty metapackage
-    try store.registerPackage("meta-pkg", "commit-b", "git", &empty_files);
+    try store.registerPackage("meta-pkg", "commit-b", "git", "sha256-mock", &empty_files);
 
     const stmt = try store.db.prepare("SELECT id FROM packages WHERE id = 'meta-pkg'");
     defer stmt.deinit();
@@ -77,4 +74,61 @@ test "Store: gracefully handles packages with zero files" {
 
     try testing.expect(row != null);
     try testing.expectEqualStrings("meta-pkg", row.?.id);
+}
+
+test "Store: computeIntegrity generates deterministic hashes regardless of map iteration order" {
+    var files1 = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files1.deinit();
+    try files1.put("file_b.kup", "hash-b");
+    try files1.put("file_a.kup", "hash-a");
+    try files1.put("file_c.kup", "hash-c");
+
+    var files2 = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files2.deinit();
+    // Insert in a completely different order to scramble the internal bucket layout
+    try files2.put("file_c.kup", "hash-c");
+    try files2.put("file_b.kup", "hash-b");
+    try files2.put("file_a.kup", "hash-a");
+
+    const hash1 = try Store.computeIntegrity(testing.allocator, &files1);
+    defer testing.allocator.free(hash1);
+
+    const hash2 = try Store.computeIntegrity(testing.allocator, &files2);
+    defer testing.allocator.free(hash2);
+
+    // The Merkle-style hash must perfectly match across both instances
+    try testing.expectEqualStrings(hash1, hash2);
+    try testing.expect(std.mem.startsWith(u8, hash1, "sha256-"));
+}
+
+test "Store: computeIntegrity detects file tampering" {
+    var files1 = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files1.deinit();
+    try files1.put("main.kup", "hash-clean");
+
+    var files2 = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files2.deinit();
+    try files2.put("main.kup", "hash-tampered");
+
+    const hash1 = try Store.computeIntegrity(testing.allocator, &files1);
+    defer testing.allocator.free(hash1);
+
+    const hash2 = try Store.computeIntegrity(testing.allocator, &files2);
+    defer testing.allocator.free(hash2);
+
+    // Hashes must deviate if the underlying file contents (represented by their hashes) change
+    try testing.expect(!std.mem.eql(u8, hash1, hash2));
+}
+
+test "Store: computeIntegrity handles empty packages" {
+    var empty_files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer empty_files.deinit();
+
+    const hash = try Store.computeIntegrity(testing.allocator, &empty_files);
+    defer testing.allocator.free(hash);
+
+    // Empty packages should still generate a valid, reproducible sha256 checksum (the hash of nothing)
+    try testing.expect(std.mem.startsWith(u8, hash, "sha256-"));
+    // e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 is the sha256 of an empty string
+    try testing.expectEqualStrings("sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", hash);
 }

@@ -53,7 +53,7 @@ test "MemoryVfs: Properly handles directories and hard links" {
 }
 
 test "NativeVfs: Reads and writes actual files on disk" {
-    var native = NativeVfs{ .io = std.testing.io };
+    var native = NativeVfs.init(std.testing.io, std.Io.Dir.cwd());
     const fs = native.vfs();
 
     const tmp_path = "test_output_tmp.txt";

@@ -94,11 +94,16 @@ pub const Resolver = struct {
                     extracted_files.deinit();
                 }
 
-                try self.store.registerPackage(pkg_id, commit_sha, @tagName(parsed.provider), &extracted_files);
+                // Compute the deterministic cryptographic hash of the extracted payload
+                const integrity_hash = try Store.computeIntegrity(self.allocator, &extracted_files);
+                defer self.allocator.free(integrity_hash);
+
+                try self.store.registerPackage(pkg_id, commit_sha, @tagName(parsed.provider), integrity_hash, &extracted_files);
 
                 const new_locked = @import("lockfile.zig").LockedPackage{
                     .resolved = commit_sha,
                     .ref = try self.allocator.dupe(u8, parsed.ref),
+                    .integrity = try self.allocator.dupe(u8, integrity_hash),
                     .dependencies = @import("lockfile.zig").StringMap.init(self.allocator),
                 };
                 try self.lockfile.packages.put(try self.allocator.dupe(u8, pkg_id), new_locked);

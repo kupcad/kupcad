@@ -27,6 +27,7 @@ test "Lockfile: saves deterministic JSON to VFS" {
     const pkg = LockedPackage{
         .resolved = try testing.allocator.dupe(u8, "abc123def456"),
         .ref = try testing.allocator.dupe(u8, "main"),
+        .integrity = try testing.allocator.dupe(u8, "sha256-mockhash123"),
         .dependencies = deps,
     };
 
@@ -36,8 +37,8 @@ test "Lockfile: saves deterministic JSON to VFS" {
     const content = try fs.readFile(testing.allocator, "kupcad.lock");
     defer testing.allocator.free(content);
 
-    // Verify critical structure exists in the serialized JSON
     try testing.expect(std.mem.indexOf(u8, content, "\"resolved\": \"abc123def456\"") != null);
+    try testing.expect(std.mem.indexOf(u8, content, "\"integrity\": \"sha256-mockhash123\"") != null);
     try testing.expect(std.mem.indexOf(u8, content, "\"github.com-kupcad-std\"") != null);
     try testing.expect(std.mem.indexOf(u8, content, "\"geom\": \"github.com/user/geom\"") != null);
 }
@@ -46,11 +47,9 @@ test "Lockfile: gracefully handles missing lockfiles by returning empty defaults
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    // Attempting to load from an empty file system
     var lockfile = try Lockfile.load(testing.allocator, mem_vfs.vfs());
     defer lockfile.deinit();
 
-    // Should yield a pristine v1.0.0 lockfile rather than crashing
     try testing.expectEqualStrings("1.0.0", lockfile.version);
     try testing.expectEqual(@as(usize, 0), lockfile.packages.count());
 }
