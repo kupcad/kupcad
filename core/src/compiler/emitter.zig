@@ -6,6 +6,36 @@ const ast = @import("../core/ast.zig");
 const Compiler = @import("compiler.zig").Compiler;
 const CompileError = @import("compiler.zig").CompileError;
 
+pub const JumpTableOffsets = struct {
+    table_start: usize,
+    default_jump: usize,
+};
+
+pub fn emitJumpTable(self: *Compiler, total_conditions: u16) CompileError!JumpTableOffsets {
+    try self.emitOpWithOperand(.op_switch, .op_switch_wide, total_conditions);
+
+    const table_start = self.current_chunk.code.items.len;
+    for (0..total_conditions) |_| {
+        try self.emitByte(0); // const_high
+        try self.emitByte(0); // const_low
+        try self.emitByte(0xFF); // jump b3
+        try self.emitByte(0xFF); // jump b2
+        try self.emitByte(0xFF); // jump b1
+        try self.emitByte(0xFF); // jump b0
+    }
+
+    const default_jump = self.current_chunk.code.items.len;
+    try self.emitByte(0xFF); // default b3
+    try self.emitByte(0xFF); // default b2
+    try self.emitByte(0xFF); // default b1
+    try self.emitByte(0xFF); // default b0
+
+    return JumpTableOffsets{
+        .table_start = table_start,
+        .default_jump = default_jump,
+    };
+}
+
 pub fn simulatePush(self: *Compiler, count: usize) void {
     self.current_stack_depth += count;
     if (self.current_stack_depth > self.max_stack_depth) {

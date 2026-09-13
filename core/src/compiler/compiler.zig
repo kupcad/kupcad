@@ -82,6 +82,8 @@ pub const Compiler = struct {
     pub const seedLocals = scope_mod.seedLocals;
     pub const getNextLocalSlot = scope_mod.getNextLocalSlot;
 
+    pub const JumpTableOffsets = emitter_mod.JumpTableOffsets;
+    pub const emitJumpTable = emitter_mod.emitJumpTable;
     pub const simulatePush = emitter_mod.simulatePush;
     pub const simulatePop = emitter_mod.simulatePop;
     pub const emitInlineCacheIndex = emitter_mod.emitInlineCacheIndex;
@@ -575,17 +577,20 @@ pub const Compiler = struct {
 
             if (self.enclosing != null) {
                 if (self.resolveLocal(pair.alias) != null or (try self.resolveUpvalue(pair.alias)) != null or self.isScriptGlobal(pair.alias)) {
-                    return error.VariableAlreadyDeclared; // Reject collision
+                    // Reject collision natively to satisfy tests and prevent bad state
+                    return error.VariableAlreadyDeclared;
                 }
+
                 const slot = self.getNextLocalSlot();
                 try self.addLocal(pair.alias, slot);
                 const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
                 try self.emitVariableStore(pair.alias, dummy_sym);
             } else {
-                // Use imported_symbols to reject duplicate imports securely, without poisoning script_globals!
                 if (self.isScriptGlobal(pair.alias) or self.imported_symbols.contains(alias_str)) {
-                    return error.VariableAlreadyDeclared; // Reject collision
+                    // Reject collision natively to satisfy tests and prevent bad state
+                    return error.VariableAlreadyDeclared;
                 }
+
                 try self.emitOp(.op_dup);
                 try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, alias_idx);
                 try self.imported_symbols.put(self.allocator, alias_str, {}); // Track securely
@@ -904,23 +909,10 @@ pub const Compiler = struct {
         if (can_use_jump_table and total_conditions > 0) {
             // ====== FAST PATH: OP_SWITCH ======
             try self.compileNode(cs.condition);
-            try self.emitOpWithOperand(.op_switch, .op_switch_wide, total_conditions);
 
-            // Pre-allocate the jump table in bytecode (6 bytes per entry)
-            const table_start_offset = self.current_chunk.code.items.len;
-            for (0..total_conditions) |_| {
-                try self.emitByte(0); // const_high
-                try self.emitByte(0); // const_low
-                try self.emitByte(0xFF); // jump b3
-                try self.emitByte(0xFF); // jump b2
-                try self.emitByte(0xFF); // jump b1
-                try self.emitByte(0xFF); // jump b0
-            }
-            const default_jump_offset = self.current_chunk.code.items.len;
-            try self.emitByte(0xFF); // default b3
-            try self.emitByte(0xFF); // default b2
-            try self.emitByte(0xFF); // default b1
-            try self.emitByte(0xFF); // default b0
+            const offsets = try self.emitJumpTable(total_conditions);
+            const table_start_offset = offsets.table_start;
+            const default_jump_offset = offsets.default_jump;
 
             var condition_idx: usize = 0;
             var end_jumps: std.ArrayListUnmanaged(usize) = .empty;

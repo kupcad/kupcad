@@ -72,7 +72,17 @@ pub const Cafs = struct {
         var decompress: std.compress.flate.Decompress = .init(reader, .gzip, &window_buffer);
 
         const cwd = std.Io.Dir.cwd();
-        const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}/tmp_{d}", .{ self.global_dir_path, std.Io.Clock.real.now(self.io).nanoseconds });
+
+        // Safely resolve a unique Process or Thread ID depending on the OS target
+        const pid: usize = switch (builtin.os.tag) {
+            .linux => @bitCast(@as(isize, std.os.linux.getpid())),
+            .windows => @intCast(std.os.windows.kernel32.GetCurrentProcessId()),
+            .wasi, .freestanding => 0,
+            else => std.Thread.getCurrentId(), // Fallback to OS thread ID for macOS/BSD
+        };
+
+        // Combine nanosecond timestamp with the PID for collision-proof isolation
+        const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}/tmp_{d}_{d}", .{ self.global_dir_path, std.Io.Clock.real.now(self.io).nanoseconds, pid });
         defer self.allocator.free(tmp_path);
 
         try cwd.createDirPath(self.io, tmp_path);
