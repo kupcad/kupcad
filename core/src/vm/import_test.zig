@@ -871,3 +871,129 @@ test "VM: op_import catches self-import cycles gracefully" {
     // Sentinel stops infinite loop and evaluates to nil, cascading into a Circular Dependency RuntimeError
     try testing.expectEqual(.runtime_error, res);
 }
+
+test "VM: op_import supports aliased exports (export { internal as public })" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    const pkg_source =
+        \\def internal_func() 42 end
+        \\export { internal_func as public_func }
+    ;
+    try mem_vfs.vfs().writeFile("./aliased_export.kup", pkg_source);
+
+    const main_source =
+        \\import { public_func } from "./aliased_export.kup"
+        \\result = public_func
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 42.0), result_val.asNumber());
+}
+
+test "VM: op_import supports multiple aliases in a single import statement" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    const pkg_source =
+        \\def fn_a() 10 end
+        \\def fn_b() 20 end
+        \\export fn_a, fn_b
+    ;
+    try mem_vfs.vfs().writeFile("./multi_pkg.kup", pkg_source);
+
+    const main_source =
+        \\import { fn_a as x, fn_b as y } from "./multi_pkg.kup"
+        \\result = x + y
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 30.0), result_val.asNumber());
+}
+
+test "Compiler: op_import rejects symbol collisions in top-level scope" {
+    const main_source =
+        \\local_var = 100
+        \\import { val as local_var } from "./pkg.kup"
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    const result = comp.compile(doc.tree.root);
+    try testing.expectError(error.VariableAlreadyDeclared, result);
+}
+
+test "VM: op_import supports chained aliased re-exports across modules" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    try mem_vfs.vfs().writeFile("./base.kup", "def raw_val() 100 end\nexport raw_val");
+
+    const pkg2_source =
+        \\import { raw_val as middle_val } from "./base.kup"
+        \\export { middle_val as final_val }
+    ;
+    try mem_vfs.vfs().writeFile("./middle.kup", pkg2_source);
+
+    const main_source =
+        \\import { final_val } from "./middle.kup"
+        \\result = final_val
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result") orelse return error.MissingResult;
+    try testing.expectEqual(@as(f64, 100.0), result_val.asNumber());
+}

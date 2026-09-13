@@ -591,8 +591,12 @@ pub const Parser = struct {
                 if (self.tag(0) == .comma) self.advance() else break;
             }
             _ = try self.expect(.r_brace);
-            _ = try self.expect(.keyword_from);
-            has_from = true;
+
+            // Make 'from' optional for braced export statements
+            if (self.tag(0) == .keyword_from) {
+                self.advance();
+                has_from = true;
+            }
         } else if (self.tag(0) == .constant or self.tag(0) == .ident) {
             while (true) {
                 self.skipIgnored();

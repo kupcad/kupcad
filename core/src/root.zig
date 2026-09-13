@@ -58,6 +58,7 @@ test {
     _ = @import("pkg/gc_test.zig");
     _ = @import("pkg/health_test.zig");
     _ = @import("pkg/store_test.zig");
+    _ = @import("pkg/providers/fetcher_test.zig");
 
     // Stdlib
     _ = @import("stdlib/stdlib_test.zig");
