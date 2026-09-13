@@ -49,15 +49,11 @@ pub const Cafs = struct {
             error.CrossDeviceLink, error.FileNotFound, error.OperationUnsupported => {
                 // Fallback: Read physically from CAFS since VFS might be strictly in-memory
                 const cwd = std.Io.Dir.cwd();
-                var file = try cwd.openFile(self.io, source_path, .{});
-                defer file.close(self.io);
 
-                const stat = try file.stat(self.io);
-                const size = std.math.cast(usize, stat.size) orelse return error.FileTooBig;
-                const content = try self.allocator.alloc(u8, size);
+                // Securely stream the entire file dynamically to prevent TOCTOU vulnerabilities
+                // caused by relying on potentially stale stat.size attributes.
+                const content = try cwd.readFileAlloc(self.io, source_path, self.allocator, .unlimited);
                 defer self.allocator.free(content);
-
-                _ = try file.readPositionalAll(self.io, content, 0);
 
                 // Write to the destination VFS natively
                 try self.fs.writeFile(dest_path, content);
