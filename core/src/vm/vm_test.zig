@@ -9840,3 +9840,48 @@ test "VM: Value.stringify recursively handles nested arrays and primitives" {
     try testing.expectEqualStrings("[42, false, nil]", out.written());
     _ = vm.pop();
 }
+
+test "VM: Case statement executes fast-path jump table for primitives" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\val = 2
+        \\case val
+        \\when 1
+        \\  "one"
+        \\when 2
+        \\  "two"
+        \\else
+        \\  "other"
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Verify the chunk actually generated the op_switch opcode
+    var found_switch = false;
+    for (out_chunk.code.items) |byte| {
+        if (byte == @intFromEnum(chunk.OpCode.op_switch)) {
+            found_switch = true;
+            break;
+        }
+    }
+    try testing.expect(found_switch);
+
+    // Verify the VM can successfully interpret the generated jump offsets
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isObject() and result.asObj().obj_type == .string);
+
+    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    try testing.expectEqualStrings("two", str_obj.chars);
+}

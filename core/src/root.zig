@@ -51,6 +51,9 @@ test {
     _ = @import("cli/options_test.zig");
     _ = @import("cli/walker_test.zig");
 
+    // Kernels
+    _ = @import("kernel/kernel_test.zig");
+
     // Package Manager & Registry
     _ = @import("pkg/manifest_test.zig");
     _ = @import("pkg/lockfile_test.zig");

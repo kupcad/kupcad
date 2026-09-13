@@ -1281,3 +1281,76 @@ test "Compiler Edge Case: Hash literals with > 255 entries emit op_build_map_wid
     // If it fell back to the standard op_build_map, this will fail
     try testing.expect(found_wide);
 }
+
+test "Compiler: Deep namespace constant resolution does not leak memory" {
+    const source =
+        \\class A
+        \\  class B
+        \\    class C
+        \\      class D
+        \\        VAL = 10
+        \\      end
+        \\    end
+        \\  end
+        \\end
+        \\
+        \\return A::B::C::D::VAL
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // The testing allocator will automatically panic if `emitVariableLoad` fails to free
+    // the fully qualified path names during the namespace traversal loop.
+    try comp.compile(doc.tree.root);
+}
+
+test "Compiler: Destructuring aborts gracefully without stack corruption" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Generate 300 identifier nodes to breach MAX_SHORT_CONSTANTS (255)
+    var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
+    defer elements.deinit(testing.allocator);
+
+    for (0..300) |i| {
+        var buf: [16]u8 = undefined;
+        const str = try std.fmt.bufPrint(&buf, "v{d}", .{i});
+        const name_id = try b.intern(str);
+        // Build raw identifier nodes
+        const id_node = try b.createNode(.identifier, 0, @intFromEnum(name_id));
+        try elements.append(testing.allocator, id_node);
+    }
+
+    const span = try b.addNodes(elements.items);
+    const tuple_node = try b.arrayLiteral(span, 0, 0);
+
+    // Pass the massive array destructuring node as a parameter to a block: `do |(v0...v299)|`
+    const block_node = try b.block(&.{tuple_node}, &.{}, 0, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // This MUST fail with TooManyConstants. If the `errdefer` stack restoration is missing
+    // inside `compileDestructureNode`, the compiler's internal `std.debug.assert` for
+    // `current_stack_depth` will instantly panic and crash the test.
+    const result = comp.compile(block_node);
+    try testing.expectError(error.TooManyConstants, result);
+}
