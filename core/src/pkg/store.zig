@@ -23,8 +23,9 @@ pub const Db = struct {
         if (args_info == .@"struct" and args_info.@"struct".is_tuple) {
             inline for (args, 1..) |arg, idx| {
                 const ArgType = @TypeOf(arg);
-                if (ArgType == []const u8) {
-                    _ = c.sqlite3_bind_text(stmt, @intCast(idx), arg.ptr, @intCast(arg.len), null);
+                if (@typeInfo(ArgType) == .pointer) {
+                    const slice: []const u8 = arg;
+                    _ = c.sqlite3_bind_text(stmt, @intCast(idx), slice.ptr, @intCast(slice.len), null);
                 } else if (ArgType == i64 or ArgType == i32 or ArgType == usize) {
                     _ = c.sqlite3_bind_int64(stmt, @intCast(idx), @intCast(arg));
                 }
@@ -67,8 +68,9 @@ pub const Stmt = struct {
         if (args_info == .@"struct" and args_info.@"struct".is_tuple) {
             inline for (args, 1..) |arg, idx| {
                 const ArgType = @TypeOf(arg);
-                if (ArgType == []const u8) {
-                    _ = c.sqlite3_bind_text(self.handle, @intCast(idx), arg.ptr, @intCast(arg.len), null);
+                if (@typeInfo(ArgType) == .pointer) {
+                    const slice: []const u8 = arg;
+                    _ = c.sqlite3_bind_text(self.handle, @intCast(idx), slice.ptr, @intCast(slice.len), null);
                 } else if (ArgType == i64 or ArgType == i32 or ArgType == usize) {
                     _ = c.sqlite3_bind_int64(self.handle, @intCast(idx), @intCast(arg));
                 }

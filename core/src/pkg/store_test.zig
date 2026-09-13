@@ -132,3 +132,37 @@ test "Store: computeIntegrity handles empty packages" {
     // e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 is the sha256 of an empty string
     try testing.expectEqualStrings("sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", hash);
 }
+
+test "Store: statement tuple bindings correctly filter query results" {
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+
+    var files_a = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files_a.deinit();
+    try files_a.put("main.kup", "hashA");
+
+    var files_b = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files_b.deinit();
+    try files_b.put("utils.kup", "hashB");
+
+    // Register two different commits for the same package
+    try store.registerPackage("pkg-test", "commit1", "git", "sha256-1", &files_a);
+    try store.registerPackage("pkg-test", "commit2", "git", "sha256-2", &files_b);
+
+    const query =
+        \\SELECT file_path, file_hash FROM package_files
+        \\WHERE package_id = ? AND commit_sha = ?
+    ;
+    var stmt = try store.db.prepare(query);
+    defer stmt.deinit();
+
+    // Query specifically for commit2
+    var rows = try stmt.iterator(struct { file_path: []const u8, file_hash: []const u8 }, .{ "pkg-test", "commit2" });
+
+    const row = (try rows.next()) orelse return error.MissingRow;
+    try testing.expectEqualStrings("utils.kup", row.file_path);
+    try testing.expectEqualStrings("hashB", row.file_hash);
+
+    // Ensure it strictly bound the arguments and didn't bleed into commit1
+    try testing.expect((try rows.next()) == null);
+}

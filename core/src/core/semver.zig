@@ -70,6 +70,9 @@ pub const Constraint = struct {
                 // Caret (^): Allows changes that do not modify the left-most non-zero digit
                 if (self.version.compare(target) == .gt) return false;
                 if (self.version.major == 0) {
+                    if (self.version.minor == 0) {
+                        return target.major == 0 and target.minor == 0 and target.patch == self.version.patch;
+                    }
                     return target.major == 0 and target.minor == self.version.minor;
                 }
                 return target.major == self.version.major;

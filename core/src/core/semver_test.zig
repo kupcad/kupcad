@@ -41,3 +41,27 @@ test "SemVer: Tilde Constraints (~)" {
     try testing.expect(c.satisfies(try semver.Version.parse("1.2.9")));
     try testing.expect(!c.satisfies(try semver.Version.parse("1.3.0"))); // Minor bump invalid
 }
+
+test "SemVer: Greater-Equal Constraints (>=)" {
+    const c = try semver.Constraint.parse(">=1.2.3");
+
+    try testing.expect(c.satisfies(try semver.Version.parse("1.2.3")));
+    try testing.expect(c.satisfies(try semver.Version.parse("1.2.4")));
+    try testing.expect(c.satisfies(try semver.Version.parse("2.0.0")));
+    try testing.expect(!c.satisfies(try semver.Version.parse("1.2.2")));
+    try testing.expect(!c.satisfies(try semver.Version.parse("0.9.9")));
+}
+
+test "SemVer: Caret zero-major behavior (^0.x)" {
+    // 0.x.x APIs lock the minor version because the public API is unstable
+    const c1 = try semver.Constraint.parse("^0.5.0");
+    try testing.expect(c1.satisfies(try semver.Version.parse("0.5.0")));
+    try testing.expect(c1.satisfies(try semver.Version.parse("0.5.9")));
+    try testing.expect(!c1.satisfies(try semver.Version.parse("0.6.0")));
+    try testing.expect(!c1.satisfies(try semver.Version.parse("1.0.0")));
+
+    // 0.0.x APIs lock the patch version
+    const c2 = try semver.Constraint.parse("^0.0.2");
+    try testing.expect(c2.satisfies(try semver.Version.parse("0.0.2")));
+    try testing.expect(!c2.satisfies(try semver.Version.parse("0.0.3")));
+}

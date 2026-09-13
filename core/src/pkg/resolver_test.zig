@@ -70,3 +70,60 @@ test "Resolver: linkWorkspace builds correct symlink and hardlink trees" {
 
     try testing.expectEqualStrings("def init() 10 end", content);
 }
+
+test "Resolver: linkWorkspace efficiently caches directory creations for deep trees" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_path);
+
+    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
+    defer cafs.deinit();
+
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+
+    var manifest = Manifest.init(testing.allocator, "test-app");
+    defer manifest.deinit();
+
+    var lockfile = Lockfile.init(testing.allocator);
+    defer lockfile.deinit();
+
+    // 1. Mock a package with multiple files in the same deep directory
+    var files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files.deinit();
+    try files.put("src/deep/nested/a.kup", "hash1");
+    try files.put("src/deep/nested/b.kup", "hash1");
+    try files.put("src/deep/nested/c.kup", "hash1");
+
+    const blob_path = try cafs.blobPath("hash1");
+    defer testing.allocator.free(blob_path);
+    var f = try std.Io.Dir.cwd().createFile(testing.io, blob_path, .{});
+    try f.writeStreamingAll(testing.io, "mock content");
+    f.close(testing.io);
+
+    try store.registerPackage("nested-pkg", "commit-nest", "local", "sha256-mock", &files);
+
+    const deps = @import("lockfile.zig").StringMap.init(testing.allocator);
+    const locked = LockedPackage{
+        .resolved = try testing.allocator.dupe(u8, "commit-nest"),
+        .ref = try testing.allocator.dupe(u8, "main"),
+        .integrity = try testing.allocator.dupe(u8, "sha256-mock"),
+        .dependencies = deps,
+    };
+    try lockfile.packages.put(try testing.allocator.dupe(u8, "nested-pkg"), locked);
+    try manifest.dependencies.put(try testing.allocator.dupe(u8, "nested"), try testing.allocator.dupe(u8, "github.com/user/nested"));
+
+    var resolver = Resolver.init(testing.allocator, testing.io, &cafs, &store, &manifest, &lockfile);
+    try resolver.linkWorkspace(mem_vfs.vfs());
+
+    // Verify files were linked successfully
+    const content = try mem_vfs.vfs().readFile(testing.allocator, ".kupcad/pkg/.store/nested-pkg-commit-nest/pkg/src/deep/nested/c.kup");
+    defer testing.allocator.free(content);
+
+    try testing.expectEqualStrings("mock content", content);
+}
