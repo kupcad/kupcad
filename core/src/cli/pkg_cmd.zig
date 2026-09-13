@@ -15,7 +15,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         return;
     };
 
-    var native_vfs = NativeVfs.init(init.io);
+    var native_vfs = NativeVfs.init(init.io, std.Io.Dir.cwd());
     const fs = native_vfs.vfs();
 
     // -- init --

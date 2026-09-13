@@ -1,4 +1,5 @@
 const std = @import("std");
+const semver = @import("../../core/semver.zig");
 
 pub const ProviderType = enum {
     github,
@@ -14,6 +15,7 @@ pub const ParsedPackage = struct {
     user: []const u8,
     repo: []const u8,
     ref: []const u8, // branch, tag, or SHA (default: "main")
+    constraint: ?semver.Constraint = null, // Extracted SemVer criteria
 
     /// Parses a URL string into a structured package identifier
     pub fn parse(requested_url: []const u8) !ParsedPackage {
@@ -42,10 +44,16 @@ pub const ParsedPackage = struct {
         // Handle Git-based providers
         var base_url = requested_url;
         var ref: []const u8 = "main";
+        var constraint: ?semver.Constraint = null;
 
         if (std.mem.indexOfScalar(u8, requested_url, '@')) |idx| {
             base_url = requested_url[0..idx];
             ref = requested_url[idx + 1 ..];
+
+            // Attempt to parse the reference as a SemVer constraint
+            if (semver.Constraint.parse(ref)) |parsed_constraint| {
+                constraint = parsed_constraint;
+            } else |_| {} // Fall back to treating it as a raw branch/SHA
         }
 
         var iter = std.mem.splitScalar(u8, base_url, '/');
@@ -68,6 +76,7 @@ pub const ParsedPackage = struct {
             .user = user,
             .repo = repo,
             .ref = ref,
+            .constraint = constraint,
         };
     }
 };
