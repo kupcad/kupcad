@@ -22,6 +22,7 @@ pub const CompileError = error{
     UnsupportedScope,
     ProtectedSymbol,
     CorruptedBytecode,
+    VariableAlreadyDeclared,
 };
 
 pub const Upvalue = scope_mod.Upvalue;
@@ -36,6 +37,7 @@ pub const Compiler = struct {
 
     // Track script globals purely by String Slice to decouple from AST integer IDs
     script_globals: std.StringHashMapUnmanaged(void) = .empty,
+    imported_symbols: std.StringHashMapUnmanaged(void) = .empty,
 
     symbols: []const resolver.ResolvedSymbol,
     token_starts: []const u32, // Map AST nodes back to Lexer byte offsets
@@ -108,6 +110,7 @@ pub const Compiler = struct {
             .allocator = allocator,
             .tree = tree,
             .script_globals = .empty,
+            .imported_symbols = .empty,
             .symbols = symbols,
             .token_starts = token_starts,
             .current_chunk = output_chunk,
@@ -133,6 +136,7 @@ pub const Compiler = struct {
     pub fn deinit(self: *Compiler) void {
         self.upvalues.deinit(self.allocator);
         self.script_globals.deinit(self.allocator);
+        self.imported_symbols.deinit(self.allocator);
         self.locals.deinit(self.allocator);
         for (self.loops.items) |*loop| {
             loop.exit_jumps.deinit(self.allocator);
@@ -485,8 +489,11 @@ pub const Compiler = struct {
 
     fn compileImportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const is_stmt = self.tree.importStmt(node);
-        const path_str = self.tree.getString(is_stmt.path);
-        const symbols = self.tree.getStringLists(is_stmt.symbols);
+
+        // Sanitize path and extract AliasPairs at the very top
+        const raw_path_str = self.tree.getString(is_stmt.path);
+        const path_str = std.mem.trimEnd(u8, raw_path_str, "/");
+        const symbols = self.tree.getAliasPairs(is_stmt.symbols);
 
         // --- 1. Asset Interception ---
         if (std.mem.endsWith(u8, path_str, ".stl") or std.mem.endsWith(u8, path_str, ".step")) {
@@ -507,7 +514,7 @@ pub const Compiler = struct {
             self.simulatePush(1);
 
             if (symbols.len > 0) {
-                const sym_id = symbols[0];
+                const sym_id = symbols[0].alias; // Target the alias ID
                 if (self.enclosing != null and self.resolveLocal(sym_id) == null and (try self.resolveUpvalue(sym_id)) == null and !self.isScriptGlobal(sym_id)) {
                     const slot = self.getNextLocalSlot();
                     try self.addLocal(sym_id, slot);
@@ -549,42 +556,50 @@ pub const Compiler = struct {
         try self.emitOpWithOperand(.op_import, .op_import_wide, path_idx);
 
         if (symbols.len == 0) {
-            try self.emitOp(.op_pop); // Discard module
+            try self.emitOp(.op_pop);
             try self.emitOp(.op_nil);
             return;
         }
 
-        for (symbols) |sym_id| {
-            try self.emitOp(.op_dup); // Duplicate module for property extraction
+        for (symbols) |pair| {
+            try self.emitOp(.op_dup);
 
-            const name_str = self.tree.getString(sym_id);
-            const name_idx = try self.makeStringConstant(name_str);
-            try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+            const orig_str = self.tree.getString(pair.original);
+            const orig_idx = try self.makeStringConstant(orig_str);
+            try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, orig_idx);
             try self.emitInlineCacheIndex();
 
-            if (self.enclosing != null and self.resolveLocal(sym_id) == null and (try self.resolveUpvalue(sym_id)) == null and !self.isScriptGlobal(sym_id)) {
+            const alias_str = self.tree.getString(pair.alias);
+            const alias_idx = try self.makeStringConstant(alias_str);
+
+            if (self.enclosing != null) {
+                if (self.resolveLocal(pair.alias) != null or (try self.resolveUpvalue(pair.alias)) != null or self.isScriptGlobal(pair.alias)) {
+                    return error.VariableAlreadyDeclared; // Reject collision
+                }
                 const slot = self.getNextLocalSlot();
-                try self.addLocal(sym_id, slot);
-            }
-            if (self.enclosing == null) {
-                // Define top-level imported symbols directly to enable parenthesis-free invocation
-                try self.emitOp(.op_dup);
-                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
-            } else {
+                try self.addLocal(pair.alias, slot);
                 const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
-                try self.emitVariableStore(sym_id, dummy_sym);
+                try self.emitVariableStore(pair.alias, dummy_sym);
+            } else {
+                // Use imported_symbols to reject duplicate imports securely, without poisoning script_globals!
+                if (self.isScriptGlobal(pair.alias) or self.imported_symbols.contains(alias_str)) {
+                    return error.VariableAlreadyDeclared; // Reject collision
+                }
+                try self.emitOp(.op_dup);
+                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, alias_idx);
+                try self.imported_symbols.put(self.allocator, alias_str, {}); // Track securely
             }
 
-            try self.emitOp(.op_pop); // Pop the assigned value
+            try self.emitOp(.op_pop);
         }
 
-        try self.emitOp(.op_pop); // Pop the module
+        try self.emitOp(.op_pop); // Pop module
         try self.emitOp(.op_nil);
     }
 
     fn compileExportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const ex_stmt = self.tree.exportStmt(node);
-        const symbols = self.tree.getStringLists(ex_stmt.symbols);
+        const symbols = self.tree.getAliasPairs(ex_stmt.symbols);
 
         const mod_name = try self.makeStringConstant("__exports__");
 
@@ -598,13 +613,17 @@ pub const Compiler = struct {
             try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, mod_name);
         }
 
-        for (symbols) |sym_id| {
-            try self.emitVariableLoad(sym_id, null); // Stack: [ObjModule, Value]
+        for (symbols) |pair| {
+            try self.emitVariableLoad(pair.original, null);
 
-            const name_str = self.tree.getString(sym_id);
-            const name_idx = try self.makeStringConstant(name_str);
-            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx); // Stack: [ObjModule, Value]
-            try self.emitOp(.op_pop); // Stack: [ObjModule]
+            const alias_str = self.tree.getString(pair.alias);
+            const alias_idx = try self.makeStringConstant(alias_str);
+
+            // op_set_member expects [ObjModule, Value]. It pops Value, attaches it, and leaves ObjModule + Value
+            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, alias_idx);
+
+            // Pop the attached Value so ONLY the ObjModule remains on the stack
+            try self.emitOp(.op_pop);
         }
     }
 
@@ -2130,6 +2149,7 @@ pub const Compiler = struct {
             .allocator = self.allocator,
             .tree = self.tree,
             .script_globals = .empty,
+            .imported_symbols = .empty,
             .symbols = self.symbols,
             .token_starts = self.token_starts,
             .current_chunk = child_chunk,

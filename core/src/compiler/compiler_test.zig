@@ -208,7 +208,7 @@ test "Compiler: compiles import statement" {
     defer b.deinit();
 
     const path_str = try b.intern("math.kup");
-    const empty_symbols = try b.addStringLists(&.{});
+    const empty_symbols = try b.addAliasPairs(&.{});
 
     // import "math.kup"
     const import_node = try b.importStmt(empty_symbols, path_str, .none, 0);
@@ -1001,7 +1001,8 @@ test "Compiler: compiles export statement natively yielding module" {
 
     // AST: export { x }
     const x_sym = try b.intern("x");
-    const symbols = try b.addStringLists(&.{x_sym});
+    // Wrap the symbol in the AliasPair struct
+    const symbols = try b.addAliasPairs(&.{.{ .original = x_sym, .alias = x_sym }});
     const export_node = try b.exportStmt(symbols, .none, .none, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
@@ -1014,10 +1015,6 @@ test "Compiler: compiles export statement natively yielding module" {
 
     try comp.compile(export_node);
 
-    // Expected Bytecode:
-    // 0: op_module ("exports")
-    // 2: op_dup
-    // 3: op_define_global ("__exports__")
     try testing.expectEqual(chunk.OpCode.op_module, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
     try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
 }
@@ -1031,7 +1028,8 @@ test "Compiler: compiles STL asset import interception" {
     // AST: import { shape } from "model.stl"
     const path_str = try b.intern("model.stl");
     const shape_sym = try b.intern("shape");
-    const symbols = try b.addStringLists(&.{shape_sym});
+    // Wrap the symbol in the AliasPair struct
+    const symbols = try b.addAliasPairs(&.{.{ .original = shape_sym, .alias = shape_sym }});
     const import_node = try b.importStmt(symbols, path_str, .none, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
@@ -1044,10 +1042,6 @@ test "Compiler: compiles STL asset import interception" {
 
     try comp.compile(import_node);
 
-    // Asset extensions bypass 'op_import' and generate a native function call
-    // 0: op_get_global ("import_stl")
-    // 2: op_constant ("model.stl")
-    // 4: op_call (1 arg)
     try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
     try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
     try testing.expectEqual(chunk.OpCode.op_call, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));

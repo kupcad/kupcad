@@ -101,10 +101,11 @@ test "VM: op_import caches evaluated modules to prevent redundant execution" {
     ;
     try mem_vfs.vfs().writeFile("./shared_pkg.kup", pkg_source);
 
+    // Removed the destructuring on the second import to prevent VariableAlreadyDeclared
     const main_source =
         \\import { get_value } from "./shared_pkg.kup"
-        \\import { get_value } from "./shared_pkg.kup"
-        \\result = get_value()
+        \\import "./shared_pkg.kup"
+        \\result = get_value
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
@@ -791,4 +792,82 @@ test "VM: op_import supports barrel re-exports from multiple files" {
 
     const result_val = vm.globals.get("result") orelse return error.MissingResult;
     try testing.expectEqual(@as(f64, 30.0), result_val.asNumber());
+}
+
+test "VM: op_import supports symbol aliasing via 'as'" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    try mem_vfs.vfs().writeFile("./pkg.kup", "def val() 10 end\nexport val");
+
+    const main_source =
+        \\import { val as external_val } from "./pkg.kup"
+        \\result = external_val
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const res = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, res);
+
+    const result_val = vm.globals.get("result").?;
+    try testing.expectEqual(@as(f64, 10.0), result_val.asNumber());
+}
+
+test "Compiler: op_import rejects symbol collisions" {
+    const main_source =
+        \\import { val } from "./a.kup"
+        \\import { val } from "./b.kup"
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // Compilation MUST fail natively with the new VariableAlreadyDeclared error
+    const result = comp.compile(doc.tree.root);
+    try testing.expectError(error.VariableAlreadyDeclared, result);
+}
+
+test "VM: op_import catches self-import cycles gracefully" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // File imports itself
+    try mem_vfs.vfs().writeFile("./self.kup", "import \"./self.kup\"");
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, "import \"./self.kup\"");
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    vm.mute_errors = true;
+    const res = vm.interpret(&out_chunk);
+
+    // Sentinel stops infinite loop and evaluates to nil, cascading into a Circular Dependency RuntimeError
+    try testing.expectEqual(.runtime_error, res);
 }

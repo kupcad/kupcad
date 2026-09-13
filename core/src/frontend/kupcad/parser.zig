@@ -66,6 +66,7 @@ pub const Parser = struct {
     scratch_rescue_clauses: std.ArrayListUnmanaged(ast.RescueClause) = .empty,
     scratch_strings: std.ArrayListUnmanaged(ast.StringId) = .empty,
     scratch_hash_entries: std.ArrayListUnmanaged(ast.HashEntry) = .empty,
+    scratch_alias_pairs: std.ArrayListUnmanaged(ast.AliasPair) = .empty,
 
     pub fn init(tokens: common_token.TokenList(Tag), source: []const u8, allocator: std.mem.Allocator) !Parser {
         var parser = Parser{
@@ -92,6 +93,7 @@ pub const Parser = struct {
         try parser.scratch_rescue_clauses.ensureTotalCapacity(allocator, estimated_nodes / 8);
         try parser.scratch_strings.ensureTotalCapacity(allocator, estimated_nodes / 4);
         try parser.scratch_hash_entries.ensureTotalCapacity(allocator, estimated_nodes / 4);
+        try parser.scratch_alias_pairs.ensureTotalCapacity(allocator, estimated_nodes / 4);
 
         return parser;
     }
@@ -108,6 +110,7 @@ pub const Parser = struct {
         self.scratch_rescue_clauses.deinit(self.allocator);
         self.scratch_strings.deinit(self.allocator);
         self.scratch_hash_entries.deinit(self.allocator);
+        self.scratch_alias_pairs.deinit(self.allocator);
     }
 
     // --- O(1) Lookahead Helpers ---
@@ -544,8 +547,8 @@ pub const Parser = struct {
         }
 
         const start_tok = try self.expect(if (is_export) .keyword_export else .keyword_import);
-        const s_len = self.scratch_strings.items.len;
-        defer self.scratch_strings.shrinkRetainingCapacity(s_len);
+        const s_len = self.scratch_alias_pairs.items.len;
+        defer self.scratch_alias_pairs.shrinkRetainingCapacity(s_len);
 
         var path_node: ast.StringId = .none;
         var attributes: ast.NodeIndex = .none;
@@ -556,13 +559,11 @@ pub const Parser = struct {
             while (self.tag(0) != .r_brace and self.tag(0) != .eof) {
                 self.skipIgnored();
 
-                // Track start of the namespace path
                 const path_start_tok = self.tok_idx;
 
                 if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
                 self.advance();
 
-                // Consume any `::` chain
                 while (self.tag(0) == .colon_colon) {
                     self.advance();
                     if (self.tag(0) == .constant or self.tag(0) == .ident) {
@@ -570,12 +571,22 @@ pub const Parser = struct {
                     } else return ParseError.UnexpectedToken;
                 }
 
-                // Combine the entire `A::B::C` token span into a single StringId
                 const p_start = self.tokens.starts[path_start_tok];
                 const prev_tok = self.tok_idx - 1;
                 const p_end = self.tokens.starts[prev_tok] + self.tokens.lengths[prev_tok];
+                const orig_id = try self.b.intern(self.source[p_start..p_end]);
+                var alias_id = orig_id;
 
-                try self.scratch_strings.append(self.allocator, try self.b.intern(self.source[p_start..p_end]));
+                self.skipIgnored();
+                if (self.tag(0) == .keyword_as) {
+                    self.advance();
+                    self.skipIgnored();
+                    if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
+                    alias_id = try self.b.intern(self.lexeme(0));
+                    self.advance();
+                }
+
+                try self.scratch_alias_pairs.append(self.allocator, .{ .original = orig_id, .alias = alias_id });
 
                 if (self.tag(0) == .comma) self.advance() else break;
             }
@@ -583,7 +594,6 @@ pub const Parser = struct {
             _ = try self.expect(.keyword_from);
             has_from = true;
         } else if (self.tag(0) == .constant or self.tag(0) == .ident) {
-            // Support raw paths like `export Test::Example, Math::Vector`
             while (true) {
                 self.skipIgnored();
                 const path_start_tok = self.tok_idx;
@@ -597,12 +607,22 @@ pub const Parser = struct {
                     } else return ParseError.UnexpectedToken;
                 }
 
-                // Combine the entire `A::B::C` token span into a single unfragmented StringId
                 const p_start = self.tokens.starts[path_start_tok];
                 const prev_tok = self.tok_idx - 1;
                 const p_end = self.tokens.starts[prev_tok] + self.tokens.lengths[prev_tok];
+                const orig_id = try self.b.intern(self.source[p_start..p_end]);
+                var alias_id = orig_id;
 
-                try self.scratch_strings.append(self.allocator, try self.b.intern(self.source[p_start..p_end]));
+                self.skipIgnored();
+                if (self.tag(0) == .keyword_as) {
+                    self.advance();
+                    self.skipIgnored();
+                    if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
+                    alias_id = try self.b.intern(self.lexeme(0));
+                    self.advance();
+                }
+
+                try self.scratch_alias_pairs.append(self.allocator, .{ .original = orig_id, .alias = alias_id });
 
                 if (self.tag(0) == .comma) {
                     self.advance();
@@ -616,7 +636,7 @@ pub const Parser = struct {
                 has_from = true;
             }
         } else if (self.tag(0) == .string) {
-            has_from = true; // e.g. import "file.kup"
+            has_from = true;
         } else {
             return ParseError.UnexpectedToken;
         }
@@ -634,7 +654,7 @@ pub const Parser = struct {
             return ParseError.UnexpectedToken;
         }
 
-        const span = try self.b.addStringLists(self.scratch_strings.items[s_len..]);
+        const span = try self.b.addAliasPairs(self.scratch_alias_pairs.items[s_len..]);
         if (is_export) {
             return self.b.exportStmt(span, path_node, attributes, start_tok) catch ParseError.OutOfMemory;
         } else {

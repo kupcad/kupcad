@@ -906,3 +906,27 @@ test "KupCAD Lexer: Interpolation containing nested curly braces" {
         t(.eof, ""),
     });
 }
+
+test "KupCAD Lexer: 'as' and 'with' keywords in imports" {
+    try expectTokens("import { x as y } from \"lib\" with { version: 1 }", &.{
+        t(.keyword_import, "import"), t(.l_brace, "{"),     t(.ident, "x"),
+        t(.keyword_as, "as"),         t(.ident, "y"),       t(.r_brace, "}"),
+        t(.keyword_from, "from"),     t(.string, "lib"),    t(.keyword_with, "with"),
+        t(.l_brace, "{"),             t(.ident, "version"), t(.colon, ":"),
+        t(.number, "1"),              t(.r_brace, "}"),     t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Multi-line strings without Heredoc" {
+    try expectTokens("\"line 1\nline 2\"", &.{
+        t(.string, "line 1\nline 2"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Chained operators with trailing underscores" {
+    // Ensures numbers ending in '_' don't bleed into identifiers
+    try expectTokens("val = 1_000_ + offset", &.{
+        t(.ident, "val"), t(.equal, "="),      t(.number, "1_000_"),
+        t(.plus, "+"),    t(.ident, "offset"), t(.eof, ""),
+    });
+}

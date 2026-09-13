@@ -215,14 +215,19 @@ pub const LambdaExpr = struct {
     body: NodeIndex,
 };
 
+pub const AliasPair = struct {
+    original: StringId,
+    alias: StringId,
+};
+
 pub const ImportStmt = struct {
-    symbols: Span, // Span of StringId
+    symbols: Span, // Span of AliasPair
     path: StringId,
     attributes: NodeIndex = .none,
 };
 
 pub const ExportStmt = struct {
-    symbols: Span, // Span of StringId
+    symbols: Span, // Span of AliasPair
     path: StringId,
     attributes: NodeIndex = .none,
 };
@@ -340,6 +345,7 @@ pub const Tree = struct {
     when_branches: std.ArrayListUnmanaged(WhenBranch) = .empty,
     lhs_exprs: std.ArrayListUnmanaged(LhsExpr) = .empty,
     rescue_clauses: std.ArrayListUnmanaged(RescueClause) = .empty,
+    alias_pairs: std.ArrayListUnmanaged(AliasPair) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Tree {
         _ = allocator;
@@ -363,6 +369,7 @@ pub const Tree = struct {
         self.when_branches.deinit(allocator);
         self.lhs_exprs.deinit(allocator);
         self.rescue_clauses.deinit(allocator);
+        self.alias_pairs.deinit(allocator);
     }
 
     /// Safely extracts the StringId payload from a node
@@ -385,6 +392,10 @@ pub const Tree = struct {
 
     pub fn getNodes(self: *const Tree, span: Span) []const NodeIndex {
         return self.extra_node_indices.items[span.start..span.end];
+    }
+
+    pub fn getAliasPairs(self: *const Tree, span: Span) []const AliasPair {
+        return self.alias_pairs.items[span.start..span.end];
     }
 
     pub fn getStringLists(self: *const Tree, span: Span) []const StringId {
@@ -861,6 +872,12 @@ pub const Builder = struct {
     pub fn addNodes(self: *Builder, items: []const NodeIndex) !Span {
         const start = @as(u32, @intCast(self.tree.extra_node_indices.items.len));
         try self.tree.extra_node_indices.appendSlice(self.allocator, items);
+        return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
+    }
+
+    pub fn addAliasPairs(self: *Builder, items: []const AliasPair) !Span {
+        const start = @as(u32, @intCast(self.tree.alias_pairs.items.len));
+        try self.tree.alias_pairs.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 

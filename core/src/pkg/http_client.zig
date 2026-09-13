@@ -11,7 +11,13 @@ pub fn request(
     options: std.http.Client.RequestOptions,
 ) !std.http.Client.Request {
     const protocol = std.http.Client.Protocol.fromUri(uri) orelse return error.UnsupportedUriScheme;
-    const port = uri.port orelse protocol.port();
+
+    // Explicitly define the fallback port mapping since `protocol.port()` is private
+    const default_port: u16 = switch (protocol) {
+        .plain => 80,
+        .tls => 443,
+    };
+    const port = uri.port orelse default_port;
 
     var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
     const host_name = try uri.getHost(&host_buf);
@@ -20,7 +26,7 @@ pub fn request(
         .host = host_name,
         .port = port,
         .protocol = protocol,
-        .timeout = .{ .ns = CONNECTION_TIMEOUT_NS },
+        .timeout = .{ .duration = .{ .raw = .fromNanoseconds(CONNECTION_TIMEOUT_NS), .clock = .awake } },
     });
     errdefer {
         conn.closing = true;
@@ -30,7 +36,6 @@ pub fn request(
     var final_opts = options;
     final_opts.connection = conn;
 
-    // Safely inject the default User-Agent only if it hasn't been explicitly overridden or omitted
     if (final_opts.headers.user_agent == .default) {
         final_opts.headers.user_agent = .{ .override = DEFAULT_USER_AGENT };
     }

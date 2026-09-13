@@ -69,10 +69,16 @@ test "Formatter Rule: SortImportsRule handles named and destructured imports" {
     try testing.expectEqualStrings("b_math.kup", parser.b.tree.getString(parser.b.tree.importStmt(n1).path));
     try testing.expectEqualStrings("z_hardware.kup", parser.b.tree.getString(parser.b.tree.importStmt(n2).path));
 
-    // Verify payload is preserved safely (B_Math should be at index 1 now)
+    // Verify payload is preserved safely
+    // "b_math.kup" is at index 1 and has the symbol "Math"
     const math_symbols_span = parser.b.tree.importStmt(n1).symbols;
-    const math_symbols = parser.b.tree.getStringLists(math_symbols_span);
-    try testing.expectEqualStrings("Math", parser.b.tree.getString(math_symbols[0]));
+    const math_symbols = parser.b.tree.getAliasPairs(math_symbols_span);
+    try testing.expectEqualStrings("Math", parser.b.tree.getString(math_symbols[0].original));
+
+    // "z_hardware.kup" is at index 2 and has the symbol "ThreadedInsert"
+    const hardware_symbols_span = parser.b.tree.importStmt(n2).symbols;
+    const hardware_symbols = parser.b.tree.getAliasPairs(hardware_symbols_span);
+    try testing.expectEqualStrings("ThreadedInsert", parser.b.tree.getString(hardware_symbols[0].original));
 }
 
 test "Formatter Rule: SortImportsRule respects non-contiguous blocks" {

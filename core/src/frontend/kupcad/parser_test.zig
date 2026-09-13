@@ -102,10 +102,12 @@ test "KupCAD Parser: Import Statement" {
     const import_stmt = tree.importStmt(stmt);
 
     try testing.expectEqualStrings("./hardware.kup", tree.getString(import_stmt.path));
-    const symbols = tree.getStringLists(import_stmt.symbols);
+
+    // Properly extract AliasPairs instead of raw StringIds
+    const symbols = tree.getAliasPairs(import_stmt.symbols);
     try testing.expectEqual(@as(usize, 2), symbols.len);
-    try testing.expectEqualStrings("ThreadedInsert", tree.getString(symbols[0]));
-    try testing.expectEqualStrings("Screw", tree.getString(symbols[1]));
+    try testing.expectEqualStrings("ThreadedInsert", tree.getString(symbols[0].original));
+    try testing.expectEqualStrings("Screw", tree.getString(symbols[1].original));
 }
 
 test "KupCAD Parser: If / Elsif / Else Control Flow" {
@@ -1057,8 +1059,8 @@ test "KupCAD Parser: Import / Export with Attributes (with {})" {
     const is_stmt = tree.importStmt(imp_node);
     try testing.expectEqualStrings("module-name", tree.getString(is_stmt.path));
 
-    const imp_symbols = tree.getStringLists(is_stmt.symbols);
-    try testing.expectEqualStrings("names", tree.getString(imp_symbols[0]));
+    const imp_symbols = tree.getAliasPairs(is_stmt.symbols);
+    try testing.expectEqualStrings("names", tree.getString(imp_symbols[0].original));
 
     const attrs = pt.getNode(is_stmt.attributes);
     const hash_entries = tree.getHashEntries(tree.nodeSpan(attrs));
@@ -1089,14 +1091,14 @@ test "KupCAD Parser: Optional Imports and Trailing Call Commas" {
     const imp_node_1 = pt.getNode(try pt.parser.parseStatement());
     const is1 = tree.importStmt(imp_node_1);
     try testing.expectEqualStrings("global_config.kup", tree.getString(is1.path));
-    const symbols1 = tree.getStringLists(is1.symbols);
+    const symbols1 = tree.getAliasPairs(is1.symbols);
     try testing.expectEqual(@as(usize, 0), symbols1.len);
 
     const imp_node_2 = pt.getNode(try pt.parser.parseStatement());
     const is2 = tree.importStmt(imp_node_2);
     try testing.expectEqualStrings("hardware.kup", tree.getString(is2.path));
-    const symbols2 = tree.getStringLists(is2.symbols);
-    try testing.expectEqualStrings("Hardware", tree.getString(symbols2[0]));
+    const symbols2 = tree.getAliasPairs(is2.symbols);
+    try testing.expectEqualStrings("Hardware", tree.getString(symbols2[0].original));
 
     const call_node = pt.getNode(try pt.parser.parseStatement());
     const mc = tree.methodCall(call_node);
@@ -1201,9 +1203,9 @@ test "KupCAD Parser: Nested Module Definitions and Export Statements" {
     const es = tree.exportStmt(export_node);
     try testing.expectEqualStrings("./housing.kup", tree.getString(es.path));
 
-    const export_symbols = tree.getStringLists(es.symbols);
-    try testing.expectEqualStrings("Enclosure", tree.getString(export_symbols[0]));
-    try testing.expectEqualStrings("Mount", tree.getString(export_symbols[1]));
+    const export_symbols = tree.getAliasPairs(es.symbols);
+    try testing.expectEqualStrings("Enclosure", tree.getString(export_symbols[0].original));
+    try testing.expectEqualStrings("Mount", tree.getString(export_symbols[1].original));
 
     const mod_node = pt.getNode(try pt.parser.parseStatement());
     try testing.expectEqual(ast.Tag.module_stmt, mod_node.tag);
@@ -3411,13 +3413,13 @@ test "KupCAD Parser: Standalone Export of Methods and Variables" {
     try testing.expectEqual(ast.Tag.export_stmt, stmt.tag);
 
     const es = tree.exportStmt(stmt);
-    const symbols = tree.getStringLists(es.symbols);
+    const symbols = tree.getAliasPairs(es.symbols);
 
     // Verifies the parser correctly accepts `.ident` tokens without throwing UnexpectedToken
     try testing.expectEqual(@as(usize, 3), symbols.len);
-    try testing.expectEqualStrings("my_func", tree.getString(symbols[0]));
-    try testing.expectEqualStrings("local_var", tree.getString(symbols[1]));
-    try testing.expectEqualStrings("SomeClass", tree.getString(symbols[2]));
+    try testing.expectEqualStrings("my_func", tree.getString(symbols[0].original));
+    try testing.expectEqualStrings("local_var", tree.getString(symbols[1].original));
+    try testing.expectEqualStrings("SomeClass", tree.getString(symbols[2].original));
 
     // Standalone exports don't have a `from` path
     try testing.expectEqual(ast.StringId.none, es.path);
@@ -3436,12 +3438,12 @@ test "KupCAD Parser: Braced Export of Methods and Variables" {
     const es = tree.exportStmt(stmt);
     try testing.expectEqualStrings("./math.kup", tree.getString(es.path));
 
-    const symbols = tree.getStringLists(es.symbols);
+    const symbols = tree.getAliasPairs(es.symbols);
     try testing.expectEqual(@as(usize, 2), symbols.len);
 
     // Verifies braced lists successfully process `.ident` and `.constant`
-    try testing.expectEqualStrings("calculate_area", tree.getString(symbols[0]));
-    try testing.expectEqualStrings("PI", tree.getString(symbols[1]));
+    try testing.expectEqualStrings("calculate_area", tree.getString(symbols[0].original));
+    try testing.expectEqualStrings("PI", tree.getString(symbols[1].original));
 }
 
 test "KupCAD Parser: Standalone Namespace Exports" {
@@ -3455,12 +3457,12 @@ test "KupCAD Parser: Standalone Namespace Exports" {
     try testing.expectEqual(ast.Tag.export_stmt, stmt.tag);
 
     const es = tree.exportStmt(stmt);
-    const symbols = tree.getStringLists(es.symbols);
+    const symbols = tree.getAliasPairs(es.symbols);
 
     // Verifies the `::` namespaces were perfectly merged into single string IDs
     try testing.expectEqual(@as(usize, 2), symbols.len);
-    try testing.expectEqualStrings("Test::Example", tree.getString(symbols[0]));
-    try testing.expectEqualStrings("Math::Vector", tree.getString(symbols[1]));
+    try testing.expectEqualStrings("Test::Example", tree.getString(symbols[0].original));
+    try testing.expectEqualStrings("Math::Vector", tree.getString(symbols[1].original));
 
     // Standalone exports don't have a `from` path
     try testing.expectEqual(ast.StringId.none, es.path);
@@ -3479,12 +3481,12 @@ test "KupCAD Parser: Braced Namespace Imports" {
     const is_stmt = tree.importStmt(stmt);
     try testing.expectEqualStrings("./lib.kup", tree.getString(is_stmt.path));
 
-    const symbols = tree.getStringLists(is_stmt.symbols);
+    const symbols = tree.getAliasPairs(is_stmt.symbols);
     try testing.expectEqual(@as(usize, 2), symbols.len);
 
     // Verifies braced lists also successfully process `::` tokens
-    try testing.expectEqualStrings("Custom::Example", tree.getString(symbols[0]));
-    try testing.expectEqualStrings("Base::Math::Vector", tree.getString(symbols[1]));
+    try testing.expectEqualStrings("Custom::Example", tree.getString(symbols[0].original));
+    try testing.expectEqualStrings("Base::Math::Vector", tree.getString(symbols[1].original));
 }
 
 test "KupCAD Parser: Rejects Nested Import/Export Statements" {
@@ -3688,9 +3690,9 @@ test "KupCAD: Default Import for 3D Assets" {
     const is_stmt = tree.importStmt(stmt);
     try testing.expectEqualStrings("./assets/608_bearing.kup", tree.getString(is_stmt.path));
 
-    const symbols = tree.getStringLists(is_stmt.symbols);
+    const symbols = tree.getAliasPairs(is_stmt.symbols);
     try testing.expectEqual(@as(usize, 1), symbols.len);
-    try testing.expectEqualStrings("bearing", tree.getString(symbols[0]));
+    try testing.expectEqualStrings("bearing", tree.getString(symbols[0].original));
 }
 
 test "KupCAD: Unary Minus vs Method Call Precedence" {
@@ -3847,4 +3849,87 @@ test "KupCAD Parser: Manufacturing Metadata (BOM) Chaining" {
 
     const new_call = tree.methodCall(pt.getNode(meta_call.receiver));
     try testing.expectEqualStrings("new", tree.getString(new_call.method_name));
+}
+
+test "KupCAD Parser: Import Statement Aliasing" {
+    const source = "import { ThreadedInsert as Insert } from \"./hardware.kup\"";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const import_stmt = pt.parser.b.tree.importStmt(pt.getNode(stmt_idx));
+
+    const symbols = pt.parser.b.tree.getAliasPairs(import_stmt.symbols);
+    try std.testing.expectEqualStrings("ThreadedInsert", pt.parser.b.tree.getString(symbols[0].original));
+    try std.testing.expectEqualStrings("Insert", pt.parser.b.tree.getString(symbols[0].alias));
+}
+
+test "KupCAD Parser: Aliased Namespace Imports" {
+    const source = "import Core::Math as M from \"./math.kup\"";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const is_stmt = pt.parser.b.tree.importStmt(pt.getNode(stmt_idx));
+
+    const symbols = pt.parser.b.tree.getAliasPairs(is_stmt.symbols);
+    try testing.expectEqual(@as(usize, 1), symbols.len);
+    try testing.expectEqualStrings("Core::Math", pt.parser.b.tree.getString(symbols[0].original));
+    try testing.expectEqualStrings("M", pt.parser.b.tree.getString(symbols[0].alias));
+}
+
+test "KupCAD Parser: Invalid Assignment Target Diagnostics" {
+    const source = "10 = x";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const result = pt.parser.parseStatement();
+
+    // The parser successfully identifies that a primitive literal cannot be the left side of an assignment
+    try testing.expectError(error.InvalidExpression, result);
+    try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
+    try testing.expect(std.mem.indexOf(u8, pt.parser.diagnostics.list.items[0].message, "Invalid expression") != null);
+}
+
+test "KupCAD Parser: Empty Case Statement" {
+    const source = "case val \n end";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    try testing.expectEqual(ast.Tag.case_stmt, stmt.tag);
+
+    const cs = tree.caseStmt(stmt);
+    try testing.expectEqualStrings("val", tree.getString(@as(ast.StringId, @enumFromInt(pt.getNode(cs.condition).data))));
+
+    const branches = tree.getWhenBranches(cs.when_branches);
+    try testing.expectEqual(@as(usize, 0), branches.len);
+    try testing.expectEqual(ast.NodeIndex.none, cs.else_branch);
+}
+
+test "KupCAD Parser: Endless Method with Inline Rescue Modifier" {
+    const source = "def safe_fetch(id) = fetch(id) rescue nil";
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+
+    const stmt_idx = try pt.parser.parseStatement();
+    const stmt = pt.getNode(stmt_idx);
+    try testing.expectEqual(ast.Tag.def_stmt, stmt.tag);
+
+    const ds = tree.defStmt(stmt);
+    try testing.expectEqualStrings("safe_fetch", tree.getString(ds.name));
+
+    const body_node = pt.getNode(ds.body);
+    try testing.expectEqual(ast.Tag.block, body_node.tag); // Endless methods are wrapped in a block secretly
+
+    const stmts = tree.getNodes(tree.block(body_node).stmts);
+    const inner_expr = pt.getNode(stmts[0]);
+
+    try testing.expectEqual(ast.Tag.rescue_modifier, inner_expr.tag);
+    const rm = tree.rescueModifier(inner_expr);
+    try testing.expectEqualStrings("fetch", tree.getString(tree.methodCall(pt.getNode(rm.expr)).method_name));
+    try testing.expectEqual(ast.Tag.nil, pt.getNode(rm.rescue_expr).tag);
 }

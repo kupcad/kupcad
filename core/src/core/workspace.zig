@@ -10,7 +10,7 @@ pub const Module = struct {
     doc: Document,
     deps: std.ArrayListUnmanaged(ModuleId) = .empty,
     // Maps the string representation of an exported symbol to its original AST NodeIndex
-    exports: std.StringHashMapUnmanaged(ast.NodeIndex) = .empty,
+    exports: std.StringHashMapUnmanaged(ast.StringId) = .empty,
 
     pub fn deinit(self: *Module, allocator: std.mem.Allocator) void {
         allocator.free(self.path);
@@ -60,9 +60,8 @@ pub const Workspace = struct {
             mod.deps.clearRetainingCapacity();
             mod.exports.clearRetainingCapacity();
 
-            for (mod.doc.tree.nodes.items, 0..) |*node, i| {
-                const node_idx: ast.NodeIndex = @enumFromInt(i);
-
+            // Removed unused `i` and `node_idx`
+            for (mod.doc.tree.nodes.items) |*node| {
                 if (node.tag == .import_stmt) {
                     const import_stmt = mod.doc.tree.importStmt(node);
                     const dep_path = mod.doc.tree.getString(import_stmt.path);
@@ -73,11 +72,12 @@ pub const Workspace = struct {
                 } else if (node.tag == .export_stmt) {
                     // Extract exported symbols and populate the Export Table
                     const export_stmt = mod.doc.tree.exportStmt(node);
-                    const symbols = mod.doc.tree.getStringLists(export_stmt.symbols);
+                    const symbols = mod.doc.tree.getAliasPairs(export_stmt.symbols);
 
-                    for (symbols) |sym_id| {
-                        const sym_name = mod.doc.tree.getString(sym_id);
-                        try mod.exports.put(self.allocator, sym_name, node_idx);
+                    for (symbols) |sym| {
+                        const alias_str = mod.doc.tree.getString(sym.alias);
+                        // Map the exported string directly to the original AST node ID
+                        try mod.exports.put(self.allocator, alias_str, sym.original);
                     }
                 }
             }
