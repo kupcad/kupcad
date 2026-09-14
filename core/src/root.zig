@@ -35,6 +35,9 @@ test {
     _ = @import("core/text_test.zig");
     _ = @import("core/semver_test.zig");
 
+    // Daemon
+    _ = @import("daemon/watcher_test.zig");
+
     // Frontends
     _ = @import("frontend/kupcad/docstring_test.zig");
     _ = @import("frontend/kupcad/lexer_test.zig");
