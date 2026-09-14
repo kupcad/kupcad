@@ -163,7 +163,7 @@
       }
     },
     "keywords": {
-      "match": "(?<![\\\\w.])(if|or|do|end|not|def|nil|and|next|with|from|true|else|self|when|case|then|super|until|break|while|yield|elsif|false|class|begin|return|module|unless|rescue|ensure|export|import|public|private)(?![\\\\w?!])",
+      "match": "(?<![\\\\w.])(do|as|if|or|not|def|nil|end|and|true|else|with|then|from|next|case|when|self|until|false|elsif|break|yield|while|class|super|begin|module|import|rescue|ensure|export|unless|return|public|private)(?![\\\\w?!])",
       "name": "keyword.control.kupcad"
     },
     "builtins": {
