@@ -101,17 +101,27 @@ pub const ScriptSession = struct {
     }
 
     /// Step 3: Lazy Re-evaluation & Early Cutoff (Pull Phase)
+    pub fn evaluateWorkspace(self: *ScriptSession) !void {
+        // Kahn's Topological Sort: Execute strictly from Leaf dependencies up to Root
+        const sorted = try self.workspace.sortModules();
+        defer self.allocator.free(sorted);
+
+        for (sorted) |mod_id| {
+            try self.evaluateModule(mod_id);
+        }
+    }
+
     pub fn evaluateModule(self: *ScriptSession, mod_id: ModuleId) !void {
         var node = &self.nodes.items[@intFromEnum(mod_id)];
 
-        if (!node.is_stale and node.verified_at == self.global_revision) return; // Cache hit
+        // Cache hit
+        if (!node.is_stale and node.verified_at == self.global_revision) return;
 
         const mod = &self.workspace.modules.items[@intFromEnum(mod_id)];
 
-        for (mod.deps.items) |dep_id| {
-            try self.evaluateModule(dep_id);
-        }
-
+        // ---------------------------------------------------------------
+        // 1. AST Parsing & Document Generation
+        // ---------------------------------------------------------------
         var doc = api.Document.parse(self.allocator, mod.source) catch |err| {
             log.err("Parse failed for module '{s}': {}", .{ mod.path, err });
             return err;
@@ -164,6 +174,7 @@ pub const ScriptSession = struct {
             return;
         }
 
+        // Just update the weak reference. Do NOT call kernel.destruct(old_h)!
         node.cached_handle = new_handle;
         node.output_hash = new_hash;
         node.changed_at = self.global_revision;

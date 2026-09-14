@@ -13,6 +13,7 @@ const registry = @import("../stdlib/registry.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const profiler_mod = @import("profiler.zig");
 const material_mod = @import("../core/material.zig");
+const kernel = @import("../kernel/kernel.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const Document = @import("../core/document.zig").Document;
@@ -76,6 +77,7 @@ pub const VM = struct {
 
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
+    dag_cache: std.AutoHashMapUnmanaged(u64, geom.GeometryHandle) = .empty,
     mute_errors: bool = false,
     step_mode: bool = false,
 
@@ -158,6 +160,7 @@ pub const VM = struct {
             .materials = .empty,
             .display_list = .empty,
             .dag_builder = dag.DAGBuilder.init(allocator),
+            .dag_cache = .empty,
             .mute_errors = builtin.is_test,
             .scratch_arena = std.heap.ArenaAllocator.init(allocator),
             .static_true = null,
@@ -182,6 +185,12 @@ pub const VM = struct {
 
         self.gc.collectGarbage(self, true);
         self.dag_builder.deinit();
+
+        var it = self.dag_cache.valueIterator();
+        while (it.next()) |handle| {
+            kernel.destruct(handle.*);
+        }
+        self.dag_cache.deinit(self.allocator);
 
         self.allocator.destroy(self.native_vfs_ptr);
 
@@ -1406,15 +1415,13 @@ pub const VM = struct {
     }
 
     // --- JIT Materialization ---
-    pub fn ensureConcrete(self: *VM, val: value.Value) !geom.GeometryHandle {
-        if (!val.isGeometry()) return error.RuntimeError;
-        var geometry = val.asGeometry();
+    pub fn ensureConcrete(self: *VM, geometry: value.Value) !geom.GeometryHandle {
+        const geom_obj = geometry.asGeometry();
+        if (geom_obj.isConcrete()) return geom_obj.cached_handle.?;
 
-        if (geometry.cached_handle) |handle| return handle;
-
-        const handle = try dag_evaluator.evaluateDAG(self, geometry.dag_idx);
-        geometry.cached_handle = handle;
-        return handle;
+        // Do NOT mutate the ObjGeometry (geom_obj.cached_handle = handle)
+        // The evaluated handle is now globally owned and managed by `vm.dag_cache`
+        return try dag_evaluator.evaluateDAG(self, geom_obj.dag_idx);
     }
 
     pub fn ensureConcreteCrossSection(self: *VM, val: value.Value) !geom.CrossSectionHandle {

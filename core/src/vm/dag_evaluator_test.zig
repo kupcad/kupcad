@@ -25,9 +25,6 @@ test "DAG Evaluator: correctly evaluates 3D primitive (Cube)" {
     // Verify physics to prove the Manifold C++ object is a 10x20x30 cube
     const vol = kernel.volume(handle);
     try testing.expectEqual(@as(f64, 6000.0), vol);
-
-    // Clean up the C++ memory (Normally handled by ARC, but we skipped ARC here)
-    kernel.destruct(handle);
 }
 
 test "DAG Evaluator: correctly evaluates CSG tree (Union)" {
@@ -47,8 +44,6 @@ test "DAG Evaluator: correctly evaluates CSG tree (Union)" {
     // Two 10x10x10 cubes side-by-side should be exactly 2000 volume
     const vol = kernel.volume(handle);
     try testing.expectEqual(@as(f64, 2000.0), vol);
-
-    kernel.destruct(handle);
 }
 
 test "DAG Builder: CSE Deduplication perfectly reuses identical nodes" {
@@ -87,7 +82,6 @@ test "DAG Evaluator: correctly evaluates 2D extrusion to 3D" {
 
     // 3. Evaluate the 3D extrusion DAG node
     const handle = try dag_evaluator.evaluateDAG(&vm, ext_idx);
-    defer kernel.destruct(handle);
 
     try testing.expectEqual(.manifold, handle.engine);
 
@@ -237,7 +231,6 @@ test "DAG Evaluator: iterative engine handles extreme depths without C-stack ove
 
     // 3. Evaluate the extremely deep DAG
     const handle = try dag_evaluator.evaluateDAG(&vm, current_node);
-    defer kernel.destruct(handle);
 
     // 4. Verify the geometry survived the traversal intact
     const vol = kernel.volume(handle);
@@ -297,4 +290,28 @@ test "DAG Evaluator: evaluateCrossSectionDAG traps 3D geometry mismatch" {
 
     // 3. Must return RuntimeError and safely drop the 3D handle
     try testing.expectError(error.RuntimeError, result);
+}
+
+test "DAG Evaluator: O(1) DAG Cache bypasses kernel evaluation" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Build a basic node and evaluate it natively
+    const c1 = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+    const handle1 = try dag_evaluator.evaluateDAG(&vm, c1);
+
+    // 2. Ensure it populated the VM's DAG cache using the builder's hash
+    const hash = vm.dag_builder.node_hashes.items[c1];
+    try testing.expect(vm.dag_cache.contains(hash));
+
+    // 3. Evaluate the exact same node again. It MUST pull from cache.
+    const handle2 = try dag_evaluator.evaluateDAG(&vm, c1);
+
+    // The raw C++ FFI pointers must be perfectly identical!
+    try testing.expectEqual(handle1.ptr, handle2.ptr);
+
+    // Free ONLY the cached instance (since handle2 is literally handle1)
+    kernel.destruct(handle1);
+    _ = vm.dag_cache.remove(hash);
 }
