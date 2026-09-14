@@ -16,6 +16,8 @@ const GiteaProvider = @import("providers/gitea.zig").GiteaProvider;
 const HttpProvider = @import("providers/http.zig").HttpProvider;
 const LocalProvider = @import("providers/local.zig").LocalProvider;
 
+const log = std.log.scoped(.resolver);
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -64,7 +66,7 @@ pub const Resolver = struct {
         }
 
         self.resolveTask(alias, pkg_url, parent_id) catch |err| {
-            std.debug.print("Error resolving {s}: {any}\n", .{ pkg_url, err });
+            log.err("Error resolving {s}: {any}\n", .{ pkg_url, err });
         };
     }
 

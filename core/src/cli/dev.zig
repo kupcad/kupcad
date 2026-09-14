@@ -260,7 +260,7 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
 }
 
 fn printUsage() void {
-    std.log.info(
+    std.debug.print(
         \\Usage: kupcad dev <subcommand> [options]
         \\
         \\Subcommands:

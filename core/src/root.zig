@@ -5,6 +5,7 @@ pub const chunk = @import("vm/chunk.zig");
 pub const value = @import("core/value.zig");
 pub const locus = @import("locus/src/root.zig");
 pub const manifest = @import("stdlib/manifest.zig");
+pub const std_options = @import("log.zig").std_options;
 
 pub const formatCode = api.formatCode;
 pub const checkCode = api.checkCode;

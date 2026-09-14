@@ -11,6 +11,8 @@ const math_class = @import("stdlib/classes/math.zig");
 const object_class = @import("stdlib/classes/object.zig");
 const gc_class = @import("stdlib/classes/gc.zig");
 
+const log = std.log.scoped(.gen_grammar);
+
 /// Core generation logic separated for testing
 pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     var keywords: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -322,7 +324,7 @@ pub fn main(init: std.process.Init) !void {
     _ = args_iter.skip(); // skip executable name
 
     const output_path = args_iter.next() orelse {
-        std.debug.print("Error: Missing output file path argument.\n", .{});
+        log.err("Error: Missing output file path argument.\n", .{});
         std.process.exit(1);
     };
 
@@ -336,5 +338,5 @@ pub fn main(init: std.process.Init) !void {
         .data = json_content,
     });
 
-    std.debug.print("Successfully generated TextMate grammar at: {s}\n", .{output_path});
+    log.info("Successfully generated TextMate grammar at: {s}\n", .{output_path});
 }

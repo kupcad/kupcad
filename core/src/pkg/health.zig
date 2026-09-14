@@ -1,7 +1,8 @@
 const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
 const Store = @import("store.zig").Store;
-const log = @import("log.zig");
+
+const log = std.log.scoped(.pkg);
 
 pub const Doctor = struct {
     allocator: std.mem.Allocator,
@@ -20,33 +21,33 @@ pub const Doctor = struct {
 
     /// Audits and heals the CAFS and database state
     pub fn run(self: *Doctor) !void {
-        log.print("Running KupCAD Doctor...\n", .{});
+        log.info("Running KupCAD Doctor...\n", .{});
 
         try self.checkDbIntegrity();
         try self.healMissingBlobs();
         try self.healOrphanedBlobs();
 
-        log.print("System health check complete.\n", .{});
+        log.info("System health check complete.\n", .{});
     }
 
     fn checkDbIntegrity(self: *Doctor) !void {
-        log.print("[1/3] Checking SQLite integrity... ", .{});
+        log.info("[1/3] Checking SQLite integrity... ", .{});
         const stmt = try self.store.db.prepare("PRAGMA quick_check");
         defer stmt.deinit();
 
         if (try stmt.one(struct { result: []const u8 }, .{}, .{})) |row| {
             if (std.mem.eql(u8, row.result, "ok")) {
-                log.print("OK\n", .{});
+                log.info("OK\n", .{});
                 return;
             }
         }
 
-        log.print("CORRUPTED!\n", .{});
+        log.err("CORRUPTED!\n", .{});
         return error.DatabaseCorrupted;
     }
 
     fn healMissingBlobs(self: *Doctor) !void {
-        log.print("[2/3] Scanning for missing physical files... ", .{});
+        log.info("[2/3] Scanning for missing physical files... ", .{});
 
         const query = "SELECT hash FROM files";
         var stmt = try self.store.db.prepare(query);
@@ -80,14 +81,14 @@ pub const Doctor = struct {
         }
 
         if (missing_count > 0) {
-            log.print("Evicted {d} missing blobs from index. Run 'kupcad pkg install' to repair.\n", .{missing_count});
+            log.warn("Evicted {d} missing blobs from index. Run 'kupcad pkg install' to repair.\n", .{missing_count});
         } else {
-            log.print("OK\n", .{});
+            log.info("OK\n", .{});
         }
     }
 
     fn healOrphanedBlobs(self: *Doctor) !void {
-        log.print("[3/3] Scanning for orphaned physical files... ", .{});
+        log.info("[3/3] Scanning for orphaned physical files... ", .{});
 
         const files_path = try std.fmt.allocPrint(self.allocator, "{s}/files", .{self.cafs.global_dir_path});
         defer self.allocator.free(files_path);
@@ -124,9 +125,9 @@ pub const Doctor = struct {
         }
 
         if (orphan_count > 0) {
-            log.print("Re-indexed {d} orphaned blobs.\n", .{orphan_count});
+            log.warn("Re-indexed {d} orphaned blobs.\n", .{orphan_count});
         } else {
-            log.print("OK\n", .{});
+            log.info("OK\n", .{});
         }
     }
 };

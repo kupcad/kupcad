@@ -8,6 +8,8 @@ const pkg_cmd = @import("cli/pkg_cmd.zig");
 const dev_cmd = @import("cli/dev.zig");
 const watch_cmd = @import("cli/watch.zig");
 
+pub const std_options = @import("log.zig").std_options;
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     var args_iter = std.process.Args.Iterator.init(init.minimal.args);

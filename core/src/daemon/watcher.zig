@@ -1,13 +1,8 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const xev = @import("xev");
 const ScriptSession = @import("session.zig").ScriptSession;
 
-inline fn logPrint(comptime fmt: []const u8, args: anytype) void {
-    if (!builtin.is_test) {
-        std.debug.print(fmt, args);
-    }
-}
+const log = std.log.scoped(.watcher);
 
 pub const Watcher = struct {
     session: *ScriptSession,
@@ -47,11 +42,10 @@ pub const Watcher = struct {
     }
 
     pub fn start(self: *Watcher) !void {
-        logPrint("Watching '{s}' for changes via libxev...\n", .{self.file_path});
+        log.info("Watching '{s}' for changes via libxev...", .{self.file_path});
 
         // Start 500ms repeating timer
         self.timer.run(&self.loop, &self.completion, 500, Watcher, self, &pollCallback);
-
         // Block the current thread, yielding execution entirely to the OS event loop
         try self.loop.run(.until_done);
     }
@@ -71,15 +65,15 @@ pub const Watcher = struct {
         if (cwd.statFile(self.init_io, self.file_path, .{})) |stat| {
             if (stat.mtime.nanoseconds > self.last_mtime) {
                 self.last_mtime = stat.mtime.nanoseconds;
-                logPrint("\nFile changed: {s}\n", .{self.file_path});
+                log.info("File changed: {s}", .{self.file_path});
 
                 self.session.markFileEdited(self.file_path) catch |err| {
-                    logPrint("Error marking file: {}\n", .{err});
+                    log.err("Error marking file: {}", .{err});
                 };
 
                 if (self.session.workspace.path_to_id.get(self.file_path)) |root_id| {
                     self.session.evaluateModule(root_id) catch |err| {
-                        logPrint("Evaluation failed: {}\n", .{err});
+                        log.err("Evaluation failed: {}", .{err});
                     };
                 }
             }

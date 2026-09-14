@@ -20,6 +20,8 @@ const Compiler = @import("../compiler/compiler.zig").Compiler;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
+const log = std.log.scoped(.vm);
+
 pub const Host = host_mod.Host;
 
 pub const InterpretResult = enum {
@@ -2577,9 +2579,9 @@ pub const VM = struct {
     }
 
     pub fn reportError(self: *VM, comptime fmt: []const u8, args: anytype) void {
-        if (!self.mute_errors) {
-            std.debug.print(fmt, args);
-        }
+        if (self.mute_errors) return;
+
+        log.err(fmt, args);
     }
 
     // --- Error Formatting Engine ---

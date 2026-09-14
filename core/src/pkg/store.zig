@@ -1,9 +1,10 @@
 const std = @import("std");
-const log = @import("log.zig");
 
 const c = @cImport({
     @cInclude("sqlite3.h");
 });
+
+const log = std.log.scoped(.pkg);
 
 pub const Db = struct {
     handle: ?*c.sqlite3,
@@ -154,7 +155,7 @@ pub const Store = struct {
         const integrity_res = try integrity_stmt.one(struct { result: []const u8 }, .{}, .{});
         if (integrity_res) |res| {
             if (!std.mem.eql(u8, res.result, "ok")) {
-                log.print("CRITICAL: SQLite database is corrupted! Self-healing triggered...\n", .{});
+                log.err("CRITICAL: SQLite database is corrupted! Self-healing triggered...\n", .{});
                 return error.DatabaseCorrupted;
             }
         }
@@ -176,7 +177,7 @@ pub const Store = struct {
         const TARGET_VERSION: i32 = 2;
 
         if (current_version < TARGET_VERSION) {
-            log.print("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, TARGET_VERSION });
+            log.info("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, TARGET_VERSION });
 
             try self.db.exec("BEGIN TRANSACTION", .{}, .{});
             if (current_version < 1) {

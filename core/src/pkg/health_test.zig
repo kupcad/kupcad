@@ -6,6 +6,8 @@ const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const Doctor = @import("health.zig").Doctor;
 
 test "Doctor: healMissingBlobs evicts DB records when physical files vanish" {
+    std.testing.log_level = .err;
+
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
@@ -43,6 +45,8 @@ test "Doctor: healMissingBlobs evicts DB records when physical files vanish" {
 }
 
 test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
+    std.testing.log_level = .err;
+
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
