@@ -7,8 +7,10 @@ const doc_cmd = @import("cli/doc.zig");
 const pkg_cmd = @import("cli/pkg_cmd.zig");
 const dev_cmd = @import("cli/dev.zig");
 const watch_cmd = @import("cli/watch.zig");
+const log_helpers = @import("log.zig");
 
-pub const std_options = @import("log.zig").std_options;
+// Export std_options for the compiler
+pub const std_options = log_helpers.std_options;
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
@@ -17,7 +19,7 @@ pub fn main(init: std.process.Init) !void {
     _ = args_iter.skip(); // Skip the executable name itself
 
     const cmd = args_iter.next() orelse {
-        printUsage();
+        printUsage(init.io);
         return;
     };
 
@@ -40,12 +42,12 @@ pub fn main(init: std.process.Init) !void {
         try dev_cmd.execute(init, allocator, &args_iter);
     } else {
         std.debug.print("Error: Unknown command '{s}'\n\n", .{cmd});
-        printUsage();
+        printUsage(init.io);
     }
 }
 
-fn printUsage() void {
-    std.debug.print(
+fn printUsage(io: std.Io) void {
+    log_helpers.printStderr(io,
         \\Usage: kupcad <command> [options]
         \\
         \\Commands:
@@ -55,5 +57,6 @@ fn printUsage() void {
         \\  lsp    Start the Language Server over stdio
         \\  dev    Developer tools and compiler debugging utilities
         \\  doc    Extract parameter metadata and docstrings as JSON
+        \\
     , .{});
 }

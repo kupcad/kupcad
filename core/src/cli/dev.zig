@@ -9,18 +9,14 @@ const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
 const disassembler = @import("../tools/dev/disassembler.zig");
 const Lexer = @import("../frontend/kupcad/lexer.zig").Lexer;
-const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
+const log_helpers = @import("../log.zig");
 
-pub const DevError = error{
-    MissingSubcommand,
-    UnknownSubcommand,
-    MissingFilePath,
-};
+const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     const subcmd = args_iter.next() orelse {
-        printUsage();
-        return error.MissingSubcommand;
+        printUsage(init.io);
+        std.process.exit(1);
     };
 
     if (std.mem.eql(u8, subcmd, "ast-dump")) {
@@ -32,29 +28,29 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     } else if (std.mem.eql(u8, subcmd, "bench")) {
         try executeBench(init, allocator, args_iter);
     } else {
-        std.log.err("Unknown dev subcommand '{s}'", .{subcmd});
-        printUsage();
-        return error.UnknownSubcommand;
+        log_helpers.printStderr(init.io, "Error: Unknown dev subcommand '{s}'\n\n", .{subcmd});
+        printUsage(init.io);
+        std.process.exit(1);
     }
 }
 
 fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     const file_path = args_iter.next() orelse {
-        std.log.err("Missing file path for 'ast-dump'. Usage: kupcad dev ast-dump <file.kup>", .{});
-        return error.MissingFilePath;
+        log_helpers.printStderr(init.io, "Missing file path for 'ast-dump'. Usage: kupcad dev ast-dump <file.kup>\n", .{});
+        std.process.exit(1);
     };
 
     // Use our new centralized file reader
     const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
-        std.log.err("Error reading file '{s}': {}", .{ file_path, err });
-        return err;
+        log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ file_path, err });
+        std.process.exit(1);
     };
     defer allocator.free(source);
 
     // Fully parse the AST and resolve symbols/slots
     var doc = api.Document.parse(allocator, source) catch |err| {
-        std.log.err("Error parsing file '{s}': {}", .{ file_path, err });
-        return err;
+        log_helpers.printStderr(init.io, "Error parsing file '{s}': {}\n", .{ file_path, err });
+        std.process.exit(1);
     };
     defer doc.deinit();
 
@@ -78,19 +74,19 @@ fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
 
 fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     const file_path = args_iter.next() orelse {
-        std.log.err("Missing file path for 'disasm'. Usage: kupcad dev disasm <file.kup>", .{});
-        return error.MissingFilePath;
+        log_helpers.printStderr(init.io, "Missing file path for 'disasm'. Usage: kupcad dev disasm <file.kup>\n", .{});
+        std.process.exit(1);
     };
 
     const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
-        std.log.err("Error reading file '{s}': {}", .{ file_path, err });
-        return err;
+        log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ file_path, err });
+        std.process.exit(1);
     };
     defer allocator.free(source);
 
     var doc = api.Document.parse(allocator, source) catch |err| {
-        std.log.err("Error parsing file '{s}': {}", .{ file_path, err });
-        return err;
+        log_helpers.printStderr(init.io, "Error parsing file '{s}': {}\n", .{ file_path, err });
+        std.process.exit(1);
     };
     defer doc.deinit();
 
@@ -107,12 +103,11 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
 
     var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
     compiler.compile(doc.tree.root) catch |err| {
-        std.log.err("Compilation failed: {}", .{err});
-        return err;
+        log_helpers.printStderr(init.io, "Compilation failed: {}\n", .{err});
+        std.process.exit(1);
     };
 
     // Disassemble
-
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
 
@@ -131,11 +126,14 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
 
 fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     const file_path = args_iter.next() orelse {
-        std.log.err("Missing file path for 'lex-dump'. Usage: kupcad dev lex-dump <file.kup>", .{});
-        return error.MissingFilePath;
+        log_helpers.printStderr(init.io, "Missing file path for 'lex-dump'. Usage: kupcad dev lex-dump <file.kup>\n", .{});
+        std.process.exit(1);
     };
 
-    const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
+    const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+        log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ file_path, err });
+        std.process.exit(1);
+    };
     defer allocator.free(source);
 
     var lexer = Lexer.init(source, 0);
@@ -172,12 +170,15 @@ fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
 
 fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     const file_path = args_iter.next() orelse {
-        std.log.err("Missing file path for 'bench'. Usage: kupcad dev bench <file.kup>", .{});
-        return error.MissingFilePath;
+        log_helpers.printStderr(init.io, "Missing file path for 'bench'. Usage: kupcad dev bench <file.kup>\n", .{});
+        std.process.exit(1);
     };
 
     // Load source code using central file utility
-    const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
+    const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+        log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ file_path, err });
+        std.process.exit(1);
+    };
     defer allocator.free(source);
 
     // ---------------------------------------------------------------
@@ -186,8 +187,8 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     const start_parse = std.Io.Clock.now(.awake, init.io);
 
     var doc = api.Document.parse(allocator, source) catch |err| {
-        std.log.err("Parse failed: {}", .{err});
-        return err;
+        log_helpers.printStderr(init.io, "Parse failed: {}\n", .{err});
+        std.process.exit(1);
     };
     defer doc.deinit();
 
@@ -212,8 +213,8 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
 
     var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
     compiler.compile(doc.tree.root) catch |err| {
-        std.log.err("Compilation failed: {}", .{err});
-        return err;
+        log_helpers.printStderr(init.io, "Compilation failed: {}\n", .{err});
+        std.process.exit(1);
     };
 
     const end_compile = std.Io.Clock.now(.awake, init.io);
@@ -236,19 +237,19 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     // ---------------------------------------------------------------
     // 4. Output Summary Reports
     // ---------------------------------------------------------------
-    std.debug.print("\n=== KupCAD Benchmark: {s} ===\n", .{file_path});
+    log_helpers.printStdout(init.io, "\n=== KupCAD Benchmark: {s} ===\n", .{file_path});
     if (result != .ok) {
-        std.debug.print("Execution Result: FAILED\n\n", .{});
+        log_helpers.printStdout(init.io, "Execution Result: FAILED\n\n", .{});
     }
 
     const ns_per_ms: f64 = 1_000_000.0;
 
     // High-level phase breakdown
-    std.debug.print("Parse Time:   {d:>6.2} ms\n", .{@as(f64, @floatFromInt(parse_time)) / ns_per_ms});
-    std.debug.print("Compile Time: {d:>6.2} ms\n", .{@as(f64, @floatFromInt(compile_time)) / ns_per_ms});
-    std.debug.print("VM Exec Time: {d:>6.2} ms\n", .{@as(f64, @floatFromInt(execute_time)) / ns_per_ms});
-    std.debug.print("---------------------------------\n", .{});
-    std.debug.print("Total Time:   {d:>6.2} ms\n\n", .{@as(f64, @floatFromInt(parse_time + compile_time + execute_time)) / ns_per_ms});
+    log_helpers.printStdout(init.io, "Parse Time:   {d:>6.2} ms\n", .{@as(f64, @floatFromInt(parse_time)) / ns_per_ms});
+    log_helpers.printStdout(init.io, "Compile Time: {d:>6.2} ms\n", .{@as(f64, @floatFromInt(compile_time)) / ns_per_ms});
+    log_helpers.printStdout(init.io, "VM Exec Time: {d:>6.2} ms\n", .{@as(f64, @floatFromInt(execute_time)) / ns_per_ms});
+    log_helpers.printStdout(init.io, "---------------------------------\n", .{});
+    log_helpers.printStdout(init.io, "Total Time:   {d:>6.2} ms\n\n", .{@as(f64, @floatFromInt(parse_time + compile_time + execute_time)) / ns_per_ms});
 
     // Detailed function-level tracing table
     var stdout_buf: [4096]u8 = undefined;
@@ -259,8 +260,8 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     try stdout.flush();
 }
 
-fn printUsage() void {
-    std.debug.print(
+fn printUsage(io: std.Io) void {
+    log_helpers.printStderr(io,
         \\Usage: kupcad dev <subcommand> [options]
         \\
         \\Subcommands:
