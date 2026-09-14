@@ -41,7 +41,7 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, cmd, "dev")) {
         try dev_cmd.execute(init, allocator, &args_iter);
     } else {
-        std.debug.print("Error: Unknown command '{s}'\n\n", .{cmd});
+        log_helpers.printStderr(init.io, "Error: Unknown command '{s}'\n\n", .{cmd});
         printUsage(init.io);
         std.process.exit(1);
     }

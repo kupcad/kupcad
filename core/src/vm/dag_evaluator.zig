@@ -2,6 +2,7 @@ const std = @import("std");
 const dag = @import("dag.zig");
 const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../kernel/geometry_handle.zig");
+const log_helpers = @import("../log.zig");
 const VM = @import("vm.zig").VM;
 
 /// Tagged handle to safely track unconsumed 2D/3D resources during evaluation
@@ -80,53 +81,53 @@ pub const EvaluationFrameStack = struct {
 
 fn dumpDAG(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) void {
     if (depth > 20) {
-        std.debug.print("... [max depth reached]\n", .{});
+        log_helpers.printStdout("... [max depth reached]\n", .{});
         return;
     }
     if (node_idx >= vm.dag_builder.nodes.items.len) {
-        std.debug.print("[OUT OF BOUNDS: {d}]\n", .{node_idx});
+        log_helpers.printStdout("[OUT OF BOUNDS: {d}]\n", .{node_idx});
         return;
     }
 
     const node = vm.dag_builder.nodes.items[node_idx];
 
     var i: usize = 0;
-    while (i < depth) : (i += 1) std.debug.print("  ", .{});
+    while (i < depth) : (i += 1) log_helpers.printStdout("  ", .{});
 
-    std.debug.print("Node #{d}: {s}", .{ node_idx, @tagName(node.tag) });
+    log_helpers.printStdout("Node #{d}: {s}", .{ node_idx, @tagName(node.tag) });
 
     switch (node.tag) {
         .union_op, .difference_op, .intersection_op, .cs_union_op, .cs_difference_op, .cs_intersection_op, .minkowski => {
             const p = vm.dag_builder.getBinaryPayload(node);
-            std.debug.print("\n", .{});
+            log_helpers.printStdout("\n", .{});
             dumpDAG(vm, p.left, depth + 1);
             dumpDAG(vm, p.right, depth + 1);
         },
         .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material => {
             const p = vm.dag_builder.getTranslatePayload(node);
-            std.debug.print("\n", .{});
+            log_helpers.printStdout("\n", .{});
             dumpDAG(vm, p.target, depth + 1);
         },
         .extrude, .revolve => {
             const p = vm.dag_builder.getExtrudePayload(node);
-            std.debug.print(" (sweeping 2D target)\n", .{});
+            log_helpers.printStdout(" (sweeping 2D target)\n", .{});
             dumpDAG(vm, p.target, depth + 1);
         },
         .loft => {
             const p = vm.dag_builder.getLoftPayload(node);
-            std.debug.print(" (height: {d})\n", .{p.height});
+            log_helpers.printStdout(" (height: {d})\n", .{p.height});
             dumpDAG(vm, p.base, depth + 1);
             dumpDAG(vm, p.top, depth + 1);
         },
         .batch_union_op, .batch_hull_op => {
             const targets = vm.dag_builder.getBatchUnionPayload(node);
-            std.debug.print(" (batch count: {d})\n", .{targets.len});
+            log_helpers.printStdout(" (batch count: {d})\n", .{targets.len});
             for (targets) |t_idx| {
                 dumpDAG(vm, t_idx, depth + 1);
             }
         },
         else => {
-            std.debug.print("\n", .{});
+            log_helpers.printStdout("\n", .{});
         },
     }
 }

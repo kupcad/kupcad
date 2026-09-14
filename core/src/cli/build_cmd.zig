@@ -1,6 +1,7 @@
 const std = @import("std");
 const api = @import("../api.zig");
 const fs = @import("fs.zig");
+const log_helpers = @import("../log.zig");
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
@@ -17,18 +18,18 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--param")) {
             const pair = args_iter.next() orelse {
-                std.debug.print("Error: Missing key=value after {s}\n", .{arg});
+                log_helpers.printStderr(init.io, "Error: Missing key=value after {s}\n", .{arg});
                 return;
             };
             var it = std.mem.splitScalar(u8, pair, '=');
             const key = it.next() orelse continue;
             const val_str = it.next() orelse {
-                std.debug.print("Error: Invalid param format. Use --param key=value.\n", .{});
+                log_helpers.printStderr(init.io, "Error: Invalid param format. Use --param key=value.\n", .{});
                 return;
             };
 
             const val = std.fmt.parseFloat(f64, val_str) catch {
-                std.debug.print("Error: Param value must be numeric (e.g. 5.5, 1, 0). Got '{s}'\n", .{val_str});
+                log_helpers.printStderr(init.io, "Error: Param value must be numeric (e.g. 5.5, 1, 0). Got '{s}'\n", .{val_str});
                 return;
             };
             try cli_params.put(key, val);
@@ -38,7 +39,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             use_draco = true;
         } else if (std.mem.eql(u8, arg, "-f") or std.mem.eql(u8, arg, "--format")) {
             format = args_iter.next() orelse {
-                std.debug.print("Error: Missing format after {s}\n", .{arg});
+                log_helpers.printStderr(init.io, "Error: Missing format after {s}\n", .{arg});
                 return;
             };
 
@@ -47,7 +48,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
                 !std.mem.eql(u8, format, "gltf") and
                 !std.mem.eql(u8, format, "step"))
             {
-                std.debug.print("Error: Unsupported format '{s}'. Allowed: stl, glb, gltf, step\n", .{format});
+                log_helpers.printStderr(init.io, "Error: Unsupported format '{s}'. Allowed: stl, glb, gltf, step\n", .{format});
                 return;
             }
         } else if (!std.mem.startsWith(u8, arg, "-")) {
@@ -56,7 +57,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     }
 
     const target_input = input_path orelse {
-        std.debug.print("Error: Missing input file path.\n", .{});
+        log_helpers.printStderr(init.io, "Error: Missing input file path.\n", .{});
         return;
     };
 
@@ -79,7 +80,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     // Compile, Inject, and Evaluate
     const output_bytes = api.buildModel(allocator, init.io, source, format, use_draco, cli_params, null) catch |err| {
-        std.debug.print("Build failed: {}\n", .{err});
+        log_helpers.printStderr(init.io, "Build failed: {}\n", .{err});
         return;
     };
     defer allocator.free(output_bytes);
@@ -91,5 +92,5 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         .data = output_bytes,
     });
 
-    std.debug.print("Successfully built {s} ({d} bytes)\n", .{ final_output, output_bytes.len });
+    log_helpers.printStdout(init.io, "Successfully built {s} ({d} bytes)\n", .{ final_output, output_bytes.len });
 }

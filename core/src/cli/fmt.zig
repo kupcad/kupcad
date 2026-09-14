@@ -3,6 +3,7 @@ const api = @import("../api.zig");
 const ProjectConfig = @import("config.zig").ProjectConfig;
 const FmtConfig = @import("../tools/fmt/config.zig").Config;
 const CommandOptions = @import("options.zig").CommandOptions;
+const log_helpers = @import("../log.zig");
 const walker = @import("walker.zig");
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
@@ -13,14 +14,13 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 }
 
 fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
-    _ = io;
     const fmt_config = @as(*FmtConfig, @ptrCast(@alignCast(context.?))).*;
 
     const formatted = api.formatCode(allocator, source, fmt_config) catch |err| {
-        std.debug.print("Format failed for '{s}': {}\n", .{ file_path, err });
+        log_helpers.printStderr(io, "Format failed for '{s}': {}\n", .{ file_path, err });
         return;
     };
     defer allocator.free(formatted);
 
-    std.debug.print("{s}", .{formatted});
+    log_helpers.printStdout(io, "{s}", .{formatted});
 }

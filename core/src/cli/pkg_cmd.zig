@@ -8,11 +8,12 @@ const Store = @import("../pkg/store.zig").Store;
 const GC = @import("../pkg/gc.zig").GarbageCollector;
 const ParsedPackage = @import("../pkg/providers/provider.zig").ParsedPackage;
 const paths = @import("../pkg/paths.zig");
+const log_helpers = @import("../log.zig");
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     const command = args_iter.next() orelse {
-        std.debug.print("Usage: kupcad pkg <init|add|install|prune|doctor>\n", .{});
+        log_helpers.printStderr(init.io, "Usage: kupcad pkg <init|add|install|prune|doctor>\n", .{});
         return;
     };
 
@@ -24,7 +25,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         var manifest = Manifest.init(allocator, "new-project");
         defer manifest.deinit();
         try manifest.save(fs);
-        std.debug.print("Initialized kupcad.json\n", .{});
+        log_helpers.printStdout(init.io, "Initialized kupcad.json\n", .{});
         return;
     }
 
@@ -64,7 +65,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     // -- add --
     if (std.mem.eql(u8, command, "add")) {
         const pkg_arg = args_iter.next() orelse {
-            std.debug.print("Usage: kupcad pkg add <alias>=<url>\n", .{});
+            log_helpers.printStderr(init.io, "Usage: kupcad pkg add <alias>=<url>\n", .{});
             return;
         };
 
@@ -74,7 +75,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
         // Eagerly validate the URL and print the detected SemVer constraint
         const parsed = ParsedPackage.parse(url) catch {
-            std.debug.print("Error: Invalid package URL format '{s}'\n", .{url});
+            log_helpers.printStderr(init.io, "Error: Invalid package URL format '{s}'\n", .{url});
             return;
         };
 
@@ -82,9 +83,9 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         try manifest.save(fs);
 
         if (parsed.constraint) |c| {
-            std.debug.print("Added {s} with constraint {s}{d}.{d}.{d}. Running concurrent install...\n", .{ alias, @tagName(c.op), c.version.major, c.version.minor, c.version.patch });
+            log_helpers.printStdout(init.io, "Added {s} with constraint {s}{d}.{d}.{d}. Running concurrent install...\n", .{ alias, @tagName(c.op), c.version.major, c.version.minor, c.version.patch });
         } else {
-            std.debug.print("Added {s} at reference '{s}'. Running concurrent install...\n", .{ alias, parsed.ref });
+            log_helpers.printStdout(init.io, "Added {s} at reference '{s}'. Running concurrent install...\n", .{ alias, parsed.ref });
         }
     }
 
@@ -96,12 +97,12 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         try resolver.linkWorkspace(fs);
 
         try lockfile.save(fs);
-        std.debug.print("Workspace linked successfully.\n", .{});
+        log_helpers.printStdout(init.io, "Workspace linked successfully.\n", .{});
 
         var gc = GC.init(allocator, init.io, &cafs, &store);
         try gc.lazyPrune();
         return;
     }
 
-    std.debug.print("Unknown command: {s}\n", .{command});
+    log_helpers.printStderr(init.io, "Unknown command: {s}\n", .{command});
 }
