@@ -43,6 +43,7 @@ pub fn main(init: std.process.Init) !void {
     } else {
         std.debug.print("Error: Unknown command '{s}'\n\n", .{cmd});
         printUsage(init.io);
+        std.process.exit(1);
     }
 }
 
