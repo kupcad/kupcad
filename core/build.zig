@@ -192,14 +192,6 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // --- Add libxev dependency ---
-    const xev_dep = b.dependency("libxev", .{ .target = target, .optimize = optimize });
-    const xev_mod = xev_dep.module("xev");
-
-    // --- Add tatfi dependency ---
-    const tatfi_dep = b.dependency("tatfi", .{});
-    const tatfi_mod = tatfi_dep.module("tatfi");
-
     // Detect if target is WASM
     const is_wasm = target.result.cpu.arch == .wasm32;
     const is_x86_64 = target.result.cpu.arch == .x86_64;
@@ -230,6 +222,27 @@ pub fn build(b: *std.Build) void {
         "manifold_parallel",
         "Enable multi-threaded parallel backend via Intel TBB",
     ) orelse !is_wasm;
+
+    // --- Add tatfi dependency ---
+    const tatfi_dep = b.dependency("tatfi", .{});
+    const tatfi_mod = tatfi_dep.module("tatfi");
+
+    // --- Add libxev dependency ---
+    var xev_mod_opt: ?*std.Build.Module = null;
+    var module_imports: []const std.Build.Module.Import = &.{
+        .{ .name = "tatfi", .module = tatfi_mod },
+    };
+
+    // Only resolve libxev if we are NOT building for WASM
+    if (!is_wasm) {
+        const xev_dep = b.dependency("libxev", .{ .target = target, .optimize = optimize });
+        xev_mod_opt = xev_dep.module("xev");
+
+        module_imports = b.allocator.dupe(std.Build.Module.Import, &.{
+            .{ .name = "tatfi", .module = tatfi_mod },
+            .{ .name = "xev", .module = xev_mod_opt.? },
+        }) catch @panic("OOM");
+    }
 
     // ====================================================================
     // C/C++ Flags & Headers
@@ -263,10 +276,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
         .link_libcpp = true,
-        .imports = &.{
-            .{ .name = "tatfi", .module = tatfi_mod },
-            .{ .name = "xev", .module = xev_mod },
-        },
+        .imports = module_imports,
     });
 
     mod.addIncludePath(b.path("vendor/Clipper2/CPP/Clipper2Lib/include"));
@@ -359,7 +369,6 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
-                    .{ .name = "xev", .module = xev_mod },
                 },
             }),
         });
@@ -392,7 +401,6 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
-                    .{ .name = "xev", .module = xev_mod },
                 },
             }),
         });
@@ -420,6 +428,8 @@ pub fn build(b: *std.Build) void {
         const test_wasm_step = b.step("test-wasm", "Run WASM tests");
         test_wasm_step.dependOn(&run_wasm_test.step);
     } else {
+        const xev_mod = xev_mod_opt.?;
+
         const lsp_kit = b.dependency("lsp_kit", .{
             .target = target,
             .optimize = optimize,
