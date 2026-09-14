@@ -6,6 +6,8 @@ const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const VM = @import("../vm/vm.zig").VM;
 
+const log = std.log.scoped(.debugger);
+
 const MAX_HISTORY = 100;
 
 // DOD History Buffer
@@ -363,7 +365,7 @@ pub fn debuggerLoop(vm: *VM) void {
 
     while (true) {
         const input_opt = readLine(vm, "(dbg) > ", &history) catch |err| {
-            std.log.err("Debugger input error: {}", .{err});
+            log.err("Debugger input error: {}", .{err});
             break;
         };
 

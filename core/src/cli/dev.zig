@@ -11,6 +11,8 @@ const disassembler = @import("../tools/dev/disassembler.zig");
 const Lexer = @import("../frontend/kupcad/lexer.zig").Lexer;
 const log_helpers = @import("../log.zig");
 
+const log = std.log.scoped(.dev);
+
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
@@ -69,7 +71,7 @@ fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
         .data = out.written(),
     });
 
-    std.log.info("Successfully dumped AST to {s}", .{out_path});
+    log.info("Successfully dumped AST to {s}", .{out_path});
 }
 
 fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
@@ -121,7 +123,7 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
         .data = out.written(),
     });
 
-    std.log.info("Successfully dumped Bytecode to {s}", .{out_path});
+    log.info("Successfully dumped Bytecode to {s}", .{out_path});
 }
 
 fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
@@ -165,7 +167,7 @@ fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
         .data = out.written(),
     });
 
-    std.log.info("Successfully dumped Tokens to {s}", .{out_path});
+    log.info("Successfully dumped Tokens to {s}", .{out_path});
 }
 
 fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {

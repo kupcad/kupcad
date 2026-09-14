@@ -5,6 +5,8 @@ const geom = @import("geometry.zig");
 const math = @import("math.zig");
 const classify = @import("csg/classify.zig");
 
+const log = std.log.scoped(.locus);
+
 pub const ValidationError = error{
     // Topological Connectivity
     BrokenLinkedList,
@@ -190,7 +192,7 @@ pub const BRepSanitizer = struct {
 
             if (euler > 2 or @rem(euler, 2) != 0) {
                 if (!config.mute_errors) {
-                    std.log.warn("Euler Violation: V={d}, E={d}, F={d}, L={d} -> Euler = {d}\n", .{
+                    log.warn("Euler Violation: V={d}, E={d}, F={d}, L={d} -> Euler = {d}\n", .{
                         v, e, f_count, l_count, euler,
                     });
                 }

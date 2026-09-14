@@ -11,6 +11,8 @@ const kernel = @import("../kernel/kernel.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
 
+const logger = std.log.scoped(.lsp);
+
 pub const DocumentBuffer = struct {
     uri: []const u8,
     source: []const u8,
@@ -238,7 +240,7 @@ pub const Handler = struct {
 
     fn log(self: *Handler, comptime fmt: []const u8, args: anytype) void {
         _ = self;
-        std.log.err("LSP: " ++ fmt, args);
+        logger.err("LSP: " ++ fmt, args);
     }
 
     pub fn initialize(
@@ -782,6 +784,6 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !void {
         allocator,
         transport,
         &handler,
-        std.log.err,
+        logger.err,
     );
 }

@@ -1,6 +1,8 @@
 const std = @import("std");
 const ProjectConfig = @import("config.zig").ProjectConfig;
 
+const log = std.log.scoped(.options);
+
 pub const CommandOptions = struct {
     config_path: ?[]const u8 = null,
     paths: std.ArrayListUnmanaged([]const u8),
@@ -43,17 +45,17 @@ pub const CommandSetup = struct {
     pub fn init(allocator: std.mem.Allocator, io: std.Io, args_iter: anytype, command_name: []const u8) !CommandSetup {
         const options = CommandOptions.parse(allocator, args_iter) catch |err| {
             if (err == error.MissingConfigValue) {
-                std.log.err("Missing value for --config. Usage: kupcad {s} [--config <file>] <file|dir>...", .{command_name});
+                log.err("Missing value for --config. Usage: kupcad {s} [--config <file>] <file|dir>...", .{command_name});
             } else if (err == error.MissingFilePath) {
-                std.log.err("Missing file path. Usage: kupcad {s} [--config <file>] <file|dir>...", .{command_name});
+                log.err("Missing file path. Usage: kupcad {s} [--config <file>] <file|dir>...", .{command_name});
             } else {
-                std.log.err("Error parsing arguments: {}", .{err});
+                log.err("Error parsing arguments: {}", .{err});
             }
             return err;
         };
 
         const config = ProjectConfig.load(io, allocator, options.config_path) catch |err| {
-            std.log.err("Error parsing configuration file: {}", .{err});
+            log.err("Error parsing configuration file: {}", .{err});
             return err;
         };
 

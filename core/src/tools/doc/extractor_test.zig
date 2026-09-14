@@ -43,3 +43,23 @@ test "Extractor: Parses Presentation Data and Param UI Config into Schema" {
     try testing.expectEqualStrings("boolean", p2.type);
     try testing.expectEqual(true, p2.default_value.?.bool);
 }
+
+test "Extractor: Parses Param within Assignments" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const source =
+        \\standoff_dist = param(:standoff_dist, default: 20.0, validate: { min: 15.0, max: 35.0 })
+        \\standoff_dia  = param(:standoff_dia, default: 5.0)
+    ;
+
+    var doc = try Document.parse(arena.allocator(), source);
+    defer doc.deinit();
+
+    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+
+    try testing.expectEqual(@as(usize, 2), schema.parameters.len);
+    try testing.expectEqualStrings("standoff_dist", schema.parameters[0].name);
+    try testing.expectEqual(@as(f64, 20.0), schema.parameters[0].default_value.?.float);
+    try testing.expectEqualStrings("standoff_dia", schema.parameters[1].name);
+}

@@ -11,6 +11,8 @@ const intersections = @import("csg/intersections.zig");
 const modifiers = @import("csg/modifiers.zig");
 const types = @import("csg/types.zig");
 
+const log = std.log.scoped(.locus);
+
 pub const BooleanOp = types.BooleanOp;
 pub const FaceTracker = types.FaceTracker;
 const BooleanError = types.BooleanError;
@@ -202,7 +204,6 @@ pub fn computeBoolean(
     solid_b: topo.SolidId,
     op: BooleanOp,
 ) BooleanError!topo.SolidId {
-
     var min_b = math.Vec3{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
     var max_b = math.Vec3{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
     for (t_arena.vertices.items) |v| {
@@ -532,7 +533,7 @@ pub fn computeBoolean(
             .check_coincidence = true,
             .check_degenerates = true,
         }) catch |err| {
-            std.log.warn("BRepSanitizer failed after {s} operation: {s}", .{ @tagName(op), @errorName(err) });
+            log.warn("BRepSanitizer failed after {s} operation: {s}", .{ @tagName(op), @errorName(err) });
             return error.TopologyCorrupted;
         };
     }

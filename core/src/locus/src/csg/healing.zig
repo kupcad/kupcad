@@ -123,7 +123,7 @@ fn healShell(
         // Graceful Fallback: If floating-point errors from a Boolean cut produced an unclosed loop,
         // abort the coplanar merge for this island to protect the stability of the larger Solid.
         const new_face_id = extractIslandBoundary(allocator, t_arena, island.items, &island_set) catch {
-            // std.log.warn("Healing aborted on Island {d}: {s}", .{ start_face_id, @errorName(err) });
+            // log.warn("Healing aborted on Island {d}: {s}", .{ start_face_id, @errorName(err) });
             try final_faces.appendSlice(allocator, island.items);
             continue;
         };

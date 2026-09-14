@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const Document = @import("../../core/document.zig").Document;
+const visitor = @import("../../core/visitor.zig"); // <-- Add the AST Walker
 
 pub const PresentationMeta = struct {
     title: ?[]const u8 = null,
@@ -22,7 +23,7 @@ pub const ParamValidate = struct {
 
 pub const ParamMetadata = struct {
     name: []const u8,
-    type: []const u8, // Zig keyword escaped for clean JSON output
+    type: []const u8,
     default_value: ?std.json.Value,
     ui: ParamUi,
     validate: ParamValidate,
@@ -55,30 +56,33 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
         }
     }
 
-    // Walk the AST to extract `param()` setters
-    var params: std.ArrayListUnmanaged(ParamMetadata) = .empty;
-    defer params.deinit(allocator);
+    const ParamVisitor = struct {
+        allocator: std.mem.Allocator,
+        params: *std.ArrayListUnmanaged(ParamMetadata),
 
-    const root = doc.tree.root;
-    if (root != .none) {
-        const root_node = doc.tree.getNode(root).?;
-        if (root_node.tag == .block) {
-            const stmts = doc.tree.getNodes(doc.tree.block(root_node).stmts);
-            for (stmts) |stmt_idx| {
-                const stmt = doc.tree.getNode(stmt_idx).?;
-                if (stmt.tag == .method_call) {
-                    const mc = doc.tree.methodCall(stmt);
-                    const method_name = doc.tree.getString(mc.method_name);
-                    if (std.mem.eql(u8, method_name, "param")) {
-                        if (try extractParam(allocator, &doc.tree, mc)) |p| {
-                            // Pass allocator to append
-                            try params.append(allocator, p);
-                        }
+        pub fn enterNode(self: *@This(), tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
+            const node = tree.getNode(node_idx) orelse return;
+            if (node.tag == .method_call) {
+                const mc = tree.methodCall(node);
+                const method_name = tree.getString(mc.method_name);
+                if (std.mem.eql(u8, method_name, "param")) {
+                    if (try extractParam(self.allocator, tree, mc)) |p| {
+                        try self.params.append(self.allocator, p);
                     }
                 }
             }
         }
-    }
+    };
+
+    var params: std.ArrayListUnmanaged(ParamMetadata) = .empty;
+    defer params.deinit(allocator);
+
+    // FIX: Walk the entire AST deeply instead of just checking the root block
+    var vis = ParamVisitor{
+        .allocator = allocator,
+        .params = &params,
+    };
+    try visitor.walk(ParamVisitor, &vis, &doc.tree, doc.tree.root);
 
     schema.parameters = try params.toOwnedSlice(allocator);
     return schema;
@@ -88,7 +92,6 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
     const args = tree.getNamedArgs(mc.args);
     if (args.len == 0) return null;
 
-    // Setter mode requires kwargs or a default value
     const is_setter = args.len > 1 or (args.len > 0 and args[0].name != .none);
     if (!is_setter) return null;
 
@@ -120,7 +123,6 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
         }
     }
 
-    // Free floating JSON allocations will be swept by an ArenaAllocator automatically
     _ = allocator;
 
     return ParamMetadata{
@@ -182,7 +184,6 @@ fn extractNumber(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?f64 {
     const node = tree.getNode(node_idx) orelse return null;
     if (node.tag == .number) return tree.number(node);
 
-    // Catch negative numbers `-10`
     if (node.tag == .unary_op) {
         const un = tree.unaryExpr(node);
         if (un.op == .negate) {
@@ -199,7 +200,6 @@ fn extractJsonValue(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?std.json.Va
         .number => return .{ .float = tree.number(node) },
         .boolean => return .{ .bool = tree.boolean(node) },
         .string, .symbol => return .{ .string = tree.getString(@as(ast.StringId, @enumFromInt(node.data))) },
-        // Unary negative number mapping
         .unary_op => {
             const un = tree.unaryExpr(node);
             if (un.op == .negate) {
