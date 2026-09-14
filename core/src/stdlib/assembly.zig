@@ -48,7 +48,7 @@ pub fn nativeUnion(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
         try scratch_indices.append(vm.allocator, part.asGeometry().dag_idx);
     }
 
-    const dag_idx = try vm.dag_builder.addBatchUnion(scratch_indices.items);
+    const dag_idx = try vm.dag_builder.addBalancedChain(.union_op, scratch_indices.items);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
@@ -77,6 +77,6 @@ pub fn nativeBatchHull(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
         try scratch_indices.append(vm.allocator, part.asGeometry().dag_idx);
     }
 
-    const dag_idx = try vm.dag_builder.addBatchHull(scratch_indices.items);
+    const dag_idx = try vm.dag_builder.addBalancedChain(.hull, scratch_indices.items);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }

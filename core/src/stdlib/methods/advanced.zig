@@ -8,16 +8,25 @@ const geom = @import("../../kernel/geometry_handle.zig");
 // --- Utilizing Strongly Typed Receivers ---
 
 pub fn meshHull(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
-    var current_idx = receiver.dag_idx;
+    var scratch = std.ArrayListUnmanaged(u32).empty;
+    const alloc = vm.scratch_arena.allocator();
 
-    // Union all passed target shapes before computing the convex hull
+    try scratch.append(alloc, receiver.dag_idx);
+
+    // Flatten any passed targets or arrays of targets into a single chain
     for (args) |arg| {
         if (arg.isGeometry()) {
-            current_idx = try vm.dag_builder.addBinary(.union_op, current_idx, arg.asGeometry().dag_idx);
+            try scratch.append(alloc, arg.asGeometry().dag_idx);
+        } else if (arg.isArray()) {
+            for (arg.asArray().items.items) |item| {
+                if (item.isGeometry()) {
+                    try scratch.append(alloc, item.asGeometry().dag_idx);
+                }
+            }
         }
     }
 
-    const hull_idx = try vm.dag_builder.addHull(current_idx);
+    const hull_idx = try vm.dag_builder.addBalancedChain(.hull, scratch.items);
     return try vm.allocateGeometry(.{ .symbolic = hull_idx });
 }
 
