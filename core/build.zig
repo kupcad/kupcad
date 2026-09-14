@@ -192,6 +192,10 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // --- Add libxev dependency ---
+    const xev_dep = b.dependency("libxev", .{ .target = target, .optimize = optimize });
+    const xev_mod = xev_dep.module("xev");
+
     // --- Add tatfi dependency ---
     const tatfi_dep = b.dependency("tatfi", .{});
     const tatfi_mod = tatfi_dep.module("tatfi");
@@ -261,6 +265,7 @@ pub fn build(b: *std.Build) void {
         .link_libcpp = true,
         .imports = &.{
             .{ .name = "tatfi", .module = tatfi_mod },
+            .{ .name = "xev", .module = xev_mod },
         },
     });
 
@@ -354,6 +359,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
+                    .{ .name = "xev", .module = xev_mod },
                 },
             }),
         });
@@ -386,6 +392,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
+                    .{ .name = "xev", .module = xev_mod },
                 },
             }),
         });
@@ -428,6 +435,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "lsp", .module = lsp_kit.module("lsp") },
                     .{ .name = "tatfi", .module = tatfi_mod },
+                    .{ .name = "xev", .module = xev_mod },
                 },
             }),
         });
@@ -443,6 +451,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
+                    .{ .name = "xev", .module = xev_mod },
                 },
             }),
         });
@@ -483,6 +492,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
+                    .{ .name = "xev", .module = xev_mod },
                 },
             }),
         });
