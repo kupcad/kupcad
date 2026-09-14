@@ -251,6 +251,55 @@ pub const Store = struct {
         return std.fmt.allocPrint(allocator, "sha256-{s}", .{hex});
     }
 
+    /// Checks whether a package commit_sha exists in the offline store
+    pub fn hasPackage(self: *Store, pkg_id: []const u8, commit_sha: []const u8) !bool {
+        const stmt_sql =
+            \\SELECT 1 FROM packages WHERE id = ? AND commit_sha = ? LIMIT 1
+        ;
+        var stmt = try self.db.prepare(stmt_sql);
+        defer stmt.deinit();
+
+        const row = try stmt.one(struct { val: i32 }, .{ pkg_id, commit_sha }, .{});
+        return row != null;
+    }
+
+    /// Retrieves cached package file mappings `[file_path -> file_hash]` if present in store
+    pub fn getPackageFiles(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        pkg_id: []const u8,
+        commit_sha: []const u8,
+    ) !?std.StringHashMap([]const u8) {
+        if (!try self.hasPackage(pkg_id, commit_sha)) return null;
+
+        const stmt_sql =
+            \\SELECT file_path, file_hash FROM package_files WHERE package_id = ? AND commit_sha = ?
+        ;
+        var stmt = try self.db.prepare(stmt_sql);
+        defer stmt.deinit();
+
+        var map = std.StringHashMap([]const u8).init(allocator);
+        errdefer {
+            var it = map.iterator();
+            while (it.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+                allocator.free(entry.value_ptr.*);
+            }
+            map.deinit();
+        }
+
+        var iter = try stmt.iterator(struct { file_path: []const u8, file_hash: []const u8 }, .{ pkg_id, commit_sha });
+        while (try iter.next()) |row| {
+            const k = try allocator.dupe(u8, row.file_path);
+            errdefer allocator.free(k);
+            const v = try allocator.dupe(u8, row.file_hash);
+            errdefer allocator.free(v);
+            try map.put(k, v);
+        }
+
+        return map;
+    }
+
     pub fn registerPackage(
         self: *Store,
         pkg_id: []const u8,

@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
+const Store = @import("store.zig").Store;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
 pub const Cafs = struct {
@@ -62,8 +63,63 @@ pub const Cafs = struct {
         };
     }
 
-    /// Extracts a gzipped tarball stream directly into the CAFS.
-    /// Returns a map of `[filepath] -> [sha256_hash]`.
+    /// Offline-First Resolver: Checks if `commit_sha` is fully cached in SQLite Store/CAFS.
+    /// Fast Path: Returns cached file map immediately without network/extraction.
+    /// Fallback: Extracts tarball stream from `reader`, ingests to CAFS, and registers in Store.
+    pub fn resolvePackage(
+        self: *Cafs,
+        store: *Store,
+        pkg_id: []const u8,
+        commit_sha: []const u8,
+        provider_name: []const u8,
+        reader: ?*std.Io.Reader,
+    ) !std.StringHashMap([]const u8) {
+        // 1. Offline Store Lookup Guard: Fast-path short-circuit
+        if (try store.getPackageFiles(self.allocator, pkg_id, commit_sha)) |cached_map| {
+            return cached_map;
+        }
+
+        // 2. Cache Miss: Ensure a valid network stream reader is provided
+        const stream_reader = reader orelse return error.PackageNotFoundOffline;
+
+        // 3. Fallback: Extract stream into PID-isolated temporary path and ingest to CAFS
+        var file_map = try self.extractTarball(stream_reader);
+        errdefer {
+            var it = file_map.iterator();
+            while (it.next()) |entry| {
+                self.allocator.free(entry.key_ptr.*);
+                self.allocator.free(entry.value_ptr.*);
+            }
+            file_map.deinit();
+        }
+
+        // 4. Compute Merkle integrity & register in SQLite Store
+        const integrity = try Store.computeIntegrity(self.allocator, &file_map);
+        defer self.allocator.free(integrity);
+
+        try store.registerPackage(pkg_id, commit_sha, provider_name, integrity, &file_map);
+
+        return file_map;
+    }
+
+    /// Links all resolved package files into a target project directory via VFS
+    pub fn materializePackage(
+        self: *Cafs,
+        files_map: *const std.StringHashMap([]const u8),
+        dest_dir: []const u8,
+    ) !void {
+        var it = files_map.iterator();
+        while (it.next()) |entry| {
+            const rel_path = entry.key_ptr.*;
+            const hash_hex = entry.value_ptr.*;
+
+            const dest_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ dest_dir, rel_path });
+            defer self.allocator.free(dest_path);
+
+            try self.linkBlob(hash_hex, dest_path);
+        }
+    }
+
     pub fn extractTarball(
         self: *Cafs,
         reader: *std.Io.Reader,
@@ -144,7 +200,7 @@ pub const Cafs = struct {
         }
     }
 
-    /// Streams data into a temporary file, hashes it, applies 0444, and atomically commits it to CAFS.
+    /// Streams data into a temporary file, hashes it, applies 0444, and atomically commits it to CAFS
     fn saveStream(self: *Cafs, reader: *std.Io.Reader) ![]const u8 {
         var hasher = Sha256.init(.{});
 
