@@ -94,6 +94,7 @@ test {
     _ = @import("tools/lint/rules/param_order_test.zig");
 
     // VFS
+    _ = @import("vfs/memory_test.zig");
     _ = @import("vfs/native_test.zig");
     _ = @import("vfs/vfs_test.zig");
 

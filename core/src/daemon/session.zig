@@ -17,12 +17,11 @@ pub const SessionNode = struct {
     verified_at: u64 = 0,
     changed_at: u64 = 0,
     output_hash: u64 = 0,
+    source_hash: u64 = 0,
     is_stale: bool = true,
     cached_handle: ?geom.GeometryHandle = null,
 
     pub fn deinit(self: *SessionNode) void {
-        // Ownership remains with the VM's Garbage Collector.
-        // We only clear the reference.
         self.cached_handle = null;
     }
 };
@@ -114,14 +113,38 @@ pub const ScriptSession = struct {
     pub fn evaluateModule(self: *ScriptSession, mod_id: ModuleId) !void {
         var node = &self.nodes.items[@intFromEnum(mod_id)];
 
-        // Cache hit
-        if (!node.is_stale and node.verified_at == self.global_revision) return;
+        if (!node.is_stale and node.verified_at == self.global_revision) return; // Cache hit
 
         const mod = &self.workspace.modules.items[@intFromEnum(mod_id)];
 
-        // ---------------------------------------------------------------
-        // 1. AST Parsing & Document Generation
-        // ---------------------------------------------------------------
+        // --- Topological Recompilation Check ---
+        var s_hasher = std.hash.Wyhash.init(0);
+        s_hasher.update(mod.source);
+        const current_source_hash = s_hasher.final();
+
+        var needs_recompile = false;
+        if (node.source_hash != current_source_hash) {
+            needs_recompile = true;
+        } else if (node.output_hash == 0) {
+            needs_recompile = true;
+        } else {
+            for (mod.deps.items) |dep_id| {
+                const dep_node = &self.nodes.items[@intFromEnum(dep_id)];
+                // If the dependency changed AFTER this module was last verified, we must recompile
+                if (dep_node.changed_at > node.verified_at) {
+                    needs_recompile = true;
+                    break;
+                }
+            }
+        }
+
+        if (!needs_recompile) {
+            node.verified_at = self.global_revision;
+            node.is_stale = false;
+            return;
+        }
+        // --------------------------------------------
+
         var doc = api.Document.parse(self.allocator, mod.source) catch |err| {
             log.err("Parse failed for module '{s}': {}", .{ mod.path, err });
             return err;
@@ -168,15 +191,23 @@ pub const ScriptSession = struct {
         const new_hash = hasher.final();
 
         if (new_hash == node.output_hash and node.output_hash != 0) {
-            // Output geometry is topologically identical! Halt downstream propagation.
+            if (new_handle) |h| {
+                if (node.cached_handle == null or h.ptr != node.cached_handle.?.ptr) {
+                    kernel.destruct(h);
+                }
+            }
             node.verified_at = self.global_revision;
+            node.source_hash = current_source_hash;
             node.is_stale = false;
             return;
         }
 
-        // Just update the weak reference. Do NOT call kernel.destruct(old_h)!
+        if (node.cached_handle) |old_h| {
+            kernel.destruct(old_h);
+        }
         node.cached_handle = new_handle;
         node.output_hash = new_hash;
+        node.source_hash = current_source_hash;
         node.changed_at = self.global_revision;
         node.verified_at = self.global_revision;
         node.is_stale = false;
