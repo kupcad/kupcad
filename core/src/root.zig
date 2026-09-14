@@ -92,6 +92,7 @@ test {
 
     // VM
     _ = @import("vm/chunk_test.zig");
+    _ = @import("vm/dag_test.zig");
     _ = @import("vm/dag_evaluator_test.zig");
     _ = @import("vm/memory_test.zig");
     _ = @import("vm/import_test.zig");

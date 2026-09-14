@@ -654,4 +654,43 @@ pub const DAGBuilder = struct {
         }
         return hasher.final();
     }
+
+    // --- Hybrid CSG Tree Balancing ---
+
+    /// Automatically routes a list of target geometries into either a flat Batch node
+    /// or a Balanced Binary Tree depending on the operation type.
+    pub fn addBalancedChain(self: *DAGBuilder, tag: DAGTag, targets: []const DAGNodeIndex) !DAGNodeIndex {
+        if (targets.len == 0) return error.EmptyChain;
+        if (targets.len == 1) return targets[0];
+
+        // 1. Homogeneous Chain Flattening (Spatial $O(N \log N)$ acceleration in Manifold)
+        // Commutative associative ops are best sent to the C++ kernel as a single array.
+        if (tag == .union_op or tag == .batch_union_op) {
+            return self.addBatchUnion(targets);
+        }
+        if (tag == .hull or tag == .batch_hull_op) {
+            return self.addBatchHull(targets);
+        }
+
+        // 2. Heterogeneous/Non-Batchable Chain Balancing
+        // For Differences, Intersections, or 2D ops, we reduce the DAG depth
+        // from $O(N)$ to $O(\log N)$ by building a balanced binary tree `(a+b) + (c+d)`.
+        // This is critical for interactive memoization (Sliders) so a change in `d`
+        // doesn't invalidate `a+b`.
+        return self.buildBalancedTree(tag, targets);
+    }
+
+    /// Recursively subdivides an array of nodes into a perfectly balanced binary tree.
+    fn buildBalancedTree(self: *DAGBuilder, tag: DAGTag, targets: []const DAGNodeIndex) anyerror!DAGNodeIndex {
+        if (targets.len == 1) return targets[0];
+        if (targets.len == 2) {
+            return self.addBinary(tag, targets[0], targets[1]);
+        }
+
+        const mid = targets.len / 2;
+        const left_subtree = try self.buildBalancedTree(tag, targets[0..mid]);
+        const right_subtree = try self.buildBalancedTree(tag, targets[mid..]);
+
+        return self.addBinary(tag, left_subtree, right_subtree);
+    }
 };
