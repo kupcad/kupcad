@@ -7,6 +7,7 @@ pub const ModuleId = enum(u32) { _ };
 pub const Module = struct {
     id: ModuleId,
     path: []const u8,
+    source: []const u8,
     doc: Document,
     deps: std.ArrayListUnmanaged(ModuleId) = .empty,
     // Maps the string representation of an exported symbol to its original AST NodeIndex
@@ -14,6 +15,7 @@ pub const Module = struct {
 
     pub fn deinit(self: *Module, allocator: std.mem.Allocator) void {
         allocator.free(self.path);
+        allocator.free(self.source);
         self.doc.deinit();
         self.deps.deinit(allocator);
         self.exports.deinit(allocator);
@@ -47,6 +49,7 @@ pub const Workspace = struct {
         try self.modules.append(self.allocator, .{
             .id = id,
             .path = try self.allocator.dupe(u8, path),
+            .source = try self.allocator.dupe(u8, source),
             .doc = doc,
         });
 
@@ -60,7 +63,6 @@ pub const Workspace = struct {
             mod.deps.clearRetainingCapacity();
             mod.exports.clearRetainingCapacity();
 
-            // Removed unused `i` and `node_idx`
             for (mod.doc.tree.nodes.items) |*node| {
                 if (node.tag == .import_stmt) {
                     const import_stmt = mod.doc.tree.importStmt(node);
@@ -70,13 +72,11 @@ pub const Workspace = struct {
                         try mod.deps.append(self.allocator, dep_id);
                     }
                 } else if (node.tag == .export_stmt) {
-                    // Extract exported symbols and populate the Export Table
                     const export_stmt = mod.doc.tree.exportStmt(node);
                     const symbols = mod.doc.tree.getAliasPairs(export_stmt.symbols);
 
                     for (symbols) |sym| {
                         const alias_str = mod.doc.tree.getString(sym.alias);
-                        // Map the exported string directly to the original AST node ID
                         try mod.exports.put(self.allocator, alias_str, sym.original);
                     }
                 }
@@ -88,11 +88,9 @@ pub const Workspace = struct {
     pub fn sortModules(self: *Workspace) ![]const ModuleId {
         const count = self.modules.items.len;
 
-        // unmet_deps[i] = how many modules module `i` relies on.
         var unmet_deps = try self.allocator.alloc(u32, count);
         defer self.allocator.free(unmet_deps);
 
-        // dependents[i] = list of modules that rely on module `i`.
         var dependents = try self.allocator.alloc(std.ArrayListUnmanaged(ModuleId), count);
         defer {
             for (dependents) |*list| list.deinit(self.allocator);
@@ -100,7 +98,6 @@ pub const Workspace = struct {
         }
         @memset(dependents, .empty);
 
-        // Build the Unmet Dependency Graph
         for (self.modules.items, 0..) |*mod, i| {
             unmet_deps[i] = @intCast(mod.deps.items.len);
             for (mod.deps.items) |dep_id| {
@@ -108,7 +105,6 @@ pub const Workspace = struct {
             }
         }
 
-        // Queue modules that have 0 unmet dependencies (Leaf nodes)
         var queue = std.ArrayListUnmanaged(ModuleId).empty;
         defer queue.deinit(self.allocator);
 
@@ -119,11 +115,9 @@ pub const Workspace = struct {
         var sorted = std.ArrayListUnmanaged(ModuleId).empty;
         errdefer sorted.deinit(self.allocator);
 
-        // Process the queue
         while (queue.pop()) |u| {
             try sorted.append(self.allocator, u);
 
-            // For every module `v` that depended on `u`, it now has one less unmet dependency
             for (dependents[@intFromEnum(u)].items) |v| {
                 unmet_deps[@intFromEnum(v)] -= 1;
                 if (unmet_deps[@intFromEnum(v)] == 0) {
@@ -132,7 +126,6 @@ pub const Workspace = struct {
             }
         }
 
-        // Cycle Detection
         if (sorted.items.len != count) {
             return error.CircularDependency;
         }

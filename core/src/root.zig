@@ -37,6 +37,7 @@ test {
     _ = @import("core/semver_test.zig");
 
     // Daemon
+    _ = @import("daemon/session_test.zig");
     _ = @import("daemon/watcher_test.zig");
 
     // Frontends
