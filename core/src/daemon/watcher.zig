@@ -4,6 +4,8 @@ const ScriptSession = @import("session.zig").ScriptSession;
 
 const log = std.log.scoped(.watcher);
 
+const WATCHER_TIMEOUT_MS = 500;
+
 pub const Watcher = struct {
     session: *ScriptSession,
     file_path: []const u8,
@@ -45,7 +47,7 @@ pub const Watcher = struct {
         log.info("Watching '{s}' for changes via libxev...", .{self.file_path});
 
         // Start 500ms repeating timer
-        self.timer.run(&self.loop, &self.completion, 500, Watcher, self, &pollCallback);
+        self.timer.run(&self.loop, &self.completion, WATCHER_TIMEOUT_MS, Watcher, self, &pollCallback);
         // Block the current thread, yielding execution entirely to the OS event loop
         try self.loop.run(.until_done);
     }
@@ -81,7 +83,7 @@ pub const Watcher = struct {
 
         // Reschedule the timer unless running in one-shot test mode
         if (!self.is_one_shot) {
-            self.timer.run(loop, c, 500, Watcher, self, &pollCallback);
+            self.timer.run(loop, c, WATCHER_TIMEOUT_MS, Watcher, self, &pollCallback);
         }
 
         // Disarm the current completion event
