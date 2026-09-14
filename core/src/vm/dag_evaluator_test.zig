@@ -218,3 +218,83 @@ test "DAG: Builder cleans up payload arrays on OutOfMemory" {
         };
     }
 }
+
+test "DAG Evaluator: iterative engine handles extreme depths without C-stack overflow" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Create a base cube
+    var current_node = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+
+    // 2. Chain 1,000 translations sequentially.
+    // In a recursive evaluator, a depth of 1,000 would instantly cause a C-stack overflow / segfault.
+    // The new `EvaluationFrameStack` handles this entirely on the heap iteratively.
+    const depth = 1000;
+    for (0..depth) |_| {
+        current_node = try vm.dag_builder.addTranslate(current_node, 1.0, 0.0, 0.0);
+    }
+
+    // 3. Evaluate the extremely deep DAG
+    const handle = try dag_evaluator.evaluateDAG(&vm, current_node);
+    defer kernel.destruct(handle);
+
+    // 4. Verify the geometry survived the traversal intact
+    const vol = kernel.volume(handle);
+    try testing.expectApproxEqAbs(@as(f64, 1000.0), vol, 1e-5);
+}
+
+test "DAG Evaluator: correctly evaluates 2D primitive via evaluateCrossSectionDAG" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Build a 2D Square
+    const sq_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
+
+    // 2. Add a 2D Offset operation
+    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0);
+
+    // 3. Evaluate explicitly requesting a 2D CrossSectionHandle
+    const handle = try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx);
+    defer kernel.destructCrossSection(handle);
+
+    try testing.expectEqual(.manifold, handle.engine);
+
+    // Base area 10x10 = 100. Expanding by 2 on all sides makes it 14x14 = 196
+    const bounds = kernel.crossSectionBounds(handle);
+    try testing.expectApproxEqAbs(@as(f64, -7.0), bounds.min[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f64, 7.0), bounds.max[0], 1e-5);
+}
+
+test "DAG Evaluator: safely traps cross-section vs geometry type mismatch and cleans up memory" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Build a 2D Square
+    const sq_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
+
+    // 2. Erroneously evaluate it as a 3D Geometry DAG
+    const result = dag_evaluator.evaluateDAG(&vm, sq_idx);
+
+    // 3. It must trap the mismatch and return RuntimeError.
+    // Zig's testing allocator will automatically fail the test if `IntermediateStack`
+    // failed to destruct the dangling 2D handle before returning the error.
+    try testing.expectError(error.RuntimeError, result);
+}
+
+test "DAG Evaluator: evaluateCrossSectionDAG traps 3D geometry mismatch" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Build a 3D Cube
+    const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+
+    // 2. Erroneously evaluate it as a 2D CrossSection DAG
+    const result = dag_evaluator.evaluateCrossSectionDAG(&vm, cube_idx);
+
+    // 3. Must return RuntimeError and safely drop the 3D handle
+    try testing.expectError(error.RuntimeError, result);
+}
