@@ -42,6 +42,9 @@ test {
     _ = @import("daemon/session_test.zig");
     _ = @import("daemon/watcher_test.zig");
 
+    // exports
+    _ = @import("exporters/3d/gltf_test.zig");
+
     // Frontends
     _ = @import("frontend/kupcad/docstring_test.zig");
     _ = @import("frontend/kupcad/lexer_test.zig");

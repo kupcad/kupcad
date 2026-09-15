@@ -348,6 +348,21 @@ test "DAG Evaluator: RAM budgeting traps complex meshes" {
     try testing.expectError(error.RamBudgetExceeded, result);
 }
 
+test "B-Rep Engine: Vertex counting and RAM budgeting works" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Switch the active engine config to B-Rep
+    vm.config_stack.items[vm.config_stack.items.len - 1].engine = .brep_native;
+
+    const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+    const handle = try dag_evaluator.evaluateDAG(&vm, cube_idx);
+
+    const verts = kernel.numVerts(handle);
+    try std.testing.expect(verts == 8); // A standard cube has 8 vertices
+}
+
 test "DAG Evaluator: respects atomic cancellation token" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
