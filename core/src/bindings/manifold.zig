@@ -134,6 +134,9 @@ extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumPr
 
 extern fn manifold_transform_array(mem: ?*ManifoldObj, m: ?*ManifoldObj, mat: [*]const f64) ?*ManifoldObj;
 
+extern fn manifold_num_vert(m: ?*ManifoldObj) c_int;
+extern fn manifold_num_tri(m: ?*ManifoldObj) c_int;
+
 // ==========================================
 // Zig Idiomatic Wrappers
 // ==========================================
@@ -427,6 +430,13 @@ pub fn polygon(points: []const ManifoldVec2) ?*ManifoldCrossSection {
     const p = manifold_simple_polygon(manifold_alloc_simple_polygon(), points.ptr, points.len);
     defer manifold_delete_simple_polygon(p);
     return manifold_cross_section_of_simple_polygon(manifold_alloc_cross_section(), p);
+}
+
+pub fn numVert(m: ?*ManifoldObj) i32 {
+    return manifold_num_vert(m);
+}
+pub fn numTri(m: ?*ManifoldObj) i32 {
+    return manifold_num_tri(m);
 }
 
 pub fn destruct(m: ?*ManifoldObj) void {

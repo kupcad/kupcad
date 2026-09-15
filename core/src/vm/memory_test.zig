@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
+const dag_evaluator = @import("dag_evaluator.zig");
 const VM = @import("vm.zig").VM;
 const GC = @import("memory.zig").GC;
 const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
@@ -222,4 +223,27 @@ test "GC: Mass allocation and sweep underflow protection" {
     // Force full sweep and ensure byte counter didn't wrap around
     vm.gc.collectGarbage(&vm, true);
     try testing.expect(vm.gc.bytes_allocated < 1000);
+}
+
+test "GC: successfully sweeps orphaned DAG cache handles" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+
+    // 1. Evaluate and cache the cube
+    _ = try dag_evaluator.evaluateDAG(&vm, cube_idx);
+    try testing.expect(vm.dag_cache.count() == 1);
+
+    // 2. Clear all VM references to geometries (simulating variable going out of scope)
+    vm.resetStack();
+    vm.display_list.clearRetainingCapacity();
+    vm.gc.geometries.clearRetainingCapacity();
+
+    // 3. Force a full Mark-and-Sweep
+    vm.gc.collectGarbage(&vm, true);
+
+    // 4. The cache should be empty, and no C++ leaks should occur
+    try testing.expect(vm.dag_cache.count() == 0);
 }

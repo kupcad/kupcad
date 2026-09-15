@@ -143,6 +143,8 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
     const engine = config.engine;
 
     while (f_stack.top > 0) {
+        if (vm.cancel_token.load(.acquire)) return error.Cancelled;
+
         var frame = &f_stack.frames[f_stack.top - 1];
 
         if (frame.node_idx >= vm.dag_builder.nodes.items.len) {
@@ -419,6 +421,12 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
             const final_handle = v_stack.handles[v_stack.top - 1];
 
             if (final_handle == .geometry) {
+                const verts = kernel.numVerts(final_handle.geometry);
+                if (verts > config.max_vertices) {
+                    vm.reportError("RAM Budget Exceeded: Generated mesh is too complex ({d} vertices).\n", .{verts});
+                    return error.RamBudgetExceeded;
+                }
+
                 try vm.dag_cache.put(vm.allocator, node_hash, final_handle.geometry);
             }
         }

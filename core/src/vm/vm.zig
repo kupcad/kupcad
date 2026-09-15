@@ -113,6 +113,8 @@ pub const VM = struct {
     /// Set to true during tests to brutally expose unrooted allocations
     zealous_gc: bool = false,
 
+    cancel_token: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
     const STACK_GROW_FACTOR: usize = 2;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
@@ -316,6 +318,9 @@ pub const VM = struct {
         var previous_line: ?u32 = null; // Track line boundary
 
         while (self.frames.items.len > target_depth) {
+
+            // Cancellation Token Check (Instant UI / Ctrl+C Interrupt)
+            if (self.cancel_token.load(.acquire)) return .runtime_error;
 
             // Gas Check
             if (self.instruction_limit > 0) {

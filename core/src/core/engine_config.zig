@@ -43,4 +43,7 @@ pub const EngineConfig = struct {
     engine: geom.EngineType = .manifold, // Selects the active backend CAD evaluation kernel
     manifold: ManifoldConfig = .{},
     brep: BRepConfig = .{},
+    /// Maximum number of vertices allowed in a single generated DAG node
+    /// Default: 5,000,000 (~500MB RAM footprint during CSG ops)
+    max_vertices: usize = 5_000_000,
 };

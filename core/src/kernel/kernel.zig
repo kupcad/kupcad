@@ -186,6 +186,14 @@ pub inline fn minGap(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f6
     return dispatch("minGapFn", a, .{ b, sl });
 }
 
+pub inline fn numVerts(handle: geom.GeometryHandle) i32 {
+    return dispatch("numVertsFn", handle, .{});
+}
+
+pub inline fn numTris(handle: geom.GeometryHandle) i32 {
+    return dispatch("numTrisFn", handle, .{});
+}
+
 pub fn destruct(handle: geom.GeometryHandle) void {
     dispatch("destructFn", handle, .{});
 }

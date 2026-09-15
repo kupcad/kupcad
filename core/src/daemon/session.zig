@@ -101,7 +101,9 @@ pub const ScriptSession = struct {
 
     /// Step 3: Lazy Re-evaluation & Early Cutoff (Pull Phase)
     pub fn evaluateWorkspace(self: *ScriptSession) !void {
-        // Kahn's Topological Sort: Execute strictly from Leaf dependencies up to Root
+        // Reset cancellation token at the start of a fresh evaluation
+        self.vm.cancel_token.store(false, .release);
+
         const sorted = try self.workspace.sortModules();
         defer self.allocator.free(sorted);
 
@@ -211,5 +213,9 @@ pub const ScriptSession = struct {
         node.changed_at = self.global_revision;
         node.verified_at = self.global_revision;
         node.is_stale = false;
+    }
+
+    pub fn cancel(self: *ScriptSession) void {
+        self.vm.cancel_token.store(true, .release);
     }
 };

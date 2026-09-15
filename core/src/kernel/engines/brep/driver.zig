@@ -599,6 +599,21 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     };
 }
 
+fn numVertsImpl(handle: geom.GeometryHandle) i32 {
+    std.debug.assert(handle.engine == .brep_native);
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    return @intCast(solid.t_arena.vertices.items.len);
+}
+
+fn numTrisImpl(handle: geom.GeometryHandle) i32 {
+    std.debug.assert(handle.engine == .brep_native);
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    // B-Rep faces are polygons, but this provides a fast O(1) proxy for complexity
+    return @intCast(solid.t_arena.faces.items.len);
+}
+
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
     _ = tolerance;
     return a;
@@ -651,6 +666,8 @@ pub const driver = struct {
     pub const minGapFn = minGapImpl;
     pub const rayCastFn = rayCastImpl;
     pub const polygonFn = polygonImpl;
+    pub const numVertsFn = numVertsImpl;
+    pub const numTrisFn = numTrisImpl;
     pub const simplifyFn = simplifyImpl;
     pub const destructFn = destructImpl;
     pub const destructCrossSectionFn = destructCrossSectionImpl;

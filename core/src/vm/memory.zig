@@ -529,6 +529,37 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjCrossSection, &self.cross_sections);
         self.sweepList(vm, value.ObjAssembly, &self.assemblies);
         self.sweepList(vm, value.ObjWorkplane, &self.workplanes);
+
+        // Collect hashes of surviving, LIVE Geometry objects
+        var live_hashes = std.AutoHashMap(u64, void).init(self.allocator);
+        defer live_hashes.deinit();
+
+        for (self.geometries.items) |geom_ptr| {
+            if (geom_ptr.dag_idx != std.math.maxInt(u32)) {
+                if (geom_ptr.dag_idx < vm.dag_builder.node_hashes.items.len) {
+                    const hash = vm.dag_builder.node_hashes.items[geom_ptr.dag_idx];
+                    live_hashes.put(hash, {}) catch {};
+                }
+            }
+        }
+
+        // SAFE TWO-PASS CACHE EVICTION: Collect stale keys first
+        var keys_to_remove = std.ArrayListUnmanaged(u64).empty;
+        defer keys_to_remove.deinit(self.allocator);
+
+        var cache_it = vm.dag_cache.iterator();
+        while (cache_it.next()) |entry| {
+            if (!live_hashes.contains(entry.key_ptr.*)) {
+                // Destruct C++ handle immediately
+                kernel.destruct(entry.value_ptr.*);
+                keys_to_remove.append(self.allocator, entry.key_ptr.*) catch {};
+            }
+        }
+
+        // Remove stale keys safely outside the iterator loop
+        for (keys_to_remove.items) |key| {
+            _ = vm.dag_cache.remove(key);
+        }
     }
 
     inline fn destroyObject(self: *GC, comptime T: type, ptr: *T) void {

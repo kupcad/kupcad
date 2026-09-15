@@ -561,6 +561,18 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     };
 }
 
+fn numVertsImpl(handle: geom.GeometryHandle) i32 {
+    std.debug.assert(handle.engine == .manifold);
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    return manifold.numVert(@ptrCast(@alignCast(handle.ptr)));
+}
+
+fn numTrisImpl(handle: geom.GeometryHandle) i32 {
+    std.debug.assert(handle.engine == .manifold);
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    return manifold.numTri(@ptrCast(@alignCast(handle.ptr)));
+}
+
 // --- Destructors ---
 
 fn destructImpl(handle: geom.GeometryHandle) void {
@@ -632,6 +644,8 @@ pub const driver = struct {
     pub const minGapFn = minGapImpl;
     pub const rayCastFn = rayCastImpl;
     pub const polygonFn = polygonImpl;
+    pub const numVertsFn = numVertsImpl;
+    pub const numTrisFn = numTrisImpl;
     pub const simplifyFn = simplifyImpl;
     pub const setMaterialFn = setMaterialImpl;
     pub const destructFn = destructImpl;

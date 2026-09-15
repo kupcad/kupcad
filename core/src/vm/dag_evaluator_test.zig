@@ -330,3 +330,35 @@ test "DAG Evaluator: O(1) DAG Cache bypasses kernel evaluation" {
     kernel.destruct(handle1);
     _ = vm.dag_cache.remove(hash);
 }
+
+test "DAG Evaluator: RAM budgeting traps complex meshes" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Artificially lower the RAM budget to 10 vertices
+    vm.config_stack.items[vm.config_stack.items.len - 1].max_vertices = 10;
+
+    // A high-segment sphere will easily exceed 10 vertices
+    const sphere_idx = try vm.dag_builder.addSphere(10.0);
+
+    const result = dag_evaluator.evaluateDAG(&vm, sphere_idx);
+
+    // Must return the specific budget error, not a generic panic
+    try testing.expectError(error.RamBudgetExceeded, result);
+}
+
+test "DAG Evaluator: respects atomic cancellation token" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+
+    // Simulate the LSP or UI triggering a cancel right before evaluation
+    vm.cancel_token.store(true, .release);
+
+    const result = dag_evaluator.evaluateDAG(&vm, cube_idx);
+
+    try testing.expectError(error.Cancelled, result);
+}
