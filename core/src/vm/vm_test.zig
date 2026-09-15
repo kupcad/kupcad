@@ -7678,6 +7678,11 @@ test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operat
         testing.allocator.free(mesh_unsimplified.tri_verts);
     }
 
+    // clear cache
+    var it = vm.dag_cache.valueIterator();
+    while (it.next()) |handle| kernel.destruct(handle.*);
+    vm.dag_cache.clearRetainingCapacity();
+
     // 2. Evaluate with simplify_coplanar: true
     const source_simplified =
         \\CAD.config(manifold: { simplify_coplanar: true })

@@ -72,8 +72,23 @@ pub const MemoryVfs = struct {
 
     fn writeFile(ptr: *anyopaque, path: []const u8, data: []const u8) anyerror!void {
         const self: *MemoryVfs = @ptrCast(@alignCast(ptr));
+
+        // Check if file exists and free existing allocations to prevent memory leaks on overwrite
+        if (self.nodes.getEntry(path)) |entry| {
+            if (entry.value_ptr.content) |c| {
+                self.allocator.free(c);
+            }
+            const data_dup = try self.allocator.dupe(u8, data);
+            entry.value_ptr.content = data_dup;
+            entry.value_ptr.kind = .file;
+            return;
+        }
+
         const path_dup = try self.allocator.dupe(u8, path);
+        errdefer self.allocator.free(path_dup);
         const data_dup = try self.allocator.dupe(u8, data);
+        errdefer self.allocator.free(data_dup);
+
         try self.nodes.put(path_dup, .{ .kind = .file, .content = data_dup });
     }
 
@@ -88,7 +103,9 @@ pub const MemoryVfs = struct {
     fn symLink(ptr: *anyopaque, target_path: []const u8, link_path: []const u8) anyerror!void {
         const self: *MemoryVfs = @ptrCast(@alignCast(ptr));
         const link_dup = try self.allocator.dupe(u8, link_path);
+        errdefer self.allocator.free(link_dup);
         const target_dup = try self.allocator.dupe(u8, target_path);
+        errdefer self.allocator.free(target_dup);
         try self.nodes.put(link_dup, .{ .kind = .symlink, .content = target_dup });
     }
 };

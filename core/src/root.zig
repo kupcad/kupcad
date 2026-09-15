@@ -6,6 +6,7 @@ pub const value = @import("core/value.zig");
 pub const locus = @import("locus/src/root.zig");
 pub const manifest = @import("stdlib/manifest.zig");
 pub const std_options = @import("log.zig").std_options;
+pub const SessionManager = @import("daemon/session_manager.zig").SessionManager;
 
 pub const formatCode = api.formatCode;
 pub const checkCode = api.checkCode;
@@ -37,6 +38,7 @@ test {
     _ = @import("core/semver_test.zig");
 
     // Daemon
+    _ = @import("daemon/session_manager_test.zig");
     _ = @import("daemon/session_test.zig");
     _ = @import("daemon/watcher_test.zig");
 
@@ -92,6 +94,7 @@ test {
     _ = @import("tools/lint/rules/param_order_test.zig");
 
     // VFS
+    _ = @import("vfs/memory_test.zig");
     _ = @import("vfs/native_test.zig");
     _ = @import("vfs/vfs_test.zig");
 

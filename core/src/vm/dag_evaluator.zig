@@ -134,8 +134,6 @@ fn dumpDAG(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) void {
 
 fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHandle {
     var v_stack = IntermediateStack.init(vm.allocator);
-    // errdefer ensures that if any kernel function panics or returns null,
-    // all dangling intermediate meshes on the stack are safely destroyed.
     errdefer v_stack.destructAll();
 
     var f_stack = EvaluationFrameStack{};
@@ -151,6 +149,18 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
             vm.reportError("Runtime Error: DAG Node Index {d} out of bounds.\n", .{frame.node_idx});
             return error.RuntimeError;
         }
+
+        // --- O(1) DAG Node Caching ---
+        // If this exact geometric sub-tree has been solved previously in this session,
+        // inject the cached handle and bypass the kernel/children entirely!
+        const node_hash = vm.dag_builder.node_hashes.items[frame.node_idx];
+        if (vm.dag_cache.get(node_hash)) |cached_handle| {
+            _ = f_stack.pop();
+            // Important: Do not destruct this handle on pop. It is owned by the cache.
+            try v_stack.push(.{ .geometry = cached_handle });
+            continue;
+        }
+
         const node = vm.dag_builder.nodes.items[frame.node_idx];
 
         if (frame.state == .visit) {
@@ -404,6 +414,12 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const handle = kernel.crossSectionBoolean(left_handle, right_handle, op) orelse return error.RuntimeError;
                     try v_stack.push(.{ .cross_section = handle });
                 },
+            }
+
+            const final_handle = v_stack.handles[v_stack.top - 1];
+
+            if (final_handle == .geometry) {
+                try vm.dag_cache.put(vm.allocator, node_hash, final_handle.geometry);
             }
         }
     }
