@@ -10,6 +10,9 @@ const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
+const ScriptSession = @import("../daemon/session.zig").ScriptSession;
+const ViewportWsServer = @import("../daemon/viewport_ws.zig").ViewportWsServer;
+const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
 const logger = std.log.scoped(.lsp);
 
@@ -216,17 +219,29 @@ pub const Handler = struct {
     io: std.Io,
     transport: *lsp.Transport,
     offset_encoding: lsp.offsets.Encoding = .@"utf-16",
-
-    // Tracks open files with their full AST and side-tables retained in memory
     files: std.StringHashMapUnmanaged(DocumentBuffer) = .empty,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, transport: *lsp.Transport) Handler {
+    session: *ScriptSession,
+    ws_server: *ViewportWsServer,
+    mem_vfs: *MemoryVfs,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        transport: *lsp.Transport,
+        session: *ScriptSession,
+        ws_server: *ViewportWsServer,
+        mem_vfs: *MemoryVfs,
+    ) Handler {
         return .{
             .allocator = allocator,
             .io = io,
             .transport = transport,
             .offset_encoding = .@"utf-16",
             .files = .empty,
+            .session = session,
+            .ws_server = ws_server,
+            .mem_vfs = mem_vfs,
         };
     }
 
@@ -326,15 +341,31 @@ pub const Handler = struct {
         const uri_dup = try self.allocator.dupe(u8, params.textDocument.uri);
         const source_dup = try self.allocator.dupe(u8, params.textDocument.text);
 
-        // Parse into full Document state
         const parsed_doc = api.Document.parse(self.allocator, source_dup) catch null;
-
-        const doc_buf = DocumentBuffer{
+        try self.files.put(self.allocator, uri_dup, .{
             .uri = uri_dup,
             .source = source_dup,
             .doc = parsed_doc,
+        });
+
+        // 1. Sync VFS and ScriptSession Pipeline
+        try self.mem_vfs.vfs().writeFile(uri_dup, source_dup);
+
+        _ = self.session.workspace.addModule(uri_dup, source_dup) catch {
+            if (self.session.workspace.path_to_id.get(uri_dup)) |mod_id| {
+                var mod = &self.session.workspace.modules.items[@intFromEnum(mod_id)];
+                self.allocator.free(mod.source);
+                mod.source = try self.allocator.dupe(u8, source_dup);
+            }
         };
-        try self.files.put(self.allocator, uri_dup, doc_buf);
+
+        try self.session.workspace.linkDependencies();
+        try self.session.buildReverseGraph();
+        try self.session.markFileEdited(uri_dup);
+
+        // 2. Evaluate and Stream
+        self.session.evaluateWorkspace() catch |err| self.log("Session evaluation failed: {}", .{err});
+        self.ws_server.broadcastSessionMesh(self.session, uri_dup) catch |err| self.log("WebSocket Broadcast failed: {}", .{err});
 
         try self.runDiagnostics(arena, params.textDocument.uri, params.textDocument.text);
     }
@@ -354,6 +385,25 @@ pub const Handler = struct {
 
                         buf.source = try self.allocator.dupe(u8, doc_change.text);
                         buf.doc = api.Document.parse(self.allocator, buf.source) catch null;
+
+                        // 1. Sync VFS and ScriptSession Pipeline
+                        try self.mem_vfs.vfs().writeFile(params.textDocument.uri, buf.source);
+
+                        _ = self.session.workspace.addModule(params.textDocument.uri, buf.source) catch {
+                            if (self.session.workspace.path_to_id.get(params.textDocument.uri)) |mod_id| {
+                                var mod = &self.session.workspace.modules.items[@intFromEnum(mod_id)];
+                                self.allocator.free(mod.source);
+                                mod.source = try self.allocator.dupe(u8, buf.source);
+                            }
+                        };
+
+                        try self.session.workspace.linkDependencies();
+                        try self.session.buildReverseGraph();
+                        try self.session.markFileEdited(params.textDocument.uri);
+
+                        // 2. Evaluate and Stream
+                        self.session.evaluateWorkspace() catch |err| self.log("Session evaluation failed: {}", .{err});
+                        self.ws_server.broadcastSessionMesh(self.session, params.textDocument.uri) catch |err| self.log("WebSocket Broadcast failed: {}", .{err});
                     }
                     try self.runDiagnostics(arena, params.textDocument.uri, doc_change.text);
                 },
@@ -630,7 +680,7 @@ pub const Handler = struct {
         var symbols = std.ArrayListUnmanaged(lsp.types.DocumentSymbol).empty;
         var line_index = try api.LineIndex.init(arena, doc_buf.source);
 
-        // ⚡ Fix: Capture node by reference using `*node`
+        // Capture node by reference using `*node`
         for (doc.tree.nodes.items, 0..) |*node, i| {
             var sym_name: ?[]const u8 = null;
             var sym_kind: lsp.types.SymbolKind = .Variable;
@@ -690,6 +740,11 @@ pub const Handler = struct {
         }
 
         return .{ .document_symbols = symbols.items };
+    }
+
+    pub fn @"kupcad/setParam"(self: *Handler, arena: std.mem.Allocator, params: std.json.Value) !void {
+        _ = arena;
+        self.log("Received interactive parameter update: {}", .{params});
     }
 
     fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, source: []const u8) !void {
@@ -772,11 +827,27 @@ pub const Handler = struct {
 };
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !void {
+    // 1. Setup global dependencies
+    var mem_vfs = MemoryVfs.init(allocator);
+    defer mem_vfs.deinit();
+
+    var session = try ScriptSession.init(allocator, init.io);
+    defer session.deinit();
+    session.vm.vfs = mem_vfs.vfs();
+
+    var ws_server = try ViewportWsServer.init(allocator, init.io, 9001);
+    defer ws_server.deinit();
+
+    // 2. Detach the WebSocket server onto a background thread
+    const ws_thread = try std.Thread.spawn(.{}, ViewportWsServer.listenLoop, .{&ws_server});
+    ws_thread.detach();
+
+    // 3. Bind everything to the LSP Handler
     var read_buffer: [4096]u8 = undefined;
     var stdio_transport: lsp.Transport.Stdio = .init(&read_buffer, .stdin(), .stdout());
     const transport: *lsp.Transport = &stdio_transport.transport;
 
-    var handler = Handler.init(allocator, init.io, transport);
+    var handler = Handler.init(allocator, init.io, transport, &session, &ws_server, &mem_vfs);
     defer handler.deinit();
 
     try lsp.basic_server.run(

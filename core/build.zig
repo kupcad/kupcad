@@ -251,21 +251,20 @@ pub fn build(b: *std.Build) void {
     const manifold_flags: []const []const u8 = if (is_wasm)
         if (wasm_threads)
             &.{
-                "-std=c++17",          "-fno-exceptions",        "-fno-rtti",                "-fno-sanitize=undefined",
-                "-DNDEBUG",            "-DMANIFOLD_NO_IOSTREAM", "-DMANIFOLD_NO_FILESYSTEM", "-DMANIFOLD_PAR=-1",
-                "-fvisibility=hidden", "-include",               wasm_stub_header,           "-matomics",
-                "-mbulk-memory",       "-pthread",
+                "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions",          "-fno-rtti",         "-fno-sanitize=undefined",
+                "-DNDEBUG",   "-DMANIFOLD_NO_IOSTREAM",        "-DMANIFOLD_NO_FILESYSTEM", "-DMANIFOLD_PAR=-1", "-fvisibility=hidden",
+                "-include",   wasm_stub_header,                "-matomics",                "-mbulk-memory",     "-pthread",
             }
         else
             &.{
-                "-std=c++17",          "-fno-exceptions",        "-fno-rtti",                "-fno-sanitize=undefined",
-                "-DNDEBUG",            "-DMANIFOLD_NO_IOSTREAM", "-DMANIFOLD_NO_FILESYSTEM", "-DMANIFOLD_PAR=-1",
-                "-fvisibility=hidden", "-include",               wasm_stub_header,
+                "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions",          "-fno-rtti",         "-fno-sanitize=undefined",
+                "-DNDEBUG",   "-DMANIFOLD_NO_IOSTREAM",        "-DMANIFOLD_NO_FILESYSTEM", "-DMANIFOLD_PAR=-1", "-fvisibility=hidden",
+                "-include",   wasm_stub_header,
             }
     else if (enable_parallel)
-        &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=1" }
+        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions", "-DMANIFOLD_PAR=1" }
     else
-        &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=-1" };
+        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions", "-DMANIFOLD_PAR=-1" };
 
     // ====================================================================
     // KupCAD Core Module
@@ -290,9 +289,9 @@ pub fn build(b: *std.Build) void {
     mod.addIncludePath(b.path("src"));
 
     const clipper_flags: []const []const u8 = if (is_wasm)
-        &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
+        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions", "-fvisibility=hidden" }
     else
-        &.{ "-std=c++17", "-fno-exceptions" };
+        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" };
 
     mod.addCSourceFiles(.{
         .files = clipper_sources,
@@ -308,14 +307,14 @@ pub fn build(b: *std.Build) void {
         mod.addIncludePath(b.path("vendor/oneTBB/include"));
 
         const tbb_flags: []const []const u8 = if (is_macos)
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE" }
+            &.{ "-std=c++17", "-Wno-nullability-completeness", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE" }
         else if (is_x86_64)
             // Safely pass waitpkg exclusively to the Clang C++ frontend.
             // This satisfies oneTBB's internal macros without poisoning Manifold or the global Zig target
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-Xclang", "-target-feature", "-Xclang", "+waitpkg" }
+            &.{ "-std=c++17", "-Wno-nullability-completeness", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-Xclang", "-target-feature", "-Xclang", "+waitpkg" }
         else
             // Fallback for ARM Linux, Windows on ARM, etc.
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1" };
+            &.{ "-std=c++17", "-Wno-nullability-completeness", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1" };
         mod.addCSourceFiles(.{
             .files = tbb_sources,
             .flags = tbb_flags,
@@ -338,16 +337,16 @@ pub fn build(b: *std.Build) void {
     });
 
     const drako_flags: []const []const u8 = if (is_wasm)
-        &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
+        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions", "-fvisibility=hidden" }
     else
-        &.{ "-std=c++17", "-fno-exceptions" };
+        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" };
 
     mod.addCSourceFiles(.{
         .files = draco_sources,
         .flags = drako_flags,
     });
 
-    const kupcad_flags: []const []const u8 = &.{ "-std=c++17", "-fno-exceptions" };
+    const kupcad_flags: []const []const u8 = &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" };
 
     mod.addCSourceFiles(.{
         .files = kupcad_bindings,
