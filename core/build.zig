@@ -224,8 +224,25 @@ pub fn build(b: *std.Build) void {
     ) orelse !is_wasm;
 
     // --- Add tatfi dependency ---
-    const tatfi_dep = b.dependency("tatfi", .{});
-    const tatfi_mod = tatfi_dep.module("tatfi");
+    const use_vendored_tatfi = true;
+
+    const tatfi_mod = if (use_vendored_tatfi) blk: {
+        const t_mod = b.createModule(.{
+            .root_source_file = b.path("vendor/tatfi/src/lib.zig"),
+            .target = active_target,
+            .optimize = optimize,
+        });
+
+        // tatfi requires a "config" options module
+        const tatfi_opts = b.addOptions();
+        tatfi_opts.addOption(bool, "variable_fonts", true);
+        tatfi_opts.addOption(bool, "opentype_layout", true);
+        tatfi_opts.addOption(bool, "apple_layout", true);
+        tatfi_opts.addOption(usize, "gvar_max_stack_tuples_len", 32);
+
+        t_mod.addOptions("config", tatfi_opts);
+        break :blk t_mod;
+    } else b.dependency("tatfi", .{}).module("tatfi");
 
     // --- list all deps ---
     const module_imports: []const std.Build.Module.Import = &.{
@@ -330,7 +347,9 @@ pub fn build(b: *std.Build) void {
         .target = active_target,
         .optimize = optimize,
     });
-    mod.addImport("sqlite", sqlite_c.createModule());
+    const sqlite_mod = sqlite_c.createModule();
+
+    mod.addImport("sqlite", sqlite_mod);
 
     const drako_flags: []const []const u8 = if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
@@ -438,6 +457,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "lsp", .module = lsp_kit.module("lsp") },
                     .{ .name = "tatfi", .module = tatfi_mod },
+                    .{ .name = "sqlite", .module = sqlite_mod },
                 },
             }),
         });
@@ -453,6 +473,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
+                    .{ .name = "sqlite", .module = sqlite_mod },
                 },
             }),
         });
@@ -493,6 +514,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
+                    .{ .name = "sqlite", .module = sqlite_mod },
                 },
             }),
         });

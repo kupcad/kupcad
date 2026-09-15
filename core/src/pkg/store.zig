@@ -9,7 +9,7 @@ pub const Db = struct {
 
     pub fn exec(self: Db, sql: []const u8, args: anytype, options: anytype) !void {
         _ = options;
-        const sql_z = try std.heap.page_allocator.dupeZ(u8, sql);
+        const sql_z = try std.heap.page_allocator.dupeSentinel(u8, sql, 0);
         defer std.heap.page_allocator.free(sql_z);
 
         var stmt: ?*sqlite.sqlite3_stmt = null;
@@ -36,7 +36,7 @@ pub const Db = struct {
     }
 
     pub fn prepare(self: Db, sql: []const u8) !Stmt {
-        const sql_z = try std.heap.page_allocator.dupeZ(u8, sql);
+        const sql_z = try std.heap.page_allocator.dupeSentinel(u8, sql, 0);
         defer std.heap.page_allocator.free(sql_z);
 
         var stmt_handle: ?*sqlite.sqlite3_stmt = null;
@@ -140,7 +140,7 @@ pub const Store = struct {
     io: std.Io,
 
     pub fn init(io: std.Io, db_path: []const u8) !Store {
-        const db_path_z = try std.heap.page_allocator.dupeZ(u8, db_path);
+        const db_path_z = try std.heap.page_allocator.dupeSentinel(u8, db_path, 0);
         defer std.heap.page_allocator.free(db_path_z);
 
         var handle: ?*sqlite.sqlite3 = null;

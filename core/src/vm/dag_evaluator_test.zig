@@ -200,7 +200,7 @@ test "DAG: Builder cleans up payload arrays on OutOfMemory" {
             break;
         };
 
-        const dummy_targets = [_]dag.DAGNodeIndex{c} ** 20;
+        const dummy_targets: [20]dag.DAGNodeIndex = @splat(c);
         last_good_extra = builder.extra_data.items.len;
 
         _ = builder.addBatchUnion(&dummy_targets) catch |err| {
