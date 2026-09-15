@@ -200,7 +200,7 @@ test "DAG: Builder cleans up payload arrays on OutOfMemory" {
             break;
         };
 
-        const dummy_targets = [_]dag.DAGNodeIndex{c} ** 20;
+        const dummy_targets: [20]dag.DAGNodeIndex = @splat(c);
         last_good_extra = builder.extra_data.items.len;
 
         _ = builder.addBatchUnion(&dummy_targets) catch |err| {
@@ -274,6 +274,21 @@ test "DAG Evaluator: safely traps cross-section vs geometry type mismatch and cl
     // 3. It must trap the mismatch and return RuntimeError.
     // Zig's testing allocator will automatically fail the test if `IntermediateStack`
     // failed to destruct the dangling 2D handle before returning the error.
+    try testing.expectError(error.RuntimeError, result);
+}
+
+test "DAG Evaluator: evaluateDAG traps 2D cross-section mismatch without cache corruption" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Build a 2D Square
+    const square_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
+
+    // 2. Erroneously evaluate it as a 3D Geometry DAG
+    const result = dag_evaluator.evaluateDAG(&vm, square_idx);
+
+    // 3. Must return RuntimeError, remove the hash from dag_cache, and clean up safely on deinit
     try testing.expectError(error.RuntimeError, result);
 }
 

@@ -80,13 +80,13 @@ pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
 /// into KupCAD's raw `NativeFn` function pointer signature (`fn(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) ...`).
 pub fn wrapMethod(comptime func: anytype) value.NativeFn {
     const fn_info = @typeInfo(@TypeOf(func)).@"fn";
-    const params = fn_info.params;
+    const param_types = fn_info.param_types;
 
-    if (params.len < 2) {
+    if (param_types.len < 2) {
         @compileError("Native method function must take at least (vm: *VM, receiver: ReceiverType)");
     }
 
-    const has_block_param = params.len > 2 and params[params.len - 1].type.? == ?*value.ObjClosure;
+    const has_block_param = param_types.len > 2 and param_types[param_types.len - 1].? == ?*value.ObjClosure;
 
     return struct {
         fn nativeWrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -94,7 +94,7 @@ pub fn wrapMethod(comptime func: anytype) value.NativeFn {
             var call_args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
 
             call_args[0] = vm;
-            call_args[1] = try unboxValue(params[1].type.?, vm.getReceiver(args), vm);
+            call_args[1] = try unboxValue(param_types[1].?, vm.getReceiver(args), vm);
 
             var effective_arg_count: usize = arg_count;
             var block_val: ?*value.ObjClosure = null;
@@ -109,9 +109,9 @@ pub fn wrapMethod(comptime func: anytype) value.NativeFn {
             }
 
             var arg_idx: usize = 0;
-            inline for (params[2..], 2..) |param, i| {
-                const ParamType = param.type.?;
-                if (has_block_param and i == params.len - 1) {
+            inline for (param_types[2..], 2..) |param_type, i| {
+                const ParamType = param_type.?;
+                if (has_block_param and i == param_types.len - 1) {
                     call_args[i] = block_val;
                 } else if (ParamType == []const value.Value) {
                     call_args[i] = args[arg_idx..effective_arg_count];
@@ -140,13 +140,13 @@ pub fn wrapMethod(comptime func: anytype) value.NativeFn {
 
 pub fn wrapGlobal(comptime func: anytype) value.NativeFn {
     const fn_info = @typeInfo(@TypeOf(func)).@"fn";
-    const params = fn_info.params;
+    const param_types = fn_info.param_types;
 
-    if (params.len < 1) {
+    if (param_types.len < 1) {
         @compileError("Native global function must take at least (vm: *VM)");
     }
 
-    const has_block_param = params.len > 1 and params[params.len - 1].type.? == ?*value.ObjClosure;
+    const has_block_param = param_types.len > 1 and param_types[param_types.len - 1].? == ?*value.ObjClosure;
 
     return struct {
         fn nativeWrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
@@ -166,9 +166,9 @@ pub fn wrapGlobal(comptime func: anytype) value.NativeFn {
             }
 
             var arg_idx: usize = 0;
-            inline for (params[1..], 1..) |param, i| {
-                const ParamType = param.type.?;
-                if (has_block_param and i == params.len - 1) {
+            inline for (param_types[1..], 1..) |param_type, i| {
+                const ParamType = param_type.?;
+                if (has_block_param and i == param_types.len - 1) {
                     call_args[i] = block_val;
                 } else if (ParamType == []const value.Value) {
                     call_args[i] = args[arg_idx..effective_arg_count];

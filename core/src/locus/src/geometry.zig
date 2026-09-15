@@ -256,10 +256,10 @@ pub fn evaluateNurbsCurve(curve: NurbsCurve, t: f64) math.Vec3 {
     while (span < n and knots[span + 1] <= t) : (span += 1) {}
     if (t >= knots[n]) span = n - 1;
 
-    var N = [_]f64{0} ** 20;
+    var N: [20]f64 = @splat(0);
     N[0] = 1.0;
-    var left = [_]f64{0} ** 20;
-    var right = [_]f64{0} ** 20;
+    var left: [20]f64 = @splat(0);
+    var right: [20]f64 = @splat(0);
 
     for (1..p + 1) |j| {
         left[j] = t - knots[span + 1 - j];

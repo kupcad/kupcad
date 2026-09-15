@@ -508,22 +508,22 @@ pub const GC = struct {
             if (!entry.value_ptr.*.obj.is_marked) _ = vm.symbols.remove(entry.key_ptr.*);
         }
 
-        // Blazingly fast contiguous memory iterations!
-        self.sweepList(vm, value.ObjString, &self.strings);
-        self.sweepList(vm, value.ObjSymbol, &self.symbols);
-        self.sweepList(vm, value.ObjArray, &self.arrays);
-        self.sweepList(vm, value.ObjMap, &self.maps);
-        self.sweepList(vm, value.ObjFunction, &self.functions);
-        self.sweepList(vm, value.ObjClass, &self.classes);
-        self.sweepList(vm, value.ObjModule, &self.modules);
+        // Sweep dependent objects before their referenced functions/primitives
+        self.sweepList(vm, value.ObjBoundMethod, &self.bound_methods);
         self.sweepList(vm, value.ObjInstance, &self.instances);
         self.sweepList(vm, value.ObjClosure, &self.closures);
+        self.sweepList(vm, value.ObjClass, &self.classes);
+        self.sweepList(vm, value.ObjModule, &self.modules);
+        self.sweepList(vm, value.ObjFunction, &self.functions);
+        self.sweepList(vm, value.ObjArray, &self.arrays);
+        self.sweepList(vm, value.ObjMap, &self.maps);
         self.sweepList(vm, value.ObjUpvalue, &self.upvalues);
-        self.sweepList(vm, value.ObjBoundMethod, &self.bound_methods);
         self.sweepList(vm, value.ObjNative, &self.natives);
         self.sweepList(vm, value.ObjRange, &self.ranges);
         self.sweepList(vm, value.ObjBrep, &self.breps);
         self.sweepList(vm, value.ObjBBox, &self.bboxes);
+        self.sweepList(vm, value.ObjString, &self.strings);
+        self.sweepList(vm, value.ObjSymbol, &self.symbols);
 
         self.sweepList(vm, value.ObjGeometry, &self.geometries);
         self.sweepList(vm, value.ObjCrossSection, &self.cross_sections);
@@ -589,11 +589,13 @@ pub const GC = struct {
                 self.destroyObject(value.ObjInstance, instance_obj);
             },
             .closure => {
-                const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
-                const upvals_size = @sizeOf(?*value.ObjUpvalue) * closure.function.upvalue_count;
-                self.allocator.free(closure.upvalues[0..closure.function.upvalue_count]);
-                self.bytes_allocated -= upvals_size;
-                self.destroyObject(value.ObjClosure, closure);
+                const closure_obj = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
+                const upvalue_count = closure_obj.function.upvalue_count;
+                const upvals_bytes = @sizeOf(?*value.ObjUpvalue) * upvalue_count;
+
+                self.allocator.free(closure_obj.upvalues[0..upvalue_count]);
+                self.bytes_allocated = self.bytes_allocated -| upvals_bytes;
+                self.destroyObject(value.ObjClosure, closure_obj);
             },
             .function => {
                 const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));

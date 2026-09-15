@@ -522,7 +522,7 @@ pub fn computeBoolean(
     // Apply the topological healing pass to dissolve boolean seams
     try healing.healSolid(allocator, t_arena, g_arena, new_solid_id, tol);
 
-    if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+    if (comptime builtin.mode == .debug or builtin.mode == .safe) {
         const validator = @import("validator.zig");
         validator.BRepSanitizer.validateSolid(allocator, t_arena, g_arena, new_solid_id, tol, .{
             .enable_checks = true,

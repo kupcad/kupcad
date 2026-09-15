@@ -13,6 +13,11 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: test-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -30,7 +35,7 @@ jobs:
       - name: Install Zig
         uses: xyzzylabs/setup-zig@v1
         with:
-          version: 0.16.0
+          version: master
 
       - name: Setup `wasmtime`
         uses: bytecodealliance/actions/wasmtime/setup@v1

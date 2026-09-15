@@ -60,6 +60,7 @@ const BufferView = struct {
     buffer: u32,
     byteOffset: u32,
     byteLength: u32,
+    byteStride: ?u32 = null,
     target: ?u32 = null,
 };
 
@@ -230,52 +231,82 @@ pub fn buildGltfBuffer(
             });
         }
     } else {
-        try bin_buf.appendSlice(allocator, vertex_buf.items);
+        // --- ZERO-COPY GLTF PACKING ---
+        for (handles) |handle| {
+            const mesh = kernel.getMesh(allocator, handle) orelse continue;
+            defer allocator.free(mesh.vert_props);
+            defer allocator.free(mesh.tri_verts);
 
-        const pos_byte_length: u32 = @intCast(vertex_buf.items.len);
-        const indices_start_offset: u32 = pos_byte_length;
+            const vertex_count: u32 = @intCast(mesh.vert_props.len / mesh.num_prop);
+            if (vertex_count == 0) continue;
 
-        var index_buf: std.ArrayListUnmanaged(u8) = .empty;
-        defer index_buf.deinit(allocator);
+            // 1. SLICE-CAST VERTICES DIRECTLY (Zero-Copy)
+            const pos_byte_offset: u32 = @intCast(bin_buf.items.len);
+            const raw_vertices = std.mem.sliceAsBytes(mesh.vert_props);
+            try bin_buf.appendSlice(allocator, raw_vertices);
 
-        for (primitives_data.items) |prim| {
-            const current_index_byte_offset: u32 = @intCast(index_buf.items.len);
+            const pos_bv_idx: u32 = @intCast(bufferViews.items.len);
+            try bufferViews.append(allocator, .{
+                .buffer = 0,
+                .byteOffset = pos_byte_offset,
+                .byteLength = @intCast(raw_vertices.len),
+                .byteStride = @intCast(mesh.num_prop * @sizeOf(f32)), // Tell WebGL how to jump over Material IDs
+                .target = GLTF_TARGET_ARRAY_BUFFER,
+            });
 
-            for (prim.indices.items) |idx| {
-                try index_buf.appendSlice(allocator, std.mem.asBytes(&idx));
+            // Fast min/max calculation for GLTF bounds without allocating
+            var local_min = [3]f64{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
+            var local_max = [3]f64{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
+            var v: usize = 0;
+            while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
+                if (mesh.vert_props[v + 0] < local_min[0]) local_min[0] = mesh.vert_props[v + 0];
+                if (mesh.vert_props[v + 0] > local_max[0]) local_max[0] = mesh.vert_props[v + 0];
+                if (mesh.vert_props[v + 1] < local_min[1]) local_min[1] = mesh.vert_props[v + 1];
+                if (mesh.vert_props[v + 1] > local_max[1]) local_max[1] = mesh.vert_props[v + 1];
+                if (mesh.vert_props[v + 2] < local_min[2]) local_min[2] = mesh.vert_props[v + 2];
+                if (mesh.vert_props[v + 2] > local_max[2]) local_max[2] = mesh.vert_props[v + 2];
             }
 
-            const accessor_id: u32 = @intCast(accessors.items.len);
+            const pos_accessor_idx: u32 = @intCast(accessors.items.len);
             try accessors.append(allocator, .{
-                .bufferView = 1,
-                .byteOffset = current_index_byte_offset,
+                .bufferView = pos_bv_idx,
+                .byteOffset = 0,
+                .componentType = GLTF_COMPONENT_TYPE_FLOAT,
+                .count = vertex_count,
+                .type = "VEC3",
+                .min = local_min,
+                .max = local_max,
+            });
+
+            // 2. SLICE-CAST INDICES DIRECTLY (Zero-Copy)
+            const idx_byte_offset: u32 = @intCast(bin_buf.items.len);
+            const raw_indices = std.mem.sliceAsBytes(mesh.tri_verts);
+            try bin_buf.appendSlice(allocator, raw_indices);
+
+            const idx_bv_idx: u32 = @intCast(bufferViews.items.len);
+            try bufferViews.append(allocator, .{
+                .buffer = 0,
+                .byteOffset = idx_byte_offset,
+                .byteLength = @intCast(raw_indices.len),
+                .target = GLTF_TARGET_ELEMENT_ARRAY_BUFFER,
+            });
+
+            const idx_accessor_idx: u32 = @intCast(accessors.items.len);
+            try accessors.append(allocator, .{
+                .bufferView = idx_bv_idx,
+                .byteOffset = 0,
                 .componentType = GLTF_COMPONENT_TYPE_UNSIGNED_INT,
-                .count = @intCast(prim.indices.items.len),
+                .count = @intCast(mesh.tri_verts.len),
                 .type = "SCALAR",
             });
 
+            // 3. Register the primitive
             try primitives.append(allocator, .{
-                .attributes = .{ .POSITION = 0 },
-                .indices = accessor_id,
-                .material = prim.material,
+                .attributes = .{ .POSITION = pos_accessor_idx },
+                .indices = idx_accessor_idx,
+                .material = 0, // Fallback to default material for fast-streaming
             });
         }
-
-        try bin_buf.appendSlice(allocator, index_buf.items);
-        const indices_byte_length: u32 = @intCast(index_buf.items.len);
-
-        try bufferViews.append(allocator, .{
-            .buffer = 0,
-            .byteOffset = 0,
-            .byteLength = pos_byte_length,
-            .target = GLTF_TARGET_ARRAY_BUFFER,
-        });
-        try bufferViews.append(allocator, .{
-            .buffer = 0,
-            .byteOffset = indices_start_offset,
-            .byteLength = indices_byte_length,
-            .target = GLTF_TARGET_ELEMENT_ARRAY_BUFFER,
-        });
     }
 
     var gltf_materials: std.ArrayListUnmanaged(GltfMaterial) = .empty;

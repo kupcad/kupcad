@@ -84,7 +84,7 @@ pub fn pcaNormal(pts: []const math.Vec3) math.Vec3 {
         centroid[1] *= inv_n;
         centroid[2] *= inv_n;
 
-        var cov = [_]f64{0} ** 9;
+        var cov: [9]f64 = @splat(0);
         for (pts) |p| {
             const dx = p[0] - centroid[0];
             const dy = p[1] - centroid[1];

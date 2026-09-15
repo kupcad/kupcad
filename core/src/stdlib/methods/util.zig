@@ -56,17 +56,17 @@ pub fn parseKwargs(comptime T: type, map: *value.ObjMap) T {
             const v = entry.value_ptr.*;
 
             // Unroll loop at compile-time
-            inline for (std.meta.fields(T)) |field| {
-                if (std.mem.eql(u8, k_str, field.name)) {
-                    const field_type = field.type;
+            inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
+                const field_type = @typeInfo(T).@"struct".field_types[i];
+                if (std.mem.eql(u8, k_str, field_name)) {
                     if (field_type == f64 or field_type == ?f64) {
-                        if (v.isNumber()) @field(result, field.name) = v.asNumber();
+                        if (v.isNumber()) @field(result, field_name) = v.asNumber();
                     } else if (field_type == i32 or field_type == ?i32) {
-                        if (v.isNumber()) @field(result, field.name) = @intFromFloat(v.asNumber());
+                        if (v.isNumber()) @field(result, field_name) = @intFromFloat(v.asNumber());
                     } else if (field_type == bool or field_type == ?bool) {
-                        if (v.isBool()) @field(result, field.name) = v.asBool();
+                        if (v.isBool()) @field(result, field_name) = v.asBool();
                     } else if (field_type == []const u8 or field_type == ?[]const u8) {
-                        if (v.isString()) @field(result, field.name) = v.asString().chars else if (v.isSymbol()) @field(result, field.name) = v.asSymbol().chars;
+                        if (v.isString()) @field(result, field_name) = v.asString().chars else if (v.isSymbol()) @field(result, field_name) = v.asSymbol().chars;
                     }
                 }
             }

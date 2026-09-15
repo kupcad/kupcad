@@ -41,19 +41,16 @@ test "Daemon Watcher: detects file modification on event loop tick" {
     defer watcher.deinit();
     watcher.is_one_shot = true;
 
-    // 4. Sleep briefly to ensure stat mtime differs, then modify file
-    testing.io.sleep(.fromMilliseconds(100), .awake) catch {};
+    // 4. Sleep briefly to ensure filesystem mtime timestamp increments, then modify file
+    testing.io.sleep(std.Io.Duration.fromMilliseconds(100), .awake) catch {};
     {
         const file = try cwd.createFile(testing.io, file_path, .{});
         defer file.close(testing.io);
         try file.writeStreamingAll(testing.io, "x = cube(20)\n");
     }
 
-    // 5. Fire 1ms timer
-    watcher.timer.run(&watcher.loop, &watcher.completion, 1, Watcher, &watcher, &Watcher.pollCallback);
-
-    // Runs until the 1ms timer fires and disarms without rescheduling
-    try watcher.loop.run(.until_done);
+    // 5. Run a single poll cycle via native std.Io async engine
+    try watcher.start();
 
     // 6. Assert that markFileEdited bumped revision to 2 AND re-evaluation verified the node
     try testing.expectEqual(@as(u64, 2), session.global_revision);

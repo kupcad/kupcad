@@ -178,7 +178,7 @@ pub fn extractText(
         },
     };
 
-    const GpaType = @typeInfo(@TypeOf(tatfi.Face.glyph_hor_advance)).@"fn".params[1].type.?;
+    const GpaType = @typeInfo(@TypeOf(tatfi.Face.glyph_hor_advance)).@"fn".param_types[1].?;
     const gpa_val: GpaType = if (GpaType == void) {} else allocator;
 
     var iter = std.unicode.Utf8Iterator{ .bytes = text_str, .i = 0 };

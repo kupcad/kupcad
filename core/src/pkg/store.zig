@@ -1,23 +1,21 @@
 const std = @import("std");
 
-const c = @cImport({
-    @cInclude("sqlite3.h");
-});
+const sqlite = @import("sqlite");
 
 const log = std.log.scoped(.pkg);
 
 pub const Db = struct {
-    handle: ?*c.sqlite3,
+    handle: ?*sqlite.sqlite3,
 
     pub fn exec(self: Db, sql: []const u8, args: anytype, options: anytype) !void {
         _ = options;
-        const sql_z = try std.heap.page_allocator.dupeZ(u8, sql);
+        const sql_z = try std.heap.page_allocator.dupeSentinel(u8, sql, 0);
         defer std.heap.page_allocator.free(sql_z);
 
-        var stmt: ?*c.sqlite3_stmt = null;
-        const rc_prep = c.sqlite3_prepare_v2(self.handle, sql_z, -1, &stmt, null);
-        if (rc_prep != c.SQLITE_OK or stmt == null) return error.SqliteError;
-        defer _ = c.sqlite3_finalize(stmt);
+        var stmt: ?*sqlite.sqlite3_stmt = null;
+        const rc_prep = sqlite.sqlite3_prepare_v2(self.handle, sql_z, -1, &stmt, null);
+        if (rc_prep != sqlite.SQLITE_OK or stmt == null) return error.SqliteError;
+        defer _ = sqlite.sqlite3_finalize(stmt);
 
         const ArgsType = @TypeOf(args);
         const args_info = @typeInfo(ArgsType);
@@ -26,41 +24,41 @@ pub const Db = struct {
                 const ArgType = @TypeOf(arg);
                 if (@typeInfo(ArgType) == .pointer) {
                     const slice: []const u8 = arg;
-                    _ = c.sqlite3_bind_text(stmt, @intCast(idx), slice.ptr, @intCast(slice.len), null);
+                    _ = sqlite.sqlite3_bind_text(stmt, @intCast(idx), slice.ptr, @intCast(slice.len), null);
                 } else if (ArgType == i64 or ArgType == i32 or ArgType == usize) {
-                    _ = c.sqlite3_bind_int64(stmt, @intCast(idx), @intCast(arg));
+                    _ = sqlite.sqlite3_bind_int64(stmt, @intCast(idx), @intCast(arg));
                 }
             }
         }
 
-        const rc = c.sqlite3_step(stmt);
-        if (rc != c.SQLITE_DONE and rc != c.SQLITE_ROW) return error.SqliteError;
+        const rc = sqlite.sqlite3_step(stmt);
+        if (rc != sqlite.SQLITE_DONE and rc != sqlite.SQLITE_ROW) return error.SqliteError;
     }
 
     pub fn prepare(self: Db, sql: []const u8) !Stmt {
-        const sql_z = try std.heap.page_allocator.dupeZ(u8, sql);
+        const sql_z = try std.heap.page_allocator.dupeSentinel(u8, sql, 0);
         defer std.heap.page_allocator.free(sql_z);
 
-        var stmt_handle: ?*c.sqlite3_stmt = null;
-        const rc = c.sqlite3_prepare_v2(self.handle, sql_z, -1, &stmt_handle, null);
-        if (rc != c.SQLITE_OK or stmt_handle == null) return error.SqliteError;
+        var stmt_handle: ?*sqlite.sqlite3_stmt = null;
+        const rc = sqlite.sqlite3_prepare_v2(self.handle, sql_z, -1, &stmt_handle, null);
+        if (rc != sqlite.SQLITE_OK or stmt_handle == null) return error.SqliteError;
 
         return Stmt{ .handle = stmt_handle.? };
     }
 
     pub fn deinit(self: *Db) void {
         if (self.handle) |h| {
-            _ = c.sqlite3_close(h);
+            _ = sqlite.sqlite3_close(h);
             self.handle = null;
         }
     }
 };
 
 pub const Stmt = struct {
-    handle: *c.sqlite3_stmt,
+    handle: *sqlite.sqlite3_stmt,
 
     pub fn deinit(self: Stmt) void {
-        _ = c.sqlite3_finalize(self.handle);
+        _ = sqlite.sqlite3_finalize(self.handle);
     }
 
     fn bindArgs(self: Stmt, args: anytype) void {
@@ -71,9 +69,9 @@ pub const Stmt = struct {
                 const ArgType = @TypeOf(arg);
                 if (@typeInfo(ArgType) == .pointer) {
                     const slice: []const u8 = arg;
-                    _ = c.sqlite3_bind_text(self.handle, @intCast(idx), slice.ptr, @intCast(slice.len), null);
+                    _ = sqlite.sqlite3_bind_text(self.handle, @intCast(idx), slice.ptr, @intCast(slice.len), null);
                 } else if (ArgType == i64 or ArgType == i32 or ArgType == usize) {
-                    _ = c.sqlite3_bind_int64(self.handle, @intCast(idx), @intCast(arg));
+                    _ = sqlite.sqlite3_bind_int64(self.handle, @intCast(idx), @intCast(arg));
                 }
             }
         }
@@ -81,20 +79,21 @@ pub const Stmt = struct {
 
     pub fn one(self: Stmt, comptime T: type, args: anytype, options: anytype) !?T {
         _ = options;
-        _ = c.sqlite3_reset(self.handle);
-        _ = c.sqlite3_clear_bindings(self.handle);
+        _ = sqlite.sqlite3_reset(self.handle);
+        _ = sqlite.sqlite3_clear_bindings(self.handle);
         self.bindArgs(args);
 
-        const rc = c.sqlite3_step(self.handle);
-        if (rc == c.SQLITE_ROW) {
+        const rc = sqlite.sqlite3_step(self.handle);
+        if (rc == sqlite.SQLITE_ROW) {
             var result: T = undefined;
-            inline for (std.meta.fields(T), 0..) |field, i| {
-                if (field.type == []const u8) {
-                    const ptr = c.sqlite3_column_text(self.handle, @intCast(i));
-                    const len = c.sqlite3_column_bytes(self.handle, @intCast(i));
-                    @field(result, field.name) = if (ptr != null) ptr[0..@intCast(len)] else "";
-                } else if (field.type == i32 or field.type == i64) {
-                    @field(result, field.name) = @intCast(c.sqlite3_column_int64(self.handle, @intCast(i)));
+            inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
+                const filed_type = @typeInfo(T).@"struct".field_types[i];
+                if (filed_type == []const u8) {
+                    const ptr = sqlite.sqlite3_column_text(self.handle, @intCast(i));
+                    const len = sqlite.sqlite3_column_bytes(self.handle, @intCast(i));
+                    @field(result, field_name) = if (ptr != null) ptr[0..@intCast(len)] else "";
+                } else if (filed_type == i32 or filed_type == i64) {
+                    @field(result, field_name) = @intCast(sqlite.sqlite3_column_int64(self.handle, @intCast(i)));
                 }
             }
             return result;
@@ -103,8 +102,8 @@ pub const Stmt = struct {
     }
 
     pub fn iterator(self: Stmt, comptime T: type, args: anytype) !Iterator(T) {
-        _ = c.sqlite3_reset(self.handle);
-        _ = c.sqlite3_clear_bindings(self.handle);
+        _ = sqlite.sqlite3_reset(self.handle);
+        _ = sqlite.sqlite3_clear_bindings(self.handle);
         self.bindArgs(args);
 
         return Iterator(T){ .stmt = self };
@@ -115,16 +114,17 @@ pub const Stmt = struct {
             stmt: Stmt,
 
             pub fn next(self: *@This()) !?T {
-                const rc = c.sqlite3_step(self.stmt.handle);
-                if (rc == c.SQLITE_ROW) {
+                const rc = sqlite.sqlite3_step(self.stmt.handle);
+                if (rc == sqlite.SQLITE_ROW) {
                     var result: T = undefined;
-                    inline for (std.meta.fields(T), 0..) |field, i| {
-                        if (field.type == []const u8) {
-                            const ptr = c.sqlite3_column_text(self.stmt.handle, @intCast(i));
-                            const len = c.sqlite3_column_bytes(self.stmt.handle, @intCast(i));
-                            @field(result, field.name) = if (ptr != null) ptr[0..@intCast(len)] else "";
-                        } else if (field.type == i32 or field.type == i64) {
-                            @field(result, field.name) = @intCast(c.sqlite3_column_int64(self.stmt.handle, @intCast(i)));
+                    inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
+                        const filed_type = @typeInfo(T).@"struct".field_types[i];
+                        if (filed_type == []const u8) {
+                            const ptr = sqlite.sqlite3_column_text(self.stmt.handle, @intCast(i));
+                            const len = sqlite.sqlite3_column_bytes(self.stmt.handle, @intCast(i));
+                            @field(result, field_name) = if (ptr != null) ptr[0..@intCast(len)] else "";
+                        } else if (filed_type == i32 or filed_type == i64) {
+                            @field(result, field_name) = @intCast(sqlite.sqlite3_column_int64(self.stmt.handle, @intCast(i)));
                         }
                     }
                     return result;
@@ -140,12 +140,12 @@ pub const Store = struct {
     io: std.Io,
 
     pub fn init(io: std.Io, db_path: []const u8) !Store {
-        const db_path_z = try std.heap.page_allocator.dupeZ(u8, db_path);
+        const db_path_z = try std.heap.page_allocator.dupeSentinel(u8, db_path, 0);
         defer std.heap.page_allocator.free(db_path_z);
 
-        var handle: ?*c.sqlite3 = null;
-        const rc = c.sqlite3_open(db_path_z, &handle);
-        if (rc != c.SQLITE_OK or handle == null) return error.DatabaseCorrupted;
+        var handle: ?*sqlite.sqlite3 = null;
+        const rc = sqlite.sqlite3_open(db_path_z, &handle);
+        if (rc != sqlite.SQLITE_OK or handle == null) return error.DatabaseCorrupted;
 
         const db = Db{ .handle = handle };
         var store = Store{ .db = db, .io = io };

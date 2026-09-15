@@ -224,30 +224,35 @@ pub fn build(b: *std.Build) void {
     ) orelse !is_wasm;
 
     // --- Add tatfi dependency ---
-    const tatfi_dep = b.dependency("tatfi", .{});
-    const tatfi_mod = tatfi_dep.module("tatfi");
+    const use_vendored_tatfi = true;
 
-    // --- Add libxev dependency ---
-    var xev_mod_opt: ?*std.Build.Module = null;
-    var module_imports: []const std.Build.Module.Import = &.{
+    const tatfi_mod = if (use_vendored_tatfi) blk: {
+        const t_mod = b.createModule(.{
+            .root_source_file = b.path("vendor/tatfi/src/lib.zig"),
+            .target = active_target,
+            .optimize = optimize,
+        });
+
+        // tatfi requires a "config" options module
+        const tatfi_opts = b.addOptions();
+        tatfi_opts.addOption(bool, "variable_fonts", true);
+        tatfi_opts.addOption(bool, "opentype_layout", true);
+        tatfi_opts.addOption(bool, "apple_layout", true);
+        tatfi_opts.addOption(usize, "gvar_max_stack_tuples_len", 32);
+
+        t_mod.addOptions("config", tatfi_opts);
+        break :blk t_mod;
+    } else b.dependency("tatfi", .{}).module("tatfi");
+
+    // --- list all deps ---
+    const module_imports: []const std.Build.Module.Import = &.{
         .{ .name = "tatfi", .module = tatfi_mod },
     };
-
-    // Only resolve libxev if we are NOT building for WASM
-    if (!is_wasm) {
-        const xev_dep = b.dependency("libxev", .{ .target = target, .optimize = optimize });
-        xev_mod_opt = xev_dep.module("xev");
-
-        module_imports = b.allocator.dupe(std.Build.Module.Import, &.{
-            .{ .name = "tatfi", .module = tatfi_mod },
-            .{ .name = "xev", .module = xev_mod_opt.? },
-        }) catch @panic("OOM");
-    }
 
     // ====================================================================
     // C/C++ Flags & Headers
     // ====================================================================
-    const wasm_stub_header = b.path("src/wasm_stubs.h").getPath(b);
+    const wasm_stub_header = "src/wasm_stubs.h";
     const manifold_flags: []const []const u8 = if (is_wasm)
         if (wasm_threads)
             &.{
@@ -336,6 +341,15 @@ pub fn build(b: *std.Build) void {
         .file = b.path("vendor/sqlite/sqlite3.c"),
         .flags = sqlite_flags,
     });
+
+    const sqlite_c = b.addTranslateC(.{
+        .root_source_file = b.path("vendor/sqlite/sqlite3.h"),
+        .target = active_target,
+        .optimize = optimize,
+    });
+    const sqlite_mod = sqlite_c.createModule();
+
+    mod.addImport("sqlite", sqlite_mod);
 
     const drako_flags: []const []const u8 = if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
@@ -428,8 +442,6 @@ pub fn build(b: *std.Build) void {
         const test_wasm_step = b.step("test-wasm", "Run WASM tests");
         test_wasm_step.dependOn(&run_wasm_test.step);
     } else {
-        const xev_mod = xev_mod_opt.?;
-
         const lsp_kit = b.dependency("lsp_kit", .{
             .target = target,
             .optimize = optimize,
@@ -445,7 +457,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "lsp", .module = lsp_kit.module("lsp") },
                     .{ .name = "tatfi", .module = tatfi_mod },
-                    .{ .name = "xev", .module = xev_mod },
+                    .{ .name = "sqlite", .module = sqlite_mod },
                 },
             }),
         });
@@ -461,7 +473,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
-                    .{ .name = "xev", .module = xev_mod },
+                    .{ .name = "sqlite", .module = sqlite_mod },
                 },
             }),
         });
@@ -471,9 +483,6 @@ pub fn build(b: *std.Build) void {
         const run_cmd = b.addRunArtifact(exe);
         run_step.dependOn(&run_cmd.step);
         run_cmd.step.dependOn(b.getInstallStep());
-        if (b.args) |args| {
-            run_cmd.addArgs(args);
-        }
 
         const test_filters = b.option([]const []const u8, "test-filter", "Filter tests by name") orelse &.{};
 
@@ -493,6 +502,15 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&run_mod_tests.step);
         test_step.dependOn(&run_exe_tests.step);
 
+        if (use_vendored_tatfi) {
+            const tatfi_tests = b.addTest(.{
+                .root_module = tatfi_mod,
+                .filters = test_filters,
+            });
+            const run_tatfi_tests = b.addRunArtifact(tatfi_tests);
+            test_step.dependOn(&run_tatfi_tests.step);
+        }
+
         const gen_grammar_exe = b.addExecutable(.{
             .name = "gen_grammar",
             .root_module = b.createModule(.{
@@ -502,7 +520,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
-                    .{ .name = "xev", .module = xev_mod },
+                    .{ .name = "sqlite", .module = sqlite_mod },
                 },
             }),
         });

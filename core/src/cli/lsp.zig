@@ -298,7 +298,7 @@ pub const Handler = struct {
             .documentSymbolProvider = .{ .bool = true },
         };
 
-        if (builtin.mode == .Debug) {
+        if (builtin.mode == .debug) {
             lsp.basic_server.validateServerCapabilities(Handler, server_capabilities);
         }
 

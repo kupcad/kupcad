@@ -202,3 +202,24 @@ test "GC Sandbox: Enforces max_memory_limit strictly" {
     // The allocator should intercept it and yield an error to halt the VM
     try testing.expectError(error.OutOfMemory, result);
 }
+
+test "GC: Mass allocation and sweep underflow protection" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.zealous_gc = true;
+
+    // Allocate and free multiple batches of dynamic strings and closures
+    for (0..500) |i| {
+        const str_buf = try std.fmt.allocPrint(testing.allocator, "tmp_string_{d}", .{i});
+        defer testing.allocator.free(str_buf);
+
+        _ = try vm.allocateString(str_buf);
+        if (i % 10 == 0) {
+            vm.gc.collectGarbage(&vm, false);
+        }
+    }
+
+    // Force full sweep and ensure byte counter didn't wrap around
+    vm.gc.collectGarbage(&vm, true);
+    try testing.expect(vm.gc.bytes_allocated < 1000);
+}
