@@ -431,6 +431,11 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
 pub fn evaluateDAG(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHandle {
     const final_val = try evaluateInternal(vm, root_node_idx);
     if (final_val == .cross_section) {
+        // Remove from dag_cache so vm.deinit() doesn't double-free the handle
+        if (root_node_idx < vm.dag_builder.node_hashes.items.len) {
+            const root_hash = vm.dag_builder.node_hashes.items[root_node_idx];
+            _ = vm.dag_cache.remove(root_hash);
+        }
         final_val.destruct(vm.allocator);
         return error.RuntimeError;
     }
@@ -440,6 +445,11 @@ pub fn evaluateDAG(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!geom.Geome
 pub fn evaluateCrossSectionDAG(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!geom.CrossSectionHandle {
     const final_val = try evaluateInternal(vm, root_node_idx);
     if (final_val == .geometry) {
+        // Remove from dag_cache so vm.deinit() doesn't double-free the handle
+        if (root_node_idx < vm.dag_builder.node_hashes.items.len) {
+            const root_hash = vm.dag_builder.node_hashes.items[root_node_idx];
+            _ = vm.dag_cache.remove(root_hash);
+        }
         final_val.destruct(vm.allocator);
         return error.RuntimeError;
     }
