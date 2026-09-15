@@ -36,10 +36,6 @@
             .url = "git+https://github.com/zigtools/lsp-kit.git#d148676ace1eaecf3c703ce7d350d0e94e502ed7",
             .hash = "lsp_kit-0.1.0-bi_PLwc2DACoR7VTz_qKFXUvtx7veHvWcTQvP9pDFLpk",
         },
-        .tatfi = .{
-            .url = "git+https://git.sr.ht/~asibahi/tatfi#68f171b9cf5c2ba1529a816ea563e1453c218e41",
-            .hash = "tatfi-0.1.3-PJjJTJ1fDgDuwFUawkE-E8X-eCYNzukYEaiu-rmBtTo-",
-        },
     },
     .paths = .{
         "build.zig",
