@@ -30,7 +30,7 @@ pub const ValidationError = error{
 };
 
 pub const ValidatorConfig = struct {
-    enable_checks: bool = (builtin.mode == .Debug),
+    enable_checks: bool = (builtin.mode == .debug),
     require_closed_shells: bool = true,
     check_euler: bool = true,
     check_twins: bool = true,

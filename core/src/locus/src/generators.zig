@@ -150,7 +150,7 @@ pub fn generateCube(
     try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
 
     // Validate base inputs are mathematically watertight before Booleans touch them
-    if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+    if (comptime builtin.mode == .debug or builtin.mode == .safe) {
         // Primitives have no floating point drift upon creation, static tolerance is safe
         const base_tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
         validator.BRepSanitizer.validateSolid(allocator, t_arena, g_arena, solid_id, base_tol, .{
@@ -241,7 +241,7 @@ pub fn generateCylinder(
     try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
 
     // Validate base inputs are mathematically watertight before Booleans touch them
-    if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+    if (comptime builtin.mode == .debug or builtin.mode == .safe) {
         // Primitives have no floating point drift upon creation, static tolerance is safe
         const base_tol = math.Tolerance{ .absolute = 1e-5, .squared = 1e-10, .parametric = 1e-5 };
         validator.BRepSanitizer.validateSolid(allocator, t_arena, g_arena, solid_id, base_tol, .{

@@ -227,27 +227,15 @@ pub fn build(b: *std.Build) void {
     const tatfi_dep = b.dependency("tatfi", .{});
     const tatfi_mod = tatfi_dep.module("tatfi");
 
-    // --- Add libxev dependency ---
-    var xev_mod_opt: ?*std.Build.Module = null;
-    var module_imports: []const std.Build.Module.Import = &.{
+    // --- list all deps ---
+    const module_imports: []const std.Build.Module.Import = &.{
         .{ .name = "tatfi", .module = tatfi_mod },
     };
-
-    // Only resolve libxev if we are NOT building for WASM
-    if (!is_wasm) {
-        const xev_dep = b.dependency("libxev", .{ .target = target, .optimize = optimize });
-        xev_mod_opt = xev_dep.module("xev");
-
-        module_imports = b.allocator.dupe(std.Build.Module.Import, &.{
-            .{ .name = "tatfi", .module = tatfi_mod },
-            .{ .name = "xev", .module = xev_mod_opt.? },
-        }) catch @panic("OOM");
-    }
 
     // ====================================================================
     // C/C++ Flags & Headers
     // ====================================================================
-    const wasm_stub_header = b.path("src/wasm_stubs.h").getPath(b);
+    const wasm_stub_header = "src/wasm_stubs.h";
     const manifold_flags: []const []const u8 = if (is_wasm)
         if (wasm_threads)
             &.{
@@ -336,6 +324,13 @@ pub fn build(b: *std.Build) void {
         .file = b.path("vendor/sqlite/sqlite3.c"),
         .flags = sqlite_flags,
     });
+
+    const sqlite_c = b.addTranslateC(.{
+        .root_source_file = b.path("vendor/sqlite/sqlite3.h"),
+        .target = active_target,
+        .optimize = optimize,
+    });
+    mod.addImport("sqlite", sqlite_c.createModule());
 
     const drako_flags: []const []const u8 = if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
@@ -428,8 +423,6 @@ pub fn build(b: *std.Build) void {
         const test_wasm_step = b.step("test-wasm", "Run WASM tests");
         test_wasm_step.dependOn(&run_wasm_test.step);
     } else {
-        const xev_mod = xev_mod_opt.?;
-
         const lsp_kit = b.dependency("lsp_kit", .{
             .target = target,
             .optimize = optimize,
@@ -445,7 +438,6 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "lsp", .module = lsp_kit.module("lsp") },
                     .{ .name = "tatfi", .module = tatfi_mod },
-                    .{ .name = "xev", .module = xev_mod },
                 },
             }),
         });
@@ -461,7 +453,6 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
-                    .{ .name = "xev", .module = xev_mod },
                 },
             }),
         });
@@ -471,9 +462,9 @@ pub fn build(b: *std.Build) void {
         const run_cmd = b.addRunArtifact(exe);
         run_step.dependOn(&run_cmd.step);
         run_cmd.step.dependOn(b.getInstallStep());
-        if (b.args) |args| {
-            run_cmd.addArgs(args);
-        }
+        // if (b.args) |args| {
+        //     run_cmd.addArgs(args);
+        // }
 
         const test_filters = b.option([]const []const u8, "test-filter", "Filter tests by name") orelse &.{};
 
@@ -502,7 +493,6 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "tatfi", .module = tatfi_mod },
-                    .{ .name = "xev", .module = xev_mod },
                 },
             }),
         });

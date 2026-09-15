@@ -109,7 +109,9 @@ pub const Profiler = struct {
             "Total (ms)",
             "Self (ms)",
         });
-        try writer.writeAll("-" ** 79 ++ "\n");
+        const dashes: [79]u8 = @splat('-');
+        try writer.writeAll(&dashes);
+        try writer.writeAll("\n");
 
         for (entries.items) |stat| {
             const total_ms = @as(f64, @floatFromInt(stat.total_time_ns)) / 1_000_000.0;
