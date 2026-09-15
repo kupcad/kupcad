@@ -505,6 +505,15 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&run_mod_tests.step);
         test_step.dependOn(&run_exe_tests.step);
 
+        if (use_vendored_tatfi) {
+            const tatfi_tests = b.addTest(.{
+                .root_module = tatfi_mod,
+                .filters = test_filters,
+            });
+            const run_tatfi_tests = b.addRunArtifact(tatfi_tests);
+            test_step.dependOn(&run_tatfi_tests.step);
+        }
+
         const gen_grammar_exe = b.addExecutable(.{
             .name = "gen_grammar",
             .root_module = b.createModule(.{

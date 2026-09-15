@@ -1,0 +1,5 @@
+.{
+    // match zigfmt settings
+    .indent = .{ .spaces = 4 },
+    .single_item_whitespace = false,
+}

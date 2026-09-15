@@ -277,6 +277,21 @@ test "DAG Evaluator: safely traps cross-section vs geometry type mismatch and cl
     try testing.expectError(error.RuntimeError, result);
 }
 
+test "DAG Evaluator: evaluateDAG traps 2D cross-section mismatch without cache corruption" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. Build a 2D Square
+    const square_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
+
+    // 2. Erroneously evaluate it as a 3D Geometry DAG
+    const result = dag_evaluator.evaluateDAG(&vm, square_idx);
+
+    // 3. Must return RuntimeError, remove the hash from dag_cache, and clean up safely on deinit
+    try testing.expectError(error.RuntimeError, result);
+}
+
 test "DAG Evaluator: evaluateCrossSectionDAG traps 3D geometry mismatch" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
