@@ -3,6 +3,7 @@ const testing = std.testing;
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
 const dag = @import("dag.zig");
+const geom = @import("../kernel/geometry_handle.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const registry = @import("../stdlib/registry.zig");
 
@@ -376,4 +377,30 @@ test "DAG Evaluator: respects atomic cancellation token" {
     const result = dag_evaluator.evaluateDAG(&vm, cube_idx);
 
     try testing.expectError(error.Cancelled, result);
+}
+
+test "DAG Evaluator: dynamic stacks handle massive batches without overflow" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Create a batch operation containing 5,000 distinct items (exceeding the old 4,096 cap)
+    const count = 5000;
+    var targets = try testing.allocator.alloc(dag.DAGNodeIndex, count);
+    defer testing.allocator.free(targets);
+
+    for (0..count) |i| {
+        // Use `i` in dimension to prevent CSE deduplication from collapsing the branch count
+        targets[i] = try vm.dag_builder.addCube(1.0 + @as(f64, @floatFromInt(i)), 1.0, 1.0, true);
+    }
+
+    const batch_idx = try vm.dag_builder.addBatchUnion(targets);
+
+    // Ensure we don't accidentally trip the RAM budget during the stress test
+    vm.config_stack.items[vm.config_stack.items.len - 1].max_vertices = 50_000_000;
+
+    const handle = try dag_evaluator.evaluateDAG(&vm, batch_idx);
+
+    // If it reaches this line and the engine resolves, dynamic scaling succeeded perfectly
+    try testing.expectEqual(geom.EngineType.manifold, handle.engine);
 }

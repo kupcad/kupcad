@@ -23,10 +23,9 @@ pub const ValueHandle = union(enum) {
     }
 };
 
-/// Fixed-capacity intermediate value stack replacing recursive C++ object returns
+/// Dynamic intermediate value stack replacing recursive C++ object returns
 pub const IntermediateStack = struct {
-    handles: [4096]ValueHandle = undefined,
-    top: usize = 0,
+    handles: std.ArrayListUnmanaged(ValueHandle) = .empty,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) IntermediateStack {
@@ -34,21 +33,22 @@ pub const IntermediateStack = struct {
     }
 
     pub fn push(self: *IntermediateStack, handle: ValueHandle) !void {
-        if (self.top >= self.handles.len) return error.EvaluationStackOverflow;
-        self.handles[self.top] = handle;
-        self.top += 1;
+        try self.handles.append(self.allocator, handle);
     }
 
     pub fn pop(self: *IntermediateStack) ValueHandle {
-        std.debug.assert(self.top > 0);
-        self.top -= 1;
-        return self.handles[self.top];
+        std.debug.assert(self.handles.items.len > 0);
+        // Universally compatible across Zig versions
+        const val = self.handles.items[self.handles.items.len - 1];
+        self.handles.items.len -= 1;
+        return val;
     }
 
     pub fn destructAll(self: *IntermediateStack) void {
-        while (self.top > 0) {
+        while (self.handles.items.len > 0) {
             self.pop().destruct(self.allocator);
         }
+        self.handles.deinit(self.allocator);
     }
 };
 
@@ -63,19 +63,26 @@ pub const EvaluationFrame = struct {
 };
 
 pub const EvaluationFrameStack = struct {
-    frames: [4096]EvaluationFrame = undefined,
-    top: usize = 0,
+    frames: std.ArrayListUnmanaged(EvaluationFrame) = .empty,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) EvaluationFrameStack {
+        return .{ .allocator = allocator };
+    }
 
     pub fn push(self: *EvaluationFrameStack, node_idx: dag.DAGNodeIndex) !void {
-        if (self.top >= self.frames.len) return error.EvaluationStackOverflow;
-        self.frames[self.top] = .{ .node_idx = node_idx };
-        self.top += 1;
+        try self.frames.append(self.allocator, .{ .node_idx = node_idx });
     }
 
     pub fn pop(self: *EvaluationFrameStack) EvaluationFrame {
-        std.debug.assert(self.top > 0);
-        self.top -= 1;
-        return self.frames[self.top];
+        std.debug.assert(self.frames.items.len > 0);
+        const val = self.frames.items[self.frames.items.len - 1];
+        self.frames.items.len -= 1;
+        return val;
+    }
+
+    pub fn deinit(self: *EvaluationFrameStack) void {
+        self.frames.deinit(self.allocator);
     }
 };
 
@@ -136,16 +143,18 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
     var v_stack = IntermediateStack.init(vm.allocator);
     errdefer v_stack.destructAll();
 
-    var f_stack = EvaluationFrameStack{};
+    var f_stack = EvaluationFrameStack.init(vm.allocator);
+    defer f_stack.deinit();
+
     try f_stack.push(root_node_idx);
 
     const config = vm.config_stack.items[vm.config_stack.items.len - 1];
     const engine = config.engine;
 
-    while (f_stack.top > 0) {
+    while (f_stack.frames.items.len > 0) {
         if (vm.cancel_token.load(.acquire)) return error.Cancelled;
 
-        var frame = &f_stack.frames[f_stack.top - 1];
+        var frame = &f_stack.frames.items[f_stack.frames.items.len - 1];
 
         if (frame.node_idx >= vm.dag_builder.nodes.items.len) {
             vm.reportError("Runtime Error: DAG Node Index {d} out of bounds.\n", .{frame.node_idx});
@@ -153,12 +162,9 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
         }
 
         // --- O(1) DAG Node Caching ---
-        // If this exact geometric sub-tree has been solved previously in this session,
-        // inject the cached handle and bypass the kernel/children entirely!
         const node_hash = vm.dag_builder.node_hashes.items[frame.node_idx];
         if (vm.dag_cache.get(node_hash)) |cached_handle| {
             _ = f_stack.pop();
-            // Important: Do not destruct this handle on pop. It is owned by the cache.
             try v_stack.push(.{ .geometry = cached_handle });
             continue;
         }
@@ -418,7 +424,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 },
             }
 
-            const final_handle = v_stack.handles[v_stack.top - 1];
+            const final_handle = v_stack.handles.items[v_stack.handles.items.len - 1];
 
             if (final_handle == .geometry) {
                 const verts = kernel.numVerts(final_handle.geometry);
@@ -432,8 +438,10 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
         }
     }
 
-    std.debug.assert(v_stack.top == 1);
-    return v_stack.pop();
+    std.debug.assert(v_stack.handles.items.len == 1);
+    const result = v_stack.pop();
+    v_stack.handles.deinit(vm.allocator); // Free the dynamic array on success
+    return result;
 }
 
 pub fn evaluateDAG(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHandle {

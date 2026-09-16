@@ -9955,10 +9955,10 @@ test "VM: DAG Evaluator prevents C-stack overflow on deep recursion" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    // If the bug exists, this will violently crash the Zig test runner with a Segmentation Fault!
-    // Once fixed, it should gracefully return InterpretResult.runtime_error.
     const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.runtime_error, result);
+
+    // Successfully evaluates massive trees thanks to dynamic arrays
+    try testing.expectEqual(.ok, result);
 }
 
 test "VM: GC marks unwind_err_val during native unwind" {
