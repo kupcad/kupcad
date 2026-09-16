@@ -10162,3 +10162,31 @@ test "VM: Nested native FFI unwinding clears unwind_err_val at rescue target" {
     try testing.expect(vm.unwind_err_val == null);
     try testing.expectEqual(@as(usize, 0), vm.unwind_stack_top);
 }
+
+test "VM: Repeated string addition (+ operator) recycles scratch arena" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\s = ""
+        \\i = 0
+        \\while i < 1000
+        \\  s += "a"
+        \\  i += 1
+        \\end
+        \\s.length
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 1000.0), result.asNumber());
+}

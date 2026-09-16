@@ -1769,7 +1769,13 @@ pub const VM = struct {
             const merged = std.fmt.allocPrint(scratch_alloc, "{s}{s}", .{ a_str, b_str }) catch return .runtime_error;
 
             // allocateString seamlessly handles checking the intern table, OR precisely allocating on the GC heap
-            const str_val = self.allocateString(merged) catch return .runtime_error;
+            const str_val = self.allocateString(merged) catch {
+                _ = self.scratch_arena.reset(.retain_capacity);
+                return .runtime_error;
+            };
+
+            // Immediately recycle scratch arena memory after interning
+            _ = self.scratch_arena.reset(.retain_capacity);
 
             self.push(str_val);
             return .ok;
@@ -2553,7 +2559,9 @@ pub const VM = struct {
         };
         if (method_val) |m| return .{ .method = m, .is_private = false };
 
-        if (self.fmtScratch("@private:{s}", .{name})) |priv_name| {
+        // Zero-allocation stack buffer for private method name lookup
+        var name_buf: [256]u8 = undefined;
+        if (std.fmt.bufPrint(&name_buf, "@private:{s}", .{name})) |priv_name| {
             const priv_method = switch (target) {
                 .instance => self.findMethod(class, priv_name),
                 .class => self.findClassMethod(class, priv_name),
