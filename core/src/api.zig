@@ -90,81 +90,61 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
     return extractor.extractSchema(allocator, doc, source);
 }
 
-/// Compiles and evaluates a KupCAD script, returning the binary buffer for the requested format.
-/// Supports formats: "stl", "glb", "gltf", "step".
-/// The caller owns the returned slice and must free it.
-pub fn buildModel(
+/// Safely injects a map of f64 CLI parameters into the active VM's global `params` map.
+pub fn injectParamsIntoVm(vm: *VM, cli_params: std.StringHashMap(f64)) !void {
+    if (cli_params.count() == 0) return;
+
+    // Retrieve the global `params` map initialized by the standard library
+    const p_val = vm.globals.get("params") orelse return;
+    const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", p_val.asObj())));
+
+    var it = cli_params.iterator();
+    while (it.next()) |entry| {
+        // Allocate the dictionary key as an interned symbol
+        const sym_key = try vm.allocateSymbol(entry.key_ptr.*);
+
+        // Push to the VM stack temporarily to protect it from the Garbage Collector
+        // in case the map.put operation triggers an allocation that causes a GC sweep
+        vm.push(sym_key);
+        defer _ = vm.pop();
+
+        // Insert the key and the numeric value into the VM's map
+        try map_obj.map.put(vm.allocator, sym_key, value.Value.initNumber(entry.value_ptr.*));
+    }
+}
+
+/// Extracts evaluated Geometry from the VM stack/display list and routes it to the requested 3D exporter.
+pub fn exportModelFromVm(
     allocator: std.mem.Allocator,
-    io: std.Io,
-    source: []const u8,
+    vm: *VM,
     format: []const u8,
     use_draco: bool,
-    cli_params: ?std.StringHashMap(f64),
-    vfs_override: ?Vfs,
 ) ![]const u8 {
-    var doc = try Document.parse(allocator, source);
-    defer doc.deinit();
-
-    var vm = try VM.init(allocator, io);
-    defer vm.deinit();
-
-    // Override default NativeFS with MemoryFS if provided by WASM
-    if (vfs_override) |vfs| {
-        vm.vfs = vfs;
-    }
-
-    vm.line_index = &doc.line_index;
-    try registry.registerStandardLibrary(&vm);
-
-    // Force the native B-Rep engine for STEP exports to ensure exact analytical geometry
-    if (std.mem.eql(u8, format, "step")) {
-        vm.config_stack.items[0].engine = .brep_native;
-    }
-
-    // Inject CLI Params into the Global Map
-    if (cli_params) |cli_p| {
-        const p_val = vm.globals.get("params").?;
-        const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", p_val.asObj())));
-        var it = cli_p.iterator();
-        while (it.next()) |entry| {
-            const sym_key = try vm.allocateSymbol(entry.key_ptr.*);
-            vm.push(sym_key);
-            defer _ = vm.pop();
-            try map_obj.map.put(vm.allocator, sym_key, value.Value.initNumber(entry.value_ptr.*));
-        }
-    }
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(allocator);
-
-    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-    if (result != .ok) return error.RuntimeError;
-
     var export_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
     defer export_handles.deinit(allocator);
 
+    // 1. Extract "Ghosted" items from the display list first
     for (vm.display_list.items) |ghost_handle| {
         try export_handles.append(allocator, ghost_handle);
     }
 
     var main_handle_opt: ?geom.GeometryHandle = null;
     var batch_created_handle: ?geom.GeometryHandle = null;
+
+    // If we create a temporary batched handle just for exporting, clean it up when we're done
     defer if (batch_created_handle) |h| kernel.destruct(h);
 
+    // 2. Extract the primary returned geometry from the top of the VM stack
     if (vm.stack_top > 0) {
         const final_val = vm.stack[0];
 
         if (final_val.isGeometry()) {
-            // 1. Direct Geometry Object
+            // Standard single geometry return
             const main_handle = try vm.ensureConcrete(final_val);
             try export_handles.append(allocator, main_handle);
             main_handle_opt = main_handle;
         } else if (final_val.isAssembly()) {
-            // 2. Assembly Object (Extract all member parts)
+            // Explode assemblies into their component parts
             var asm_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
             defer asm_handles.deinit(allocator);
 
@@ -179,14 +159,15 @@ pub fn buildModel(
             if (asm_handles.items.len == 1) {
                 main_handle_opt = asm_handles.items[0];
             } else if (asm_handles.items.len > 1) {
-                // Combine multi-part assemblies into a single CSG mesh ONLY for STL!
+                // STL files don't support multiple disjoint meshes natively,
+                // so we must boolean union them together first.
                 if (std.mem.eql(u8, format, "stl")) {
                     main_handle_opt = kernel.batchBoolean(allocator, asm_handles.items, .union_op);
                     batch_created_handle = main_handle_opt;
                 }
             }
         } else if (final_val.isArray()) {
-            // 3. Array of Geometries
+            // Arrays of geometry are treated exactly like assemblies
             var arr_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
             defer arr_handles.deinit(allocator);
 
@@ -211,17 +192,17 @@ pub fn buildModel(
 
     if (export_handles.items.len == 0) return error.NoGeometry;
 
-    // --- Route to appropriate exporter ---
+    // 3. Route the extracted handles to the appropriate binary exporter
     if (std.mem.eql(u8, format, "stl")) {
         if (main_handle_opt) |h| {
             return stl_exporter.buildStlBuffer(allocator, h);
         } else {
-            return error.NoGeometry;
+            return error.NoGeometry; // STL requires a unified mesh
         }
     } else if (std.mem.eql(u8, format, "glb") or std.mem.eql(u8, format, "gltf")) {
-        return gltf_exporter.buildGltfBuffer(allocator, &vm, export_handles.items, use_draco);
+        // GLTF handles multiple distinct meshes naturally
+        return gltf_exporter.buildGltfBuffer(allocator, vm, export_handles.items, use_draco);
     } else if (std.mem.eql(u8, format, "step")) {
-        // Pass the entire slice of separate bodies natively
         return step_exporter.buildStepBuffer(allocator, export_handles.items);
     } else {
         return error.UnsupportedFormat;
@@ -229,6 +210,49 @@ pub fn buildModel(
 }
 
 /// Safely frees an array of LinterDiagnostics and their inner allocated strings.
+pub fn buildModel(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    source: []const u8,
+    format: []const u8,
+    use_draco: bool,
+    cli_params: ?std.StringHashMap(f64),
+    vfs_override: ?Vfs,
+) ![]const u8 {
+    var doc = try Document.parse(allocator, source);
+    defer doc.deinit();
+
+    var vm = try VM.init(allocator, io);
+    defer vm.deinit();
+
+    if (vfs_override) |vfs| vm.vfs = vfs;
+    vm.line_index = &doc.line_index;
+    try registry.registerStandardLibrary(&vm);
+
+    // STEP requires exact B-Rep geometry, not polygonal Manifold meshes
+    if (std.mem.eql(u8, format, "step")) {
+        vm.config_stack.items[0].engine = .brep_native;
+    }
+
+    // Inject parameters securely
+    if (cli_params) |cli_p| {
+        try injectParamsIntoVm(&vm, cli_p);
+    }
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(allocator);
+
+    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    if (result != .ok) return error.RuntimeError;
+
+    // Route to the new DRY exporter helper!
+    return try exportModelFromVm(allocator, &vm, format, use_draco);
+}
+
 pub fn freeDiagnostics(allocator: std.mem.Allocator, diags: []LinterDiagnostic) void {
     for (diags) |d| allocator.free(d.message);
     allocator.free(diags);

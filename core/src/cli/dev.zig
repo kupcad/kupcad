@@ -10,6 +10,8 @@ const registry = @import("../stdlib/registry.zig");
 const disassembler = @import("../tools/dev/disassembler.zig");
 const Lexer = @import("../frontend/kupcad/lexer.zig").Lexer;
 const log_helpers = @import("../log.zig");
+const ScriptSession = @import("../daemon/session.zig").ScriptSession;
+const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 
 const log = std.log.scoped(.dev);
 
@@ -93,17 +95,16 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
     defer doc.deinit();
 
     // Setup compilation environment
-    var vm = try VM.init(allocator, init.io);
-    defer vm.deinit();
+    var session = try ScriptSession.init(allocator, init.io);
+    defer session.deinit();
 
-    vm.line_index = &doc.line_index;
-
-    try registry.registerStandardLibrary(&vm);
+    session.vm.line_index = &doc.line_index;
+    try registry.registerStandardLibrary(&session.vm);
 
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(allocator);
 
-    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &session.vm);
     compiler.compile(doc.tree.root) catch |err| {
         log_helpers.printStderr(init.io, "Compilation failed: {}\n", .{err});
         std.process.exit(1);
@@ -200,20 +201,18 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     // ---------------------------------------------------------------
     // 2. Benchmark Compilation Phase
     // ---------------------------------------------------------------
-    var vm = try VM.init(allocator, init.io);
-    defer vm.deinit();
+    var session = try ScriptSession.init(allocator, init.io);
+    defer session.deinit();
 
-    // Inject line index mapping for rich error backtraces
-    vm.line_index = &doc.line_index;
-
-    try registry.registerStandardLibrary(&vm);
+    session.vm.line_index = &doc.line_index;
+    try registry.registerStandardLibrary(&session.vm);
 
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(allocator);
 
     const start_compile = std.Io.Clock.now(.awake, init.io);
 
-    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &session.vm);
     compiler.compile(doc.tree.root) catch |err| {
         log_helpers.printStderr(init.io, "Compilation failed: {}\n", .{err});
         std.process.exit(1);
@@ -227,11 +226,11 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     // ---------------------------------------------------------------
     var p = profiler_mod.Profiler.init(allocator, init.io);
     defer p.deinit();
-    vm.profiler = &p;
+    session.vm.profiler = &p;
 
     const start_exec = std.Io.Clock.now(.awake, init.io);
 
-    const result = vm.interpret(&main_chunk);
+    const result = session.vm.interpret(&main_chunk);
 
     const end_exec = std.Io.Clock.now(.awake, init.io);
     const execute_time = start_exec.durationTo(end_exec).toNanoseconds();
