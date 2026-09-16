@@ -44,6 +44,11 @@ pub const InterpretResult = enum {
     paused,
 };
 
+const SwitchMatch = struct {
+    matched: bool,
+    jump_offset: usize,
+};
+
 pub const CallFrame = struct {
     closure: *value.ObjClosure,
     ip: usize,
@@ -828,35 +833,15 @@ pub const VM = struct {
                 },
                 .op_switch, .op_switch_wide => {
                     const test_val = self.pop();
-
                     const case_count = self.readOperand(exec_chunk, frame, op == .op_switch_wide);
-                    var matched = false;
-                    var jump_offset: usize = 0;
 
-                    for (0..case_count) |_| {
-                        // Read 6 bytes per case: [const_high] [const_low] [b3] [b2] [b1] [b0]
-                        const const_high = @as(u16, exec_chunk.code.items[frame.ip]);
-                        const const_low = @as(u16, exec_chunk.code.items[frame.ip + 1]);
-                        const j_b3 = @as(usize, exec_chunk.code.items[frame.ip + 2]);
-                        const j_b2 = @as(usize, exec_chunk.code.items[frame.ip + 3]);
-                        const j_b1 = @as(usize, exec_chunk.code.items[frame.ip + 4]);
-                        const j_b0 = @as(usize, exec_chunk.code.items[frame.ip + 5]);
-                        frame.ip += 6;
+                    const match = searchJumpTable(exec_chunk, frame.ip, case_count, test_val);
 
-                        if (!matched) {
-                            const const_idx = (const_high << 8) | const_low;
-                            const case_val = exec_chunk.constants.items[const_idx];
-                            if (self.valuesCaseEqual(case_val, test_val)) {
-                                matched = true;
-                                jump_offset = (j_b3 << 24) | (j_b2 << 16) | (j_b1 << 8) | j_b0;
-                            }
-                        }
-                    }
-
+                    frame.ip += case_count * 6; // Fast-forward past the 6-byte jump table entries
                     const default_offset = self.readJumpOffset(exec_chunk, frame);
 
-                    if (matched) {
-                        frame.ip += jump_offset;
+                    if (match.matched) {
+                        frame.ip += match.jump_offset;
                     } else {
                         frame.ip += default_offset;
                     }
@@ -2587,6 +2572,70 @@ pub const VM = struct {
             current = c.superclass;
         }
         return false;
+    }
+
+    inline fn searchJumpTable(
+        exec_chunk: *chunk.Chunk,
+        table_start: usize,
+        case_count: usize,
+        test_val: value.Value,
+    ) SwitchMatch {
+        const test_type: u8 = if (test_val.isNumber()) 0 else if (test_val.isObject() and test_val.asObj().obj_type == .string) 1 else 2;
+        if (test_type >= 2) return .{ .matched = false, .jump_offset = 0 };
+
+        var low: usize = 0;
+        var high: usize = case_count;
+
+        while (low < high) {
+            const mid = low + (high - low) / 2;
+            const idx = table_start + (mid * 6);
+
+            const const_high = @as(u16, exec_chunk.code.items[idx]);
+            const const_low = @as(u16, exec_chunk.code.items[idx + 1]);
+            const const_idx = (const_high << 8) | const_low;
+            const case_val = exec_chunk.constants.items[const_idx];
+
+            const case_type: u8 = if (case_val.isNumber()) 0 else 1;
+
+            if (test_type < case_type) {
+                high = mid;
+            } else if (test_type > case_type) {
+                low = mid + 1;
+            } else {
+                if (test_type == 0) {
+                    const tn = test_val.asNumber();
+                    const cn = case_val.asNumber();
+                    if (tn < cn) {
+                        high = mid;
+                    } else if (tn > cn) {
+                        low = mid + 1;
+                    } else {
+                        const offset = (@as(usize, exec_chunk.code.items[idx + 2]) << 24) |
+                            (@as(usize, exec_chunk.code.items[idx + 3]) << 16) |
+                            (@as(usize, exec_chunk.code.items[idx + 4]) << 8) |
+                            @as(usize, exec_chunk.code.items[idx + 5]);
+                        return .{ .matched = true, .jump_offset = offset };
+                    }
+                } else {
+                    const ts = test_val.asString().chars;
+                    const cs = case_val.asString().chars;
+                    const order = std.mem.order(u8, ts, cs);
+                    if (order == .lt) {
+                        high = mid;
+                    } else if (order == .gt) {
+                        low = mid + 1;
+                    } else {
+                        const offset = (@as(usize, exec_chunk.code.items[idx + 2]) << 24) |
+                            (@as(usize, exec_chunk.code.items[idx + 3]) << 16) |
+                            (@as(usize, exec_chunk.code.items[idx + 4]) << 8) |
+                            @as(usize, exec_chunk.code.items[idx + 5]);
+                        return .{ .matched = true, .jump_offset = offset };
+                    }
+                }
+            }
+        }
+
+        return .{ .matched = false, .jump_offset = 0 };
     }
 
     pub fn throwDynamicError(self: *VM, comptime fmt: []const u8, args: anytype) InterpretResult {

@@ -10190,3 +10190,100 @@ test "VM: Repeated string addition (+ operator) recycles scratch arena" {
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expectEqual(@as(f64, 1000.0), result.asNumber());
 }
+
+test "VM: op_switch binary search correctly matches first, middle, last, and missing cases" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\def test_switch(x)
+        \\  case x
+        \\  when 50
+        \\    "fifty"
+        \\  when 10
+        \\    "ten"
+        \\  when 30
+        \\    "thirty"
+        \\  else
+        \\    "default"
+        \\  end
+        \\end
+        \\
+        \\a = test_switch(10)  # Tests first element after sorting
+        \\b = test_switch(30)  # Tests middle element
+        \\c = test_switch(50)  # Tests last element after sorting
+        \\d = test_switch(99)  # Tests missing key / else fallback
+        \\[a, b, c, d]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    // Enforces zealous GC mode and asserts expected_stack_top == 1
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(arr_val.isArray());
+
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
+
+    try testing.expectEqualStrings("ten", arr_obj.items.items[0].asString().chars);
+    try testing.expectEqualStrings("thirty", arr_obj.items.items[1].asString().chars);
+    try testing.expectEqualStrings("fifty", arr_obj.items.items[2].asString().chars);
+    try testing.expectEqualStrings("default", arr_obj.items.items[3].asString().chars);
+}
+
+test "VM: op_switch binary search handles mixed numbers and strings safely" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\def test_mixed(x)
+        \\  case x
+        \\  when "apple"
+        \\    1
+        \\  when 20
+        \\    2
+        \\  when "banana"
+        \\    3
+        \\  when 5
+        \\    4
+        \\  else
+        \\    0
+        \\  end
+        \\end
+        \\
+        \\res_num = test_mixed(20)
+        \\res_str = test_mixed("banana")
+        \\res_miss = test_mixed("cherry")
+        \\[res_num, res_str, res_miss]
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(arr_val.isArray());
+
+    const arr_obj = arr_val.asArray();
+    try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
+
+    try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber());
+    try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[1].asNumber());
+    try testing.expectEqual(@as(f64, 0.0), arr_obj.items.items[2].asNumber());
+}

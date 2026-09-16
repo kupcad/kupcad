@@ -880,150 +880,210 @@ pub const Compiler = struct {
         }
     }
 
+    // Entry Point: Routes to Fast Path or Linear Fallback
     fn compileCaseStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
-        _ = expected_entry_depth; // Ignore warning
+        _ = expected_entry_depth;
         const cs = self.tree.caseStmt(node);
         const saved_depth = self.current_stack_depth;
         const branches = self.tree.getWhenBranches(cs.when_branches);
         const has_cond = cs.condition != .none;
 
-        // --- Heuristic: Can we use a Fast Jump Table? ---
-        var can_use_jump_table = has_cond;
-        var total_conditions: u16 = 0;
+        if (self.checkJumpTableFeasibility(branches, has_cond)) |total_conditions| {
+            try self.compileCaseFastPath(cs, branches, total_conditions, saved_depth);
+        } else {
+            try self.compileCaseLinearFallback(cs, branches, has_cond, saved_depth);
+        }
+    }
 
-        if (can_use_jump_table) {
-            for (branches) |branch| {
-                const conds = self.tree.getNodes(branch.conditions);
-                for (conds) |cond_idx| {
-                    const c_node = self.tree.getNode(cond_idx).?;
-                    if (c_node.tag != .number and c_node.tag != .string) {
-                        can_use_jump_table = false;
-                        break;
-                    }
-                    total_conditions += 1;
-                }
-                if (!can_use_jump_table) break;
+    // Heuristic Check: Verifies if all when-conditions are literal numbers or strings
+    fn checkJumpTableFeasibility(self: *Compiler, branches: []const ast.WhenBranch, has_cond: bool) ?u16 {
+        if (!has_cond) return null;
+
+        var total_conditions: u16 = 0;
+        for (branches) |branch| {
+            const conds = self.tree.getNodes(branch.conditions);
+            for (conds) |cond_idx| {
+                const c_node = self.tree.getNode(cond_idx) orelse return null;
+                if (c_node.tag != .number and c_node.tag != .string) return null;
+                total_conditions += 1;
             }
         }
 
-        if (can_use_jump_table and total_conditions > 0) {
-            // ====== FAST PATH: OP_SWITCH ======
-            try self.compileNode(cs.condition);
+        return if (total_conditions > 0) total_conditions else null;
+    }
 
-            const offsets = try self.emitJumpTable(total_conditions);
-            const table_start_offset = offsets.table_start;
-            const default_jump_offset = offsets.default_jump;
+    // Fast Path: Emits op_switch, collects, sorts, and backpatches jump table entries
+    fn compileCaseFastPath(
+        self: *Compiler,
+        cs: ast.CaseStmt,
+        branches: []const ast.WhenBranch,
+        total_conditions: u16,
+        saved_depth: usize,
+    ) CompileError!void {
+        try self.compileNode(cs.condition);
 
-            var condition_idx: usize = 0;
-            var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
-            defer end_jumps.deinit(self.allocator);
+        const offsets = try self.emitJumpTable(total_conditions);
+        const table_start_offset = offsets.table_start;
+        const default_jump_offset = offsets.default_jump;
 
-            for (branches) |branch| {
-                const body_jump_target = self.current_chunk.code.items.len;
-                const conds = self.tree.getNodes(branch.conditions);
+        const SwitchCase = struct {
+            const_idx: u16,
+            jump_offset: u32,
+            val: value.Value,
 
-                self.current_stack_depth = saved_depth;
+            fn lessThan(_: void, a: @This(), b: @This()) bool {
+                const type_a: u8 = if (a.val.isNumber()) 0 else 1;
+                const type_b: u8 = if (b.val.isNumber()) 0 else 1;
+                if (type_a != type_b) return type_a < type_b;
 
-                // Backpatch table entries
-                for (conds) |cond_node_idx| {
-                    const c_node = self.tree.getNode(cond_node_idx).?;
-                    const table_idx = table_start_offset + (condition_idx * 6);
-
-                    var raw_idx: usize = 0;
-                    if (c_node.tag == .number) {
-                        raw_idx = try self.makeConstant(value.Value.initNumber(self.tree.number(c_node)));
-                    } else if (c_node.tag == .string) {
-                        const str_content = self.tree.getString(self.tree.stringId(c_node));
-                        raw_idx = try self.makeStringConstant(str_content);
-                    }
-
-                    self.current_chunk.code.items[table_idx] = @intCast((raw_idx >> 8) & 0xFF);
-                    self.current_chunk.code.items[table_idx + 1] = @intCast(raw_idx & 0xFF);
-
-                    const offset = body_jump_target - (default_jump_offset + 4);
-                    self.writeJumpOffset(table_idx + 2, offset);
-                    condition_idx += 1;
+                if (type_a == 0) {
+                    return a.val.asNumber() < b.val.asNumber();
+                } else {
+                    const str_a = a.val.asString().chars;
+                    const str_b = b.val.asString().chars;
+                    return std.mem.order(u8, str_a, str_b) == .lt;
                 }
-
-                try self.compileNode(branch.body);
-                try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
             }
+        };
 
-            // Backpatch Default Branch
-            const default_target = self.current_chunk.code.items.len;
-            const d_offset = default_target - (default_jump_offset + 4);
-            self.writeJumpOffset(default_jump_offset, d_offset);
+        var cases = try self.allocator.alloc(SwitchCase, total_conditions);
+        defer self.allocator.free(cases);
+
+        var condition_idx: usize = 0;
+        var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+        defer end_jumps.deinit(self.allocator);
+
+        for (branches) |branch| {
+            const body_jump_target = self.current_chunk.code.items.len;
+            const conds = self.tree.getNodes(branch.conditions);
 
             self.current_stack_depth = saved_depth;
 
-            if (cs.else_branch != .none) {
-                try self.compileNode(cs.else_branch);
-            } else {
-                try self.emitOp(.op_nil);
-            }
+            for (conds) |cond_node_idx| {
+                const c_node = self.tree.getNode(cond_node_idx).?;
 
-            for (end_jumps.items) |jmp| {
-                self.patchJump(jmp);
-            }
-            self.current_stack_depth = saved_depth + 1;
-        } else {
-            // ====== LINEAR FALLBACK PATH ======
-            if (has_cond) {
-                try self.compileNode(cs.condition);
-            }
-
-            var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
-            defer end_jumps.deinit(self.allocator);
-
-            for (branches) |branch| {
-                const conds = self.tree.getNodes(branch.conditions);
-                for (conds) |cond_idx| {
-                    if (has_cond) {
-                        self.current_stack_depth = saved_depth + 1; // Condition is on stack
-                        try self.emitOp(.op_dup);
-                        try self.compileNode(cond_idx);
-                        try self.emitOp(.op_case_equal);
-                    } else {
-                        self.current_stack_depth = saved_depth;
-                        try self.compileNode(cond_idx);
-                    }
-
-                    const skip_jump = try self.emitJump(.op_jump_if_false);
-                    try self.emitOp(.op_pop); // pop false
-                    if (has_cond) try self.emitOp(.op_pop); // pop cond
-
-                    try self.compileNode(branch.body);
-                    try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
-
-                    if (has_cond) {
-                        self.current_stack_depth = saved_depth + 2; // Jump lands here with false + cond on stack
-                    } else {
-                        self.current_stack_depth = saved_depth + 1; // Jump lands here with false
-                    }
-
-                    self.patchJump(skip_jump);
-                    try self.emitOp(.op_pop); // pop false
+                var raw_idx: usize = 0;
+                if (c_node.tag == .number) {
+                    raw_idx = try self.makeConstant(value.Value.initNumber(self.tree.number(c_node)));
+                } else if (c_node.tag == .string) {
+                    const str_content = self.tree.getString(self.tree.stringId(c_node));
+                    raw_idx = try self.makeStringConstant(str_content);
                 }
+
+                const const_idx: u16 = @intCast(raw_idx);
+                const offset: u32 = @intCast(body_jump_target - (default_jump_offset + 4));
+
+                cases[condition_idx] = .{
+                    .const_idx = const_idx,
+                    .jump_offset = offset,
+                    .val = self.current_chunk.constants.items[const_idx],
+                };
+                condition_idx += 1;
             }
 
-            if (has_cond) {
-                self.current_stack_depth = saved_depth + 1; // Condition is on stack
-                try self.emitOp(.op_pop);
-            } else {
-                self.current_stack_depth = saved_depth;
-            }
-
-            if (cs.else_branch != .none) {
-                try self.compileNode(cs.else_branch);
-            } else {
-                try self.emitOp(.op_nil);
-            }
-
-            for (end_jumps.items) |jmp| {
-                self.patchJump(jmp);
-            }
-            self.current_stack_depth = saved_depth + 1;
+            try self.compileNode(branch.body);
+            try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
         }
+
+        // Backpatch Default Branch
+        const default_target = self.current_chunk.code.items.len;
+        const d_offset = default_target - (default_jump_offset + 4);
+        self.writeJumpOffset(default_jump_offset, d_offset);
+
+        // Sort cases and write jump table
+        std.mem.sort(SwitchCase, cases, {}, SwitchCase.lessThan);
+        self.writeSortedJumpTable(table_start_offset, cases);
+
+        self.current_stack_depth = saved_depth;
+
+        if (cs.else_branch != .none) {
+            try self.compileNode(cs.else_branch);
+        } else {
+            try self.emitOp(.op_nil);
+        }
+
+        for (end_jumps.items) |jmp| {
+            self.patchJump(jmp);
+        }
+        self.current_stack_depth = saved_depth + 1;
+    }
+
+    // Helper: Writes sorted cases into the jump table bytecode stream
+    inline fn writeSortedJumpTable(self: *Compiler, table_start_offset: usize, cases: anytype) void {
+        for (cases, 0..) |entry, i| {
+            const table_idx = table_start_offset + (i * 6);
+            self.current_chunk.code.items[table_idx] = @intCast((entry.const_idx >> 8) & 0xFF);
+            self.current_chunk.code.items[table_idx + 1] = @intCast(entry.const_idx & 0xFF);
+            self.current_chunk.code.items[table_idx + 2] = @intCast((entry.jump_offset >> 24) & 0xFF);
+            self.current_chunk.code.items[table_idx + 3] = @intCast((entry.jump_offset >> 16) & 0xFF);
+            self.current_chunk.code.items[table_idx + 4] = @intCast((entry.jump_offset >> 8) & 0xFF);
+            self.current_chunk.code.items[table_idx + 5] = @intCast(entry.jump_offset & 0xFF);
+        }
+    }
+
+    // Fallback Path: Compiles complex expressions or conditionless case statements linearly
+    fn compileCaseLinearFallback(
+        self: *Compiler,
+        cs: ast.CaseStmt,
+        branches: []const ast.WhenBranch,
+        has_cond: bool,
+        saved_depth: usize,
+    ) CompileError!void {
+        if (has_cond) {
+            try self.compileNode(cs.condition);
+        }
+
+        var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+        defer end_jumps.deinit(self.allocator);
+
+        for (branches) |branch| {
+            const conds = self.tree.getNodes(branch.conditions);
+            for (conds) |cond_idx| {
+                if (has_cond) {
+                    self.current_stack_depth = saved_depth + 1;
+                    try self.emitOp(.op_dup);
+                    try self.compileNode(cond_idx);
+                    try self.emitOp(.op_case_equal);
+                } else {
+                    self.current_stack_depth = saved_depth;
+                    try self.compileNode(cond_idx);
+                }
+
+                const skip_jump = try self.emitJump(.op_jump_if_false);
+                try self.emitOp(.op_pop);
+                if (has_cond) try self.emitOp(.op_pop);
+
+                try self.compileNode(branch.body);
+                try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
+
+                if (has_cond) {
+                    self.current_stack_depth = saved_depth + 2;
+                } else {
+                    self.current_stack_depth = saved_depth + 1;
+                }
+
+                self.patchJump(skip_jump);
+                try self.emitOp(.op_pop);
+            }
+        }
+
+        if (has_cond) {
+            self.current_stack_depth = saved_depth + 1;
+            try self.emitOp(.op_pop);
+        } else {
+            self.current_stack_depth = saved_depth;
+        }
+
+        if (cs.else_branch != .none) {
+            try self.compileNode(cs.else_branch);
+        } else {
+            try self.emitOp(.op_nil);
+        }
+
+        for (end_jumps.items) |jmp| {
+            self.patchJump(jmp);
+        }
+        self.current_stack_depth = saved_depth + 1;
     }
 
     fn compileBeginStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {

@@ -1354,3 +1354,62 @@ test "Compiler: Destructuring aborts gracefully without stack corruption" {
     const result = comp.compile(block_node);
     try testing.expectError(error.TooManyConstants, result);
 }
+
+test "Compiler: op_switch table entries are emitted in strictly sorted order" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    // Construct case statement with unsorted keys: when 30, when 10, when 20
+    const cond = try b.number("0", 0);
+
+    const w1_cond = try b.addNodes(&.{try b.number("30", 0)});
+    const w1_body = try b.number("3", 0);
+
+    const w2_cond = try b.addNodes(&.{try b.number("10", 0)});
+    const w2_body = try b.number("1", 0);
+
+    const w3_cond = try b.addNodes(&.{try b.number("20", 0)});
+    const w3_body = try b.number("2", 0);
+
+    const branch1 = ast.WhenBranch{ .conditions = w1_cond, .body = w1_body };
+    const branch2 = ast.WhenBranch{ .conditions = w2_cond, .body = w2_body };
+    const branch3 = ast.WhenBranch{ .conditions = w3_cond, .body = w3_body };
+
+    const branches = try b.addWhenBranches(&.{ branch1, branch2, branch3 });
+    const case_node = try b.caseStmt(cond, branches, .none, 0);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(case_node);
+
+    // op_switch sits at code[2], case_count (3) at code[3]
+    // Table entries start at byte offset 4 (6 bytes per entry)
+    const table_start = 4;
+
+    const readConstVal = struct {
+        fn read(ch: *chunk.Chunk, idx: usize) f64 {
+            const high = @as(u16, ch.code.items[idx]);
+            const low = @as(u16, ch.code.items[idx + 1]);
+            const const_idx = (high << 8) | low;
+            return ch.constants.items[const_idx].asNumber();
+        }
+    }.read;
+
+    const val1 = readConstVal(&out_chunk, table_start);
+    const val2 = readConstVal(&out_chunk, table_start + 6);
+    const val3 = readConstVal(&out_chunk, table_start + 12);
+
+    // Verify the compiler re-ordered [30, 10, 20] -> [10, 20, 30]
+    try testing.expectEqual(@as(f64, 10.0), val1);
+    try testing.expectEqual(@as(f64, 20.0), val2);
+    try testing.expectEqual(@as(f64, 30.0), val3);
+}
