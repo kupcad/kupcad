@@ -25,6 +25,16 @@ const log = std.log.scoped(.vm);
 
 pub const Host = host_mod.Host;
 
+pub const MethodLookupResult = struct {
+    method: ?value.Value,
+    is_private: bool,
+};
+
+pub const LookupTarget = enum {
+    instance,
+    class,
+};
+
 pub const InterpretResult = enum {
     ok,
     block_break,
@@ -271,6 +281,7 @@ pub const VM = struct {
     // --- Execution Core ---
     pub fn interpret(self: *VM, execution_chunk: *chunk.Chunk) InterpretResult {
         self.instruction_count = 0; // Reset gas on fresh run
+        self.clearUnwindState();
         self.frames.clearRetainingCapacity();
         // Start small (64 initial frames) and let it grow dynamically
         self.frames.ensureTotalCapacity(self.allocator, 64) catch return .runtime_error;
@@ -307,7 +318,9 @@ pub const VM = struct {
         // --- PROFILER: Top-Level Script ---
         if (self.profiler) |p| p.enterFrame("script") catch {};
 
-        return self.run();
+        const res = self.run();
+        self.clearUnwindState();
+        return res;
     }
 
     pub fn run(self: *VM) InterpretResult {
@@ -604,12 +617,18 @@ pub const VM = struct {
                     for (self.stack[start_idx..self.stack_top]) |val| {
                         val.stringify(false, &out.writer) catch {
                             out.deinit();
+                            _ = self.scratch_arena.reset(.retain_capacity);
                             return .runtime_error;
                         };
                     }
 
                     // Pass scratch output to the GC string intern table
-                    const merged_str = self.allocateString(out.written()) catch return .runtime_error;
+                    const merged_str = self.allocateString(out.written()) catch {
+                        _ = self.scratch_arena.reset(.retain_capacity);
+                        return .runtime_error;
+                    };
+
+                    _ = self.scratch_arena.reset(.retain_capacity);
 
                     // Pop and release all original stack fragments
                     for (0..count) |_| {
@@ -1405,8 +1424,8 @@ pub const VM = struct {
 
     pub inline fn shrinkStack(self: *VM, target_slot: usize) void {
         std.debug.assert(self.stack_top >= target_slot);
-        while (self.stack_top > target_slot) {
-            self.stack_top -= 1;
+        if (self.stack_top > target_slot) {
+            self.stack_top = target_slot;
         }
     }
 
@@ -1415,8 +1434,14 @@ pub const VM = struct {
         self.shrinkStack(self.stack_top - count);
     }
 
+    pub inline fn clearUnwindState(self: *VM) void {
+        self.unwind_err_val = null;
+        self.unwind_stack_top = 0;
+    }
+
     pub fn resetStack(self: *VM) void {
         self.shrinkStack(0);
+        self.clearUnwindState();
     }
 
     // --- JIT Materialization ---
@@ -2273,6 +2298,7 @@ pub const VM = struct {
                 if (self.unwind_err_val) |err_val| {
                     self.stack_top = self.unwind_stack_top;
                     self.push(err_val);
+                    self.clearUnwindState();
                 }
                 return .ok;
             }
@@ -2514,25 +2540,36 @@ pub const VM = struct {
         return error.RuntimeError;
     }
 
-    pub fn findMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: []const u8, ic: ?*chunk.InlineCache) struct { method: ?value.Value, is_private: bool } {
-        const method_val = if (ic) |cache| self.findMethodCached(class, name, cache) else self.findMethod(class, name);
+    fn findMethodInternal(
+        self: *VM,
+        class: *value.ObjClass,
+        name: []const u8,
+        ic: ?*chunk.InlineCache,
+        target: LookupTarget,
+    ) MethodLookupResult {
+        const method_val = switch (target) {
+            .instance => if (ic) |cache| self.findMethodCached(class, name, cache) else self.findMethod(class, name),
+            .class => self.findClassMethod(class, name),
+        };
         if (method_val) |m| return .{ .method = m, .is_private = false };
 
         if (self.fmtScratch("@private:{s}", .{name})) |priv_name| {
-            if (self.findMethod(class, priv_name)) |m| return .{ .method = m, .is_private = true };
+            const priv_method = switch (target) {
+                .instance => self.findMethod(class, priv_name),
+                .class => self.findClassMethod(class, priv_name),
+            };
+            if (priv_method) |m| return .{ .method = m, .is_private = true };
         } else |_| {}
 
         return .{ .method = null, .is_private = false };
     }
 
-    pub fn findClassMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: []const u8) struct { method: ?value.Value, is_private: bool } {
-        if (self.findClassMethod(class, name)) |m| return .{ .method = m, .is_private = false };
+    pub fn findMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: []const u8, ic: ?*chunk.InlineCache) MethodLookupResult {
+        return self.findMethodInternal(class, name, ic, .instance);
+    }
 
-        if (self.fmtScratch("@private:{s}", .{name})) |priv_name| {
-            if (self.findClassMethod(class, priv_name)) |m| return .{ .method = m, .is_private = true };
-        } else |_| {}
-
-        return .{ .method = null, .is_private = false };
+    pub fn findClassMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: []const u8) MethodLookupResult {
+        return self.findMethodInternal(class, name, null, .class);
     }
 
     pub fn isSubclassOf(class: *value.ObjClass, superclass: *value.ObjClass) bool {

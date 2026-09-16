@@ -351,7 +351,12 @@ pub const GC = struct {
             self.markValue(val);
         }
 
-        // --- Phase 1 Fix: Protect static interned strings! ---
+        // Protect temporary error value held during native boundary unwinds
+        if (vm.unwind_err_val) |err_val| {
+            self.markValue(err_val);
+        }
+
+        // --- Protect static interned strings ---
         if (vm.static_true) |s| self.markObject(&s.obj);
         if (vm.static_false) |s| self.markObject(&s.obj);
         if (vm.static_nil) |s| self.markObject(&s.obj);

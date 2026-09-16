@@ -3265,7 +3265,7 @@ test "VM: ARC references are safely released when receivers are discarded" {
         \\    nil
         \\  end
         \\end
-        \\f()
+        \\f
         \\f = nil
     ;
 
@@ -6715,8 +6715,6 @@ test "VM: Destructuring assignments route correctly to Class Variables via emitV
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    // Because of our Phase 6 destructuring refactor, unpacking an array directly into
-    // `@@` class variables should now securely route to the class fields map!
     const source =
         \\class Config
         \\  def init()
@@ -9961,4 +9959,206 @@ test "VM: DAG Evaluator prevents C-stack overflow on deep recursion" {
     // Once fixed, it should gracefully return InterpretResult.runtime_error.
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.runtime_error, result);
+}
+
+test "VM: GC marks unwind_err_val during native unwind" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // Park an un-rooted error string in unwind_err_val
+    const err_str = try vm.allocateString("Unwind error protection");
+    vm.unwind_err_val = err_str;
+
+    // Force GC cycle
+    vm.gc.collectGarbage(&vm, false);
+
+    // Verify error string was marked and preserved in strings table
+    try testing.expect(vm.strings.contains("Unwind error protection"));
+}
+
+test "VM: Stack underflow during rescue unwinding shrinks safely without panic" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // An invalid operation that pops operands before throwing an exception
+    const source =
+        \\begin
+        \\  10 - "invalid"
+        \\rescue => e
+        \\  42
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // executeAndAssertStack enforces zealous GC and checks stack equilibrium == 1
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 42.0), result.asNumber());
+}
+
+test "VM: op_interpolate resets scratch arena memory and maintains stack equilibrium" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\name = "World"
+        \\"Hello #{name}!"
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isString());
+    try testing.expectEqualStrings("Hello World!", result.asString().chars);
+}
+
+test "VM: Sequential rescued exceptions do not accumulate un-swept memory" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Warm up VM and capture baseline
+    vm.gc.collectGarbage(&vm, false);
+    const baseline_memory = vm.gc.bytes_allocated;
+
+    // Use an anonymous lambda and clear 'f' so no global function remains rooted
+    const source =
+        \\f = ->() do
+        \\  begin
+        \\    cube(10).invalid_a = 1
+        \\  rescue => e1
+        \\    nil
+        \\  end
+        \\
+        \\  begin
+        \\    cube(10).invalid_b = 2
+        \\  rescue => e2
+        \\    nil
+        \\  end
+        \\end
+        \\f
+        \\f = nil
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // Verify unwind state was cleared
+    try testing.expect(vm.unwind_err_val == null);
+
+    // Collect garbage and verify all temporary exception objects were swept
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(baseline_memory, vm.gc.bytes_allocated);
+}
+
+test "VM: Uncaught exception state is purged on resetStack" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source = "raise(\"Uncaught Fatal\")";
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
+
+    // State should be completely cleared by interpret's exit or resetStack
+    vm.resetStack();
+    try testing.expect(vm.unwind_err_val == null);
+    try testing.expectEqual(@as(usize, 0), vm.unwind_stack_top);
+}
+
+test "VM: Repeated string interpolation loop recycles scratch arena" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const source =
+        \\i = 0
+        \\while i < 1000
+        \\  str = "Iteration #{i}"
+        \\  i += 1
+        \\end
+        \\i
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 1000.0), result.asNumber());
+}
+
+test "VM: Nested native FFI unwinding clears unwind_err_val at rescue target" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\def level2
+        \\  cube(10).invalid_method
+        \\end
+        \\
+        \\def level1
+        \\  level2
+        \\end
+        \\
+        \\begin
+        \\  level1
+        \\rescue => e
+        \\  e.message
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // Unwind state must be cleared after successfully reaching rescue block
+    try testing.expect(vm.unwind_err_val == null);
+    try testing.expectEqual(@as(usize, 0), vm.unwind_stack_top);
 }
