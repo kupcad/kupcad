@@ -222,11 +222,11 @@ pub const Resolver = struct {
             self.symbols[@intFromEnum(node)] = .{ .kind = .global, .index = 0 };
             return;
         }
-        if (name_str.len > 0 and name_str[0] == '@') {
+        if (std.mem.startsWith(u8, name_str, "@")) {
             self.symbols[@intFromEnum(node)] = .{ .kind = .instance_var, .index = 0 };
             return;
         }
-        if (name_str.len > 0 and name_str[0] == '$') {
+        if (std.mem.startsWith(u8, name_str, "$")) {
             self.symbols[@intFromEnum(node)] = .{ .kind = .global, .index = 0 };
             return;
         }
