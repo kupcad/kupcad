@@ -217,6 +217,11 @@ pub const Resolver = struct {
     pub fn resolveUsage(self: *Resolver, name: ast.StringId, node: ast.NodeIndex) !void {
         const name_str = self.tree.getString(name);
 
+        // Check @@ before @ so class variables aren't tagged as instance variables
+        if (std.mem.startsWith(u8, name_str, "@@")) {
+            self.symbols[@intFromEnum(node)] = .{ .kind = .global, .index = 0 };
+            return;
+        }
         if (name_str.len > 0 and name_str[0] == '@') {
             self.symbols[@intFromEnum(node)] = .{ .kind = .instance_var, .index = 0 };
             return;
@@ -226,7 +231,7 @@ pub const Resolver = struct {
             return;
         }
 
-        // Trigger the recursive resolution from the current depth
+        // Trigger recursive local/upvalue resolution from the current depth
         if (self.scopes.items.len > 0) {
             const top_idx = self.scopes.items.len - 1;
             if (try self.resolveInClosure(top_idx, name)) |sym| {

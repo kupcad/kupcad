@@ -300,3 +300,32 @@ test "Resolver: deep recursive upvalue capture" {
     // It targets the 0th upvalue index of the outer lambda's upvalue array
     try testing.expectEqual(@as(u24, 0), inner_captures[0].index);
 }
+
+test "Resolver: correctly classifies class variables (@@) separately from instance variables (@)" {
+    const source =
+        \\def check
+        \\  a = @instance
+        \\  b = @@class_var
+        \\end
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const root_idx = try pt.parser.parseProgram();
+
+    var diags = errors.Diagnostics.init(testing.allocator);
+    defer diags.deinit();
+
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
+    defer res.deinit();
+
+    try res.resolve(root_idx);
+
+    const tree = &pt.parser.b.tree;
+
+    // Instance variables start with single '@'
+    try expectResolved(&res, tree, "@instance", .instance_var, 0);
+
+    // Class variables start with '@@' and resolve to .global (not .instance_var)
+    try expectResolved(&res, tree, "@@class_var", .global, 0);
+}
