@@ -2641,7 +2641,16 @@ pub const VM = struct {
         log.err(fmt, args);
     }
 
-    // --- Error Formatting Engine ---
+    fn formatTraceLine(self: *VM, allocator: std.mem.Allocator, source_offset: u32, func_name: []const u8) ![]const u8 {
+        if (self.line_index) |li| {
+            const line = li.getLine(source_offset) + 1;
+            const col = li.getUtf8Column(source_offset) + 1;
+            return std.fmt.allocPrint(allocator, "    from script:{d}:{d}:in '{s}'", .{ line, col, func_name });
+        } else {
+            return std.fmt.allocPrint(allocator, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
+        }
+    }
+
     fn printStacktrace(self: *VM) void {
         var i: usize = self.frames.items.len;
         while (i > 0) {
@@ -2653,14 +2662,13 @@ pub const VM = struct {
             const source_offset = exec_chunk.getOffset(instruction_ip);
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
 
-            if (self.line_index) |li| {
-                const line = li.getLine(source_offset) + 1;
-                const col = li.getUtf8Column(source_offset) + 1;
-                self.reportError("    from script:{d}:{d}:in '{s}'\n", .{ line, col, func_name });
-            } else {
-                self.reportError("    from script:offset {d}:in '{s}'\n", .{ source_offset, func_name });
+            if (self.formatTraceLine(self.scratch_arena.allocator(), source_offset, func_name)) |trace_str| {
+                self.reportError("{s}\n", .{trace_str});
+            } else |_| {
+                self.reportError("    from unknown\n", .{});
             }
         }
+        _ = self.scratch_arena.reset(.retain_capacity);
     }
 
     // --- First-Class Error Backtraces ---
@@ -2680,18 +2688,16 @@ pub const VM = struct {
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
 
             var trace_str: []const u8 = "";
-
-            if (self.line_index) |li| {
-                const line = li.getLine(source_offset) + 1;
-                const col = li.getUtf8Column(source_offset) + 1;
-                trace_str = self.fmtScratch("    from script:{d}:{d}:in '{s}'", .{ line, col, func_name }) catch "    from unknown";
-            } else {
-                trace_str = self.fmtScratch("    from script:offset {d}:in '{s}'", .{ source_offset, func_name }) catch "    from unknown";
+            if (self.formatTraceLine(self.scratch_arena.allocator(), source_offset, func_name)) |formatted| {
+                trace_str = formatted;
+            } else |_| {
+                trace_str = "    from unknown";
             }
 
             const str_val = try self.allocateString(trace_str);
             try arr_obj.items.append(self.allocator, str_val);
         }
+        _ = self.scratch_arena.reset(.retain_capacity);
 
         return arr_obj;
     }

@@ -307,40 +307,7 @@ pub const Lexer = struct {
             }
         }
 
-        // Bare %(...) or %!... (Disambiguate against binary modulo x % (y) or width % (2+3))
-        if (c2 != 0 and c2 != '=' and !std.ascii.isAlphanumeric(c2) and !std.ascii.isWhitespace(c2)) {
-            var is_expr_end = false;
-            if (self.index > 0) {
-                var prev_i = self.index;
-                while (prev_i > 0 and (self.buffer[prev_i - 1] == ' ' or self.buffer[prev_i - 1] == '\t')) : (prev_i -= 1) {}
-                if (prev_i > 0) {
-                    const prev = self.buffer[prev_i - 1];
-                    if (std.ascii.isDigit(prev) or prev == ')' or prev == ']' or prev == '}' or prev == '"' or prev == '\'') {
-                        is_expr_end = true;
-                    } else if (isIdentChar(prev)) {
-                        // Extract the preceding word to check if it is a statement keyword
-                        var word_start = prev_i - 1;
-                        while (word_start > 0 and isIdentChar(self.buffer[word_start - 1])) : (word_start -= 1) {}
-                        const word = self.buffer[word_start..prev_i];
-
-                        const is_stmt_kw = std.mem.eql(u8, word, "return") or
-                            std.mem.eql(u8, word, "yield") or
-                            std.mem.eql(u8, word, "break") or
-                            std.mem.eql(u8, word, "next");
-
-                        if (!is_stmt_kw) {
-                            is_expr_end = true;
-                        }
-                    }
-                }
-            }
-
-            if (!is_expr_end) {
-                self.advance(); // %
-                return self.consumePercentInterpolated();
-            }
-        }
-
+        // A bare % is ALWAYS a modulo operator.
         return self.consumeOperator(start_loc);
     }
 

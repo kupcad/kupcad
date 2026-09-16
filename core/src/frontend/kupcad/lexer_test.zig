@@ -525,13 +525,6 @@ test "KupCAD Lexer: Semicolons as statement terminators" {
     });
 }
 
-test "KupCAD Lexer: Bare Percent Strings" {
-    try expectTokens("str1 = %(hello)\nstr2 = %!1/4\" Plate!", &.{
-        t(.ident, "str1"), t(.equal, "="), t(.string, "hello"),       t(.newline, "\n"),
-        t(.ident, "str2"), t(.equal, "="), t(.string, "1/4\" Plate"), t(.eof, ""),
-    });
-}
-
 test "KupCAD Lexer: Percent Literals with Paired Bracket Delimiters" {
     // Verifies the switch fallback for [], {}, (), and <> remains completely intact
     try expectTokens("a = %w<one two>\nb = %i(admin guest)", &.{
@@ -548,30 +541,21 @@ test "KupCAD Lexer: Modulo Operator remains unaffected" {
     });
 }
 
-test "KupCAD Lexer: Bare Percent Strings with Interpolation" {
-    try expectTokens("%(Value: #{1 + 2})", &.{
+test "KupCAD Lexer: Percent Q Strings" {
+    try expectTokens("str1 = %Q(hello)\nstr2 = %Q!1/4\" Plate!", &.{
+        t(.ident, "str1"), t(.equal, "="), t(.string, "hello"),       t(.newline, "\n"),
+        t(.ident, "str2"), t(.equal, "="), t(.string, "1/4\" Plate"), t(.eof, ""),
+    });
+}
+
+test "KupCAD Lexer: Percent Q Strings with Interpolation" {
+    try expectTokens("%Q(Value: #{1 + 2})", &.{
         t(.string_start, "Value: "),
         t(.number, "1"),
         t(.plus, "+"),
         t(.number, "2"),
         t(.string_end, ""),
         t(.eof, ""),
-    });
-}
-
-test "KupCAD Lexer: Percent Literals with Unescaped Nested Pairs" {
-    // Verifies the "Ruby Trap": balanced pairs inside the string do not prematurely close the literal
-    try expectTokens("nested = %w( item_a (item_b) [item_c] )\nstr = %(hello (nested) world)", &.{
-        t(.ident, "nested"), t(.equal, "="), t(.percent_w, "%w( item_a (item_b) [item_c] )"), t(.newline, "\n"),
-        t(.ident, "str"),    t(.equal, "="), t(.string, "hello (nested) world"),              t(.eof, ""),
-    });
-}
-
-test "KupCAD Lexer: Percent Literals with Escaped Delimiters" {
-    // Tests that \% escapes the delimiter from prematurely ending the string
-    try expectTokens("x = %| do this \\| or this |\ny = %w( item_\\(1\\) )", &.{
-        t(.ident, "x"), t(.equal, "="), t(.string, " do this \\| or this "), t(.newline, "\n"),
-        t(.ident, "y"), t(.equal, "="), t(.percent_w, "%w( item_\\(1\\) )"), t(.eof, ""),
     });
 }
 
