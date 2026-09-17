@@ -10318,3 +10318,35 @@ test "VM: Native memory allocation strictly respects limits and refuses to grow 
     const result = vm.interpret(&out_chunk);
     try std.testing.expectEqual(.runtime_error, result);
 }
+
+test "VM: Mid-expression throw safely unwinds without stack underflow" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // AST effectively evaluates to: `10 + (throw RuntimeError)`
+    // The `10` is left stranded on the stack when the throw occurs.
+    const source =
+        \\begin
+        \\  10 + missing_function_call
+        \\rescue
+        \\  99
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // If `shrinkStack` underflows, this will panic the entire test runner.
+    // By using executeAndAssertStack, we also enforce `zealous_gc` to ensure the stranded `10` doesn't leak!
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    // It should cleanly rescue and yield the fallback value 99
+    try testing.expectEqual(@as(f64, 99.0), result.asNumber());
+}

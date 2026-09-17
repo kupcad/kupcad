@@ -41,12 +41,16 @@ pub const GC = struct {
     // Hard Sandbox Memory Limit
     max_memory_limit: ?usize,
 
+    // --- GC State ---
+    is_gc_running: bool = false,
+
     const HEAP_GROW_FACTOR: usize = 2;
 
     pub fn init(allocator: std.mem.Allocator) GC {
         return .{
             .allocator = allocator,
             .bytes_allocated = 0,
+            .is_gc_running = false,
             .next_gc_threshold = 1024 * 1024, // 1MB starting threshold
             .max_memory_limit = null,
         };
@@ -150,11 +154,19 @@ pub const GC = struct {
     }
 
     pub fn collectGarbage(self: *GC, vm: *VM, force_full: bool) void {
+        // Prevent catastrophic nested GC sweeps
+        std.debug.assert(!self.is_gc_running);
+        self.is_gc_running = true;
+        defer self.is_gc_running = false;
+
         const before = self.bytes_allocated;
 
         if (!force_full) {
             self.markRoots(vm);
             self.traceReferences();
+
+            // Ensure the tracing phase perfectly exhausted the mark queue
+            std.debug.assert(self.gray_stack.items.len == 0);
         }
 
         self.sweep(vm);
@@ -525,6 +537,10 @@ pub const GC = struct {
         var i: usize = 0;
         while (i < list.items.len) {
             const ptr = list.items[i];
+
+            // Assert the pointer is valid before checking its mark status
+            std.debug.assert(@intFromPtr(ptr) > 0);
+
             if (ptr.obj.is_marked) {
                 ptr.obj.is_marked = false; // Reset for next GC cycle
                 i += 1;

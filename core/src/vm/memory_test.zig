@@ -269,3 +269,17 @@ test "GC: Unrooted objects are cleanly swept without double-frees" {
     // 4. Verify the unrooted string was perfectly cleaned up by the tracker
     try std.testing.expectEqual(initial_strings, vm.gc.strings.items.len);
 }
+
+test "GC: Memory limit safely aborts allocations without crashing" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+
+    // Artificially restrict the GC's memory limit to exactly what it's using right now
+    vm.gc.max_memory_limit = vm.gc.bytes_allocated;
+
+    // Attempt to allocate a new string.
+    // The GC should intercept this, report a Sandbox Error, and yield OutOfMemory.
+    const result = vm.gc.allocateString(&vm, "this_string_exceeds_the_sandbox_limit");
+
+    try std.testing.expectError(error.OutOfMemory, result);
+}
