@@ -487,8 +487,8 @@ pub const GC = struct {
             .module => {
                 const module_obj = @as(*value.ObjModule, @alignCast(@fieldParentPtr("obj", obj)));
                 self.markObject(&module_obj.name.obj);
-                var it = module_obj.methods.valueIterator();
-                while (it.next()) |val| self.markValue(val.*);
+                for (module_obj.methods.keys()) |k| self.markValue(k);
+                for (module_obj.methods.values()) |v| self.markValue(v);
             },
             .class => {
                 const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
@@ -496,14 +496,17 @@ pub const GC = struct {
                 if (class_obj.superclass) |sup| self.markObject(&sup.obj);
                 for (class_obj.included_modules.items) |mod| self.markObject(&mod.obj);
 
-                var it = class_obj.methods.valueIterator();
-                while (it.next()) |val| self.markValue(val.*);
+                // Trace all map keys and values to prevent Use-After-Free
+                for (class_obj.methods.keys()) |k| self.markValue(k);
+                for (class_obj.methods.values()) |v| self.markValue(v);
 
-                var c_it = class_obj.class_methods.valueIterator();
-                while (c_it.next()) |val| self.markValue(val.*);
+                for (class_obj.class_methods.keys()) |k| self.markValue(k);
+                for (class_obj.class_methods.values()) |v| self.markValue(v);
 
-                var f_it = class_obj.class_fields.valueIterator();
-                while (f_it.next()) |val| self.markValue(val.*);
+                for (class_obj.class_fields.keys()) |k| self.markValue(k);
+                for (class_obj.class_fields.values()) |v| self.markValue(v);
+
+                for (class_obj.instance_layout.keys()) |k| self.markValue(k);
             },
             .instance => {
                 const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
@@ -659,6 +662,10 @@ pub const GC = struct {
             },
             .string => {
                 const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", obj));
+                // Debug Memory Poisoning: Instantly crash any lingering references to this string's bytes
+                if (builtin.is_test or builtin.mode == .debug) {
+                    @memset(@constCast(str_obj.chars), 0xAA);
+                }
                 self.trackingAllocator().free(str_obj.chars);
                 self.destroyObject(value.ObjString, str_obj);
             },

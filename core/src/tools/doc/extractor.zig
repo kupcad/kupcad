@@ -77,7 +77,7 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
     var params: std.ArrayListUnmanaged(ParamMetadata) = .empty;
     defer params.deinit(allocator);
 
-    // FIX: Walk the entire AST deeply instead of just checking the root block
+    // Walk the entire AST deeply instead of just checking the root block
     var vis = ParamVisitor{
         .allocator = allocator,
         .params = &params,

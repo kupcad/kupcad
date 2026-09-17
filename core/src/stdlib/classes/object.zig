@@ -47,24 +47,29 @@ pub fn nativeRespondsTo(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     }
 
     const target_val = args[0];
-    const query_name = if (target_val.isObject() and target_val.asObj().obj_type == .symbol)
-        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars
-    else if (target_val.isObject() and target_val.asObj().obj_type == .string)
-        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars
-    else {
+    var query_val = target_val;
+    var query_name: []const u8 = "";
+
+    // Normalize symbols into string Values for consistent dictionary lookup
+    if (target_val.isObject() and target_val.asObj().obj_type == .symbol) {
+        query_name = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
+        query_val = try vm.allocateString(query_name);
+    } else if (target_val.isObject() and target_val.asObj().obj_type == .string) {
+        query_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
+    } else {
         vm.runtimeError("Runtime Error: responds_to? expects a Symbol or String.\n", .{});
         return error.RuntimeError;
-    };
+    }
 
     var match = false;
 
     // Unified Resolution
     if (receiver.isClass()) {
-        const resolved = vm.findClassMethodWithPrivacy(receiver.asClass(), query_name);
+        const resolved = vm.findClassMethodWithPrivacy(receiver.asClass(), query_val);
         if (resolved.method != null) match = true;
         if (!match and std.mem.eql(u8, query_name, "new")) match = true;
     } else if (vm.getClass(receiver)) |c| {
-        const resolved = vm.findMethodWithPrivacy(c, query_name, null);
+        const resolved = vm.findMethodWithPrivacy(c, query_val, null);
         if (resolved.method != null) match = true;
     }
 
@@ -73,7 +78,9 @@ pub fn nativeRespondsTo(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
             query_name[1..]
         else
             query_name;
-        if (receiver.asInstance().class.instance_layout.contains(clean_name)) match = true;
+
+        const clean_val = try vm.allocateString(clean_name);
+        if (receiver.asInstance().class.instance_layout.contains(clean_val)) match = true;
     }
 
     return value.Value.initBool(match);
@@ -142,19 +149,24 @@ pub fn nativeMethod(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
     const receiver = (args - 1)[0];
     const name_val = args[0];
 
-    // Extract name
-    const method_name = if (name_val.isObject() and name_val.asObj().obj_type == .symbol)
-        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars
-    else if (name_val.isObject() and name_val.asObj().obj_type == .string)
-        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars
-    else
+    var query_val = name_val;
+    var method_name: []const u8 = "";
+
+    // Normalize name to String Value
+    if (name_val.isObject() and name_val.asObj().obj_type == .symbol) {
+        method_name = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+        query_val = try vm.allocateString(method_name);
+    } else if (name_val.isObject() and name_val.asObj().obj_type == .string) {
+        method_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
+    } else {
         return error.RuntimeError;
+    }
 
     var method_val: ?value.Value = null;
 
-    // Standard Class Lookup
+    // Standard Class Lookup using Value Keys
     if (receiver.isInstance()) {
-        method_val = vm.findMethod(receiver.asInstance().class, method_name);
+        method_val = vm.findMethod(receiver.asInstance().class, query_val);
     } else if (receiver.isObject()) {
         const class_obj = switch (receiver.asObj().obj_type) {
             .string => vm.string_class,
@@ -163,14 +175,14 @@ pub fn nativeMethod(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
             .map => vm.map_class,
             else => vm.object_class,
         };
-        if (class_obj) |c| method_val = vm.findMethod(c, method_name);
+        if (class_obj) |c| method_val = vm.findMethod(c, query_val);
     } else if (receiver.isNumber()) {
-        if (vm.number_class) |c| method_val = vm.findMethod(c, method_name);
+        if (vm.number_class) |c| method_val = vm.findMethod(c, query_val);
     } else if (receiver.isBool()) {
-        if (vm.boolean_class) |c| method_val = vm.findMethod(c, method_name);
+        if (vm.boolean_class) |c| method_val = vm.findMethod(c, query_val);
     }
 
-    // CAD Mesh Method Lookup
+    // CAD Mesh Method Lookup (String based via Manifest)
     if (method_val == null and (receiver.isGeometry() or receiver.isCrossSection() or receiver.isAssembly())) {
         const manifest = @import("../manifest.zig");
         if (manifest.getMeshMethod(method_name)) |mesh_fn| {

@@ -465,18 +465,17 @@ pub const VM = struct {
                     const test_val = self.pop();
                     self.push(value.Value.initBool(self.valuesCaseEqual(case_val, test_val)));
                 },
-
                 .op_set_member, .op_set_member_wide => {
-                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_set_member_wide);
+                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_set_member_wide);
                     const val = self.pop();
                     const receiver = self.stack[self.stack_top - 1]; // Peek at namespace (Module/Class)
 
                     if (receiver.isModule()) {
                         const mod = receiver.asModule();
-                        mod.methods.put(self.gc.trackingAllocator(), name_str, val) catch return .runtime_error;
+                        mod.methods.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        cls.class_fields.put(self.gc.trackingAllocator(), name_str, val) catch return .runtime_error;
+                        cls.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
                     } else {
                         if (self.throwDynamicError("Runtime Error: Cannot attach member to non-namespace.\n", .{}) != .ok) return .runtime_error;
                         continue;
@@ -799,7 +798,7 @@ pub const VM = struct {
 
                     const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
 
-                    // --- CIRCULAR DEPENDENCY FIX: Register Sentinel ---
+                    // --- CIRCULAR DEPENDENCY: Register Sentinel ---
                     self.modules.put(self.allocator, path_str, value.Value.initNil()) catch return .runtime_error;
 
                     // 6. Execute synchronously
@@ -961,14 +960,14 @@ pub const VM = struct {
                     self.push(value.Value.initObj(&class_obj.obj));
                 },
                 .op_method, .op_method_wide => {
-                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_method_wide);
+                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_method_wide);
                     const method = self.pop(); // The closure
                     const receiver_val = self.stack[self.stack_top - 1]; // Peek at class or module
 
                     if (receiver_val.isClass()) {
-                        receiver_val.asClass().methods.put(self.gc.trackingAllocator(), name_str, method) catch return .runtime_error;
+                        receiver_val.asClass().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
                     } else if (receiver_val.isModule()) {
-                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_str, method) catch return .runtime_error;
+                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
                     } else return .runtime_error;
                 },
                 .op_define_global, .op_define_global_wide => {
@@ -978,7 +977,8 @@ pub const VM = struct {
                 },
                 .op_get_property, .op_get_property_wide => {
                     const is_wide = op == .op_get_property_wide;
-                    const name_str = self.readStringOperand(exec_chunk, frame, is_wide);
+                    const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
+                    const name_str = name_val.asString().chars;
                     const ic = self.readInlineCache(exec_chunk, frame);
                     const receiver = self.stack[self.stack_top - 1];
 
@@ -986,13 +986,13 @@ pub const VM = struct {
                         const instance = receiver.asInstance();
 
                         // --- 1. Property Fast/Slow Path ---
-                        if (self.getPropertyCached(instance, name_str, ic)) |prop_val| {
+                        if (self.getPropertyCached(instance, name_val, ic)) |prop_val| {
                             self.stack[self.stack_top - 1] = prop_val;
                             continue;
                         }
 
                         // --- 2. Method Fallback ---
-                        if (self.findMethodWithPrivacy(instance.class, name_str, null).method) |method_val| {
+                        if (self.findMethodWithPrivacy(instance.class, name_val, null).method) |method_val| {
                             self.stack[self.stack_top - 1] = method_val;
                             continue;
                         }
@@ -1002,7 +1002,7 @@ pub const VM = struct {
                         continue;
                     } else if (receiver.isModule()) {
                         const mod = receiver.asModule();
-                        if (mod.methods.get(name_str)) |val| {
+                        if (mod.methods.get(name_val)) |val| {
                             self.stack[self.stack_top - 1] = val;
                             continue;
                         }
@@ -1010,14 +1010,14 @@ pub const VM = struct {
                         continue;
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        if (cls.class_fields.get(name_str)) |val| {
+                        if (cls.class_fields.get(name_val)) |val| {
                             self.stack[self.stack_top - 1] = val;
                             continue;
                         }
                         if (self.throwDynamicError("Runtime Error: Undefined class member '{s}'.\n", .{name_str}) != .ok) return .runtime_error;
                         continue;
                     } else if (self.getClass(receiver)) |class| {
-                        if (self.findMethodWithPrivacy(class, name_str, null).method) |method_val| {
+                        if (self.findMethodWithPrivacy(class, name_val, null).method) |method_val| {
                             self.stack[self.stack_top - 1] = method_val;
                             continue;
                         }
@@ -1030,7 +1030,7 @@ pub const VM = struct {
                 },
                 .op_set_property, .op_set_property_wide => {
                     const is_wide = op == .op_set_property_wide;
-                    const name_str = self.readStringOperand(exec_chunk, frame, is_wide);
+                    const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
                     const ic = self.readInlineCache(exec_chunk, frame);
 
                     const receiver = self.stack[self.stack_top - 2];
@@ -1040,20 +1040,20 @@ pub const VM = struct {
                         const instance = receiver.asInstance();
 
                         // --- Property Fast/Slow Path ---
-                        self.setInstanceField(instance, name_str, val, ic) catch return .runtime_error;
+                        self.setInstanceField(instance, name_val, val, ic) catch return .runtime_error;
 
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        cls.class_fields.put(self.gc.trackingAllocator(), name_str, val) catch return .runtime_error;
+                        cls.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
                     } else if (receiver.isModule()) {
                         const mod = receiver.asModule();
-                        mod.methods.put(self.gc.trackingAllocator(), name_str, val) catch return .runtime_error;
+                        mod.methods.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
@@ -1091,6 +1091,8 @@ pub const VM = struct {
                     const base_slot = self.stack_top - 1 - arg_count;
 
                     const method_name_str = if (frame.closure.function.name) |n| n.chars else "";
+                    const method_name_val = if (frame.closure.function.name) |n| value.Value.initObj(&n.obj) else self.allocateString("") catch return .runtime_error;
+
                     const receiver = self.stack[base_slot];
 
                     if (receiver.isInstance()) {
@@ -1100,7 +1102,7 @@ pub const VM = struct {
                         };
 
                         // Use new Privacy Resolution Helper
-                        const resolved = self.findMethodWithPrivacy(superclass, method_name_str, null);
+                        const resolved = self.findMethodWithPrivacy(superclass, method_name_val, null);
 
                         if (resolved.method) |m_val| {
                             if (m_val.isClosure()) {
@@ -1173,21 +1175,22 @@ pub const VM = struct {
                     self.push(value.Value.initBool(block_val.isClosure()));
                 },
                 .op_class_method, .op_class_method_wide => {
-                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_class_method_wide);
+                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_class_method_wide);
                     const method = self.pop();
                     const receiver_val = self.stack[self.stack_top - 1]; // Peek at target
 
                     if (receiver_val.isClass()) {
-                        receiver_val.asClass().class_methods.put(self.gc.trackingAllocator(), name_str, method) catch return .runtime_error;
+                        receiver_val.asClass().class_methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
                     } else if (receiver_val.isModule()) {
-                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_str, method) catch return .runtime_error;
+                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
                     } else {
                         if (self.throwDynamicError("Runtime Error: Can only define singleton methods on classes or modules.\n", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
                 .op_get_class_var, .op_get_class_var_wide => {
-                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_get_class_var_wide);
+                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_get_class_var_wide);
+                    const name_str = name_val.asString().chars;
                     const receiver = self.pop(); // Explicitly pop receiver from stack
 
                     const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
@@ -1198,7 +1201,7 @@ pub const VM = struct {
 
                         // Search up the hierarchy
                         while (current) |cls| {
-                            if (cls.class_fields.get(name_str)) |val| {
+                            if (cls.class_fields.get(name_val)) |val| {
                                 found_val = val;
                                 break;
                             }
@@ -1217,7 +1220,7 @@ pub const VM = struct {
                     }
                 },
                 .op_set_class_var, .op_set_class_var_wide => {
-                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_set_class_var_wide);
+                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_set_class_var_wide);
                     const receiver = self.pop(); // Pop explicit receiver
                     const val = self.pop(); // Pop RHS value
 
@@ -1230,7 +1233,7 @@ pub const VM = struct {
                         // Update the variable if it exists anywhere in the hierarchy
                         var found = false;
                         while (current) |cls| {
-                            if (cls.class_fields.contains(name_str)) {
+                            if (cls.class_fields.contains(name_val)) {
                                 target_class = cls;
                                 found = true;
                                 break;
@@ -1247,7 +1250,7 @@ pub const VM = struct {
                             target_class = root;
                         }
 
-                        target_class.class_fields.put(self.gc.trackingAllocator(), name_str, val) catch return .runtime_error;
+                        target_class.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
 
                         self.push(val); // Yield the assigned value
                     } else {
@@ -1277,7 +1280,8 @@ pub const VM = struct {
                     self.push(value.Value.initBool(match));
                 },
                 .op_defined, .op_defined_wide => {
-                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_defined_wide);
+                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_defined_wide);
+                    const name_str = name_val.asString().chars;
                     var is_def = false;
 
                     if (std.mem.startsWith(u8, name_str, "@@")) {
@@ -1287,7 +1291,7 @@ pub const VM = struct {
                         if (class_obj) |c| {
                             var current: ?*value.ObjClass = c;
                             while (current) |cls| {
-                                if (cls.class_fields.contains(name_str)) {
+                                if (cls.class_fields.contains(name_val)) {
                                     is_def = true;
                                     break;
                                 }
@@ -1299,10 +1303,11 @@ pub const VM = struct {
                         const self_val = self.getLocal(frame, 0);
                         if (self_val.isInstance()) {
                             const clean_name = name_str[1..];
-                            is_def = self_val.asInstance().class.instance_layout.contains(clean_name);
+                            const clean_val = self.allocateString(clean_name) catch return .runtime_error;
+                            is_def = self_val.asInstance().class.instance_layout.contains(clean_val);
                         }
                     } else {
-                        // Global / Native Check
+                        // Global / Native Check (Globals still use string keys)
                         is_def = self.globals.contains(name_str);
                     }
 
@@ -1501,7 +1506,7 @@ pub const VM = struct {
         }
     }
 
-    pub fn findMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {
+    pub fn findMethod(self: *VM, class: *value.ObjClass, name: value.Value) ?value.Value {
         _ = self;
         var current: ?*value.ObjClass = class;
         while (current) |c| {
@@ -1520,7 +1525,7 @@ pub const VM = struct {
         return null;
     }
 
-    pub fn findClassMethod(self: *VM, class: *value.ObjClass, name: []const u8) ?value.Value {
+    pub fn findClassMethod(self: *VM, class: *value.ObjClass, name: value.Value) ?value.Value {
         _ = self;
         var current: ?*value.ObjClass = class;
         while (current) |c| {
@@ -1830,8 +1835,10 @@ pub const VM = struct {
         return .ok;
     }
 
+    // Replace inside src/vm/vm.zig
     inline fn executeInvoke(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
-        const method_name_str = self.readStringOperand(exec_chunk, frame, is_wide);
+        const method_name_val = self.readValueOperand(exec_chunk, frame, is_wide);
+        const method_name_str = method_name_val.asString().chars;
         const arg_count = exec_chunk.code.items[frame.ip];
         frame.ip += 1;
 
@@ -1857,7 +1864,8 @@ pub const VM = struct {
                 const instance = self.gc.allocateInstance(self, class_to_instantiate) catch return .runtime_error;
                 self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
 
-                if (self.findMethod(class_to_instantiate, "initialize")) |init_method| {
+                const init_name_val = self.allocateString("initialize") catch return .runtime_error;
+                if (self.findMethod(class_to_instantiate, init_name_val)) |init_method| {
                     if (init_method.isClosure()) {
                         self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, true) catch return .runtime_error;
                         return .ok;
@@ -1874,22 +1882,22 @@ pub const VM = struct {
                 return .ok;
             }
 
-            const resolved = self.findClassMethodWithPrivacy(receiver.asClass(), method_name_str);
+            const resolved = self.findClassMethodWithPrivacy(receiver.asClass(), method_name_val);
             method_val = resolved.method;
             is_private_call = resolved.is_private;
 
             // Fallback to Object methods (so Class.responds_to? works)
-            if (method_val == null and self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_str);
+            if (method_val == null and self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_val);
         } else if (receiver.isModule()) {
             // Check the module's own methods first
-            if (receiver.asModule().methods.get(method_name_str)) |m| {
+            if (receiver.asModule().methods.get(method_name_val)) |m| {
                 method_val = m;
             } else if (self.object_class != null) {
                 // Fallback to Object methods for modules
-                method_val = self.findMethod(self.object_class.?, method_name_str);
+                method_val = self.findMethod(self.object_class.?, method_name_val);
             }
         } else if (class_obj) |c| {
-            const resolved = self.findMethodWithPrivacy(c, method_name_str, ic);
+            const resolved = self.findMethodWithPrivacy(c, method_name_val, ic);
             method_val = resolved.method;
             is_private_call = resolved.is_private;
         }
@@ -1915,7 +1923,7 @@ pub const VM = struct {
         // --- 2. PROPERTY FALLBACK (Instances only when no method matches) ---
         if (receiver.isInstance() and arg_count == 0) {
             const instance = receiver.asInstance();
-            if (instance.class.instance_layout.get(method_name_str)) |idx| {
+            if (instance.class.instance_layout.get(method_name_val)) |idx| {
                 // Populate PIC slots
                 if (ic.cached_class_1 == null) {
                     ic.cached_class_1 = instance.class;
@@ -2212,6 +2220,12 @@ pub const VM = struct {
         return self.readStringObjectOperand(exec_chunk, frame, is_wide).chars;
     }
 
+    /// Extracts a direct Value (ObjString/ObjSymbol) from the constants pool
+    inline fn readValueOperand(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame, is_wide: bool) value.Value {
+        const idx = self.readOperand(exec_chunk, frame, is_wide);
+        return exec_chunk.constants.items[idx];
+    }
+
     inline fn readOperand(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame, is_wide: bool) u16 {
         _ = self;
         if (is_wide) {
@@ -2270,7 +2284,8 @@ pub const VM = struct {
             const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
             self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj);
 
-            if (self.findMethod(class_obj, "initialize")) |init_method| {
+            const init_key = self.allocateString("initialize") catch return .runtime_error;
+            if (self.findMethod(class_obj, init_key)) |init_method| {
                 self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
             } else if (arg_count > 0) {
                 self.runtimeError("Runtime Error: Expected 0 args for default constructor.\n", .{});
@@ -2338,12 +2353,15 @@ pub const VM = struct {
 
                         if (str_val) |s_val| {
                             self.push(value.Value.initObj(&inst.obj));
-                            self.setInstanceField(inst, "message", s_val, null) catch {};
+
+                            const msg_key = self.allocateString("message") catch return .runtime_error;
+                            self.setInstanceField(inst, msg_key, s_val, null) catch {};
 
                             // --- EAGER BACKTRACE CAPTURE ---
                             if (self.buildBacktrace() catch null) |bt_arr| {
                                 self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
-                                self.setInstanceField(inst, "backtrace", value.Value.initObj(&bt_arr.obj), null) catch {};
+                                const bt_key = self.allocateString("backtrace") catch return .runtime_error;
+                                self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch {};
                                 _ = self.pop();
                             }
 
@@ -2368,8 +2386,10 @@ pub const VM = struct {
                 const inst = err_val.asInstance();
                 var printed = false;
 
+                const msg_key = self.allocateString("message") catch return .runtime_error;
+
                 // Format: ClassName: Message
-                if (inst.class.instance_layout.get("message")) |idx| {
+                if (inst.class.instance_layout.get(msg_key)) |idx| {
                     if (idx < inst.fields.items.len) {
                         const msg_val = inst.fields.items[idx];
                         if (msg_val.isObject() and msg_val.asObj().obj_type == .string) {
@@ -2383,7 +2403,9 @@ pub const VM = struct {
 
                 // Print First-Class Backtrace seamlessly
                 var printed_bt = false;
-                if (inst.class.instance_layout.get("backtrace")) |bt_idx| {
+                const bt_key = self.allocateString("backtrace") catch return .runtime_error;
+
+                if (inst.class.instance_layout.get(bt_key)) |bt_idx| {
                     if (bt_idx < inst.fields.items.len) {
                         const bt_val = inst.fields.items[bt_idx];
                         if (bt_val.isObject() and bt_val.asObj().obj_type == .array) {
@@ -2457,7 +2479,7 @@ pub const VM = struct {
         return self.valuesEqual(case_val, test_val);
     }
 
-    inline fn getPropertyCached(self: *VM, instance: *value.ObjInstance, name_str: []const u8, ic: *chunk.InlineCache) ?value.Value {
+    inline fn getPropertyCached(self: *VM, instance: *value.ObjInstance, name: value.Value, ic: *chunk.InlineCache) ?value.Value {
         _ = self;
         var offset: usize = 0;
 
@@ -2467,9 +2489,8 @@ pub const VM = struct {
         } else if (ic.cached_class_2 == instance.class) {
             offset = ic.offset_2;
         }
-
         // Slow Path
-        else if (instance.class.instance_layout.get(name_str)) |idx| {
+        else if (instance.class.instance_layout.get(name)) |idx| {
             if (ic.cached_class_1 == null) {
                 ic.cached_class_1 = instance.class;
                 ic.offset_1 = idx;
@@ -2489,7 +2510,7 @@ pub const VM = struct {
         }
     }
 
-    pub fn setInstanceField(self: *VM, instance: *value.ObjInstance, name: []const u8, val: value.Value, ic: ?*chunk.InlineCache) !void {
+    pub fn setInstanceField(self: *VM, instance: *value.ObjInstance, name: value.Value, val: value.Value, ic: ?*chunk.InlineCache) !void {
         var idx: usize = 0;
 
         // Fast Path
@@ -2498,7 +2519,6 @@ pub const VM = struct {
         } else if (ic != null and ic.?.cached_class_2 == instance.class) {
             idx = ic.?.offset_2;
         }
-
         // Slow Path
         else {
             if (instance.class.instance_layout.get(name)) |existing_idx| {
@@ -2542,7 +2562,7 @@ pub const VM = struct {
     fn findMethodInternal(
         self: *VM,
         class: *value.ObjClass,
-        name: []const u8,
+        name: value.Value,
         ic: ?*chunk.InlineCache,
         target: LookupTarget,
     ) MethodLookupResult {
@@ -2554,22 +2574,28 @@ pub const VM = struct {
 
         // Zero-allocation stack buffer for private method name lookup
         var name_buf: [256]u8 = undefined;
-        if (std.fmt.bufPrint(&name_buf, "@private:{s}", .{name})) |priv_name| {
-            const priv_method = switch (target) {
-                .instance => self.findMethod(class, priv_name),
-                .class => self.findClassMethod(class, priv_name),
-            };
-            if (priv_method) |m| return .{ .method = m, .is_private = true };
-        } else |_| {}
+        // Verify it's actually an ObjString before casting
+        if (name.isObject() and name.asObj().obj_type == .string) {
+            if (std.fmt.bufPrint(&name_buf, "@private:{s}", .{name.asString().chars})) |priv_name| {
+                // Dynamically allocate a Value to use as the dictionary lookup key
+                if (self.allocateString(priv_name) catch null) |priv_val| {
+                    const priv_method = switch (target) {
+                        .instance => self.findMethod(class, priv_val),
+                        .class => self.findClassMethod(class, priv_val),
+                    };
+                    if (priv_method) |m| return .{ .method = m, .is_private = true };
+                }
+            } else |_| {}
+        }
 
         return .{ .method = null, .is_private = false };
     }
 
-    pub fn findMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: []const u8, ic: ?*chunk.InlineCache) MethodLookupResult {
+    pub fn findMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: value.Value, ic: ?*chunk.InlineCache) MethodLookupResult {
         return self.findMethodInternal(class, name, ic, .instance);
     }
 
-    pub fn findClassMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: []const u8) MethodLookupResult {
+    pub fn findClassMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: value.Value) MethodLookupResult {
         return self.findMethodInternal(class, name, null, .class);
     }
 
@@ -2658,12 +2684,14 @@ pub const VM = struct {
                     self.push(value.Value.initObj(&inst.obj));
 
                     if (self.allocateString(msg) catch null) |str_val| {
-                        self.setInstanceField(inst, "message", str_val, null) catch {};
+                        const msg_key = self.allocateString("message") catch return .runtime_error;
+                        self.setInstanceField(inst, msg_key, str_val, null) catch {};
 
                         // --- EAGER BACKTRACE CAPTURE ---
                         if (self.buildBacktrace() catch null) |bt_arr| {
                             self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
-                            self.setInstanceField(inst, "backtrace", value.Value.initObj(&bt_arr.obj), null) catch {};
+                            const bt_key = self.allocateString("backtrace") catch return .runtime_error;
+                            self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch {};
                             _ = self.pop();
                         }
 
@@ -2784,7 +2812,7 @@ pub const VM = struct {
         return &exec_chunk.inline_caches.items[ic_idx];
     }
 
-    inline fn findMethodCached(self: *VM, class: *value.ObjClass, name: []const u8, ic: *chunk.InlineCache) ?value.Value {
+    inline fn findMethodCached(self: *VM, class: *value.ObjClass, name: value.Value, ic: *chunk.InlineCache) ?value.Value {
         // Fast Path (Monomorphic)
         if (ic.cached_class_1 == class) {
             if (!ic.cached_val_1.isNil()) return ic.cached_val_1;

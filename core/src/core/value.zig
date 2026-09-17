@@ -106,17 +106,17 @@ pub const ObjClass = struct {
     obj: Obj,
     name: *ObjString,
     superclass: ?*ObjClass = null,
-    methods: std.StringHashMapUnmanaged(Value),
-    class_methods: std.StringHashMapUnmanaged(Value),
-    class_fields: std.StringHashMapUnmanaged(Value),
+    methods: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
+    class_methods: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
+    class_fields: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
     included_modules: std.ArrayListUnmanaged(*ObjModule),
-    instance_layout: std.StringHashMapUnmanaged(usize),
+    instance_layout: std.ArrayHashMapUnmanaged(Value, usize, ValueContext, false),
 };
 
 pub const ObjModule = struct {
     obj: Obj,
     name: *ObjString,
-    methods: std.StringHashMapUnmanaged(Value),
+    methods: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
 };
 
 pub const ObjInstance = struct {

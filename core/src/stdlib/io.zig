@@ -55,7 +55,11 @@ pub fn nativeInspect(vm: *VM, args: []const value.Value) !value.Value {
             var printed = false;
             if (arg.isInstance()) {
                 const inst = arg.asInstance();
-                if (inst.class.methods.get("inspect") orelse inst.class.methods.get("to_s")) |m_val| {
+
+                const inspect_key = try vm.allocateString("inspect");
+                const tos_key = try vm.allocateString("to_s");
+
+                if (inst.class.methods.get(inspect_key) orelse inst.class.methods.get(tos_key)) |m_val| {
                     if (m_val.isObject() and m_val.asObj().obj_type == .native) {
                         const native_obj = @as(*value.ObjNative, @alignCast(@fieldParentPtr("obj", m_val.asObj())));
 

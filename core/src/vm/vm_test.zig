@@ -3121,7 +3121,10 @@ test "VM: super correctly resolves and executes Native C++ methods" {
         }
     }.run;
     const native_obj = try vm.gc.allocateNative(&vm, native_func);
-    try base_class.methods.put(vm.gc.trackingAllocator(), "get_val", value.Value.initObj(&native_obj.obj));
+
+    // --- Allocate a Value key for the method name ---
+    const get_val_key = try vm.allocateString("get_val");
+    try base_class.methods.put(vm.gc.trackingAllocator(), get_val_key, value.Value.initObj(&native_obj.obj));
 
     // Subclass it and call super
     const source =
@@ -9423,7 +9426,8 @@ test "VM Edge Case: Exceptions inside blocks passed to Native methods safely unw
     try std.testing.expectEqualStrings("RuntimeError", inst.class.name.chars);
 
     // Extract the 'message' field natively using the DOD instance layout map
-    const msg_idx = inst.class.instance_layout.get("message").?;
+    const msg_key = try vm.allocateString("message");
+    const msg_idx = inst.class.instance_layout.get(msg_key).?;
     const msg_val = inst.fields.items[msg_idx];
 
     try std.testing.expect(msg_val.isObject() and msg_val.asObj().obj_type == .string);
@@ -9543,7 +9547,8 @@ test "VM Edge Case: raise auto-wraps Array primitives into RuntimeError with str
     try testing.expectEqualStrings("RuntimeError", inst.class.name.chars);
 
     // Extract the 'message' field natively using the DOD instance layout map
-    const msg_idx = inst.class.instance_layout.get("message").?;
+    const msg_key = try vm.allocateString("message");
+    const msg_idx = inst.class.instance_layout.get(msg_key).?;
     const msg_val = inst.fields.items[msg_idx];
 
     // Assert the message is a valid string
@@ -9587,7 +9592,8 @@ test "VM Edge Case: raise auto-wraps Map primitives into RuntimeError with strin
     try testing.expectEqualStrings("RuntimeError", inst.class.name.chars);
 
     // Extract the 'message' field natively using the DOD instance layout map
-    const msg_idx = inst.class.instance_layout.get("message").?;
+    const msg_key = try vm.allocateString("message");
+    const msg_idx = inst.class.instance_layout.get(msg_key).?;
     const msg_val = inst.fields.items[msg_idx];
 
     // Assert the message is a valid string

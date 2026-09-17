@@ -11,11 +11,13 @@ pub fn exceptionInit(vm: *VM, receiver: value.Value, message_opt: ?value.Value) 
     const instance = receiver.asInstance();
 
     const msg = message_opt orelse try vm.allocateString(instance.class.name.chars);
-    try vm.setInstanceField(instance, "message", msg, null);
+    const msg_key = try vm.allocateString("message");
+    try vm.setInstanceField(instance, msg_key, msg, null);
 
     // --- EAGER BACKTRACE CAPTURE ---
     if (vm.buildBacktrace()) |bt_arr| {
-        try vm.setInstanceField(instance, "backtrace", value.Value.initObj(&bt_arr.obj), null);
+        const bt_key = try vm.allocateString("backtrace");
+        try vm.setInstanceField(instance, bt_key, value.Value.initObj(&bt_arr.obj), null);
     } else |_| {}
 
     return receiver;
@@ -24,8 +26,9 @@ pub fn exceptionInit(vm: *VM, receiver: value.Value, message_opt: ?value.Value) 
 // e.message()
 pub fn exceptionMessage(vm: *VM, receiver: value.Value) !value.Value {
     const instance = receiver.asInstance();
+    const msg_key = try vm.allocateString("message");
 
-    if (instance.class.instance_layout.get("message")) |idx| {
+    if (instance.class.instance_layout.get(msg_key)) |idx| {
         if (idx < instance.fields.items.len) {
             return instance.fields.items[idx];
         }
@@ -37,9 +40,10 @@ pub fn exceptionMessage(vm: *VM, receiver: value.Value) !value.Value {
 // e.backtrace()
 pub fn exceptionBacktrace(vm: *VM, receiver: value.Value) !value.Value {
     const instance = receiver.asInstance();
+    const bt_key = try vm.allocateString("backtrace");
 
     // Pull the pre-calculated backtrace!
-    if (instance.class.instance_layout.get("backtrace")) |idx| {
+    if (instance.class.instance_layout.get(bt_key)) |idx| {
         if (idx < instance.fields.items.len) {
             return instance.fields.items[idx];
         }
@@ -65,17 +69,18 @@ pub fn registerExceptions(vm: *VM) !void {
     _ = vm.pop();
 
     const init_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionInit));
-    // Use trackingAllocator for class method maps
-    try exc_class.methods.put(vm.gc.trackingAllocator(), "initialize", value.Value.initObj(&init_fn.obj));
+    const init_key = try vm.allocateString("initialize");
+    try exc_class.methods.put(vm.gc.trackingAllocator(), init_key, value.Value.initObj(&init_fn.obj));
 
     const msg_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionMessage));
-    // Use trackingAllocator for class method maps
-    try exc_class.methods.put(vm.gc.trackingAllocator(), "message", value.Value.initObj(&msg_fn.obj));
-    try exc_class.methods.put(vm.gc.trackingAllocator(), "to_s", value.Value.initObj(&msg_fn.obj));
+    const msg_key = try vm.allocateString("message");
+    const tos_key = try vm.allocateString("to_s");
+    try exc_class.methods.put(vm.gc.trackingAllocator(), msg_key, value.Value.initObj(&msg_fn.obj));
+    try exc_class.methods.put(vm.gc.trackingAllocator(), tos_key, value.Value.initObj(&msg_fn.obj));
 
     const bt_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionBacktrace));
-    // Use trackingAllocator for class method maps
-    try exc_class.methods.put(vm.gc.trackingAllocator(), "backtrace", value.Value.initObj(&bt_fn.obj));
+    const bt_key = try vm.allocateString("backtrace");
+    try exc_class.methods.put(vm.gc.trackingAllocator(), bt_key, value.Value.initObj(&bt_fn.obj));
 
     // StandardError < Exception
     const std_name = try vm.allocateString("StandardError");

@@ -66,12 +66,15 @@ pub fn nativeAssert(vm: *VM, args: []const value.Value) anyerror!value.Value {
         // Construct and Throw Exception
         const inst = try vm.gc.allocateInstance(vm, err_class);
         vm.push(value.Value.initObj(&inst.obj)); // Protect from GC
-        try vm.setInstanceField(inst, "message", msg_val, null);
+
+        const msg_key = try vm.allocateString("message");
+        try vm.setInstanceField(inst, msg_key, msg_val, null);
 
         // Capture Stack Trace
         if (vm.buildBacktrace()) |bt_arr| {
             vm.push(value.Value.initObj(&bt_arr.obj));
-            try vm.setInstanceField(inst, "backtrace", value.Value.initObj(&bt_arr.obj), null);
+            const bt_key = try vm.allocateString("backtrace");
+            try vm.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null);
             _ = vm.pop();
         } else |_| {}
 

@@ -162,7 +162,7 @@ pub const Resolver = struct {
         const manifest_path = try self.cafs.blobPath(manifest_hash);
         defer self.allocator.free(manifest_path);
 
-        // Fix: Store NativeVfs in a variable so we can take a mutable pointer to it
+        // Store NativeVfs in a variable so we can take a mutable pointer to it
         var native_vfs = NativeVfs.init(self.io, std.Io.Dir.cwd());
         const fs = native_vfs.vfs();
 

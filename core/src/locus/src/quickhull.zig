@@ -308,7 +308,7 @@ pub const QuickhullBuilder = struct {
                 const prev_he = self.half_edges.items[@as(usize, @intCast(next_he.next_edge))];
                 const p0_idx = prev_he.end_vertex;
 
-                // FIX: Corrected winding order to p0 -> p1 -> eye so normals point outward
+                // Corrected winding order to p0 -> p1 -> eye so normals point outward
                 const new_face_idx = try self.addFace(p0_idx, p1_idx, eye_pt_idx);
 
                 for (unassigned_points.items) |p_idx| {

@@ -28,12 +28,14 @@ fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !
 
 fn bindNativeClassMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
     const native_fn = try vm.gc.allocateNative(vm, func);
-    try class.class_methods.put(vm.gc.trackingAllocator(), name, value.Value.initObj(&native_fn.obj));
+    const name_val = try vm.allocateString(name);
+    try class.class_methods.put(vm.gc.trackingAllocator(), name_val, value.Value.initObj(&native_fn.obj));
 }
 
 fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
     const native_obj = try vm.gc.allocateNative(vm, func);
-    try class.methods.put(vm.gc.trackingAllocator(), name, value.Value.initObj(&native_obj.obj));
+    const name_val = try vm.allocateString(name);
+    try class.methods.put(vm.gc.trackingAllocator(), name_val, value.Value.initObj(&native_obj.obj));
 }
 
 // --- Standard Library Registration ---
@@ -110,7 +112,8 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // Set up Math module (as an instance of a pseudo-class to support property access)
     const math_class = try defineBuiltinClass(vm, "Math", null);
     const math_inst = try vm.gc.allocateInstance(vm, math_class);
-    try vm.setInstanceField(math_inst, "PI", value.Value.initNumber(std.math.pi), null);
+    const pi_name = try vm.allocateString("PI");
+    try vm.setInstanceField(math_inst, pi_name, value.Value.initNumber(std.math.pi), null);
     try vm.globals.put(vm.allocator, "Math", value.Value.initObj(&math_inst.obj));
 
     // Set up CAD settings module (as a pseudo-class)
