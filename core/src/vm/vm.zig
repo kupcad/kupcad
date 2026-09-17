@@ -338,6 +338,9 @@ pub const VM = struct {
     }
 
     pub fn runUntil(self: *VM, target_depth: usize) InterpretResult {
+        // Guarantee ephemeral memory is recycled even during catastrophic exception unwinds
+        defer _ = self.scratch_arena.reset(.retain_capacity);
+
         var previous_line: ?u32 = null; // Track line boundary
 
         while (self.frames.items.len > target_depth) {
@@ -1366,8 +1369,6 @@ pub const VM = struct {
             }
         }
 
-        // Reset the scratch arena but keep the memory mapped to prevent OS thrashing
-        _ = self.scratch_arena.reset(.retain_capacity);
         return .ok;
     }
 
