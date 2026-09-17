@@ -109,7 +109,7 @@ pub fn injectParamsIntoVm(vm: *VM, cli_params: std.StringHashMap(f64)) !void {
         defer _ = vm.pop();
 
         // Insert the key and the numeric value into the VM's map
-        try map_obj.map.put(vm.allocator, sym_key, value.Value.initNumber(entry.value_ptr.*));
+        try map_obj.map.put(vm.gc.trackingAllocator(), sym_key, value.Value.initNumber(entry.value_ptr.*));
     }
 }
 

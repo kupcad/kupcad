@@ -54,26 +54,31 @@ pub fn exceptionBacktrace(vm: *VM, receiver: value.Value) !value.Value {
 
 pub fn registerExceptions(vm: *VM) !void {
     // Base Exception
-    const exc_name = try vm.allocateStringTakeOwnership(try vm.allocator.dupe(u8, "Exception"));
+    // Use allocateString directly, which internally uses the trackingAllocator!
+    const exc_name = try vm.allocateString("Exception");
     vm.push(exc_name);
 
     const exc_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", exc_name.asObj()))), vm.object_class);
 
+    // Note: vm.globals.put safely stays vm.allocator because globals are tied to VM lifetime, not sandbox GC
     try vm.globals.put(vm.allocator, "Exception", value.Value.initObj(&exc_class.obj));
     _ = vm.pop();
 
     const init_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionInit));
-    try exc_class.methods.put(vm.allocator, "initialize", value.Value.initObj(&init_fn.obj));
+    // Use trackingAllocator for class method maps
+    try exc_class.methods.put(vm.gc.trackingAllocator(), "initialize", value.Value.initObj(&init_fn.obj));
 
     const msg_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionMessage));
-    try exc_class.methods.put(vm.allocator, "message", value.Value.initObj(&msg_fn.obj));
-    try exc_class.methods.put(vm.allocator, "to_s", value.Value.initObj(&msg_fn.obj));
+    // Use trackingAllocator for class method maps
+    try exc_class.methods.put(vm.gc.trackingAllocator(), "message", value.Value.initObj(&msg_fn.obj));
+    try exc_class.methods.put(vm.gc.trackingAllocator(), "to_s", value.Value.initObj(&msg_fn.obj));
 
     const bt_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionBacktrace));
-    try exc_class.methods.put(vm.allocator, "backtrace", value.Value.initObj(&bt_fn.obj));
+    // Use trackingAllocator for class method maps
+    try exc_class.methods.put(vm.gc.trackingAllocator(), "backtrace", value.Value.initObj(&bt_fn.obj));
 
     // StandardError < Exception
-    const std_name = try vm.allocateStringTakeOwnership(try vm.allocator.dupe(u8, "StandardError"));
+    const std_name = try vm.allocateString("StandardError");
     vm.push(std_name);
     const std_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", std_name.asObj()))), exc_class);
     try vm.globals.put(vm.allocator, "StandardError", value.Value.initObj(&std_class.obj));
@@ -90,7 +95,8 @@ pub fn registerExceptions(vm: *VM) !void {
     };
 
     for (error_types) |err_name| {
-        const name_val = try vm.allocateStringTakeOwnership(try vm.allocator.dupe(u8, err_name));
+        // Use allocateString directly to ensure trackingAllocator is used
+        const name_val = try vm.allocateString(err_name);
         vm.push(name_val);
         const err_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))), std_class);
         try vm.globals.put(vm.allocator, err_name, value.Value.initObj(&err_class.obj));

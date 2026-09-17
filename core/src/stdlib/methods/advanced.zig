@@ -211,8 +211,8 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
     const back_geom = try vm.allocateGeometry(.{ .symbolic = back_dag });
 
     const arr = try vm.gc.allocateArray(vm);
-    try arr.items.append(vm.allocator, front_geom);
-    try arr.items.append(vm.allocator, back_geom);
+    try arr.items.append(vm.gc.trackingAllocator(), front_geom);
+    try arr.items.append(vm.gc.trackingAllocator(), back_geom);
 
     return value.Value.initObj(&arr.obj);
 }
@@ -228,7 +228,7 @@ pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
     for (parts) |p| {
         // Wrap the concrete pointer directly so the DAG is bypassed
         const geom_val = try vm.allocateGeometry(.{ .concrete = p });
-        try arr_obj.items.append(vm.allocator, geom_val);
+        try arr_obj.items.append(vm.gc.trackingAllocator(), geom_val);
     }
 
     _ = vm.pop();

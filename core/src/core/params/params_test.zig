@@ -45,8 +45,8 @@ test "Params Unit: Choice validation (in: [...])" {
     vm.push(value.Value.initObj(&arr_obj.obj));
     defer _ = vm.pop();
 
-    try arr_obj.items.append(testing.allocator, value.Value.initNumber(10.0));
-    try arr_obj.items.append(testing.allocator, value.Value.initNumber(20.0));
+    try arr_obj.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(10.0));
+    try arr_obj.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(20.0));
 
     // Valid Choice
     try choice_param.validate(&vm, value.Value.initNumber(10.0), arr_obj);

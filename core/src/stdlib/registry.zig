@@ -27,13 +27,13 @@ fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !
 }
 
 fn bindNativeClassMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
-    const native_obj = try vm.gc.allocateNative(vm, func);
-    try class.class_methods.put(vm.allocator, name, value.Value.initObj(&native_obj.obj));
+    const native_fn = try vm.gc.allocateNative(vm, func);
+    try class.class_methods.put(vm.gc.trackingAllocator(), name, value.Value.initObj(&native_fn.obj));
 }
 
 fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
     const native_obj = try vm.gc.allocateNative(vm, func);
-    try class.methods.put(vm.allocator, name, value.Value.initObj(&native_obj.obj));
+    try class.methods.put(vm.gc.trackingAllocator(), name, value.Value.initObj(&native_obj.obj));
 }
 
 // --- Standard Library Registration ---

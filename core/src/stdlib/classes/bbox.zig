@@ -16,9 +16,9 @@ fn buildVec3(vm: *VM, x: f64, y: f64, z: f64) !value.Value {
     const arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&arr.obj));
     defer _ = vm.pop();
-    try arr.items.append(vm.allocator, value.Value.initNumber(x));
-    try arr.items.append(vm.allocator, value.Value.initNumber(y));
-    try arr.items.append(vm.allocator, value.Value.initNumber(z));
+    try arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(x));
+    try arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(y));
+    try arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(z));
     return value.Value.initObj(&arr.obj);
 }
 

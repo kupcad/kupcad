@@ -11,7 +11,7 @@ pub fn mapKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     const new_arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&new_arr.obj));
 
-    try new_arr.items.ensureTotalCapacity(vm.allocator, map.map.count());
+    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
     for (map.map.keys()) |k| {
         new_arr.items.appendAssumeCapacity(k);
     }
@@ -25,7 +25,7 @@ pub fn mapValues(vm: *VM, map: *value.ObjMap) !value.Value {
     const new_arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&new_arr.obj));
 
-    try new_arr.items.ensureTotalCapacity(vm.allocator, map.map.count());
+    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
     for (map.map.values()) |v| {
         new_arr.items.appendAssumeCapacity(v);
     }
@@ -79,12 +79,12 @@ pub fn mapMerge(vm: *VM, map: *value.ObjMap, other_map: *value.ObjMap) !value.Va
     // Fast O(1) hash map merging
     var it = map.map.iterator();
     while (it.next()) |entry| {
-        try new_map.map.put(vm.allocator, entry.key_ptr.*, entry.value_ptr.*);
+        try new_map.map.put(vm.gc.trackingAllocator(), entry.key_ptr.*, entry.value_ptr.*);
     }
 
     var other_it = other_map.map.iterator();
     while (other_it.next()) |entry| {
-        try new_map.map.put(vm.allocator, entry.key_ptr.*, entry.value_ptr.*);
+        try new_map.map.put(vm.gc.trackingAllocator(), entry.key_ptr.*, entry.value_ptr.*);
     }
 
     return value.Value.initObj(&new_map.obj);
@@ -105,7 +105,7 @@ pub fn mapSymbolizeKeys(vm: *VM, map: *value.ObjMap) !value.Value {
             const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj())));
             new_k = try vm.allocateSymbol(str.chars);
         }
-        try new_map.map.put(vm.allocator, new_k, entry.value_ptr.*);
+        try new_map.map.put(vm.gc.trackingAllocator(), new_k, entry.value_ptr.*);
     }
     return value.Value.initObj(&new_map.obj);
 }
@@ -125,7 +125,7 @@ pub fn mapStringifyKeys(vm: *VM, map: *value.ObjMap) !value.Value {
             const sym = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj())));
             new_k = try vm.allocateString(sym.chars);
         }
-        try new_map.map.put(vm.allocator, new_k, entry.value_ptr.*);
+        try new_map.map.put(vm.gc.trackingAllocator(), new_k, entry.value_ptr.*);
     }
     return value.Value.initObj(&new_map.obj);
 }

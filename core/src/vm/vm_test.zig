@@ -3121,7 +3121,7 @@ test "VM: super correctly resolves and executes Native C++ methods" {
         }
     }.run;
     const native_obj = try vm.gc.allocateNative(&vm, native_func);
-    try base_class.methods.put(vm.allocator, "get_val", value.Value.initObj(&native_obj.obj));
+    try base_class.methods.put(vm.gc.trackingAllocator(), "get_val", value.Value.initObj(&native_obj.obj));
 
     // Subclass it and call super
     const source =
@@ -3641,7 +3641,7 @@ test "VM: CLI parameter injection overrides default script parameter values" {
     defer _ = vm.pop();
 
     // Replace map_obj.keys.append and map_obj.values.append with a single put!
-    try map_obj.map.put(vm.allocator, sym_key, value.Value.initNumber(85.0));
+    try map_obj.map.put(vm.gc.trackingAllocator(), sym_key, value.Value.initNumber(85.0));
 
     // Script declares default: 50, but CLI injection should replace it with 85
     const source =
@@ -9830,9 +9830,9 @@ test "VM: Value.stringify recursively handles nested arrays and primitives" {
     const arr = try vm.gc.allocateArray(&vm);
     vm.push(value.Value.initObj(&arr.obj)); // Root it
 
-    try arr.items.append(testing.allocator, value.Value.initNumber(42));
-    try arr.items.append(testing.allocator, value.Value.initBool(false));
-    try arr.items.append(testing.allocator, value.Value.initNil());
+    try arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(42));
+    try arr.items.append(vm.gc.trackingAllocator(), value.Value.initBool(false));
+    try arr.items.append(vm.gc.trackingAllocator(), value.Value.initNil());
 
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
@@ -10286,4 +10286,35 @@ test "VM: op_switch binary search handles mixed numbers and strings safely" {
     try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[1].asNumber());
     try testing.expectEqual(@as(f64, 0.0), arr_obj.items.items[2].asNumber());
+}
+
+test "VM: Native memory allocation strictly respects limits and refuses to grow Array lists" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+
+    // Lock the sandbox to exactly its baseline init size + 1KB for safety bounds
+    vm.gc.max_memory_limit = vm.gc.bytes_allocated + 1024;
+
+    // Trigger an out-of-memory array allocation dynamically
+    const source =
+        \\arr = []
+        \\i = 0
+        \\while i < 1000
+        \\  arr.push(10)
+        \\  i += 1
+        \\end
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // It should cleanly catch the out of bounds expansion instead of crashing!
+    const result = vm.interpret(&out_chunk);
+    try std.testing.expectEqual(.runtime_error, result);
 }

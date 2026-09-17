@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
@@ -74,6 +75,78 @@ pub const GC = struct {
         self.cross_sections.deinit(self.allocator);
         self.assemblies.deinit(self.allocator);
         self.workplanes.deinit(self.allocator);
+    }
+
+    // --- Dynamic Tracking Allocator Interface ---
+
+    pub fn trackingAllocator(self: *GC) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = trackAlloc,
+                .resize = trackResize,
+                .remap = trackRemap,
+                .free = trackFree,
+            },
+        };
+    }
+
+    fn trackAlloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        const self: *GC = @ptrCast(@alignCast(ctx));
+        if (self.max_memory_limit) |limit| {
+            if (self.bytes_allocated + len > limit) return null;
+        }
+        const res = self.allocator.rawAlloc(len, ptr_align, ret_addr) orelse return null;
+        self.bytes_allocated += len;
+        return res;
+    }
+
+    fn trackResize(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        const self: *GC = @ptrCast(@alignCast(ctx));
+        if (new_len > buf.len) {
+            const diff = new_len - buf.len;
+            if (self.max_memory_limit) |limit| {
+                if (self.bytes_allocated + diff > limit) return false;
+            }
+            if (self.allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
+                self.bytes_allocated += diff;
+                return true;
+            }
+            return false;
+        } else {
+            if (self.allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
+                self.bytes_allocated -= (buf.len - new_len); // Normal Subtraction Restored
+                return true;
+            }
+            return false;
+        }
+    }
+
+    fn trackRemap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *GC = @ptrCast(@alignCast(ctx));
+        if (new_len > buf.len) {
+            const diff = new_len - buf.len;
+            if (self.max_memory_limit) |limit| {
+                if (self.bytes_allocated + diff > limit) return null;
+            }
+            if (self.allocator.rawRemap(buf, buf_align, new_len, ret_addr)) |new_ptr| {
+                self.bytes_allocated += diff;
+                return new_ptr;
+            }
+            return null;
+        } else {
+            if (self.allocator.rawRemap(buf, buf_align, new_len, ret_addr)) |new_ptr| {
+                self.bytes_allocated -= (buf.len - new_len); // Normal Subtraction Restored
+                return new_ptr;
+            }
+            return null;
+        }
+    }
+
+    fn trackFree(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
+        const self: *GC = @ptrCast(@alignCast(ctx));
+        self.allocator.rawFree(buf, buf_align, ret_addr);
+        self.bytes_allocated -= buf.len; // Normal Subtraction Restored
     }
 
     pub fn collectGarbage(self: *GC, vm: *VM, force_full: bool) void {
@@ -196,24 +269,14 @@ pub const GC = struct {
     }
 
     pub fn allocateClosure(self: *GC, vm: *VM, function: *value.ObjFunction) !*value.ObjClosure {
-        const upvals_size = @sizeOf(?*value.ObjUpvalue) * function.upvalue_count;
-
-        if (self.max_memory_limit) |limit| {
-            if (self.bytes_allocated + upvals_size + @sizeOf(value.ObjClosure) > limit) {
-                vm.reportError("Sandbox Error: Script exceeded maximum memory limit.\n", .{});
-                return error.OutOfMemory;
-            }
-        }
-
-        const upvalues = try self.allocator.alloc(?*value.ObjUpvalue, function.upvalue_count);
+        const upvalues = try self.trackingAllocator().alloc(?*value.ObjUpvalue, function.upvalue_count);
         @memset(upvalues, null);
 
         const ptr = self.allocateObject(vm, value.ObjClosure, &self.closures, .closure) catch |err| {
-            self.allocator.free(upvalues);
+            self.trackingAllocator().free(upvalues);
             return err;
         };
 
-        self.bytes_allocated += upvals_size;
         ptr.function = function;
         ptr.upvalues = upvalues.ptr;
         return ptr;
@@ -222,21 +285,12 @@ pub const GC = struct {
     pub fn allocateString(self: *GC, vm: *VM, chars: []const u8) !*value.ObjString {
         if (vm.strings.get(chars)) |existing| return existing;
 
-        if (self.max_memory_limit) |limit| {
-            if (self.bytes_allocated + chars.len + @sizeOf(value.ObjString) > limit) {
-                vm.reportError("Sandbox Error: Script exceeded maximum memory limit.\n", .{});
-                return error.OutOfMemory;
-            }
-        }
-
-        const owned_chars = try self.allocator.dupe(u8, chars);
+        const owned_chars = try self.trackingAllocator().dupe(u8, chars);
 
         const ptr = self.allocateObject(vm, value.ObjString, &self.strings, .string) catch |err| {
-            self.allocator.free(owned_chars);
+            self.trackingAllocator().free(owned_chars);
             return err;
         };
-
-        self.bytes_allocated += owned_chars.len;
         ptr.chars = owned_chars;
 
         vm.strings.put(self.allocator, ptr.chars, ptr) catch |err| {
@@ -248,21 +302,12 @@ pub const GC = struct {
     pub fn allocateSymbol(self: *GC, vm: *VM, chars: []const u8) !*value.ObjSymbol {
         if (vm.symbols.get(chars)) |existing| return existing;
 
-        if (self.max_memory_limit) |limit| {
-            if (self.bytes_allocated + chars.len + @sizeOf(value.ObjSymbol) > limit) {
-                vm.reportError("Sandbox Error: Script exceeded maximum memory limit.\n", .{});
-                return error.OutOfMemory;
-            }
-        }
-
-        const owned_chars = try self.allocator.dupe(u8, chars);
+        const owned_chars = try self.trackingAllocator().dupe(u8, chars);
 
         const ptr = self.allocateObject(vm, value.ObjSymbol, &self.symbols, .symbol) catch |err| {
-            self.allocator.free(owned_chars);
+            self.trackingAllocator().free(owned_chars);
             return err;
         };
-
-        self.bytes_allocated += owned_chars.len;
         ptr.chars = owned_chars;
 
         vm.symbols.put(self.allocator, ptr.chars, ptr) catch |err| {
@@ -273,27 +318,17 @@ pub const GC = struct {
 
     pub fn takeString(self: *GC, vm: *VM, chars: []u8) !*value.ObjString {
         if (vm.strings.get(chars)) |existing| {
-            self.allocator.free(chars); // Free the duplicate
+            self.trackingAllocator().free(chars); // Safely free the duplicate via tracker
             return existing;
         }
 
-        if (self.max_memory_limit) |limit| {
-            if (self.bytes_allocated + chars.len + @sizeOf(value.ObjString) > limit) {
-                self.allocator.free(chars);
-                return error.OutOfMemory;
-            }
-        }
-
         const ptr = self.allocateObject(vm, value.ObjString, &self.strings, .string) catch |err| {
-            self.allocator.free(chars);
+            self.trackingAllocator().free(chars);
             return err;
         };
-
-        self.bytes_allocated += chars.len;
         ptr.chars = chars;
 
         vm.strings.put(self.allocator, ptr.chars, ptr) catch |err| {
-            self.allocator.free(chars);
             return err;
         };
         return ptr;
@@ -422,10 +457,10 @@ pub const GC = struct {
                 for (map.map.values()) |v| self.markValue(v);
             },
             .closure => {
-                const closure = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
-                self.markObject(&closure.function.obj);
-                for (0..closure.function.upvalue_count) |i| {
-                    if (closure.upvalues[i]) |upvalue| self.markObject(&upvalue.obj);
+                const closure_obj = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
+                self.markObject(&closure_obj.function.obj);
+                for (0..closure_obj.function.upvalue_count) |i| {
+                    if (closure_obj.upvalues[i]) |u| self.markObject(&u.obj);
                 }
             },
             .upvalue => {
@@ -502,15 +537,28 @@ pub const GC = struct {
     }
 
     fn sweep(self: *GC, vm: *VM) void {
-        // Clean weak string/symbol intern references first
+        // --- SAFE TWO-PASS REMOVAL FOR STRINGS ---
+        var stale_strings = std.ArrayListUnmanaged([]const u8).empty;
+        defer stale_strings.deinit(self.allocator);
+
         var str_iter = vm.strings.iterator();
         while (str_iter.next()) |entry| {
-            if (!entry.value_ptr.*.obj.is_marked) _ = vm.strings.remove(entry.key_ptr.*);
+            if (!entry.value_ptr.*.obj.is_marked) stale_strings.append(self.allocator, entry.key_ptr.*) catch {};
         }
+        for (stale_strings.items) |k| {
+            _ = vm.strings.remove(k);
+        }
+
+        // --- SAFE TWO-PASS REMOVAL FOR SYMBOLS ---
+        var stale_symbols = std.ArrayListUnmanaged([]const u8).empty;
+        defer stale_symbols.deinit(self.allocator);
 
         var sym_iter = vm.symbols.iterator();
         while (sym_iter.next()) |entry| {
-            if (!entry.value_ptr.*.obj.is_marked) _ = vm.symbols.remove(entry.key_ptr.*);
+            if (!entry.value_ptr.*.obj.is_marked) stale_symbols.append(self.allocator, entry.key_ptr.*) catch {};
+        }
+        for (stale_symbols.items) |k| {
+            _ = vm.symbols.remove(k);
         }
 
         // Sweep dependent objects before their referenced functions/primitives
@@ -598,39 +646,34 @@ pub const GC = struct {
             },
             .string => {
                 const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", obj));
-                self.allocator.free(str_obj.chars);
-                self.bytes_allocated -= str_obj.chars.len;
+                self.trackingAllocator().free(str_obj.chars);
                 self.destroyObject(value.ObjString, str_obj);
             },
             .symbol => {
                 const sym_obj: *value.ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
-                self.allocator.free(sym_obj.chars);
-                self.bytes_allocated -= sym_obj.chars.len;
+                self.trackingAllocator().free(sym_obj.chars);
                 self.destroyObject(value.ObjSymbol, sym_obj);
             },
             .native => self.destroyObject(value.ObjNative, @alignCast(@fieldParentPtr("obj", obj))),
             .array => {
                 const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", obj));
-                arr_obj.items.deinit(self.allocator);
+                arr_obj.items.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjArray, arr_obj);
             },
             .map => {
                 const map_obj: *value.ObjMap = @alignCast(@fieldParentPtr("obj", obj));
-                map_obj.map.deinit(self.allocator);
+                map_obj.map.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjMap, map_obj);
             },
             .instance => {
                 const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
-                instance_obj.fields.deinit(self.allocator);
+                instance_obj.fields.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjInstance, instance_obj);
             },
             .closure => {
                 const closure_obj = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
                 const upvalue_count = closure_obj.function.upvalue_count;
-                const upvals_bytes = @sizeOf(?*value.ObjUpvalue) * upvalue_count;
-
-                self.allocator.free(closure_obj.upvalues[0..upvalue_count]);
-                self.bytes_allocated = self.bytes_allocated -| upvals_bytes;
+                self.trackingAllocator().free(closure_obj.upvalues[0..upvalue_count]);
                 self.destroyObject(value.ObjClosure, closure_obj);
             },
             .function => {
@@ -647,16 +690,16 @@ pub const GC = struct {
             .upvalue => self.destroyObject(value.ObjUpvalue, @alignCast(@fieldParentPtr("obj", obj))),
             .module => {
                 const module_obj = @as(*value.ObjModule, @alignCast(@fieldParentPtr("obj", obj)));
-                module_obj.methods.deinit(self.allocator);
+                module_obj.methods.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjModule, module_obj);
             },
             .class => {
                 const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
-                class_obj.methods.deinit(self.allocator);
-                class_obj.included_modules.deinit(self.allocator);
-                class_obj.class_methods.deinit(self.allocator);
-                class_obj.class_fields.deinit(self.allocator);
-                class_obj.instance_layout.deinit(self.allocator);
+                class_obj.methods.deinit(self.trackingAllocator());
+                class_obj.included_modules.deinit(self.trackingAllocator());
+                class_obj.class_methods.deinit(self.trackingAllocator());
+                class_obj.class_fields.deinit(self.trackingAllocator());
+                class_obj.instance_layout.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjClass, class_obj);
             },
             .bound_method => self.destroyObject(value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj))),

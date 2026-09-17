@@ -16,7 +16,7 @@ const cad_class = @import("classes/cad.zig");
 fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
     const native_obj = try vm.gc.allocateNative(vm, func);
     const native_val = value.Value.initObj(&native_obj.obj);
-    try class.methods.put(vm.allocator, name, native_val);
+    try class.methods.put(vm.gc.trackingAllocator(), name, native_val);
 }
 
 pub fn registerCoreClasses(vm: *VM) !void {

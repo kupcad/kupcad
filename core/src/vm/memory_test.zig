@@ -125,7 +125,7 @@ test "GC Stress: High volume allocations and segmented sweeps" {
         const str_val = std.fmt.bufPrint(&buf, "str{d}", .{i}) catch unreachable;
 
         // Take ownership of a duped string
-        const s = try vm.gc.takeString(&vm, try testing.allocator.dupe(u8, str_val));
+        const s = try vm.gc.takeString(&vm, try vm.gc.trackingAllocator().dupe(u8, str_val));
 
         // Allocate empty array
         const a = try vm.gc.allocateArray(&vm);
@@ -165,7 +165,7 @@ test "GC: Nested objects (Arrays) survive sweep if parent is rooted" {
 
     const child_str = try vm.gc.allocateString(&vm, "child_string");
     // Do NOT push child_str to the stack. Add it directly to the array.
-    try parent_arr.items.append(testing.allocator, value.Value.initObj(&child_str.obj));
+    try parent_arr.items.append(vm.gc.trackingAllocator(), value.Value.initObj(&child_str.obj));
 
     const count_before = countObjects(&vm.gc);
     vm.gc.collectGarbage(&vm, false);
@@ -246,4 +246,26 @@ test "GC: successfully sweeps orphaned DAG cache handles" {
 
     // 4. The cache should be empty, and no C++ leaks should occur
     try testing.expect(vm.dag_cache.count() == 0);
+}
+
+test "GC: Unrooted objects are cleanly swept without double-frees" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const initial_strings = vm.gc.strings.items.len;
+
+    // 1. Allocate a string but DO NOT push it to the VM stack.
+    // This simulates an object that was allocated and added to the tracking list,
+    // but failed to fully register (e.g., if a hash map insertion threw OutOfMemory).
+    _ = try vm.gc.allocateString(&vm, "transient_leak_test");
+
+    // 2. Verify the GC is tracking the newly allocated memory
+    try std.testing.expectEqual(initial_strings + 1, vm.gc.strings.items.len);
+
+    // 3. Force a full Garbage Collection sweep.
+    // If we had manually called `destroyObject` earlier, this sweep would trigger a fatal Use-After-Free crash.
+    vm.gc.collectGarbage(&vm, false);
+
+    // 4. Verify the unrooted string was perfectly cleaned up by the tracker
+    try std.testing.expectEqual(initial_strings, vm.gc.strings.items.len);
 }

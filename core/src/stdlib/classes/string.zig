@@ -13,8 +13,8 @@ pub fn stringLength(vm: *VM, str: *value.ObjString) !value.Value {
 
 /// String#upcase
 pub fn stringUpcase(vm: *VM, str: *value.ObjString) !value.Value {
-    const new_str = try vm.allocator.alloc(u8, str.chars.len);
-    errdefer vm.allocator.free(new_str);
+    const new_str = try vm.gc.trackingAllocator().alloc(u8, str.chars.len);
+    errdefer vm.gc.trackingAllocator().free(new_str);
 
     for (str.chars, 0..) |c, i| new_str[i] = std.ascii.toUpper(c);
 
@@ -23,8 +23,8 @@ pub fn stringUpcase(vm: *VM, str: *value.ObjString) !value.Value {
 
 /// String#downcase
 pub fn stringDowncase(vm: *VM, str: *value.ObjString) !value.Value {
-    const new_str = try vm.allocator.alloc(u8, str.chars.len);
-    errdefer vm.allocator.free(new_str);
+    const new_str = try vm.gc.trackingAllocator().alloc(u8, str.chars.len);
+    errdefer vm.gc.trackingAllocator().free(new_str);
 
     for (str.chars, 0..) |c, i| new_str[i] = std.ascii.toLower(c);
 
@@ -44,7 +44,7 @@ pub fn stringSplit(vm: *VM, str: *value.ObjString, delim_obj: *value.ObjString) 
     var iter = std.mem.splitSequence(u8, str.chars, delim_str);
     while (iter.next()) |part| {
         const part_val = try vm.allocateString(part);
-        try arr_obj.items.append(vm.allocator, part_val);
+        try arr_obj.items.append(vm.gc.trackingAllocator(), part_val);
     }
     return value.Value.initObj(&arr_obj.obj);
 }
@@ -54,8 +54,8 @@ pub fn stringReplace(vm: *VM, str: *value.ObjString, target_obj: *value.ObjStrin
     const t_str = target_obj.chars;
     const r_str = replace_obj.chars;
 
-    const replaced = try std.mem.replaceOwned(u8, vm.allocator, str.chars, t_str, r_str);
-    errdefer vm.allocator.free(replaced);
+    const replaced = try std.mem.replaceOwned(u8, vm.gc.trackingAllocator(), str.chars, t_str, r_str);
+    errdefer vm.gc.trackingAllocator().free(replaced);
 
     return try vm.allocateStringTakeOwnership(replaced);
 }

@@ -12,7 +12,7 @@ pub fn arrayLength(vm: *VM, arr: *value.ObjArray) !value.Value {
 
 /// Array#push(val)
 pub fn arrayPush(vm: *VM, arr: *value.ObjArray, val: value.Value) !value.Value {
-    try arr.items.append(vm.allocator, val);
+    try arr.items.append(vm.gc.trackingAllocator(), val);
     return value.Value.initObj(&arr.obj);
 }
 
@@ -38,7 +38,7 @@ pub fn arrayShift(vm: *VM, arr: *value.ObjArray) !value.Value {
 
 /// Array#unshift(val)
 pub fn arrayUnshift(vm: *VM, arr: *value.ObjArray, val: value.Value) !value.Value {
-    try arr.items.insert(vm.allocator, 0, val);
+    try arr.items.insert(vm.gc.trackingAllocator(), 0, val);
     return value.Value.initObj(&arr.obj);
 }
 
@@ -52,7 +52,7 @@ pub fn arraySlice(vm: *VM, arr: *value.ObjArray, start_num: f64, len_num: f64) !
 
     const new_arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&new_arr.obj));
-    try new_arr.items.ensureTotalCapacity(vm.allocator, length);
+    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), length);
 
     var idx: usize = 0;
     while (idx < length and start_idx + idx < arr.items.items.len) : (idx += 1) {
@@ -66,7 +66,7 @@ pub fn arraySlice(vm: *VM, arr: *value.ObjArray, start_num: f64, len_num: f64) !
 pub fn arrayJoin(vm: *VM, arr: *value.ObjArray, delim_obj: *value.ObjString) !value.Value {
     const delim = delim_obj.chars;
 
-    var out: std.Io.Writer.Allocating = .init(vm.allocator);
+    var out: std.Io.Writer.Allocating = .init(vm.gc.trackingAllocator());
     errdefer out.deinit();
 
     for (arr.items.items, 0..) |item, idx| {
@@ -76,10 +76,10 @@ pub fn arrayJoin(vm: *VM, arr: *value.ObjArray, delim_obj: *value.ObjString) !va
         }
     }
 
-    const merged_bytes = try vm.allocator.dupe(u8, out.written());
+    const merged_bytes = try vm.gc.trackingAllocator().dupe(u8, out.written());
     out.deinit();
 
-    errdefer vm.allocator.free(merged_bytes);
+    errdefer vm.gc.trackingAllocator().free(merged_bytes);
     return try vm.allocateStringTakeOwnership(merged_bytes);
 }
 
@@ -100,7 +100,7 @@ pub fn arrayMap(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !valu
     defer scope.deinit();
     const new_arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&new_arr.obj));
-    try new_arr.items.ensureTotalCapacity(vm.allocator, arr.items.items.len);
+    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), arr.items.items.len);
     for (arr.items.items) |item| {
         const mapped_val = vm.callClosureSync(closure, &.{item}) catch |err| {
             if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
@@ -147,7 +147,7 @@ pub fn arrayFilter(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !v
         const res = try vm.callClosureSync(closure, &.{item});
         const is_truthy = !res.isNil() and !(res.isBool() and !res.asBool());
         if (is_truthy) {
-            try new_arr.items.append(vm.allocator, item);
+            try new_arr.items.append(vm.gc.trackingAllocator(), item);
         }
     }
     return value.Value.initObj(&new_arr.obj);
@@ -192,10 +192,10 @@ pub fn arrayFlatten(vm: *VM, arr: *value.ObjArray) !value.Value {
         if (item.isObject() and item.asObj().obj_type == .array) {
             const inner_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", item.asObj())));
             for (inner_arr.items.items) |inner_item| {
-                try new_arr.items.append(vm.allocator, inner_item);
+                try new_arr.items.append(vm.gc.trackingAllocator(), inner_item);
             }
         } else {
-            try new_arr.items.append(vm.allocator, item);
+            try new_arr.items.append(vm.gc.trackingAllocator(), item);
         }
     }
     return value.Value.initObj(&new_arr.obj);
@@ -250,7 +250,7 @@ pub fn arraySort(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !valu
     // Allocate a NEW array to prevent in-place mutation
     const new_arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&new_arr.obj)); // Protect from GC
-    try new_arr.items.appendSlice(vm.allocator, items);
+    try new_arr.items.appendSlice(vm.gc.trackingAllocator(), items);
 
     const new_items = new_arr.items.items;
 

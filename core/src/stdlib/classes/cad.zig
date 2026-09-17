@@ -137,21 +137,21 @@ pub fn cadCurrentConfig(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
 
     // Set Active Engine
     const engine_sym = if (config.engine == .manifold) "manifold" else "brep";
-    try root_map.map.put(vm.allocator, try vm.allocateSymbol("engine"), try vm.allocateSymbol(engine_sym));
+    try root_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("engine"), try vm.allocateSymbol(engine_sym));
 
     // --- Create Nested Manifold Map ---
     const man_map = try vm.gc.allocateMap(vm);
     vm.push(value.Value.initObj(&man_map.obj)); // Protect man_map from GC
 
     // Manifold Options
-    try man_map.map.put(vm.allocator, try vm.allocateSymbol("tolerance"), value.Value.initNumber(config.manifold.tolerance));
-    try man_map.map.put(vm.allocator, try vm.allocateSymbol("simplify_coplanar"), value.Value.initBool(config.manifold.simplify_coplanar));
-    try man_map.map.put(vm.allocator, try vm.allocateSymbol("fixed_segments"), value.Value.initNumber(@floatFromInt(config.manifold.fixed_segments)));
-    try man_map.map.put(vm.allocator, try vm.allocateSymbol("min_angle_deg"), value.Value.initNumber(config.manifold.min_angle_deg));
-    try man_map.map.put(vm.allocator, try vm.allocateSymbol("min_segment_len"), value.Value.initNumber(config.manifold.min_segment_len));
+    try man_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("tolerance"), value.Value.initNumber(config.manifold.tolerance));
+    try man_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("simplify_coplanar"), value.Value.initBool(config.manifold.simplify_coplanar));
+    try man_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("fixed_segments"), value.Value.initNumber(@floatFromInt(config.manifold.fixed_segments)));
+    try man_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("min_angle_deg"), value.Value.initNumber(config.manifold.min_angle_deg));
+    try man_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("min_segment_len"), value.Value.initNumber(config.manifold.min_segment_len));
 
     // Attach Manifold Map to Root
-    try root_map.map.put(vm.allocator, try vm.allocateSymbol("manifold"), value.Value.initObj(&man_map.obj));
+    try root_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("manifold"), value.Value.initObj(&man_map.obj));
     _ = vm.pop();
 
     // --- Create Nested B-Rep Map ---
@@ -159,21 +159,21 @@ pub fn cadCurrentConfig(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
     vm.push(value.Value.initObj(&brep_map.obj)); // Protect brep_map from GC
 
     // B-Rep Tolerances
-    try brep_map.map.put(vm.allocator, try vm.allocateSymbol("tolerance"), value.Value.initNumber(config.brep.tolerance));
-    try brep_map.map.put(vm.allocator, try vm.allocateSymbol("angle_tolerance"), value.Value.initNumber(config.brep.angle_tolerance));
-    try brep_map.map.put(vm.allocator, try vm.allocateSymbol("sewing_tolerance"), value.Value.initNumber(config.brep.sewing_tolerance));
+    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("tolerance"), value.Value.initNumber(config.brep.tolerance));
+    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("angle_tolerance"), value.Value.initNumber(config.brep.angle_tolerance));
+    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("sewing_tolerance"), value.Value.initNumber(config.brep.sewing_tolerance));
 
     // B-Rep Tessellation
-    try brep_map.map.put(vm.allocator, try vm.allocateSymbol("chordal_deflection"), value.Value.initNumber(config.brep.chordal_deflection));
-    try brep_map.map.put(vm.allocator, try vm.allocateSymbol("angular_deflection"), value.Value.initNumber(config.brep.angular_deflection));
-    try brep_map.map.put(vm.allocator, try vm.allocateSymbol("min_circle_segments"), value.Value.initNumber(@floatFromInt(config.brep.min_circle_segments)));
+    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("chordal_deflection"), value.Value.initNumber(config.brep.chordal_deflection));
+    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("angular_deflection"), value.Value.initNumber(config.brep.angular_deflection));
+    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("min_circle_segments"), value.Value.initNumber(@floatFromInt(config.brep.min_circle_segments)));
 
     // B-Rep Solvers
-    try brep_map.map.put(vm.allocator, try vm.allocateSymbol("max_newton_trials"), value.Value.initNumber(@floatFromInt(config.brep.max_newton_trials)));
-    try brep_map.map.put(vm.allocator, try vm.allocateSymbol("max_marching_steps"), value.Value.initNumber(@floatFromInt(config.brep.max_marching_steps)));
+    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("max_newton_trials"), value.Value.initNumber(@floatFromInt(config.brep.max_newton_trials)));
+    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("max_marching_steps"), value.Value.initNumber(@floatFromInt(config.brep.max_marching_steps)));
 
     // Attach B-Rep Map to Root
-    try root_map.map.put(vm.allocator, try vm.allocateSymbol("brep"), value.Value.initObj(&brep_map.obj));
+    try root_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("brep"), value.Value.initObj(&brep_map.obj));
     _ = vm.pop();
 
     return value.Value.initObj(&root_map.obj);

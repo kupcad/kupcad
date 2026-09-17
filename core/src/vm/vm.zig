@@ -201,6 +201,11 @@ pub const VM = struct {
         self.resetStack();
 
         self.gc.collectGarbage(self, true);
+        // --- GC Teardown Memory Assert ---
+        if (builtin.is_test) {
+            std.debug.assert(self.gc.bytes_allocated == 0);
+        }
+
         self.dag_builder.deinit();
 
         var it = self.dag_cache.valueIterator();
@@ -256,7 +261,7 @@ pub const VM = struct {
     }
 
     pub fn mapSet(self: *VM, map: *value.ObjMap, key: value.Value, val: value.Value) !void {
-        try map.map.put(self.allocator, key, val);
+        try map.map.put(self.gc.trackingAllocator(), key, val);
     }
 
     pub fn ensureStackCapacity(self: *VM, required_capacity: usize) !void {
@@ -468,10 +473,10 @@ pub const VM = struct {
 
                     if (receiver.isModule()) {
                         const mod = receiver.asModule();
-                        mod.methods.put(self.allocator, name_str, val) catch return .runtime_error;
+                        mod.methods.put(self.gc.trackingAllocator(), name_str, val) catch return .runtime_error;
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        cls.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
+                        cls.class_fields.put(self.gc.trackingAllocator(), name_str, val) catch return .runtime_error;
                     } else {
                         if (self.throwDynamicError("Runtime Error: Cannot attach member to non-namespace.\n", .{}) != .ok) return .runtime_error;
                         continue;
@@ -571,7 +576,7 @@ pub const VM = struct {
                     const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
                     const arr_val = value.Value.initObj(&arr_obj.obj);
 
-                    arr_obj.items.ensureTotalCapacity(self.allocator, item_count) catch return .runtime_error;
+                    arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), item_count) catch return .runtime_error;
 
                     // The elements were pushed in order, slice them off the top of the stack
                     const start_idx = self.stack_top - item_count;
@@ -589,7 +594,7 @@ pub const VM = struct {
                     const map_val = value.Value.initObj(&map_obj.obj);
 
                     // Pre-allocate for performance
-                    map_obj.map.ensureTotalCapacity(self.allocator, pair_count) catch return .runtime_error;
+                    map_obj.map.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch return .runtime_error;
 
                     const start_idx = self.stack_top - (pair_count * 2);
                     var i: usize = 0;
@@ -645,7 +650,7 @@ pub const VM = struct {
                     const val = self.pop();
                     const arr_val = self.stack[self.stack_top - 1];
                     const arr = arr_val.asArray();
-                    arr.items.append(self.allocator, val) catch return .runtime_error;
+                    arr.items.append(self.gc.trackingAllocator(), val) catch return .runtime_error;
                 },
                 .op_array_spread => {
                     const source_val = self.pop();
@@ -655,7 +660,7 @@ pub const VM = struct {
                     if (source_val.isObject() and source_val.asObj().obj_type == .array) {
                         const source_arr = source_val.asArray();
                         for (source_arr.items.items) |item| {
-                            target_arr.items.append(self.allocator, item) catch return .runtime_error;
+                            target_arr.items.append(self.gc.trackingAllocator(), item) catch return .runtime_error;
                         }
                     } else {
                         if (self.throwDynamicError("Runtime Error: Can only spread arrays into arrays.\n", .{}) != .ok) return .runtime_error;
@@ -933,10 +938,12 @@ pub const VM = struct {
                         if (self.throwDynamicError("Runtime Error: Can only include Modules.\n", .{}) != .ok) return .runtime_error;
                         continue;
                     }
+
                     const class_val = self.stack[self.stack_top - 1]; // Peek at class
                     if (!class_val.isClass()) return .runtime_error;
                     const class_obj = class_val.asClass();
-                    class_obj.included_modules.append(self.allocator, module_val.asModule()) catch return .runtime_error;
+
+                    class_obj.included_modules.append(self.gc.trackingAllocator(), module_val.asModule()) catch return .runtime_error;
                 },
                 .op_class, .op_class_wide => {
                     const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, op == .op_class_wide);
@@ -959,9 +966,9 @@ pub const VM = struct {
                     const receiver_val = self.stack[self.stack_top - 1]; // Peek at class or module
 
                     if (receiver_val.isClass()) {
-                        receiver_val.asClass().methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                        receiver_val.asClass().methods.put(self.gc.trackingAllocator(), name_str, method) catch return .runtime_error;
                     } else if (receiver_val.isModule()) {
-                        receiver_val.asModule().methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_str, method) catch return .runtime_error;
                     } else return .runtime_error;
                 },
                 .op_define_global, .op_define_global_wide => {
@@ -1040,13 +1047,13 @@ pub const VM = struct {
                         continue;
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        cls.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
+                        cls.class_fields.put(self.gc.trackingAllocator(), name_str, val) catch return .runtime_error;
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
                     } else if (receiver.isModule()) {
                         const mod = receiver.asModule();
-                        mod.methods.put(self.allocator, name_str, val) catch return .runtime_error;
+                        mod.methods.put(self.gc.trackingAllocator(), name_str, val) catch return .runtime_error;
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
@@ -1171,9 +1178,9 @@ pub const VM = struct {
                     const receiver_val = self.stack[self.stack_top - 1]; // Peek at target
 
                     if (receiver_val.isClass()) {
-                        receiver_val.asClass().class_methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                        receiver_val.asClass().class_methods.put(self.gc.trackingAllocator(), name_str, method) catch return .runtime_error;
                     } else if (receiver_val.isModule()) {
-                        receiver_val.asModule().methods.put(self.allocator, name_str, method) catch return .runtime_error;
+                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_str, method) catch return .runtime_error;
                     } else {
                         if (self.throwDynamicError("Runtime Error: Can only define singleton methods on classes or modules.\n", .{}) != .ok) return .runtime_error;
                         continue;
@@ -1240,7 +1247,7 @@ pub const VM = struct {
                             target_class = root;
                         }
 
-                        target_class.class_fields.put(self.allocator, name_str, val) catch return .runtime_error;
+                        target_class.class_fields.put(self.gc.trackingAllocator(), name_str, val) catch return .runtime_error;
 
                         self.push(val); // Yield the assigned value
                     } else {
@@ -1365,8 +1372,9 @@ pub const VM = struct {
             return value.Value.initObj(&existing.obj);
         }
 
-        // We must duplicate because the passed slice is likely a temporary stack buffer or constant
-        const heap_chars = try self.allocator.dupe(u8, chars);
+        // MUST use trackingAllocator so the GC natively registers these bytes.
+        // If it's a duplicate, GC.takeString will safely call trackingAllocator().free to un-track it.
+        const heap_chars = try self.gc.trackingAllocator().dupe(u8, chars);
         return try self.allocateStringTakeOwnership(heap_chars);
     }
 
@@ -1560,7 +1568,7 @@ pub const VM = struct {
 
             const arr_obj = try self.gc.allocateArray(self);
             const arr_val = value.Value.initObj(&arr_obj.obj);
-            try arr_obj.items.ensureTotalCapacity(self.allocator, splat_size);
+            try arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size);
 
             const start_idx = base_slot + 1 + fixed_arity;
             for (0..splat_size) |i| {
@@ -1773,7 +1781,7 @@ pub const VM = struct {
             const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
             const new_val = value.Value.initObj(&new_arr.obj);
 
-            new_arr.items.ensureTotalCapacity(self.allocator, a_arr.items.items.len + b_arr.items.items.len) catch return .runtime_error;
+            new_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), a_arr.items.items.len + b_arr.items.items.len) catch return .runtime_error;
             for (a_arr.items.items) |item| {
                 new_arr.items.appendAssumeCapacity(item);
             }
@@ -1984,7 +1992,7 @@ pub const VM = struct {
 
             if (total > pre_count + post_count) {
                 const splat_size = total - pre_count - post_count;
-                splat_arr.items.ensureTotalCapacity(self.allocator, splat_size) catch return .runtime_error;
+                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return .runtime_error;
 
                 for (0..splat_size) |i| {
                     const item = arr.items.items[pre_count + i];
@@ -2032,7 +2040,7 @@ pub const VM = struct {
             } else {
                 const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
                 self.push(value.Value.initObj(&arr_obj.obj));
-                arr_obj.items.append(self.allocator, val) catch return .runtime_error;
+                arr_obj.items.append(self.gc.trackingAllocator(), val) catch return .runtime_error;
                 _ = self.pop();
                 self.push(value.Value.initObj(&arr_obj.obj));
             }
@@ -2057,7 +2065,7 @@ pub const VM = struct {
 
         const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
         const arr_val = value.Value.initObj(&arr_obj.obj);
-        arr_obj.items.ensureTotalCapacity(self.allocator, splat_size) catch return .runtime_error;
+        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return .runtime_error;
 
         // Pack all excess arguments starting immediately after the fixed arity
         const start_idx = frame.base_slot + 1 + fixed_arity;
@@ -2121,7 +2129,7 @@ pub const VM = struct {
                 while (curr < limit) : (curr += 1) {
                     const char_slice = &[_]u8{curr};
                     const char_str = self.allocateString(char_slice) catch return .runtime_error;
-                    arr_obj.items.append(self.allocator, char_str) catch return .runtime_error;
+                    arr_obj.items.append(self.gc.trackingAllocator(), char_str) catch return .runtime_error;
                 }
 
                 // Cleanup the protected values
@@ -2497,7 +2505,7 @@ pub const VM = struct {
                 idx = existing_idx;
             } else {
                 idx = instance.class.instance_layout.count();
-                try instance.class.instance_layout.put(self.allocator, name, idx);
+                try instance.class.instance_layout.put(self.gc.trackingAllocator(), name, idx);
             }
             if (ic) |cache| {
                 if (cache.cached_class_1 == null) {
@@ -2513,7 +2521,7 @@ pub const VM = struct {
         // Ensure the instance's flat array is large enough
         if (idx >= instance.fields.items.len) {
             const old_len = instance.fields.items.len;
-            try instance.fields.resize(self.allocator, idx + 1);
+            try instance.fields.resize(self.gc.trackingAllocator(), idx + 1);
             for (old_len..idx) |i| instance.fields.items[i] = value.Value.initNil();
         }
 
@@ -2744,7 +2752,7 @@ pub const VM = struct {
             }
 
             const str_val = try self.allocateString(trace_str);
-            try arr_obj.items.append(self.allocator, str_val);
+            try arr_obj.items.append(self.gc.trackingAllocator(), str_val);
         }
         _ = self.scratch_arena.reset(.retain_capacity);
 
