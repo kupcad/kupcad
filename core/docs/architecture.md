@@ -2,36 +2,22 @@
 
 The KupCAD pipeline is structured as a multi-pass CAD language compiler and virtual execution environment, optimized for zero-waste memory access, explicit memory ownership, and deferred 3D geometry evaluation.
 
-```
-[ Source Text ]
-      │
-      ▼
-   [ Lexer ]  ──(SoA Token Lists)──► [ Parser ]
-                                        │
-                                        ▼
-                                  [ AST Tree ] ──(Arena Backed)
-                                        │
-                                        ▼
-                                  [ Compiler ]
-                                        │
-                        ┌───────────────┴───────────────┐
-                        ▼                               ▼
-                 [ GC Engine ]                   [ Bytecode Chunk ]
-            (Segregated DOD Heap)                       │
-                        │                               ▼
-                        └─────────────► [ VM Runtime ] ◄──(Inline Caches)
-                                         │     │
-                 ┌───────────────────────┘     └────────────────────────┐
-                 ▼                                                      ▼
-          [ Host Interface ]                                    [ JIT DAG Engine ]
-    (I/O, UI, Dispatches)                                       (CSE & Depth Guard)
-                                                                        │
-                                                                        ▼
-                                                             [ Geometry Kernel Bridge ]
-                                                                        │
-                                                       ┌────────────────┴────────────────┐
-                                                       ▼                                 ▼
-                                              [ Manifold C++ Driver ]           [ Native B-Rep Driver ]
+```mermaid
+flowchart TD
+    Source[Source Text] --> Lexer[Lexer<br/>SoA Token Lists]
+    Lexer --> Parser[Parser]
+    Parser --> AST[AST Tree<br/>Arena Backed]
+    AST --> Compiler[Compiler]
+    Compiler --> GCEngine[GC Engine<br/>Segregated DOD Heap]
+    Compiler --> Bytecode[Bytecode Chunk]
+    GCEngine --> VM[VM Runtime]
+    Bytecode --> VM
+    IC[Inline Caches] -.-> VM
+    VM --> Host[Host Interface<br/>I/O, UI, Dispatches]
+    VM --> DAG[JIT DAG Engine<br/>CSE & Depth Guard]
+    DAG --> KernelBridge[Geometry Kernel Bridge]
+    KernelBridge --> Manifold[Manifold C++ Driver]
+    KernelBridge --> BRep[Native B-Rep Driver]
 
 ```
 
@@ -73,12 +59,14 @@ The AST uses a **Data-Oriented Cache-Dense Layout**. Nodes avoid heap pointers a
 * **Side-Table Metadata:** Extended payloads (such as function parameters or multi-branch `case/when` lists) are appended to a contiguous `extra_data: ArrayListUnmanaged(u32)` buffer.
 * **String Interning:** Identifier and string literal characters are stored in a dedicated String Pool. Duplicate strings map to the exact same `StringId`, turning name comparisons into $O(1)$ integer equality checks.
 
-```
-┌────────────────────────────────────────────────────────┐
-│                        Node (8B)                       │
-├───────────────────┬───────────────────┬────────────────┤
-│    tag (Enum)     │  main_token (u24) │   data (u32)   │
-└───────────────────┴───────────────────┴────────────────┘
+```mermaid
+flowchart LR
+    subgraph Node ["Node (8 Bytes)"]
+        direction LR
+        tag["tag (Enum)"]
+        main_token["main_token (u24)"]
+        data["data (u32)"]
+    end
 
 ```
 
@@ -88,19 +76,14 @@ The AST uses a **Data-Oriented Cache-Dense Layout**. Nodes avoid heap pointers a
 
 The Compiler traverses the AST and translates nodes into virtual machine instruction streams called **Chunks**.
 
-```
-      AST Node (.binary_op)
-       ├── left:  Node (.number 10)
-       └── right: Node (.number 5)
-                │
-                ▼
-      [ Compiler Processing ]
-                │
-                ▼
-Bytecode Output:
-  0x00: op_constant 0  (Pushes 10.0 onto VM Stack)
-  0x02: op_constant 1  (Pushes 5.0 onto VM Stack)
-  0x04: op_add         (Pops both, pushes 15.0)
+```mermaid
+flowchart TD
+    subgraph AST ["AST Node (.binary_op)"]
+        L["left: Node (.number 10)"]
+        R["right: Node (.number 5)"]
+    end
+    AST --> Compiler[Compiler Processing]
+    Compiler --> Bytecode["Bytecode Output:<br/>0x00: op_constant 0 (Pushes 10.0)<br/>0x02: op_constant 1 (Pushes 5.0)<br/>0x04: op_add (Pops both, pushes 15.0)"]
 
 ```
 
@@ -115,16 +98,15 @@ Bytecode Output:
 
 KupCAD employs a **Segregated Data-Oriented Design (DOD) Tracing Garbage Collector** that manages all language objects and CAD handles through flat memory slices.
 
-```
-                         VM Memory Space
-        ┌───────────────────────────────────────────────┐
-        │  Segregated DOD GC Engine (memory.GC)         │
-        │  • Metadata: strings, symbols, functions,     │
-        │    classes, modules, closures, upvalues       │
-        │  • Data: arrays, maps, ranges, bboxes         │
-        │  • Geometry: geometries, cross_sections,      │
-        │    assemblies, workplanes                     │
-        └───────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph VMSpace ["VM Memory Space"]
+        subgraph GC ["Segregated DOD GC Engine (memory.GC)"]
+            Meta["Metadata:<br/>• strings, symbols, functions<br/>• classes, modules, closures, upvalues"]
+            Data["Data:<br/>• arrays, maps, ranges, bboxes"]
+            Geom["Geometry:<br/>• geometries, cross_sections<br/>• assemblies, workplanes"]
+        end
+    end
 
 ```
 
@@ -166,17 +148,31 @@ pub const InlineCache = struct {
 * **Monomorphic Hit:** If the receiver's `ObjClass` matches `cached_class_1`, field access or method dispatch executes in $O(1)$ time bypassing table lookup.
 * **Polymorphic Graduation:** If a second receiver class is encountered, slot 2 (`cached_class_2`) is populated to accelerate multi-type call sites without cache thrashing.
 
+### Dictionary Interning & The Scratch Arena
+
+* **Strict Value Dictionaries:** All object dictionaries (`methods`, `class_fields`, `instance_fields`, `map`) strictly require GC-tracked `Value` types (Interned Strings or Symbols) as keys rather than raw `[]const u8` slices. This guarantees that dynamically generated dictionary keys are safely traced during the GC Mark phase.
+* **Scratch Arena Lifecycle:** The VM utilizes a secondary `scratch_arena` (an `ArenaAllocator`) for ephemeral string formatting, interpolation, and method resolution. To prevent unbounded memory bloat, this arena is seamlessly reset (`.reset(.retain_capacity)`) at the end of localized opcodes (`op_interpolate`, `op_add`) and at the bottom of the main execution loop, recycling the memory block without triggering OS-level thrashing.
+
 ---
 
 ## 5. Exception Handling & Stack Unwinding
 
 When `raise(...)` or an internal VM error occurs:
 
-```
-[ Active Call Stack ]          [ Rescue Frame Stack ]
-  Frame 3 (deep_calc)
-  Frame 2 (process_mesh)  ───►  Rescue Handler (handler_ip)
-  Frame 1 (main)                 Stack Pointer Reset Target
+```mermaid
+flowchart LR
+    subgraph CallStack ["Active Call Stack"]
+        F3["Frame 3 (deep_calc)"]
+        F2["Frame 2 (process_mesh)"]
+        F1["Frame 1 (main)"]
+        F3 --> F2 --> F1
+    end
+
+    subgraph RescueStack ["Rescue Frame Stack"]
+        RH["Rescue Handler (handler_ip)<br/>Stack Pointer Reset Target"]
+    end
+
+    F2 -->|Unwinds to| RH
 
 ```
 
@@ -244,15 +240,18 @@ pub const GeometryHandle = struct {
 
 KupCAD uses a **Directed Acyclic Graph (DAG)** to defer expensive C++ kernel calculations until materialization.
 
-```
-Script Execution:
-  c = cube(10)          --> Appends DAG Node #0 (.cube)
-  t = c.translate(x: 5) --> Appends DAG Node #1 (.translate -> Node #0)
+```mermaid
+flowchart TD
+    subgraph Script ["Script Execution"]
+        S1["c = cube(10)"] -->|Appends| N0["DAG Node #0 (.cube)"]
+        S2["t = c.translate(x: 5)"] -->|Appends| N1["DAG Node #1 (.translate -> Node #0)"]
+    end
 
-Materialization Phase (e.g., export_stl, .volume()):
-  ensureConcrete(t)     --> Traverses DAG Node #1
-                            ├── Evaluates Node #0 via C++ Kernel (cube)
-                            └── Evaluates Node #1 via C++ Kernel (translate)
+    subgraph Mat ["Materialization Phase (export_stl, .volume)"]
+        EC["ensureConcrete(t)"] -->|Traverses| N1_Eval["DAG Node #1"]
+        N1_Eval -->|Evaluates| K0["Node #0 via C++ Kernel (cube)"]
+        N1_Eval -->|Evaluates| K1["Node #1 via C++ Kernel (translate)"]
+    end
 
 ```
 
@@ -262,17 +261,13 @@ Materialization Phase (e.g., export_stl, .volume()):
 * **Common Subexpression Elimination (CSE):** Nodes are hashed deterministically using `Wyhash`. The `dedup_map: AutoHashMapUnmanaged(u64, DAGNodeIndex)` detects duplicate sub-graphs in $O(1)$ time and reuses existing node indices.
 * **Snapshot Rollback Safety:** Adding nodes uses snapshot guards (`StateSnapshot`) and `errdefer` blocks. If an `OutOfMemory` error occurs during node insertion, all side-table buffers shrink back to their pre-call length.
 
-### Recursion Depth Guard
+### Iterative Evaluation Engine & RAM Budgeting
 
-`dag_evaluator.zig` evaluates symbolic trees recursively. To prevent deep or cyclic CSG trees from overflowing the host C-stack, evaluation is guarded by a depth check (`MAX_DAG_DEPTH = 256`):
+`dag_evaluator.zig` evaluates symbolic trees iteratively, completely decoupling DAG depth from the host OS C-stack.
 
-```zig
-if (depth > MAX_DAG_DEPTH) {
-    vm.reportError("Runtime Error: CSG Tree exceeds maximum recursion depth of {d}.\n", .{MAX_DAG_DEPTH});
-    return error.RuntimeError;
-}
-
-```
+* **Frame & Value Stacks:** Evaluation is managed via two heap-allocated dynamic arrays: `EvaluationFrameStack` (for post-order tree traversal) and `IntermediateStack` (for temporarily holding `ValueHandle` wrappers around C++ pointers).
+* **Infinite Depth Support:** By avoiding recursive C++ function calls, KupCAD can evaluate extreme DAG structures (e.g., 5,000+ nested transformations) without triggering C-stack overflows or segfaults.
+* **RAM Budgeting:** Before an evaluated mesh is committed to the cache, the evaluator checks the C++ kernel's vertex count against the current `EngineConfig.max_vertices`. If it exceeds the limit, the engine safely destructs the intermediate handles and throws a `RamBudgetExceeded` exception, protecting the host hardware from runaway memory exhaustion.
 
 ---
 
@@ -288,14 +283,18 @@ The package manager (`pkg/cafs.zig`) handles package downloading, verification, 
 
 ## Architecture Summary Matrix
 
-| Component         | Primary Responsibility                    | Memory Strategy                  | Key Safety Invariants                         |
-|-------------------|-------------------------------------------|----------------------------------|-----------------------------------------------|
-| **Lexer**         | Source text $\rightarrow$ SoA Token Lists | Zero-allocation byte slices      | Fixed-size SoA arrays                         |
-| **AST**           | Syntax tree & string interning            | 8-byte nodes, Arena-backed       | Integer index references (`NodeIndex`)        |
-| **Compiler**      | AST $\rightarrow$ Bytecode Chunk          | Stack depth simulation           | `errdefer` counter rollbacks                  |
-| **VM**            | Instruction interpretation                | Pre-allocated dynamic stack      | Open upvalue pointer patching on realloc      |
-| **GC Engine**     | Heap memory management                    | Segregated DOD tracking lists    | Iterative Grey Stack (prevents C-stack OOM)   |
-| **Host**          | I/O & platform abstraction                | C function pointer callbacks     | Total decoupling from terminal/OS streams     |
-| **Kernel Bridge** | Polymorphic 3D engine dispatcher          | Tagged `GeometryHandle` pointers | Comptime dispatch routing                     |
-| **DAG Engine**    | Deferred CSG computation                  | 8-byte nodes, Wyhash CSE         | Snapshot OOM rollback & `MAX_DAG_DEPTH = 256` |
-| **CAFS**          | Package extraction & storage              | Content-addressable storage      | PID & timestamp concurrent isolation          |
+| Component         | Primary Responsibility                    | Memory Strategy                  | Key Safety Invariants                                  |
+|-------------------|-------------------------------------------|----------------------------------|--------------------------------------------------------|
+| **Lexer**         | Source text $\rightarrow$ SoA Token Lists | Zero-allocation byte slices      | Fixed-size SoA arrays                                  |
+| **AST**           | Syntax tree & string interning            | 8-byte nodes, Arena-backed       | Integer index references (`NodeIndex`)                 |
+| **Compiler**      | AST $\rightarrow$ Bytecode Chunk          | Stack depth simulation           | `errdefer` counter rollbacks                           |
+| **VM**            | Instruction interpretation                | Pre-allocated dynamic stack      | Open upvalue pointer patching on realloc               |
+| **GC Engine**     | Heap memory management                    | Segregated DOD tracking lists    | Iterative Grey Stack (prevents C-stack OOM)            |
+| **Host**          | I/O & platform abstraction                | C function pointer callbacks     | Total decoupling from terminal/OS streams              |
+| **Kernel Bridge** | Polymorphic 3D engine dispatcher          | Tagged `GeometryHandle` pointers | Comptime dispatch routing                              |
+| **DAG Engine**    | Deferred CSG computation                  | 8-byte nodes, Wyhash CSE         | Iterative traversal (No C-stack limits), RAM Budgeting |
+| **CAFS**          | Package extraction & storage              | Content-addressable storage      | PID & timestamp concurrent isolation                   |
+
+```
+
+```

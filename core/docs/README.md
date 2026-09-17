@@ -110,12 +110,12 @@ KupCAD uses a **Hybrid Architecture** for parametric UI generation. The `param` 
 # @description A parametric L-bracket optimized for 3D printing.
 
 # Supports min, max, and exact choice arrays
-param(:width, default: 20.0, validate: { min: 10.0, max: 100.0 })
-param(:material, default: "PLA", validate: { in: ["PLA", "PETG", "ABS"] })
+width = param(:width, default: 20.0, validate: { min: 10.0, max: 100.0 })
+material = param(:material, default: "PLA", validate: { in: ["PLA", "PETG", "ABS"] })
 
 def build
   # Dynamic retrieval halts execution safely if constraints are violated
-  Solid.cube(x: param(:width), y: 50, z: 5)
+  Solid.cube(x: width, y: 50, z: 5)
 end
 
 ```
@@ -198,7 +198,7 @@ KupCAD uses a Content Addressable File System (CAFS) paired with an SQLite cache
 
 ```ruby
 # 1. Importing native KupCAD modules via isolated lexical scope
-import "github.com/kupcad-libs/hardware"
+import "[github.com/kupcad-libs/hardware](https://github.com/kupcad-libs/hardware)"
 
 # 2. Importing external 3D CAD assets directly into the CSG tree
 bearing = import_step("assets/608_bearing.step")
@@ -215,20 +215,19 @@ The KupCAD engine is implemented entirely in **Zig**, relying on a dual-engine a
 * **The Session Manager**: Coordinates multi-file dependency trees using Kahn's Topological Sort and enforces strict RAM budgeting via LRU eviction.
 * **$O(1)$ DAG Caching**: The `dag_evaluator` intercepts geometric evaluations, mapping cryptographic hashes of AST operations to pre-solved pointers, completely bypassing C++ FFI crossings on cached nodes.
 
-```text
-[ .kup File ] ──> Lexer ──> Parser ──> Compiler ──> Bytecode Chunk
-                                                         │
-                                                         ▼
-                                       KupCAD VM (Stack Machine)
-                                                         │
-                        ┌────────────────────────────────┴────────────────────────────────┐
-                        ▼                                                                 ▼
-      [ Engine A: Fast Mesh / WASM ]                                   [ Engine B: Precise B-Rep ]
-            Manifold3D (C++)                                              Locus Native Zig B-Rep
-                        │                                                                 │
-       ┌────────────────┴────────────────┐                              ┌─────────────────┴────────────────┐
-       ▼                                 ▼                              ▼                                  ▼
-WebGL 60 FPS Preview              Binary STL / GLB                 Manufacturing STEP              Spatial Queries
+```mermaid
+flowchart TD
+    Source[".kup File"] --> Lexer --> Parser --> Compiler --> Chunk[Bytecode Chunk]
+    Chunk --> VM["KupCAD VM (Stack Machine)"]
+
+    VM --> EngineA["Engine A: Fast Mesh / WASM<br/>Manifold3D (C++)"]
+    VM --> EngineB["Engine B: Precise B-Rep<br/>Locus Native Zig B-Rep"]
+
+    EngineA --> WebGL[WebGL 60 FPS Preview]
+    EngineA --> STL[Binary STL / GLB]
+
+    EngineB --> STEP[Manufacturing STEP]
+    EngineB --> Queries[Spatial Queries]
 
 ```
 
