@@ -35,7 +35,7 @@ jobs:
       - name: Install Zig
         uses: xyzzylabs/setup-zig@v1
         with:
-          version: master
+          zig-version-file: .tool-versions
 
       - name: Setup `wasmtime`
         uses: bytecodealliance/actions/wasmtime/setup@v1
