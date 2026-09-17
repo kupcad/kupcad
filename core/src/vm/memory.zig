@@ -159,8 +159,6 @@ pub const GC = struct {
         self.is_gc_running = true;
         defer self.is_gc_running = false;
 
-        const before = self.bytes_allocated;
-
         if (!force_full) {
             self.markRoots(vm);
             self.traceReferences();
@@ -171,7 +169,6 @@ pub const GC = struct {
 
         self.sweep(vm);
         self.next_gc_threshold = self.bytes_allocated * HEAP_GROW_FACTOR;
-        _ = before;
     }
 
     /// Generic allocator that appends directly to the specific tracking list
