@@ -1,14 +1,16 @@
-# **KupCAD Language & Architecture Specification**
+# KupCAD Language & Architecture Specification
 
 **Version:** 1.0.0
+
 **Core Runtime:** Custom Zig Bytecode VM (`VM`) + Manifold3D (Mesh/Preview) + Locus Native B-Rep (STEP/Analytical)
+
 **Syntax Paradigm:** Ruby-inspired, Expression-based, Method-chaining OOP
 
-## **1. Syntax & Core Concepts**
+## 1. Syntax & Core Concepts
 
 KupCAD (`.kup`) is a high-level, expression-based parametric CAD language executing on a custom stack-based VM. Primitives are generated via built-in classes like `Solid` and `Sketch2D`. Every operation returns a first-class geometry node, enabling fluid method-chaining.
 
-### **3D Primitives & Assemblies**
+### 3D Primitives & Assemblies
 
 Primitives accept intelligent keyword arguments, including native support for rounded corners and chamfers directly during instantiation.
 
@@ -29,7 +31,7 @@ final_part = assemble(name: "HousingAssembly", parts: [housing, ring])
 
 ```
 
-### **Batch CSG & Operator Overloading**
+### Batch CSG & Operator Overloading
 
 You can use standard math operators (`+`, `-`, `&`) for binary CSG, or utilize batch operations for arrays of geometry to heavily optimize the evaluation graph:
 
@@ -43,7 +45,7 @@ convex_wrap = batch_hull(pins)
 
 ---
 
-## **2. 2D Sketching, Profiles, & Text**
+## 2. 2D Sketching, Profiles, & Text
 
 The `Sketch2D` class provides powerful 2D cross-section primitives that can be swept into 3D.
 
@@ -66,11 +68,11 @@ thread = Sketch2D.circle(r: 1).helix(pitch: 2.0, height: 20.0)
 
 ---
 
-## **3. Core Standard Library & Block Iteration**
+## 3. Core Standard Library & Block Iteration
 
 KupCAD is a Turing-complete language with a robust standard library and functional iteration patterns.
 
-### **Blocks and Closures**
+### Blocks and Closures
 
 KupCAD fully supports Ruby-style block execution using `do |args| ... end` or `{ |args| ... }`.
 
@@ -83,25 +85,25 @@ end
 
 ```
 
-### **Native Collections**
+### Native Collections
 
 * **Arrays**: Exposes functional mutators (`.push`, `.pop`, `.shift`, `.unshift`, `.slice`, `.join`), iterators (`.each`, `.map`, `.filter`, `.reduce`), and native numeric reducers (`.max`, `.min`, `.sum`, `.sort`).
 * **Maps**: Exposes key/value manipulation (`.keys`, `.values`, `.has_key?`, `.delete`, `.get`, `.merge`, `.empty?`). Keys can be swapped dynamically via `.symbolize_keys` and `.stringify_keys`.
 
-### **Strings, Symbols & Math**
+### Strings, Symbols & Math
 
 * **Strings**: Support `.length`, `.size`, `.upcase`, `.downcase`, `.trim`, `.split`, and `.replace`. Strings can check prefixes/suffixes with `.starts_with?` and `.ends_with?`, and typecast using `.to_sym`, `.to_f`, and `.to_i`.
 * **Symbols**: Lightweight, interned identifiers (`:name`) used heavily for parameter keys and map properties.
 * **Math Module**: Exposes variadic `.min` and `.max`, trigonometric functions (`.sin`, `.cos`, `.tan`, `.asin`, `.acos`, `.atan2`), and CAD-specific interpolation helpers (`.clamp`, `.lerp`, `.hypot`, `.sign`).
 
-### **Base Object Introspection**
+### Base Object Introspection
 
 * All objects and geometry nodes support introspection methods like `.is_a?`, `.responds_to?`, and `.nil?`.
 * You can duplicate instances using `.dup` or `.clone`, extract bound functions using `.method`, or yield to blocks contextually via `.tap` and `.into`.
 
 ---
 
-## **4. Parametric UI & The "Hybrid Architecture"**
+## 4. Parametric UI & The "Hybrid Architecture"
 
 KupCAD uses a **Hybrid Architecture** for parametric UI generation. The `param` keyword executes securely inside the VM, validating types, enforcing bounds, and extracting precise line/column locations for stack-trace error reporting if validation fails.
 
@@ -132,7 +134,7 @@ end
 
 ---
 
-## **5. Geometry Modifiers & Sweeps**
+## 5. Geometry Modifiers & Sweeps
 
 KupCAD exposes an exhaustive list of native mesh manipulation methods attached to all evaluated solid and 2D nodes:
 
@@ -143,7 +145,7 @@ KupCAD exposes an exhaustive list of native mesh manipulation methods attached t
 
 ---
 
-## **6. Inspection & Spatial Alignment**
+## 6. Inspection & Spatial Alignment
 
 Evaluated geometry nodes are first-class objects with natively exposed mass properties and exact spatial bounding boxes.
 
@@ -151,18 +153,18 @@ Evaluated geometry nodes are first-class objects with natively exposed mass prop
 box = Solid.cube(x: 50, y: 30, z: 20)
 
 # Physical inspection
-bounds = box.bbox()             # Returns a BoundingBox object
-vol = box.volume()              # mm³
-area = box.surface_area()       # mm²
+bounds = box.bbox               # Returns a BoundingBox object
+vol = box.volume                # mm³
+area = box.surface_area         # mm²
 gap = box.min_gap(other_part)   # Shortest distance between two solids
 is_inside = box.contains?(pt)   # Point-in-polygon/solid check
-topology = box.genus()          # Topological genus (holes)
+topology = box.genus            # Topological genus (holes)
 
 ```
 
 ---
 
-## **7. System Kernel & Development Modifiers**
+## 7. System Kernel & Development Modifiers
 
 The `Kernel` class provides global host bindings for I/O, garbage collection, and debugging.
 
@@ -173,8 +175,8 @@ Kernel.assert(vol > 0, "Volume must be positive")
 Kernel.benchmark { heavy_csg_operation() }
 
 # Memory introspection
-GC.collect()
-puts(GC.bytes_allocated())
+GC.collect
+puts(GC.bytes_allocated)
 
 ```
 
@@ -192,7 +194,7 @@ part = Solid.cube(10).material(color: "#FF0000", roughness: 0.2, metallic: 0.8)
 
 ---
 
-## **8. Module & Asset Imports**
+## 8. Module & Asset Imports
 
 KupCAD uses a Content Addressable File System (CAFS) paired with an SQLite cache for dependency management. External solid files are parsed and injected directly into the VM.
 
@@ -208,7 +210,7 @@ logo = import_stl("assets/logo.stl")
 
 ---
 
-## **9. Architecture & Execution Pipeline**
+## 9. Architecture & Execution Pipeline
 
 The KupCAD engine is implemented entirely in **Zig**, relying on a dual-engine architecture governed by a robust VM.
 
@@ -233,7 +235,7 @@ flowchart TD
 
 ---
 
-## **10. IDE & Toolchain Ecosystem (`src/cli/`)**
+## 10. IDE & Toolchain Ecosystem (`src/cli/`)
 
 KupCAD ships as a monolithic executable containing a complete developer toolchain:
 
