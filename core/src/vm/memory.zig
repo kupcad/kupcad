@@ -119,7 +119,7 @@ pub const GC = struct {
             return false;
         } else {
             if (self.allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
-                self.bytes_allocated -= (buf.len - new_len); // Normal Subtraction Restored
+                self.bytes_allocated -= (buf.len - new_len);
                 return true;
             }
             return false;
@@ -140,7 +140,7 @@ pub const GC = struct {
             return null;
         } else {
             if (self.allocator.rawRemap(buf, buf_align, new_len, ret_addr)) |new_ptr| {
-                self.bytes_allocated -= (buf.len - new_len); // Normal Subtraction Restored
+                self.bytes_allocated -= (buf.len - new_len);
                 return new_ptr;
             }
             return null;
@@ -150,7 +150,7 @@ pub const GC = struct {
     fn trackFree(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
         const self: *GC = @ptrCast(@alignCast(ctx));
         self.allocator.rawFree(buf, buf_align, ret_addr);
-        self.bytes_allocated -= buf.len; // Normal Subtraction Restored
+        self.bytes_allocated -= buf.len;
     }
 
     pub fn collectGarbage(self: *GC, vm: *VM, force_full: bool) void {
