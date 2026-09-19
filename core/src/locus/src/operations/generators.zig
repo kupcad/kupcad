@@ -76,7 +76,8 @@ pub fn generateCube(
             const next_he = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast((j + 1) % 4))));
             const prev_he = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast((j + 3) % 4))));
 
-            const line_idx = @as(u24, @intCast(g_arena.lines.items.len));
+            const line_idx: geom_types.CurveIndex = @enumFromInt(g_arena.lines.items.len);
+
             const p1 = points[f_idx[j]];
             const p2 = points[f_idx[(j + 1) % 4]];
             try g_arena.lines.append(allocator, .{ .start = p1, .end = p2 });
@@ -100,8 +101,8 @@ pub fn generateCube(
         const fl_start = @as(u32, @intCast(t_arena.face_loops.items.len));
         try t_arena.face_loops.append(allocator, loop_id);
 
-        const surf_handle = geom_arena.SurfaceHandle{
-            .index = @intCast(p_start + @as(u32, @intCast(i))),
+        const surf_handle = geom_types.SurfaceId{
+            .index = @enumFromInt(p_start + @as(u32, @intCast(i))),
             .surface_type = .plane,
         };
 

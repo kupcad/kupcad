@@ -7,9 +7,9 @@ pub const types = @import("types.zig");
 pub const CurveType = types.CurveType;
 pub const PCurveType = types.PCurveType;
 pub const SurfaceType = types.SurfaceType;
-pub const CurveHandle = types.CurveHandle;
-pub const PCurveHandle = types.PCurveHandle;
-pub const SurfaceHandle = types.SurfaceHandle;
+pub const CurveId = types.CurveId;
+pub const PCurveId = types.PCurveId;
+pub const SurfaceId = types.SurfaceId;
 
 pub const GeometryArena = struct {
     points: std.ArrayListUnmanaged(math.Vec3) = .empty,
@@ -78,15 +78,15 @@ pub const GeometryArena = struct {
         self.toruses.clearRetainingCapacity();
     }
 
-    pub fn surfaceProject(self: *const GeometryArena, handle: SurfaceHandle, pt: math.Vec3) math.Vec2 {
+    pub fn surfaceProject(self: *const GeometryArena, handle: SurfaceId, pt: math.Vec3) math.Vec2 {
         switch (handle.surface_type) {
             .plane => {
-                const p = self.planes.items[handle.index];
+                const p = self.planes.items[@intFromEnum(handle.index)];
                 const v = math.sub(pt, p.origin);
                 return .{ math.dot(v, p.u_axis), math.dot(v, p.v_axis) };
             },
             .cylinder => {
-                const c = self.cylinders.items[handle.index];
+                const c = self.cylinders.items[@intFromEnum(handle.index)];
                 const v = math.sub(pt, c.origin);
                 const z_val = math.dot(v, c.axis);
                 const proj = math.sub(v, math.scale(c.axis, z_val));

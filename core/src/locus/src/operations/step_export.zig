@@ -3,6 +3,7 @@ const topo_arena = @import("../topology/arena.zig");
 const topo_types = @import("../topology/types.zig");
 const topo_he = @import("../topology/half_edge.zig");
 const geom_arena = @import("../geometry/arena.zig");
+const geom_types = @import("../geometry/types.zig");
 const math = @import("../math.zig");
 
 pub const StepSolid = struct {
@@ -260,7 +261,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
         var edge_map = std.AutoHashMap(EdgeKey, u32).init(allocator);
         defer edge_map.deinit();
 
-        var full_circle_map = std.AutoHashMap(u24, FullCircleEntry).init(allocator);
+        var full_circle_map = std.AutoHashMap(geom_types.CurveIndex, FullCircleEntry).init(allocator);
         defer full_circle_map.deinit();
 
         for (t.half_edges.items, 0..) |he, i| {
@@ -275,8 +276,10 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
 
             if (v1_id == v2_id and he.curve.curve_type == .circle_arc) {
                 if (!full_circle_map.contains(he.curve.index)) {
-                    if (he.curve.index >= g.circle_arcs.items.len) return error.CorruptTopology;
-                    const arc = g.circle_arcs.items[he.curve.index];
+                    const arc_idx = @intFromEnum(he.curve.index);
+                    if (arc_idx >= g.circle_arcs.items.len) return error.CorruptTopology;
+
+                    const arc = g.circle_arcs.items[arc_idx];
                     const p1 = g.points.items[@intFromEnum(t.vertices.items[@intFromEnum(v1_id)].point)];
 
                     const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
@@ -313,8 +316,9 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
 
                     switch (he.curve.curve_type) {
                         .circle_arc => {
-                            if (he.curve.index >= g.circle_arcs.items.len) return error.CorruptTopology;
-                            const arc = g.circle_arcs.items[he.curve.index];
+                            const arc_idx = @intFromEnum(he.curve.index);
+                            if (arc_idx >= g.circle_arcs.items.len) return error.CorruptTopology;
+                            const arc = g.circle_arcs.items[arc_idx];
                             const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
                             const nx = arc.x_axis[1] * arc.y_axis[2] - arc.x_axis[2] * arc.y_axis[1];
                             const ny = arc.x_axis[2] * arc.y_axis[0] - arc.x_axis[0] * arc.y_axis[2];
@@ -513,8 +517,9 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                 switch (face.surface.surface_type) {
                     .cylinder => {
                         face_orientation = if (face.forward) "T" else "F";
-                        if (face.surface.index >= g.cylinders.items.len) return error.CorruptTopology;
-                        const cyl = g.cylinders.items[face.surface.index];
+                        const surf_idx = @intFromEnum(face.surface.index);
+                        if (surf_idx >= g.cylinders.items.len) return error.CorruptTopology;
+                        const cyl = g.cylinders.items[surf_idx];
 
                         var axis_dir = math.normalize(cyl.axis);
                         if (math.magSq(axis_dir) < 1e-12) axis_dir = .{ 0, 0, 1 };
@@ -538,8 +543,9 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     },
                     .sphere => {
                         face_orientation = if (face.forward) "T" else "F";
-                        if (face.surface.index >= g.spheres.items.len) return error.CorruptTopology;
-                        const sph = g.spheres.items[face.surface.index];
+                        const surf_idx = @intFromEnum(face.surface.index);
+                        if (surf_idx >= g.spheres.items.len) return error.CorruptTopology;
+                        const sph = g.spheres.items[surf_idx];
 
                         const origin_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ sph.center[0], sph.center[1], sph.center[2] });
                         const z_axis_id = try s.emit("DIRECTION('',(0.000000,0.000000,1.000000))", .{});
@@ -550,8 +556,9 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     },
                     .cone => {
                         face_orientation = if (face.forward) "T" else "F";
-                        if (face.surface.index >= g.cones.items.len) return error.CorruptTopology;
-                        const cone = g.cones.items[face.surface.index];
+                        const surf_idx = @intFromEnum(face.surface.index);
+                        if (surf_idx >= g.cones.items.len) return error.CorruptTopology;
+                        const cone = g.cones.items[surf_idx];
 
                         var axis_dir = math.normalize(cone.axis);
                         if (math.magSq(axis_dir) < 1e-12) axis_dir = .{ 0, 0, 1 };
@@ -575,8 +582,9 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     },
                     .torus => {
                         face_orientation = if (face.forward) "T" else "F";
-                        if (face.surface.index >= g.toruses.items.len) return error.CorruptTopology;
-                        const tor = g.toruses.items[face.surface.index];
+                        const surf_idx = @intFromEnum(face.surface.index);
+                        if (surf_idx >= g.toruses.items.len) return error.CorruptTopology;
+                        const tor = g.toruses.items[surf_idx];
 
                         var axis_dir = math.normalize(tor.axis);
                         if (math.magSq(axis_dir) < 1e-12) axis_dir = .{ 0, 0, 1 };

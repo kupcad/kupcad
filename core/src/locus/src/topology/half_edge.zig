@@ -2,19 +2,22 @@ const types = @import("types.zig");
 const geom_types = @import("../geometry/types.zig");
 
 pub const Vertex = struct {
-    point: geom_types.PointIndex,
+    point: geom_types.PointIndex, // Explicit link to coordinates in GeometryArena
+    tolerance: f64 = 1e-5, // Needed for dynamic local welding logic
 };
 
 pub const HalfEdge = struct {
+    start_vertex: types.VertexIndex,
     twin: types.HalfEdgeIndex,
     next: types.HalfEdgeIndex,
     prev: types.HalfEdgeIndex,
-    start_vertex: types.VertexIndex,
     loop_id: types.LoopIndex,
 
-    curve: geom_types.CurveHandle,
-    p_curve: ?geom_types.PCurveHandle = null,
+    // Links to explicit mathematical boundaries
+    curve: geom_types.CurveId,
+    p_curve: ?geom_types.PCurveId = null,
 
+    start_uv: ?[2]f64 = null, // Cached parameter space projection for boundary stitching
     forward: bool,
 };
 
@@ -24,7 +27,7 @@ pub const Loop = struct {
 };
 
 pub const Face = struct {
-    surface: geom_types.SurfaceHandle,
+    surface: geom_types.SurfaceId,
     forward: bool,
     loops_start: u32,
     loops_len: u32,
