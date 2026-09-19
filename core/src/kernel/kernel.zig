@@ -9,7 +9,6 @@ pub const BooleanOp = enum {
     intersection_op,
 };
 
-// --- Comptime Kernel Dispatcher ---
 fn ReturnType(comptime T: type) type {
     switch (@typeInfo(T)) {
         .@"fn" => |func| return func.return_type.?,
@@ -24,7 +23,6 @@ inline fn dispatch(comptime fn_name: []const u8, handle: anytype, args: anytype)
     }
 }
 
-// --- Dynamic Creation Dispatchers ---
 pub inline fn cube(engine: geom.EngineType, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     switch (engine) {
         .manifold => return manifold_driver.driver.cubeFn(x, y, z, center),
@@ -81,7 +79,6 @@ pub inline fn polygonsEvenOdd(engine: geom.EngineType, allocator: std.mem.Alloca
     }
 }
 
-// --- Top-Level Static Dispatchers ---
 pub inline fn translate(handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
     return dispatch("translateFn", handle, .{ x, y, z });
 }
@@ -262,4 +259,8 @@ pub inline fn getMesh(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
         .manifold => return manifold_driver.driver.getMeshFn(allocator, handle),
         .brep_native => return brep_driver.driver.getMeshFn(allocator, handle),
     }
+}
+
+pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const u8 {
+    return brep_driver.exportStep(allocator, handles);
 }

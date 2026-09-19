@@ -38,28 +38,6 @@ pub inline fn pointsCoincide2D(p1: Vec2, tol1: f64, p2: Vec2, tol2: f64) bool {
     return (dx * dx + dy * dy) <= (combined_tol * combined_tol);
 }
 
-pub const Tolerance = struct {
-    absolute: f64,
-    squared: f64,
-    parametric: f64, // Used for 2D (u,v) UV space checks
-
-    /// Calculates adaptive tolerances based on solid bounding box dimensions
-    pub fn fromBoundingBox(min: Vec3, max: Vec3) Tolerance {
-        const dx = max[0] - min[0];
-        const dy = max[1] - min[1];
-        const dz = max[2] - min[2];
-        const max_dim = @max(dx, @max(dy, dz));
-
-        // Scale relative to object size (minimum floor of 1e-7 mm)
-        const abs_tol = @max(1.0e-7, max_dim * 1.0e-7);
-        return .{
-            .absolute = abs_tol,
-            .squared = abs_tol * abs_tol,
-            .parametric = 1.0e-5, // Fixed domain tolerance for [0, 1] parameter space
-        };
-    }
-};
-
 // --- Vector Math ---
 
 pub inline fn dot(a: Vec3, b: Vec3) f64 {
