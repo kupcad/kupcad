@@ -162,4 +162,26 @@ pub const DebugDumper = struct {
             .data = out.written(),
         });
     }
+
+    pub fn dumpTopologyDot(
+        io: std.Io,
+        path: []const u8,
+        t_arena: *const topo_arena.TopologyArena,
+    ) !void {
+        var file = try std.Io.Dir.cwd().createFile(io, path, .{});
+        defer file.close(io);
+        var writer = file.writer(io);
+
+        try writer.writeAll("digraph Topology {\n");
+        for (t_arena.half_edges.items, 0..) |he, i| {
+            try writer.print("  he_{d} -> v_{d} [label=\"start\"];\n", .{ i, @intFromEnum(he.start_vertex) });
+            if (he.twin != topo_types.NULL_HALF_EDGE) {
+                try writer.print("  he_{d} -> he_{d} [style=dashed, label=\"twin\"];\n", .{ i, @intFromEnum(he.twin) });
+            }
+            if (he.next != topo_types.NULL_HALF_EDGE) {
+                try writer.print("  he_{d} -> he_{d} [label=\"next\"];\n", .{ i, @intFromEnum(he.next) });
+            }
+        }
+        try writer.writeAll("}\n");
+    }
 };

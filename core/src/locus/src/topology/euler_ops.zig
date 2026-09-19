@@ -1,7 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const types = @import("types.zig");
 const geom_types = @import("../geometry/types.zig");
 const topo_arena = @import("arena.zig");
+const verifier = @import("verifier.zig");
 
 pub const EulerError = error{
     OutOfMemory,
@@ -9,7 +11,7 @@ pub const EulerError = error{
     NonManifoldEdge,
     InvalidHalfEdge,
     InvalidLoopStructure,
-};
+} || verifier.ValidationError;
 
 pub const MevResult = struct {
     new_vertex: types.VertexIndex,
@@ -65,6 +67,13 @@ pub fn mev(
         .forward = false,
     });
 
+    if (comptime builtin.is_test or builtin.mode == .debug) {
+        verifier.Verifier.validateGraph(t_arena) catch |err| {
+            std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
+            return err;
+        };
+    }
+
     return MevResult{
         .new_vertex = new_v_idx,
         .he_out = he_out_idx,
@@ -82,8 +91,6 @@ pub fn mef(
     curve_id: geom_types.CurveId,
     surface_id: geom_types.SurfaceId,
 ) EulerError!MefResult {
-    const parent_face_idx = t_arena.loops.items[@intFromEnum(target_loop)].face_id;
-
     const new_face_idx = @as(types.FaceIndex, @enumFromInt(@as(u32, @intCast(t_arena.faces.items.len))));
     const new_loop_idx = @as(types.LoopIndex, @enumFromInt(@as(u32, @intCast(t_arena.loops.items.len))));
 
@@ -146,7 +153,13 @@ pub fn mef(
         curr = he_ptr.next;
     }
 
-    _ = parent_face_idx;
+    if (comptime builtin.is_test or builtin.mode == .debug) {
+        verifier.Verifier.validateGraph(t_arena) catch |err| {
+            std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
+            return err;
+        };
+    }
+
     return MefResult{
         .new_face = new_face_idx,
         .new_loop = new_loop_idx,
@@ -195,6 +208,13 @@ pub fn kef(
         curr = he_ptr.next;
     }
 
+    if (comptime builtin.is_test or builtin.mode == .debug) {
+        verifier.Verifier.validateGraph(t_arena) catch |err| {
+            std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
+            return err;
+        };
+    }
+
     return face_a_idx;
 }
 
@@ -226,6 +246,13 @@ pub fn kev(
     const loop_ptr = &t_arena.loops.items[@intFromEnum(loop_idx)];
     if (loop_ptr.first_half_edge == he_out_idx or loop_ptr.first_half_edge == he_in_idx) {
         loop_ptr.first_half_edge = next_he_idx;
+    }
+
+    if (comptime builtin.is_test or builtin.mode == .debug) {
+        verifier.Verifier.validateGraph(t_arena) catch |err| {
+            std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
+            return err;
+        };
     }
 }
 
@@ -276,6 +303,13 @@ pub fn kemr(
     // Attach loop to parent face
     try t_arena.face_loops.append(allocator, new_loop_idx);
     t_arena.faces.items[@intFromEnum(face_idx)].loops_len += 1;
+
+    if (comptime builtin.is_test or builtin.mode == .debug) {
+        verifier.Verifier.validateGraph(t_arena) catch |err| {
+            std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
+            return err;
+        };
+    }
 
     return KemrResult{ .new_loop = new_loop_idx };
 }

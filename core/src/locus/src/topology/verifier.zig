@@ -44,6 +44,59 @@ pub const ValidatorConfig = struct {
 };
 
 pub const Verifier = struct {
+    /// Resolves 3D point coordinates for a vertex index.
+    pub inline fn getVertexPoint(
+        t_arena: *const arena.TopologyArena,
+        g_arena: *const geom_arena.GeometryArena,
+        v_idx: types.VertexIndex,
+    ) math.Vec3 {
+        const pt_idx = t_arena.vertices.items[@intFromEnum(v_idx)].point;
+        return g_arena.points.items[@intFromEnum(pt_idx)];
+    }
+
+    /// Validates next/prev and twin reciprocity for a single half-edge.
+    pub fn validateHalfEdgeReciprocity(
+        t_arena: *const arena.TopologyArena,
+        he_idx: types.HalfEdgeIndex,
+        require_closed_twin: bool,
+    ) ValidationError!void {
+        const he = t_arena.half_edges.items[@intFromEnum(he_idx)];
+
+        // Next/Prev Reciprocity
+        if (he.next != types.NULL_HALF_EDGE) {
+            const next_he = t_arena.half_edges.items[@intFromEnum(he.next)];
+            if (next_he.prev != he_idx) return error.BrokenLinkedList;
+        }
+        if (he.prev != types.NULL_HALF_EDGE) {
+            const prev_he = t_arena.half_edges.items[@intFromEnum(he.prev)];
+            if (prev_he.next != he_idx) return error.BrokenLinkedList;
+        }
+
+        // Twin Symmetry & Anti-Parallel Alignment
+        if (he.twin != types.NULL_HALF_EDGE) {
+            const twin_idx = @intFromEnum(he.twin);
+            if (twin_idx >= t_arena.half_edges.items.len) return error.DanglingTwin;
+            const twin_he = t_arena.half_edges.items[twin_idx];
+
+            if (twin_he.twin != he_idx) return error.AsymmetricTwin;
+
+            if (he.next != types.NULL_HALF_EDGE) {
+                const next_he = t_arena.half_edges.items[@intFromEnum(he.next)];
+                if (twin_he.start_vertex != next_he.start_vertex) return error.AntiParallelTwin;
+            }
+        } else if (require_closed_twin) {
+            return error.OpenBoundaryInClosedShell;
+        }
+    }
+
+    /// Pure topological graph verification for atomic operations (no geometry required).
+    pub fn validateGraph(t_arena: *const arena.TopologyArena) ValidationError!void {
+        for (t_arena.half_edges.items, 0..) |_, i| {
+            const curr_he_idx = @as(types.HalfEdgeIndex, @enumFromInt(@as(u32, @intCast(i))));
+            try validateHalfEdgeReciprocity(t_arena, curr_he_idx, false);
+        }
+    }
+
     pub fn validateSolid(
         allocator: std.mem.Allocator,
         t_arena: *const arena.TopologyArena,
@@ -99,29 +152,14 @@ pub const Verifier = struct {
 
                     try visited_vertices.put(he.start_vertex, {});
 
-                    // 1. Linked List Integrity
-                    if (config.check_linked_lists) {
-                        if (t_arena.half_edges.items[@intFromEnum(he.next)].prev != curr_he_idx) return error.BrokenLinkedList;
-                        if (t_arena.half_edges.items[@intFromEnum(he.prev)].next != curr_he_idx) return error.BrokenLinkedList;
+                    // 1 & 2. Reciprocity & Twin Checks via DRY Helper
+                    if (config.check_linked_lists or config.check_twins) {
+                        try validateHalfEdgeReciprocity(t_arena, curr_he_idx, config.require_closed_shells);
                         if (he.loop_id != loop_idx) return error.LoopFaceMismatch;
                     }
 
-                    // 2. Twin Reciprocity & Orientation
-                    if (config.check_twins) {
-                        if (he.twin != types.NULL_HALF_EDGE) {
-                            const twin_idx = @intFromEnum(he.twin);
-                            if (twin_idx >= t_arena.half_edges.items.len) return error.DanglingTwin;
-                            const twin_he = t_arena.half_edges.items[twin_idx];
-
-                            if (twin_he.twin != curr_he_idx) return error.AsymmetricTwin;
-                            if (twin_he.start_vertex != next_he.start_vertex) return error.AntiParallelTwin;
-                        } else if (config.require_closed_shells) {
-                            return error.OpenBoundaryInClosedShell;
-                        }
-                    }
-
-                    const v_start_pt_idx = t_arena.vertices.items[@intFromEnum(he.start_vertex)].point;
-                    const v_start = g_arena.points.items[@intFromEnum(v_start_pt_idx)];
+                    // Resolve vertex point via DRY Helper
+                    const v_start = getVertexPoint(t_arena, g_arena, he.start_vertex);
 
                     // 3. NaN/Inf Memory Corruption Check
                     if (std.math.isNan(v_start[0]) or std.math.isNan(v_start[1]) or std.math.isNan(v_start[2]) or
@@ -132,8 +170,7 @@ pub const Verifier = struct {
 
                     // 4. Degenerate Geometry Check
                     if (config.check_degenerates and he.curve.curve_type == .line) {
-                        const v_end_pt_idx = t_arena.vertices.items[@intFromEnum(next_he.start_vertex)].point;
-                        const v_end = g_arena.points.items[@intFromEnum(v_end_pt_idx)];
+                        const v_end = getVertexPoint(t_arena, g_arena, next_he.start_vertex);
                         if (math_env.isCoincident(v_start, v_end)) {
                             return error.DegenerateEdge;
                         }
@@ -174,10 +211,8 @@ pub const Verifier = struct {
                     while (safety < 1000) : (safety += 1) {
                         const he = t_arena.half_edges.items[@intFromEnum(c_he_idx)];
                         const next_he = t_arena.half_edges.items[@intFromEnum(he.next)];
-                        const v1_pt_idx = t_arena.vertices.items[@intFromEnum(he.start_vertex)].point;
-                        const v2_pt_idx = t_arena.vertices.items[@intFromEnum(next_he.start_vertex)].point;
-                        const v1 = g_arena.points.items[@intFromEnum(v1_pt_idx)];
-                        const v2 = g_arena.points.items[@intFromEnum(v2_pt_idx)];
+                        const v1 = getVertexPoint(t_arena, g_arena, he.start_vertex);
+                        const v2 = getVertexPoint(t_arena, g_arena, next_he.start_vertex);
 
                         cross_sum = math.add(cross_sum, math.cross(v1, v2));
                         c_he_idx = he.next;

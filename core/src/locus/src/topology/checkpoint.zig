@@ -76,3 +76,14 @@ pub const Checkpoint = struct {
         g.nurbs_surfaces.shrinkRetainingCapacity(cp.nurbs_surfaces_len);
     }
 };
+
+pub fn execTransaction(
+    t: *topo_arena.TopologyArena,
+    g: *geom_arena.GeometryArena,
+    comptime action: fn (t_ptr: *topo_arena.TopologyArena, g_ptr: *geom_arena.GeometryArena, ctx: anytype) anyerror!void,
+    ctx: anytype,
+) !void {
+    const cp = Checkpoint.save(t, g);
+    errdefer Checkpoint.restore(t, g, cp);
+    try action(t, g, ctx);
+}
