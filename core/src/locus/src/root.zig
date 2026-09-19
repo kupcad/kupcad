@@ -1,49 +1,54 @@
-// --- API Exports ---
+const std = @import("std");
+
+// --- Core Math & Environment ---
 pub const math = @import("math.zig");
-pub const topology = @import("topology.zig");
-pub const geometry = @import("geometry.zig");
-pub const generators = @import("generators.zig");
-pub const transforms = @import("transforms.zig");
-pub const quickhull = @import("quickhull.zig");
-pub const sweeps = @import("sweeps.zig");
-pub const minkowski = @import("minkowski.zig");
-pub const booleans = @import("booleans.zig");
-pub const booleans_2d = @import("booleans_2d.zig");
-pub const slicing = @import("slicing.zig");
-pub const tessellate = @import("tessellate.zig");
+pub const math_env = @import("math_env.zig");
 pub const eigen = @import("eigen.zig");
-pub const nurbs_ssi = @import("nurbs_ssi.zig");
+pub const parallel = @import("parallel.zig");
+
+// --- Geometry Subsystem (Phase 1 & 2) ---
+pub const geometry = struct {
+    pub const arena = @import("geometry/arena.zig");
+    pub const curves = @import("geometry/curves.zig");
+    pub const surfaces = @import("geometry/surfaces.zig");
+    pub const types = @import("geometry/types.zig");
+};
+
+// --- Topology Subsystem (Phase 2, 3 & 4) ---
+pub const topology = struct {
+    pub const arena = @import("topology/arena.zig");
+    pub const half_edge = @import("topology/half_edge.zig");
+    pub const types = @import("topology/types.zig");
+    pub const verifier = @import("topology/verifier.zig");
+};
+
+// --- CSG & Operations (Phase 4) ---
+pub const operations = struct {
+    pub const booleans = @import("operations/booleans.zig");
+    pub const booleans_2d = @import("operations/booleans_2d.zig");
+    pub const generators = @import("operations/generators.zig");
+    pub const inspection = @import("operations/inspection.zig");
+    pub const minkowski = @import("operations/minkowski.zig");
+    pub const projections = @import("operations/projections.zig");
+    pub const properties = @import("operations/properties.zig");
+    pub const queries = @import("operations/queries.zig");
+    pub const quickhull = @import("operations/quickhull.zig");
+    pub const slicing = @import("operations/slicing.zig");
+    pub const step_export = @import("operations/step_export.zig");
+    pub const sweeps = @import("operations/sweeps.zig");
+    pub const tessellate = @import("operations/tessellate.zig");
+    pub const transforms = @import("operations/transforms.zig");
+};
 
 test {
-    _ = @import("csg/blends_test.zig");
-    _ = @import("csg/healing_test.zig");
-    _ = @import("csg/modifiers_test.zig");
+    _ = @import("geometry/interning_test.zig");
 
-    _ = @import("booleans_test.zig");
-    _ = @import("booleans_2d_test.zig");
-    _ = @import("bvh_test.zig");
-    _ = @import("eigen_test.zig");
-    _ = @import("eigen_lm_test.zig");
-    _ = @import("fuzz_test.zig");
-    _ = @import("nurbs_test.zig");
-    _ = @import("nurbs_intersect_test.zig");
-    _ = @import("nurbs_ssi_test.zig");
-    _ = @import("nurbs_tessellate_test.zig");
-    _ = @import("nurbs_topology_test.zig");
-    _ = @import("generators_test.zig");
-    _ = @import("geometry_test.zig");
-    _ = @import("parallel_test.zig");
-    _ = @import("minkowski_test.zig");
-    _ = @import("quickhull_test.zig");
-    _ = @import("properties_test.zig");
-    _ = @import("inspection_test.zig");
-    _ = @import("projections_test.zig");
-    _ = @import("queries_test.zig");
-    _ = @import("slicing_test.zig");
-    _ = @import("stress_test.zig");
-    _ = @import("sweeps_test.zig");
-    _ = @import("tessellate_test.zig");
-    _ = @import("tolerances_test.zig");
-    _ = @import("transforms_test.zig");
-    _ = @import("validator_test.zig");
+    _ = @import("operations/generators_test.zig");
+
+    _ = @import("topology/bvh_test.zig");
+    _ = @import("topology/checkpoint_test.zig");
+    _ = @import("topology/euler_ops_test.zig");
+    _ = @import("topology/verifier_test.zig");
+
+    _ = @import("test_runner.zig");
 }

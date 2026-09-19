@@ -54,12 +54,8 @@ pub fn parallelFor(
             wasm_work_ctx = ctx;
             wasm_work_func = Wrapper.c_func;
 
-            // FUTURE: Add an `extern fn` call here to tell JS to wake up the Web Workers
-
             // The main thread also pitches in and processes the queue!
             locus_wasm_worker_loop();
-
-            // FUTURE: Add an atomic wait/yield here to block until all workers finish
         }
     } else {
         // Native Desktop uses Intel TBB C++ bindings

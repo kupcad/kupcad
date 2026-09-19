@@ -16,10 +16,10 @@ Primitives accept intelligent keyword arguments, including native support for ro
 
 ```ruby
 # Native 3D primitives with built-in filleting
-base_box = Solid.cube(x: 50, y: 30, z: 20, round_r: 2.0, center: true)
-cyl = Solid.cylinder(r: 5, h: 40, chamfer: 1.0)
-ring = Solid.torus(major_r: 10.0, minor_r: 2.0)
-custom = Solid.polyhedron(points: [...], faces: [...])
+base_box = cube(x: 50, y: 30, z: 20, round_r: 2.0, center: true)
+cyl = cylinder(r: 5, h: 40, chamfer: 1.0)
+ring = torus(major_r: 10.0, minor_r: 2.0)
+custom = polyhedron(points: [...], faces: [...])
 
 # Method-chained transformations & CSG booleans
 housing = base_box
@@ -37,7 +37,7 @@ You can use standard math operators (`+`, `-`, `&`) for binary CSG, or utilize b
 
 ```ruby
 # Union or Hull across entire arrays natively
-pins = [Solid.cylinder(r: 2, h: 10), Solid.cylinder(r: 2, h: 10).translate(x: 20)]
+pins = [cylinder(r: 2, h: 10), cylinder(r: 2, h: 10).translate(x: 20)]
 casing = union(pins)
 convex_wrap = batch_hull(pins)
 
@@ -51,18 +51,18 @@ The `Sketch2D` class provides powerful 2D cross-section primitives that can be s
 
 ```ruby
 # Advanced 2D Polygons with Hole support (Even-Odd winding rules)
-profile = Sketch2D.polygon(
+profile = polygon(
   [[0,0], [10,0], [10,10], [0,10]],
   paths: [[[2,2], [8,2], [8,8], [2,8]]] # Inner cutout hole
 )
 
 # Text Generation with alignment and typography controls
-label = Sketch2D.text("KupCAD", size: 12.0, font: "sans", halign: "center", valign: "baseline")
+label = text("KupCAD", size: 12.0, font: "sans", halign: "center", valign: "baseline")
 
 # Sweeping 2D into 3D
 3d_label = label.extrude(5.0)
-knob = Sketch2D.regular_polygon(sides: 6, r: 15).revolve(angle: 360)
-thread = Sketch2D.circle(r: 1).helix(pitch: 2.0, height: 20.0)
+knob = regular_polygon(sides: 6, r: 15).revolve(angle: 360)
+thread = circle(r: 1).helix(pitch: 2.0, height: 20.0)
 
 ```
 
@@ -80,7 +80,7 @@ KupCAD fully supports Ruby-style block execution using `do |args| ... end` or `{
 # Using the block to generate an array of cylinders
 pegs = []
 (0...3).each do |row|
-  pegs.push( Solid.cylinder(r: 2, h: 10).translate(x: row * 10) )
+  pegs.push(cylinder(r: 2, h: 10).translate(x: row * 10))
 end
 
 ```
@@ -117,7 +117,7 @@ material = param(:material, default: "PLA", validate: { in: ["PLA", "PETG", "ABS
 
 def build
   # Dynamic retrieval halts execution safely if constraints are violated
-  Solid.cube(x: width, y: 50, z: 5)
+  cube(x: width, y: 50, z: 5)
 end
 
 ```
@@ -127,7 +127,7 @@ Global CAD engine overrides can be dynamically applied using the `CAD` module:
 ```ruby
 # Force specific tessellation resolutions for the enclosed block
 CAD.with_config({ manifold: { min_angle_deg: 5.0 } }) do
-  Solid.sphere(r: 10)
+  sphere(r: 10)
 end
 
 ```
@@ -170,9 +170,9 @@ The `Kernel` class provides global host bindings for I/O, garbage collection, an
 
 ```ruby
 # CLI Output & Assertions
-Kernel.puts("Generating parts...")
-Kernel.assert(vol > 0, "Volume must be positive")
-Kernel.benchmark { heavy_csg_operation() }
+puts("Generating parts...")
+assert(vol > 0, "Volume must be positive")
+benchmark { heavy_csg_operation() }
 
 # Memory introspection
 GC.collect
@@ -184,11 +184,11 @@ KupCAD also provides non-destructive inline modifiers to alter visibility in the
 
 ```ruby
 # Debugging Modifiers pushed to the VM display list
-env = Solid.cube(100).ghost           # Renders as a semi-transparent mesh
-bolt = Solid.cylinder(r: 3).highlight # Forces high-contrast visibility
+env = cube(100).ghost           # Renders as a semi-transparent mesh
+bolt = cylinder(r: 3).highlight # Forces high-contrast visibility
 
 # Material metadata assigned to the geometry handle (propagates to GLB exports)
-part = Solid.cube(10).material(color: "#FF0000", roughness: 0.2, metallic: 0.8)
+part = cube(10).material(color: "#FF0000", roughness: 0.2, metallic: 0.8)
 
 ```
 
@@ -200,7 +200,7 @@ KupCAD uses a Content Addressable File System (CAFS) paired with an SQLite cache
 
 ```ruby
 # 1. Importing native KupCAD modules via isolated lexical scope
-import "[github.com/kupcad-libs/hardware](https://github.com/kupcad-libs/hardware)"
+import { Screw } from "github.com/kupcad-libs/hardware"
 
 # 2. Importing external 3D CAD assets directly into the CSG tree
 bearing = import_step("assets/608_bearing.step")

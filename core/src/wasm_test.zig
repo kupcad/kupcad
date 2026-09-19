@@ -12,8 +12,6 @@ const value = kupcad.value;
 const locus = kupcad.locus;
 const math = locus.math;
 const eigen = locus.eigen;
-const geom = locus.geometry;
-const nurbs_ssi = locus.nurbs_ssi;
 
 test "WASM Interop: format_code_wasm handles invalid and empty inputs gracefully" {
     // Test Syntax Error Handling
@@ -294,50 +292,4 @@ test "WASM Math: Pure-Zig Non-Linear LM Solver (Circle-Line Intersection)" {
     const expected = 5.0 / @sqrt(2.0);
     try testing.expectApproxEqAbs(expected, vars[0], 1e-4);
     try testing.expectApproxEqAbs(expected, vars[1], 1e-4);
-}
-
-test "WASM B-Rep: Surface-Surface Intersection Marching" {
-    const alloc = testing.allocator;
-
-    const a_cps = [_]math.Vec4{
-        .{ 0, 0, 0, 1 },  .{ 10, 0, 0, 1 },
-        .{ 0, 10, 0, 1 }, .{ 10, 10, 0, 1 },
-    };
-    const b_cps = [_]math.Vec4{
-        .{ 0, 5, -5, 1 }, .{ 10, 5, -5, 1 },
-        .{ 0, 5, 5, 1 },  .{ 10, 5, 5, 1 },
-    };
-    const knots = [_]f64{ 0, 0, 1, 1 };
-
-    const surf_a = geom.NurbsSurface{
-        .degree_u = 1,
-        .degree_v = 1,
-        .knots_u = &knots,
-        .knots_v = &knots,
-        .num_cp_u = 2,
-        .num_cp_v = 2,
-        .control_points = &a_cps,
-    };
-    const surf_b = geom.NurbsSurface{
-        .degree_u = 1,
-        .degree_v = 1,
-        .knots_u = &knots,
-        .knots_v = &knots,
-        .num_cp_u = 2,
-        .num_cp_v = 2,
-        .control_points = &b_cps,
-    };
-
-    const seams = try nurbs_ssi.findAllIntersectionSeams(alloc, &surf_a, &surf_b, 1.0);
-    defer {
-        for (seams) |s| {
-            alloc.free(s.points_3d);
-            alloc.free(s.uvs_a);
-            alloc.free(s.uvs_b);
-        }
-        alloc.free(seams);
-    }
-
-    try testing.expect(seams.len >= 1);
-    try testing.expect(seams[0].points_3d.len > 3);
 }
