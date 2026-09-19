@@ -19,3 +19,19 @@ test "EulerOps: MEV creates valid edge-vertex pair" {
     try std.testing.expectEqual(v0, t.half_edges.items[@intFromEnum(res.he_out)].start_vertex);
     try std.testing.expectEqual(res.new_vertex, t.half_edges.items[@intFromEnum(res.he_in)].start_vertex);
 }
+
+test "EulerOps: KEV collapses dead-end valence-1 vertex" {
+    const alloc = std.testing.allocator;
+    var t = topo_arena.TopologyArena.init();
+    defer t.deinit(alloc);
+
+    try t.vertices.append(alloc, .{ .point = @enumFromInt(0) });
+    try t.loops.append(alloc, .{ .face_id = @enumFromInt(0), .first_half_edge = @enumFromInt(0) });
+
+    const mev_res = try euler_ops.mev(alloc, &t, @enumFromInt(0), @enumFromInt(1), .{ .index = @enumFromInt(0), .curve_type = .line }, @enumFromInt(0));
+
+    try euler_ops.kev(&t, mev_res.he_out);
+
+    // The loop's starting edge gracefully reassigned away from killed edges
+    try std.testing.expect(t.loops.items[0].first_half_edge != mev_res.he_out);
+}
