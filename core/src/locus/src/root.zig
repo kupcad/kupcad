@@ -39,3 +39,9 @@ pub const operations = struct {
     pub const tessellate = @import("operations/tessellate.zig");
     pub const transforms = @import("operations/transforms.zig");
 };
+
+test {
+    _ = @import("operations/generators_test.zig");
+    _ = @import("topology/verifier_test.zig");
+    _ = @import("test_runner.zig");
+}

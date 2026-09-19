@@ -3,6 +3,7 @@ const topo_arena = @import("../topology/arena.zig");
 const topo_types = @import("../topology/types.zig");
 const geom_arena = @import("../geometry/arena.zig");
 const MathEnv = @import("../math_env.zig").MathEnv;
+const verifier = @import("../topology/verifier.zig").Verifier;
 const queries = @import("queries.zig");
 
 pub const BooleanOp = enum {
@@ -42,7 +43,11 @@ pub fn computeBoolean(
     _ = working_a;
     _ = working_b;
 
-    return try packageResultingSolid(allocator, dest_t);
+    const result_solid = try packageResultingSolid(allocator, dest_t);
+
+    // verifier.assertValidTestOnly(allocator, dest_t, dest_g, result_solid);
+
+    return result_solid;
 }
 
 pub fn deepCloneSolid(

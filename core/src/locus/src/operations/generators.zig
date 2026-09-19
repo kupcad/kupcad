@@ -7,7 +7,21 @@ const math = @import("../math.zig");
 
 pub const GenError = error{OutOfMemory};
 
-/// Generates a watertight 3D Cube using Data-Oriented topology and decoupled geometry arrays.
+pub const EdgeKey = struct {
+    min_v: topo_types.VertexIndex,
+    max_v: topo_types.VertexIndex,
+
+    pub fn init(v1: topo_types.VertexIndex, v2: topo_types.VertexIndex) EdgeKey {
+        const v1_int = @intFromEnum(v1);
+        const v2_int = @intFromEnum(v2);
+
+        return .{
+            .min_v = @as(topo_types.VertexIndex, @enumFromInt(@min(v1_int, v2_int))),
+            .max_v = @as(topo_types.VertexIndex, @enumFromInt(@max(v1_int, v2_int))),
+        };
+    }
+};
+
 pub fn generateCube(
     allocator: std.mem.Allocator,
     t_arena: *topo_arena.TopologyArena,
@@ -26,22 +40,14 @@ pub fn generateCube(
 
     const v_start = t_arena.vertices.items.len;
     const points = [_]math.Vec3{
-        .{ ox, oy, oz },
-        .{ ox + x, oy, oz },
-        .{ ox + x, oy + y, oz },
-        .{ ox, oy + y, oz },
-        .{ ox, oy, oz + z },
-        .{ ox + x, oy, oz + z },
-        .{ ox + x, oy + y, oz + z },
-        .{ ox, oy + y, oz + z },
+        .{ ox, oy, oz },     .{ ox + x, oy, oz },     .{ ox + x, oy + y, oz },     .{ ox, oy + y, oz },
+        .{ ox, oy, oz + z }, .{ ox + x, oy, oz + z }, .{ ox + x, oy + y, oz + z }, .{ ox, oy + y, oz + z },
     };
 
     for (points) |pt| {
         const pt_idx = @as(u32, @intCast(g_arena.points.items.len));
         try g_arena.points.append(allocator, pt);
-        try t_arena.vertices.append(allocator, .{
-            .point = @as(geom_types.PointIndex, @enumFromInt(pt_idx)),
-        });
+        try t_arena.vertices.append(allocator, .{ .point = @as(geom_types.PointIndex, @enumFromInt(pt_idx)) });
     }
 
     const p_start = @as(u32, @intCast(g_arena.planes.items.len));
@@ -55,13 +61,12 @@ pub fn generateCube(
     };
     for (planes) |p| try g_arena.planes.append(allocator, p);
 
+    var twin_map = std.AutoHashMap(EdgeKey, topo_types.HalfEdgeIndex).init(allocator);
+    defer twin_map.deinit();
+
     const face_indices = [_][4]u32{
-        .{ 0, 3, 2, 1 },
-        .{ 4, 5, 6, 7 },
-        .{ 0, 1, 5, 4 },
-        .{ 1, 2, 6, 5 },
-        .{ 2, 3, 7, 6 },
-        .{ 3, 0, 4, 7 },
+        .{ 0, 3, 2, 1 }, .{ 4, 5, 6, 7 }, .{ 0, 1, 5, 4 },
+        .{ 1, 2, 6, 5 }, .{ 2, 3, 7, 6 }, .{ 3, 0, 4, 7 },
     };
 
     const sh_faces_start = @as(u32, @intCast(t_arena.shell_faces.items.len));
@@ -72,18 +77,17 @@ pub fn generateCube(
         const he_start = @as(u32, @intCast(t_arena.half_edges.items.len));
 
         for (0..4) |j| {
-            const v_start_idx = @as(topo_types.VertexIndex, @enumFromInt(v_start + f_idx[j]));
+            const v1_idx = @as(topo_types.VertexIndex, @enumFromInt(v_start + f_idx[j]));
+            const v2_idx = @as(topo_types.VertexIndex, @enumFromInt(v_start + f_idx[(j + 1) % 4]));
             const next_he = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast((j + 1) % 4))));
             const prev_he = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast((j + 3) % 4))));
-
             const line_idx: geom_types.CurveIndex = @enumFromInt(g_arena.lines.items.len);
 
-            const p1 = points[f_idx[j]];
-            const p2 = points[f_idx[(j + 1) % 4]];
-            try g_arena.lines.append(allocator, .{ .start = p1, .end = p2 });
+            try g_arena.lines.append(allocator, .{ .start = points[f_idx[j]], .end = points[f_idx[(j + 1) % 4]] });
 
+            const he_idx = @as(topo_types.HalfEdgeIndex, @enumFromInt(t_arena.half_edges.items.len));
             try t_arena.half_edges.append(allocator, .{
-                .start_vertex = v_start_idx,
+                .start_vertex = v1_idx,
                 .twin = topo_types.NULL_HALF_EDGE,
                 .next = next_he,
                 .prev = prev_he,
@@ -91,44 +95,37 @@ pub fn generateCube(
                 .curve = .{ .index = line_idx, .curve_type = .line },
                 .forward = true,
             });
+
+            // Stitch twins securely
+            const key = EdgeKey.init(v1_idx, v2_idx);
+            if (twin_map.get(key)) |twin_id| {
+                t_arena.half_edges.items[@intFromEnum(he_idx)].twin = twin_id;
+                t_arena.half_edges.items[@intFromEnum(twin_id)].twin = he_idx;
+                _ = twin_map.remove(key);
+            } else {
+                try twin_map.put(key, he_idx);
+            }
         }
 
-        try t_arena.loops.append(allocator, .{
-            .face_id = face_id,
-            .first_half_edge = @enumFromInt(he_start),
-        });
-
-        const fl_start = @as(u32, @intCast(t_arena.face_loops.items.len));
+        try t_arena.loops.append(allocator, .{ .face_id = face_id, .first_half_edge = @enumFromInt(he_start) });
         try t_arena.face_loops.append(allocator, loop_id);
 
-        const surf_handle = geom_types.SurfaceId{
-            .index = @enumFromInt(p_start + @as(u32, @intCast(i))),
-            .surface_type = .plane,
-        };
-
+        const surf_handle = geom_types.SurfaceId{ .index = @enumFromInt(p_start + @as(u32, @intCast(i))), .surface_type = .plane };
         try t_arena.faces.append(allocator, .{
             .surface = surf_handle,
             .forward = true,
-            .loops_start = fl_start,
+            .loops_start = @as(u32, @intCast(t_arena.face_loops.items.len - 1)),
             .loops_len = 1,
         });
-
         try t_arena.shell_faces.append(allocator, face_id);
     }
 
     const shell_id = @as(topo_types.ShellIndex, @enumFromInt(t_arena.shells.items.len));
-    try t_arena.shells.append(allocator, .{
-        .faces_start = sh_faces_start,
-        .faces_len = 6,
-    });
+    try t_arena.shells.append(allocator, .{ .faces_start = sh_faces_start, .faces_len = 6 });
 
     const solid_id = @as(topo_types.SolidIndex, @enumFromInt(t_arena.solids.items.len));
-    const so_shells_start = @as(u32, @intCast(t_arena.solid_shells.items.len));
     try t_arena.solid_shells.append(allocator, shell_id);
-    try t_arena.solids.append(allocator, .{
-        .shells_start = so_shells_start,
-        .shells_len = 1,
-    });
+    try t_arena.solids.append(allocator, .{ .shells_start = @as(u32, @intCast(t_arena.solid_shells.items.len - 1)), .shells_len = 1 });
 
     return solid_id;
 }
