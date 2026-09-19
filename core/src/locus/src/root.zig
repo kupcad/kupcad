@@ -41,7 +41,13 @@ pub const operations = struct {
 };
 
 test {
+    _ = @import("geometry/interning_test.zig");
+
     _ = @import("operations/generators_test.zig");
+
+    _ = @import("topology/checkpoint_test.zig");
+    _ = @import("topology/euler_ops_test.zig");
     _ = @import("topology/verifier_test.zig");
+
     _ = @import("test_runner.zig");
 }
