@@ -49,4 +49,6 @@ test {
     _ = @import("topology/checkpoint_test.zig");
     _ = @import("topology/euler_ops_test.zig");
     _ = @import("topology/verifier_test.zig");
+
+    _ = @import("testing/fixture_test.zig");
 }
