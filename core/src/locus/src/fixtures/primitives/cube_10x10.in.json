@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "tolerance": 0.000001,
+  "points": [
+    [-5.0, -5.0, -5.0],
+    [5.0, -5.0, -5.0],
+    [5.0, 5.0, -5.0],
+    [-5.0, 5.0, -5.0],
+    [-5.0, -5.0, 5.0],
+    [5.0, -5.0, 5.0],
+    [5.0, 5.0, 5.0],
+    [-5.0, 5.0, 5.0]
+  ],
+  "vertices": [0, 1, 2, 3, 4, 5, 6, 7],
+  "half_edges": [
+    {
+      "start_vertex": 0,
+      "twin": 13,
+      "next": 1,
+      "prev": 3,
+      "loop_id": 0,
+      "curve_type": 0,
+      "curve_index": 0,
+      "forward": true
+    }
+  ],
+  "loops": [
+    {
+      "face_id": 0,
+      "first_half_edge": 0
+    }
+  ],
+  "faces": [
+    {
+      "surface_type": 0,
+      "surface_index": 0,
+      "forward": true,
+      "loops_start": 0,
+      "loops_len": 1
+    }
+  ],
+  "shells": [
+    {
+      "faces_start": 0,
+      "faces_len": 6
+    }
+  ],
+  "solids": [
+    {
+      "shells_start": 0,
+      "shells_len": 1
+    }
+  ],
+  "solid_shells": [0],
+  "shell_faces": [0, 1, 2, 3, 4, 5],
+  "face_loops": [0, 1, 2, 3, 4, 5],
+  "target_solid": 0
+}
