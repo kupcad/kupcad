@@ -10321,23 +10321,25 @@ test "VM: Mid-expression throw safely unwinds without stack underflow" {
     try testing.expectEqual(@as(f64, 99.0), result.asNumber());
 }
 
-test "VM: Map#map and Array#to_h convert between pairs and hashes" {
+test "VM: Map#to_a, Map#map, and Array#to_h convert seamlessly" {
     var vm = try VM.init(std.testing.allocator, std.testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // 1. `orig.map()` without a block creates [[k, v], ...]
-    // 2. `pairs.to_h()` flawlessly reconstructs it
-    // 3. `orig.map { |k, v| [k, v * 2] }` dynamically evaluates the mapping logic
+    // 1. `orig.to_a()` natively extracts pairs to [[k, v], ...]
+    // 2. `orig.map()` without block routes securely through the same to_a logic
+    // 3. `pairs.to_h()` flawlessly reconstructs it
     // 4. Checking against order-independent keys ensures Hash wyhash randomness doesn't flake the test
     const source =
         \\orig = { a: 10, b: 20 }
-        \\pairs = orig.map
-        \\rebuilt = pairs.to_h
+        \\
+        \\pairs_a = orig.to_a
+        \\pairs_b = orig.map
+        \\rebuilt = pairs_a.to_h
         \\
         \\custom_h = orig.map { |k, v| [k, v * 2] }.to_h
         \\
-        \\[pairs.length, pairs[0].length, rebuilt[:a], rebuilt[:b], custom_h[:a], custom_h[:b]]
+        \\[pairs_a.length, pairs_b.length, rebuilt[:a], rebuilt[:b], custom_h[:a], custom_h[:b]]
     ;
 
     var doc = try Document.parse(std.testing.allocator, source);
@@ -10352,8 +10354,8 @@ test "VM: Map#map and Array#to_h convert between pairs and hashes" {
     const arr_obj = result.asArray();
     try std.testing.expectEqual(@as(usize, 6), arr_obj.items.items.len);
 
-    try std.testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber()); // length of pairs array
-    try std.testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[1].asNumber()); // length of the inner pair array
+    try std.testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber()); // to_a() length
+    try std.testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[1].asNumber()); // map() fallback length
 
     // Original values properly reconstructed via to_h()
     try std.testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[2].asNumber()); // rebuilt[:a]

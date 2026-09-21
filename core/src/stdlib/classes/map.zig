@@ -57,12 +57,12 @@ pub fn mapEach(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure) !value.V
     return value.Value.initObj(&map.obj);
 }
 
-/// Map#map { |k, v| ... }
-/// Yields an array of array pairs `[[k, v], ...]` if no block is provided,
-/// or an array of the block evaluations if a block is provided.
-pub fn mapMap(vm: *VM, map: *value.ObjMap, block_opt: ?*value.ObjClosure) !value.Value {
+/// Map#to_a
+/// Converts the map to an array of key-value pair arrays [[k, v], ...]
+pub fn mapToA(vm: *VM, map: *value.ObjMap) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
+
     const new_arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&new_arr.obj));
 
@@ -72,23 +72,48 @@ pub fn mapMap(vm: *VM, map: *value.ObjMap, block_opt: ?*value.ObjClosure) !value
     const values = map.map.values();
 
     for (keys, 0..) |k, i| {
-        if (block_opt) |closure| {
-            const mapped_val = vm.callClosureSync(closure, &.{ k, values[i] }) catch |err| {
-                if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
-                return err;
-            };
-            new_arr.items.appendAssumeCapacity(mapped_val);
-        } else {
-            // No block given: return an array representation [k, v]
-            const pair_arr = try vm.gc.allocateArray(vm);
-            vm.push(value.Value.initObj(&pair_arr.obj));
-            try pair_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), 2);
-            pair_arr.items.appendAssumeCapacity(k);
-            pair_arr.items.appendAssumeCapacity(values[i]);
-            _ = vm.pop(); // Pop pair_arr
-            new_arr.items.appendAssumeCapacity(value.Value.initObj(&pair_arr.obj));
-        }
+        const pair_arr = try vm.gc.allocateArray(vm);
+        vm.push(value.Value.initObj(&pair_arr.obj)); // Protect pair_arr from GC
+
+        try pair_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), 2);
+        pair_arr.items.appendAssumeCapacity(k);
+        pair_arr.items.appendAssumeCapacity(values[i]);
+
+        _ = vm.pop(); // Unprotect pair_arr
+        new_arr.items.appendAssumeCapacity(value.Value.initObj(&pair_arr.obj));
     }
+
+    return value.Value.initObj(&new_arr.obj);
+}
+
+/// Map#map { |k, v| ... }
+/// Yields an array of array pairs `[[k, v], ...]` if no block is provided,
+/// or an array of the block evaluations if a block is provided.
+pub fn mapMap(vm: *VM, map: *value.ObjMap, block_opt: ?*value.ObjClosure) !value.Value {
+    // Fallback to `to_a` if no block is provided
+    if (block_opt == null) {
+        return mapToA(vm, map);
+    }
+
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+    const new_arr = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&new_arr.obj));
+
+    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
+
+    const keys = map.map.keys();
+    const values = map.map.values();
+    const closure = block_opt.?;
+
+    for (keys, 0..) |k, i| {
+        const mapped_val = vm.callClosureSync(closure, &.{ k, values[i] }) catch |err| {
+            if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
+            return err;
+        };
+        new_arr.items.appendAssumeCapacity(mapped_val);
+    }
+
     return value.Value.initObj(&new_arr.obj);
 }
 
@@ -177,4 +202,5 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "merge", .func = common.wrapMethod(mapMerge) },
     .{ .name = "symbolize_keys", .func = common.wrapMethod(mapSymbolizeKeys) },
     .{ .name = "stringify_keys", .func = common.wrapMethod(mapStringifyKeys) },
+    .{ .name = "to_a", .func = common.wrapMethod(mapToA) },
 };
