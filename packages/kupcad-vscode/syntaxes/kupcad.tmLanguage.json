@@ -171,7 +171,7 @@
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {
-      "match": "(?<![\\\\w])(is_a?|responds_to?|nil?|empty?|method|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reduce|first|last|contains?|flatten|max|min|sum|sort|to_h|keys|values|key?|delete|get|merge|symbolize_keys|stringify_keys|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|round|ceil|floor|abs|inspect|invert|sin|cos|tan|asin|acos|atan2|sqrt|deg2rad|rad2deg|clamp|lerp|hypot|sign|collect|bytes_allocated)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(is_a?|responds_to?|nil?|empty?|method|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reduce|first|last|contains?|flatten|max|min|sum|sort|to_h|keys|values|key?|delete|get|merge|symbolize_keys|stringify_keys|to_a|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|round|ceil|floor|abs|inspect|invert|sin|cos|tan|asin|acos|atan2|sqrt|deg2rad|rad2deg|clamp|lerp|hypot|sign|collect|bytes_allocated)(?![\\\\w?!])",
       "name": "support.function.core.kupcad"
     },
     "primitives_3d": {
