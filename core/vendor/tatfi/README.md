@@ -1,5 +1,3 @@
-![alt text](tatfi.jpg "tatfi")
-
 # `tatfi` - TTF parsing in Zig
 
 `tatfi` is an almost state-less, almost allocation-free, high level font parser of `TTF`, `OTF` and `AAT` written in pure Zig. It has no dependencies outside of the Zig standard library. It aims to be completely safe and completely panic free. If you find it panics in any compilation mode, please report it as a bug.
