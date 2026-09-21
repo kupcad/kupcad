@@ -10320,3 +10320,68 @@ test "VM: Mid-expression throw safely unwinds without stack underflow" {
     // It should cleanly rescue and yield the fallback value 99
     try testing.expectEqual(@as(f64, 99.0), result.asNumber());
 }
+
+test "VM: Map#map and Array#to_h convert between pairs and hashes" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // 1. `orig.map()` without a block creates [[k, v], ...]
+    // 2. `pairs.to_h()` flawlessly reconstructs it
+    // 3. `orig.map { |k, v| [k, v * 2] }` dynamically evaluates the mapping logic
+    // 4. Checking against order-independent keys ensures Hash wyhash randomness doesn't flake the test
+    const source =
+        \\orig = { a: 10, b: 20 }
+        \\pairs = orig.map
+        \\rebuilt = pairs.to_h
+        \\
+        \\custom_h = orig.map { |k, v| [k, v * 2] }.to_h
+        \\
+        \\[pairs.length, pairs[0].length, rebuilt[:a], rebuilt[:b], custom_h[:a], custom_h[:b]]
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    const arr_obj = result.asArray();
+    try std.testing.expectEqual(@as(usize, 6), arr_obj.items.items.len);
+
+    try std.testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber()); // length of pairs array
+    try std.testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[1].asNumber()); // length of the inner pair array
+
+    // Original values properly reconstructed via to_h()
+    try std.testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[2].asNumber()); // rebuilt[:a]
+    try std.testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[3].asNumber()); // rebuilt[:b]
+
+    // Custom block multipliers evaluated properly
+    try std.testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[4].asNumber()); // custom_h[:a]
+    try std.testing.expectEqual(@as(f64, 40.0), arr_obj.items.items[5].asNumber()); // custom_h[:b]
+}
+
+test "VM: Array#to_h safely throws ArgumentError on invalid structure" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\[1, 2, 3].to_h # Elements are numbers, not pair arrays
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // It should cleanly catch the invalid type and safely abort the execution
+    const result = vm.interpret(&out_chunk);
+    try std.testing.expectEqual(.runtime_error, result);
+}

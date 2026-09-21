@@ -32,8 +32,8 @@ pub fn mapValues(vm: *VM, map: *value.ObjMap) !value.Value {
     return value.Value.initObj(&new_arr.obj);
 }
 
-/// Map#has_key?(key)
-pub fn mapHasKey(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
+/// Map#key?(key)
+pub fn mapKey(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
     _ = vm;
     return value.Value.initBool(map.map.contains(key));
 }
@@ -55,6 +55,41 @@ pub fn mapEach(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure) !value.V
         _ = try vm.callClosureSync(closure, &.{ k, values[i] });
     }
     return value.Value.initObj(&map.obj);
+}
+
+/// Map#map { |k, v| ... }
+/// Yields an array of array pairs `[[k, v], ...]` if no block is provided,
+/// or an array of the block evaluations if a block is provided.
+pub fn mapMap(vm: *VM, map: *value.ObjMap, block_opt: ?*value.ObjClosure) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+    const new_arr = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&new_arr.obj));
+
+    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
+
+    const keys = map.map.keys();
+    const values = map.map.values();
+
+    for (keys, 0..) |k, i| {
+        if (block_opt) |closure| {
+            const mapped_val = vm.callClosureSync(closure, &.{ k, values[i] }) catch |err| {
+                if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
+                return err;
+            };
+            new_arr.items.appendAssumeCapacity(mapped_val);
+        } else {
+            // No block given: return an array representation [k, v]
+            const pair_arr = try vm.gc.allocateArray(vm);
+            vm.push(value.Value.initObj(&pair_arr.obj));
+            try pair_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), 2);
+            pair_arr.items.appendAssumeCapacity(k);
+            pair_arr.items.appendAssumeCapacity(values[i]);
+            _ = vm.pop(); // Pop pair_arr
+            new_arr.items.appendAssumeCapacity(value.Value.initObj(&pair_arr.obj));
+        }
+    }
+    return value.Value.initObj(&new_arr.obj);
 }
 
 /// Map#empty?
@@ -133,9 +168,10 @@ pub fn mapStringifyKeys(vm: *VM, map: *value.ObjMap) !value.Value {
 pub const methods = [_]common.MethodDef{
     .{ .name = "keys", .func = common.wrapMethod(mapKeys) },
     .{ .name = "values", .func = common.wrapMethod(mapValues) },
-    .{ .name = "has_key?", .func = common.wrapMethod(mapHasKey) },
+    .{ .name = "key?", .func = common.wrapMethod(mapKey) },
     .{ .name = "delete", .func = common.wrapMethod(mapDelete) },
     .{ .name = "each", .func = common.wrapMethod(mapEach) },
+    .{ .name = "map", .func = common.wrapMethod(mapMap) },
     .{ .name = "empty?", .func = common.wrapMethod(mapEmpty) },
     .{ .name = "get", .func = common.wrapMethod(mapGet) },
     .{ .name = "merge", .func = common.wrapMethod(mapMerge) },

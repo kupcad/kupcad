@@ -345,6 +345,38 @@ pub fn arraySort(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !valu
     return value.Value.initObj(&new_arr.obj);
 }
 
+/// Array#to_h
+/// Converts an array of pair arrays [[k, v], [k, v]] into a Map
+pub fn arrayToH(vm: *VM, arr: *value.ObjArray) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+
+    const new_map = try vm.gc.allocateMap(vm);
+    vm.push(value.Value.initObj(&new_map.obj));
+
+    try new_map.map.ensureTotalCapacity(vm.gc.trackingAllocator(), arr.items.items.len);
+
+    for (arr.items.items) |item| {
+        if (item.isArray()) {
+            const inner_arr = item.asArray();
+            const inner_items = inner_arr.items.items;
+            if (inner_items.len >= 2) {
+                try new_map.map.put(vm.gc.trackingAllocator(), inner_items[0], inner_items[1]);
+            } else if (inner_items.len == 1) {
+                try new_map.map.put(vm.gc.trackingAllocator(), inner_items[0], value.Value.initNil());
+            } else {
+                _ = vm.throwDynamicError("ArgumentError: empty array cannot be converted to key-value pair.\n", .{});
+                return error.RuntimeError;
+            }
+        } else {
+            _ = vm.throwDynamicError("ArgumentError: wrong element type (expected array).\n", .{});
+            return error.RuntimeError;
+        }
+    }
+
+    return value.Value.initObj(&new_map.obj);
+}
+
 /// Array class method dispatch table
 pub const methods = [_]common.MethodDef{
     .{ .name = "length", .func = common.wrapMethod(arrayLength) },
@@ -367,4 +399,5 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "min", .func = common.wrapMethod(arrayMin) },
     .{ .name = "sum", .func = common.wrapMethod(arraySum) },
     .{ .name = "sort", .func = common.wrapMethod(arraySort) },
+    .{ .name = "to_h", .func = common.wrapMethod(arrayToH) },
 };
