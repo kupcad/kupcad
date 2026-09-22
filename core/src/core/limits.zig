@@ -15,7 +15,7 @@ pub const INITIAL_STACK_CAPACITY: usize = 1024;
 // Compile-Time Platform Detection:
 // WASM -> 100M Gas Cap to protect Web Worker UI threads
 // Native Desktop -> 0 (Unlimited gas for heavy local batch modeling)
-pub const DEFAULT_INSTRUCTION_LIMIT: usize = if (builtin.cpu.arch.isWasm())
+pub const DEFAULT_INSTRUCTION_LIMIT: usize = if (builtin.target.cpu.arch == .wasm32)
     100_000_000
 else
     0;
