@@ -101,7 +101,7 @@ pub const FlatBVH = struct {
 
     fn buildRecursive(self: *FlatBVH, allocator: std.mem.Allocator, items: []FaceAABB) !u32 {
         if (items.len == 1) {
-            const node_idx = @as(u32, @intCast(self.nodes.items.len));
+            const node_idx: u32 = @intCast(self.nodes.items.len);
             try self.nodes.append(allocator, .{
                 .min = items[0].min,
                 .max = items[0].max,
@@ -141,7 +141,7 @@ pub const FlatBVH = struct {
         }.lessThan);
 
         const mid = items.len / 2;
-        const node_idx = @as(u32, @intCast(self.nodes.items.len));
+        const node_idx: u32 = @intCast(self.nodes.items.len);
 
         // Placeholder node
         try self.nodes.append(allocator, .{

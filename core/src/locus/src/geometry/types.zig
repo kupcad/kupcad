@@ -1,4 +1,3 @@
-const std = @import("std");
 
 // --- Typed Geometry Indices (u24 allows perfect 32-bit packing with the u8 type tags) ---
 pub const PointIndex = enum(u32) { _ };

@@ -1,7 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
 const Document = @import("document.zig").Document;
-const ast = @import("ast.zig");
 
 test "Document: parse successfully resolves semantics and parents" {
     const source =

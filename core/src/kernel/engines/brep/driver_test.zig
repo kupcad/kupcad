@@ -1,6 +1,5 @@
 const std = @import("std");
 const driver = @import("driver.zig");
-const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
 const step_exporter = @import("../../../exporters/3d/step.zig");
 

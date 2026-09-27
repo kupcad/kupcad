@@ -1,4 +1,3 @@
-const std = @import("std");
 
 // --- Core Math & Environment ---
 pub const math = @import("math.zig");

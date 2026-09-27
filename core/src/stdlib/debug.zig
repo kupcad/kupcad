@@ -192,7 +192,7 @@ fn printLocals(vm: *VM) void {
     if (vm.frames.items.len > 0) {
         const frame = &vm.frames.items[vm.frames.items.len - 1];
         if (frame.closure.function.chunk) |c_ptr| {
-            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(c_ptr)));
+            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(c_ptr));
             const locals = exec_chunk.local_names.items;
             for (locals, 0..) |name, i| {
                 if (std.mem.eql(u8, name, "<anonymous>")) continue;
@@ -267,7 +267,7 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
     const caller_frame = &vm.frames.items[vm.frames.items.len - 1];
     var caller_locals: []const []const u8 = &.{};
     if (caller_frame.closure.function.chunk) |c_ptr| {
-        const caller_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(c_ptr)));
+        const caller_chunk: *chunk.Chunk = @ptrCast(@alignCast(c_ptr));
         caller_locals = caller_chunk.local_names.items;
     }
 
@@ -346,7 +346,7 @@ pub fn debuggerLoop(vm: *VM) void {
     if (vm.frames.items.len > 0) {
         const frame = &vm.frames.items[vm.frames.items.len - 1];
         if (frame.closure.function.chunk) |chunk_ptr| {
-            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(chunk_ptr)));
+            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(chunk_ptr));
             const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
             const source_offset = exec_chunk.getOffset(instruction_ip);
             if (vm.line_index) |li| {

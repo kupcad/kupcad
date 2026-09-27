@@ -44,8 +44,8 @@ pub fn arrayUnshift(vm: *VM, arr: *value.ObjArray, val: value.Value) !value.Valu
 
 /// Array#slice(start, len)
 pub fn arraySlice(vm: *VM, arr: *value.ObjArray, start_num: f64, len_num: f64) !value.Value {
-    const start_idx = @as(usize, @intFromFloat(start_num));
-    const length = @as(usize, @intFromFloat(len_num));
+    const start_idx: usize = @intFromFloat(start_num);
+    const length: usize = @intFromFloat(len_num);
 
     var scope = HandleScope.init(vm);
     defer scope.deinit();
@@ -190,7 +190,7 @@ pub fn arrayFlatten(vm: *VM, arr: *value.ObjArray) !value.Value {
 
     for (arr.items.items) |item| {
         if (item.isObject() and item.asObj().obj_type == .array) {
-            const inner_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", item.asObj())));
+            const inner_arr: *value.ObjArray = @alignCast(@fieldParentPtr("obj", item.asObj()));
             for (inner_arr.items.items) |inner_item| {
                 try new_arr.items.append(vm.gc.trackingAllocator(), inner_item);
             }

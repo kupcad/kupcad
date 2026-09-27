@@ -1,6 +1,5 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
-const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;
 
 pub fn nativeAssert(vm: *VM, args: []const value.Value) anyerror!value.Value {
@@ -143,7 +142,7 @@ pub fn nativeBenchmark(vm: *VM, args: []const value.Value) anyerror!value.Value 
 
     // Calculate safe duration
     const duration_ns = start_time.durationTo(end_time).toNanoseconds();
-    const elapsed_ns = @as(u64, @intCast(@max(0, duration_ns)));
+    const elapsed_ns: u64 = @intCast(@max(0, duration_ns));
     const duration_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
 
     if (vm.host.print_handler) |print_handler| {

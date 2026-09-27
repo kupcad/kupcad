@@ -60,17 +60,17 @@ pub fn addFaceWithCurves(
     surface_id: geom_types.SurfaceId,
     twin_map: anytype,
 ) GenError!topo_types.FaceIndex {
-    const face_id = @as(topo_types.FaceIndex, @enumFromInt(t_arena.faces.items.len));
-    const loop_id = @as(topo_types.LoopIndex, @enumFromInt(t_arena.loops.items.len));
-    const he_start = @as(u32, @intCast(t_arena.half_edges.items.len));
+    const face_id: topo_types.FaceIndex = @enumFromInt(t_arena.faces.items.len);
+    const loop_id: topo_types.LoopIndex = @enumFromInt(t_arena.loops.items.len);
+    const he_start: u32 = @intCast(t_arena.half_edges.items.len);
     const n = vertices.len;
 
     for (0..n) |i| {
         const va = vertices[i];
         const vb = vertices[(i + 1) % n];
-        const next_he = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast((i + 1) % n))));
-        const prev_he = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast((i + n - 1) % n))));
-        const he_id = @as(topo_types.HalfEdgeIndex, @enumFromInt(t_arena.half_edges.items.len));
+        const next_he: topo_types.HalfEdgeIndex = @enumFromInt(he_start + @as(u32, @intCast((i + 1) % n)));
+        const prev_he: topo_types.HalfEdgeIndex = @enumFromInt(he_start + @as(u32, @intCast((i + n - 1) % n)));
+        const he_id: topo_types.HalfEdgeIndex = @enumFromInt(t_arena.half_edges.items.len);
         const curve_id = curves[i];
 
         try t_arena.half_edges.append(allocator, .{
@@ -99,7 +99,7 @@ pub fn addFaceWithCurves(
     }
 
     try t_arena.loops.append(allocator, .{ .face_id = face_id, .first_half_edge = @enumFromInt(he_start) });
-    const fl_start = @as(u32, @intCast(t_arena.face_loops.items.len));
+    const fl_start: u32 = @intCast(t_arena.face_loops.items.len);
     try t_arena.face_loops.append(allocator, loop_id);
 
     try t_arena.faces.append(allocator, .{
@@ -131,7 +131,7 @@ pub fn addPolygonFace(
         const p_start = g_arena.points.items[@intFromEnum(t_arena.vertices.items[@intFromEnum(v_start)].point)];
         const p_end = g_arena.points.items[@intFromEnum(t_arena.vertices.items[@intFromEnum(v_end)].point)];
 
-        const line_idx = @as(geom_types.CurveIndex, @enumFromInt(g_arena.lines.items.len));
+        const line_idx: geom_types.CurveIndex = @enumFromInt(g_arena.lines.items.len);
         try g_arena.lines.append(allocator, .{ .start = p_start, .end = p_end });
         curves_buf[i] = .{ .index = line_idx, .curve_type = .line };
     }
@@ -152,7 +152,7 @@ pub fn addPolygonFaceAutoPlane(
     const p1 = g_arena.points.items[@intFromEnum(t_arena.vertices.items[@intFromEnum(vertices[1])].point)];
     const p2 = g_arena.points.items[@intFromEnum(t_arena.vertices.items[@intFromEnum(vertices[2])].point)];
 
-    const plane_idx = @as(u32, @intCast(g_arena.planes.items.len));
+    const plane_idx: u32 = @intCast(g_arena.planes.items.len);
     try g_arena.planes.append(allocator, computePlaneFromPoints(p0, p1, p2));
 
     const surf_id = geom_types.SurfaceId{
@@ -169,15 +169,15 @@ pub fn packageSingleShellSolid(
     t_arena: *topo_arena.TopologyArena,
     sh_faces_start: u32,
 ) GenError!topo_types.SolidIndex {
-    const num_faces = @as(u32, @intCast(t_arena.shell_faces.items.len - sh_faces_start));
-    const shell_id = @as(topo_types.ShellIndex, @enumFromInt(t_arena.shells.items.len));
+    const num_faces: u32 = @intCast(t_arena.shell_faces.items.len - sh_faces_start);
+    const shell_id: topo_types.ShellIndex = @enumFromInt(t_arena.shells.items.len);
     try t_arena.shells.append(allocator, .{
         .faces_start = sh_faces_start,
         .faces_len = num_faces,
     });
 
-    const solid_id = @as(topo_types.SolidIndex, @enumFromInt(t_arena.solids.items.len));
-    const so_shells_start = @as(u32, @intCast(t_arena.solid_shells.items.len));
+    const solid_id: topo_types.SolidIndex = @enumFromInt(t_arena.solids.items.len);
+    const so_shells_start: u32 = @intCast(t_arena.solid_shells.items.len);
     try t_arena.solid_shells.append(allocator, shell_id);
     try t_arena.solids.append(allocator, .{
         .shells_start = so_shells_start,
@@ -210,12 +210,12 @@ pub fn generateCube(
     };
 
     for (points) |pt| {
-        const pt_idx = @as(u32, @intCast(g_arena.points.items.len));
+        const pt_idx: u32 = @intCast(g_arena.points.items.len);
         try g_arena.points.append(allocator, pt);
         try t_arena.vertices.append(allocator, .{ .point = @as(geom_types.PointIndex, @enumFromInt(pt_idx)) });
     }
 
-    const p_start = @as(u32, @intCast(g_arena.planes.items.len));
+    const p_start: u32 = @intCast(g_arena.planes.items.len);
     const planes = [_]geom_arena.surfaces.Plane{
         .{ .origin = .{ 0, 0, oz }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, -1, 0 } },
         .{ .origin = .{ 0, 0, oz + z }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } },
@@ -234,7 +234,7 @@ pub fn generateCube(
         .{ 1, 2, 6, 5 }, .{ 2, 3, 7, 6 }, .{ 3, 0, 4, 7 },
     };
 
-    const sh_faces_start = @as(u32, @intCast(t_arena.shell_faces.items.len));
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
 
     for (face_indices, 0..) |f_idx, i| {
         const quad = [_]topo_types.VertexIndex{
@@ -261,8 +261,8 @@ pub fn generateCylinder(
 ) GenError!topo_types.SolidIndex {
     const oz = if (center) -height / 2.0 else 0.0;
 
-    const p_start = @as(u32, @intCast(g_arena.points.items.len));
-    const v_start = @as(u32, @intCast(t_arena.vertices.items.len));
+    const p_start: u32 = @intCast(g_arena.points.items.len);
+    const v_start: u32 = @intCast(t_arena.vertices.items.len);
 
     const p0 = math.Vec3{ radius, 0.0, oz };
     const p1 = math.Vec3{ -radius, 0.0, oz };
@@ -280,20 +280,20 @@ pub fn generateCylinder(
         });
     }
 
-    const v0 = @as(topo_types.VertexIndex, @enumFromInt(v_start + 0));
-    const v1 = @as(topo_types.VertexIndex, @enumFromInt(v_start + 1));
-    const v2 = @as(topo_types.VertexIndex, @enumFromInt(v_start + 2));
-    const v3 = @as(topo_types.VertexIndex, @enumFromInt(v_start + 3));
+    const v0: topo_types.VertexIndex = @enumFromInt(v_start + 0);
+    const v1: topo_types.VertexIndex = @enumFromInt(v_start + 1);
+    const v2: topo_types.VertexIndex = @enumFromInt(v_start + 2);
+    const v3: topo_types.VertexIndex = @enumFromInt(v_start + 3);
 
     // Cap Planes
-    const bot_plane_idx = @as(geom_types.SurfaceIndex, @enumFromInt(g_arena.planes.items.len));
+    const bot_plane_idx: geom_types.SurfaceIndex = @enumFromInt(g_arena.planes.items.len);
     try g_arena.planes.append(allocator, .{ .origin = .{ 0.0, 0.0, oz }, .u_axis = .{ 1.0, 0.0, 0.0 }, .v_axis = .{ 0.0, -1.0, 0.0 } });
 
-    const top_plane_idx = @as(geom_types.SurfaceIndex, @enumFromInt(g_arena.planes.items.len));
+    const top_plane_idx: geom_types.SurfaceIndex = @enumFromInt(g_arena.planes.items.len);
     try g_arena.planes.append(allocator, .{ .origin = .{ 0.0, 0.0, oz + height }, .u_axis = .{ 1.0, 0.0, 0.0 }, .v_axis = .{ 0.0, 1.0, 0.0 } });
 
     // Analytical Quadric Surface
-    const cyl_surf_idx = @as(geom_types.SurfaceIndex, @enumFromInt(g_arena.cylinders.items.len));
+    const cyl_surf_idx: geom_types.SurfaceIndex = @enumFromInt(g_arena.cylinders.items.len);
     try g_arena.cylinders.append(allocator, .{
         .origin = .{ 0.0, 0.0, oz },
         .axis = .{ 0.0, 0.0, 1.0 },
@@ -303,23 +303,23 @@ pub fn generateCylinder(
     });
 
     // Circular Arcs
-    const bot_arc_pos_idx = @as(geom_types.CurveIndex, @enumFromInt(g_arena.circle_arcs.items.len));
+    const bot_arc_pos_idx: geom_types.CurveIndex = @enumFromInt(g_arena.circle_arcs.items.len);
     try g_arena.circle_arcs.append(allocator, .{ .center = .{ 0.0, 0.0, oz }, .radius = radius, .x_axis = .{ 1.0, 0.0, 0.0 }, .y_axis = .{ 0.0, 1.0, 0.0 } });
 
-    const bot_arc_neg_idx = @as(geom_types.CurveIndex, @enumFromInt(g_arena.circle_arcs.items.len));
+    const bot_arc_neg_idx: geom_types.CurveIndex = @enumFromInt(g_arena.circle_arcs.items.len);
     try g_arena.circle_arcs.append(allocator, .{ .center = .{ 0.0, 0.0, oz }, .radius = radius, .x_axis = .{ -1.0, 0.0, 0.0 }, .y_axis = .{ 0.0, -1.0, 0.0 } });
 
-    const top_arc_pos_idx = @as(geom_types.CurveIndex, @enumFromInt(g_arena.circle_arcs.items.len));
+    const top_arc_pos_idx: geom_types.CurveIndex = @enumFromInt(g_arena.circle_arcs.items.len);
     try g_arena.circle_arcs.append(allocator, .{ .center = .{ 0.0, 0.0, oz + height }, .radius = radius, .x_axis = .{ 1.0, 0.0, 0.0 }, .y_axis = .{ 0.0, 1.0, 0.0 } });
 
-    const top_arc_neg_idx = @as(geom_types.CurveIndex, @enumFromInt(g_arena.circle_arcs.items.len));
+    const top_arc_neg_idx: geom_types.CurveIndex = @enumFromInt(g_arena.circle_arcs.items.len);
     try g_arena.circle_arcs.append(allocator, .{ .center = .{ 0.0, 0.0, oz + height }, .radius = radius, .x_axis = .{ -1.0, 0.0, 0.0 }, .y_axis = .{ 0.0, -1.0, 0.0 } });
 
     // Vertical Seam Lines
-    const seam_180_idx = @as(geom_types.CurveIndex, @enumFromInt(g_arena.lines.items.len));
+    const seam_180_idx: geom_types.CurveIndex = @enumFromInt(g_arena.lines.items.len);
     try g_arena.lines.append(allocator, .{ .start = p1, .end = p2 });
 
-    const seam_0_idx = @as(geom_types.CurveIndex, @enumFromInt(g_arena.lines.items.len));
+    const seam_0_idx: geom_types.CurveIndex = @enumFromInt(g_arena.lines.items.len);
     try g_arena.lines.append(allocator, .{ .start = p0, .end = p3 });
 
     const bot_surf_id = geom_types.SurfaceId{ .index = bot_plane_idx, .surface_type = .plane };
@@ -336,7 +336,7 @@ pub fn generateCylinder(
     var twin_map = std.AutoHashMap(geom_types.CurveId, topo_types.HalfEdgeIndex).init(allocator);
     defer twin_map.deinit();
 
-    const sh_faces_start = @as(u32, @intCast(t_arena.shell_faces.items.len));
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
 
     // Face 0: Bottom Cap
     const f0 = try addFaceWithCurves(.by_curve_id, allocator, t_arena, &[_]topo_types.VertexIndex{ v0, v1 }, &[_]geom_types.CurveId{ c_bot_neg, c_bot_pos }, bot_surf_id, &twin_map);
@@ -366,9 +366,9 @@ pub fn generateSphere(
     const rings: u32 = 8;
     const segments: u32 = 16;
 
-    const v_start = @as(u32, @intCast(t_arena.vertices.items.len));
-    const p_start = @as(u32, @intCast(g_arena.points.items.len));
-    const sh_faces_start = @as(u32, @intCast(t_arena.shell_faces.items.len));
+    const v_start: u32 = @intCast(t_arena.vertices.items.len);
+    const p_start: u32 = @intCast(g_arena.points.items.len);
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
     const first_he_idx = t_arena.half_edges.items.len;
 
     const top_pt = math.Vec3{ 0, 0, radius };
@@ -391,14 +391,14 @@ pub fn generateSphere(
                 radius * sin_phi * @sin(theta),
                 radius * cos_phi,
             };
-            const pt_idx = @as(u32, @intCast(g_arena.points.items.len));
+            const pt_idx: u32 = @intCast(g_arena.points.items.len);
             try g_arena.points.append(allocator, pt);
             try t_arena.vertices.append(allocator, .{ .point = @as(geom_types.PointIndex, @enumFromInt(pt_idx)) });
         }
     }
 
-    const top_v = @as(topo_types.VertexIndex, @enumFromInt(v_start + 0));
-    const bot_v = @as(topo_types.VertexIndex, @enumFromInt(v_start + 1));
+    const top_v: topo_types.VertexIndex = @enumFromInt(v_start + 0);
+    const bot_v: topo_types.VertexIndex = @enumFromInt(v_start + 1);
 
     const ringVertex = struct {
         fn get(v_base: u32, r_idx: usize, s_idx: usize, segs: u32) topo_types.VertexIndex {
@@ -496,11 +496,11 @@ pub fn addMultiLoopFace(
     surface_id: geom_types.SurfaceId,
     twin_map: *std.AutoHashMap(EdgeKey, topo_types.HalfEdgeIndex),
 ) GenError!topo_types.FaceIndex {
-    const f_loops_start = @as(u32, @intCast(t_arena.face_loops.items.len));
+    const f_loops_start: u32 = @intCast(t_arena.face_loops.items.len);
 
     for (loops) |vertices| {
-        const loop_id = @as(topo_types.LoopIndex, @enumFromInt(t_arena.loops.items.len));
-        const he_start = @as(u32, @intCast(t_arena.half_edges.items.len));
+        const loop_id: topo_types.LoopIndex = @enumFromInt(t_arena.loops.items.len);
+        const he_start: u32 = @intCast(t_arena.half_edges.items.len);
         const n = vertices.len;
 
         for (0..n) |i| {
@@ -510,10 +510,10 @@ pub fn addMultiLoopFace(
             const p_start = g_arena.points.items[@intFromEnum(t_arena.vertices.items[@intFromEnum(v_start)].point)];
             const p_end = g_arena.points.items[@intFromEnum(t_arena.vertices.items[@intFromEnum(v_end)].point)];
 
-            const line_idx = @as(geom_types.CurveIndex, @enumFromInt(g_arena.lines.items.len));
+            const line_idx: geom_types.CurveIndex = @enumFromInt(g_arena.lines.items.len);
             try g_arena.lines.append(allocator, .{ .start = p_start, .end = p_end });
 
-            const he_id = @as(topo_types.HalfEdgeIndex, @enumFromInt(t_arena.half_edges.items.len));
+            const he_id: topo_types.HalfEdgeIndex = @enumFromInt(t_arena.half_edges.items.len);
             try t_arena.half_edges.append(allocator, .{
                 .start_vertex = v_start,
                 .twin = topo_types.NULL_HALF_EDGE,
@@ -537,7 +537,7 @@ pub fn addMultiLoopFace(
         try t_arena.face_loops.append(allocator, loop_id);
     }
 
-    const face_id = @as(topo_types.FaceIndex, @enumFromInt(t_arena.faces.items.len));
+    const face_id: topo_types.FaceIndex = @enumFromInt(t_arena.faces.items.len);
     try t_arena.faces.append(allocator, .{
         .surface = surface_id,
         .forward = true,
@@ -563,14 +563,14 @@ pub fn generatePolygon(
     defer allocator.free(vert_ids);
 
     for (pts, 0..) |pt, i| {
-        const pt_idx = @as(u32, @intCast(g_arena.points.items.len));
+        const pt_idx: u32 = @intCast(g_arena.points.items.len);
         try g_arena.points.append(allocator, .{ pt[0], pt[1], 0.0 });
-        const v_id = @as(topo_types.VertexIndex, @enumFromInt(t_arena.vertices.items.len));
+        const v_id: topo_types.VertexIndex = @enumFromInt(t_arena.vertices.items.len);
         try t_arena.vertices.append(allocator, .{ .point = @enumFromInt(pt_idx) });
         vert_ids[i] = v_id;
     }
 
-    const plane_idx = @as(u32, @intCast(g_arena.planes.items.len));
+    const plane_idx: u32 = @intCast(g_arena.planes.items.len);
     try g_arena.planes.append(allocator, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
 
     var twin_map = std.AutoHashMap(EdgeKey, topo_types.HalfEdgeIndex).init(allocator);
@@ -579,7 +579,7 @@ pub fn generatePolygon(
     const surf_id = geom_types.SurfaceId{ .index = @enumFromInt(plane_idx), .surface_type = .plane };
     const face_id = try addPolygonFace(allocator, t_arena, g_arena, vert_ids, surf_id, &twin_map);
 
-    const sh_faces_start = @as(u32, @intCast(t_arena.shell_faces.items.len));
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
     try t_arena.shell_faces.append(allocator, face_id);
 
     return packageSingleShellSolid(allocator, t_arena, sh_faces_start);
@@ -594,12 +594,12 @@ pub fn buildPolyhedron(
 ) GenError!topo_types.SolidIndex {
     const v_start = t_arena.vertices.items.len;
     for (pts) |p| {
-        const pt_idx = @as(u32, @intCast(g_arena.points.items.len));
+        const pt_idx: u32 = @intCast(g_arena.points.items.len);
         try g_arena.points.append(allocator, p);
         try t_arena.vertices.append(allocator, .{ .point = @as(geom_types.PointIndex, @enumFromInt(pt_idx)) });
     }
 
-    const sh_faces_start = @as(u32, @intCast(t_arena.shell_faces.items.len));
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
 
     var twin_map = std.AutoHashMap(EdgeKey, topo_types.HalfEdgeIndex).init(allocator);
     defer twin_map.deinit();
@@ -624,7 +624,7 @@ pub fn generatePolygonsEvenOdd(
     g_arena: *geom_arena.GeometryArena,
     contours: []const []const [2]f64,
 ) GenError!topo_types.SolidIndex {
-    const plane_idx = @as(u32, @intCast(g_arena.planes.items.len));
+    const plane_idx: u32 = @intCast(g_arena.planes.items.len);
     try g_arena.planes.append(allocator, .{ .origin = .{ 0, 0, 0 }, .u_axis = .{ 1, 0, 0 }, .v_axis = .{ 0, 1, 0 } });
     var twin_map = std.AutoHashMap(EdgeKey, topo_types.HalfEdgeIndex).init(allocator);
     defer twin_map.deinit();
@@ -638,9 +638,9 @@ pub fn generatePolygonsEvenOdd(
     for (contours) |pts| {
         var vert_ids = try allocator.alloc(topo_types.VertexIndex, pts.len);
         for (pts, 0..) |pt, i| {
-            const pt_idx = @as(u32, @intCast(g_arena.points.items.len));
+            const pt_idx: u32 = @intCast(g_arena.points.items.len);
             try g_arena.points.append(allocator, .{ pt[0], pt[1], 0.0 });
-            const v_id = @as(topo_types.VertexIndex, @enumFromInt(t_arena.vertices.items.len));
+            const v_id: topo_types.VertexIndex = @enumFromInt(t_arena.vertices.items.len);
             try t_arena.vertices.append(allocator, .{ .point = @enumFromInt(pt_idx) });
             vert_ids[i] = v_id;
         }
@@ -650,7 +650,7 @@ pub fn generatePolygonsEvenOdd(
     const surf_id = geom_types.SurfaceId{ .index = @enumFromInt(plane_idx), .surface_type = .plane };
     const face_id = try addMultiLoopFace(allocator, t_arena, g_arena, loops_verts.items, surf_id, &twin_map);
 
-    const sh_faces_start = @as(u32, @intCast(t_arena.shell_faces.items.len));
+    const sh_faces_start: u32 = @intCast(t_arena.shell_faces.items.len);
     try t_arena.shell_faces.append(allocator, face_id);
 
     return packageSingleShellSolid(allocator, t_arena, sh_faces_start);

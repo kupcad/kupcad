@@ -118,7 +118,7 @@ test "VM: Character ranges evaluate to an Array of Strings" {
     const arr_val = vm.stack[0];
     try testing.expect(arr_val.isObject());
 
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
 
     const b_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj()))).chars;

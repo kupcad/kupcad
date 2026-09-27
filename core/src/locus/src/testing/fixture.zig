@@ -3,8 +3,6 @@ const math_env = @import("../math_env.zig");
 const topo_arena = @import("../topology/arena.zig");
 const topo_types = @import("../topology/types.zig");
 const geom_arena = @import("../geometry/arena.zig");
-const geom_types = @import("../geometry/types.zig");
-const verifier = @import("../topology/verifier.zig");
 
 pub const FixtureData = struct {
     version: u32 = 1,

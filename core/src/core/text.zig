@@ -154,7 +154,7 @@ pub fn extractText(
     errdefer polygons.deinit(allocator);
 
     // Calculate scaling factor from font design units to physical CAD units (mm)
-    const units_per_em = @as(f64, @floatFromInt(face.units_per_em()));
+    const units_per_em: f64 = @floatFromInt(face.units_per_em());
     const scale = size_mm / units_per_em;
     const tol_sq = tolerance * tolerance;
 

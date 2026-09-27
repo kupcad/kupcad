@@ -1,6 +1,5 @@
 const std = @import("std");
 const value = @import("value.zig");
-const ast = @import("ast.zig");
 
 pub const ParamType = enum {
     number,

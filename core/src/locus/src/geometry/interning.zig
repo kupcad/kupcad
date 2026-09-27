@@ -18,7 +18,7 @@ pub const Interner = struct {
                 return @enumFromInt(@as(u32, @intCast(idx)));
             }
         }
-        const new_idx = @as(geom_types.PointIndex, @enumFromInt(@as(u32, @intCast(g.points.items.len))));
+        const new_idx: geom_types.PointIndex = @enumFromInt(@as(u32, @intCast(g.points.items.len)));
         try g.points.append(allocator, pt);
         return new_idx;
     }
@@ -35,7 +35,7 @@ pub const Interner = struct {
                 return @enumFromInt(@as(u24, @intCast(idx)));
             }
         }
-        const new_idx = @as(geom_types.CurveIndex, @enumFromInt(@as(u24, @intCast(g.lines.items.len))));
+        const new_idx: geom_types.CurveIndex = @enumFromInt(@as(u24, @intCast(g.lines.items.len)));
         try g.lines.append(allocator, line);
         return new_idx;
     }
@@ -55,7 +55,7 @@ pub const Interner = struct {
                 return @enumFromInt(@as(u24, @intCast(idx)));
             }
         }
-        const new_idx = @as(geom_types.SurfaceIndex, @enumFromInt(@as(u24, @intCast(g.planes.items.len))));
+        const new_idx: geom_types.SurfaceIndex = @enumFromInt(@as(u24, @intCast(g.planes.items.len)));
         try g.planes.append(allocator, plane);
         return new_idx;
     }

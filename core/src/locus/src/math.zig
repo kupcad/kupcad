@@ -1,4 +1,3 @@
-const std = @import("std");
 
 /// Used purely for floating-point safety and preventing division by zero.
 pub const MATH_EPSILON = 1.0e-12;

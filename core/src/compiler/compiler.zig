@@ -28,8 +28,6 @@ pub const CompileError = error{
 pub const Upvalue = scope_mod.Upvalue;
 pub const Local = scope_mod.Local;
 pub const LoopState = scope_mod.LoopState;
-const VarType = scope_mod.VarType;
-const ResolvedVar = scope_mod.ResolvedVar;
 
 pub const Compiler = struct {
     allocator: std.mem.Allocator,

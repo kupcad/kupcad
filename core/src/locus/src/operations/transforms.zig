@@ -19,8 +19,8 @@ fn cloneAndTransform(
     _ = env;
     _ = src_solid;
 
-    const v_offset = @as(u32, @intCast(dest_t.vertices.items.len));
-    const pt_offset = @as(u32, @intCast(dest_g.points.items.len));
+    const v_offset: u32 = @intCast(dest_t.vertices.items.len);
+    const pt_offset: u32 = @intCast(dest_g.points.items.len);
 
     // Clone & transform points using .apply(pt)
     for (src_g.points.items) |pt| {
@@ -39,10 +39,10 @@ fn cloneAndTransform(
     try dest_g.planes.appendSlice(allocator, src_g.planes.items);
 
     // Copy topology arrays
-    const he_offset = @as(u32, @intCast(dest_t.half_edges.items.len));
-    const loop_offset = @as(u32, @intCast(dest_t.loops.items.len));
-    const face_offset = @as(u32, @intCast(dest_t.faces.items.len));
-    const shell_offset = @as(u32, @intCast(dest_t.shells.items.len));
+    const he_offset: u32 = @intCast(dest_t.half_edges.items.len);
+    const loop_offset: u32 = @intCast(dest_t.loops.items.len);
+    const face_offset: u32 = @intCast(dest_t.faces.items.len);
+    const shell_offset: u32 = @intCast(dest_t.shells.items.len);
     _ = shell_offset; // <-- Add this to silence unused constant
 
     for (src_t.half_edges.items) |he| {
@@ -83,19 +83,19 @@ fn cloneAndTransform(
         try dest_t.face_loops.append(allocator, @enumFromInt(@intFromEnum(fl) + loop_offset));
     }
 
-    const sh_faces_start = @as(u32, @intCast(dest_t.shell_faces.items.len));
+    const sh_faces_start: u32 = @intCast(dest_t.shell_faces.items.len);
     for (src_t.shell_faces.items) |sf| {
         try dest_t.shell_faces.append(allocator, @enumFromInt(@intFromEnum(sf) + face_offset));
     }
 
-    const new_shell_idx = @as(topo_types.ShellIndex, @enumFromInt(dest_t.shells.items.len));
+    const new_shell_idx: topo_types.ShellIndex = @enumFromInt(dest_t.shells.items.len);
     try dest_t.shells.append(allocator, .{
         .faces_start = sh_faces_start,
         .faces_len = @intCast(src_t.shell_faces.items.len - sh_faces_start),
     });
 
-    const new_solid_idx = @as(topo_types.SolidIndex, @enumFromInt(dest_t.solids.items.len));
-    const so_shells_start = @as(u32, @intCast(dest_t.solid_shells.items.len));
+    const new_solid_idx: topo_types.SolidIndex = @enumFromInt(dest_t.solids.items.len);
+    const so_shells_start: u32 = @intCast(dest_t.solid_shells.items.len);
     try dest_t.solid_shells.append(allocator, new_shell_idx);
     try dest_t.solids.append(allocator, .{
         .shells_start = so_shells_start,

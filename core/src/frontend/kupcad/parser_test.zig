@@ -3395,7 +3395,7 @@ test "KupCAD Parser: Ruby Double-Quoted Escape Sequences" {
     const expr = pt.getNode(expr_idx);
 
     try testing.expectEqual(ast.Tag.string, expr.tag);
-    const str_id = @as(ast.StringId, @enumFromInt(expr.data));
+    const str_id: ast.StringId = @enumFromInt(expr.data);
     const parsed_str = pt.parser.b.tree.getString(str_id);
 
     try testing.expectEqualStrings("Line 1\nLine 2\tTabbed\"Quote\\Hash#", parsed_str);

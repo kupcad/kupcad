@@ -3,7 +3,6 @@ const api = @import("../api.zig");
 const ast_dumper = @import("../tools/dev/ast_dumper.zig");
 const profiler_mod = @import("../vm/profiler.zig");
 const fs = @import("fs.zig");
-const VM = @import("../vm/vm.zig").VM;
 const chunk = @import("../vm/chunk.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
@@ -11,7 +10,6 @@ const disassembler = @import("../tools/dev/disassembler.zig");
 const Lexer = @import("../frontend/kupcad/lexer.zig").Lexer;
 const log_helpers = @import("../log.zig");
 const ScriptSession = @import("../daemon/session.zig").ScriptSession;
-const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 
 const log = std.log.scoped(.dev);
 

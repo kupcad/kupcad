@@ -9,12 +9,12 @@ pub const ShellIndex = enum(u32) { _ };
 pub const SolidIndex = enum(u32) { _ };
 
 // --- Safe Null Sentinels ---
-pub const NULL_VERTEX = @as(VertexIndex, @enumFromInt(std.math.maxInt(u32)));
-pub const NULL_HALF_EDGE = @as(HalfEdgeIndex, @enumFromInt(std.math.maxInt(u32)));
-pub const NULL_LOOP = @as(LoopIndex, @enumFromInt(std.math.maxInt(u32)));
-pub const NULL_FACE = @as(FaceIndex, @enumFromInt(std.math.maxInt(u32)));
-pub const NULL_SHELL = @as(ShellIndex, @enumFromInt(std.math.maxInt(u32)));
-pub const NULL_SOLID = @as(SolidIndex, @enumFromInt(std.math.maxInt(u32)));
+pub const NULL_VERTEX: VertexIndex = @enumFromInt(std.math.maxInt(u32));
+pub const NULL_HALF_EDGE: HalfEdgeIndex = @enumFromInt(std.math.maxInt(u32));
+pub const NULL_LOOP: LoopIndex = @enumFromInt(std.math.maxInt(u32));
+pub const NULL_FACE: FaceIndex = @enumFromInt(std.math.maxInt(u32));
+pub const NULL_SHELL: ShellIndex = @enumFromInt(std.math.maxInt(u32));
+pub const NULL_SOLID: SolidIndex = @enumFromInt(std.math.maxInt(u32));
 
 // --- Feature Lineage & CAD History Tracking ---
 pub const AncestryTag = enum(u32) {

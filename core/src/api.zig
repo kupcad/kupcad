@@ -96,7 +96,7 @@ pub fn injectParamsIntoVm(vm: *VM, cli_params: std.StringHashMap(f64)) !void {
 
     // Retrieve the global `params` map initialized by the standard library
     const p_val = vm.globals.get("params") orelse return;
-    const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", p_val.asObj())));
+    const map_obj: *value.ObjMap = @alignCast(@fieldParentPtr("obj", p_val.asObj()));
 
     var it = cli_params.iterator();
     while (it.next()) |entry| {

@@ -309,7 +309,7 @@ const ResolverContext = struct {
                 for (tree.getNodes(b.params)) |param_idx| {
                     const param_node = tree.getNode(param_idx).?;
                     if (param_node.tag == .identifier) {
-                        const name_id = @as(ast.StringId, @enumFromInt(param_node.data));
+                        const name_id: ast.StringId = @enumFromInt(param_node.data);
                         _ = try self.resolver.declareLocal(name_id);
                         try self.resolver.resolveUsage(name_id, param_idx);
                     }
@@ -351,7 +351,7 @@ const ResolverContext = struct {
                 }
             },
             .identifier => {
-                const name_id = @as(ast.StringId, @enumFromInt(node.data));
+                const name_id: ast.StringId = @enumFromInt(node.data);
                 try self.resolver.resolveUsage(name_id, node_idx);
             },
             else => {},

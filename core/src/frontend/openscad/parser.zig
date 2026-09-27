@@ -1,11 +1,8 @@
 const std = @import("std");
 const lexer_mod = @import("lexer.zig");
-const Lexer = lexer_mod.Lexer;
 const Tag = lexer_mod.Tag;
-const Token = lexer_mod.Token;
 const ast = @import("../../core/ast.zig");
 const common_token = @import("../../core/token.zig");
-const Node = ast.Node;
 const common_errors = @import("../../core/errors.zig");
 const Diagnostics = common_errors.Diagnostics;
 

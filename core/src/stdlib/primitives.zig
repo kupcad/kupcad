@@ -286,7 +286,7 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     if (args.len > 1) {
         // Parse `paths` from kwargs or positional argument
         if (args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+            const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
             // $O(1)$ Hash lookup
             var it = map.map.iterator();
             while (it.next()) |entry| {
@@ -325,7 +325,7 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
 
             for (indices, 0..) |idx_val, p_idx| {
                 if (!idx_val.isNumber()) return error.RuntimeError;
-                const pt_idx = @as(usize, @intFromFloat(idx_val.asNumber()));
+                const pt_idx: usize = @intFromFloat(idx_val.asNumber());
                 if (pt_idx >= pt_arr.len) return error.RuntimeError;
 
                 const pt_val = pt_arr[pt_idx];
@@ -488,7 +488,7 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
 
     if (parsed.kwargs) |kw| {
         if (kw.isObject() and kw.asObj().obj_type == .map) {
-            const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", kw.asObj())));
+            const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", kw.asObj()));
             var it = map.map.iterator();
             while (it.next()) |entry| {
                 const k = entry.key_ptr.*;

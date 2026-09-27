@@ -54,7 +54,7 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     if (vm.frames.items.len > 0) {
         const frame = &vm.frames.items[vm.frames.items.len - 1];
         if (frame.closure.function.chunk) |chunk_ptr| {
-            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(chunk_ptr)));
+            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(chunk_ptr));
             const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
             const source_offset = exec_chunk.getOffset(instruction_ip);
             if (vm.line_index) |li| {
@@ -73,7 +73,7 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     var choices_array: ?*value.ObjArray = null;
 
     if (args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const kwargs_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+        const kwargs_map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
 
         if (vm.findMapKeyByString(kwargs_map, "default")) |idx| {
             default_val = kwargs_map.map.values()[idx];
@@ -86,7 +86,7 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
         if (vm.findMapKeyByString(kwargs_map, "validate")) |v_idx| {
             const val_map_val = kwargs_map.map.values()[v_idx];
             if (val_map_val.isObject() and val_map_val.asObj().obj_type == .map) {
-                const val_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", val_map_val.asObj())));
+                const val_map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", val_map_val.asObj()));
                 if (vm.findMapKeyByString(val_map, "min")) |min_idx| {
                     if (val_map.map.values()[min_idx].isNumber()) min_val = val_map.map.values()[min_idx].asNumber();
                 }
@@ -107,7 +107,7 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     var injected_val = default_val;
     if (vm.globals.get("params")) |global_params| {
         if (global_params.isObject() and global_params.asObj().obj_type == .map) {
-            const p_map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", global_params.asObj())));
+            const p_map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", global_params.asObj()));
             if (vm.findMapKey(p_map, sym_key)) |idx| {
                 injected_val = p_map.map.values()[idx];
             }

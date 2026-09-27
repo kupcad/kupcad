@@ -6,10 +6,8 @@ const dag = @import("dag.zig");
 const limits = @import("../core/limits.zig");
 const value = @import("../core/value.zig");
 const parameters = @import("../core/parameters.zig");
-const kernel_mod = @import("../kernel/kernel.zig");
 const host_mod = @import("host.zig");
 const geom = @import("../kernel/geometry_handle.zig");
-const registry = @import("../stdlib/registry.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const profiler_mod = @import("profiler.zig");
 const material_mod = @import("../core/material.zig");
@@ -365,7 +363,7 @@ pub const VM = struct {
             }
 
             var frame = &self.frames.items[self.frames.items.len - 1];
-            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
+            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(frame.closure.function.chunk.?));
 
             // --- DEBUGGER: Step Mechanics ---
             if (self.step_mode) {
@@ -412,8 +410,8 @@ pub const VM = struct {
                     self.push(exec_chunk.constants.items[const_idx]);
                 },
                 .op_constant_wide => {
-                    const high = @as(usize, exec_chunk.code.items[frame.ip]);
-                    const low = @as(usize, exec_chunk.code.items[frame.ip + 1]);
+                    const high: usize = exec_chunk.code.items[frame.ip];
+                    const low: usize = exec_chunk.code.items[frame.ip + 1];
                     frame.ip += 2;
                     self.push(exec_chunk.constants.items[(high << 8) | low]);
                 },
@@ -423,8 +421,8 @@ pub const VM = struct {
                     self.push(self.getLocal(frame, slot));
                 },
                 .op_get_local_wide => {
-                    const high = @as(usize, exec_chunk.code.items[frame.ip]);
-                    const low = @as(usize, exec_chunk.code.items[frame.ip + 1]);
+                    const high: usize = exec_chunk.code.items[frame.ip];
+                    const low: usize = exec_chunk.code.items[frame.ip + 1];
                     frame.ip += 2;
                     self.push(self.getLocal(frame, (high << 8) | low));
                 },
@@ -434,8 +432,8 @@ pub const VM = struct {
                     self.setLocal(frame, slot, self.stack[self.stack_top - 1]);
                 },
                 .op_set_local_wide => {
-                    const high = @as(usize, exec_chunk.code.items[frame.ip]);
-                    const low = @as(usize, exec_chunk.code.items[frame.ip + 1]);
+                    const high: usize = exec_chunk.code.items[frame.ip];
+                    const low: usize = exec_chunk.code.items[frame.ip + 1];
                     frame.ip += 2;
                     self.setLocal(frame, (high << 8) | low, self.stack[self.stack_top - 1]);
                 },
@@ -2167,11 +2165,11 @@ pub const VM = struct {
         }
 
         if (num_idx < 0) {
-            const offset = @as(usize, @intFromFloat(-num_idx));
+            const offset: usize = @intFromFloat(-num_idx);
             if (offset == 0 or offset > arr_len) return error.RuntimeError;
             return arr_len - offset;
         } else {
-            const idx = @as(usize, @intFromFloat(num_idx));
+            const idx: usize = @intFromFloat(num_idx);
             if (idx >= arr_len) return error.RuntimeError;
             return idx;
         }
@@ -2231,8 +2229,8 @@ pub const VM = struct {
         _ = self;
         if (is_wide) {
             std.debug.assert(frame.ip + 2 <= exec_chunk.code.items.len); // Hardened check
-            const high = @as(u16, exec_chunk.code.items[frame.ip]);
-            const low = @as(u16, exec_chunk.code.items[frame.ip + 1]);
+            const high: u16 = exec_chunk.code.items[frame.ip];
+            const low: u16 = exec_chunk.code.items[frame.ip + 1];
             frame.ip += 2;
             return (high << 8) | low;
         } else {
@@ -2246,10 +2244,10 @@ pub const VM = struct {
     inline fn readJumpOffset(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) usize {
         _ = self;
         std.debug.assert(frame.ip + 4 <= exec_chunk.code.items.len); // Hardened check
-        const b3 = @as(usize, exec_chunk.code.items[frame.ip]);
-        const b2 = @as(usize, exec_chunk.code.items[frame.ip + 1]);
-        const b1 = @as(usize, exec_chunk.code.items[frame.ip + 2]);
-        const b0 = @as(usize, exec_chunk.code.items[frame.ip + 3]);
+        const b3: usize = exec_chunk.code.items[frame.ip];
+        const b2: usize = exec_chunk.code.items[frame.ip + 1];
+        const b1: usize = exec_chunk.code.items[frame.ip + 2];
+        const b0: usize = exec_chunk.code.items[frame.ip + 3];
         frame.ip += 4;
         return (b3 << 24) | (b2 << 16) | (b1 << 8) | b0;
     }
@@ -2625,8 +2623,8 @@ pub const VM = struct {
             const mid = low + (high - low) / 2;
             const idx = table_start + (mid * 6);
 
-            const const_high = @as(u16, exec_chunk.code.items[idx]);
-            const const_low = @as(u16, exec_chunk.code.items[idx + 1]);
+            const const_high: u16 = exec_chunk.code.items[idx];
+            const const_low: u16 = exec_chunk.code.items[idx + 1];
             const const_idx = (const_high << 8) | const_low;
             const case_val = exec_chunk.constants.items[const_idx];
 
@@ -2742,7 +2740,7 @@ pub const VM = struct {
         while (i > 0) {
             i -= 1;
             const frame = &self.frames.items[i];
-            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
+            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(frame.closure.function.chunk.?));
 
             const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
             const source_offset = exec_chunk.getOffset(instruction_ip);
@@ -2767,7 +2765,7 @@ pub const VM = struct {
         while (i > 0) {
             i -= 1;
             const frame = &self.frames.items[i];
-            const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(frame.closure.function.chunk.?)));
+            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(frame.closure.function.chunk.?));
 
             const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
             const source_offset = exec_chunk.getOffset(instruction_ip);
@@ -2806,8 +2804,8 @@ pub const VM = struct {
     inline fn readInlineCache(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.InlineCache {
         _ = self;
         std.debug.assert(frame.ip + 2 <= exec_chunk.code.items.len); // Hardened check
-        const ic_high = @as(u16, exec_chunk.code.items[frame.ip]);
-        const ic_low = @as(u16, exec_chunk.code.items[frame.ip + 1]);
+        const ic_high: u16 = exec_chunk.code.items[frame.ip];
+        const ic_low: u16 = exec_chunk.code.items[frame.ip + 1];
         frame.ip += 2;
         const ic_idx = (ic_high << 8) | ic_low;
         return &exec_chunk.inline_caches.items[ic_idx];

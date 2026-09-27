@@ -2,11 +2,9 @@ const std = @import("std");
 const testing = std.testing;
 const value = @import("../value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const registry = @import("../../stdlib/registry.zig");
 
 const number_param = @import("number.zig");
 const boolean_param = @import("boolean.zig");
-const string_param = @import("string.zig");
 const choice_param = @import("choice.zig");
 
 test "Params Unit: Number normalization and bounds checking" {

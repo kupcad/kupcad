@@ -467,7 +467,7 @@ pub const Value = packed struct {
             const obj = self.asObj();
             switch (obj.obj_type) {
                 .string => {
-                    const str_obj = @as(*ObjString, @alignCast(@fieldParentPtr("obj", obj)));
+                    const str_obj: *ObjString = @alignCast(@fieldParentPtr("obj", obj));
                     if (is_inspect) {
                         try writer.print("\"{s}\"", .{str_obj.chars});
                     } else {
@@ -475,11 +475,11 @@ pub const Value = packed struct {
                     }
                 },
                 .symbol => {
-                    const sym = @as(*ObjSymbol, @alignCast(@fieldParentPtr("obj", obj)));
+                    const sym: *ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.print(":{s}", .{sym.chars});
                 },
                 .array => {
-                    const arr = @as(*ObjArray, @alignCast(@fieldParentPtr("obj", obj)));
+                    const arr: *ObjArray = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.writeAll("[");
                     for (arr.items.items, 0..) |item, i| {
                         if (i > 0) try writer.writeAll(", ");
@@ -488,7 +488,7 @@ pub const Value = packed struct {
                     try writer.writeAll("]");
                 },
                 .map => {
-                    const map = @as(*ObjMap, @alignCast(@fieldParentPtr("obj", obj)));
+                    const map: *ObjMap = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.writeAll("{");
                     const keys = map.map.keys();
                     const values = map.map.values();
@@ -501,29 +501,29 @@ pub const Value = packed struct {
                     try writer.writeAll("}");
                 },
                 .class => {
-                    const cls = @as(*ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
+                    const cls: *ObjClass = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.print("<Class {s}>", .{cls.name.chars});
                 },
                 .instance => {
-                    const inst = @as(*ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
+                    const inst: *ObjInstance = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.print("<Instance of {s}>", .{inst.class.name.chars});
                 },
                 .closure, .function => try writer.writeAll("<Function>"),
                 .native => try writer.writeAll("<Native Function>"),
                 .bound_method => try writer.writeAll("<Bound Method>"),
                 .range => {
-                    const r = @as(*ObjRange, @alignCast(@fieldParentPtr("obj", obj)));
+                    const r: *ObjRange = @alignCast(@fieldParentPtr("obj", obj));
                     const op_str = if (r.is_exclusive) "..." else "..";
                     try writer.print("{d}{s}{d}", .{ r.start, op_str, r.end });
                 },
                 .geometry => try writer.print("<Geometry DAG:{d}>", .{@as(*ObjGeometry, @alignCast(@fieldParentPtr("obj", obj))).dag_idx}),
                 .cross_section => {
-                    const cs = @as(*ObjCrossSection, @alignCast(@fieldParentPtr("obj", obj)));
+                    const cs: *ObjCrossSection = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.print("<CrossSection DAG:{d}>", .{cs.dag_idx});
                 },
                 .workplane => try writer.writeAll("<Workplane>"),
                 .bbox => {
-                    const bx = @as(*ObjBBox, @alignCast(@fieldParentPtr("obj", obj)));
+                    const bx: *ObjBBox = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.print("BoundingBox(min: [{d}, {d}, {d}], max: [{d}, {d}, {d}])", .{ bx.min[0], bx.min[1], bx.min[2], bx.max[0], bx.max[1], bx.max[2] });
                 },
                 else => try writer.writeAll("<Object>"),

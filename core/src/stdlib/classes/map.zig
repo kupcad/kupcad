@@ -1,4 +1,3 @@
-const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
@@ -162,7 +161,7 @@ pub fn mapSymbolizeKeys(vm: *VM, map: *value.ObjMap) !value.Value {
         const k = entry.key_ptr.*;
         var new_k = k;
         if (k.isObject() and k.asObj().obj_type == .string) {
-            const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj())));
+            const str: *value.ObjString = @alignCast(@fieldParentPtr("obj", k.asObj()));
             new_k = try vm.allocateSymbol(str.chars);
         }
         try new_map.map.put(vm.gc.trackingAllocator(), new_k, entry.value_ptr.*);
@@ -182,7 +181,7 @@ pub fn mapStringifyKeys(vm: *VM, map: *value.ObjMap) !value.Value {
         const k = entry.key_ptr.*;
         var new_k = k;
         if (k.isObject() and k.asObj().obj_type == .symbol) {
-            const sym = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj())));
+            const sym: *value.ObjSymbol = @alignCast(@fieldParentPtr("obj", k.asObj()));
             new_k = try vm.allocateString(sym.chars);
         }
         try new_map.map.put(vm.gc.trackingAllocator(), new_k, entry.value_ptr.*);

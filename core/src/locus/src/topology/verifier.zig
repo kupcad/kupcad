@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const types = @import("types.zig");
 const arena = @import("arena.zig");
 const geom_arena = @import("../geometry/arena.zig");
-const geom_types = @import("../geometry/types.zig");
 const surfaces = @import("../geometry/surfaces.zig");
 const math = @import("../math.zig");
 const env = @import("../math_env.zig");
@@ -91,7 +90,7 @@ pub fn validateHalfEdgeReciprocity(
 /// Pure topological graph verification for atomic operations (no geometry required).
 pub fn validateGraph(t_arena: *const arena.TopologyArena) ValidationError!void {
     for (t_arena.half_edges.items, 0..) |_, i| {
-        const curr_he_idx = @as(types.HalfEdgeIndex, @enumFromInt(@as(u32, @intCast(i))));
+        const curr_he_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(i)));
         try validateHalfEdgeReciprocity(t_arena, curr_he_idx, false);
     }
 }

@@ -1,8 +1,6 @@
 const std = @import("std");
 const api = @import("../api.zig");
-const ProjectConfig = @import("config.zig").ProjectConfig;
 const FmtConfig = @import("../tools/fmt/config.zig").Config;
-const CommandOptions = @import("options.zig").CommandOptions;
 const log_helpers = @import("../log.zig");
 const walker = @import("walker.zig");
 

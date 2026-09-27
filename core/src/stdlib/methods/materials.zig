@@ -14,7 +14,7 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
         return error.RuntimeError;
     }
 
-    const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+    const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
     var it = map.map.iterator();
     while (it.next()) |entry| {
         const k = entry.key_ptr.*;
@@ -35,7 +35,7 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
     }
 
     // Insert into VM registry to get an ID
-    const material_id = @as(u32, @intCast(vm.materials.items.len));
+    const material_id: u32 = @intCast(vm.materials.items.len);
     try vm.materials.append(vm.allocator, mat_def);
 
     const new_idx = try vm.dag_builder.addSetMaterial(receiver.asGeometry().dag_idx, material_id);
@@ -48,7 +48,7 @@ pub fn meshHighlight(vm: *VM, receiver: value.Value, args: []const value.Value) 
     _ = args;
     if (!receiver.isGeometry()) return error.RuntimeError;
 
-    const material_id = @as(u32, @intCast(vm.materials.items.len));
+    const material_id: u32 = @intCast(vm.materials.items.len);
     // Pure semantic tagging. Let the viewer handle the visuals.
     try vm.materials.append(vm.allocator, .{ .role = .highlight });
 
@@ -60,7 +60,7 @@ pub fn meshGhost(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     _ = args;
     if (!receiver.isGeometry()) return error.RuntimeError;
 
-    const material_id = @as(u32, @intCast(vm.materials.items.len));
+    const material_id: u32 = @intCast(vm.materials.items.len);
     // Pure semantic tagging
     try vm.materials.append(vm.allocator, .{ .role = .ghost });
 
@@ -84,7 +84,7 @@ pub fn globalHighlight(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
     const result = try vm.callClosureSync(args[0].asClosure(), &.{});
     if (!result.isGeometry()) return result;
 
-    const material_id = @as(u32, @intCast(vm.materials.items.len));
+    const material_id: u32 = @intCast(vm.materials.items.len);
     try vm.materials.append(vm.allocator, .{ .role = .highlight });
 
     const new_idx = try vm.dag_builder.addSetMaterial(result.asGeometry().dag_idx, material_id);
@@ -98,7 +98,7 @@ pub fn globalGhost(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     const result = try vm.callClosureSync(args[0].asClosure(), &.{});
     if (!result.isGeometry()) return value.Value.initNil();
 
-    const material_id = @as(u32, @intCast(vm.materials.items.len));
+    const material_id: u32 = @intCast(vm.materials.items.len);
     try vm.materials.append(vm.allocator, .{ .role = .ghost });
 
     const new_idx = try vm.dag_builder.addSetMaterial(result.asGeometry().dag_idx, material_id);

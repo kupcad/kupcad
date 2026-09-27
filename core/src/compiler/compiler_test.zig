@@ -1,7 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
-const limits = @import("../core/limits.zig");
 const chunk = @import("../vm/chunk.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
@@ -799,7 +798,7 @@ test "Compiler: Block closures calculate total local slots accurately" {
     var block_func: ?*value.ObjFunction = null;
     for (out_chunk.constants.items) |c_val| {
         if (c_val.isObject() and c_val.asObj().obj_type == .function) {
-            const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", c_val.asObj())));
+            const func: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", c_val.asObj()));
             if (func.name == null) {
                 block_func = func;
                 break;
@@ -1072,7 +1071,7 @@ test "Compiler: Local variable names are exported to chunk metadata for REPL int
     var child_chunk: ?*chunk.Chunk = null;
     for (out_chunk.constants.items) |c_val| {
         if (c_val.isObject() and c_val.asObj().obj_type == .function) {
-            const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", c_val.asObj())));
+            const func: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", c_val.asObj()));
             if (func.name != null and std.mem.eql(u8, func.name.?.chars, "test_func")) {
                 child_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(func.chunk.?)));
                 break;
@@ -1139,7 +1138,7 @@ test "Compiler: Deep spatial tuple destructuring emits recursive unpacks" {
     var child_chunk: ?*chunk.Chunk = null;
     for (out_chunk.constants.items) |c_val| {
         if (c_val.isObject() and c_val.asObj().obj_type == .function) {
-            const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", c_val.asObj())));
+            const func: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", c_val.asObj()));
             if (func.name == null) {
                 child_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(func.chunk.?)));
                 break;
@@ -1397,8 +1396,8 @@ test "Compiler: op_switch table entries are emitted in strictly sorted order" {
 
     const readConstVal = struct {
         fn read(ch: *chunk.Chunk, idx: usize) f64 {
-            const high = @as(u16, ch.code.items[idx]);
-            const low = @as(u16, ch.code.items[idx + 1]);
+            const high: u16 = ch.code.items[idx];
+            const low: u16 = ch.code.items[idx + 1];
             const const_idx = (high << 8) | low;
             return ch.constants.items[const_idx].asNumber();
         }

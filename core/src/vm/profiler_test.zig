@@ -5,7 +5,6 @@ const registry = @import("../stdlib/registry.zig");
 const VM = @import("vm.zig").VM;
 const chunk = @import("../vm/chunk.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
-const resolver = @import("../core/resolver.zig");
 const Document = @import("../core/document.zig").Document;
 
 // A simple busy loop to waste time without depending on removed OS sleep APIs

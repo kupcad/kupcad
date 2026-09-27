@@ -2,7 +2,6 @@ const std = @import("std");
 const topo_arena = @import("topology/arena.zig");
 const topo_types = @import("topology/types.zig");
 const geom_arena = @import("geometry/arena.zig");
-const math = @import("math.zig");
 
 pub const DebugDumper = struct {
     pub fn dumpSolidToObj(

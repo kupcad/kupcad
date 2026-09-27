@@ -36,7 +36,7 @@ pub fn nativeInspect(vm: *VM, args: []const value.Value) !value.Value {
         if (vm.frames.items.len > 0) {
             const frame = &vm.frames.items[vm.frames.items.len - 1];
             if (frame.closure.function.chunk) |chunk_ptr| {
-                const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(chunk_ptr)));
+                const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(chunk_ptr));
                 const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
                 const source_offset = exec_chunk.getOffset(instruction_ip);
                 if (vm.line_index) |li| {
@@ -61,7 +61,7 @@ pub fn nativeInspect(vm: *VM, args: []const value.Value) !value.Value {
 
                 if (inst.class.methods.get(inspect_key) orelse inst.class.methods.get(tos_key)) |m_val| {
                     if (m_val.isObject() and m_val.asObj().obj_type == .native) {
-                        const native_obj = @as(*value.ObjNative, @alignCast(@fieldParentPtr("obj", m_val.asObj())));
+                        const native_obj: *value.ObjNative = @alignCast(@fieldParentPtr("obj", m_val.asObj()));
 
                         // Push `arg` onto the VM stack so `vm.getReceiver(args_ptr)` safely resolves `arg`!
                         vm.push(arg);

@@ -3,7 +3,6 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const util = @import("util.zig");
 const kernel = @import("../../kernel/kernel.zig");
-const geom = @import("../../kernel/geometry_handle.zig");
 
 // --- Utilizing Strongly Typed Receivers ---
 
@@ -46,7 +45,7 @@ pub fn meshOffset(vm: *VM, receiver: *value.ObjCrossSection, args: []const value
 
     var pos_count = args.len;
     if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+        const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
         pos_count -= 1;
 
         var it = map.map.iterator();
@@ -89,7 +88,7 @@ pub fn meshProject(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Va
 
     // Parse `cut: true` from kwargs
     if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+        const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
         if (map.map.get(try vm.allocateSymbol("cut"))) |val| {
             if (val.isBool()) cut = val.asBool();
         } else if (map.map.get(try vm.allocateString("cut"))) |val| {

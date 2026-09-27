@@ -1,8 +1,6 @@
 const std = @import("std");
 const api = @import("../api.zig");
-const ProjectConfig = @import("config.zig").ProjectConfig;
 const LintConfig = @import("../tools/lint/config.zig").Config;
-const CommandOptions = @import("options.zig").CommandOptions;
 const walker = @import("walker.zig");
 const log_helpers = @import("../log.zig");
 const LimitAllocator = @import("../core/limit_allocator.zig").LimitAllocator;
@@ -64,7 +62,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 }
 
 fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
-    var totals = @as(*Totals, @ptrCast(@alignCast(context.?)));
+    var totals: *Totals = @ptrCast(@alignCast(context.?));
     totals.files += 1;
 
     // Apply the Memory Sandbox

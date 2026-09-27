@@ -2,7 +2,6 @@ const std = @import("std");
 const testing = std.testing;
 const ScriptSession = @import("session.zig").ScriptSession;
 const kernel = @import("../kernel/kernel.zig");
-const geom = @import("../kernel/geometry_handle.zig");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
 test "ScriptSession: init and deinit manage memory cleanly" {

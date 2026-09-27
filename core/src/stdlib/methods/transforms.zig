@@ -208,7 +208,7 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     }
 
     if (args.len > 1 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj())));
+        const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
         if (vm.findMapKeyByString(map, "auto")) |idx| {
             if (map.map.values()[idx].isBool()) auto = map.map.values()[idx].asBool();
         }
@@ -275,7 +275,7 @@ pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Valu
     var current_idx = base_idx;
 
     for (1..count) |i| {
-        const factor = @as(f64, @floatFromInt(i));
+        const factor: f64 = @floatFromInt(i);
         const next_idx = try vm.dag_builder.addTranslate(base_idx, tx * factor, ty * factor, tz * factor);
         current_idx = try vm.dag_builder.addBinary(.union_op, current_idx, next_idx);
     }

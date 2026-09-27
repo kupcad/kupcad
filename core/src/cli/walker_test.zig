@@ -12,7 +12,7 @@ fn testProcessFn(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8
     _ = allocator;
     _ = file_path;
     _ = source;
-    var ctx = @as(*WalkerContext, @ptrCast(@alignCast(context.?)));
+    var ctx: *WalkerContext = @ptrCast(@alignCast(context.?));
     ctx.kup_files_found += 1;
 }
 

@@ -14,11 +14,9 @@ pub const ProjectConfig = struct {
 
     /// Parses a JSON configuration string safely without crashing
     pub fn parse(allocator: std.mem.Allocator, source: []const u8) !ProjectConfig {
-        const parsed = std.json.parseFromSlice(ProjectConfig, allocator, source, .{
+        const parsed = try std.json.parseFromSlice(ProjectConfig, allocator, source, .{
             .ignore_unknown_fields = true,
-        }) catch |err| {
-            return err;
-        };
+        });
         defer parsed.deinit();
         return parsed.value;
     }

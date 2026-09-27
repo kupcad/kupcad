@@ -6,10 +6,7 @@ const common_token = @import("../../core/token.zig");
 const common_errors = @import("../../core/errors.zig");
 const docstring = @import("docstring.zig");
 
-const Lexer = lexer_mod.Lexer;
 const Tag = lexer_mod.Tag;
-const Token = lexer_mod.Token;
-const Node = ast.Node;
 const Diagnostics = common_errors.Diagnostics;
 
 const RescueEnsurePayload = struct {
@@ -935,7 +932,7 @@ pub const Parser = struct {
         // If the receiver was just an identifier, we "upgrade" it into a method call.
         // The identifier string becomes the method_name, and the receiver becomes `.none`.
         if (rec_tag == .identifier) {
-            const method_name = @as(ast.StringId, @enumFromInt(rec_data));
+            const method_name: ast.StringId = @enumFromInt(rec_data);
             return self.b.methodCall(.none, method_name, suffix.args, suffix.block, false, suffix.end_token, rec_main_token) catch ParseError.OutOfMemory;
         } else {
             // If the receiver is a complex expression (e.g., a lambda or proc being called),

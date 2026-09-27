@@ -61,10 +61,10 @@ pub fn verifyChunk(c: *const chunk.Chunk) VerifierError!void {
             .op_jump, .op_jump_if_false, .op_jump_if_nil, .op_jump_if_not_nil, .op_loop, .op_setup_rescue => {
                 if (ip + 4 > len) return error.OutOfBoundsRead;
 
-                const b3 = @as(usize, c.code.items[ip]);
-                const b2 = @as(usize, c.code.items[ip + 1]);
-                const b1 = @as(usize, c.code.items[ip + 2]);
-                const b0 = @as(usize, c.code.items[ip + 3]);
+                const b3: usize = c.code.items[ip];
+                const b2: usize = c.code.items[ip + 1];
+                const b1: usize = c.code.items[ip + 2];
+                const b0: usize = c.code.items[ip + 3];
                 const offset = (b3 << 24) | (b2 << 16) | (b1 << 8) | b0;
 
                 ip += 4;
@@ -104,7 +104,7 @@ pub fn verifyChunk(c: *const chunk.Chunk) VerifierError!void {
                 // Safety: Assume it's an ObjFunction to verify the upvalue size payload.
                 // If it isn't, the script is corrupt.
                 if (func_val.isObject() and func_val.asObj().obj_type == .function) {
-                    const func_obj = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", func_val.asObj())));
+                    const func_obj: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", func_val.asObj()));
                     if (ip + (func_obj.upvalue_count * 3) > len) return error.OutOfBoundsRead;
                     ip += func_obj.upvalue_count * 3;
                 } else {

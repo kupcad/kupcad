@@ -1,5 +1,4 @@
 const std = @import("std");
-const dag = @import("dag.zig");
 
 test "DAG: addBalancedChain flattens Unions into Batch nodes" {
     // Setup

@@ -1,6 +1,5 @@
 const std = @import("std");
 const testing = std.testing;
-const xev = @import("xev");
 const ScriptSession = @import("session.zig").ScriptSession;
 const Watcher = @import("watcher.zig").Watcher;
 

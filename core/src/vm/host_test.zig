@@ -1,7 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
 const VM = @import("vm.zig").VM;
-const Host = @import("host.zig").Host;
 const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");

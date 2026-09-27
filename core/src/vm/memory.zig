@@ -4,7 +4,6 @@ const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
-const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
 
 pub const GC = struct {
     allocator: std.mem.Allocator,
@@ -302,9 +301,7 @@ pub const GC = struct {
         };
         ptr.chars = owned_chars;
 
-        vm.strings.put(self.allocator, ptr.chars, ptr) catch |err| {
-            return err;
-        };
+        try vm.strings.put(self.allocator, ptr.chars, ptr);
         return ptr;
     }
 
@@ -319,9 +316,7 @@ pub const GC = struct {
         };
         ptr.chars = owned_chars;
 
-        vm.symbols.put(self.allocator, ptr.chars, ptr) catch |err| {
-            return err;
-        };
+        try vm.symbols.put(self.allocator, ptr.chars, ptr);
         return ptr;
     }
 
@@ -337,9 +332,7 @@ pub const GC = struct {
         };
         ptr.chars = chars;
 
-        vm.strings.put(self.allocator, ptr.chars, ptr) catch |err| {
-            return err;
-        };
+        try vm.strings.put(self.allocator, ptr.chars, ptr);
         return ptr;
     }
 
@@ -457,41 +450,41 @@ pub const GC = struct {
     fn blackenObject(self: *GC, obj: *value.Obj) void {
         switch (obj.obj_type) {
             .array => {
-                const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", obj)));
+                const arr: *value.ObjArray = @alignCast(@fieldParentPtr("obj", obj));
                 for (arr.items.items) |val| self.markValue(val);
             },
             .map => {
-                const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", obj)));
+                const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", obj));
                 for (map.map.keys()) |k| self.markValue(k);
                 for (map.map.values()) |v| self.markValue(v);
             },
             .closure => {
-                const closure_obj = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
+                const closure_obj: *value.ObjClosure = @alignCast(@fieldParentPtr("obj", obj));
                 self.markObject(&closure_obj.function.obj);
                 for (0..closure_obj.function.upvalue_count) |i| {
                     if (closure_obj.upvalues[i]) |u| self.markObject(&u.obj);
                 }
             },
             .upvalue => {
-                const upval = @as(*value.ObjUpvalue, @alignCast(@fieldParentPtr("obj", obj)));
+                const upval: *value.ObjUpvalue = @alignCast(@fieldParentPtr("obj", obj));
                 self.markValue(upval.closed);
             },
             .function => {
-                const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
+                const func: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", obj));
                 if (func.name) |name| self.markObject(&name.obj);
                 if (func.chunk) |c_ptr| {
-                    const exec_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(c_ptr)));
+                    const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(c_ptr));
                     for (exec_chunk.constants.items) |val| self.markValue(val);
                 }
             },
             .module => {
-                const module_obj = @as(*value.ObjModule, @alignCast(@fieldParentPtr("obj", obj)));
+                const module_obj: *value.ObjModule = @alignCast(@fieldParentPtr("obj", obj));
                 self.markObject(&module_obj.name.obj);
                 for (module_obj.methods.keys()) |k| self.markValue(k);
                 for (module_obj.methods.values()) |v| self.markValue(v);
             },
             .class => {
-                const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
+                const class_obj: *value.ObjClass = @alignCast(@fieldParentPtr("obj", obj));
                 self.markObject(&class_obj.name.obj);
                 if (class_obj.superclass) |sup| self.markObject(&sup.obj);
                 for (class_obj.included_modules.items) |mod| self.markObject(&mod.obj);
@@ -509,22 +502,22 @@ pub const GC = struct {
                 for (class_obj.instance_layout.keys()) |k| self.markValue(k);
             },
             .instance => {
-                const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
+                const instance_obj: *value.ObjInstance = @alignCast(@fieldParentPtr("obj", obj));
                 self.markObject(&instance_obj.class.obj);
                 for (instance_obj.fields.items) |val| self.markValue(val);
             },
             .bound_method => {
-                const bound_obj = @as(*value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj)));
+                const bound_obj: *value.ObjBoundMethod = @alignCast(@fieldParentPtr("obj", obj));
                 self.markValue(bound_obj.receiver);
                 self.markValue(bound_obj.method);
             },
             .assembly => {
-                const assembly = @as(*value.ObjAssembly, @alignCast(@fieldParentPtr("obj", obj)));
+                const assembly: *value.ObjAssembly = @alignCast(@fieldParentPtr("obj", obj));
                 self.markObject(&assembly.name.obj);
                 self.markObject(&assembly.parts.obj);
             },
             .workplane => {
-                const wp_obj = @as(*value.ObjWorkplane, @alignCast(@fieldParentPtr("obj", obj)));
+                const wp_obj: *value.ObjWorkplane = @alignCast(@fieldParentPtr("obj", obj));
                 self.markObject(&wp_obj.parent.obj);
             },
             else => {},
@@ -640,11 +633,11 @@ pub const GC = struct {
     fn freeObject(self: *GC, vm: *VM, obj: *value.Obj) void {
         switch (obj.obj_type) {
             .assembly => {
-                const assembly_obj = @as(*value.ObjAssembly, @alignCast(@fieldParentPtr("obj", obj)));
+                const assembly_obj: *value.ObjAssembly = @alignCast(@fieldParentPtr("obj", obj));
                 self.destroyObject(value.ObjAssembly, assembly_obj);
             },
             .geometry => {
-                const geom_obj = @as(*value.ObjGeometry, @alignCast(@fieldParentPtr("obj", obj)));
+                const geom_obj: *value.ObjGeometry = @alignCast(@fieldParentPtr("obj", obj));
                 if (geom_obj.cached_topology) |cache| self.allocator.destroy(cache);
                 if (geom_obj.cached_handle) |handle| {
                     if (vm.host.mesh_destructor) |destructor| destructor(handle);
@@ -652,11 +645,11 @@ pub const GC = struct {
                 self.destroyObject(value.ObjGeometry, geom_obj);
             },
             .workplane => {
-                const wp_obj = @as(*value.ObjWorkplane, @alignCast(@fieldParentPtr("obj", obj)));
+                const wp_obj: *value.ObjWorkplane = @alignCast(@fieldParentPtr("obj", obj));
                 self.destroyObject(value.ObjWorkplane, wp_obj);
             },
             .cross_section => {
-                const cs_obj = @as(*value.ObjCrossSection, @alignCast(@fieldParentPtr("obj", obj)));
+                const cs_obj: *value.ObjCrossSection = @alignCast(@fieldParentPtr("obj", obj));
                 if (cs_obj.cached_handle) |handle| kernel.destructCrossSection(handle);
                 self.destroyObject(value.ObjCrossSection, cs_obj);
             },
@@ -686,21 +679,21 @@ pub const GC = struct {
                 self.destroyObject(value.ObjMap, map_obj);
             },
             .instance => {
-                const instance_obj = @as(*value.ObjInstance, @alignCast(@fieldParentPtr("obj", obj)));
+                const instance_obj: *value.ObjInstance = @alignCast(@fieldParentPtr("obj", obj));
                 instance_obj.fields.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjInstance, instance_obj);
             },
             .closure => {
-                const closure_obj = @as(*value.ObjClosure, @alignCast(@fieldParentPtr("obj", obj)));
+                const closure_obj: *value.ObjClosure = @alignCast(@fieldParentPtr("obj", obj));
                 const upvalue_count = closure_obj.function.upvalue_count;
                 self.trackingAllocator().free(closure_obj.upvalues[0..upvalue_count]);
                 self.destroyObject(value.ObjClosure, closure_obj);
             },
             .function => {
-                const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", obj)));
+                const func: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", obj));
                 if (func.owns_chunk) {
                     if (func.chunk) |c| {
-                        const chnk = @as(*chunk.Chunk, @ptrCast(@alignCast(c)));
+                        const chnk: *chunk.Chunk = @ptrCast(@alignCast(c));
                         chnk.free(self.allocator);
                         self.allocator.destroy(chnk);
                     }
@@ -709,12 +702,12 @@ pub const GC = struct {
             },
             .upvalue => self.destroyObject(value.ObjUpvalue, @alignCast(@fieldParentPtr("obj", obj))),
             .module => {
-                const module_obj = @as(*value.ObjModule, @alignCast(@fieldParentPtr("obj", obj)));
+                const module_obj: *value.ObjModule = @alignCast(@fieldParentPtr("obj", obj));
                 module_obj.methods.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjModule, module_obj);
             },
             .class => {
-                const class_obj = @as(*value.ObjClass, @alignCast(@fieldParentPtr("obj", obj)));
+                const class_obj: *value.ObjClass = @alignCast(@fieldParentPtr("obj", obj));
                 class_obj.methods.deinit(self.trackingAllocator());
                 class_obj.included_modules.deinit(self.trackingAllocator());
                 class_obj.class_methods.deinit(self.trackingAllocator());

@@ -5,7 +5,6 @@ const value = @import("../core/value.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const VM = @import("vm.zig").VM;
 const GC = @import("memory.zig").GC;
-const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
 
 fn countObjects(gc: *GC) usize {
     var count: usize = 0;

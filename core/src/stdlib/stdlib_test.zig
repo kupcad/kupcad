@@ -2,7 +2,6 @@ const std = @import("std");
 const testing = std.testing;
 const VM = @import("../vm/vm.zig").VM;
 const chunk = @import("../vm/chunk.zig");
-const value = @import("../core/value.zig");
 const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("registry.zig");

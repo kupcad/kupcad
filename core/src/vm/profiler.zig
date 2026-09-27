@@ -56,7 +56,7 @@ pub const Profiler = struct {
 
         // Calculate raw elapsed time safely in u64 (clamping negative durations to 0)
         const duration_ns = frame.start_time.durationTo(end).toNanoseconds();
-        const elapsed = @as(u64, @intCast(@max(0, duration_ns)));
+        const elapsed: u64 = @intCast(@max(0, duration_ns));
 
         // Self time is total time MINUS child time.
         // Clamped to 0 to prevent underflow if clock measurement overhead causes child_time > elapsed.

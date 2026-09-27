@@ -1,6 +1,5 @@
 const std = @import("std");
 const api = @import("api.zig");
-const Vfs = @import("vfs/vfs.zig").Vfs;
 const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 
 // Use the thread-safe C allocator provided by wasi-libc

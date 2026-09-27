@@ -261,7 +261,7 @@ test "VM: executes dynamic array building and spreading" {
 
     const final_arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(final_arr_val.isObject());
-    const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", final_arr_val.asObj())));
+    const arr: *value.ObjArray = @alignCast(@fieldParentPtr("obj", final_arr_val.asObj()));
     try testing.expectEqual(@as(usize, 3), arr.items.items.len);
     try testing.expectEqual(@as(f64, 42.0), arr.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 1.0), arr.items.items[1].asNumber());
@@ -535,7 +535,7 @@ test "VM: executes Array.map with functional closure block" {
 
     const final_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(final_arr.isObject());
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", final_arr.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", final_arr.asObj()));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 4.0), arr_obj.items.items[1].asNumber());
@@ -667,7 +667,7 @@ test "VM: String Native Methods (split, replace)" {
     out_chunk.max_stack_slots = 5;
     const arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(arr.isObject() and arr.asObj().obj_type == .array);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
 }
 
@@ -718,7 +718,7 @@ test "VM: Array and Map Native Methods (slice, keys)" {
     const slice_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
 
     try testing.expect(slice_arr.isObject() and slice_arr.asObj().obj_type == .array);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", slice_arr.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", slice_arr.asObj()));
 
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[0].asNumber());
@@ -896,7 +896,7 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     const result_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
 
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", result_arr.asObj()));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 2.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[1].asNumber());
@@ -1058,19 +1058,19 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     // The result should be an array: [ [20, 30], { "x" => 100 } ]
     const result_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", result_arr.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
 
     // args == [20, 30]
     const packed_args = arr_obj.items.items[0];
-    const packed_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", packed_args.asObj())));
+    const packed_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", packed_args.asObj()));
     try testing.expectEqual(@as(usize, 2), packed_obj.items.items.len);
     try testing.expectEqual(@as(f64, 20.0), packed_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 30.0), packed_obj.items.items[1].asNumber());
 
     // kwargs == {"x" => 100}
     const packed_kwargs = arr_obj.items.items[1];
-    const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", packed_kwargs.asObj())));
+    const map_obj: *value.ObjMap = @alignCast(@fieldParentPtr("obj", packed_kwargs.asObj()));
     try testing.expectEqual(@as(usize, 1), map_obj.map.count());
 }
 
@@ -1123,7 +1123,7 @@ test "VM: LHS Splat Destructuring (a, *b, c = arr)" {
 
     // Outer array
     const out_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const out_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", out_arr.asObj())));
+    const out_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", out_arr.asObj()));
     try testing.expectEqual(@as(usize, 3), out_obj.items.items.len);
 
     // a = 10
@@ -1131,7 +1131,7 @@ test "VM: LHS Splat Destructuring (a, *b, c = arr)" {
 
     // b = [20, 30, 40]
     const b_arr = out_obj.items.items[1];
-    const b_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", b_arr.asObj())));
+    const b_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", b_arr.asObj()));
     try testing.expectEqual(@as(usize, 3), b_obj.items.items.len);
     try testing.expectEqual(@as(f64, 20.0), b_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 40.0), b_obj.items.items[2].asNumber());
@@ -1190,7 +1190,7 @@ test "VM: Named Keyword Arguments with default values" {
 
     const result_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", result_arr.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber()); // Passed width
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber()); // Default height
@@ -1314,7 +1314,7 @@ test "VM: executes ternary operator with short-circuiting" {
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(arr_val.isObject() and arr_val.asObj().obj_type == .array);
 
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
@@ -1382,7 +1382,7 @@ test "VM: Module mixin method resolution order" {
 
     // Result should be an array: [3, 4]
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
 
     // Child: M2 overrides M1 and Base
@@ -1413,7 +1413,7 @@ test "VM: Array utility methods (max, min, sum, flatten)" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 6), arr_obj.items.items.len);
 
     try testing.expectEqual(@as(f64, 9.0), arr_obj.items.items[0].asNumber()); // max
@@ -1446,14 +1446,14 @@ test "VM: Symbol conversion and Map key manipulation" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
 
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber()); // m2[:a]
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[1].asNumber()); // m3["a"]
 
     // :test.to_s() == "test"
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()));
     try testing.expectEqualStrings("test", str_obj.chars);
 
     // "test".to_sym() == :test
@@ -1479,7 +1479,7 @@ test "VM: Type coercion and Number methods" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 6), arr_obj.items.items.len);
 
     try testing.expectEqual(@as(f64, 3.14), arr_obj.items.items[0].asNumber()); // round(2)
@@ -1487,7 +1487,7 @@ test "VM: Type coercion and Number methods" {
     try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[2].asNumber()); // floor()
 
     // 42.to_s() == "42"
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[3].asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", arr_obj.items.items[3].asObj()));
     try testing.expectEqualStrings("42", str_obj.chars);
 
     try testing.expectEqual(@as(f64, 42.5), arr_obj.items.items[4].asNumber()); // "42.5".to_f()
@@ -1514,7 +1514,7 @@ test "VM: Negative array indexing" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
 
     // -1 = last, -2 = middle, -3 = first
@@ -1553,7 +1553,7 @@ test "VM: case statement subsumption (===) with ranges and classes" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
 
     try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[0].asNumber()); // Matches Class
@@ -2064,7 +2064,7 @@ test "VM: Native string and array addition (+ operator)" {
     const outer_arr = result.asArray().items.items;
 
     // Check String Concatenation
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", outer_arr[0].asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", outer_arr[0].asObj()));
     try testing.expectEqualStrings("Hello World", str_obj.chars);
 
     // Check Array Concatenation
@@ -2540,7 +2540,7 @@ test "VM: Comprehensive Ruby-like language features integration" {
     try testing.expectEqual(true, arr_obj.items.items[3].asBool());
 
     // Interpolated summary == "Count: 42"
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[4].asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", arr_obj.items.items[4].asObj()));
     try testing.expectEqualStrings("Count: 42", str_obj.chars);
 }
 
@@ -2567,7 +2567,7 @@ test "VM: Map indexing and compound assignment" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
 
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 25.0), arr_obj.items.items[0].asNumber());
@@ -2635,7 +2635,7 @@ test "VM: Class variables (@@var) are shared globally across instances" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
 
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     // Because they share the same @@c, both should read `2`!
@@ -2665,7 +2665,7 @@ test "VM: Advanced Math (exponent, modulo) and nested String Interpolation" {
     try comp.compile(doc.tree.root);
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqualStrings("Result: 12!", str_obj.chars);
 }
 
@@ -2742,7 +2742,7 @@ test "VM: Logical OR (||) short-circuiting and Unary NOT (!) truthiness" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
 
     try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber()); // false || 42 -> 42
@@ -2774,7 +2774,7 @@ test "VM: Map literal spreading (**kwargs) executes seamlessly" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
 
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[0].asNumber());
@@ -2830,7 +2830,7 @@ test "VM: Relational operators (<=, >=, <, >, !=) evaluate correctly" {
     try comp.compile(doc.tree.root);
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqual(@as(usize, 8), arr_obj.items.items.len);
 
     try testing.expectEqual(true, arr_obj.items.items[0].asBool()); // 5 <= 5
@@ -2862,7 +2862,7 @@ test "VM: Consolidated numeric operations (*, /, %, **) evaluate correctly" {
     try comp.compile(doc.tree.root);
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
 
     try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber()); // 10 * 5
@@ -2893,16 +2893,16 @@ test "VM: Optimized String methods operate safely without leaks" {
     try comp.compile(doc.tree.root);
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
 
-    const s1 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[0].asObj())));
+    const s1: *value.ObjString = @alignCast(@fieldParentPtr("obj", arr_obj.items.items[0].asObj()));
     try testing.expectEqualStrings("HELLO", s1.chars);
 
-    const s2 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj())));
+    const s2: *value.ObjString = @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj()));
     try testing.expectEqualStrings("world", s2.chars);
 
-    const s3 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj())));
+    const s3: *value.ObjString = @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()));
     try testing.expectEqualStrings("baz bar", s3.chars);
 }
 
@@ -3070,7 +3070,7 @@ test "VM: super correctly resolves and executes Native C++ methods" {
     // Create a safe custom native base class instead of subclassing `Array`
     const base_name = try vm.allocateString("NativeBase");
     vm.push(base_name); // Protect from GC
-    const name_str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", base_name.asObj())));
+    const name_str: *value.ObjString = @alignCast(@fieldParentPtr("obj", base_name.asObj()));
     const base_class = try vm.gc.allocateClass(&vm, name_str, null);
     try vm.globals.put(vm.allocator, "NativeBase", value.Value.initObj(&base_class.obj));
     _ = vm.pop();
@@ -3143,7 +3143,7 @@ test "Compiler/VM: Splat parameters calculate trailing arity correctly alongside
 
     const result_arr = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result_arr.isObject() and result_arr.asObj().obj_type == .array);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result_arr.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", result_arr.asObj()));
 
     try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
 
@@ -3152,7 +3152,7 @@ test "Compiler/VM: Splat parameters calculate trailing arity correctly alongside
 
     // args = [20, 30]
     const packed_args = arr_obj.items.items[1];
-    const packed_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", packed_args.asObj())));
+    const packed_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", packed_args.asObj()));
     try testing.expectEqual(@as(usize, 2), packed_obj.items.items.len);
     try testing.expectEqual(@as(f64, 20.0), packed_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 30.0), packed_obj.items.items[1].asNumber());
@@ -3298,7 +3298,7 @@ test "VM: Unified Exception hierarchy with native methods" {
 
     // Prove `e.message()` evaluates successfully to the VM's formatted array bounds error
     const msg_val = arr_obj.items.items[2];
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", msg_val.asObj()));
     try testing.expectEqualStrings("Runtime Error: Array index out of bounds.", str_obj.chars);
 }
 
@@ -3338,7 +3338,7 @@ test "VM: Custom exceptions inherit properly and rescue block ordering is respec
     const str_val = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(str_val.isObject() and str_val.asObj().obj_type == .string);
 
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", str_val.asObj()));
     try testing.expectEqualStrings("My custom failure!", str_obj.chars);
 }
 
@@ -3601,7 +3601,7 @@ test "VM: CLI parameter injection overrides default script parameter values" {
 
     // Simulate CLI flag injection (`--param width=85`) into the VM `params` Map
     const params_val = vm.globals.get("params").?;
-    const map_obj = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", params_val.asObj())));
+    const map_obj: *value.ObjMap = @alignCast(@fieldParentPtr("obj", params_val.asObj()));
 
     const sym_key = try vm.allocateSymbol("width");
     vm.push(sym_key);
@@ -3912,7 +3912,7 @@ test "VM: Closed upvalues inside loops migrate to heap without slot corruption" 
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 0.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[1].asNumber());
@@ -3944,11 +3944,11 @@ test "VM: Block closures support splat (*args) parameters natively" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
 
-    const rest_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj())));
+    const rest_arr: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj()));
     try testing.expectEqual(@as(usize, 3), rest_arr.items.items.len);
     try testing.expectEqual(@as(f64, 20.0), rest_arr.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 30.0), rest_arr.items.items[1].asNumber());
@@ -4008,7 +4008,7 @@ test "VM: Block closures support keyword arguments (**kwargs) cleanly" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
 
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber());
@@ -4041,14 +4041,14 @@ test "VM: Block closures handle extreme complex arguments |(x, y), *args, **kw|"
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
 
     try testing.expectEqual(@as(usize, 4), arr_obj.items.items.len);
 
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
 
-    const args_arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj())));
+    const args_arr: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()));
     try testing.expectEqual(@as(usize, 2), args_arr.items.items.len);
     try testing.expectEqual(@as(f64, 30.0), args_arr.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 40.0), args_arr.items.items[1].asNumber());
@@ -4082,7 +4082,7 @@ test "VM: Block closures support default parameter assignments" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
 
     // b() -> 10 + 20 = 30
@@ -4153,7 +4153,7 @@ test "VM: Block arguments gracefully pad with nil when missing" {
 
     // Should return [true, true] without reading garbage memory
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(true, arr_obj.items.items[0].asBool());
     try testing.expectEqual(true, arr_obj.items.items[1].asBool());
@@ -4185,7 +4185,7 @@ test "VM: Keyword arguments extract correctly regardless of passing order" {
 
     // Should reliably map to [10, 20]
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 10.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
@@ -4216,7 +4216,7 @@ test "VM: Block array destructuring safely pads missing elements with nil" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
 
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber()); // x
@@ -4307,7 +4307,7 @@ test "VM: Ensure block executes on successful (non-raising) path without corrupt
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[0].asNumber()); // result of begin block
     try testing.expectEqual(@as(f64, 110.0), arr_obj.items.items[1].asNumber()); // x modified by ensure
@@ -4341,7 +4341,7 @@ test "VM: Rescue handles multiple comma-separated exception types in one clause"
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[1].asNumber());
@@ -4429,7 +4429,7 @@ test "VM: Shorthand hash syntax evaluates in runtime scope" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[1].asNumber());
@@ -4513,7 +4513,7 @@ test "VM: Stabby lambdas compile and execute with default and keyword parameters
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
 
     // calc(5) -> (5 + 10) * 2 = 30
@@ -4603,7 +4603,7 @@ test "VM: GC sweep during dynamic map and array splat expansion" {
     try comp.compile(doc.tree.root);
 
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
     try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
     try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 30.0), arr_obj.items.items[1].asNumber());
@@ -4767,7 +4767,7 @@ test "VM GC: Geometry lifecycle triggers C++ destructor upon sweep" {
     defer vm.deinit();
     vm.host.mesh_destructor = mockMeshDestructor;
 
-    const test_ptr = @as(*anyopaque, @ptrFromInt(0xDEADBEEF));
+    const test_ptr: *anyopaque = @ptrFromInt(0xDEADBEEF);
     const handle = geom.GeometryHandle{ .engine = .manifold, .ptr = test_ptr };
 
     const mesh_val = try vm.allocateGeometry(.{ .concrete = handle });
@@ -5048,7 +5048,7 @@ test "VM: Exception objects capture first-class error backtraces" {
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
     try testing.expect(result.isObject() and result.asObj().obj_type == .array);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", result.asObj()));
 
     try testing.expect(arr_obj.items.items.len >= 3);
 
@@ -6112,7 +6112,7 @@ test "VM: Condition-less case statements execute as sequential boolean checks" {
     try comp.compile(doc.tree.root);
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqualStrings("second", str_obj.chars);
 }
 
@@ -6560,7 +6560,7 @@ test "VM: attr_accessor inside singleton class (class << self)" {
     try comp.compile(doc.tree.root);
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqualStrings("production", str_obj.chars);
 }
 
@@ -6596,7 +6596,7 @@ test "VM Syntax:A - Uninitialized instance variables gracefully return nil" {
     try comp.compile(doc.tree.root);
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqualStrings("default_blue", str_obj.chars);
 }
 
@@ -7816,7 +7816,7 @@ test "VM Syntax: Endless methods evaluate correctly without 'end' keyword" {
     try testing.expectEqual(@as(f64, 42.0), arr_obj.items.items[1].asNumber());
 
     // 3. greet("World") == "Hello, World!"
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()));
     try testing.expectEqualStrings("Hello, World!", str_obj.chars);
 
     // 4. agent.access() == 100
@@ -8381,7 +8381,7 @@ test "VM: Evaluates static multiple assignment optimization (Deficit and Excess)
     const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
 
     try testing.expect(arr_val.isObject() and arr_val.asObj().obj_type == .array);
-    const arr_obj = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", arr_val.asObj())));
+    const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", arr_val.asObj()));
 
     try testing.expect(arr_obj.items.items[0].isNil()); // 'c' should be nil
     try testing.expectEqual(@as(f64, 4.0), arr_obj.items.items[1].asNumber()); // 'e' should be 4
@@ -8514,7 +8514,7 @@ test "VM: Property assignments and invoke fallbacks trigger Polymorphic Inline C
     var process_chunk: ?*chunk.Chunk = null;
     for (out_chunk.constants.items) |c_val| {
         if (c_val.isObject() and c_val.asObj().obj_type == .function) {
-            const func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", c_val.asObj())));
+            const func: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", c_val.asObj()));
             if (func.name != null and std.mem.eql(u8, func.name.?.chars, "process")) {
                 process_chunk = @as(*chunk.Chunk, @ptrCast(@alignCast(func.chunk.?)));
                 break;
@@ -9395,7 +9395,7 @@ test "VM Edge Case: Exceptions inside blocks passed to Native methods safely unw
     const msg_val = inst.fields.items[msg_idx];
 
     try std.testing.expect(msg_val.isObject() and msg_val.asObj().obj_type == .string);
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", msg_val.asObj()));
 
     // Proves the stack unwound, auto-wrapped the primitive string, and populated the instance field!
     try std.testing.expectEqualStrings("Abort", str_obj.chars);
@@ -9474,7 +9474,7 @@ test "VM: raise auto-wraps primitive types in RuntimeError" {
 
     try testing.expectEqual(true, arr_obj.items.items[0].asBool());
 
-    const msg_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj())));
+    const msg_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj()));
     try testing.expectEqualStrings("42", msg_obj.chars);
 }
 
@@ -9517,7 +9517,7 @@ test "VM Edge Case: raise auto-wraps Array primitives into RuntimeError with str
 
     // Assert the message is a valid string
     try testing.expect(msg_val.isObject() and msg_val.asObj().obj_type == .string);
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", msg_val.asObj()));
 
     // Verify the Array stringification resolved perfectly
     try testing.expectEqualStrings("[1, 2, 3]", str_obj.chars);
@@ -9562,7 +9562,7 @@ test "VM Edge Case: raise auto-wraps Map primitives into RuntimeError with strin
 
     // Assert the message is a valid string
     try testing.expect(msg_val.isObject() and msg_val.asObj().obj_type == .string);
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", msg_val.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", msg_val.asObj()));
 
     // Map stringification order can be unpredictable depending on the underlying hash,
     // so we verify that the formatted contents exist securely within the output.
@@ -9600,7 +9600,7 @@ test "VM Edge Case: Exception raised inside a rescue block is caught by outer re
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
     try testing.expect(result.isObject() and result.asObj().obj_type == .string);
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqualStrings("Second Error", str_obj.chars);
 }
 
@@ -9637,7 +9637,7 @@ test "VM Edge Case: Exception raised inside a constructor unwinds safely" {
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
     try testing.expect(result.isObject() and result.asObj().obj_type == .string);
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqualStrings("Init Failed", str_obj.chars);
 }
 
@@ -9677,7 +9677,7 @@ test "VM Edge Case: Exception unwinds cleanly through multiple closure call fram
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
     try testing.expect(result.isObject() and result.asObj().obj_type == .string);
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqualStrings("Deep Error", str_obj.chars);
 }
 
@@ -9789,7 +9789,7 @@ test "VM: String ranges root boundary strings safely" {
     const arr = result.asArray();
     try testing.expectEqual(@as(usize, 3), arr.items.items.len); // ["a", "b", "c"]
 
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr.items.items[2].asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", arr.items.items[2].asObj()));
     try testing.expectEqualStrings("c", str_obj.chars);
 }
 
@@ -9855,7 +9855,7 @@ test "VM: Case statement executes fast-path jump table for primitives" {
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result.isObject() and result.asObj().obj_type == .string);
 
-    const str_obj = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", result.asObj())));
+    const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", result.asObj()));
     try testing.expectEqualStrings("two", str_obj.chars);
 }
 

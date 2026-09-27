@@ -61,7 +61,7 @@ pub fn readBinary(allocator: std.mem.Allocator, data: []const u8) !StlData {
         // Skip the attribute byte count (2 bytes)
         offset += 2;
 
-        const base_idx = @as(u32, @intCast(vertices.items.len));
+        const base_idx: u32 = @intCast(vertices.items.len);
 
         vertices.appendAssumeCapacity(.{ .x = v1_x, .y = v1_y, .z = v1_z });
         vertices.appendAssumeCapacity(.{ .x = v2_x, .y = v2_y, .z = v2_z });

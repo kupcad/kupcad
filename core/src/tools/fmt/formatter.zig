@@ -241,7 +241,7 @@ pub const Formatter = struct {
             .defined_expr => {
                 try self.out.appendSlice(self.allocator, "defined?(");
                 if (node.data != @intFromEnum(ast.StringId.none)) {
-                    const name_id = @as(ast.StringId, @enumFromInt(node.data));
+                    const name_id: ast.StringId = @enumFromInt(node.data);
                     try self.out.appendSlice(self.allocator, tree.getString(name_id));
                 }
                 try self.out.append(self.allocator, ')');

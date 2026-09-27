@@ -26,7 +26,7 @@ fn dumpNode(
     switch (node.tag) {
         .identifier, .string, .symbol => {
             // Extract the StringId from the node's data payload
-            const name_id = @as(ast.StringId, @enumFromInt(node.data));
+            const name_id: ast.StringId = @enumFromInt(node.data);
             // Look up the actual string text from the AST tree
             const str_content = tree.getString(name_id);
 

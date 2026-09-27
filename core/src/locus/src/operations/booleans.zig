@@ -3,7 +3,6 @@ const topo_arena = @import("../topology/arena.zig");
 const topo_types = @import("../topology/types.zig");
 const geom_arena = @import("../geometry/arena.zig");
 const MathEnv = @import("../math_env.zig").MathEnv;
-const verifier = @import("../topology/verifier.zig").Verifier;
 const queries = @import("queries.zig");
 
 pub const BooleanOp = enum {

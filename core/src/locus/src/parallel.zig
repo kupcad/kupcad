@@ -35,7 +35,7 @@ pub fn parallelFor(
 ) void {
     const Wrapper = struct {
         fn c_func(idx: usize, c_ctx: ?*anyopaque) callconv(.c) void {
-            const typed_ctx = @as(*Context, @ptrCast(@alignCast(c_ctx.?)));
+            const typed_ctx: *Context = @ptrCast(@alignCast(c_ctx.?));
             func(idx, typed_ctx);
         }
     };

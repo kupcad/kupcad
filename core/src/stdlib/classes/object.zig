@@ -106,15 +106,15 @@ pub fn nativeEmptyQ(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) 
         const obj = self_val.asObj();
         switch (obj.obj_type) {
             .string => {
-                const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", obj)));
+                const str: *value.ObjString = @alignCast(@fieldParentPtr("obj", obj));
                 return value.Value.initBool(str.chars.len == 0);
             },
             .array => {
-                const arr = @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", obj)));
+                const arr: *value.ObjArray = @alignCast(@fieldParentPtr("obj", obj));
                 return value.Value.initBool(arr.items.items.len == 0);
             },
             .map => {
-                const map = @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", obj)));
+                const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", obj));
                 return value.Value.initBool(map.map.count() == 0);
             },
             else => {},

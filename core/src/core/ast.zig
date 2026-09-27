@@ -767,7 +767,7 @@ pub const Builder = struct {
 
     /// Core allocation method for the 8-byte Tiny Node
     pub fn createNode(self: *Builder, tag: Tag, main_token: u24, data: u32) !NodeIndex {
-        const index = @as(u32, @intCast(self.tree.nodes.items.len));
+        const index: u32 = @intCast(self.tree.nodes.items.len);
         try self.tree.nodes.append(self.allocator, .{
             .tag = tag,
             .main_token = main_token,
@@ -789,7 +789,7 @@ pub const Builder = struct {
 
         const offset: u32 = @intCast(self.tree.string_bytes.items.len);
         try self.tree.string_bytes.appendSlice(self.allocator, str);
-        const id = @as(StringId, @enumFromInt(self.tree.string_spans.items.len));
+        const id: StringId = @enumFromInt(self.tree.string_spans.items.len);
         try self.tree.string_spans.append(self.allocator, .{
             .offset = offset,
             .length = @intCast(str.len),
@@ -842,7 +842,7 @@ pub const Builder = struct {
 
     /// Serializes payloads sequentially into the global DoD extra_data array
     fn addExtra(self: *Builder, items: anytype) !u32 {
-        const start = @as(u32, @intCast(self.tree.extra_data.items.len));
+        const start: u32 = @intCast(self.tree.extra_data.items.len);
         inline for (items) |item| {
             const T = @TypeOf(item);
             if (T == u32) {
@@ -870,61 +870,61 @@ pub const Builder = struct {
     // --- Span Generators (Side-Table Arrays) ---
 
     pub fn addNodes(self: *Builder, items: []const NodeIndex) !Span {
-        const start = @as(u32, @intCast(self.tree.extra_node_indices.items.len));
+        const start: u32 = @intCast(self.tree.extra_node_indices.items.len);
         try self.tree.extra_node_indices.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addAliasPairs(self: *Builder, items: []const AliasPair) !Span {
-        const start = @as(u32, @intCast(self.tree.alias_pairs.items.len));
+        const start: u32 = @intCast(self.tree.alias_pairs.items.len);
         try self.tree.alias_pairs.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addStringLists(self: *Builder, items: []const StringId) !Span {
-        const start = @as(u32, @intCast(self.tree.extra_string_indices.items.len));
+        const start: u32 = @intCast(self.tree.extra_string_indices.items.len);
         try self.tree.extra_string_indices.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addNamedArgs(self: *Builder, items: []const NamedArg) !Span {
-        const start = @as(u32, @intCast(self.tree.named_args.items.len));
+        const start: u32 = @intCast(self.tree.named_args.items.len);
         try self.tree.named_args.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addParams(self: *Builder, items: []const Param) !Span {
-        const start = @as(u32, @intCast(self.tree.params.items.len));
+        const start: u32 = @intCast(self.tree.params.items.len);
         try self.tree.params.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addLhsExprs(self: *Builder, items: []const LhsExpr) !Span {
-        const start = @as(u32, @intCast(self.tree.lhs_exprs.items.len));
+        const start: u32 = @intCast(self.tree.lhs_exprs.items.len);
         try self.tree.lhs_exprs.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addWhenBranches(self: *Builder, items: []const WhenBranch) !Span {
-        const start = @as(u32, @intCast(self.tree.when_branches.items.len));
+        const start: u32 = @intCast(self.tree.when_branches.items.len);
         try self.tree.when_branches.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addRescueClauses(self: *Builder, items: []const RescueClause) !Span {
-        const start = @as(u32, @intCast(self.tree.rescue_clauses.items.len));
+        const start: u32 = @intCast(self.tree.rescue_clauses.items.len);
         try self.tree.rescue_clauses.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addForBindings(self: *Builder, items: []const ForBinding) !Span {
-        const start = @as(u32, @intCast(self.tree.for_bindings.items.len));
+        const start: u32 = @intCast(self.tree.for_bindings.items.len);
         try self.tree.for_bindings.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
     pub fn addHashEntries(self: *Builder, items: []const HashEntry) !Span {
-        const start = @as(u32, @intCast(self.tree.hash_entries.items.len));
+        const start: u32 = @intCast(self.tree.hash_entries.items.len);
         try self.tree.hash_entries.appendSlice(self.allocator, items);
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }

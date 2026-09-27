@@ -39,11 +39,11 @@ pub fn mev(
     curve_id: geom_types.CurveId,
     target_loop: types.LoopIndex,
 ) EulerError!MevResult {
-    const new_v_idx = @as(types.VertexIndex, @enumFromInt(@as(u32, @intCast(t_arena.vertices.items.len))));
+    const new_v_idx: types.VertexIndex = @enumFromInt(@as(u32, @intCast(t_arena.vertices.items.len)));
     try t_arena.vertices.append(allocator, .{ .point = point_idx });
 
-    const he_out_idx = @as(types.HalfEdgeIndex, @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len))));
-    const he_in_idx = @as(types.HalfEdgeIndex, @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len + 1))));
+    const he_out_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len)));
+    const he_in_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len + 1)));
 
     // HE Out: v_start -> new_v
     try t_arena.half_edges.append(allocator, .{
@@ -91,11 +91,11 @@ pub fn mef(
     curve_id: geom_types.CurveId,
     surface_id: geom_types.SurfaceId,
 ) EulerError!MefResult {
-    const new_face_idx = @as(types.FaceIndex, @enumFromInt(@as(u32, @intCast(t_arena.faces.items.len))));
-    const new_loop_idx = @as(types.LoopIndex, @enumFromInt(@as(u32, @intCast(t_arena.loops.items.len))));
+    const new_face_idx: types.FaceIndex = @enumFromInt(@as(u32, @intCast(t_arena.faces.items.len)));
+    const new_loop_idx: types.LoopIndex = @enumFromInt(@as(u32, @intCast(t_arena.loops.items.len)));
 
-    const he_a_idx = @as(types.HalfEdgeIndex, @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len))));
-    const he_b_idx = @as(types.HalfEdgeIndex, @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len + 1))));
+    const he_a_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len)));
+    const he_b_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len + 1)));
 
     const v_a = t_arena.half_edges.items[@intFromEnum(he_a_prev)].targetVertex(t_arena);
     const v_b = t_arena.half_edges.items[@intFromEnum(he_b_prev)].targetVertex(t_arena);
@@ -135,7 +135,7 @@ pub fn mef(
         .first_half_edge = he_a_idx,
     });
 
-    const fl_start = @as(u32, @intCast(t_arena.face_loops.items.len));
+    const fl_start: u32 = @intCast(t_arena.face_loops.items.len);
     try t_arena.face_loops.append(allocator, new_loop_idx);
 
     try t_arena.faces.append(allocator, .{
@@ -284,7 +284,7 @@ pub fn kemr(
     t_arena.half_edges.items[@intFromEnum(a_next)].prev = b_prev;
 
     // Instantiate new Loop for the inner ring
-    const new_loop_idx = @as(types.LoopIndex, @enumFromInt(@as(u32, @intCast(t_arena.loops.items.len))));
+    const new_loop_idx: types.LoopIndex = @enumFromInt(@as(u32, @intCast(t_arena.loops.items.len)));
     try t_arena.loops.append(allocator, .{
         .face_id = face_idx,
         .first_half_edge = a_next,
