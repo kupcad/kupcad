@@ -1,4 +1,3 @@
-const std = @import("std");
 const lexer_mod = @import("lexer.zig");
 const Lexer = lexer_mod.Lexer;
 const test_utils = @import("../test_utils.zig");
