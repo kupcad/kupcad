@@ -7,6 +7,11 @@ const math = @import("../math.zig");
 
 pub const GenError = error{OutOfMemory};
 
+pub const TwinStitchMode = enum {
+    by_edge_key, // Matches half-edge twins using topological vertex pairs (v_min, v_max)
+    by_curve_id, // Matches half-edge twins using exact mathematical curve handles
+};
+
 pub const EdgeKey = struct {
     min_v: topo_types.VertexIndex,
     max_v: topo_types.VertexIndex,
@@ -45,14 +50,15 @@ pub fn computePlaneFromPoints(p0: math.Vec3, p1: math.Vec3, p2: math.Vec3) geom_
     };
 }
 
-/// Universal B-Rep face builder with explicit boundary curves and twin stitching.
+/// Universal B-Rep face builder with explicit boundary curves and type-safe twin stitching.
 pub fn addFaceWithCurves(
+    comptime mode: TwinStitchMode,
     allocator: std.mem.Allocator,
     t_arena: *topo_arena.TopologyArena,
     vertices: []const topo_types.VertexIndex,
     curves: []const geom_types.CurveId,
     surface_id: geom_types.SurfaceId,
-    twin_map: *std.AutoHashMap(EdgeKey, topo_types.HalfEdgeIndex),
+    twin_map: anytype,
 ) GenError!topo_types.FaceIndex {
     const face_id = @as(topo_types.FaceIndex, @enumFromInt(t_arena.faces.items.len));
     const loop_id = @as(topo_types.LoopIndex, @enumFromInt(t_arena.loops.items.len));
@@ -65,6 +71,7 @@ pub fn addFaceWithCurves(
         const next_he = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast((i + 1) % n))));
         const prev_he = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast((i + n - 1) % n))));
         const he_id = @as(topo_types.HalfEdgeIndex, @enumFromInt(t_arena.half_edges.items.len));
+        const curve_id = curves[i];
 
         try t_arena.half_edges.append(allocator, .{
             .start_vertex = va,
@@ -72,11 +79,16 @@ pub fn addFaceWithCurves(
             .next = next_he,
             .prev = prev_he,
             .loop_id = loop_id,
-            .curve = curves[i],
+            .curve = curve_id,
             .forward = true,
         });
 
-        const key = EdgeKey.init(va, vb);
+        // Comptime resolution of the stitch key eliminates reflection hacks
+        const key = switch (mode) {
+            .by_edge_key => EdgeKey.init(va, vb),
+            .by_curve_id => curve_id,
+        };
+
         if (twin_map.get(key)) |twin_id| {
             t_arena.half_edges.items[@intFromEnum(he_id)].twin = twin_id;
             t_arena.half_edges.items[@intFromEnum(twin_id)].twin = he_id;
@@ -124,7 +136,7 @@ pub fn addPolygonFace(
         curves_buf[i] = .{ .index = line_idx, .curve_type = .line };
     }
 
-    return addFaceWithCurves(allocator, t_arena, vertices, curves_buf, surface_id, twin_map);
+    return addFaceWithCurves(.by_edge_key, allocator, t_arena, vertices, curves_buf, surface_id, twin_map);
 }
 
 /// Adds a planar face while automatically computing its exact 3D Plane surface from its first 3 points.
@@ -321,25 +333,25 @@ pub fn generateCylinder(
     const c_seam_180 = geom_types.CurveId{ .index = seam_180_idx, .curve_type = .line };
     const c_seam_0 = geom_types.CurveId{ .index = seam_0_idx, .curve_type = .line };
 
-    var twin_map = std.AutoHashMap(EdgeKey, topo_types.HalfEdgeIndex).init(allocator);
+    var twin_map = std.AutoHashMap(geom_types.CurveId, topo_types.HalfEdgeIndex).init(allocator);
     defer twin_map.deinit();
 
     const sh_faces_start = @as(u32, @intCast(t_arena.shell_faces.items.len));
 
     // Face 0: Bottom Cap
-    const f0 = try addFaceWithCurves(allocator, t_arena, &[_]topo_types.VertexIndex{ v0, v1 }, &[_]geom_types.CurveId{ c_bot_neg, c_bot_pos }, bot_surf_id, &twin_map);
+    const f0 = try addFaceWithCurves(.by_curve_id, allocator, t_arena, &[_]topo_types.VertexIndex{ v0, v1 }, &[_]geom_types.CurveId{ c_bot_neg, c_bot_pos }, bot_surf_id, &twin_map);
     try t_arena.shell_faces.append(allocator, f0);
 
     // Face 1: Top Cap
-    const f1 = try addFaceWithCurves(allocator, t_arena, &[_]topo_types.VertexIndex{ v3, v2 }, &[_]geom_types.CurveId{ c_top_pos, c_top_neg }, top_surf_id, &twin_map);
+    const f1 = try addFaceWithCurves(.by_curve_id, allocator, t_arena, &[_]topo_types.VertexIndex{ v3, v2 }, &[_]geom_types.CurveId{ c_top_pos, c_top_neg }, top_surf_id, &twin_map);
     try t_arena.shell_faces.append(allocator, f1);
 
     // Face 2: Front Half-Cylinder
-    const f2 = try addFaceWithCurves(allocator, t_arena, &[_]topo_types.VertexIndex{ v0, v1, v2, v3 }, &[_]geom_types.CurveId{ c_bot_pos, c_seam_180, c_top_pos, c_seam_0 }, cyl_surf_id, &twin_map);
+    const f2 = try addFaceWithCurves(.by_curve_id, allocator, t_arena, &[_]topo_types.VertexIndex{ v0, v1, v2, v3 }, &[_]geom_types.CurveId{ c_bot_pos, c_seam_180, c_top_pos, c_seam_0 }, cyl_surf_id, &twin_map);
     try t_arena.shell_faces.append(allocator, f2);
 
     // Face 3: Back Half-Cylinder
-    const f3 = try addFaceWithCurves(allocator, t_arena, &[_]topo_types.VertexIndex{ v1, v0, v3, v2 }, &[_]geom_types.CurveId{ c_bot_neg, c_seam_0, c_top_neg, c_seam_180 }, cyl_surf_id, &twin_map);
+    const f3 = try addFaceWithCurves(.by_curve_id, allocator, t_arena, &[_]topo_types.VertexIndex{ v1, v0, v3, v2 }, &[_]geom_types.CurveId{ c_bot_neg, c_seam_0, c_top_neg, c_seam_180 }, cyl_surf_id, &twin_map);
     try t_arena.shell_faces.append(allocator, f3);
 
     return packageSingleShellSolid(allocator, t_arena, sh_faces_start);

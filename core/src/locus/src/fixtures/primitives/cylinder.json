@@ -32,7 +32,7 @@
   "half_edges": [
     {
       "start_vertex": 0,
-      "twin": 1,
+      "twin": 8,
       "next": 1,
       "prev": 1,
       "loop_id": 0,
@@ -42,7 +42,7 @@
     },
     {
       "start_vertex": 1,
-      "twin": 0,
+      "twin": 4,
       "next": 0,
       "prev": 0,
       "loop_id": 0,
@@ -52,7 +52,7 @@
     },
     {
       "start_vertex": 3,
-      "twin": 3,
+      "twin": 6,
       "next": 3,
       "prev": 3,
       "loop_id": 1,
@@ -62,7 +62,7 @@
     },
     {
       "start_vertex": 2,
-      "twin": 2,
+      "twin": 10,
       "next": 2,
       "prev": 2,
       "loop_id": 1,
@@ -72,7 +72,7 @@
     },
     {
       "start_vertex": 0,
-      "twin": 8,
+      "twin": 1,
       "next": 5,
       "prev": 7,
       "loop_id": 2,
@@ -92,7 +92,7 @@
     },
     {
       "start_vertex": 2,
-      "twin": 10,
+      "twin": 2,
       "next": 7,
       "prev": 5,
       "loop_id": 2,
@@ -112,7 +112,7 @@
     },
     {
       "start_vertex": 1,
-      "twin": 4,
+      "twin": 0,
       "next": 9,
       "prev": 11,
       "loop_id": 3,
@@ -132,7 +132,7 @@
     },
     {
       "start_vertex": 3,
-      "twin": 6,
+      "twin": 3,
       "next": 11,
       "prev": 9,
       "loop_id": 3,
