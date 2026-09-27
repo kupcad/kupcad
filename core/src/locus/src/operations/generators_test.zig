@@ -87,3 +87,100 @@ test "Generator: Sphere Strict Topology Validation" {
     // Validate Manifold Invariants
     verifier.assertValidTestOnly(alloc, &t_arena, &g_arena, .{}, sphere_idx);
 }
+
+test "Generator: 2D Square (Open Manifold)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    const solid_idx = try generators.generateSquare(alloc, &t_arena, &g_arena, 10.0, 10.0, true);
+
+    try std.testing.expectEqual(@as(usize, 4), t_arena.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 4), t_arena.half_edges.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.faces.items.len);
+
+    // Assert graph integrity (disabling require_closed_shells since it's just a 2D sheet)
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{
+        .require_closed_shells = false,
+        .check_twins = false,
+    });
+}
+
+test "Generator: 2D Multi-Loop Face (Even-Odd Polygons)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    // Outer 20x20 boundary, Inner 10x10 hole
+    const outer = [_][2]f64{ .{ -10, -10 }, .{ 10, -10 }, .{ 10, 10 }, .{ -10, 10 } };
+    const inner = [_][2]f64{ .{ -5, -5 }, .{ -5, 5 }, .{ 5, 5 }, .{ 5, -5 } };
+    const contours = [_][]const [2]f64{ &outer, &inner };
+
+    const solid_idx = try generators.generatePolygonsEvenOdd(alloc, &t_arena, &g_arena, &contours);
+
+    try std.testing.expectEqual(@as(usize, 8), t_arena.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 8), t_arena.half_edges.items.len);
+    try std.testing.expectEqual(@as(usize, 2), t_arena.loops.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.faces.items.len);
+
+    const face = t_arena.faces.items[0];
+    try std.testing.expectEqual(@as(u32, 2), face.loops_len);
+
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{
+        .require_closed_shells = false,
+        .check_twins = false,
+    });
+}
+
+test "Generator: 2D Polygon (Triangle)" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    // An asymmetrical 3-point polygon (triangle)
+    const pts = [_][2]f64{ .{ 0, 0 }, .{ 10, 0 }, .{ 5, 10 } };
+    const solid_idx = try generators.generatePolygon(alloc, &t_arena, &g_arena, &pts);
+
+    // Verify generation metrics
+    try std.testing.expectEqual(@as(usize, 3), t_arena.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 3), t_arena.half_edges.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.loops.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.faces.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
+
+    // Assert open manifold graph integrity
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{
+        .require_closed_shells = false,
+        .check_twins = false,
+    });
+}
+
+test "Generator: 2D Circle" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    // Generate a 12-segment faceted circle
+    const solid_idx = try generators.generateCircle(alloc, &t_arena, &g_arena, 5.0, 12);
+
+    // Verify generation metrics
+    try std.testing.expectEqual(@as(usize, 12), t_arena.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 12), t_arena.half_edges.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.loops.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.faces.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
+
+    // Assert open manifold graph integrity
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{
+        .require_closed_shells = false,
+        .check_twins = false,
+    });
+}
