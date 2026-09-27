@@ -1,4 +1,3 @@
-const std = @import("std");
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;

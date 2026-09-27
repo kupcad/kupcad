@@ -1,4 +1,3 @@
-const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");

@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const MaterialRole = enum { standard, ghost, highlight };
 
 pub const MaterialDef = struct {

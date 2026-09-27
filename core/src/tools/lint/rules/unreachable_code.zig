@@ -1,4 +1,3 @@
-const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;

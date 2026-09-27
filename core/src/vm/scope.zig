@@ -1,4 +1,3 @@
-const std = @import("std");
 const VM = @import("vm.zig").VM;
 
 pub const HandleScope = struct {

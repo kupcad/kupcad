@@ -1,5 +1,3 @@
-const std = @import("std");
-
 /// Context-aware tolerance environment mapped from KupCAD's EngineConfig.
 pub const MathEnv = struct {
     // Spatial Tolerances

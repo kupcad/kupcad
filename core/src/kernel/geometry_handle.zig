@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const EngineType = enum {
     manifold,
     brep_native,

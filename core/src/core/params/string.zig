@@ -1,4 +1,3 @@
-const std = @import("std");
 const value = @import("../value.zig");
 
 pub fn normalize(val: value.Value) ![]const u8 {

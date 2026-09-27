@@ -1,4 +1,3 @@
-const std = @import("std");
 const topo_arena = @import("arena.zig");
 const geom_arena = @import("../geometry/arena.zig");
 
