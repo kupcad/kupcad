@@ -1,99 +1,177 @@
 const std = @import("std");
 const testing = std.testing;
-const math_env = @import("../math_env.zig");
 const topo_arena = @import("../topology/arena.zig");
 const geom_arena = @import("../geometry/arena.zig");
+const math_env = @import("../math_env.zig");
 const generators = @import("../operations/generators.zig");
-const verifier = @import("../topology/verifier.zig").Verifier;
+const verifier = @import("../topology/verifier.zig");
 const fixture_mod = @import("fixture.zig");
 
-test "Fixture Suite: Cube 10x10 Roundtrip Serialization & Verification" {
-    const alloc = testing.allocator;
-    const env = math_env.MathEnv{};
+fn getFixturePath(alloc: std.mem.Allocator, filename: []const u8) ![]u8 {
+    const locus_src_dir = comptime blk: {
+        const file_path = @src().file;
+        const test_dir = std.fs.path.dirname(file_path) orelse ".";
+        const src_dir = std.fs.path.dirname(test_dir) orelse ".";
 
-    // 1. Generate standard live Cube
-    var src_t = topo_arena.TopologyArena.init();
-    defer src_t.deinit(alloc);
-    var src_g = geom_arena.GeometryArena.init();
-    defer src_g.deinit(alloc);
+        // When Zig compiles a module defined at src/locus/src/root.zig,
+        // @src().file strips 'src/'. We restore it so path.join resolves
+        // relative to the repository root (core/).
+        if (std.mem.startsWith(u8, src_dir, "locus")) {
+            break :blk "src/" ++ src_dir;
+        }
+        break :blk src_dir;
+    };
 
-    const cube_solid = try generators.generateCube(alloc, &src_t, &src_g, 10.0, 10.0, 10.0, true);
-
-    // Verify initial generator output
-    try verifier.validateSolid(alloc, &src_t, &src_g, env, cube_solid, .{});
-
-    // 2. Serialize live arenas to JSON string
-    const json_output = try fixture_mod.Fixture.dump(alloc, &src_t, &src_g, cube_solid, env);
-    defer alloc.free(json_output);
-
-    // Ensure valid JSON payload generated
-    try testing.expect(json_output.len > 0);
-    try testing.expect(std.mem.indexOf(u8, json_output, "\"target_solid\": 0") != null);
-
-    // 3. Deserialize into fresh, isolated arenas
-    var dst_t = topo_arena.TopologyArena.init();
-    defer dst_t.deinit(alloc);
-    var dst_g = geom_arena.GeometryArena.init();
-    defer dst_g.deinit(alloc);
-
-    const loaded = try fixture_mod.Fixture.load(alloc, json_output, &dst_t, &dst_g);
-
-    // 4. Validate deserialized B-Rep solid against topological invariants
-    try verifier.validateSolid(alloc, &dst_t, &dst_g, loaded.env, loaded.solid_idx, .{});
-
-    // 5. Parity Assertions between source and deserialized state
-    try testing.expectEqual(src_t.vertices.items.len, dst_t.vertices.items.len);
-    try testing.expectEqual(src_t.half_edges.items.len, dst_t.half_edges.items.len);
-    try testing.expectEqual(src_t.faces.items.len, dst_t.faces.items.len);
-    try testing.expectEqual(src_g.points.items.len, dst_g.points.items.len);
-
-    // Verify coordinates match within tolerance
-    for (src_g.points.items, dst_g.points.items) |p_src, p_dst| {
-        try testing.expect(env.isCoincident(p_src, p_dst));
-    }
+    return std.fs.path.join(alloc, &[_][]const u8{ locus_src_dir, "fixtures", "primitives", filename });
 }
 
-test "Fixture Suite: Polyhedron Roundtrip Serialization & Verification" {
+// ============================================================================
+// 3D Solid Snapshot Fixtures
+// ============================================================================
+
+test "Snapshot Suite: Cube 10x10x10" {
     const alloc = testing.allocator;
+    const io = testing.io;
     const env = math_env.MathEnv{};
 
-    var src_t = topo_arena.TopologyArena.init();
-    defer src_t.deinit(alloc);
-    var src_g = geom_arena.GeometryArena.init();
-    defer src_g.deinit(alloc);
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
 
-    const pts = [_][3]f64{
-        .{ 0, 0, 0 },
-        .{ 10, 0, 0 },
-        .{ 0, 10, 0 },
-        .{ 0, 0, 10 },
-    };
-    const faces = [_][3]u32{
-        .{ 0, 2, 1 },
-        .{ 0, 1, 3 },
-        .{ 1, 2, 3 },
-        .{ 2, 0, 3 },
-    };
+    const solid = try generators.generateCube(alloc, &t_arena, &g_arena, 10.0, 10.0, 10.0, true);
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, env, solid, .{});
 
-    const poly_solid = try generators.buildPolyhedron(alloc, &src_t, &src_g, &pts, &faces);
-    try verifier.validateSolid(alloc, &src_t, &src_g, env, poly_solid, .{});
+    const file_path = try getFixturePath(alloc, "cube.json");
+    defer alloc.free(file_path);
 
-    const json_output = try fixture_mod.Fixture.dump(alloc, &src_t, &src_g, poly_solid, env);
-    defer alloc.free(json_output);
+    try fixture_mod.Fixture.matchSnapshot(alloc, io, file_path, &t_arena, &g_arena, solid, env);
+}
 
-    try testing.expect(json_output.len > 0);
+test "Snapshot Suite: Cylinder" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const env = math_env.MathEnv{};
 
-    var dst_t = topo_arena.TopologyArena.init();
-    defer dst_t.deinit(alloc);
-    var dst_g = geom_arena.GeometryArena.init();
-    defer dst_g.deinit(alloc);
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
 
-    const loaded = try fixture_mod.Fixture.load(alloc, json_output, &dst_t, &dst_g);
-    try verifier.validateSolid(alloc, &dst_t, &dst_g, loaded.env, loaded.solid_idx, .{});
+    const solid = try generators.generateCylinder(alloc, &t_arena, &g_arena, 5.0, 20.0, true);
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, env, solid, .{});
 
-    // Parity Assertions
-    try testing.expectEqual(src_t.vertices.items.len, dst_t.vertices.items.len);
-    try testing.expectEqual(src_t.half_edges.items.len, dst_t.half_edges.items.len);
-    try testing.expectEqual(src_t.faces.items.len, dst_t.faces.items.len);
-    try testing.expectEqual(src_g.points.items.len, dst_g.points.items.len);
+    const file_path = try getFixturePath(alloc, "cylinder.json");
+    defer alloc.free(file_path);
+
+    try fixture_mod.Fixture.matchSnapshot(alloc, io, file_path, &t_arena, &g_arena, solid, env);
+}
+
+test "Snapshot Suite: Sphere" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const env = math_env.MathEnv{};
+
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    const solid = try generators.generateSphere(alloc, &t_arena, &g_arena, 10.0);
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, env, solid, .{});
+
+    const file_path = try getFixturePath(alloc, "sphere.json");
+    defer alloc.free(file_path);
+
+    try fixture_mod.Fixture.matchSnapshot(alloc, io, file_path, &t_arena, &g_arena, solid, env);
+}
+
+// ============================================================================
+// 2D Cross-Section Snapshot Fixtures
+// ============================================================================
+
+test "Snapshot Suite: Square (2D)" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const env = math_env.MathEnv{};
+
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    const solid = try generators.generateSquare(alloc, &t_arena, &g_arena, 10.0, 10.0, true);
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, env, solid, .{ .require_closed_shells = false, .check_twins = false });
+
+    const file_path = try getFixturePath(alloc, "square.json");
+    defer alloc.free(file_path);
+
+    try fixture_mod.Fixture.matchSnapshot(alloc, io, file_path, &t_arena, &g_arena, solid, env);
+}
+
+test "Snapshot Suite: Circle (2D)" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const env = math_env.MathEnv{};
+
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    const solid = try generators.generateCircle(alloc, &t_arena, &g_arena, 5.0, 12);
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, env, solid, .{ .require_closed_shells = false, .check_twins = false });
+
+    const file_path = try getFixturePath(alloc, "circle.json");
+    defer alloc.free(file_path);
+
+    try fixture_mod.Fixture.matchSnapshot(alloc, io, file_path, &t_arena, &g_arena, solid, env);
+}
+
+test "Snapshot Suite: Polygon (2D)" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const env = math_env.MathEnv{};
+
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    const pts = [_][2]f64{ .{ 0, 0 }, .{ 10, 0 }, .{ 5, 10 } };
+    const solid = try generators.generatePolygon(alloc, &t_arena, &g_arena, &pts);
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, env, solid, .{ .require_closed_shells = false, .check_twins = false });
+
+    const file_path = try getFixturePath(alloc, "polygon.json");
+    defer alloc.free(file_path);
+
+    try fixture_mod.Fixture.matchSnapshot(alloc, io, file_path, &t_arena, &g_arena, solid, env);
+}
+
+test "Snapshot Suite: PolygonsEvenOdd (2D)" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const env = math_env.MathEnv{};
+
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    const outer = [_][2]f64{ .{ -10, -10 }, .{ 10, -10 }, .{ 10, 10 }, .{ -10, 10 } };
+    const hole = [_][2]f64{ .{ -5, -5 }, .{ 5, -5 }, .{ 5, 5 }, .{ -5, 5 } };
+
+    var polys: std.ArrayListUnmanaged([]const [2]f64) = .empty;
+    defer polys.deinit(alloc);
+
+    try polys.append(alloc, &outer);
+    try polys.append(alloc, &hole);
+
+    const solid = try generators.generatePolygonsEvenOdd(alloc, &t_arena, &g_arena, polys.items);
+    try verifier.validateSolid(alloc, &t_arena, &g_arena, env, solid, .{ .require_closed_shells = false, .check_twins = false });
+
+    const file_path = try getFixturePath(alloc, "poly_even_odd.json");
+    defer alloc.free(file_path);
+
+    try fixture_mod.Fixture.matchSnapshot(alloc, io, file_path, &t_arena, &g_arena, solid, env);
 }

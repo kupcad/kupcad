@@ -68,7 +68,7 @@ pub fn mev(
     });
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
-        verifier.Verifier.validateGraph(t_arena) catch |err| {
+        verifier.validateGraph(t_arena) catch |err| {
             std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
             return err;
         };
@@ -154,7 +154,7 @@ pub fn mef(
     }
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
-        verifier.Verifier.validateGraph(t_arena) catch |err| {
+        verifier.validateGraph(t_arena) catch |err| {
             std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
             return err;
         };
@@ -209,7 +209,7 @@ pub fn kef(
     }
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
-        verifier.Verifier.validateGraph(t_arena) catch |err| {
+        verifier.validateGraph(t_arena) catch |err| {
             std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
             return err;
         };
@@ -249,7 +249,7 @@ pub fn kev(
     }
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
-        verifier.Verifier.validateGraph(t_arena) catch |err| {
+        verifier.validateGraph(t_arena) catch |err| {
             std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
             return err;
         };
@@ -305,7 +305,7 @@ pub fn kemr(
     t_arena.faces.items[@intFromEnum(face_idx)].loops_len += 1;
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
-        verifier.Verifier.validateGraph(t_arena) catch |err| {
+        verifier.validateGraph(t_arena) catch |err| {
             std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
             return err;
         };

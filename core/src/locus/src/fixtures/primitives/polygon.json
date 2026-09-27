@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "tolerance": 0.00001,
+  "points": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      10,
+      0,
+      0
+    ],
+    [
+      5,
+      10,
+      0
+    ]
+  ],
+  "vertices": [
+    0,
+    1,
+    2
+  ],
+  "half_edges": [
+    {
+      "start_vertex": 0,
+      "twin": 4294967295,
+      "next": 1,
+      "prev": 2,
+      "loop_id": 0,
+      "curve_type": 0,
+      "curve_index": 0,
+      "forward": true
+    },
+    {
+      "start_vertex": 1,
+      "twin": 4294967295,
+      "next": 2,
+      "prev": 0,
+      "loop_id": 0,
+      "curve_type": 0,
+      "curve_index": 1,
+      "forward": true
+    },
+    {
+      "start_vertex": 2,
+      "twin": 4294967295,
+      "next": 0,
+      "prev": 1,
+      "loop_id": 0,
+      "curve_type": 0,
+      "curve_index": 2,
+      "forward": true
+    }
+  ],
+  "loops": [
+    {
+      "face_id": 0,
+      "first_half_edge": 0
+    }
+  ],
+  "faces": [
+    {
+      "surface_type": 0,
+      "surface_index": 0,
+      "forward": true,
+      "loops_start": 0,
+      "loops_len": 1
+    }
+  ],
+  "shells": [
+    {
+      "faces_start": 0,
+      "faces_len": 1
+    }
+  ],
+  "solids": [
+    {
+      "shells_start": 0,
+      "shells_len": 1
+    }
+  ],
+  "solid_shells": [
+    0
+  ],
+  "shell_faces": [
+    0
+  ],
+  "face_loops": [
+    0
+  ],
+  "target_solid": 0,
+  "lines": [
+    {
+      "start": [
+        0,
+        0,
+        0
+      ],
+      "end": [
+        10,
+        0,
+        0
+      ]
+    },
+    {
+      "start": [
+        10,
+        0,
+        0
+      ],
+      "end": [
+        5,
+        10,
+        0
+      ]
+    },
+    {
+      "start": [
+        5,
+        10,
+        0
+      ],
+      "end": [
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "planes": [
+    {
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "u_axis": [
+        1,
+        0,
+        0
+      ],
+      "v_axis": [
+        0,
+        1,
+        0
+      ]
+    }
+  ],
+  "circle_arcs": [],
+  "cylinders": []
+}

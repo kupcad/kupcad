@@ -3,7 +3,7 @@ const math = @import("../math.zig");
 const topo_arena = @import("arena.zig");
 const topo_types = @import("types.zig");
 const geom_arena = @import("../geometry/arena.zig");
-const verifier = @import("verifier.zig").Verifier;
+const verifier = @import("verifier.zig");
 const generators = @import("../operations/generators.zig");
 
 test "Verifier: Validates perfectly watertight 2-manifold B-Rep" {

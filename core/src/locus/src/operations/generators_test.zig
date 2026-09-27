@@ -2,7 +2,7 @@ const std = @import("std");
 const topo_arena = @import("../topology/arena.zig");
 const geom_arena = @import("../geometry/arena.zig");
 const generators = @import("generators.zig");
-const verifier = @import("../topology/verifier.zig").Verifier;
+const verifier = @import("../topology/verifier.zig");
 
 test "Generator: Cube Strict Topology Validation" {
     const alloc = std.testing.allocator;

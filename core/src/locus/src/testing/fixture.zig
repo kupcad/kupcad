@@ -308,4 +308,58 @@ pub const Fixture = struct {
             .env = .{ .vertex_tolerance = data.tolerance },
         };
     }
+
+    /// VCR/Snapshot style testing helper.
+    /// If the file exists, it asserts the current state matches the file.
+    /// If the file is missing, it records the current state to the file and returns error.SnapshotCreated.
+    pub fn matchSnapshot(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        file_path: []const u8,
+        t_arena: *const topo_arena.TopologyArena,
+        g_arena: *const geom_arena.GeometryArena,
+        solid_idx: topo_types.SolidIndex,
+        env: math_env.MathEnv,
+    ) !void {
+        // 1. Generate the current topological state as JSON
+        const current_json = try dump(allocator, t_arena, g_arena, solid_idx, env);
+        defer allocator.free(current_json);
+
+        const cwd = std.Io.Dir.cwd();
+
+        // 2. Ensure parent directory exists
+        if (std.fs.path.dirname(file_path)) |dir_path| {
+            _ = cwd.createDirPath(io, dir_path) catch {};
+        }
+
+        // 3. Try to open the existing snapshot
+        var file = cwd.openFile(io, file_path, .{}) catch |err| {
+            if (err == error.FileNotFound) {
+                // 4a. Record new snapshot if missing
+                var new_file = try cwd.createFile(io, file_path, .{});
+                defer new_file.close(io);
+
+                // Write out the JSON using the positional writer wrapper
+                try std.Io.File.writePositionalAll(new_file, io, current_json, 0);
+
+                std.log.warn("\n[!] Created new snapshot at: {s}\n[!] Please review the generated JSON and rerun the tests.\n", .{file_path});
+                return error.SnapshotCreated; // Fail intentionally so CI doesn't silently ignore missing files
+            }
+            return err;
+        };
+        defer file.close(io);
+
+        // 4b. Verify existing snapshot
+        const file_len = try file.length(io);
+        const expected_json = try allocator.alloc(u8, file_len);
+        defer allocator.free(expected_json);
+
+        const read_len = try std.Io.File.readPositionalAll(file, io, expected_json, 0);
+
+        // Uses std.testing to give us a nice diff output if the geometries diverge
+        std.testing.expectEqualStrings(expected_json[0..read_len], current_json) catch |err| {
+            std.log.err("\n[X] Snapshot mismatch for {s}! The generator logic has changed.\n", .{file_path});
+            return err;
+        };
+    }
 };

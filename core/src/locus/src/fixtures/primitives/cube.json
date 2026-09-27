@@ -1,0 +1,796 @@
+{
+  "version": 1,
+  "tolerance": 0.00001,
+  "points": [
+    [
+      -5,
+      -5,
+      -5
+    ],
+    [
+      5,
+      -5,
+      -5
+    ],
+    [
+      5,
+      5,
+      -5
+    ],
+    [
+      -5,
+      5,
+      -5
+    ],
+    [
+      -5,
+      -5,
+      5
+    ],
+    [
+      5,
+      -5,
+      5
+    ],
+    [
+      5,
+      5,
+      5
+    ],
+    [
+      -5,
+      5,
+      5
+    ]
+  ],
+  "vertices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "half_edges": [
+    {
+      "start_vertex": 0,
+      "twin": 20,
+      "next": 1,
+      "prev": 3,
+      "loop_id": 0,
+      "curve_type": 0,
+      "curve_index": 0,
+      "forward": true
+    },
+    {
+      "start_vertex": 3,
+      "twin": 16,
+      "next": 2,
+      "prev": 0,
+      "loop_id": 0,
+      "curve_type": 0,
+      "curve_index": 1,
+      "forward": true
+    },
+    {
+      "start_vertex": 2,
+      "twin": 12,
+      "next": 3,
+      "prev": 1,
+      "loop_id": 0,
+      "curve_type": 0,
+      "curve_index": 2,
+      "forward": true
+    },
+    {
+      "start_vertex": 1,
+      "twin": 8,
+      "next": 0,
+      "prev": 2,
+      "loop_id": 0,
+      "curve_type": 0,
+      "curve_index": 3,
+      "forward": true
+    },
+    {
+      "start_vertex": 4,
+      "twin": 10,
+      "next": 5,
+      "prev": 7,
+      "loop_id": 1,
+      "curve_type": 0,
+      "curve_index": 4,
+      "forward": true
+    },
+    {
+      "start_vertex": 5,
+      "twin": 14,
+      "next": 6,
+      "prev": 4,
+      "loop_id": 1,
+      "curve_type": 0,
+      "curve_index": 5,
+      "forward": true
+    },
+    {
+      "start_vertex": 6,
+      "twin": 18,
+      "next": 7,
+      "prev": 5,
+      "loop_id": 1,
+      "curve_type": 0,
+      "curve_index": 6,
+      "forward": true
+    },
+    {
+      "start_vertex": 7,
+      "twin": 22,
+      "next": 4,
+      "prev": 6,
+      "loop_id": 1,
+      "curve_type": 0,
+      "curve_index": 7,
+      "forward": true
+    },
+    {
+      "start_vertex": 0,
+      "twin": 3,
+      "next": 9,
+      "prev": 11,
+      "loop_id": 2,
+      "curve_type": 0,
+      "curve_index": 8,
+      "forward": true
+    },
+    {
+      "start_vertex": 1,
+      "twin": 15,
+      "next": 10,
+      "prev": 8,
+      "loop_id": 2,
+      "curve_type": 0,
+      "curve_index": 9,
+      "forward": true
+    },
+    {
+      "start_vertex": 5,
+      "twin": 4,
+      "next": 11,
+      "prev": 9,
+      "loop_id": 2,
+      "curve_type": 0,
+      "curve_index": 10,
+      "forward": true
+    },
+    {
+      "start_vertex": 4,
+      "twin": 21,
+      "next": 8,
+      "prev": 10,
+      "loop_id": 2,
+      "curve_type": 0,
+      "curve_index": 11,
+      "forward": true
+    },
+    {
+      "start_vertex": 1,
+      "twin": 2,
+      "next": 13,
+      "prev": 15,
+      "loop_id": 3,
+      "curve_type": 0,
+      "curve_index": 12,
+      "forward": true
+    },
+    {
+      "start_vertex": 2,
+      "twin": 19,
+      "next": 14,
+      "prev": 12,
+      "loop_id": 3,
+      "curve_type": 0,
+      "curve_index": 13,
+      "forward": true
+    },
+    {
+      "start_vertex": 6,
+      "twin": 5,
+      "next": 15,
+      "prev": 13,
+      "loop_id": 3,
+      "curve_type": 0,
+      "curve_index": 14,
+      "forward": true
+    },
+    {
+      "start_vertex": 5,
+      "twin": 9,
+      "next": 12,
+      "prev": 14,
+      "loop_id": 3,
+      "curve_type": 0,
+      "curve_index": 15,
+      "forward": true
+    },
+    {
+      "start_vertex": 2,
+      "twin": 1,
+      "next": 17,
+      "prev": 19,
+      "loop_id": 4,
+      "curve_type": 0,
+      "curve_index": 16,
+      "forward": true
+    },
+    {
+      "start_vertex": 3,
+      "twin": 23,
+      "next": 18,
+      "prev": 16,
+      "loop_id": 4,
+      "curve_type": 0,
+      "curve_index": 17,
+      "forward": true
+    },
+    {
+      "start_vertex": 7,
+      "twin": 6,
+      "next": 19,
+      "prev": 17,
+      "loop_id": 4,
+      "curve_type": 0,
+      "curve_index": 18,
+      "forward": true
+    },
+    {
+      "start_vertex": 6,
+      "twin": 13,
+      "next": 16,
+      "prev": 18,
+      "loop_id": 4,
+      "curve_type": 0,
+      "curve_index": 19,
+      "forward": true
+    },
+    {
+      "start_vertex": 3,
+      "twin": 0,
+      "next": 21,
+      "prev": 23,
+      "loop_id": 5,
+      "curve_type": 0,
+      "curve_index": 20,
+      "forward": true
+    },
+    {
+      "start_vertex": 0,
+      "twin": 11,
+      "next": 22,
+      "prev": 20,
+      "loop_id": 5,
+      "curve_type": 0,
+      "curve_index": 21,
+      "forward": true
+    },
+    {
+      "start_vertex": 4,
+      "twin": 7,
+      "next": 23,
+      "prev": 21,
+      "loop_id": 5,
+      "curve_type": 0,
+      "curve_index": 22,
+      "forward": true
+    },
+    {
+      "start_vertex": 7,
+      "twin": 17,
+      "next": 20,
+      "prev": 22,
+      "loop_id": 5,
+      "curve_type": 0,
+      "curve_index": 23,
+      "forward": true
+    }
+  ],
+  "loops": [
+    {
+      "face_id": 0,
+      "first_half_edge": 0
+    },
+    {
+      "face_id": 1,
+      "first_half_edge": 4
+    },
+    {
+      "face_id": 2,
+      "first_half_edge": 8
+    },
+    {
+      "face_id": 3,
+      "first_half_edge": 12
+    },
+    {
+      "face_id": 4,
+      "first_half_edge": 16
+    },
+    {
+      "face_id": 5,
+      "first_half_edge": 20
+    }
+  ],
+  "faces": [
+    {
+      "surface_type": 0,
+      "surface_index": 0,
+      "forward": true,
+      "loops_start": 0,
+      "loops_len": 1
+    },
+    {
+      "surface_type": 0,
+      "surface_index": 1,
+      "forward": true,
+      "loops_start": 1,
+      "loops_len": 1
+    },
+    {
+      "surface_type": 0,
+      "surface_index": 2,
+      "forward": true,
+      "loops_start": 2,
+      "loops_len": 1
+    },
+    {
+      "surface_type": 0,
+      "surface_index": 3,
+      "forward": true,
+      "loops_start": 3,
+      "loops_len": 1
+    },
+    {
+      "surface_type": 0,
+      "surface_index": 4,
+      "forward": true,
+      "loops_start": 4,
+      "loops_len": 1
+    },
+    {
+      "surface_type": 0,
+      "surface_index": 5,
+      "forward": true,
+      "loops_start": 5,
+      "loops_len": 1
+    }
+  ],
+  "shells": [
+    {
+      "faces_start": 0,
+      "faces_len": 6
+    }
+  ],
+  "solids": [
+    {
+      "shells_start": 0,
+      "shells_len": 1
+    }
+  ],
+  "solid_shells": [
+    0
+  ],
+  "shell_faces": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "face_loops": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "target_solid": 0,
+  "lines": [
+    {
+      "start": [
+        -5,
+        -5,
+        -5
+      ],
+      "end": [
+        -5,
+        5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        5,
+        -5
+      ],
+      "end": [
+        5,
+        5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        5,
+        5,
+        -5
+      ],
+      "end": [
+        5,
+        -5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        5,
+        -5,
+        -5
+      ],
+      "end": [
+        -5,
+        -5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        -5,
+        5
+      ],
+      "end": [
+        5,
+        -5,
+        5
+      ]
+    },
+    {
+      "start": [
+        5,
+        -5,
+        5
+      ],
+      "end": [
+        5,
+        5,
+        5
+      ]
+    },
+    {
+      "start": [
+        5,
+        5,
+        5
+      ],
+      "end": [
+        -5,
+        5,
+        5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        5,
+        5
+      ],
+      "end": [
+        -5,
+        -5,
+        5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        -5,
+        -5
+      ],
+      "end": [
+        5,
+        -5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        5,
+        -5,
+        -5
+      ],
+      "end": [
+        5,
+        -5,
+        5
+      ]
+    },
+    {
+      "start": [
+        5,
+        -5,
+        5
+      ],
+      "end": [
+        -5,
+        -5,
+        5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        -5,
+        5
+      ],
+      "end": [
+        -5,
+        -5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        5,
+        -5,
+        -5
+      ],
+      "end": [
+        5,
+        5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        5,
+        5,
+        -5
+      ],
+      "end": [
+        5,
+        5,
+        5
+      ]
+    },
+    {
+      "start": [
+        5,
+        5,
+        5
+      ],
+      "end": [
+        5,
+        -5,
+        5
+      ]
+    },
+    {
+      "start": [
+        5,
+        -5,
+        5
+      ],
+      "end": [
+        5,
+        -5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        5,
+        5,
+        -5
+      ],
+      "end": [
+        -5,
+        5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        5,
+        -5
+      ],
+      "end": [
+        -5,
+        5,
+        5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        5,
+        5
+      ],
+      "end": [
+        5,
+        5,
+        5
+      ]
+    },
+    {
+      "start": [
+        5,
+        5,
+        5
+      ],
+      "end": [
+        5,
+        5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        5,
+        -5
+      ],
+      "end": [
+        -5,
+        -5,
+        -5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        -5,
+        -5
+      ],
+      "end": [
+        -5,
+        -5,
+        5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        -5,
+        5
+      ],
+      "end": [
+        -5,
+        5,
+        5
+      ]
+    },
+    {
+      "start": [
+        -5,
+        5,
+        5
+      ],
+      "end": [
+        -5,
+        5,
+        -5
+      ]
+    }
+  ],
+  "planes": [
+    {
+      "origin": [
+        0,
+        0,
+        -5
+      ],
+      "u_axis": [
+        1,
+        0,
+        0
+      ],
+      "v_axis": [
+        0,
+        -1,
+        0
+      ]
+    },
+    {
+      "origin": [
+        0,
+        0,
+        5
+      ],
+      "u_axis": [
+        1,
+        0,
+        0
+      ],
+      "v_axis": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "origin": [
+        0,
+        -5,
+        0
+      ],
+      "u_axis": [
+        1,
+        0,
+        0
+      ],
+      "v_axis": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "origin": [
+        5,
+        0,
+        0
+      ],
+      "u_axis": [
+        0,
+        1,
+        0
+      ],
+      "v_axis": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "origin": [
+        0,
+        5,
+        0
+      ],
+      "u_axis": [
+        -1,
+        0,
+        0
+      ],
+      "v_axis": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "origin": [
+        -5,
+        0,
+        0
+      ],
+      "u_axis": [
+        0,
+        -1,
+        0
+      ],
+      "v_axis": [
+        0,
+        0,
+        1
+      ]
+    }
+  ],
+  "circle_arcs": [],
+  "cylinders": []
+}
