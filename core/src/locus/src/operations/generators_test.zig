@@ -56,16 +56,17 @@ test "Generator: Cylinder Strict Topology Validation" {
 
     const cyl_idx = try generators.generateCylinder(alloc, &t_arena, &g_arena, 5.0, 15.0, true);
 
-    // Verify generation metrics for a 16-segment faceted cylinder
-    // Vertices: 16 top + 16 bottom = 32
-    // Faces: 16 sides + 1 top + 1 bottom = 18
-    // Half-edges: 16*4 (sides) + 16 (top) + 16 (bottom) = 96
-    try std.testing.expectEqual(@as(usize, 32), t_arena.vertices.items.len);
-    try std.testing.expectEqual(@as(usize, 96), t_arena.half_edges.items.len);
-    try std.testing.expectEqual(@as(usize, 18), t_arena.faces.items.len);
+    // Verify generation metrics for an analytical B-Rep cylinder
+    // Vertices: 2 top + 2 bottom = 4
+    // Half-edges: 2 (bot cap) + 2 (top cap) + 4 (front half) + 4 (back half) = 12
+    // Faces: 2 planar caps + 2 quadric half-cylinders = 4
+    // Solids: 1
+    try std.testing.expectEqual(@as(usize, 4), t_arena.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 12), t_arena.half_edges.items.len);
+    try std.testing.expectEqual(@as(usize, 4), t_arena.faces.items.len);
     try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
 
-    // 2. Validate Manifold Invariants
+    // Validate Manifold Invariants
     verifier.assertValidTestOnly(alloc, &t_arena, &g_arena, .{}, cyl_idx);
 }
 
