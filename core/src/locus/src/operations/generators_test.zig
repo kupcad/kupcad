@@ -78,10 +78,13 @@ test "Generator: Sphere Strict Topology Validation" {
 
     const sphere_idx = try generators.generateSphere(alloc, &t_arena, &g_arena, 10.0);
 
-    // Verify generation metrics for a 16-segment faceted sphere (delegated to cylinder)
-    try std.testing.expectEqual(@as(usize, 32), t_arena.vertices.items.len);
-    try std.testing.expectEqual(@as(usize, 96), t_arena.half_edges.items.len);
-    try std.testing.expectEqual(@as(usize, 18), t_arena.faces.items.len);
+    // Verify generation metrics for an 8-ring x 16-segment UV sphere
+    // Vertices: 2 poles + 7 rings * 16 segments = 114
+    // Faces: 16 top tris + 6*16 quads + 16 bot tris = 128
+    // Half-edges: 16*3 + 96*4 + 16*3 = 480
+    try std.testing.expectEqual(@as(usize, 114), t_arena.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 480), t_arena.half_edges.items.len);
+    try std.testing.expectEqual(@as(usize, 128), t_arena.faces.items.len);
     try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
 
     // Validate Manifold Invariants
