@@ -15,3 +15,34 @@ test "Generator: Cube Strict Topology Validation" {
 
     verifier.assertValidTestOnly(alloc, &t_arena, &g_arena, .{}, cube_idx);
 }
+
+test "Generator: buildPolyhedron Strict Topology Validation" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    // Simple 4-point tetrahedron
+    const pts = [_][3]f64{
+        .{ 0, 0, 0 },
+        .{ 10, 0, 0 },
+        .{ 0, 10, 0 },
+        .{ 0, 0, 10 },
+    };
+    // Proper CCW winding oriented outwards
+    const faces = [_][3]u32{
+        .{ 0, 2, 1 }, // Bottom
+        .{ 0, 1, 3 }, // Front
+        .{ 1, 2, 3 }, // Right
+        .{ 2, 0, 3 }, // Left
+    };
+
+    const poly_idx = try generators.buildPolyhedron(alloc, &t_arena, &g_arena, &pts, &faces);
+    verifier.assertValidTestOnly(alloc, &t_arena, &g_arena, .{}, poly_idx);
+
+    try std.testing.expectEqual(@as(usize, 4), t_arena.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 12), t_arena.half_edges.items.len); // 4 faces * 3 edges
+    try std.testing.expectEqual(@as(usize, 4), t_arena.faces.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
+}

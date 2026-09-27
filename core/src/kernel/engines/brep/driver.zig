@@ -80,26 +80,38 @@ pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHa
 
 fn extractAllVertices(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const locus_math.Vec3 {
     var pts = std.ArrayListUnmanaged(locus_math.Vec3).empty;
+    var seen = std.AutoHashMap(u32, void).init(allocator);
+    defer seen.deinit();
+
     for (handles) |h| {
         if (@intFromPtr(h.ptr) == 0) continue;
         const solid: *BrepSolid = @ptrCast(@alignCast(h.ptr));
-        if (solid.t_arena.solids.items.len <= @intFromEnum(solid.solid_id)) continue;
-
         const s = solid.t_arena.solids.items[@intFromEnum(solid.solid_id)];
+
         for (0..s.shells_len) |s_off| {
             const shell_idx = solid.t_arena.solid_shells.items[s.shells_start + s_off];
             const shell = solid.t_arena.shells.items[@intFromEnum(shell_idx)];
+
             for (0..shell.faces_len) |f_off| {
                 const face_idx = solid.t_arena.shell_faces.items[shell.faces_start + f_off];
                 const face = solid.t_arena.faces.items[@intFromEnum(face_idx)];
+
                 for (0..face.loops_len) |l_off| {
                     const loop_idx = solid.t_arena.face_loops.items[face.loops_start + l_off];
                     const loop = solid.t_arena.loops.items[@intFromEnum(loop_idx)];
                     var curr = loop.first_half_edge;
+
                     while (true) {
                         const he = solid.t_arena.half_edges.items[@intFromEnum(curr)];
-                        const v_idx = solid.t_arena.vertices.items[@intFromEnum(he.start_vertex)].point;
-                        try pts.append(allocator, solid.g_arena.points.items[@intFromEnum(v_idx)]);
+                        const v = solid.t_arena.vertices.items[@intFromEnum(he.start_vertex)];
+                        const pt_idx = @intFromEnum(v.point);
+
+                        // Deduplicate points before passing them to Quickhull
+                        if (!seen.contains(pt_idx)) {
+                            try seen.put(pt_idx, {});
+                            try pts.append(allocator, solid.g_arena.points.items[pt_idx]);
+                        }
+
                         curr = he.next;
                         if (curr == loop.first_half_edge) break;
                     }

@@ -61,7 +61,7 @@ test "Driver: Polyhedron Import (Mesh to B-Rep)" {
     const poly_handle = driver.driver.polyhedronFn(std.testing.allocator, &pts, &faces) orelse return error.PolyhedronFailed;
     defer driver.driver.destructFn(poly_handle);
 
-    try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(poly_handle));
+    try std.testing.expectEqual(@as(i32, 5), driver.driver.numVertsFn(poly_handle));
 }
 
 test "Driver: Revolve 2D Profile" {

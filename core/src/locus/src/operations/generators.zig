@@ -197,9 +197,97 @@ pub fn buildPolyhedron(
     pts: []const [3]f64,
     faces: []const [3]u32,
 ) GenError!topo_types.SolidIndex {
-    _ = pts;
-    _ = faces;
-    return generateCube(allocator, t_arena, g_arena, 10, 10, 10, true);
+    const v_start = t_arena.vertices.items.len;
+    for (pts) |p| {
+        const pt_idx = @as(u32, @intCast(g_arena.points.items.len));
+        try g_arena.points.append(allocator, p);
+        try t_arena.vertices.append(allocator, .{ .point = @as(geom_types.PointIndex, @enumFromInt(pt_idx)) });
+    }
+
+    const shell_id = @as(topo_types.ShellIndex, @enumFromInt(t_arena.shells.items.len));
+    const sh_faces_start = @as(u32, @intCast(t_arena.shell_faces.items.len));
+
+    var twin_map = std.AutoHashMap(EdgeKey, topo_types.HalfEdgeIndex).init(allocator);
+    defer twin_map.deinit();
+
+    for (faces) |f| {
+        const v0 = @as(u32, @intCast(v_start + f[0]));
+        const v1 = @as(u32, @intCast(v_start + f[1]));
+        const v2 = @as(u32, @intCast(v_start + f[2]));
+
+        const p0 = pts[f[0]];
+        const p1 = pts[f[1]];
+        const p2 = pts[f[2]];
+
+        const u_axis = math.normalize(math.sub(p1, p0));
+        const v_vec = math.sub(p2, p0);
+        var normal = math.normalize(math.cross(u_axis, v_vec));
+        if (math.magSq(normal) < 1e-12) normal = .{ 0, 0, 1 }; // Degenerate fallback
+        const v_axis = math.normalize(math.cross(normal, u_axis));
+
+        const plane_idx = @as(u32, @intCast(g_arena.planes.items.len));
+        try g_arena.planes.append(allocator, .{ .origin = p0, .u_axis = u_axis, .v_axis = v_axis });
+
+        const he_start = @as(u32, @intCast(t_arena.half_edges.items.len));
+        const loop_id = @as(topo_types.LoopIndex, @enumFromInt(t_arena.loops.items.len));
+        const face_id = @as(topo_types.FaceIndex, @enumFromInt(t_arena.faces.items.len));
+
+        const v_arr = [_]u32{ v0, v1, v2 };
+        for (0..3) |i| {
+            const va = @as(topo_types.VertexIndex, @enumFromInt(v_arr[i]));
+            const vb = @as(topo_types.VertexIndex, @enumFromInt(v_arr[(i + 1) % 3]));
+
+            const line_idx: geom_types.CurveIndex = @enumFromInt(g_arena.lines.items.len);
+            const pA = pts[f[i]];
+            const pB = pts[f[(i + 1) % 3]];
+            try g_arena.lines.append(allocator, .{ .start = pA, .end = pB });
+
+            const he_id = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast(i))));
+            try t_arena.half_edges.append(allocator, .{
+                .start_vertex = va,
+                .twin = topo_types.NULL_HALF_EDGE,
+                .next = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast((i + 1) % 3)))),
+                .prev = @as(topo_types.HalfEdgeIndex, @enumFromInt(he_start + @as(u32, @intCast((i + 2) % 3)))),
+                .loop_id = loop_id,
+                .curve = .{ .index = line_idx, .curve_type = .line },
+                .forward = true,
+            });
+
+            // Universal Twin Stitching
+            const key = EdgeKey.init(va, vb);
+            if (twin_map.get(key)) |twin_he| {
+                t_arena.half_edges.items[@intFromEnum(he_id)].twin = twin_he;
+                t_arena.half_edges.items[@intFromEnum(twin_he)].twin = he_id;
+                _ = twin_map.remove(key);
+            } else {
+                try twin_map.put(key, he_id);
+            }
+        }
+
+        try t_arena.loops.append(allocator, .{ .face_id = face_id, .first_half_edge = @enumFromInt(he_start) });
+        const fl_start = @as(u32, @intCast(t_arena.face_loops.items.len));
+        try t_arena.face_loops.append(allocator, loop_id);
+        const surf_handle = geom_types.SurfaceId{ .index = @enumFromInt(plane_idx), .surface_type = .plane };
+        try t_arena.faces.append(allocator, .{
+            .surface = surf_handle,
+            .forward = true,
+            .loops_start = fl_start,
+            .loops_len = 1,
+        });
+        try t_arena.shell_faces.append(allocator, face_id);
+    }
+
+    try t_arena.shells.append(allocator, .{
+        .faces_start = sh_faces_start,
+        .faces_len = @intCast(t_arena.shell_faces.items.len - sh_faces_start),
+    });
+
+    const solid_id = @as(topo_types.SolidIndex, @enumFromInt(t_arena.solids.items.len));
+    const so_shells_start = @as(u32, @intCast(t_arena.solid_shells.items.len));
+    try t_arena.solid_shells.append(allocator, shell_id);
+    try t_arena.solids.append(allocator, .{ .shells_start = so_shells_start, .shells_len = 1 });
+
+    return solid_id;
 }
 
 pub fn generatePolygonsEvenOdd(

@@ -52,3 +52,48 @@ test "Fixture Suite: Cube 10x10 Roundtrip Serialization & Verification" {
         try testing.expect(env.isCoincident(p_src, p_dst));
     }
 }
+
+test "Fixture Suite: Polyhedron Roundtrip Serialization & Verification" {
+    const alloc = testing.allocator;
+    const env = math_env.MathEnv{};
+
+    var src_t = topo_arena.TopologyArena.init();
+    defer src_t.deinit(alloc);
+    var src_g = geom_arena.GeometryArena.init();
+    defer src_g.deinit(alloc);
+
+    const pts = [_][3]f64{
+        .{ 0, 0, 0 },
+        .{ 10, 0, 0 },
+        .{ 0, 10, 0 },
+        .{ 0, 0, 10 },
+    };
+    const faces = [_][3]u32{
+        .{ 0, 2, 1 },
+        .{ 0, 1, 3 },
+        .{ 1, 2, 3 },
+        .{ 2, 0, 3 },
+    };
+
+    const poly_solid = try generators.buildPolyhedron(alloc, &src_t, &src_g, &pts, &faces);
+    try verifier.validateSolid(alloc, &src_t, &src_g, env, poly_solid, .{});
+
+    const json_output = try fixture_mod.Fixture.dump(alloc, &src_t, &src_g, poly_solid, env);
+    defer alloc.free(json_output);
+
+    try testing.expect(json_output.len > 0);
+
+    var dst_t = topo_arena.TopologyArena.init();
+    defer dst_t.deinit(alloc);
+    var dst_g = geom_arena.GeometryArena.init();
+    defer dst_g.deinit(alloc);
+
+    const loaded = try fixture_mod.Fixture.load(alloc, json_output, &dst_t, &dst_g);
+    try verifier.validateSolid(alloc, &dst_t, &dst_g, loaded.env, loaded.solid_idx, .{});
+
+    // Parity Assertions
+    try testing.expectEqual(src_t.vertices.items.len, dst_t.vertices.items.len);
+    try testing.expectEqual(src_t.half_edges.items.len, dst_t.half_edges.items.len);
+    try testing.expectEqual(src_t.faces.items.len, dst_t.faces.items.len);
+    try testing.expectEqual(src_g.points.items.len, dst_g.points.items.len);
+}
