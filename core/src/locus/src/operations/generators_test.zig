@@ -46,3 +46,44 @@ test "Generator: buildPolyhedron Strict Topology Validation" {
     try std.testing.expectEqual(@as(usize, 4), t_arena.faces.items.len);
     try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
 }
+
+test "Generator: Cylinder Strict Topology Validation" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    const cyl_idx = try generators.generateCylinder(alloc, &t_arena, &g_arena, 5.0, 15.0, true);
+
+    // Verify generation metrics for a 16-segment faceted cylinder
+    // Vertices: 16 top + 16 bottom = 32
+    // Faces: 16 sides + 1 top + 1 bottom = 18
+    // Half-edges: 16*4 (sides) + 16 (top) + 16 (bottom) = 96
+    try std.testing.expectEqual(@as(usize, 32), t_arena.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 96), t_arena.half_edges.items.len);
+    try std.testing.expectEqual(@as(usize, 18), t_arena.faces.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
+
+    // 2. Validate Manifold Invariants
+    verifier.assertValidTestOnly(alloc, &t_arena, &g_arena, .{}, cyl_idx);
+}
+
+test "Generator: Sphere Strict Topology Validation" {
+    const alloc = std.testing.allocator;
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    const sphere_idx = try generators.generateSphere(alloc, &t_arena, &g_arena, 10.0);
+
+    // Verify generation metrics for a 16-segment faceted sphere (delegated to cylinder)
+    try std.testing.expectEqual(@as(usize, 32), t_arena.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 96), t_arena.half_edges.items.len);
+    try std.testing.expectEqual(@as(usize, 18), t_arena.faces.items.len);
+    try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
+
+    // Validate Manifold Invariants
+    verifier.assertValidTestOnly(alloc, &t_arena, &g_arena, .{}, sphere_idx);
+}
