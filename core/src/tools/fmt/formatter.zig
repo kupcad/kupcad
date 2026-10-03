@@ -625,7 +625,7 @@ pub const Formatter = struct {
         try self.formatNode(tree, b.right);
     }
 
-    fn formatUnaryOp(self: *Formatter, tree: *const ast.Tree, u: anytype) Error!void {
+    fn formatUnaryOp(self: *Formatter, tree: *const ast.Tree, u: ast.UnaryExpr) Error!void {
         const op_str = switch (u.op) {
             .negate => "-",
             .positive => "+",

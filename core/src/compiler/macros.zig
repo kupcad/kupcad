@@ -1,8 +1,9 @@
 const std = @import("std");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
+const Compiler = @import("compiler.zig").Compiler;
 
-pub fn emitAttrReader(comp: anytype, prop_name: []const u8, is_singleton: bool) !void {
+pub fn emitAttrReader(comp: *Compiler, prop_name: []const u8, is_singleton: bool) !void {
     const clean_name = std.mem.trimStart(u8, prop_name, ":@");
 
     const func = try comp.vm.gc.allocateFunction(comp.vm);
