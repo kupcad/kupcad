@@ -180,7 +180,7 @@ pub const Lexer = struct {
     index: usize,
     file_id: u32,
     brace_depth: u32 = 0,
-    interp_stack: [8]InterpState = undefined,
+    interp_stack: [8]InterpState,
     interp_depth: usize = 0,
 
     pub fn init(buffer: []const u8, file_id: u32) Lexer {
@@ -188,6 +188,8 @@ pub const Lexer = struct {
             .buffer = buffer,
             .index = 0,
             .file_id = file_id,
+            // SAFETY: The stack is guarded by interp_depth. Uninitialized elements are never read before being written
+            .interp_stack = undefined,
         };
     }
 

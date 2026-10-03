@@ -225,7 +225,7 @@ pub const Formatter = struct {
                 // We temporarily adapt the AliasPair slice back into an array of StringIds for the formatter
                 var string_ids = std.ArrayListUnmanaged(ast.StringId).empty;
                 defer string_ids.deinit(self.allocator);
-                for (pairs) |p| string_ids.append(self.allocator, p.original) catch unreachable;
+                for (pairs) |p| try string_ids.append(self.allocator, p.original);
 
                 try self.formatImportExport(tree, "import", string_ids.items, tree.getString(is_stmt.path), is_stmt.attributes);
             },
@@ -234,7 +234,7 @@ pub const Formatter = struct {
                 const pairs = tree.getAliasPairs(es_stmt.symbols);
                 var string_ids = std.ArrayListUnmanaged(ast.StringId).empty;
                 defer string_ids.deinit(self.allocator);
-                for (pairs) |p| string_ids.append(self.allocator, p.original) catch unreachable;
+                for (pairs) |p| try string_ids.append(self.allocator, p.original);
 
                 try self.formatImportExport(tree, "export", string_ids.items, tree.getString(es_stmt.path), es_stmt.attributes);
             },

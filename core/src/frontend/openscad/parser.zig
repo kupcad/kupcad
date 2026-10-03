@@ -488,6 +488,7 @@ pub const Parser = struct {
     pub fn parseExpression(self: *Parser, precedence: Precedence) ParseError!ast.NodeIndex {
         self.skipIgnored();
         const start_tok = self.tok_idx;
+        // SAFETY: left is unconditionally initialized by the switch statement below
         var left: ast.NodeIndex = undefined;
 
         switch (self.tag(0)) {
@@ -599,6 +600,7 @@ pub const Parser = struct {
             is_each = true;
             self.advance();
         }
+        // SAFETY: first is unconditionally initialized by the if/else branches below
         var first: ast.NodeIndex = undefined;
         if (self.tag(0) == .comma or self.tag(0) == .r_bracket) {
             first = try self.b.undefNode(self.tok_idx);
@@ -631,6 +633,7 @@ pub const Parser = struct {
                 is_each = true;
                 self.advance();
             }
+            // SAFETY: elem is unconditionally initialized by the if/else branches below
             var elem: ast.NodeIndex = undefined;
             if (self.tag(0) == .comma or self.tag(0) == .r_bracket) {
                 elem = try self.b.undefNode(self.tok_idx);

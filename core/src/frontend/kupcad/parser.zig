@@ -174,7 +174,9 @@ pub const Parser = struct {
                 self.comments.append(self.allocator, .{
                     .lexeme = self.lexeme(0),
                     .loc = self.getLoc(self.tok_idx),
-                }) catch {};
+                }) catch |err| {
+                    std.log.err("OOM while parsing comments: {}", .{err});
+                };
             }
             self.advance();
         }
@@ -186,7 +188,9 @@ pub const Parser = struct {
                 self.comments.append(self.allocator, .{
                     .lexeme = self.lexeme(0),
                     .loc = self.getLoc(self.tok_idx),
-                }) catch {};
+                }) catch |err| {
+                    std.log.err("OOM while parsing comments: {}", .{err});
+                };
             }
             self.advance();
         }
@@ -699,6 +703,7 @@ pub const Parser = struct {
 
         while (self.tag(0) == .keyword_when) {
             self.advance();
+            // SAFETY: cond_span is unconditionally initialized before use via addNodes below
             var cond_span: ast.Span = undefined;
 
             const cond_s_len = self.scratch_nodes.items.len;
@@ -744,6 +749,7 @@ pub const Parser = struct {
         _ = try self.expect(.keyword_def);
 
         var is_class_method = false;
+        // SAFETY: name_idx is unconditionally initialized by the if/else branches below
         var name_idx: u24 = undefined;
         if (self.tag(0) == .keyword_self and self.tag(1) == .dot) {
             is_class_method = true;
@@ -1205,6 +1211,7 @@ pub const Parser = struct {
             const double_splat = self.b.doubleSplatExpr(inner, star_tok) catch return ParseError.OutOfMemory;
             return .{ .key = double_splat, .value = double_splat };
         } else {
+            // SAFETY: key is unconditionally initialized by the if/else branches below
             var key: ast.NodeIndex = undefined;
             if (self.tag(0) == .ident and self.tag(1) == .colon) {
                 const key_tok = self.tok_idx;

@@ -324,7 +324,9 @@ pub const VM = struct {
         });
 
         // --- PROFILER: Top-Level Script ---
-        if (self.profiler) |p| p.enterFrame("script") catch {};
+        if (self.profiler) |p| p.enterFrame("script") catch |err| {
+            std.log.err("Profiler error: {}", .{err});
+        };
 
         const res = self.run();
         self.clearUnwindState();
@@ -881,7 +883,9 @@ pub const VM = struct {
                 },
                 .op_return => {
                     // --- PROFILER: Stop Timer ---
-                    if (self.profiler) |p| p.exitFrame() catch {};
+                    if (self.profiler) |p| p.exitFrame() catch |err| {
+                        std.log.err("Profiler error: {}", .{err});
+                    };
 
                     const result = self.pop();
 
@@ -1636,7 +1640,9 @@ pub const VM = struct {
 
         if (self.profiler) |p| {
             const func_name = if (closure.function.name) |n| n.chars else "block";
-            p.enterFrame(func_name) catch {};
+            p.enterFrame(func_name) catch |err| {
+                std.log.err("Profiler error: {}", .{err});
+            };
         }
 
         try self.frames.append(self.allocator, .{
@@ -1673,7 +1679,9 @@ pub const VM = struct {
 
         if (self.profiler) |p| {
             const func_name = if (closure.function.name) |n| n.chars else "block";
-            p.enterFrame(func_name) catch {};
+            p.enterFrame(func_name) catch |err| {
+                std.log.err("Profiler error: {}", .{err});
+            };
         }
 
         try self.frames.append(self.allocator, .{
@@ -2301,10 +2309,14 @@ pub const VM = struct {
 
     inline fn executeNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, args_ptr: [*]value.Value, func_name: []const u8) InterpretResult {
         // --- PROFILER: Native Enter ---
-        if (self.profiler) |p| p.enterFrame(func_name) catch {};
+        if (self.profiler) |p| p.enterFrame(func_name) catch |err| {
+            std.log.err("Profiler error: {}", .{err});
+        };
 
         const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
-            if (self.profiler) |p| p.exitFrame() catch {};
+            if (self.profiler) |p| p.exitFrame() catch |e| {
+                std.log.err("Profiler error: {}", .{e});
+            };
             if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
             if (err == error.Unwind) {
                 // --- Restore Stack corrupted by Native Defers ---
@@ -2320,7 +2332,9 @@ pub const VM = struct {
         };
 
         // --- PROFILER: Native Exit ---
-        if (self.profiler) |p| p.exitFrame() catch {};
+        if (self.profiler) |p| p.exitFrame() catch |err| {
+            std.log.err("Profiler error: {}", .{err});
+        };
 
         self.popAndRelease(arg_count + 1);
         self.stack.ptr[self.stack_top] = result;
@@ -2346,7 +2360,9 @@ pub const VM = struct {
                             // Otherwise, stringify the primitive (number, boolean, etc.)
                             const scratch_alloc = self.scratch_arena.allocator();
                             var out: std.Io.Writer.Allocating = .init(scratch_alloc);
-                            err_val.stringify(false, &out.writer) catch {};
+                            err_val.stringify(false, &out.writer) catch |err| {
+                                std.log.err("Error stringifying primitive exception: {}", .{err});
+                            };
                             str_val = self.allocateString(out.written()) catch null;
                         }
 
@@ -2354,13 +2370,17 @@ pub const VM = struct {
                             self.push(value.Value.initObj(&inst.obj));
 
                             const msg_key = self.allocateString("message") catch return .runtime_error;
-                            self.setInstanceField(inst, msg_key, s_val, null) catch {};
+                            self.setInstanceField(inst, msg_key, s_val, null) catch |err| {
+                                std.log.err("Error setting exception message: {}", .{err});
+                            };
 
                             // --- EAGER BACKTRACE CAPTURE ---
                             if (self.buildBacktrace() catch null) |bt_arr| {
                                 self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
                                 const bt_key = self.allocateString("backtrace") catch return .runtime_error;
-                                self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch {};
+                                self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
+                                    std.log.err("Error setting exception backtrace: {}", .{err});
+                                };
                                 _ = self.pop();
                             }
 

@@ -552,7 +552,7 @@ pub const GC = struct {
 
         var str_iter = vm.strings.iterator();
         while (str_iter.next()) |entry| {
-            if (!entry.value_ptr.*.obj.is_marked) stale_strings.append(self.allocator, entry.key_ptr.*) catch {};
+            if (!entry.value_ptr.*.obj.is_marked) stale_strings.append(self.allocator, entry.key_ptr.*) catch @panic("OOM during GC sweep");
         }
         for (stale_strings.items) |k| {
             _ = vm.strings.remove(k);
@@ -564,7 +564,7 @@ pub const GC = struct {
 
         var sym_iter = vm.symbols.iterator();
         while (sym_iter.next()) |entry| {
-            if (!entry.value_ptr.*.obj.is_marked) stale_symbols.append(self.allocator, entry.key_ptr.*) catch {};
+            if (!entry.value_ptr.*.obj.is_marked) stale_symbols.append(self.allocator, entry.key_ptr.*) catch @panic("OOM during GC sweep");
         }
         for (stale_symbols.items) |k| {
             _ = vm.symbols.remove(k);
@@ -600,7 +600,7 @@ pub const GC = struct {
             if (geom_ptr.dag_idx != std.math.maxInt(u32)) {
                 if (geom_ptr.dag_idx < vm.dag_builder.node_hashes.items.len) {
                     const hash = vm.dag_builder.node_hashes.items[geom_ptr.dag_idx];
-                    live_hashes.put(hash, {}) catch {};
+                    live_hashes.put(hash, {}) catch @panic("OOM during GC sweep");
                 }
             }
         }
@@ -614,7 +614,7 @@ pub const GC = struct {
             if (!live_hashes.contains(entry.key_ptr.*)) {
                 // Destruct C++ handle immediately
                 kernel.destruct(entry.value_ptr.*);
-                keys_to_remove.append(self.allocator, entry.key_ptr.*) catch {};
+                keys_to_remove.append(self.allocator, entry.key_ptr.*) catch @panic("OOM during GC sweep");
             }
         }
 
