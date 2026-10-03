@@ -118,6 +118,7 @@ pub fn arrayReduce(vm: *VM, arr: *value.ObjArray, initial_val: ?value.Value, blo
         return error.RuntimeError;
     }
 
+    // SAFETY: acc_val is conditionally initialized below based on `initial_val` presence or array length.
     var acc_val: value.Value = undefined;
     var start_idx: usize = 0;
 

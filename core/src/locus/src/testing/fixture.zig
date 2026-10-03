@@ -327,7 +327,9 @@ pub const Fixture = struct {
 
         // 2. Ensure parent directory exists
         if (std.fs.path.dirname(file_path)) |dir_path| {
-            _ = cwd.createDirPath(io, dir_path) catch {};
+            _ = cwd.createDirPath(io, dir_path) catch |err| {
+                std.log.warn("Failed to create snapshot dir: {}", .{err});
+            };
         }
 
         // 3. Try to open the existing snapshot

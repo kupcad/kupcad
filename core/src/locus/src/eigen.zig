@@ -167,6 +167,7 @@ pub fn pcaNormal(pts: []const math.Vec3) math.Vec3 {
 
         return math.normalize(.{ V[0 * 3 + min_idx], V[1 * 3 + min_idx], V[2 * 3 + min_idx] });
     } else {
+        // SAFETY: Populated via C-FFI pointer out-parameter in locus_eigen_pca_normal.
         var normal: math.Vec3 = undefined;
         locus_eigen_pca_normal(@ptrCast(pts.ptr), @intCast(pts.len), &normal);
         return normal;

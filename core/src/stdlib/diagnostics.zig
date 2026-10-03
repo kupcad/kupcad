@@ -27,6 +27,7 @@ pub fn nativeAssert(vm: *VM, args: []const value.Value) anyerror!value.Value {
     // Check if the assertion failed (using Truthiness: only false or nil fail)
     if (value.Value.isFalsey(condition)) {
         // Determine Exception Class
+        // SAFETY: err_class is unconditionally initialized in the if/else block below.
         var err_class: *value.ObjClass = undefined;
         if (pos_count == 3) {
             const err_val = args[2];

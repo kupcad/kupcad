@@ -145,7 +145,9 @@ pub const ViewportWsServer = struct {
             const writer = &writer_wrapper.interface;
 
             if (writer.writeAll(frame.items)) |_| {
-                writer.flush() catch {};
+                writer.flush() catch |err| {
+                    log.err("Failed to flush websocket: {}", .{err});
+                };
                 active_i += 1;
             } else |_| {
                 stream.close(self.io);

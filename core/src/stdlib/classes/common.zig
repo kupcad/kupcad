@@ -91,6 +91,7 @@ pub fn wrapMethod(comptime func: anytype) value.NativeFn {
     return struct {
         fn nativeWrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
             const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+            // SAFETY: call_args array is populated exactly element-by-element in the loop below.
             var call_args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
 
             call_args[0] = vm;
@@ -151,6 +152,7 @@ pub fn wrapGlobal(comptime func: anytype) value.NativeFn {
     return struct {
         fn nativeWrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
             const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+            // SAFETY: call_args array is populated exactly element-by-element in the loop below.
             var call_args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
             call_args[0] = vm;
 

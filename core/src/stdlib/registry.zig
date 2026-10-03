@@ -14,7 +14,7 @@ const params_mod = @import("params.zig");
 const kernel = @import("../kernel/kernel.zig");
 
 fn defaultPrintHandler(vm: *VM, message: []const u8) void {
-    std.Io.File.stderr().writeStreamingAll(vm.io, message) catch {};
+    std.Io.File.stderr().writeStreamingAll(vm.io, message) catch return;
 }
 
 // --- Bootstrap Helpers ---

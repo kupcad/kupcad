@@ -62,7 +62,9 @@ pub const SessionManager = struct {
         for (self.lru_queue.items, 0..) |id, i| {
             if (id == session_id) {
                 _ = self.lru_queue.orderedRemove(i);
-                self.lru_queue.append(self.allocator, session_id) catch {};
+                self.lru_queue.append(self.allocator, session_id) catch |err| {
+                    log.err("OOM appending to LRU queue: {}", .{err});
+                };
                 return;
             }
         }

@@ -31,7 +31,7 @@ pub const MemoryVfs = struct {
                 const ptr_val = @intFromPtr(c.ptr);
                 if (!freed_ptrs.contains(ptr_val)) {
                     self.allocator.free(c);
-                    freed_ptrs.put(ptr_val, {}) catch {};
+                    freed_ptrs.put(ptr_val, {}) catch @panic("OOM tracking double-frees");
                 }
             }
             // Free the path string (key)

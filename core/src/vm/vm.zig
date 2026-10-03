@@ -2704,13 +2704,17 @@ pub const VM = struct {
 
                     if (self.allocateString(msg) catch null) |str_val| {
                         const msg_key = self.allocateString("message") catch return .runtime_error;
-                        self.setInstanceField(inst, msg_key, str_val, null) catch {};
+                        self.setInstanceField(inst, msg_key, str_val, null) catch |err| {
+                            std.log.err("Error setting dynamic exception message: {}", .{err});
+                        };
 
                         // --- EAGER BACKTRACE CAPTURE ---
                         if (self.buildBacktrace() catch null) |bt_arr| {
                             self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
                             const bt_key = self.allocateString("backtrace") catch return .runtime_error;
-                            self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch {};
+                            self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
+                                std.log.err("Error setting dynamic exception backtrace: {}", .{err});
+                            };
                             _ = self.pop();
                         }
 

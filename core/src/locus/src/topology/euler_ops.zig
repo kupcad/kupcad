@@ -69,7 +69,7 @@ pub fn mev(
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
         verifier.validateGraph(t_arena) catch |err| {
-            std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
+            std.log.err("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
             return err;
         };
     }
@@ -155,7 +155,7 @@ pub fn mef(
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
         verifier.validateGraph(t_arena) catch |err| {
-            std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
+            std.log.err("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
             return err;
         };
     }
@@ -210,7 +210,7 @@ pub fn kef(
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
         verifier.validateGraph(t_arena) catch |err| {
-            std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
+            std.log.err("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
             return err;
         };
     }
@@ -250,7 +250,7 @@ pub fn kev(
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
         verifier.validateGraph(t_arena) catch |err| {
-            std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
+            std.log.err("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
             return err;
         };
     }
@@ -306,7 +306,7 @@ pub fn kemr(
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
         verifier.validateGraph(t_arena) catch |err| {
-            std.debug.print("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
+            std.log.err("Euler operator '{s}' broke topology invariants: {s}!\n", .{ @src().fn_name, @errorName(err) });
             return err;
         };
     }

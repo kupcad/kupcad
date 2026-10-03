@@ -236,7 +236,7 @@ fn validateShell(
 
         if (euler > 2 or @rem(euler, 2) != 0) {
             if (!config.mute_errors) {
-                std.debug.print("Euler Violation: V={d}, E={d}, F={d}, L={d} -> Euler = {d}\n", .{
+                std.log.err("Euler Violation: V={d}, E={d}, F={d}, L={d} -> Euler = {d}\n", .{
                     v, e, f_count, l_count, euler,
                 });
             }
@@ -260,9 +260,13 @@ pub inline fn assertValidTestOnly(
             const io = std.testing.io;
 
             const cwd = std.Io.Dir.cwd();
-            cwd.createDirPath(io, "src/locus/test_dump") catch {};
+            cwd.createDirPath(io, "src/locus/test_dump") catch |dump_err| {
+                std.log.warn("Failed to create test_dump dir: {}", .{dump_err});
+            };
 
-            debug_dump.dumpSolidToObj(allocator, io, "src/locus/test_dump/crash_dump.obj", t_arena, g_arena, solid_idx) catch {};
+            debug_dump.dumpSolidToObj(allocator, io, "src/locus/test_dump/crash_dump.obj", t_arena, g_arena, solid_idx) catch |dump_err| {
+                std.log.warn("Failed to dump crash obj: {}", .{dump_err});
+            };
             std.debug.panic("Topological corruption detected during test: {s}", .{@errorName(err)});
         };
     }

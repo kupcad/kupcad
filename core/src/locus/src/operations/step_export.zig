@@ -482,6 +482,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     const pj1 = g.points.items[@intFromEnum(pj1_idx)];
 
                     const tri_normal = math.normalize(math.cross(math.sub(pj, p0), math.sub(pj1, p0)));
+                    // SAFETY: Unconditionally initialized in the if/else block below.
                     var tri_u: math.Vec3 = undefined;
                     if (@abs(tri_normal[0]) < 0.9) {
                         tri_u = math.normalize(math.cross(.{ 1.0, 0.0, 0.0 }, tri_normal));
@@ -609,6 +610,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     else => {
                         face_orientation = "T";
                         const n_ax = loop_data.normal;
+                        // SAFETY: Unconditionally initialized in the if/else block below.
                         var u_ax: math.Vec3 = undefined;
                         if (@abs(n_ax[0]) < 0.9) {
                             u_ax = math.normalize(math.cross(.{ 1.0, 0.0, 0.0 }, n_ax));

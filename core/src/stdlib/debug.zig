@@ -31,7 +31,7 @@ const History = struct {
             const diff = second_start - first_start;
 
             // Shift characters and remove oldest entry
-            self.chars.replaceRange(alloc, 0, diff, &[_]u8{}) catch {};
+            self.chars.replaceRange(alloc, 0, diff, &[_]u8{}) catch @panic("OOM");
             _ = self.line_starts.orderedRemove(0);
 
             for (self.line_starts.items) |*s| s.* -= diff;
@@ -62,14 +62,14 @@ const History = struct {
 
 // --- Raw Terminal Line Editor ---
 fn refreshLine(vm: *VM, stdout: std.Io.File, prompt: []const u8, buf: []const u8, cursor: usize) !void {
-    stdout.writeStreamingAll(vm.io, "\r\x1b[2K") catch {}; // Clear line
-    stdout.writeStreamingAll(vm.io, prompt) catch {};
-    stdout.writeStreamingAll(vm.io, buf) catch {};
+    stdout.writeStreamingAll(vm.io, "\r\x1b[2K") catch return; // Clear line
+    stdout.writeStreamingAll(vm.io, prompt) catch return;
+    stdout.writeStreamingAll(vm.io, buf) catch return;
 
     if (buf.len > cursor) {
         var ansi_buf: [32]u8 = undefined;
         if (std.fmt.bufPrint(&ansi_buf, "\x1b[{d}D", .{buf.len - cursor})) |msg| {
-            stdout.writeStreamingAll(vm.io, msg) catch {};
+            stdout.writeStreamingAll(vm.io, msg) catch return;
         } else |_| {}
     }
 }
@@ -79,7 +79,7 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
     const stdout = std.Io.File.stdout();
 
     if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        stdout.writeStreamingAll(vm.io, prompt) catch {};
+        stdout.writeStreamingAll(vm.io, prompt) catch return null;
         var buf: [1024]u8 = undefined;
         const bytes_read = stdin.readStreaming(vm.io, &.{&buf}) catch return null;
         if (bytes_read == 0) return null;
@@ -96,11 +96,11 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
         var raw = orig;
         raw.lflag.ICANON = false;
         raw.lflag.ECHO = false;
-        posix.tcsetattr(stdin_fd, .FLUSH, raw) catch {};
+        posix.tcsetattr(stdin_fd, .FLUSH, raw) catch |err| log.warn("Terminal config error: {}", .{err});
     }
     defer {
         if (orig_termios_opt) |orig| {
-            posix.tcsetattr(stdin_fd, .FLUSH, orig) catch {};
+            posix.tcsetattr(stdin_fd, .FLUSH, orig) catch |err| log.warn("Terminal config error: {}", .{err});
         }
     }
 
@@ -118,10 +118,10 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
         const c = b_buf[0];
 
         if (c == '\n' or c == '\r') {
-            stdout.writeStreamingAll(vm.io, "\n") catch {};
+            stdout.writeStreamingAll(vm.io, "\n") catch return null;
             return try vm.allocator.dupe(u8, buf[0..len]);
         } else if (c == 3 or c == 4) { // Ctrl+C or Ctrl+D
-            stdout.writeStreamingAll(vm.io, "\n") catch {};
+            stdout.writeStreamingAll(vm.io, "\n") catch return null;
             return null;
         } else if (c == 127 or c == 8) { // Backspace
             if (cursor > 0) {
@@ -187,7 +187,7 @@ fn printLocals(vm: *VM) void {
     const stdout = std.Io.File.stdout();
     var out: std.Io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
-    out.writer.writeAll("--- Locals ---\n") catch {};
+    out.writer.writeAll("--- Locals ---\n") catch return;
 
     if (vm.frames.items.len > 0) {
         const frame = &vm.frames.items[vm.frames.items.len - 1];
@@ -198,38 +198,38 @@ fn printLocals(vm: *VM) void {
                 if (std.mem.eql(u8, name, "<anonymous>")) continue;
                 const slot = frame.base_slot + i;
                 if (slot < vm.stack_top) {
-                    out.writer.print("{s}: ", .{name}) catch {};
-                    vm.stack[slot].stringify(true, &out.writer) catch {};
-                    out.writer.writeAll("\n") catch {};
+                    out.writer.print("{s}: ", .{name}) catch return;
+                    vm.stack[slot].stringify(true, &out.writer) catch return;
+                    out.writer.writeAll("\n") catch return;
                 }
             }
         }
     }
-    out.writer.writeAll("--------------\n") catch {};
-    stdout.writeStreamingAll(vm.io, out.written()) catch {};
+    out.writer.writeAll("--------------\n") catch return;
+    stdout.writeStreamingAll(vm.io, out.written()) catch return;
 }
 
 fn printStack(vm: *VM) void {
     const stdout = std.Io.File.stdout();
     var out: std.Io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
-    out.writer.writeAll("--- VM Stack ---\n") catch {};
+    out.writer.writeAll("--- VM Stack ---\n") catch return;
     var i: usize = vm.stack_top;
     while (i > 0) {
         i -= 1;
-        out.writer.print("[{d:0>2}] ", .{i}) catch {};
-        vm.stack[i].stringify(true, &out.writer) catch {};
-        out.writer.writeAll("\n") catch {};
+        out.writer.print("[{d:0>2}] ", .{i}) catch return;
+        vm.stack[i].stringify(true, &out.writer) catch return;
+        out.writer.writeAll("\n") catch return;
     }
-    out.writer.writeAll("----------------\n") catch {};
-    stdout.writeStreamingAll(vm.io, out.written()) catch {};
+    out.writer.writeAll("----------------\n") catch return;
+    stdout.writeStreamingAll(vm.io, out.written()) catch return;
 }
 
 fn printGlobals(vm: *VM) void {
     const stdout = std.Io.File.stdout();
     var out: std.Io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
-    out.writer.writeAll("--- User Globals ---\n") catch {};
+    out.writer.writeAll("--- User Globals ---\n") catch return;
 
     var it = vm.globals.iterator();
     while (it.next()) |entry| {
@@ -237,24 +237,24 @@ fn printGlobals(vm: *VM) void {
         if (val.isNative() or val.isClass() or val.isModule()) continue;
         if (std.mem.eql(u8, entry.key_ptr.*, "GC") or std.mem.eql(u8, entry.key_ptr.*, "Math")) continue;
 
-        out.writer.print("{s}: ", .{entry.key_ptr.*}) catch {};
-        val.stringify(true, &out.writer) catch {};
-        out.writer.writeAll("\n") catch {};
+        out.writer.print("{s}: ", .{entry.key_ptr.*}) catch return;
+        val.stringify(true, &out.writer) catch return;
+        out.writer.writeAll("\n") catch return;
     }
-    out.writer.writeAll("--------------------\n") catch {};
-    stdout.writeStreamingAll(vm.io, out.written()) catch {};
+    out.writer.writeAll("--------------------\n") catch return;
+    stdout.writeStreamingAll(vm.io, out.written()) catch return;
 }
 
 fn evaluateContextually(vm: *VM, input: []const u8) void {
     const stdout = std.Io.File.stdout();
     var doc = Document.parse(vm.allocator, input) catch {
-        stdout.writeStreamingAll(vm.io, "Parse error.\n") catch {};
+        stdout.writeStreamingAll(vm.io, "Parse error.\n") catch return;
         return;
     };
     defer doc.deinit();
 
     if (doc.diagnostics.len > 0) {
-        stdout.writeStreamingAll(vm.io, "Syntax error.\n") catch {};
+        stdout.writeStreamingAll(vm.io, "Syntax error.\n") catch return;
         return;
     }
 
@@ -275,7 +275,7 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
     comp.compile(doc.tree.root) catch |err| {
         var err_buf: [128]u8 = undefined;
         const err_str = std.fmt.bufPrint(&err_buf, "Compile error: {}\n", .{err}) catch "Compile error.\n";
-        stdout.writeStreamingAll(vm.io, err_str) catch {};
+        stdout.writeStreamingAll(vm.io, err_str) catch return;
         return;
     };
 
@@ -327,11 +327,11 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
 
         var out: std.Io.Writer.Allocating = .init(vm.allocator);
         defer out.deinit();
-        result_val.stringify(true, &out.writer) catch {};
-        out.writer.writeAll("\n") catch {};
-        stdout.writeStreamingAll(vm.io, out.written()) catch {};
+        result_val.stringify(true, &out.writer) catch return;
+        out.writer.writeAll("\n") catch return;
+        stdout.writeStreamingAll(vm.io, out.written()) catch return;
     } else {
-        stdout.writeStreamingAll(vm.io, "Evaluation failed.\n") catch {};
+        stdout.writeStreamingAll(vm.io, "Evaluation failed.\n") catch return;
     }
 
     vm.shrinkStack(repl_base_slot);
@@ -340,8 +340,8 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
 pub fn debuggerLoop(vm: *VM) void {
     const stdout = std.Io.File.stdout();
 
-    stdout.writeStreamingAll(vm.io, "\n===   KupCAD Debugger ===\n") catch {};
-    stdout.writeStreamingAll(vm.io, "Commands: .step, .continue, .locals, .stack, .globals, .help\n") catch {};
+    stdout.writeStreamingAll(vm.io, "\n===   KupCAD Debugger ===\n") catch return;
+    stdout.writeStreamingAll(vm.io, "Commands: .step, .continue, .locals, .stack, .globals, .help\n") catch return;
 
     if (vm.frames.items.len > 0) {
         const frame = &vm.frames.items[vm.frames.items.len - 1];
@@ -354,7 +354,7 @@ pub fn debuggerLoop(vm: *VM) void {
                 const col = li.getUtf8Column(source_offset) + 1;
                 var loc_buf: [64]u8 = undefined;
                 if (std.fmt.bufPrint(&loc_buf, "Break at line {d}, col {d}\n", .{ line, col })) |msg| {
-                    stdout.writeStreamingAll(vm.io, msg) catch {};
+                    stdout.writeStreamingAll(vm.io, msg) catch return;
                 } else |_| {}
             }
         }
@@ -377,17 +377,17 @@ pub fn debuggerLoop(vm: *VM) void {
         const trimmed = std.mem.trim(u8, input, " \r\n\t");
         if (trimmed.len == 0) continue;
 
-        history.push(vm.allocator, trimmed) catch {};
+        history.push(vm.allocator, trimmed) catch |err| log.warn("History push failed: {}", .{err});
 
         if (std.mem.eql(u8, trimmed, ".c") or std.mem.eql(u8, trimmed, ".continue")) {
-            stdout.writeStreamingAll(vm.io, "Resuming execution...\n\n") catch {};
+            stdout.writeStreamingAll(vm.io, "Resuming execution...\n\n") catch return;
             vm.step_mode = false;
             break;
         } else if (std.mem.eql(u8, trimmed, ".s") or std.mem.eql(u8, trimmed, ".step")) {
             vm.step_mode = true;
             break;
         } else if (std.mem.eql(u8, trimmed, ".q") or std.mem.eql(u8, trimmed, ".exit") or std.mem.eql(u8, trimmed, ".quit")) {
-            stdout.writeStreamingAll(vm.io, "Exiting KupCAD...\n") catch {};
+            stdout.writeStreamingAll(vm.io, "Exiting KupCAD...\n") catch return;
             std.process.exit(0);
         } else if (std.mem.eql(u8, trimmed, ".l") or std.mem.eql(u8, trimmed, ".locals")) {
             printLocals(vm);
@@ -396,7 +396,7 @@ pub fn debuggerLoop(vm: *VM) void {
         } else if (std.mem.eql(u8, trimmed, ".g") or std.mem.eql(u8, trimmed, ".globals")) {
             printGlobals(vm);
         } else if (std.mem.eql(u8, trimmed, ".h") or std.mem.eql(u8, trimmed, ".help")) {
-            stdout.writeStreamingAll(vm.io, "Commands:\n  .s, .step      Step to next line\n  .c, .continue  Resume execution\n  .l, .locals    Print local variables\n  .st, .stack    Print VM stack\n  .g, .globals   Print User Globals\n  .q, .exit      Quit program\n  <expr>         Evaluate expression (e.g. 'c', 'width * 2')\n") catch {};
+            stdout.writeStreamingAll(vm.io, "Commands:\n  .s, .step      Step to next line\n  .c, .continue  Resume execution\n  .l, .locals    Print local variables\n  .st, .stack    Print VM stack\n  .g, .globals   Print User Globals\n  .q, .exit      Quit program\n  <expr>         Evaluate expression (e.g. 'c', 'width * 2')\n") catch return;
         } else {
             evaluateContextually(vm, trimmed);
         }
