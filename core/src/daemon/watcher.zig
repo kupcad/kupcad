@@ -36,7 +36,9 @@ pub const Watcher = struct {
         while (true) {
             // Sleep for 500ms using the native async IO engine, bound to the awake clock
             const duration = std.Io.Duration.fromMilliseconds(500);
-            self.io.sleep(duration, .awake) catch {};
+            self.io.sleep(duration, .awake) catch |err| {
+                log.warn("Watcher sleep interrupted: {}", .{err});
+            };
 
             const cwd = std.Io.Dir.cwd();
             if (cwd.statFile(self.io, self.file_path, .{})) |stat| {

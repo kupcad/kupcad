@@ -213,7 +213,9 @@ pub const Parser = struct {
                     self.comments.append(self.allocator, .{
                         .lexeme = self.lexeme(0),
                         .loc = self.getLoc(self.tok_idx),
-                    }) catch {};
+                    }) catch |err| {
+                        std.log.err("OOM while parsing comments: {}", .{err});
+                    };
                 }
                 self.advance();
                 lookahead -= 1;
