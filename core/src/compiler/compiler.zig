@@ -2064,7 +2064,7 @@ pub const Compiler = struct {
         }
     }
 
-    fn compileDestructure(self: *Compiler, target: anytype) CompileError!void {
+    fn compileDestructure(self: *Compiler, target: ast.LhsExpr) CompileError!void {
         // Assign the unpacked value currently on top of the stack to the target identifier
         if (target.name != .none) {
             // Provide a dummy symbol. The classification engine will figure out if it's a

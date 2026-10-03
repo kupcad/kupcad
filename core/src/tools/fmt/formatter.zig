@@ -610,7 +610,7 @@ pub const Formatter = struct {
         try self.formatNode(tree, ia.value);
     }
 
-    fn formatIndexAccess(self: *Formatter, tree: *const ast.Tree, ia: anytype) Error!void {
+    fn formatIndexAccess(self: *Formatter, tree: *const ast.Tree, ia: ast.IndexAccess) Error!void {
         try self.formatNode(tree, ia.target);
         try self.out.append(self.allocator, '[');
         try self.formatNode(tree, ia.index);
@@ -649,7 +649,7 @@ pub const Formatter = struct {
         try self.formatNode(tree, node);
     }
 
-    fn formatRescueModifier(self: *Formatter, tree: *const ast.Tree, rm: anytype) Error!void {
+    fn formatRescueModifier(self: *Formatter, tree: *const ast.Tree, rm: ast.RescueModifier) Error!void {
         try self.formatNode(tree, rm.expr);
         try self.out.appendSlice(self.allocator, " rescue ");
         try self.formatNode(tree, rm.rescue_expr);
