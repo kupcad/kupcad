@@ -37,7 +37,7 @@ pub const Lockfile = struct {
     pub fn init(allocator: std.mem.Allocator) Lockfile {
         return .{
             .allocator = allocator,
-            .version = allocator.dupe(u8, "1.0.0") catch unreachable,
+            .version = allocator.dupe(u8, "1.0.0") catch @panic("OOM allocating lockfile version"),
             .packages = PackagesMap.init(allocator),
         };
     }

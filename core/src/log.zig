@@ -30,8 +30,8 @@ pub fn printStderr(io: std.Io, comptime fmt: []const u8, args: anytype) void {
     if (io.lockStderr(&buf, null)) |ls| {
         defer io.unlockStderr();
 
-        ls.file_writer.interface.print(fmt, args) catch {};
-        ls.file_writer.interface.flush() catch {};
+        ls.file_writer.interface.print(fmt, args) catch return;
+        ls.file_writer.interface.flush() catch return;
     } else |_| {}
 }
 
@@ -43,6 +43,6 @@ pub fn printStdout(io: std.Io, comptime fmt: []const u8, args: anytype) void {
     var stdout_w = std.Io.File.stdout().writer(io, &buf);
     const stdout = &stdout_w.interface;
 
-    stdout.print(fmt, args) catch {};
-    stdout.flush() catch {};
+    stdout.print(fmt, args) catch return;
+    stdout.flush() catch return;
 }

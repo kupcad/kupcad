@@ -79,6 +79,7 @@ pub const Resolver = struct {
         const pkg_id = try std.fmt.allocPrint(self.allocator, "{s}-{s}-{s}", .{ parsed.domain, parsed.user, parsed.repo });
         defer self.allocator.free(pkg_id);
 
+        // SAFETY: Populated securely by lockfile check or fetcher.fetchCommitSha before use.
         var commit_sha: []const u8 = undefined;
         var needs_download = false;
 
@@ -95,6 +96,7 @@ pub const Resolver = struct {
         if (needs_download) {
             commit_sha = try fetcher.fetchCommitSha(parsed);
 
+            // SAFETY: Unconditionally populated by the exhaustive switch statement below.
             var archive_url: []const u8 = undefined;
             switch (parsed.provider) {
                 .github => archive_url = try GithubProvider.formatArchiveUrl(self.allocator, parsed, commit_sha),
@@ -256,7 +258,7 @@ pub const Resolver = struct {
                         const target_path = try std.fmt.allocPrint(self.allocator, "../../../{s}-{s}/pkg", .{ dep_pkg_id, dep_locked.resolved });
                         defer self.allocator.free(target_path);
 
-                        fs.symLink(target_path, link_name) catch {};
+                        fs.symLink(target_path, link_name) catch |err| log.warn("Failed to create symlink: {}", .{err});
                     }
                 }
             }
@@ -277,7 +279,7 @@ pub const Resolver = struct {
                 const target_path = try std.fmt.allocPrint(self.allocator, ".store/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
                 defer self.allocator.free(target_path);
 
-                fs.symLink(target_path, link_name) catch {};
+                fs.symLink(target_path, link_name) catch |err| log.warn("Failed to create symlink: {}", .{err});
             }
         }
     }

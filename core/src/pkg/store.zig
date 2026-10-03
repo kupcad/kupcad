@@ -85,6 +85,7 @@ pub const Stmt = struct {
 
         const rc = sqlite.sqlite3_step(self.handle);
         if (rc == sqlite.SQLITE_ROW) {
+            // SAFETY: All fields are immediately populated via reflection from sqlite3_column_* below.
             var result: T = undefined;
             inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
                 const filed_type = @typeInfo(T).@"struct".field_types[i];
@@ -116,6 +117,7 @@ pub const Stmt = struct {
             pub fn next(self: *@This()) !?T {
                 const rc = sqlite.sqlite3_step(self.stmt.handle);
                 if (rc == sqlite.SQLITE_ROW) {
+                    // SAFETY: All fields are immediately populated via reflection from sqlite3_column_* below.
                     var result: T = undefined;
                     inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
                         const filed_type = @typeInfo(T).@"struct".field_types[i];
@@ -310,7 +312,7 @@ pub const Store = struct {
         files_map: *std.StringHashMap([]const u8),
     ) !void {
         try self.db.exec("BEGIN TRANSACTION", .{}, .{});
-        errdefer self.db.exec("ROLLBACK", .{}, .{}) catch {};
+        errdefer self.db.exec("ROLLBACK", .{}, .{}) catch |err| log.err("Rollback failed: {}", .{err});
 
         const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
         const now: i64 = @intCast(@divTrunc(now_ns, std.time.ns_per_s));

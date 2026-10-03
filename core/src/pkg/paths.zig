@@ -22,6 +22,7 @@ pub fn getHomeDir(allocator: std.mem.Allocator, env_map: *const std.process.Envi
 
         // FOLDERID_Profile
         const guid = comptime std.os.windows.GUID.parse(WIN_FOLDERID_GUID);
+        // SAFETY: Pointer is populated by SHGetKnownFolderPath on success.
         var dir_path_ptr: [*:0]u16 = undefined;
 
         if (funcs.SHGetKnownFolderPath(&guid, 32768, null, &dir_path_ptr) == 0) {

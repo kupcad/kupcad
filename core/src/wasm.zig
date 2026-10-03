@@ -11,6 +11,7 @@ const allocator = std.heap.c_allocator;
 var last_error_msg: [*]const u8 = "None".ptr;
 
 // --- Global VFS State ---
+// SAFETY: Initialized securely in getMemVfs() before any external access.
 var global_mem_vfs: MemoryVfs = undefined;
 var vfs_initialized: bool = false;
 
@@ -109,6 +110,7 @@ fn inner_extract_params(source: []const u8) ![]const u8 {
 }
 
 fn inner_build_model(source: []const u8, format: []const u8, use_draco: bool) ![]const u8 {
+    // SAFETY: The undefined IO context is safely unused because we are explicitly providing a vfs_override.
     return try api.buildModel(allocator, undefined, source, format, use_draco, null, getMemVfs().vfs());
 }
 

@@ -18,8 +18,8 @@ pub const Manifest = struct {
     pub fn init(allocator: std.mem.Allocator, name: []const u8) Manifest {
         return .{
             .allocator = allocator,
-            .name = allocator.dupe(u8, name) catch unreachable,
-            .version = allocator.dupe(u8, "0.1.0") catch unreachable,
+            .name = allocator.dupe(u8, name) catch @panic("OOM allocating manifest name"),
+            .version = allocator.dupe(u8, "0.1.0") catch @panic("OOM allocating manifest version"),
             .dependencies = StringMap.init(allocator),
         };
     }

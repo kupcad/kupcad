@@ -14,15 +14,15 @@ pub const Cafs = struct {
         const cwd = std.Io.Dir.cwd();
 
         // Use native I/O for the global CAFS directories
-        cwd.createDirPath(io, global_dir_path) catch {};
+        cwd.createDirPath(io, global_dir_path) catch |err| std.log.warn("Failed to create CAFS dir: {}", .{err});
 
         const files_path = try std.fmt.allocPrint(allocator, "{s}/files", .{global_dir_path});
         defer allocator.free(files_path);
-        cwd.createDirPath(io, files_path) catch {};
+        cwd.createDirPath(io, files_path) catch |err| std.log.warn("Failed to create CAFS files dir: {}", .{err});
 
         const tmp_path = try std.fmt.allocPrint(allocator, "{s}/tmp", .{global_dir_path});
         defer allocator.free(tmp_path);
-        cwd.createDirPath(io, tmp_path) catch {};
+        cwd.createDirPath(io, tmp_path) catch |err| std.log.warn("Failed to create CAFS tmp dir: {}", .{err});
 
         return .{
             .allocator = allocator,
@@ -142,7 +142,7 @@ pub const Cafs = struct {
         defer self.allocator.free(tmp_path);
 
         try cwd.createDirPath(self.io, tmp_path);
-        defer cwd.deleteTree(self.io, tmp_path) catch {};
+        defer cwd.deleteTree(self.io, tmp_path) catch |err| std.log.warn("Failed to cleanup CAFS tmp dir: {}", .{err});
 
         var tmp_dir = try cwd.openDir(self.io, tmp_path, .{ .iterate = true });
         defer tmp_dir.close(self.io);
@@ -236,7 +236,7 @@ pub const Cafs = struct {
             try cwd.deleteFile(self.io, tmp_path);
         } else |_| {
             cwd.rename(tmp_path, cwd, final_path, self.io) catch |err| {
-                cwd.deleteFile(self.io, tmp_path) catch {};
+                cwd.deleteFile(self.io, tmp_path) catch |e| std.log.warn("Failed to delete tmp file: {}", .{e});
                 return err;
             };
         }
