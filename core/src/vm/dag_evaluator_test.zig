@@ -404,3 +404,34 @@ test "DAG Evaluator: dynamic stacks handle massive batches without overflow" {
     // If it reaches this line and the engine resolves, dynamic scaling succeeded perfectly
     try testing.expectEqual(geom.EngineType.manifold, handle.engine);
 }
+
+test "DAG Builder: Polyhedron CSE uses O(1) precomputed hash correctly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const pts = [_][3]f64{
+        .{ 0.0, 0.0, 0.0 },
+        .{ 1.0, 0.0, 0.0 },
+        .{ 0.0, 1.0, 0.0 },
+        .{ 0.0, 0.0, 1.0 },
+    };
+    const faces = [_][3]u32{
+        .{ 0, 1, 2 },
+        .{ 0, 3, 1 },
+        .{ 0, 2, 3 },
+        .{ 1, 3, 2 },
+    };
+
+    // Add the exact same polyhedron twice
+    const node1 = try vm.dag_builder.addPolyhedron(&pts, &faces);
+    const node2 = try vm.dag_builder.addPolyhedron(&pts, &faces);
+
+    // Because the precomputed u64 hash is identical, the CSE engine should
+    // perfectly deduplicate them without traversing the arrays a second time!
+    try testing.expectEqual(node1, node2);
+
+    // Verify the payload correctly returns the reconstructed precomputed hash
+    const node = vm.dag_builder.nodes.items[node1];
+    const payload = vm.dag_builder.getPolyhedronPayload(node);
+    try testing.expect(payload.geom_hash != 0);
+}

@@ -213,13 +213,26 @@ pub const DAGBuilder = struct {
         const snap = self.snapshot();
         const alloc = self.allocator();
 
+        // --- PRECOMPUTE GEOMETRY HASH (O(N) -> O(1) CSE Optimization) ---
+        // We hash the raw bytes of the vertices and faces exactly ONCE upon creation.
+        // This prevents the CSE engine from re-hashing millions of floats every time this node is evaluated.
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(std.mem.sliceAsBytes(pts));
+        hasher.update(std.mem.sliceAsBytes(faces));
+        const geom_hash = hasher.final();
+
+        // Split the 64-bit hash into two 32-bit halves to pack seamlessly into the DOD `extra_data` array
+        const hash_high: u32 = @truncate(geom_hash >> 32);
+        const hash_low: u32 = @truncate(geom_hash);
+
         const pts_start: u32 = @intCast(self.poly_points.items.len);
         try self.poly_points.appendSlice(alloc, pts);
 
         const faces_start: u32 = @intCast(self.poly_faces.items.len);
         try self.poly_faces.appendSlice(alloc, faces);
 
-        const data_offset = try self.appendExtraData(&.{ pts_start, @intCast(pts.len), faces_start, @intCast(faces.len) });
+        // Store the two hash halves immediately after the geometry footprint
+        const data_offset = try self.appendExtraData(&.{ pts_start, @intCast(pts.len), faces_start, @intCast(faces.len), hash_high, hash_low });
         return try self.appendNodeWithRollback(.{ .tag = .polyhedron_op, .flags = 0, .data = data_offset }, snap);
     }
 
@@ -479,14 +492,21 @@ pub const DAGBuilder = struct {
         };
     }
 
-    pub inline fn getPolyhedronPayload(self: *const DAGBuilder, node: DAGNode) struct { pts: []const [3]f64, faces: []const [3]u32 } {
+    pub inline fn getPolyhedronPayload(self: *const DAGBuilder, node: DAGNode) struct { pts: []const [3]f64, faces: []const [3]u32, geom_hash: u64 } {
         const pts_start = self.extra_data.items[node.data];
         const pts_len = self.extra_data.items[node.data + 1];
         const faces_start = self.extra_data.items[node.data + 2];
         const faces_len = self.extra_data.items[node.data + 3];
+
+        // Reconstruct the cached 64-bit hash from the two 32-bit payloads
+        const hash_high: u64 = self.extra_data.items[node.data + 4];
+        const hash_low: u64 = self.extra_data.items[node.data + 5];
+        const geom_hash = (hash_high << 32) | hash_low;
+
         return .{
             .pts = self.poly_points.items[pts_start .. pts_start + pts_len],
             .faces = self.poly_faces.items[faces_start .. faces_start + faces_len],
+            .geom_hash = geom_hash,
         };
     }
 
@@ -564,16 +584,8 @@ pub const DAGBuilder = struct {
             },
             .polyhedron_op => {
                 const p = self.getPolyhedronPayload(node);
-                for (p.pts) |pt| {
-                    hasher.update(std.mem.asBytes(&pt[0]));
-                    hasher.update(std.mem.asBytes(&pt[1]));
-                    hasher.update(std.mem.asBytes(&pt[2]));
-                }
-                for (p.faces) |f| {
-                    hasher.update(std.mem.asBytes(&f[0]));
-                    hasher.update(std.mem.asBytes(&f[1]));
-                    hasher.update(std.mem.asBytes(&f[2]));
-                }
+                // O(1) CSE Hashing: We use the precomputed mesh hash instead of iterating millions of vertices
+                hasher.update(std.mem.asBytes(&p.geom_hash));
             },
             .union_op, .difference_op, .intersection_op, .cs_union_op, .cs_difference_op, .cs_intersection_op, .minkowski => {
                 const p = self.getBinaryPayload(node);
