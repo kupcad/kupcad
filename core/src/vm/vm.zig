@@ -629,18 +629,14 @@ pub const VM = struct {
                     for (self.stack[start_idx..self.stack_top]) |val| {
                         val.stringify(false, &out.writer) catch {
                             out.deinit();
-                            // Removed manual arena reset to protect nested evaluations
                             return .runtime_error;
                         };
                     }
 
                     // Pass scratch output to the GC string intern table
                     const merged_str = self.allocateString(out.written()) catch {
-                        // Removed manual arena reset to protect nested evaluations
                         return .runtime_error;
                     };
-
-                    // Removed manual arena reset! The `defer` in `runUntil` will recycle this safely.
 
                     // Pop and release all original stack fragments
                     for (0..count) |_| {
