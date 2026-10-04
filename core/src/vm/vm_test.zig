@@ -1528,7 +1528,6 @@ test "VM: case statement subsumption (===) with ranges and classes" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Replaced 'then' with newlines for valid KupCAD syntax
     const source =
         \\def check_val(x)
         \\  case x
@@ -3607,7 +3606,7 @@ test "VM: CLI parameter injection overrides default script parameter values" {
     vm.push(sym_key);
     defer _ = vm.pop();
 
-    // Replace map_obj.keys.append and map_obj.values.append with a single put!
+    // Replace map_obj.keys.append and map_obj.values.append with a single put
     try map_obj.map.put(vm.gc.trackingAllocator(), sym_key, value.Value.initNumber(85.0));
 
     // Script declares default: 50, but CLI injection should replace it with 85
@@ -10560,4 +10559,124 @@ test "VM: Scratch Arena is preserved during complex nested string formatting" {
 
     try std.testing.expect(final_val.isString());
     try std.testing.expectEqualStrings("hello world!", final_val.asString().chars);
+}
+
+test "VM: DOD array operations (build, spread, pack, unpack) transfer memory losslessly" {
+    const source =
+        \\ base = [2, 3, 4]
+        \\ expanded = [1, *base, 5]
+        \\ expanded
+    ;
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const final_val = try executeAndAssertStack(&vm, &main_chunk, 1);
+
+    try std.testing.expect(final_val.isArray());
+    const result_arr = final_val.asArray().items.items;
+
+    try std.testing.expectEqual(@as(usize, 5), result_arr.len);
+    try std.testing.expectEqual(@as(f64, 1.0), result_arr[0].asNumber());
+    try std.testing.expectEqual(@as(f64, 2.0), result_arr[1].asNumber());
+    try std.testing.expectEqual(@as(f64, 5.0), result_arr[4].asNumber());
+}
+
+test "VM: DOD map operations (build, insert, spread) transfer memory losslessly" {
+    const source =
+        \\ base_map = { "x": 10, "y": 20 }
+        \\ expanded = { "a": 1, **base_map, "z": 30 }
+        \\ expanded["w"] = 40
+        \\ expanded
+    ;
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const final_val = try executeAndAssertStack(&vm, &main_chunk, 1);
+
+    try std.testing.expect(final_val.isMap());
+    const result_map = final_val.asMap();
+
+    try std.testing.expectEqual(@as(usize, 5), result_map.map.count());
+
+    const key_w = try vm.allocateString("w");
+    const val_w = result_map.map.get(key_w).?;
+    try std.testing.expectEqual(@as(f64, 40.0), val_w.asNumber());
+
+    const key_x = try vm.allocateString("x");
+    const val_x = result_map.map.get(key_x).?;
+    try std.testing.expectEqual(@as(f64, 10.0), val_x.asNumber());
+}
+
+test "VM: DOD method splat packing and unpacking transfer memory losslessly" {
+    // We test both `executePackSplat` (method parameters) and
+    // `executeUnpackSplat` (multiple assignment) securely.
+    const source =
+        \\ def pack_test(first, *rest)
+        \\   rest
+        \\ end
+        \\
+        \\ # 1. Test executeUnpackSplat via Multiple Assignment
+        \\ a, *b, c = [1, 2, 3, 4, 5]
+        \\
+        \\ # 2. Test executePackSplat via Function Invocation
+        \\ packed = pack_test(1, 2, 3, 4, 5)
+        \\
+        \\ [b, packed]
+    ;
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Tests that stack_top is completely restored after the complex memory shifts
+    const final_val = try executeAndAssertStack(&vm, &main_chunk, 1);
+
+    try std.testing.expect(final_val.isArray());
+    const result_arr = final_val.asArray().items.items;
+
+    // --- Verify executeUnpackSplat (b) ---
+    const unpacked_arr = result_arr[0].asArray().items.items;
+    try std.testing.expectEqual(@as(usize, 3), unpacked_arr.len);
+    try std.testing.expectEqual(@as(f64, 2.0), unpacked_arr[0].asNumber());
+    try std.testing.expectEqual(@as(f64, 4.0), unpacked_arr[2].asNumber());
+
+    // --- Verify executePackSplat (packed) ---
+    const packed_arr = result_arr[1].asArray().items.items;
+    try std.testing.expectEqual(@as(usize, 4), packed_arr.len);
+    try std.testing.expectEqual(@as(f64, 2.0), packed_arr[0].asNumber());
+    try std.testing.expectEqual(@as(f64, 5.0), packed_arr[3].asNumber());
 }

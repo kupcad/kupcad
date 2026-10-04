@@ -519,14 +519,16 @@ pub const VM = struct {
                     }
                 },
                 .op_set_index => {
-                    const val = self.pop();
-                    const index = self.pop();
-                    const target = self.pop();
+                    // Peek instead of Pop to keep everything rooted during potential reallocation
+                    const val = self.stack[self.stack_top - 1];
+                    const index = self.stack[self.stack_top - 2];
+                    const target = self.stack[self.stack_top - 3];
 
                     if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
                         const arr = target.asArray();
                         if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
                             arr.items.items[idx] = val;
+                            self.stack_top -= 3; // Safely pop all three
                             self.push(val);
                         } else |_| {
                             if (self.throwDynamicError("Runtime Error: Array index out of bounds.", .{}) != .ok) return .runtime_error;
@@ -534,8 +536,8 @@ pub const VM = struct {
                         }
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = target.asMap();
-
-                        self.mapSet(map, index, val) catch return .runtime_error;
+                        self.mapSet(map, index, val) catch @panic("OOM in op_set_index");
+                        self.stack_top -= 3; // Safely pop all three
                         self.push(val);
                     } else {
                         if (self.throwDynamicError("Runtime Error: Cannot assign to index on target.\n", .{}) != .ok) return .runtime_error;
@@ -578,16 +580,20 @@ pub const VM = struct {
                     const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
                     const arr_val = value.Value.initObj(&arr_obj.obj);
 
-                    arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), item_count) catch return .runtime_error;
+                    // Root the array BEFORE allocating internal capacity to prevent GC sweeps
+                    self.push(arr_val);
+                    arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), item_count) catch @panic("OOM in op_build_array");
 
-                    // The elements were pushed in order, slice them off the top of the stack
-                    const start_idx = self.stack_top - item_count;
-                    for (self.stack[start_idx..self.stack_top]) |item| {
-                        arr_obj.items.appendAssumeCapacity(item);
-                    }
+                    // The elements were pushed before arr_val, so they sit below it
+                    const start_idx = self.stack_top - 1 - item_count;
 
-                    // Clear the consumed stack space and push the resulting Array
-                    self.stack_top -= item_count;
+                    // Slice AFTER capacity allocation to guarantee memory addresses are valid
+                    arr_obj.items.appendSliceAssumeCapacity(self.stack[start_idx .. start_idx + item_count]);
+
+                    // Pop the protected arr_val, physically shrink the stack to remove the consumed elements,
+                    // and push arr_val back to the new top
+                    _ = self.pop();
+                    self.shrinkStack(start_idx);
                     self.push(arr_val);
                 },
                 .op_build_map, .op_build_map_wide => {
@@ -595,18 +601,23 @@ pub const VM = struct {
                     const map_obj = self.gc.allocateMap(self) catch return .runtime_error;
                     const map_val = value.Value.initObj(&map_obj.obj);
 
-                    // Pre-allocate for performance
-                    map_obj.map.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch return .runtime_error;
+                    // Root the map BEFORE allocating internal capacity to prevent GC sweeps
+                    self.push(map_val);
+                    map_obj.map.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch @panic("OOM in op_build_map");
 
-                    const start_idx = self.stack_top - (pair_count * 2);
+                    const start_idx = self.stack_top - 1 - (pair_count * 2);
                     var i: usize = 0;
                     while (i < pair_count * 2) : (i += 2) {
                         const key = self.stack[start_idx + i];
                         const val = self.stack[start_idx + i + 1];
 
-                        self.mapSet(map_obj, key, val) catch return .runtime_error;
+                        self.mapSet(map_obj, key, val) catch @panic("OOM during mapSet");
                     }
-                    self.stack_top -= (pair_count * 2);
+
+                    // Pop the protected map_val, physically shrink the stack to remove the consumed pairs,
+                    // and push map_val back to the new top
+                    _ = self.pop();
+                    self.shrinkStack(start_idx);
                     self.push(map_val);
                 },
                 .op_build_range => {
@@ -645,50 +656,65 @@ pub const VM = struct {
                     self.push(merged_str);
                 },
                 .op_array_push => {
-                    const val = self.pop();
-                    const arr_val = self.stack[self.stack_top - 1];
+                    // Peek instead of Pop to keep `val` rooted during potential reallocation
+                    const val = self.stack[self.stack_top - 1];
+                    const arr_val = self.stack[self.stack_top - 2];
                     const arr = arr_val.asArray();
-                    arr.items.append(self.gc.trackingAllocator(), val) catch return .runtime_error;
+                    arr.items.append(self.gc.trackingAllocator(), val) catch @panic("OOM in op_array_push");
+                    // Safely pop only the pushed value; target array stays on top
+                    _ = self.pop();
                 },
                 .op_array_spread => {
-                    const source_val = self.pop();
-                    const target_val = self.stack[self.stack_top - 1];
+                    // Peek instead of Pop to keep `source_val` rooted during potential reallocation
+                    const source_val = self.stack[self.stack_top - 1];
+                    const target_val = self.stack[self.stack_top - 2];
                     const target_arr = target_val.asArray();
 
                     if (source_val.isObject() and source_val.asObj().obj_type == .array) {
                         const source_arr = source_val.asArray();
-                        for (source_arr.items.items) |item| {
-                            target_arr.items.append(self.gc.trackingAllocator(), item) catch return .runtime_error;
-                        }
+                        target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch @panic("OOM in op_array_spread");
+                        target_arr.items.appendSliceAssumeCapacity(source_arr.items.items);
                     } else {
                         if (self.throwDynamicError("Runtime Error: Can only spread arrays into arrays.\n", .{}) != .ok) return .runtime_error;
                         continue;
                     }
+                    // Safely pop only the spread source array; target array stays on top
+                    _ = self.pop();
                 },
                 .op_map_insert => {
-                    const val = self.pop();
-                    const key = self.pop();
-                    const map_val = self.stack[self.stack_top - 1];
+                    // Peek instead of Pop to keep values rooted during potential reallocation
+                    const val = self.stack[self.stack_top - 1];
+                    const key = self.stack[self.stack_top - 2];
+                    const map_val = self.stack[self.stack_top - 3];
                     const map = map_val.asMap();
 
-                    self.mapSet(map, key, val) catch return .runtime_error;
+                    self.mapSet(map, key, val) catch @panic("OOM in op_map_insert");
+                    // Safely pop both key and val; target map stays on top
+                    _ = self.pop();
+                    _ = self.pop();
                 },
                 .op_map_spread => {
-                    const source_val = self.pop();
-                    const target_val = self.stack[self.stack_top - 1];
+                    // Peek instead of Pop to keep `source_val` rooted during potential reallocation
+                    const source_val = self.stack[self.stack_top - 1];
+                    const target_val = self.stack[self.stack_top - 2];
                     const target_map = target_val.asMap();
 
                     if (source_val.isObject() and source_val.asObj().obj_type == .map) {
                         const source_map = source_val.asMap();
                         const keys = source_map.map.keys();
                         const values = source_map.map.values();
+
+                        target_map.map.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.map.count() + keys.len) catch @panic("OOM in op_map_spread");
+
                         for (keys, 0..) |key, i| {
-                            self.mapSet(target_map, key, values[i]) catch return .runtime_error;
+                            self.mapSet(target_map, key, values[i]) catch @panic("OOM during mapSet in op_map_spread");
                         }
                     } else {
                         if (self.throwDynamicError("Runtime Error: Can only spread maps into maps.\n", .{}) != .ok) return .runtime_error;
                         continue;
                     }
+                    // Safely pop only the spread source map; target map stays on top
+                    _ = self.pop();
                 },
                 .op_jump => {
                     // Properly read 3-byte offset
@@ -1843,7 +1869,6 @@ pub const VM = struct {
         return .ok;
     }
 
-    // Replace inside src/vm/vm.zig
     inline fn executeInvoke(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
         const method_name_val = self.readValueOperand(exec_chunk, frame, is_wide);
         const method_name_str = method_name_val.asString().chars;
@@ -1862,7 +1887,7 @@ pub const VM = struct {
         // Resolve Class of Receiver seamlessly
         const class_obj: ?*value.ObjClass = self.getClass(receiver);
 
-        // --- 1. METHOD LOOKUP (DRY) ---
+        // --- 1. METHOD LOOKUP ---
         var method_val: ?value.Value = null;
         var is_private_call = false;
 
@@ -1991,7 +2016,6 @@ pub const VM = struct {
         const post_count = exec_chunk.code.items[frame.ip + 1];
         frame.ip += 2;
 
-        // Peek instead of Pop to keep the target rooted during allocations
         const val = self.stack[self.stack_top - 1];
 
         if (val.isObject() and val.asObj().obj_type == .array) {
@@ -2004,31 +2028,23 @@ pub const VM = struct {
 
             const splat_arr = self.gc.allocateArray(self) catch return .runtime_error;
             const splat_val = value.Value.initObj(&splat_arr.obj);
-            self.push(splat_val); // Protect the splat array
+            self.push(splat_val);
 
             if (total > pre_count + post_count) {
                 const splat_size = total - pre_count - post_count;
-                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return .runtime_error;
-
-                for (0..splat_size) |i| {
-                    const item = arr.items.items[pre_count + i];
-                    splat_arr.items.appendAssumeCapacity(item);
-                }
+                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch @panic("OOM in executeUnpackSplat");
+                splat_arr.items.appendSliceAssumeCapacity(arr.items.items[pre_count .. pre_count + splat_size]);
             }
 
-            _ = self.pop(); // Pop the protected splat array
-
-            // Now we can safely remove the target array we peeked at earlier
+            _ = self.pop();
             const base_slot = self.stack_top - pre_count - 1;
 
-            // Shift the pre_count values down one slot to overwrite the original array
             if (pre_count > 0) {
                 const src = self.stack[base_slot + 1 .. base_slot + 1 + pre_count];
                 const dest = self.stack[base_slot .. base_slot + pre_count];
                 std.mem.copyForwards(value.Value, dest, src);
             }
-            self.stack_top -= 1; // Physically shrink the stack to finalize the pop
-
+            self.stack_top -= 1;
             self.push(splat_val);
 
             for (0..post_count) |i| {
@@ -2040,8 +2056,7 @@ pub const VM = struct {
                 }
             }
         } else {
-            // Fallback for non-arrays
-            _ = self.pop(); // Pop the value manually
+            _ = self.pop();
             if (pre_count > 0) {
                 self.push(val);
                 for (1..pre_count) |_| self.push(value.Value.initNil());
@@ -2069,7 +2084,7 @@ pub const VM = struct {
         const trailing_arity = exec_chunk.code.items[frame.ip + 1];
         frame.ip += 2;
 
-        const block_val = self.stack[self.stack_top - 1]; // Grab the implicit block early!
+        const block_val = self.stack[self.stack_top - 1]; // Grab the implicit block early
 
         // The arguments start at frame.base_slot + 1 and end exactly before the block
         const total_args_passed = (self.stack_top - 1) - (frame.base_slot + 1);
@@ -2081,18 +2096,15 @@ pub const VM = struct {
 
         const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
         const arr_val = value.Value.initObj(&arr_obj.obj);
-        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return .runtime_error;
 
-        // Pack all excess arguments starting immediately after the fixed arity
+        self.push(arr_val);
+        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch @panic("OOM in executePackSplat");
+        _ = self.pop();
+
         const start_idx = frame.base_slot + 1 + fixed_arity;
-        for (0..splat_size) |i| {
-            const item = self.stack[start_idx + i];
-            arr_obj.items.appendAssumeCapacity(item);
-        }
+        arr_obj.items.appendSliceAssumeCapacity(self.stack[start_idx .. start_idx + splat_size]);
 
-        // Shift any trailing arguments down to close the gap left by the packed arguments
         if (splat_size != 1) {
-            // Ensure we never slice past the VM's active stack top
             std.debug.assert(start_idx + 1 + trailing_arity <= self.stack.len);
             std.debug.assert(start_idx + splat_size + trailing_arity <= self.stack.len);
 
@@ -2105,11 +2117,8 @@ pub const VM = struct {
             }
         }
 
-        // Rewrite the stack to hold the new Array in the splat parameter's slot
         self.stack[start_idx] = arr_val;
-        self.stack_top = start_idx + 1 + trailing_arity;
-
-        // Push the block back on top to maintain the Uniform Padding invariant
+        self.shrinkStack(start_idx + 1 + trailing_arity);
         self.push(block_val);
 
         return .ok;
