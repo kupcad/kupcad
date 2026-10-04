@@ -32,20 +32,15 @@ test "Compiler: compiles basic binary addition" {
     defer comp.deinit(); // Leak fixed
     try comp.compile(bin_node);
 
-    try testing.expectEqual(@as(usize, 6), out_chunk.code.items.len);
+    // Bytecode Expected (Folded):
+    // 0: op_constant (15)
+    // 2: op_return
+    try testing.expectEqual(@as(usize, 3), out_chunk.code.items.len);
 
-    // Left Node
+    // Folded Result Node
     try testing.expectEqual(@as(u8, @intFromEnum(chunk.OpCode.op_constant)), out_chunk.code.items[0]);
     try testing.expectEqual(@as(u8, 0), out_chunk.code.items[1]);
-    try testing.expectEqual(@as(f64, 10.0), out_chunk.constants.items[0].asNumber());
-
-    // Right Node
-    try testing.expectEqual(@as(u8, @intFromEnum(chunk.OpCode.op_constant)), out_chunk.code.items[2]);
-    try testing.expectEqual(@as(u8, 1), out_chunk.code.items[3]);
-    try testing.expectEqual(@as(f64, 5.0), out_chunk.constants.items[1].asNumber());
-
-    // Operator
-    try testing.expectEqual(@as(u8, @intFromEnum(chunk.OpCode.op_add)), out_chunk.code.items[4]);
+    try testing.expectEqual(@as(f64, 15.0), out_chunk.constants.items[0].asNumber());
 }
 
 test "Compiler: compiles range expression (1..10)" {
@@ -436,8 +431,10 @@ test "Compiler: correctly maps AST token offsets into DebugSpans" {
 
     // Verify the DebugSpans caught the offsets from the token_starts array
     try testing.expect(out_chunk.debug_spans.items.len > 0);
-    // The very first instruction should be mapped to offset 0 (the "10" literal)
-    try testing.expectEqual(@as(u32, 0), out_chunk.getOffset(0));
+
+    // Because 10 + 5 folds to 15, the compiler skips the leaf nodes and directly compiles
+    // the binary operator (Token Index 1, which corresponds to offset 3 in the array)
+    try testing.expectEqual(@as(u32, 3), out_chunk.getOffset(0));
 }
 
 test "Compiler Edge Case: compiles array literal with > 255 elements (wide operand)" {
@@ -1411,4 +1408,37 @@ test "Compiler: op_switch table entries are emitted in strictly sorted order" {
     try testing.expectEqual(@as(f64, 10.0), val1);
     try testing.expectEqual(@as(f64, 20.0), val2);
     try testing.expectEqual(@as(f64, 30.0), val3);
+}
+
+test "Compiler: Constant Folding optimizer" {
+    const source = "val = 10 * 5.0 + 2";
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    // 1. Verify Top-Level Variables safely remained Globals (0 locals)
+    try std.testing.expectEqual(@as(usize, 0), comp.locals.items.len);
+
+    // 2. Verify Constant Folding completely eliminated the math ops from the bytecode stream
+    var has_math = false;
+    for (main_chunk.code.items) |byte| {
+        const op: chunk.OpCode = @enumFromInt(byte);
+        if (op == .op_multiply or op == .op_add) {
+            has_math = true;
+        }
+    }
+
+    // The expression "10 * 5.0 + 2" should have been folded at compile time
+    try std.testing.expect(!has_math);
 }

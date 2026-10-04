@@ -716,7 +716,36 @@ pub const Compiler = struct {
         }
     }
 
+    fn tryConstantFold(self: *Compiler, node_idx: ast.NodeIndex) ?f64 {
+        const node = self.tree.getNode(node_idx) orelse return null;
+        if (node.tag == .number) return self.tree.number(node);
+        if (node.tag == .binary_op) {
+            const bin = self.tree.binaryExpr(node);
+            const left = self.tryConstantFold(bin.left) orelse return null;
+            const right = self.tryConstantFold(bin.right) orelse return null;
+
+            return switch (bin.op) {
+                .add => left + right,
+                .subtract => left - right,
+                .multiply => left * right,
+                .divide => if (right != 0.0) left / right else null,
+                .modulo => if (right != 0.0) @mod(left, right) else null,
+                .exponent => std.math.pow(f64, left, right),
+                else => null,
+            };
+        }
+        return null;
+    }
+
     fn compileBinaryOp(self: *Compiler, start_node_idx: ast.NodeIndex) CompileError!void {
+        // --- CONSTANT FOLDING PEEPHOLE OPTIMIZER ---
+        // If the entire binary expression sub-tree consists of constants,
+        // fold it into a single value at compile-time to save VM execution cycles
+        if (self.tryConstantFold(start_node_idx)) |folded_val| {
+            try self.emitConstant(value.Value.initNumber(folded_val));
+            return;
+        }
+
         const initial_ops_len = self.scratch_ops.items.len;
         const initial_rights_len = self.scratch_rights.items.len;
         defer {

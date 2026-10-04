@@ -10485,3 +10485,48 @@ test "VM: GC gray stack accurately sizes capacity without panicking" {
     // `appendAssumeCapacity` will trigger an out-of-bounds panic right here
     vm.gc.collectGarbage(&vm, true);
 }
+
+test "VM: Constant Folding evaluates all arithmetic operations correctly" {
+    // These expressions will all be evaluated at compile-time by the Peephole Optimizer
+    const source =
+        \\ [
+        \\   10 + 5,      # 15
+        \\   10 - 5,      # 5
+        \\   10 * 5,      # 50
+        \\   10 / 2,      # 5
+        \\   10 % 3,      # 1
+        \\   2 ** 3,      # 8
+        \\   (2 + 3) * 4  # 20
+        \\ ]
+    ;
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+
+    // Register standard library so we have Array methods
+    try registry.registerStandardLibrary(&vm);
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Use the strict helper to catch leaks and get the final yielded array
+    const final_val = try executeAndAssertStack(&vm, &main_chunk, 1);
+
+    try std.testing.expect(final_val.isObject() and final_val.asObj().obj_type == .array);
+
+    const arr = final_val.asArray().items.items;
+    try std.testing.expectEqual(@as(f64, 15.0), arr[0].asNumber());
+    try std.testing.expectEqual(@as(f64, 5.0), arr[1].asNumber());
+    try std.testing.expectEqual(@as(f64, 50.0), arr[2].asNumber());
+    try std.testing.expectEqual(@as(f64, 5.0), arr[3].asNumber());
+    try std.testing.expectEqual(@as(f64, 1.0), arr[4].asNumber());
+    try std.testing.expectEqual(@as(f64, 8.0), arr[5].asNumber());
+    try std.testing.expectEqual(@as(f64, 20.0), arr[6].asNumber());
+}
