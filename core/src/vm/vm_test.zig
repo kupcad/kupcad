@@ -10387,3 +10387,38 @@ test "VM: Array#to_h safely throws ArgumentError on invalid structure" {
     const result = vm.interpret(&out_chunk);
     try std.testing.expectEqual(.runtime_error, result);
 }
+
+test "VM: Array concatenation via op_add" {
+    // Tests that [1, 2] + [3, 4] natively merges into [1, 2, 3, 4]
+    const source =
+        \\a = [1, 2]
+        \\b = [3, 4]
+        \\a + b
+    ;
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &main_chunk, 1);
+    try std.testing.expect(result.isObject());
+    try std.testing.expectEqual(.array, result.asObj().obj_type);
+
+    const arr = result.asArray();
+    try std.testing.expectEqual(@as(usize, 4), arr.items.items.len);
+
+    // Verify values were copied faithfully
+    try std.testing.expectEqual(@as(f64, 1.0), arr.items.items[0].asNumber());
+    try std.testing.expectEqual(@as(f64, 2.0), arr.items.items[1].asNumber());
+    try std.testing.expectEqual(@as(f64, 3.0), arr.items.items[2].asNumber());
+    try std.testing.expectEqual(@as(f64, 4.0), arr.items.items[3].asNumber());
+}

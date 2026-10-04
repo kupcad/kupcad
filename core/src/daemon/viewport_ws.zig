@@ -151,7 +151,7 @@ pub const ViewportWsServer = struct {
                 active_i += 1;
             } else |_| {
                 stream.close(self.io);
-                _ = self.clients.orderedRemove(active_i);
+                _ = self.clients.swapRemove(active_i);
             }
         }
     }

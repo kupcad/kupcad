@@ -35,10 +35,16 @@ const StepSerializer = struct {
         var id_buf: [32]u8 = undefined;
         const id_str = try std.fmt.bufPrint(&id_buf, "#{d}=", .{id});
         try self.out.appendSlice(self.allocator, id_str);
-        const record_str = try std.fmt.allocPrint(self.allocator, fmt, args);
-        defer self.allocator.free(record_str);
-        try self.out.appendSlice(self.allocator, record_str);
-        try self.out.appendSlice(self.allocator, ";\n");
+
+        const count = std.fmt.count(fmt, args);
+        try self.out.ensureUnusedCapacity(self.allocator, count + 2); // +2 for ";\n"
+
+        const start_idx = self.out.items.len;
+        self.out.items.len += count;
+        _ = std.fmt.bufPrint(self.out.items[start_idx..self.out.items.len], fmt, args) catch @panic("bufPrint failed after exact capacity was allocated");
+
+        self.out.appendAssumeCapacity(';');
+        self.out.appendAssumeCapacity('\n');
         return id;
     }
 };

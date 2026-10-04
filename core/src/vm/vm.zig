@@ -1794,12 +1794,8 @@ pub const VM = struct {
             const new_val = value.Value.initObj(&new_arr.obj);
 
             new_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), a_arr.items.items.len + b_arr.items.items.len) catch return .runtime_error;
-            for (a_arr.items.items) |item| {
-                new_arr.items.appendAssumeCapacity(item);
-            }
-            for (b_arr.items.items) |item| {
-                new_arr.items.appendAssumeCapacity(item);
-            }
+            new_arr.items.appendSliceAssumeCapacity(a_arr.items.items);
+            new_arr.items.appendSliceAssumeCapacity(b_arr.items.items);
 
             // Un-root the old arrays and push the new one
             _ = self.pop(); // Pop b_val
