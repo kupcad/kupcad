@@ -2930,7 +2930,14 @@ test "KupCAD Parser: Ignore trailing comments on binary operations and calls" {
 }
 
 test "KupCAD Parser: Deeply Nested String Interpolation gracefully fails" {
-    const source = "\"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"#{ \"deep\" }\" }\" }\" }\" }\" }\" }\" }\" }\"";
+    // 65 levels deep (exceeds the [64]InterpState stack size)
+    const source = comptime blk: {
+        var res: []const u8 = "";
+        for (0..65) |_| res = res ++ "\"#{ ";
+        res = res ++ "\"deep\"";
+        for (0..65) |_| res = res ++ " }\"";
+        break :blk res;
+    };
     var pt = try KTest.init(source);
     defer pt.deinit();
 

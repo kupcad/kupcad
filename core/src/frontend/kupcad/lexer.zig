@@ -180,7 +180,7 @@ pub const Lexer = struct {
     index: usize,
     file_id: u32,
     brace_depth: u32 = 0,
-    interp_stack: [8]InterpState,
+    interp_stack: [64]InterpState,
     interp_depth: usize = 0,
 
     pub fn init(buffer: []const u8, file_id: u32) Lexer {
