@@ -1821,16 +1821,28 @@ pub const VM = struct {
             return self.throwDynamicError("Runtime Error: Invalid operands for math operation.", .{});
         };
         switch (op) {
-            .op_multiply => self.push(value.Value.initNumber(nums[0] * nums[1])),
+            .op_multiply => {
+                const res = nums[0] * nums[1];
+                if (std.math.isNan(res)) return self.throwDynamicError("MathError: Operation resulted in NaN.\n", .{});
+                self.push(value.Value.initNumber(res));
+            },
             .op_divide => {
                 if (nums[1] == 0.0) return self.throwDynamicError("ZeroDivisionError: Division by zero.\n", .{});
-                self.push(value.Value.initNumber(nums[0] / nums[1]));
+                const res = nums[0] / nums[1];
+                if (std.math.isNan(res)) return self.throwDynamicError("MathError: Operation resulted in NaN.\n", .{});
+                self.push(value.Value.initNumber(res));
             },
             .op_modulo => {
                 if (nums[1] == 0.0) return self.throwDynamicError("ZeroDivisionError: Modulo by zero.\n", .{});
-                self.push(value.Value.initNumber(@mod(nums[0], nums[1])));
+                const res = @mod(nums[0], nums[1]);
+                if (std.math.isNan(res)) return self.throwDynamicError("MathError: Operation resulted in NaN.\n", .{});
+                self.push(value.Value.initNumber(res));
             },
-            .op_exponent => self.push(value.Value.initNumber(std.math.pow(f64, nums[0], nums[1]))),
+            .op_exponent => {
+                const res = std.math.pow(f64, nums[0], nums[1]);
+                if (std.math.isNan(res)) return self.throwDynamicError("MathError: Operation resulted in NaN.\n", .{});
+                self.push(value.Value.initNumber(res));
+            },
             .op_less => self.push(value.Value.initBool(nums[0] < nums[1])),
             .op_greater => self.push(value.Value.initBool(nums[0] > nums[1])),
             else => unreachable,

@@ -159,6 +159,22 @@ pub const GC = struct {
         defer self.is_gc_running = false;
 
         if (!force_full) {
+            // Pre-allocate gray stack to absolute worst-case capacity to avoid mid-trace OOM
+            const worst_case_size = self.strings.items.len + self.symbols.items.len +
+                self.arrays.items.len + self.maps.items.len + self.functions.items.len +
+                self.classes.items.len + self.modules.items.len + self.instances.items.len +
+                self.closures.items.len + self.upvalues.items.len + self.bound_methods.items.len +
+                self.natives.items.len + self.ranges.items.len + self.breps.items.len +
+                self.bboxes.items.len + self.geometries.items.len + self.cross_sections.items.len +
+                self.assemblies.items.len + self.workplanes.items.len;
+
+            self.gray_stack.ensureTotalCapacity(self.allocator, worst_case_size) catch {
+                vm.reportError("Fatal: Out of memory during garbage collection. Aborting script execution.\n", .{});
+                // Instruct the VM to halt execution immediately so the daemon stays alive
+                vm.cancel_token.store(true, .release);
+                return;
+            };
+
             self.markRoots(vm);
             self.traceReferences();
 
@@ -437,7 +453,7 @@ pub const GC = struct {
     fn markObject(self: *GC, obj: *value.Obj) void {
         if (obj.is_marked) return;
         obj.is_marked = true;
-        self.gray_stack.append(self.allocator, obj) catch @panic("OOM during GC Grey Stack tracking.");
+        self.gray_stack.appendAssumeCapacity(obj);
     }
 
     fn traceReferences(self: *GC) void {

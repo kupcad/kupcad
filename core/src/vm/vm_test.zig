@@ -10422,3 +10422,66 @@ test "VM: Array concatenation via op_add" {
     try std.testing.expectEqual(@as(f64, 3.0), arr.items.items[2].asNumber());
     try std.testing.expectEqual(@as(f64, 4.0), arr.items.items[3].asNumber());
 }
+
+test "VM: Catches NaN in math operations and throws" {
+    // Square root of a negative number yields NaN
+    const source = "val = (-1.0) ** 0.5";
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+
+    // Silence the expected stderr error output during the test run
+    vm.mute_errors = true;
+    try registry.registerStandardLibrary(&vm);
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&main_chunk);
+
+    try std.testing.expectEqual(.runtime_error, result);
+}
+
+test "VM: GC gray stack accurately sizes capacity without panicking" {
+    // We allocate thousands of distinct objects (strings, arrays, numbers)
+    // to ensure the gray_stack capacity math correctly accounts for all of
+    // them during the mark phase.
+    const source =
+        \\arr = []
+        \\i = 0
+        \\while i < 1000 do
+        \\  arr.push([i, "test", true])
+        \\  i = i + 1
+        \\end
+        \\arr # Leave the array on the stack so it stays rooted!
+    ;
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+
+    // Register standard library so we have Array methods
+    try registry.registerStandardLibrary(&vm);
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&main_chunk);
+    try std.testing.expectEqual(.ok, result);
+
+    // Force a full garbage collection sweep.
+    // If our `worst_case_size` math missed any object types,
+    // `appendAssumeCapacity` will trigger an out-of-bounds panic right here
+    vm.gc.collectGarbage(&vm, true);
+}
