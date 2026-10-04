@@ -109,15 +109,11 @@ pub const ViewportWsServer = struct {
     }
 
     pub fn broadcastSessionMesh(self: *ViewportWsServer, session: *ScriptSession, root_mod_path: []const u8) !void {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-
-        if (self.clients.items.len == 0) return;
-
         const root_id = session.workspace.path_to_id.get(root_mod_path) orelse return;
         const node = &session.nodes.items[@intFromEnum(root_id)];
         const handle = node.cached_handle orelse return;
 
+        // 1. Build the payload OUTSIDE the lock
         const handles = [_]geom.GeometryHandle{handle};
         const glb_bytes = gltf.buildGltfBuffer(self.allocator, &session.vm, &handles, false) catch |err| {
             log.err("Failed to build GLB: {}", .{err});
@@ -147,10 +143,18 @@ pub const ViewportWsServer = struct {
 
         try frame.appendSlice(self.allocator, glb_bytes);
 
-        var active_i: usize = 0;
-        while (active_i < self.clients.items.len) {
-            const stream = self.clients.items[active_i];
+        // 2. Lock just long enough to take a snapshot of the clients list
+        self.mutex.lockUncancelable(self.io);
+        if (self.clients.items.len == 0) {
+            self.mutex.unlock(self.io);
+            return;
+        }
+        var clients_snapshot = try self.clients.clone(self.allocator);
+        self.mutex.unlock(self.io);
+        defer clients_snapshot.deinit(self.allocator);
 
+        // 3. Broadcast to all clients OUTSIDE the lock
+        for (clients_snapshot.items) |stream| {
             var w_buf: [4096]u8 = undefined;
             var writer_wrapper = stream.writer(self.io, &w_buf);
             const writer = &writer_wrapper.interface;
@@ -159,10 +163,20 @@ pub const ViewportWsServer = struct {
                 writer.flush() catch |err| {
                     log.err("Failed to flush websocket: {}", .{err});
                 };
-                active_i += 1;
             } else |_| {
                 stream.close(self.io);
-                _ = self.clients.swapRemove(active_i);
+
+                // If the stream is broken, lock briefly to remove it safely
+                self.mutex.lockUncancelable(self.io);
+                var active_i: usize = 0;
+                while (active_i < self.clients.items.len) {
+                    if (self.clients.items[active_i].socket.handle == stream.socket.handle) {
+                        _ = self.clients.swapRemove(active_i);
+                        break;
+                    }
+                    active_i += 1;
+                }
+                self.mutex.unlock(self.io);
             }
         }
     }
