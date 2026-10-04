@@ -629,18 +629,18 @@ pub const VM = struct {
                     for (self.stack[start_idx..self.stack_top]) |val| {
                         val.stringify(false, &out.writer) catch {
                             out.deinit();
-                            _ = self.scratch_arena.reset(.retain_capacity);
+                            // Removed manual arena reset to protect nested evaluations
                             return .runtime_error;
                         };
                     }
 
                     // Pass scratch output to the GC string intern table
                     const merged_str = self.allocateString(out.written()) catch {
-                        _ = self.scratch_arena.reset(.retain_capacity);
+                        // Removed manual arena reset to protect nested evaluations
                         return .runtime_error;
                     };
 
-                    _ = self.scratch_arena.reset(.retain_capacity);
+                    // Removed manual arena reset! The `defer` in `runUntil` will recycle this safely.
 
                     // Pop and release all original stack fragments
                     for (0..count) |_| {
@@ -1775,12 +1775,9 @@ pub const VM = struct {
 
             // allocateString seamlessly handles checking the intern table, OR precisely allocating on the GC heap
             const str_val = self.allocateString(merged) catch {
-                _ = self.scratch_arena.reset(.retain_capacity);
+                // Removed manual arena reset to protect outer scopes
                 return .runtime_error;
             };
-
-            // Immediately recycle scratch arena memory after interning
-            _ = self.scratch_arena.reset(.retain_capacity);
 
             self.push(str_val);
             return .ok;

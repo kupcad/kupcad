@@ -10530,3 +10530,34 @@ test "VM: Constant Folding evaluates all arithmetic operations correctly" {
     try std.testing.expectEqual(@as(f64, 8.0), arr[5].asNumber());
     try std.testing.expectEqual(@as(f64, 20.0), arr[6].asNumber());
 }
+
+test "VM: Scratch Arena is preserved during complex nested string formatting" {
+    // If the arena resets prematurely inside `+`, the outer `#{}` interpolation
+    // will read corrupted/freed memory for the first string fragment.
+    const source =
+        \\ a = "hello"
+        \\ b = "world"
+        \\ "#{a + " " + b}!"
+    ;
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+
+    try registry.registerStandardLibrary(&vm);
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Use our strict stack helper to ensure zero memory leaks
+    const final_val = try executeAndAssertStack(&vm, &main_chunk, 1);
+
+    try std.testing.expect(final_val.isString());
+    try std.testing.expectEqualStrings("hello world!", final_val.asString().chars);
+}
