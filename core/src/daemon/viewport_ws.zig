@@ -48,11 +48,22 @@ pub const ViewportWsServer = struct {
                 log.err("WebSocket accept error: {}", .{err});
                 continue;
             };
-            self.handleHandshake(stream) catch |err| {
-                log.err("Handshake failed: {}", .{err});
+            // Spawn a detached thread to prevent Slowloris attacks (stalling clients blocking the loop)
+            const thread = std.Thread.spawn(.{}, handleHandshakeThread, .{ self, stream }) catch |err| {
+                log.err("Failed to spawn handshake thread: {}", .{err});
                 stream.close(self.io);
+                continue;
             };
+            thread.detach();
         }
+    }
+
+    // Isolated thread trampoline for the handshake protocol
+    fn handleHandshakeThread(self: *ViewportWsServer, stream: std.Io.net.Stream) void {
+        self.handleHandshake(stream) catch |err| {
+            log.err("Handshake failed: {}", .{err});
+            stream.close(self.io);
+        };
     }
 
     fn handleHandshake(self: *ViewportWsServer, stream: std.Io.net.Stream) !void {

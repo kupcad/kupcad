@@ -8,10 +8,10 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     const file_path = args_iter.next() orelse return error.MissingFilePath;
 
     // Spin up the cache controller
-    var manager = SessionManager.init(allocator, 1);
+    var manager = SessionManager.init(allocator, init.io, 1);
     defer manager.deinit();
 
-    var session = try manager.getOrInitializeSession(file_path, init.io);
+    var session = try manager.getOrInitializeSession(file_path);
 
     const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
     defer allocator.free(source);

@@ -74,10 +74,10 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     // --- 3. Setup Persistent Session Manager ---
     // We use a capacity of 1 since this is a one-shot CLI command.
-    var manager = SessionManager.init(allocator, 1);
+    var manager = SessionManager.init(allocator, init.io, 1);
     defer manager.deinit();
 
-    var session = manager.getOrInitializeSession(target_input, init.io) catch |err| {
+    var session = manager.getOrInitializeSession(target_input) catch |err| {
         log_helpers.printStderr(init.io, "Failed to initialize session: {}\n", .{err});
         return;
     };
