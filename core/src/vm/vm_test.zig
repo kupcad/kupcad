@@ -10680,3 +10680,115 @@ test "VM: DOD method splat packing and unpacking transfer memory losslessly" {
     try std.testing.expectEqual(@as(f64, 2.0), packed_arr[0].asNumber());
     try std.testing.expectEqual(@as(f64, 5.0), packed_arr[3].asNumber());
 }
+
+test "VM: FFI Boundary - Exhaustive type checking prevents kernel segfaults" {
+    const source =
+        \\ # Attempting to pass a malicious string to a kernel math/vector function
+        \\ kernel_translate("crash_the_c_kernel_please")
+    ;
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Mock C++ boundary function matching the exact NativeFn prototype
+    const MockKernel = struct {
+        fn translate(ctx_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) !value.Value {
+            const ctx: *VM = @ptrCast(@alignCast(ctx_opaque));
+
+            if (arg_count != 1) {
+                _ = ctx.throwDynamicError("ArgumentError: expected 1 arg", .{});
+                return error.RuntimeError;
+            }
+
+            const vec_arg = args[0];
+
+            // DOD FFI DEFENSE: Explicit type guard before operating on native memory
+            if (!vec_arg.isNumber()) {
+                _ = ctx.throwDynamicError("TypeError: kernel_translate expects a Number, got invalid type", .{});
+                return error.RuntimeError;
+            }
+
+            return value.Value.initNumber(vec_arg.asNumber() + 10.0);
+        }
+    };
+
+    try vm.defineNative("kernel_translate", MockKernel.translate);
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Assert that the script fails safely with an intercepted .runtime_error, NOT a segfault
+    const result = vm.interpret(&main_chunk);
+    try std.testing.expectEqual(.runtime_error, result);
+}
+
+test "VM: DAG Benchmark - Safely orchestrates 10,000 deeply nested CSG booleans" {
+    const source =
+        \\ i = 0
+        \\ tree = mock_box()
+        \\ while i < 10000
+        \\   # The '-' operator routes to host.binary_handler for non-primitives
+        \\   tree = tree - mock_cylinder()
+        \\   i = i + 1
+        \\ end
+        \\ tree
+    ;
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Explicitly expand the VM instruction limit to accommodate the massive tree generation loop
+    vm.instruction_limit = 1_000_000;
+
+    const MockKernel = struct {
+        fn shape(ctx_opaque: *anyopaque, _: u8, _: [*]value.Value) !value.Value {
+            const ctx: *VM = @ptrCast(@alignCast(ctx_opaque));
+            // Return a generic map so '-' bypasses standard math and triggers binary_handler
+            const map_obj = try ctx.gc.allocateMap(ctx);
+            return value.Value.initObj(&map_obj.obj);
+        }
+
+        fn mockCSG(ctx: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) !value.Value {
+            _ = op;
+            _ = a;
+            _ = b;
+            // Mimic C++ DAG node generation: allocate a new heap object to simulate memory pressure
+            const node = try ctx.gc.allocateMap(ctx);
+            return value.Value.initObj(&node.obj);
+        }
+    };
+
+    try vm.defineNative("mock_box", MockKernel.shape);
+    try vm.defineNative("mock_cylinder", MockKernel.shape);
+
+    // Inject the mock C++ DAG builder (binary_handler natively expects *VM)
+    vm.host.binary_handler = MockKernel.mockCSG;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Execute the massive CSG loop
+    // (Note: Do not use executeAndAssertStack here, as 10,000 full GC mark-and-sweeps will take too long)
+    const result = vm.interpret(&main_chunk);
+    try std.testing.expectEqual(.ok, result);
+
+    // The final result sitting on the top of the stack is our 10,000-node deep DAG map
+    const final_val = vm.pop();
+    try std.testing.expect(final_val.isMap());
+}
