@@ -61,9 +61,19 @@ pub const ObjArray = struct {
 pub const ValueContext = struct {
     pub fn hash(self: ValueContext, key: Value) u32 {
         _ = self;
-        var hasher = std.hash.Wyhash.init(0);
-        hasher.update(std.mem.asBytes(&key.val));
-        return @truncate(hasher.final());
+        var x = key.val;
+
+        // SplitMix64 / MurmurHash3 avalanche step.
+        // These "magic numbers" are statistically chosen large odd constants.
+        // Multiplying by them forces a high degree of bit diffusion (the avalanche effect),
+        // ensuring tightly clustered keys (like 1.0, 2.0, 3.0) produce wildly different hashes.
+        x ^= x >> 30;
+        x *%= 0xbf58476d1ce4e5b9;
+        x ^= x >> 27;
+        x *%= 0x94d049bb133111eb;
+        x ^= x >> 31;
+
+        return @truncate(x);
     }
 
     pub fn eql(self: ValueContext, a: Value, b: Value, b_index: usize) bool {
@@ -241,7 +251,9 @@ pub const Value = packed struct {
     // --- Constructors ---
 
     pub inline fn initNumber(num: f64) Value {
-        return .{ .val = @bitCast(num) };
+        // Normalize -0.0 to +0.0 to protect Map invariants
+        const normalized: f64 = if (num == 0.0) 0.0 else num;
+        return .{ .val = @bitCast(normalized) };
     }
 
     pub inline fn initNil() Value {

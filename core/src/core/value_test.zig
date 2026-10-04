@@ -83,3 +83,28 @@ test "Value: Map ValueContext hashes identically for equal values" {
     try testing.expectEqual(ctx.hash(num1), ctx.hash(num2));
     try testing.expect(ctx.eql(num1, num2, 0));
 }
+
+test "Value: initNumber normalizes -0.0 to 0.0 to protect hash invariants" {
+    const zero = value.Value.initNumber(0.0);
+    const neg_zero = value.Value.initNumber(-0.0);
+
+    // Because of our normalization, their raw bitwise payloads must be exactly identical
+    try testing.expectEqual(zero.val, neg_zero.val);
+}
+
+test "Value: ValueContext hash diffuses bits and correctly hashes edge cases" {
+    const ctx = value.ValueContext{};
+
+    const hash_zero = ctx.hash(value.Value.initNumber(0.0));
+    const hash_neg_zero = ctx.hash(value.Value.initNumber(-0.0));
+
+    // 0.0 and -0.0 must yield the exact same hash
+    try testing.expectEqual(hash_zero, hash_neg_zero);
+
+    // Ensure the avalanche effect is working (close numbers produce vastly different hashes)
+    const hash_one = ctx.hash(value.Value.initNumber(1.0));
+    const hash_two = ctx.hash(value.Value.initNumber(2.0));
+
+    try testing.expect(hash_zero != hash_one);
+    try testing.expect(hash_one != hash_two);
+}
