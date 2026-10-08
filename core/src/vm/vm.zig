@@ -536,7 +536,7 @@ pub const VM = struct {
                         }
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = target.asMap();
-                        self.mapSet(map, index, val) catch @panic("OOM in op_set_index");
+                        self.mapSet(map, index, val) catch return self.throwDynamicError("OutOfMemoryError: Map set failed", .{});
                         self.stack_top -= 3; // Safely pop all three
                         self.push(val);
                     } else {
@@ -582,7 +582,9 @@ pub const VM = struct {
 
                     // Root the array BEFORE allocating internal capacity to prevent GC sweeps
                     self.push(arr_val);
-                    arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), item_count) catch @panic("OOM in op_build_array");
+                    arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), item_count) catch {
+                        return self.throwDynamicError("OutOfMemoryError: Failed to build array", .{});
+                    };
 
                     // The elements were pushed before arr_val, so they sit below it
                     const start_idx = self.stack_top - 1 - item_count;
@@ -603,7 +605,9 @@ pub const VM = struct {
 
                     // Root the map BEFORE allocating internal capacity to prevent GC sweeps
                     self.push(map_val);
-                    map_obj.map.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch @panic("OOM in op_build_map");
+                    map_obj.map.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch {
+                        return self.throwDynamicError("OutOfMemoryError: Failed to build map", .{});
+                    };
 
                     const start_idx = self.stack_top - 1 - (pair_count * 2);
                     var i: usize = 0;
@@ -611,7 +615,9 @@ pub const VM = struct {
                         const key = self.stack[start_idx + i];
                         const val = self.stack[start_idx + i + 1];
 
-                        self.mapSet(map_obj, key, val) catch @panic("OOM during mapSet");
+                        self.mapSet(map_obj, key, val) catch {
+                            return self.throwDynamicError("OutOfMemoryError: Failed to insert map key", .{});
+                        };
                     }
 
                     // Pop the protected map_val, physically shrink the stack to remove the consumed pairs,
@@ -660,7 +666,7 @@ pub const VM = struct {
                     const val = self.stack[self.stack_top - 1];
                     const arr_val = self.stack[self.stack_top - 2];
                     const arr = arr_val.asArray();
-                    arr.items.append(self.gc.trackingAllocator(), val) catch @panic("OOM in op_array_push");
+                    arr.items.append(self.gc.trackingAllocator(), val) catch return self.throwDynamicError("OutOfMemoryError: Array push failed", .{});
                     // Safely pop only the pushed value; target array stays on top
                     _ = self.pop();
                 },
@@ -672,7 +678,7 @@ pub const VM = struct {
 
                     if (source_val.isObject() and source_val.asObj().obj_type == .array) {
                         const source_arr = source_val.asArray();
-                        target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch @panic("OOM in op_array_spread");
+                        target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch return self.throwDynamicError("OutOfMemoryError: Array spread failed", .{});
                         target_arr.items.appendSliceAssumeCapacity(source_arr.items.items);
                     } else {
                         if (self.throwDynamicError("Runtime Error: Can only spread arrays into arrays.\n", .{}) != .ok) return .runtime_error;
@@ -688,7 +694,7 @@ pub const VM = struct {
                     const map_val = self.stack[self.stack_top - 3];
                     const map = map_val.asMap();
 
-                    self.mapSet(map, key, val) catch @panic("OOM in op_map_insert");
+                    self.mapSet(map, key, val) catch return self.throwDynamicError("OutOfMemoryError: Map insert failed", .{});
                     // Safely pop both key and val; target map stays on top
                     _ = self.pop();
                     _ = self.pop();
@@ -704,10 +710,10 @@ pub const VM = struct {
                         const keys = source_map.map.keys();
                         const values = source_map.map.values();
 
-                        target_map.map.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.map.count() + keys.len) catch @panic("OOM in op_map_spread");
+                        target_map.map.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.map.count() + keys.len) catch return self.throwDynamicError("OutOfMemoryError: Map spread failed", .{});
 
                         for (keys, 0..) |key, i| {
-                            self.mapSet(target_map, key, values[i]) catch @panic("OOM during mapSet in op_map_spread");
+                            self.mapSet(target_map, key, values[i]) catch return self.throwDynamicError("OutOfMemoryError: Map spread failed", .{});
                         }
                     } else {
                         if (self.throwDynamicError("Runtime Error: Can only spread maps into maps.\n", .{}) != .ok) return .runtime_error;
@@ -2032,7 +2038,7 @@ pub const VM = struct {
 
             if (total > pre_count + post_count) {
                 const splat_size = total - pre_count - post_count;
-                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch @panic("OOM in executeUnpackSplat");
+                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.throwDynamicError("OutOfMemoryError: Splat unpack failed", .{});
                 splat_arr.items.appendSliceAssumeCapacity(arr.items.items[pre_count .. pre_count + splat_size]);
             }
 
@@ -2098,7 +2104,7 @@ pub const VM = struct {
         const arr_val = value.Value.initObj(&arr_obj.obj);
 
         self.push(arr_val);
-        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch @panic("OOM in executePackSplat");
+        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.throwDynamicError("OutOfMemoryError: Splat pack failed", .{});
         _ = self.pop();
 
         const start_idx = frame.base_slot + 1 + fixed_arity;
