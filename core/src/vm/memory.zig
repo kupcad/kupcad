@@ -562,28 +562,14 @@ pub const GC = struct {
     }
 
     fn sweep(self: *GC, vm: *VM) void {
-        // --- SAFE TWO-PASS REMOVAL FOR STRINGS ---
-        var stale_strings = std.ArrayListUnmanaged([]const u8).empty;
-        defer stale_strings.deinit(self.allocator);
-
-        var str_iter = vm.strings.iterator();
-        while (str_iter.next()) |entry| {
-            if (!entry.value_ptr.*.obj.is_marked) stale_strings.append(self.allocator, entry.key_ptr.*) catch @panic("OOM during GC sweep");
+        // --- SAFE ZERO-ALLOCATION MAP EVICTION ---
+        // By iterating the backing arrays directly, we can safely remove from
+        // the VM hashmaps without invalidating iterators or allocating temporary tracking lists.
+        for (self.strings.items) |str| {
+            if (!str.obj.is_marked) _ = vm.strings.remove(str.chars);
         }
-        for (stale_strings.items) |k| {
-            _ = vm.strings.remove(k);
-        }
-
-        // --- SAFE TWO-PASS REMOVAL FOR SYMBOLS ---
-        var stale_symbols = std.ArrayListUnmanaged([]const u8).empty;
-        defer stale_symbols.deinit(self.allocator);
-
-        var sym_iter = vm.symbols.iterator();
-        while (sym_iter.next()) |entry| {
-            if (!entry.value_ptr.*.obj.is_marked) stale_symbols.append(self.allocator, entry.key_ptr.*) catch @panic("OOM during GC sweep");
-        }
-        for (stale_symbols.items) |k| {
-            _ = vm.symbols.remove(k);
+        for (self.symbols.items) |sym| {
+            if (!sym.obj.is_marked) _ = vm.symbols.remove(sym.chars);
         }
 
         // Sweep dependent objects before their referenced functions/primitives
@@ -608,29 +594,34 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjAssembly, &self.assemblies);
         self.sweepList(vm, value.ObjWorkplane, &self.workplanes);
 
-        // Collect hashes of surviving, LIVE Geometry objects
+        // --- CACHE EVICTION ---
         var live_hashes = std.AutoHashMap(u64, void).init(self.allocator);
         defer live_hashes.deinit();
+
+        var keys_to_remove = std.ArrayListUnmanaged(u64).empty;
+        defer keys_to_remove.deinit(self.allocator);
+
+        // Pre-allocate tracking arrays to their maximum theoretical bounds.
+        // If we lack memory to compute evictions, safely skip clearing the cache this cycle.
+        // The DAG cache will just be evaluated and cleaned up on the next GC run.
+        live_hashes.ensureTotalCapacity(@intCast(self.geometries.items.len)) catch return;
+        keys_to_remove.ensureTotalCapacity(self.allocator, vm.dag_cache.count()) catch return;
 
         for (self.geometries.items) |geom_ptr| {
             if (geom_ptr.dag_idx != std.math.maxInt(u32)) {
                 if (geom_ptr.dag_idx < vm.dag_builder.node_hashes.items.len) {
                     const hash = vm.dag_builder.node_hashes.items[geom_ptr.dag_idx];
-                    live_hashes.put(hash, {}) catch @panic("OOM during GC sweep");
+                    live_hashes.putAssumeCapacity(hash, {});
                 }
             }
         }
-
-        // SAFE TWO-PASS CACHE EVICTION: Collect stale keys first
-        var keys_to_remove = std.ArrayListUnmanaged(u64).empty;
-        defer keys_to_remove.deinit(self.allocator);
 
         var cache_it = vm.dag_cache.iterator();
         while (cache_it.next()) |entry| {
             if (!live_hashes.contains(entry.key_ptr.*)) {
                 // Destruct C++ handle immediately
                 kernel.destruct(entry.value_ptr.*);
-                keys_to_remove.append(self.allocator, entry.key_ptr.*) catch @panic("OOM during GC sweep");
+                keys_to_remove.appendAssumeCapacity(entry.key_ptr.*);
             }
         }
 

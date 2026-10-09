@@ -282,3 +282,33 @@ test "GC: Memory limit safely aborts allocations without crashing" {
 
     try std.testing.expectError(error.OutOfMemory, result);
 }
+
+test "GC Edge Case: Sweep handles OutOfMemory gracefully without panicking" {
+    // This allocator will fail immediately on its first request
+    var fail_alloc = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Populate DAG cache
+    const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+    _ = try dag_evaluator.evaluateDAG(&vm, cube_idx);
+
+    // Unroot geometry
+    vm.resetStack();
+    vm.display_list.clearRetainingCapacity();
+    vm.gc.geometries.clearRetainingCapacity();
+
+    // Swap the GC allocator to the failing allocator right before sweeping
+    vm.gc.allocator = fail_alloc.allocator();
+
+    // The sweep should fail to allocate `live_hashes`, skip eviction, and NOT panic!
+    vm.gc.collectGarbage(&vm, true);
+
+    // Restore standard allocator so deinit() can clean up successfully
+    vm.gc.allocator = testing.allocator;
+
+    // The cache item should survive because eviction was aborted
+    try testing.expectEqual(@as(usize, 1), vm.dag_cache.count());
+}
