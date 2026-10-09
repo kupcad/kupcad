@@ -14,7 +14,7 @@ test "Checkpoint: Restores arena state cleanly on transaction rollback" {
 
     // Simulate speculative allocations
     _ = try g.points.append(alloc, .{ 10.0, 20.0, 30.0 });
-    _ = try t.vertices.append(alloc, .{ .point = @enumFromInt(0) });
+    _ = try t.vertices.append(alloc, .{ .point = @fromBackingInt(0) });
 
     try std.testing.expectEqual(@as(usize, 1), t.vertices.items.len);
     try std.testing.expectEqual(@as(usize, 1), g.points.items.len);

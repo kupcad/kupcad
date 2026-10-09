@@ -40,7 +40,7 @@ pub const BrepSolid = struct {
             .allocator = allocator,
             .t_arena = locus_topo_arena.TopologyArena.init(),
             .g_arena = locus_geom_arena.GeometryArena.init(),
-            .solid_id = @enumFromInt(0),
+            .solid_id = @fromBackingInt(0),
         };
         return self;
     }
@@ -86,25 +86,25 @@ fn extractAllVertices(allocator: std.mem.Allocator, handles: []const geom.Geomet
     for (handles) |h| {
         if (@intFromPtr(h.ptr) == 0) continue;
         const solid: *BrepSolid = @ptrCast(@alignCast(h.ptr));
-        const s = solid.t_arena.solids.items[@intFromEnum(solid.solid_id)];
+        const s = solid.t_arena.solids.items[@backingInt(solid.solid_id)];
 
         for (0..s.shells_len) |s_off| {
             const shell_idx = solid.t_arena.solid_shells.items[s.shells_start + s_off];
-            const shell = solid.t_arena.shells.items[@intFromEnum(shell_idx)];
+            const shell = solid.t_arena.shells.items[@backingInt(shell_idx)];
 
             for (0..shell.faces_len) |f_off| {
                 const face_idx = solid.t_arena.shell_faces.items[shell.faces_start + f_off];
-                const face = solid.t_arena.faces.items[@intFromEnum(face_idx)];
+                const face = solid.t_arena.faces.items[@backingInt(face_idx)];
 
                 for (0..face.loops_len) |l_off| {
                     const loop_idx = solid.t_arena.face_loops.items[face.loops_start + l_off];
-                    const loop = solid.t_arena.loops.items[@intFromEnum(loop_idx)];
+                    const loop = solid.t_arena.loops.items[@backingInt(loop_idx)];
                     var curr = loop.first_half_edge;
 
                     while (true) {
-                        const he = solid.t_arena.half_edges.items[@intFromEnum(curr)];
-                        const v = solid.t_arena.vertices.items[@intFromEnum(he.start_vertex)];
-                        const pt_idx = @intFromEnum(v.point);
+                        const he = solid.t_arena.half_edges.items[@backingInt(curr)];
+                        const v = solid.t_arena.vertices.items[@backingInt(he.start_vertex)];
+                        const pt_idx = @backingInt(v.point);
 
                         // Deduplicate points before passing them to Quickhull
                         if (!seen.contains(pt_idx)) {
@@ -258,7 +258,7 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
     const dest_solid = BrepSolid.create(backend_allocator) catch return null;
     const env = buildMathEnv(.{});
 
-    dest_solid.solid_id = locus_sweeps.extrudeFace(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, &src_solid.g_arena, @as(locus_topo_types.FaceIndex, @enumFromInt(@intFromEnum(src_solid.solid_id))), .{ 0, 0, height }, env) catch {
+    dest_solid.solid_id = locus_sweeps.extrudeFace(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, &src_solid.g_arena, @as(locus_topo_types.FaceIndex, @fromBackingInt(@backingInt(src_solid.solid_id))), .{ 0, 0, height }, env) catch {
         dest_solid.destroy();
         return null;
     };
@@ -273,7 +273,7 @@ fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64)
     const dest_solid = BrepSolid.create(backend_allocator) catch return null;
     const env = buildMathEnv(.{});
 
-    dest_solid.solid_id = locus_sweeps.revolveFace(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, @as(locus_topo_types.FaceIndex, @enumFromInt(@intFromEnum(src_solid.solid_id))), @intCast(segments), revolve_degrees, env) catch {
+    dest_solid.solid_id = locus_sweeps.revolveFace(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, @as(locus_topo_types.FaceIndex, @fromBackingInt(@backingInt(src_solid.solid_id))), @intCast(segments), revolve_degrees, env) catch {
         dest_solid.destroy();
         return null;
     };

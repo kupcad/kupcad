@@ -23,11 +23,11 @@ test "Workspace: Kahn's Algorithm sorts dependencies bottom-up" {
     try testing.expectEqual(@as(usize, 3), sorted.len);
 
     // math must be compiled first
-    try testing.expectEqualStrings("math.kup", ws.modules.items[@intFromEnum(sorted[0])].path);
+    try testing.expectEqualStrings("math.kup", ws.modules.items[@backingInt(sorted[0])].path);
     // hardware relies on math, so it comes second
-    try testing.expectEqualStrings("hardware.kup", ws.modules.items[@intFromEnum(sorted[1])].path);
+    try testing.expectEqualStrings("hardware.kup", ws.modules.items[@backingInt(sorted[1])].path);
     // main relies on both, so it comes last
-    try testing.expectEqualStrings("main.kup", ws.modules.items[@intFromEnum(sorted[2])].path);
+    try testing.expectEqualStrings("main.kup", ws.modules.items[@backingInt(sorted[2])].path);
 }
 
 test "Workspace: Kahn's Algorithm detects circular dependencies" {
@@ -57,7 +57,7 @@ test "Workspace: correctly populates Module Export Tables" {
     const id = try ws.addModule("main.kup", source);
     try ws.linkDependencies();
 
-    const mod = &ws.modules.items[@intFromEnum(id)];
+    const mod = &ws.modules.items[@backingInt(id)];
 
     // It should have extracted 3 exported symbols!
     try testing.expectEqual(@as(usize, 3), mod.exports.count());

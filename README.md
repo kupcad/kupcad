@@ -5,6 +5,9 @@
 ## Deps
 
 ```
+# sqlite translations
+zig translate-c vendor/sqlite/sqlite3.h > vendor/sqlite/sqlite_bindings.zig
+# run needed test
 zig build test -Dtest-filter="Point Segregation Bug"
 ```
 

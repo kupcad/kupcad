@@ -62,7 +62,7 @@ pub const VarOffsets = struct {
         index: u32,
     ) ?u32 {
         if (index >= self.len()) return null;
-        const offset_size = @intFromEnum(self.offset_size);
+        const offset_size = @backingInt(self.offset_size);
 
         const start = @as(usize, index) * offset_size;
         var s = parser.Stream.new_at(self.data, start) catch return null;
@@ -89,7 +89,7 @@ pub const VarOffsets = struct {
         self: VarOffsets,
     ) u32 {
         return @as(u32, @truncate(self.data.len)) /
-            @intFromEnum(self.offset_size);
+            @backingInt(self.offset_size);
     }
 };
 
@@ -130,7 +130,7 @@ pub fn skip(
     const offsets_len = try std.math.mul(
         u32,
         count + 1,
-        @intFromEnum(offset_size),
+        @backingInt(offset_size),
     );
 
     const offsets: VarOffsets = .{
@@ -154,7 +154,7 @@ pub fn parse(
     const offsets_len = try std.math.mul(
         u32,
         count + 1,
-        @intFromEnum(offset_size),
+        @backingInt(offset_size),
     );
 
     const offsets: VarOffsets = .{

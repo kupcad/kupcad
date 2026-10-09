@@ -88,7 +88,7 @@ pub const ScriptSession = struct {
         try queue.append(self.allocator, root_id);
 
         while (queue.pop()) |current_id| {
-            var node = &self.nodes.items[@intFromEnum(current_id)];
+            var node = &self.nodes.items[@backingInt(current_id)];
             if (node.is_stale) continue;
 
             node.is_stale = true;
@@ -113,11 +113,11 @@ pub const ScriptSession = struct {
     }
 
     pub fn evaluateModule(self: *ScriptSession, mod_id: ModuleId) !void {
-        var node = &self.nodes.items[@intFromEnum(mod_id)];
+        var node = &self.nodes.items[@backingInt(mod_id)];
 
         if (!node.is_stale and node.verified_at == self.global_revision) return; // Cache hit
 
-        const mod = &self.workspace.modules.items[@intFromEnum(mod_id)];
+        const mod = &self.workspace.modules.items[@backingInt(mod_id)];
 
         // --- Topological Recompilation Check ---
         var s_hasher = std.hash.Wyhash.init(0);
@@ -131,7 +131,7 @@ pub const ScriptSession = struct {
             needs_recompile = true;
         } else {
             for (mod.deps.items) |dep_id| {
-                const dep_node = &self.nodes.items[@intFromEnum(dep_id)];
+                const dep_node = &self.nodes.items[@backingInt(dep_id)];
                 // If the dependency changed AFTER this module was last verified, we must recompile
                 if (dep_node.changed_at > node.verified_at) {
                     needs_recompile = true;

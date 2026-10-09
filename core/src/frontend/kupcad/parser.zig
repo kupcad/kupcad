@@ -435,7 +435,7 @@ pub const Parser = struct {
         const left_node = self.b.tree.getNode(left) orelse return ParseError.InvalidExpression;
         switch (left_node.tag) {
             .identifier => {
-                return self.b.assignment(@as(ast.StringId, @enumFromInt(left_node.data)), tagToAssignmentOp(op_tag), value, left_node.main_token) catch ParseError.OutOfMemory;
+                return self.b.assignment(@as(ast.StringId, @fromBackingInt(left_node.data)), tagToAssignmentOp(op_tag), value, left_node.main_token) catch ParseError.OutOfMemory;
             },
             .method_call => {
                 const mc = self.b.tree.methodCall(left_node);
@@ -462,7 +462,7 @@ pub const Parser = struct {
         }
         const op = tagToBinaryOp(tok_tag) orelse return ParseError.InvalidExpression;
         const next_prec = if (tok_tag == .star_star)
-            @as(Precedence, @enumFromInt(@intFromEnum(self.getInfixPrecedence(tok_tag)) - 1))
+            @as(Precedence, @fromBackingInt(@backingInt(self.getInfixPrecedence(tok_tag)) - 1))
         else
             self.getInfixPrecedence(tok_tag);
         const left_main_token = self.b.tree.getNode(left).?.main_token;
@@ -858,7 +858,7 @@ pub const Parser = struct {
             } else break;
         }
         if (self.scratch_strings.items.len - s_len == 1) {
-            return self.b.createNode(.identifier, start_tok, @intFromEnum(self.scratch_strings.items[s_len])) catch ParseError.OutOfMemory;
+            return self.b.createNode(.identifier, start_tok, @backingInt(self.scratch_strings.items[s_len])) catch ParseError.OutOfMemory;
         } else {
             const span = try self.b.addStringLists(self.scratch_strings.items[s_len..]);
             return self.b.namespaceAccess(span, start_tok) catch ParseError.OutOfMemory;
@@ -940,7 +940,7 @@ pub const Parser = struct {
         // If the receiver was just an identifier, we "upgrade" it into a method call.
         // The identifier string becomes the method_name, and the receiver becomes `.none`.
         if (rec_tag == .identifier) {
-            const method_name: ast.StringId = @enumFromInt(rec_data);
+            const method_name: ast.StringId = @fromBackingInt(rec_data);
             return self.b.methodCall(.none, method_name, suffix.args, suffix.block, false, suffix.end_token, rec_main_token) catch ParseError.OutOfMemory;
         } else {
             // If the receiver is a complex expression (e.g., a lambda or proc being called),
@@ -1321,7 +1321,7 @@ pub const Parser = struct {
             }
 
             self.skipComments();
-            if (@intFromEnum(precedence) >= @intFromEnum(self.getInfixPrecedence(self.tag(0)))) break;
+            if (@backingInt(precedence) >= @backingInt(self.getInfixPrecedence(self.tag(0)))) break;
 
             const op_tag = self.tag(0);
             left = switch (op_tag) {
@@ -1411,9 +1411,9 @@ pub const Parser = struct {
         while (iter.next()) |word| {
             const interned = try self.b.intern(word);
             if (t == .percent_w) {
-                try self.scratch_nodes.append(self.allocator, try self.b.createNode(.string, tok_idx, @intFromEnum(interned)));
+                try self.scratch_nodes.append(self.allocator, try self.b.createNode(.string, tok_idx, @backingInt(interned)));
             } else {
-                try self.scratch_nodes.append(self.allocator, try self.b.createNode(.symbol, tok_idx, @intFromEnum(interned)));
+                try self.scratch_nodes.append(self.allocator, try self.b.createNode(.symbol, tok_idx, @backingInt(interned)));
             }
         }
         const span = try self.b.addNodes(self.scratch_nodes.items[s_len..]);
@@ -1495,7 +1495,7 @@ pub const Parser = struct {
                 const curr_start = self.tokens.starts[self.tok_idx];
                 const has_space = curr_start > prev_end;
                 if (has_space and t == .l_bracket) return true;
-                if (@intFromEnum(self.getInfixPrecedence(t)) == 0) return true;
+                if (@backingInt(self.getInfixPrecedence(t)) == 0) return true;
                 return false;
             },
         }
@@ -1566,7 +1566,7 @@ pub const Parser = struct {
         } else if (left_tag == .identifier) {
             const s_len = self.scratch_strings.items.len;
             defer self.scratch_strings.shrinkRetainingCapacity(s_len);
-            try self.scratch_strings.append(self.allocator, @as(ast.StringId, @enumFromInt(left_data)));
+            try self.scratch_strings.append(self.allocator, @as(ast.StringId, @fromBackingInt(left_data)));
             try self.scratch_strings.append(self.allocator, try self.b.intern(self.tokens.lexeme(self.source, right_idx)));
             const new_span = try self.b.addStringLists(self.scratch_strings.items[s_len..]);
             return self.b.namespaceAccess(new_span, left_main_token) catch ParseError.OutOfMemory;
@@ -1627,7 +1627,7 @@ pub const Parser = struct {
                     // Keyword with default: a: 10
                     const default_val = try self.parseExpression(.none);
 
-                    const sym_node = self.b.createNode(.symbol, ident_tok, @intFromEnum(name_id)) catch return ParseError.OutOfMemory;
+                    const sym_node = self.b.createNode(.symbol, ident_tok, @backingInt(name_id)) catch return ParseError.OutOfMemory;
 
                     const s_len = self.scratch_hash_entries.items.len;
                     defer self.scratch_hash_entries.shrinkRetainingCapacity(s_len);
@@ -1637,7 +1637,7 @@ pub const Parser = struct {
                     return self.b.hashLiteral(span, ident_tok) catch ParseError.OutOfMemory;
                 }
                 // Keyword without default: a:
-                return self.b.createNode(.symbol, ident_tok, @intFromEnum(name_id)) catch return ParseError.OutOfMemory;
+                return self.b.createNode(.symbol, ident_tok, @backingInt(name_id)) catch return ParseError.OutOfMemory;
             }
 
             return self.b.identifierNode(ident_str, start_tok) catch ParseError.OutOfMemory;
@@ -1668,7 +1668,7 @@ pub const Parser = struct {
             const child_block = try self.parseBlock(&.{.r_brace});
             _ = try self.expect(.r_brace);
             const call_data = self.b.tree.getNode(call_node).?.data;
-            self.b.tree.extra_data.items[call_data + 4] = @intFromEnum(child_block);
+            self.b.tree.extra_data.items[call_data + 4] = @backingInt(child_block);
             return call_node;
         } else if (self.tag(0) != .r_brace and self.tag(0) != .eof) {
             const child_stmt = try self.parseStatement();
@@ -1679,7 +1679,7 @@ pub const Parser = struct {
             const child_end_tok = self.tok_idx;
             const block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], child_end_tok, child_main_token);
             const call_data = self.b.tree.getNode(call_node).?.data;
-            self.b.tree.extra_data.items[call_data + 4] = @intFromEnum(block);
+            self.b.tree.extra_data.items[call_data + 4] = @backingInt(block);
             return call_node;
         }
         return call_node;

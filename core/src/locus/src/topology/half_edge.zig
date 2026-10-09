@@ -54,7 +54,7 @@ pub const VertexUmbrellaIterator = struct {
         // Find the first outgoing half-edge starting at this vertex
         for (t_arena.half_edges.items, 0..) |he, idx| {
             if (he.start_vertex == vertex) {
-                const he_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(idx)));
+                const he_idx: types.HalfEdgeIndex = @fromBackingInt(@as(u32, @intCast(idx)));
                 return .{
                     .t_arena = t_arena,
                     .start_he = he_idx,
@@ -73,9 +73,9 @@ pub const VertexUmbrellaIterator = struct {
         const yield_he = self.current_he;
 
         // Radial pivot: next outgoing half-edge is twin(prev(current_he))
-        const he = self.t_arena.half_edges.items[@intFromEnum(self.current_he)];
+        const he = self.t_arena.half_edges.items[@backingInt(self.current_he)];
         if (he.prev != types.NULL_HALF_EDGE) {
-            const prev_he = self.t_arena.half_edges.items[@intFromEnum(he.prev)];
+            const prev_he = self.t_arena.half_edges.items[@backingInt(he.prev)];
             self.current_he = prev_he.twin;
         } else {
             self.current_he = types.NULL_HALF_EDGE;

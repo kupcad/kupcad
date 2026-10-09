@@ -139,7 +139,7 @@ pub fn main() !void {
             const st = subtable.format.format1;
             _ = st.class(.{0});
             _ = st.entry(0, 0);
-            _ = st.kerning(@enumFromInt(0));
+            _ = st.kerning(@fromBackingInt(0));
             _ = st.new_state(0);
         }
     }

@@ -159,7 +159,7 @@ Production kernels must never panic or crash the host application. Locus utilize
 
 When proposing code changes to Locus, you **must** obey the following rules:
 
-1. **NO RAW POINTERS:** Never use `*Face` or `*Vertex`. You must use `TopologyArena.faces.items[@intFromEnum(face_id)]` using strictly typed `FaceIndex`.
+1. **NO RAW POINTERS:** Never use `*Face` or `*Vertex`. You must use `TopologyArena.faces.items[@backingInt(face_id)]` using strictly typed `FaceIndex`.
 
 
 2. **PREVENT C-STACK OVERFLOWS:** Never use deep recursion for traversing the graph. Winged-edge loops must be traversed iteratively using `while` loops equipped with a `safety_counter` limit (e.g., `10_000`) to prevent kernel hanging on corrupted cyclic graphs.

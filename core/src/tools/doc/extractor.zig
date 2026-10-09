@@ -175,7 +175,7 @@ fn extractValidate(tree: *const ast.Tree, node_idx: ast.NodeIndex) ParamValidate
 fn extractString(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?[]const u8 {
     const node = tree.getNode(node_idx) orelse return null;
     switch (node.tag) {
-        .string, .symbol, .identifier => return tree.getString(@as(ast.StringId, @enumFromInt(node.data))),
+        .string, .symbol, .identifier => return tree.getString(@as(ast.StringId, @fromBackingInt(node.data))),
         else => return null,
     }
 }
@@ -199,7 +199,7 @@ fn extractJsonValue(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?std.json.Va
     switch (node.tag) {
         .number => return .{ .float = tree.number(node) },
         .boolean => return .{ .bool = tree.boolean(node) },
-        .string, .symbol => return .{ .string = tree.getString(@as(ast.StringId, @enumFromInt(node.data))) },
+        .string, .symbol => return .{ .string = tree.getString(@as(ast.StringId, @fromBackingInt(node.data))) },
         .unary_op => {
             const un = tree.unaryExpr(node);
             if (un.op == .negate) {

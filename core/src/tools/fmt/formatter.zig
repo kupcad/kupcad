@@ -155,12 +155,12 @@ pub const Formatter = struct {
                 var buf: [64]u8 = undefined;
                 try self.out.appendSlice(self.allocator, try std.fmt.bufPrint(&buf, "{d}", .{n}));
             },
-            .string => try self.formatWrappedString(tree.getString(@enumFromInt(node.data)), '"'),
+            .string => try self.formatWrappedString(tree.getString(@fromBackingInt(node.data)), '"'),
             .interpolated_string => {
                 const parts = tree.nodeSpan(node);
                 try self.formatInterpolatedString(tree, tree.getNodes(parts));
             },
-            .symbol => try self.formatWrappedString(tree.getString(@enumFromInt(node.data)), ':'),
+            .symbol => try self.formatWrappedString(tree.getString(@fromBackingInt(node.data)), ':'),
             .boolean => {
                 const b = tree.boolean(node);
                 try self.out.appendSlice(self.allocator, if (b) "true" else "false");
@@ -168,7 +168,7 @@ pub const Formatter = struct {
             .nil => try self.out.appendSlice(self.allocator, "nil"),
             .undef => try self.out.appendSlice(self.allocator, "undef"),
             .self_expr => try self.out.appendSlice(self.allocator, "self"),
-            .identifier => try self.out.appendSlice(self.allocator, tree.getString(@enumFromInt(node.data))),
+            .identifier => try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(node.data))),
             .array_literal => {
                 const arr = tree.nodeSpan(node);
                 try self.formatArray(tree, tree.getNodes(arr));
@@ -240,8 +240,8 @@ pub const Formatter = struct {
             },
             .defined_expr => {
                 try self.out.appendSlice(self.allocator, "defined?(");
-                if (node.data != @intFromEnum(ast.StringId.none)) {
-                    const name_id: ast.StringId = @enumFromInt(node.data);
+                if (node.data != @backingInt(ast.StringId.none)) {
+                    const name_id: ast.StringId = @fromBackingInt(node.data);
                     try self.out.appendSlice(self.allocator, tree.getString(name_id));
                 }
                 try self.out.append(self.allocator, ')');
@@ -308,7 +308,7 @@ pub const Formatter = struct {
         for (parts) |part_idx| {
             const part = tree.getNode(part_idx).?;
             if (part.tag == .string) {
-                try self.out.appendSlice(self.allocator, tree.getString(@enumFromInt(part.data)));
+                try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(part.data)));
             } else {
                 try self.out.appendSlice(self.allocator, "#{");
                 try self.formatNode(tree, part_idx);
@@ -338,12 +338,12 @@ pub const Formatter = struct {
 
             if (key_node.tag == .double_splat_expr) {
                 try self.formatNode(tree, entry.key);
-            } else if (key_node.tag == .symbol and val_node.tag == .identifier and std.mem.eql(u8, tree.getString(@enumFromInt(key_node.data)), tree.getString(@enumFromInt(val_node.data)))) {
-                try self.out.appendSlice(self.allocator, tree.getString(@enumFromInt(key_node.data)));
+            } else if (key_node.tag == .symbol and val_node.tag == .identifier and std.mem.eql(u8, tree.getString(@fromBackingInt(key_node.data)), tree.getString(@fromBackingInt(val_node.data)))) {
+                try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(key_node.data)));
                 try self.out.append(self.allocator, ':');
             } else {
                 if (key_node.tag == .symbol) {
-                    try self.out.appendSlice(self.allocator, tree.getString(@enumFromInt(key_node.data)));
+                    try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(key_node.data)));
                     try self.out.appendSlice(self.allocator, ": ");
                 } else {
                     try self.formatNode(tree, entry.key);

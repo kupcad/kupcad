@@ -13,22 +13,22 @@ test "BVH: Accelerates face collision query efficiently" {
 
     // Populate fake geometry point
     try g.points.append(alloc, .{ 0.0, 0.0, 0.0 });
-    try t.vertices.append(alloc, .{ .point = @enumFromInt(0) });
+    try t.vertices.append(alloc, .{ .point = @fromBackingInt(0) });
 
     // Populate mock topological face
     try t.half_edges.append(alloc, .{
-        .start_vertex = @enumFromInt(0),
+        .start_vertex = @fromBackingInt(0),
         .twin = types.NULL_HALF_EDGE,
-        .next = @enumFromInt(0),
-        .prev = @enumFromInt(0),
-        .loop_id = @enumFromInt(0),
-        .curve = .{ .index = @enumFromInt(0), .curve_type = .line },
+        .next = @fromBackingInt(0),
+        .prev = @fromBackingInt(0),
+        .loop_id = @fromBackingInt(0),
+        .curve = .{ .index = @fromBackingInt(0), .curve_type = .line },
         .forward = true,
     });
-    try t.loops.append(alloc, .{ .face_id = @enumFromInt(0), .first_half_edge = @enumFromInt(0) });
-    try t.face_loops.append(alloc, @enumFromInt(0));
+    try t.loops.append(alloc, .{ .face_id = @fromBackingInt(0), .first_half_edge = @fromBackingInt(0) });
+    try t.face_loops.append(alloc, @fromBackingInt(0));
     try t.faces.append(alloc, .{
-        .surface = .{ .index = @enumFromInt(0), .surface_type = .plane },
+        .surface = .{ .index = @fromBackingInt(0), .surface_type = .plane },
         .forward = true,
         .loops_start = 0,
         .loops_len = 1,
@@ -37,7 +37,7 @@ test "BVH: Accelerates face collision query efficiently" {
     var tree = bvh.FlatBVH{};
     defer tree.deinit(alloc);
 
-    const faces = [_]types.FaceIndex{@enumFromInt(0)};
+    const faces = [_]types.FaceIndex{@fromBackingInt(0)};
     try tree.build(alloc, &t, &g, &faces);
 
     var queried = std.ArrayListUnmanaged(types.FaceIndex).empty;
@@ -46,5 +46,5 @@ test "BVH: Accelerates face collision query efficiently" {
     try tree.queryBox(alloc, .{ -1.0, -1.0, -1.0 }, .{ 1.0, 1.0, 1.0 }, &queried);
 
     try std.testing.expectEqual(@as(usize, 1), queried.items.len);
-    try std.testing.expectEqual(@as(types.FaceIndex, @enumFromInt(0)), queried.items[0]);
+    try std.testing.expectEqual(@as(types.FaceIndex, @fromBackingInt(0)), queried.items[0]);
 }

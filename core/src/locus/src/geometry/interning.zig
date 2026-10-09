@@ -15,10 +15,10 @@ pub const Interner = struct {
         // Fast Linear Scan (Sufficient for localized primitive buffers)
         for (g.points.items, 0..) |existing, idx| {
             if (env.isCoincident(existing, pt)) {
-                return @enumFromInt(@as(u32, @intCast(idx)));
+                return @fromBackingInt(@as(u32, @intCast(idx)));
             }
         }
-        const new_idx: geom_types.PointIndex = @enumFromInt(@as(u32, @intCast(g.points.items.len)));
+        const new_idx: geom_types.PointIndex = @fromBackingInt(@as(u32, @intCast(g.points.items.len)));
         try g.points.append(allocator, pt);
         return new_idx;
     }
@@ -32,10 +32,10 @@ pub const Interner = struct {
     ) !geom_types.CurveIndex {
         for (g.lines.items, 0..) |existing, idx| {
             if (env.isCoincident(existing.start, line.start) and env.isCoincident(existing.end, line.end)) {
-                return @enumFromInt(@as(u24, @intCast(idx)));
+                return @fromBackingInt(@as(u24, @intCast(idx)));
             }
         }
-        const new_idx: geom_types.CurveIndex = @enumFromInt(@as(u24, @intCast(g.lines.items.len)));
+        const new_idx: geom_types.CurveIndex = @fromBackingInt(@as(u24, @intCast(g.lines.items.len)));
         try g.lines.append(allocator, line);
         return new_idx;
     }
@@ -52,10 +52,10 @@ pub const Interner = struct {
                 env.isParallel(existing.u_axis, plane.u_axis) and
                 env.isParallel(existing.v_axis, plane.v_axis))
             {
-                return @enumFromInt(@as(u24, @intCast(idx)));
+                return @fromBackingInt(@as(u24, @intCast(idx)));
             }
         }
-        const new_idx: geom_types.SurfaceIndex = @enumFromInt(@as(u24, @intCast(g.planes.items.len)));
+        const new_idx: geom_types.SurfaceIndex = @fromBackingInt(@as(u24, @intCast(g.planes.items.len)));
         try g.planes.append(allocator, plane);
         return new_idx;
     }

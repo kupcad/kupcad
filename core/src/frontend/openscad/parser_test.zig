@@ -268,7 +268,7 @@ test "OpenSCAD Parser: Special Variables and Children Calls" {
     const range_end = getNode(&parser, parser.b.tree.range(range).end);
 
     const range_end_left = getNode(&parser, parser.b.tree.binaryExpr(range_end).left);
-    try testing.expectEqualStrings("$children", getStr(&parser, @as(ast.StringId, @enumFromInt(range_end_left.data))));
+    try testing.expectEqualStrings("$children", getStr(&parser, @as(ast.StringId, @fromBackingInt(range_end_left.data))));
 
     const for_body = getNode(&parser, for_stmt.body);
     const trans_node = getNode(&parser, getNodes(&parser, parser.b.tree.block(for_body).stmts)[0]);
@@ -329,10 +329,10 @@ test "OpenSCAD Parser: Let and If Expressions" {
 
     const yield_if = parser.b.tree.ifStmt(yield_node);
     const then_branch = getNode(&parser, yield_if.then_branch);
-    try testing.expectEqualStrings("a", getStr(&parser, @as(ast.StringId, @enumFromInt(then_branch.data))));
+    try testing.expectEqualStrings("a", getStr(&parser, @as(ast.StringId, @fromBackingInt(then_branch.data))));
 
     const else_branch = getNode(&parser, yield_if.else_branch);
-    try testing.expectEqualStrings("b", getStr(&parser, @as(ast.StringId, @enumFromInt(else_branch.data))));
+    try testing.expectEqualStrings("b", getStr(&parser, @as(ast.StringId, @fromBackingInt(else_branch.data))));
 }
 
 test "OpenSCAD Parser: Local Quoted Includes and Unary Plus" {
@@ -422,7 +422,7 @@ test "OpenSCAD Parser: Array Literal Expansion (each)" {
     try testing.expectEqual(ast.Tag.each_expr, el1.tag);
 
     const each_val = getNode(&parser, parser.b.tree.nodeIndex(el1));
-    try testing.expectEqualStrings("sub_array", getStr(&parser, @as(ast.StringId, @enumFromInt(each_val.data))));
+    try testing.expectEqualStrings("sub_array", getStr(&parser, @as(ast.StringId, @fromBackingInt(each_val.data))));
 
     const el2 = getNode(&parser, elements[2]);
     try testing.expectEqual(@as(f64, 4.0), parser.b.tree.number(el2));
@@ -451,7 +451,7 @@ test "OpenSCAD Parser: Comprehension with Else" {
     const if_payload = parser.b.tree.ifStmt(if_node);
 
     const then_branch = getNode(&parser, if_payload.then_branch);
-    try testing.expectEqualStrings("i", getStr(&parser, @as(ast.StringId, @enumFromInt(then_branch.data))));
+    try testing.expectEqualStrings("i", getStr(&parser, @as(ast.StringId, @fromBackingInt(then_branch.data))));
 
     const else_branch = getNode(&parser, if_payload.else_branch);
     try testing.expectEqual(ast.UnaryOp.negate, parser.b.tree.unaryExpr(else_branch).op);
@@ -500,7 +500,7 @@ test "OpenSCAD Parser: Adjacency String Concatenation" {
 
     const args = getNamedArgs(&parser, parser.b.tree.methodCall(node).args);
     const arg0 = getNode(&parser, args[0].value);
-    try testing.expectEqualStrings("Path: to/file.stl", getStr(&parser, @as(ast.StringId, @enumFromInt(arg0.data))));
+    try testing.expectEqualStrings("Path: to/file.stl", getStr(&parser, @as(ast.StringId, @fromBackingInt(arg0.data))));
 }
 
 test "OpenSCAD Parser: Trailing Commas Leniency" {
@@ -781,10 +781,10 @@ test "OpenSCAD Parser: Children Module Invocation with Modulo Index" {
     try testing.expectEqual(ast.BinaryOp.modulo, parser.b.tree.binaryExpr(arg_expr).op);
 
     const left = getNode(&parser, parser.b.tree.binaryExpr(arg_expr).left);
-    try testing.expectEqualStrings("i", getStr(&parser, @as(ast.StringId, @enumFromInt(left.data))));
+    try testing.expectEqualStrings("i", getStr(&parser, @as(ast.StringId, @fromBackingInt(left.data))));
 
     const right = getNode(&parser, parser.b.tree.binaryExpr(arg_expr).right);
-    try testing.expectEqualStrings("$children", getStr(&parser, @as(ast.StringId, @enumFromInt(right.data))));
+    try testing.expectEqualStrings("$children", getStr(&parser, @as(ast.StringId, @fromBackingInt(right.data))));
 }
 
 test "OpenSCAD Parser: Diagnostics Line and Column Tracking" {

@@ -48,15 +48,15 @@ test "ScriptSession: markFileEdited triggers reverse BFS invalidation" {
     try session.buildReverseGraph();
 
     // Mark as clean initial evaluation state
-    session.nodes.items[@intFromEnum(child_id)].is_stale = false;
-    session.nodes.items[@intFromEnum(parent_id)].is_stale = false;
+    session.nodes.items[@backingInt(child_id)].is_stale = false;
+    session.nodes.items[@backingInt(parent_id)].is_stale = false;
 
     // Edit child file
     try session.markFileEdited(child_path);
 
     try testing.expectEqual(@as(u64, 2), session.global_revision);
-    try testing.expect(session.nodes.items[@intFromEnum(child_id)].is_stale);
-    try testing.expect(session.nodes.items[@intFromEnum(parent_id)].is_stale);
+    try testing.expect(session.nodes.items[@backingInt(child_id)].is_stale);
+    try testing.expect(session.nodes.items[@backingInt(parent_id)].is_stale);
 }
 
 test "ScriptSession: evaluateModule compiles code, stores CAD handle, and applies Wyhash early cutoff" {
@@ -72,7 +72,7 @@ test "ScriptSession: evaluateModule compiles code, stores CAD handle, and applie
     // 1. Initial Evaluation
     try session.evaluateModule(mod_id);
 
-    const node1 = &session.nodes.items[@intFromEnum(mod_id)];
+    const node1 = &session.nodes.items[@backingInt(mod_id)];
     try testing.expect(!node1.is_stale);
     try testing.expectEqual(@as(u64, 1), node1.verified_at);
     try testing.expect(node1.cached_handle != null);
@@ -85,7 +85,7 @@ test "ScriptSession: evaluateModule compiles code, stores CAD handle, and applie
     try testing.expectApproxEqAbs(@as(f64, 1000.0), vol, 1e-4);
 
     // 2. Modify code to yield the identical output geometry (variable renaming)
-    var mod = &session.workspace.modules.items[@intFromEnum(mod_id)];
+    var mod = &session.workspace.modules.items[@backingInt(mod_id)];
     testing.allocator.free(mod.source);
     mod.source = try testing.allocator.dupe(u8, "box = cube(10.0)");
 
@@ -96,7 +96,7 @@ test "ScriptSession: evaluateModule compiles code, stores CAD handle, and applie
     // 3. Re-evaluate module
     try session.evaluateModule(mod_id);
 
-    const node2 = &session.nodes.items[@intFromEnum(mod_id)];
+    const node2 = &session.nodes.items[@backingInt(mod_id)];
     try testing.expect(!node2.is_stale);
     try testing.expectEqual(@as(u64, 2), node2.verified_at);
 
@@ -132,8 +132,8 @@ test "ScriptSession: evaluateWorkspace processes multi-file dependencies and pro
     // 1. Initial full workspace evaluation
     try session.evaluateWorkspace();
 
-    var leaf_node = &session.nodes.items[@intFromEnum(leaf_id)];
-    var root_node = &session.nodes.items[@intFromEnum(root_id)];
+    var leaf_node = &session.nodes.items[@backingInt(leaf_id)];
+    var root_node = &session.nodes.items[@backingInt(root_id)];
 
     try testing.expectEqual(@as(u64, 1), leaf_node.verified_at);
     try testing.expectEqual(@as(u64, 1), root_node.verified_at);
@@ -144,7 +144,7 @@ test "ScriptSession: evaluateWorkspace processes multi-file dependencies and pro
     const new_leaf_source = "c = cube(x: 10.0, y: 10.0, z: 10.0); export c;";
     try mem_vfs.vfs().writeFile(leaf_path, new_leaf_source);
 
-    var mod_leaf = &session.workspace.modules.items[@intFromEnum(leaf_id)];
+    var mod_leaf = &session.workspace.modules.items[@backingInt(leaf_id)];
     testing.allocator.free(mod_leaf.source);
     mod_leaf.source = try testing.allocator.dupe(u8, new_leaf_source);
 
@@ -155,8 +155,8 @@ test "ScriptSession: evaluateWorkspace processes multi-file dependencies and pro
     // 3. Re-evaluate workspace
     try session.evaluateWorkspace();
 
-    leaf_node = &session.nodes.items[@intFromEnum(leaf_id)];
-    root_node = &session.nodes.items[@intFromEnum(root_id)];
+    leaf_node = &session.nodes.items[@backingInt(leaf_id)];
+    root_node = &session.nodes.items[@backingInt(root_id)];
 
     // Both files were verified topologically in revision 2
     try testing.expectEqual(@as(u64, 2), leaf_node.verified_at);
@@ -199,16 +199,16 @@ test "ScriptSession: deep dependency chain short-circuits propagation on identic
     const new_a_source = "x = cube(10.0); out = x; export out;";
     try mem_vfs.vfs().writeFile("./a.kup", new_a_source);
 
-    var mod_a = &session.workspace.modules.items[@intFromEnum(a_id)];
+    var mod_a = &session.workspace.modules.items[@backingInt(a_id)];
     testing.allocator.free(mod_a.source);
     mod_a.source = try testing.allocator.dupe(u8, new_a_source);
 
     try session.markFileEdited("./a.kup");
     try session.evaluateWorkspace();
 
-    const a_node = &session.nodes.items[@intFromEnum(a_id)];
-    const b_node = &session.nodes.items[@intFromEnum(b_id)];
-    const c_node = &session.nodes.items[@intFromEnum(c_id)];
+    const a_node = &session.nodes.items[@backingInt(a_id)];
+    const b_node = &session.nodes.items[@backingInt(b_id)];
+    const c_node = &session.nodes.items[@backingInt(c_id)];
 
     // ALL verified_at timestamps updated to 2 during the topological pass
     try testing.expectEqual(@as(u64, 2), a_node.verified_at);
@@ -247,7 +247,7 @@ test "ScriptSession: gracefully halts evaluation on syntax error and leaves down
     const bad_a_source = "out = cube(10.0; export out;";
     try mem_vfs.vfs().writeFile("./a.kup", bad_a_source);
 
-    var mod_a = &session.workspace.modules.items[@intFromEnum(a_id)];
+    var mod_a = &session.workspace.modules.items[@backingInt(a_id)];
     testing.allocator.free(mod_a.source);
     mod_a.source = try testing.allocator.dupe(u8, bad_a_source);
 
@@ -256,8 +256,8 @@ test "ScriptSession: gracefully halts evaluation on syntax error and leaves down
     const err = session.evaluateWorkspace();
     try testing.expectError(error.ParseError, err);
 
-    const a_node = &session.nodes.items[@intFromEnum(a_id)];
-    const b_node = &session.nodes.items[@intFromEnum(b_id)];
+    const a_node = &session.nodes.items[@backingInt(a_id)];
+    const b_node = &session.nodes.items[@backingInt(b_id)];
 
     try testing.expect(a_node.is_stale);
     try testing.expect(b_node.is_stale);

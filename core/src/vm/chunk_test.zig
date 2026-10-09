@@ -33,9 +33,9 @@ test "Chunk: handles advanced opcodes" {
     try c.write(testing.allocator, 0xFF, 0); // Low byte
 
     try testing.expectEqual(@as(usize, 5), c.code.items.len);
-    try testing.expectEqual(chunk.OpCode.op_build_range, @as(chunk.OpCode, @enumFromInt(c.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_array_spread, @as(chunk.OpCode, @enumFromInt(c.code.items[1])));
-    try testing.expectEqual(chunk.OpCode.op_setup_rescue, @as(chunk.OpCode, @enumFromInt(c.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_build_range, @as(chunk.OpCode, @fromBackingInt(c.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_array_spread, @as(chunk.OpCode, @fromBackingInt(c.code.items[1])));
+    try testing.expectEqual(chunk.OpCode.op_setup_rescue, @as(chunk.OpCode, @fromBackingInt(c.code.items[2])));
 }
 
 test "Chunk: DebugSpan RLE compression groups identical source offsets" {

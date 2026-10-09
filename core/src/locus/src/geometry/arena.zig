@@ -81,12 +81,12 @@ pub const GeometryArena = struct {
     pub fn surfaceProject(self: *const GeometryArena, handle: SurfaceId, pt: math.Vec3) math.Vec2 {
         switch (handle.surface_type) {
             .plane => {
-                const p = self.planes.items[@intFromEnum(handle.index)];
+                const p = self.planes.items[@backingInt(handle.index)];
                 const v = math.sub(pt, p.origin);
                 return .{ math.dot(v, p.u_axis), math.dot(v, p.v_axis) };
             },
             .cylinder => {
-                const c = self.cylinders.items[@intFromEnum(handle.index)];
+                const c = self.cylinders.items[@backingInt(handle.index)];
                 const v = math.sub(pt, c.origin);
                 const z_val = math.dot(v, c.axis);
                 const proj = math.sub(v, math.scale(c.axis, z_val));

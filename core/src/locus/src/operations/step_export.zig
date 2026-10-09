@@ -69,28 +69,28 @@ fn computeLoopNormalAndOrigin(
     var nz: f64 = 0;
     var curr_he = loop.first_half_edge;
 
-    if (@intFromEnum(curr_he) >= t.half_edges.items.len) return error.CorruptTopology;
+    if (@backingInt(curr_he) >= t.half_edges.items.len) return error.CorruptTopology;
 
-    const start_v_id = t.half_edges.items[@intFromEnum(curr_he)].start_vertex;
-    if (@intFromEnum(start_v_id) >= t.vertices.items.len) return error.CorruptTopology;
+    const start_v_id = t.half_edges.items[@backingInt(curr_he)].start_vertex;
+    if (@backingInt(start_v_id) >= t.vertices.items.len) return error.CorruptTopology;
 
-    const pt_idx_0 = t.vertices.items[@intFromEnum(start_v_id)].point;
-    const p0 = g.points.items[@intFromEnum(pt_idx_0)];
+    const pt_idx_0 = t.vertices.items[@backingInt(start_v_id)].point;
+    const p0 = g.points.items[@backingInt(pt_idx_0)];
 
     var safety_counter: u32 = 0;
-    while (curr_he != topo_types.NULL_HALF_EDGE and @intFromEnum(curr_he) < t.half_edges.items.len) {
-        const he_c = t.half_edges.items[@intFromEnum(curr_he)];
-        if (he_c.next == topo_types.NULL_HALF_EDGE or @intFromEnum(he_c.next) >= t.half_edges.items.len) break;
+    while (curr_he != topo_types.NULL_HALF_EDGE and @backingInt(curr_he) < t.half_edges.items.len) {
+        const he_c = t.half_edges.items[@backingInt(curr_he)];
+        if (he_c.next == topo_types.NULL_HALF_EDGE or @backingInt(he_c.next) >= t.half_edges.items.len) break;
 
-        if (@intFromEnum(he_c.start_vertex) >= t.vertices.items.len) return error.CorruptTopology;
-        const p_c_idx = t.vertices.items[@intFromEnum(he_c.start_vertex)].point;
-        const p_c = g.points.items[@intFromEnum(p_c_idx)];
+        if (@backingInt(he_c.start_vertex) >= t.vertices.items.len) return error.CorruptTopology;
+        const p_c_idx = t.vertices.items[@backingInt(he_c.start_vertex)].point;
+        const p_c = g.points.items[@backingInt(p_c_idx)];
 
-        const next_he = t.half_edges.items[@intFromEnum(he_c.next)];
-        if (@intFromEnum(next_he.start_vertex) >= t.vertices.items.len) return error.CorruptTopology;
+        const next_he = t.half_edges.items[@backingInt(he_c.next)];
+        if (@backingInt(next_he.start_vertex) >= t.vertices.items.len) return error.CorruptTopology;
 
-        const p_n_idx = t.vertices.items[@intFromEnum(next_he.start_vertex)].point;
-        const p_n = g.points.items[@intFromEnum(p_n_idx)];
+        const p_n_idx = t.vertices.items[@backingInt(next_he.start_vertex)].point;
+        const p_n = g.points.items[@backingInt(p_n_idx)];
 
         nx += (p_c[1] - p_n[1]) * (p_c[2] + p_n[2]);
         ny += (p_c[2] - p_n[2]) * (p_c[0] + p_n[0]);
@@ -116,18 +116,18 @@ fn getOrCreateLineEdge(
     v1_id: topo_types.VertexIndex,
     v2_id: topo_types.VertexIndex,
 ) !u32 {
-    const v_min = if (@intFromEnum(v1_id) < @intFromEnum(v2_id)) v1_id else v2_id;
-    const v_max = if (@intFromEnum(v1_id) > @intFromEnum(v2_id)) v1_id else v2_id;
+    const v_min = if (@backingInt(v1_id) < @backingInt(v2_id)) v1_id else v2_id;
+    const v_max = if (@backingInt(v1_id) > @backingInt(v2_id)) v1_id else v2_id;
     const key = EdgeKey{ .v1 = v_min, .v2 = v_max };
 
     if (edge_map.get(key)) |ec_id| {
         return ec_id;
     }
 
-    const p1_idx = t.vertices.items[@intFromEnum(v_min)].point;
-    const p2_idx = t.vertices.items[@intFromEnum(v_max)].point;
-    const p1 = g.points.items[@intFromEnum(p1_idx)];
-    const p2 = g.points.items[@intFromEnum(p2_idx)];
+    const p1_idx = t.vertices.items[@backingInt(v_min)].point;
+    const p2_idx = t.vertices.items[@backingInt(v_max)].point;
+    const p1 = g.points.items[@backingInt(p1_idx)];
+    const p2 = g.points.items[@backingInt(p2_idx)];
 
     const dx = p2[0] - p1[0];
     const dy = p2[1] - p1[1];
@@ -208,7 +208,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
         const g = solid_ref.g_arena;
         const active_solid_id = solid_ref.solid_id;
 
-        if (@intFromEnum(active_solid_id) >= t.solids.items.len) continue;
+        if (@backingInt(active_solid_id) >= t.solids.items.len) continue;
 
         var active_shells = std.AutoHashMap(u32, void).init(allocator);
         defer active_shells.deinit();
@@ -221,27 +221,27 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
         var active_vertices = std.AutoHashMap(topo_types.VertexIndex, void).init(allocator);
         defer active_vertices.deinit();
 
-        const target_solid = t.solids.items[@intFromEnum(active_solid_id)];
+        const target_solid = t.solids.items[@backingInt(active_solid_id)];
         for (0..target_solid.shells_len) |s_off| {
             const shell_idx = t.solid_shells.items[target_solid.shells_start + s_off];
-            try active_shells.put(@intFromEnum(shell_idx), {});
-            const shell = t.shells.items[@intFromEnum(shell_idx)];
+            try active_shells.put(@backingInt(shell_idx), {});
+            const shell = t.shells.items[@backingInt(shell_idx)];
 
             for (0..shell.faces_len) |f_off| {
                 const face_idx = t.shell_faces.items[shell.faces_start + f_off];
-                try active_faces.put(@intFromEnum(face_idx), {});
-                const face = t.faces.items[@intFromEnum(face_idx)];
+                try active_faces.put(@backingInt(face_idx), {});
+                const face = t.faces.items[@backingInt(face_idx)];
 
                 for (0..face.loops_len) |l_off| {
                     const loop_idx = t.face_loops.items[face.loops_start + l_off];
-                    try active_loops.put(@intFromEnum(loop_idx), {});
-                    const loop = t.loops.items[@intFromEnum(loop_idx)];
+                    try active_loops.put(@backingInt(loop_idx), {});
+                    const loop = t.loops.items[@backingInt(loop_idx)];
 
                     var curr_he = loop.first_half_edge;
                     var safety_counter: u32 = 0;
-                    while (curr_he != topo_types.NULL_HALF_EDGE and @intFromEnum(curr_he) < t.half_edges.items.len) {
-                        try active_half_edges.put(@intFromEnum(curr_he), {});
-                        const he = t.half_edges.items[@intFromEnum(curr_he)];
+                    while (curr_he != topo_types.NULL_HALF_EDGE and @backingInt(curr_he) < t.half_edges.items.len) {
+                        try active_half_edges.put(@backingInt(curr_he), {});
+                        const he = t.half_edges.items[@backingInt(curr_he)];
                         try active_vertices.put(he.start_vertex, {});
 
                         curr_he = he.next;
@@ -256,10 +256,10 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
         defer vertex_map.deinit();
 
         for (t.vertices.items, 0..) |v, i| {
-            const v_idx: topo_types.VertexIndex = @enumFromInt(i);
+            const v_idx: topo_types.VertexIndex = @fromBackingInt(@as(u32, @intCast(i)));
             if (!active_vertices.contains(v_idx)) continue;
 
-            const pt = g.points.items[@intFromEnum(v.point)];
+            const pt = g.points.items[@backingInt(v.point)];
             const pt_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ pt[0], pt[1], pt[2] });
             try vertex_map.put(v_idx, try s.emit("VERTEX_POINT('',#{d})", .{pt_id}));
         }
@@ -272,21 +272,21 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
 
         for (t.half_edges.items, 0..) |he, i| {
             if (!active_half_edges.contains(@intCast(i))) continue;
-            if (he.next == topo_types.NULL_HALF_EDGE or @intFromEnum(he.next) >= t.half_edges.items.len) return error.CorruptTopology;
+            if (he.next == topo_types.NULL_HALF_EDGE or @backingInt(he.next) >= t.half_edges.items.len) return error.CorruptTopology;
 
-            const next_he = t.half_edges.items[@intFromEnum(he.next)];
+            const next_he = t.half_edges.items[@backingInt(he.next)];
             const v1_id = he.start_vertex;
             const v2_id = next_he.start_vertex;
 
-            if (@intFromEnum(v1_id) >= t.vertices.items.len or @intFromEnum(v2_id) >= t.vertices.items.len) return error.CorruptTopology;
+            if (@backingInt(v1_id) >= t.vertices.items.len or @backingInt(v2_id) >= t.vertices.items.len) return error.CorruptTopology;
 
             if (v1_id == v2_id and he.curve.curve_type == .circle_arc) {
                 if (!full_circle_map.contains(he.curve.index)) {
-                    const arc_idx = @intFromEnum(he.curve.index);
+                    const arc_idx = @backingInt(he.curve.index);
                     if (arc_idx >= g.circle_arcs.items.len) return error.CorruptTopology;
 
                     const arc = g.circle_arcs.items[arc_idx];
-                    const p1 = g.points.items[@intFromEnum(t.vertices.items[@intFromEnum(v1_id)].point)];
+                    const p1 = g.points.items[@backingInt(t.vertices.items[@backingInt(v1_id)].point)];
 
                     const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
                     const nx = arc.x_axis[1] * arc.y_axis[2] - arc.x_axis[2] * arc.y_axis[1];
@@ -310,19 +310,19 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     try full_circle_map.put(he.curve.index, .{ .ec1 = edge_curve_1, .ec2 = edge_curve_2 });
                 }
             } else if (v1_id != v2_id) {
-                const v_min = if (@intFromEnum(v1_id) < @intFromEnum(v2_id)) v1_id else v2_id;
-                const v_max = if (@intFromEnum(v1_id) > @intFromEnum(v2_id)) v1_id else v2_id;
+                const v_min = if (@backingInt(v1_id) < @backingInt(v2_id)) v1_id else v2_id;
+                const v_max = if (@backingInt(v1_id) > @backingInt(v2_id)) v1_id else v2_id;
                 const key = EdgeKey{ .v1 = v_min, .v2 = v_max };
 
                 if (!edge_map.contains(key)) {
-                    const p1 = g.points.items[@intFromEnum(t.vertices.items[@intFromEnum(v_min)].point)];
-                    const p2 = g.points.items[@intFromEnum(t.vertices.items[@intFromEnum(v_max)].point)];
+                    const p1 = g.points.items[@backingInt(t.vertices.items[@backingInt(v_min)].point)];
+                    const p2 = g.points.items[@backingInt(t.vertices.items[@backingInt(v_max)].point)];
                     var curve_entity_id: u32 = 0;
                     var same_sense = true;
 
                     switch (he.curve.curve_type) {
                         .circle_arc => {
-                            const arc_idx = @intFromEnum(he.curve.index);
+                            const arc_idx = @backingInt(he.curve.index);
                             if (arc_idx >= g.circle_arcs.items.len) return error.CorruptTopology;
                             const arc = g.circle_arcs.items[arc_idx];
                             const center_id = try s.emit("CARTESIAN_POINT('',({d:.6},{d:.6},{d:.6}))", .{ arc.center[0], arc.center[1], arc.center[2] });
@@ -374,11 +374,11 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
 
             var curr_he_id = loop.first_half_edge;
             var safety_counter: u32 = 0;
-            while (curr_he_id != topo_types.NULL_HALF_EDGE and @intFromEnum(curr_he_id) < t.half_edges.items.len) {
-                const he = t.half_edges.items[@intFromEnum(curr_he_id)];
-                if (he.next == topo_types.NULL_HALF_EDGE or @intFromEnum(he.next) >= t.half_edges.items.len) return error.CorruptTopology;
+            while (curr_he_id != topo_types.NULL_HALF_EDGE and @backingInt(curr_he_id) < t.half_edges.items.len) {
+                const he = t.half_edges.items[@backingInt(curr_he_id)];
+                if (he.next == topo_types.NULL_HALF_EDGE or @backingInt(he.next) >= t.half_edges.items.len) return error.CorruptTopology;
 
-                const next_he = t.half_edges.items[@intFromEnum(he.next)];
+                const next_he = t.half_edges.items[@backingInt(he.next)];
                 const v1_id = he.start_vertex;
                 const v2_id = next_he.start_vertex;
 
@@ -396,8 +396,8 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                         try loop_oriented_edges.append(allocator, oe1);
                     }
                 } else {
-                    const v_min = if (@intFromEnum(v1_id) < @intFromEnum(v2_id)) v1_id else v2_id;
-                    const v_max = if (@intFromEnum(v1_id) > @intFromEnum(v2_id)) v1_id else v2_id;
+                    const v_min = if (@backingInt(v1_id) < @backingInt(v2_id)) v1_id else v2_id;
+                    const v_max = if (@backingInt(v1_id) > @backingInt(v2_id)) v1_id else v2_id;
                     const key = EdgeKey{ .v1 = v_min, .v2 = v_max };
                     const ec_id = edge_map.get(key) orelse return error.CorruptTopology;
 
@@ -441,15 +441,15 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
             var emitted_face_ids = std.ArrayListUnmanaged(u32).empty;
 
             const outer_loop_id = t.face_loops.items[face.loops_start];
-            const outer_loop = t.loops.items[@intFromEnum(outer_loop_id)];
+            const outer_loop = t.loops.items[@backingInt(outer_loop_id)];
 
             var loop_verts = std.ArrayListUnmanaged(topo_types.VertexIndex).empty;
             defer loop_verts.deinit(allocator);
 
             var curr_he = outer_loop.first_half_edge;
             var safety_counter: u32 = 0;
-            while (curr_he != topo_types.NULL_HALF_EDGE and @intFromEnum(curr_he) < t.half_edges.items.len) {
-                const he = t.half_edges.items[@intFromEnum(curr_he)];
+            while (curr_he != topo_types.NULL_HALF_EDGE and @backingInt(curr_he) < t.half_edges.items.len) {
+                const he = t.half_edges.items[@backingInt(curr_he)];
                 try loop_verts.append(allocator, he.start_vertex);
                 curr_he = he.next;
                 safety_counter += 1;
@@ -461,8 +461,8 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
 
             if (face.surface.surface_type == .plane and face.loops_len == 1 and loop_verts.items.len >= 4) {
                 for (loop_verts.items) |v_id| {
-                    const p_idx = t.vertices.items[@intFromEnum(v_id)].point;
-                    const p = g.points.items[@intFromEnum(p_idx)];
+                    const p_idx = t.vertices.items[@backingInt(v_id)].point;
+                    const p = g.points.items[@backingInt(p_idx)];
                     const dist = @abs(math.dot(math.sub(p, loop_data.origin), loop_data.normal));
                     if (dist > 1e-4) {
                         is_warped = true;
@@ -473,19 +473,19 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
 
             if (is_warped) {
                 const v0_id = loop_verts.items[0];
-                const p0_idx = t.vertices.items[@intFromEnum(v0_id)].point;
-                const p0 = g.points.items[@intFromEnum(p0_idx)];
+                const p0_idx = t.vertices.items[@backingInt(v0_id)].point;
+                const p0 = g.points.items[@backingInt(p0_idx)];
 
                 var j: usize = 1;
                 while (j + 1 < loop_verts.items.len) : (j += 1) {
                     const vj_id = loop_verts.items[j];
                     const vj1_id = loop_verts.items[j + 1];
 
-                    const pj_idx = t.vertices.items[@intFromEnum(vj_id)].point;
-                    const pj1_idx = t.vertices.items[@intFromEnum(vj1_id)].point;
+                    const pj_idx = t.vertices.items[@backingInt(vj_id)].point;
+                    const pj1_idx = t.vertices.items[@backingInt(vj1_id)].point;
 
-                    const pj = g.points.items[@intFromEnum(pj_idx)];
-                    const pj1 = g.points.items[@intFromEnum(pj1_idx)];
+                    const pj = g.points.items[@backingInt(pj_idx)];
+                    const pj1 = g.points.items[@backingInt(pj1_idx)];
 
                     const tri_normal = math.normalize(math.cross(math.sub(pj, p0), math.sub(pj1, p0)));
                     // SAFETY: Unconditionally initialized in the if/else block below.
@@ -503,13 +503,13 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     const tri_plane_id = try s.emit("PLANE('',#{d})", .{axis2});
 
                     const ec1 = try getOrCreateLineEdge(&s, t, g, &vertex_map, &edge_map, v0_id, vj_id);
-                    const oe1 = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{ ec1, if (@intFromEnum(v0_id) < @intFromEnum(vj_id)) "T" else "F" });
+                    const oe1 = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{ ec1, if (@backingInt(v0_id) < @backingInt(vj_id)) "T" else "F" });
 
                     const ec2 = try getOrCreateLineEdge(&s, t, g, &vertex_map, &edge_map, vj_id, vj1_id);
-                    const oe2 = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{ ec2, if (@intFromEnum(vj_id) < @intFromEnum(vj1_id)) "T" else "F" });
+                    const oe2 = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{ ec2, if (@backingInt(vj_id) < @backingInt(vj1_id)) "T" else "F" });
 
                     const ec3 = try getOrCreateLineEdge(&s, t, g, &vertex_map, &edge_map, vj1_id, v0_id);
-                    const oe3 = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{ ec3, if (@intFromEnum(vj1_id) < @intFromEnum(v0_id)) "T" else "F" });
+                    const oe3 = try s.emit("ORIENTED_EDGE('',*,*,#{d},.{s}.)", .{ ec3, if (@backingInt(vj1_id) < @backingInt(v0_id)) "T" else "F" });
 
                     const tri_loop_id = try s.emit("EDGE_LOOP('',(#{d},#{d},#{d}))", .{ oe1, oe2, oe3 });
                     const bound_id = try s.emit("FACE_OUTER_BOUND('',#{d},.T.)", .{tri_loop_id});
@@ -524,7 +524,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                 switch (face.surface.surface_type) {
                     .cylinder => {
                         face_orientation = if (face.forward) "T" else "F";
-                        const surf_idx = @intFromEnum(face.surface.index);
+                        const surf_idx = @backingInt(face.surface.index);
                         if (surf_idx >= g.cylinders.items.len) return error.CorruptTopology;
                         const cyl = g.cylinders.items[surf_idx];
 
@@ -550,7 +550,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     },
                     .sphere => {
                         face_orientation = if (face.forward) "T" else "F";
-                        const surf_idx = @intFromEnum(face.surface.index);
+                        const surf_idx = @backingInt(face.surface.index);
                         if (surf_idx >= g.spheres.items.len) return error.CorruptTopology;
                         const sph = g.spheres.items[surf_idx];
 
@@ -563,7 +563,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     },
                     .cone => {
                         face_orientation = if (face.forward) "T" else "F";
-                        const surf_idx = @intFromEnum(face.surface.index);
+                        const surf_idx = @backingInt(face.surface.index);
                         if (surf_idx >= g.cones.items.len) return error.CorruptTopology;
                         const cone = g.cones.items[surf_idx];
 
@@ -589,7 +589,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     },
                     .torus => {
                         face_orientation = if (face.forward) "T" else "F";
-                        const surf_idx = @intFromEnum(face.surface.index);
+                        const surf_idx = @backingInt(face.surface.index);
                         if (surf_idx >= g.toruses.items.len) return error.CorruptTopology;
                         const tor = g.toruses.items[surf_idx];
 
@@ -639,7 +639,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                 for (0..face.loops_len) |l_off| {
                     const current_loop_id = t.face_loops.items[face.loops_start + l_off];
                     const bound_type = if (l_off == 0) "FACE_OUTER_BOUND" else "FACE_BOUND";
-                    const step_loop_id = loop_map.get(@intFromEnum(current_loop_id)) orelse return error.CorruptTopology;
+                    const step_loop_id = loop_map.get(@backingInt(current_loop_id)) orelse return error.CorruptTopology;
                     const bound_id = try s.emit("{s}('',#{d},.T.)", .{ bound_type, step_loop_id });
 
                     if (l_off > 0) try bounds_str.appendSlice(allocator, ",");
@@ -671,7 +671,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
             var written_count: usize = 0;
             for (0..shell.faces_len) |f_off| {
                 const f_idx = t.shell_faces.items[shell.faces_start + f_off];
-                if (face_map.get(@intFromEnum(f_idx))) |sub_face_list| {
+                if (face_map.get(@backingInt(f_idx))) |sub_face_list| {
                     for (sub_face_list.items) |step_face_id| {
                         if (written_count > 0) try s.out.appendSlice(allocator, ",");
                         var f_buf: [32]u8 = undefined;
@@ -687,7 +687,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
 
         if (target_solid.shells_len > 0) {
             const primary_shell_idx = t.solid_shells.items[target_solid.shells_start];
-            const step_shell_id = shell_map.get(@intFromEnum(primary_shell_idx)) orelse return error.CorruptTopology;
+            const step_shell_id = shell_map.get(@backingInt(primary_shell_idx)) orelse return error.CorruptTopology;
             var buf: [128]u8 = undefined;
             const out_str = try std.fmt.bufPrint(&buf, "#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ step_solid_id, step_shell_id });
             try s.out.appendSlice(allocator, out_str);

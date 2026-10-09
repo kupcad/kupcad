@@ -16,11 +16,11 @@ pub const Cafs = struct {
         // Use native I/O for the global CAFS directories
         cwd.createDirPath(io, global_dir_path) catch |err| std.log.warn("Failed to create CAFS dir: {}", .{err});
 
-        const files_path = try std.fmt.allocPrint(allocator, "{s}/files", .{global_dir_path});
+        const files_path = try allocator.print("{s}/files", .{global_dir_path});
         defer allocator.free(files_path);
         cwd.createDirPath(io, files_path) catch |err| std.log.warn("Failed to create CAFS files dir: {}", .{err});
 
-        const tmp_path = try std.fmt.allocPrint(allocator, "{s}/tmp", .{global_dir_path});
+        const tmp_path = try allocator.print("{s}/tmp", .{global_dir_path});
         defer allocator.free(tmp_path);
         cwd.createDirPath(io, tmp_path) catch |err| std.log.warn("Failed to create CAFS tmp dir: {}", .{err});
 

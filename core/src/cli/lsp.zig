@@ -116,7 +116,7 @@ fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, doc: *const api.D
     var val: value.Value = value.Value.initNil();
 
     if (node.tag == .identifier) {
-        const name = doc.tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
+        const name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data)));
         val = vm.globals.get(name) orelse return error.NoValue;
     } else if (node.tag == .assignment) {
         const assign = doc.tree.assignment(node);
@@ -188,7 +188,7 @@ inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex
     var ctx = ScopeContext{};
 
     while (current != .none) {
-        const p_idx = doc.parents[@intFromEnum(current)];
+        const p_idx = doc.parents[@backingInt(current)];
         if (p_idx == .none) break;
         const p_node = doc.tree.getNode(p_idx) orelse break;
         switch (p_node.tag) {
@@ -204,7 +204,7 @@ inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex
                     const name_node = doc.tree.getNode(cs.name);
                     if (name_node) |nn| {
                         if (nn.tag == .identifier) {
-                            ctx.class_name = doc.tree.getString(@as(ast.StringId, @enumFromInt(nn.data)));
+                            ctx.class_name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(nn.data)));
                         }
                     }
                 }
@@ -355,7 +355,7 @@ pub const Handler = struct {
 
         _ = self.session.workspace.addModule(uri_dup, source_dup) catch {
             if (self.session.workspace.path_to_id.get(uri_dup)) |mod_id| {
-                var mod = &self.session.workspace.modules.items[@intFromEnum(mod_id)];
+                var mod = &self.session.workspace.modules.items[@backingInt(mod_id)];
                 self.allocator.free(mod.source);
                 mod.source = try self.allocator.dupe(u8, source_dup);
             }
@@ -393,7 +393,7 @@ pub const Handler = struct {
 
                         _ = self.session.workspace.addModule(params.textDocument.uri, buf.source) catch {
                             if (self.session.workspace.path_to_id.get(params.textDocument.uri)) |mod_id| {
-                                var mod = &self.session.workspace.modules.items[@intFromEnum(mod_id)];
+                                var mod = &self.session.workspace.modules.items[@backingInt(mod_id)];
                                 self.allocator.free(mod.source);
                                 mod.source = try self.allocator.dupe(u8, buf.source);
                             }
@@ -483,7 +483,7 @@ pub const Handler = struct {
         var found_node_idx: ast.NodeIndex = .none;
         for (doc.tree.nodes.items, 0..) |node, i| {
             if (node.main_token == tok_idx) {
-                found_node_idx = @enumFromInt(i);
+                found_node_idx = @fromBackingInt(i);
                 break;
             }
         }
@@ -497,8 +497,8 @@ pub const Handler = struct {
 
         // AST Base Formatting
         if (target_node.tag == .identifier) {
-            const name = doc.tree.getString(@as(ast.StringId, @enumFromInt(target_node.data)));
-            const sym = doc.symbols[@intFromEnum(found_node_idx)];
+            const name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(target_node.data)));
+            const sym = doc.symbols[@backingInt(found_node_idx)];
             out.writer.print("```kupcad\n(variable) {s}\n```\n", .{name}) catch return null;
             out.writer.print("**Scope:** `{s}` (slot `{d}`)\n\n", .{ @tagName(sym.kind), sym.index }) catch return null;
         } else if (target_node.tag == .method_call) {
@@ -699,7 +699,7 @@ pub const Handler = struct {
                     const cs = doc.tree.classStmt(node);
                     const name_node = doc.tree.getNode(cs.name);
                     if (name_node != null and name_node.?.tag == .identifier) {
-                        sym_name = doc.tree.getString(@as(ast.StringId, @enumFromInt(name_node.?.data)));
+                        sym_name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(name_node.?.data)));
                     }
                     sym_kind = .Class;
                 },

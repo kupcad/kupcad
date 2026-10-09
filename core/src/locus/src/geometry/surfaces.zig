@@ -83,7 +83,7 @@ pub fn projectPointToSurface(
     id: geom_types.SurfaceId,
     pt: math.Vec3,
 ) math.Vec3 {
-    const idx = @intFromEnum(id.index);
+    const idx = @backingInt(id.index);
     switch (id.surface_type) {
         .plane => {
             const p = g_arena.planes.items[idx];

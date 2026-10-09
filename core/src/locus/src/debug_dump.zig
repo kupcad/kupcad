@@ -20,30 +20,30 @@ pub const DebugDumper = struct {
 
         var v_count: usize = 1; // OBJ indices are 1-based
 
-        const solid = t_arena.solids.items[@intFromEnum(solid_id)];
+        const solid = t_arena.solids.items[@backingInt(solid_id)];
 
         // 1. Pass: Dump all unique referenced 3D vertices
         for (0..solid.shells_len) |s_off| {
             const shell_idx = t_arena.solid_shells.items[solid.shells_start + s_off];
-            const shell = t_arena.shells.items[@intFromEnum(shell_idx)];
+            const shell = t_arena.shells.items[@backingInt(shell_idx)];
             for (0..shell.faces_len) |f_off| {
                 const face_idx = t_arena.shell_faces.items[shell.faces_start + f_off];
-                const face = t_arena.faces.items[@intFromEnum(face_idx)];
+                const face = t_arena.faces.items[@backingInt(face_idx)];
 
                 for (0..face.loops_len) |l_off| {
                     const loop_idx = t_arena.face_loops.items[face.loops_start + l_off];
-                    const loop = t_arena.loops.items[@intFromEnum(loop_idx)];
+                    const loop = t_arena.loops.items[@backingInt(loop_idx)];
                     var curr_he = loop.first_half_edge;
 
                     var safety: usize = 0;
                     while (true) : (safety += 1) {
                         if (safety > 10_000) return error.TopologyCorrupted;
-                        const he = t_arena.half_edges.items[@intFromEnum(curr_he)];
+                        const he = t_arena.half_edges.items[@backingInt(curr_he)];
 
                         if (!vertex_map.contains(he.start_vertex)) {
                             try vertex_map.put(he.start_vertex, v_count);
-                            const pt_idx = t_arena.vertices.items[@intFromEnum(he.start_vertex)].point;
-                            const p = g_arena.points.items[@intFromEnum(pt_idx)];
+                            const pt_idx = t_arena.vertices.items[@backingInt(he.start_vertex)].point;
+                            const p = g_arena.points.items[@backingInt(pt_idx)];
                             try out.writer.print("v {d:.6} {d:.6} {d:.6}\n", .{ p[0], p[1], p[2] });
                             v_count += 1;
                         }
@@ -58,21 +58,21 @@ pub const DebugDumper = struct {
         // 2. Pass: Dump all half-edges as explicit lines
         for (0..solid.shells_len) |s_off| {
             const shell_idx = t_arena.solid_shells.items[solid.shells_start + s_off];
-            const shell = t_arena.shells.items[@intFromEnum(shell_idx)];
+            const shell = t_arena.shells.items[@backingInt(shell_idx)];
             for (0..shell.faces_len) |f_off| {
                 const face_idx = t_arena.shell_faces.items[shell.faces_start + f_off];
-                const face = t_arena.faces.items[@intFromEnum(face_idx)];
+                const face = t_arena.faces.items[@backingInt(face_idx)];
 
                 for (0..face.loops_len) |l_off| {
                     const loop_idx = t_arena.face_loops.items[face.loops_start + l_off];
-                    const loop = t_arena.loops.items[@intFromEnum(loop_idx)];
+                    const loop = t_arena.loops.items[@backingInt(loop_idx)];
                     var curr_he = loop.first_half_edge;
 
                     var safety: usize = 0;
                     while (true) : (safety += 1) {
                         if (safety > 10_000) break;
-                        const he = t_arena.half_edges.items[@intFromEnum(curr_he)];
-                        const next_he = t_arena.half_edges.items[@intFromEnum(he.next)];
+                        const he = t_arena.half_edges.items[@backingInt(curr_he)];
+                        const next_he = t_arena.half_edges.items[@backingInt(he.next)];
 
                         const v1_obj = vertex_map.get(he.start_vertex).?;
                         const v2_obj = vertex_map.get(next_he.start_vertex).?;
@@ -113,11 +113,11 @@ pub const DebugDumper = struct {
             \\
         , .{ width, height });
 
-        const face = t_arena.faces.items[@intFromEnum(face_id)];
+        const face = t_arena.faces.items[@backingInt(face_id)];
 
         for (0..face.loops_len) |l_off| {
             const loop_idx = t_arena.face_loops.items[face.loops_start + l_off];
-            const loop = t_arena.loops.items[@intFromEnum(loop_idx)];
+            const loop = t_arena.loops.items[@backingInt(loop_idx)];
 
             try out.writer.writeAll("<polyline fill=\"none\" stroke=\"#007acc\" stroke-width=\"0.005\" points=\"");
 
@@ -126,12 +126,12 @@ pub const DebugDumper = struct {
             while (true) : (safety += 1) {
                 if (safety > 10_000) return error.TopologyCorrupted;
 
-                const he = t_arena.half_edges.items[@intFromEnum(curr_he)];
+                const he = t_arena.half_edges.items[@backingInt(curr_he)];
 
                 // Use cached boundary UV if available, otherwise project the 3D point dynamically
                 const uv = he.start_uv orelse blk: {
-                    const pt_idx = t_arena.vertices.items[@intFromEnum(he.start_vertex)].point;
-                    const p = g_arena.points.items[@intFromEnum(pt_idx)];
+                    const pt_idx = t_arena.vertices.items[@backingInt(he.start_vertex)].point;
+                    const p = g_arena.points.items[@backingInt(pt_idx)];
                     break :blk g_arena.surfaceProject(face.surface, p);
                 };
 
@@ -142,10 +142,10 @@ pub const DebugDumper = struct {
             }
 
             // Close the loop explicitly in SVG by re-emitting the first vertex
-            const first_he = t_arena.half_edges.items[@intFromEnum(loop.first_half_edge)];
+            const first_he = t_arena.half_edges.items[@backingInt(loop.first_half_edge)];
             const first_uv = first_he.start_uv orelse blk: {
-                const pt_idx = t_arena.vertices.items[@intFromEnum(first_he.start_vertex)].point;
-                const p = g_arena.points.items[@intFromEnum(pt_idx)];
+                const pt_idx = t_arena.vertices.items[@backingInt(first_he.start_vertex)].point;
+                const p = g_arena.points.items[@backingInt(pt_idx)];
                 break :blk g_arena.surfaceProject(face.surface, p);
             };
 
@@ -173,12 +173,12 @@ pub const DebugDumper = struct {
 
         try writer.writeAll("digraph Topology {\n");
         for (t_arena.half_edges.items, 0..) |he, i| {
-            try writer.print("  he_{d} -> v_{d} [label=\"start\"];\n", .{ i, @intFromEnum(he.start_vertex) });
+            try writer.print("  he_{d} -> v_{d} [label=\"start\"];\n", .{ i, @backingInt(he.start_vertex) });
             if (he.twin != topo_types.NULL_HALF_EDGE) {
-                try writer.print("  he_{d} -> he_{d} [style=dashed, label=\"twin\"];\n", .{ i, @intFromEnum(he.twin) });
+                try writer.print("  he_{d} -> he_{d} [style=dashed, label=\"twin\"];\n", .{ i, @backingInt(he.twin) });
             }
             if (he.next != topo_types.NULL_HALF_EDGE) {
-                try writer.print("  he_{d} -> he_{d} [label=\"next\"];\n", .{ i, @intFromEnum(he.next) });
+                try writer.print("  he_{d} -> he_{d} [label=\"next\"];\n", .{ i, @backingInt(he.next) });
             }
         }
         try writer.writeAll("}\n");

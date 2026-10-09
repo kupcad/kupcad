@@ -63,7 +63,7 @@ pub fn deepCloneSolid(
     _ = src_t;
     _ = src_g;
     _ = src_solid;
-    return @enumFromInt(0);
+    return @fromBackingInt(0);
 }
 
 fn packageResultingSolid(
@@ -72,5 +72,5 @@ fn packageResultingSolid(
 ) !topo_types.SolidIndex {
     _ = allocator;
     _ = dest_t;
-    return @enumFromInt(0);
+    return @fromBackingInt(0);
 }

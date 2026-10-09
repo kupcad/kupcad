@@ -217,11 +217,11 @@ pub const Resolver = struct {
             var rows = try stmt.iterator(struct { file_path: []const u8, file_hash: []const u8 }, .{ pkg_id, locked.resolved });
 
             // Track created directories to minimize redundant VFS syscalls
-            var created_dirs = std.StringHashMap(void).init(self.allocator);
+            var created_dirs: std.StringHashMapUnmanaged(void) = .empty;
             defer {
                 var key_it = created_dirs.keyIterator();
                 while (key_it.next()) |k| self.allocator.free(k.*);
-                created_dirs.deinit();
+                created_dirs.deinit(self.allocator);
             }
 
             while (try rows.next()) |row| {
@@ -231,7 +231,7 @@ pub const Resolver = struct {
                 if (std.fs.path.dirname(dest_path)) |parent_dir| {
                     if (!created_dirs.contains(parent_dir)) {
                         try fs.makePath(parent_dir);
-                        try created_dirs.put(try self.allocator.dupe(u8, parent_dir), {});
+                        try created_dirs.put(self.allocator, try self.allocator.dupe(u8, parent_dir), {});
                     }
                 }
 

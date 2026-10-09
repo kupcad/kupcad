@@ -35,7 +35,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     var cafs = try Cafs.init(allocator, init.io, global_dir, fs);
     defer cafs.deinit();
 
-    const db_path = try std.fmt.allocPrint(allocator, "{s}/index.db", .{global_dir});
+    const db_path = try allocator.print("{s}/index.db", .{global_dir});
     defer allocator.free(db_path);
     var store = try Store.init(init.io, db_path);
     defer store.deinit();

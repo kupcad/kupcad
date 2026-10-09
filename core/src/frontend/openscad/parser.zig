@@ -466,7 +466,7 @@ pub const Parser = struct {
                 const children_block = try self.parseBlock();
                 _ = try self.expect(.r_brace);
                 const expr_data = self.b.tree.getNode(expr).?.data;
-                self.b.tree.extra_data.items[expr_data + 4] = @intFromEnum(children_block);
+                self.b.tree.extra_data.items[expr_data + 4] = @backingInt(children_block);
             } else if (self.tag(0) != .semicolon and self.tag(0) != .r_brace and self.tag(0) != .eof) {
                 const child_stmt = try self.parseStatement();
                 const s_len = self.scratch_nodes.items.len;
@@ -476,7 +476,7 @@ pub const Parser = struct {
                 const end_tok = self.tok_idx;
                 const child_block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, child_loc);
                 const expr_data = self.b.tree.getNode(expr).?.data;
-                self.b.tree.extra_data.items[expr_data + 4] = @intFromEnum(child_block);
+                self.b.tree.extra_data.items[expr_data + 4] = @backingInt(child_block);
             }
         }
         if (self.tag(0) == .semicolon) {
@@ -546,7 +546,7 @@ pub const Parser = struct {
 
         while (true) {
             self.skipIgnored();
-            if (@intFromEnum(precedence) >= @intFromEnum(getInfixPrecedence(self.tag(0)))) break;
+            if (@backingInt(precedence) >= @backingInt(getInfixPrecedence(self.tag(0)))) break;
 
             left = switch (self.tag(0)) {
                 .plus, .minus, .star, .slash, .percent, .caret, .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .and_and, .or_or => try self.parseBinary(left),
@@ -784,7 +784,7 @@ pub const Parser = struct {
             const child_block = try self.parseBlock();
             _ = try self.expect(.r_brace);
             const call_data = self.b.tree.getNode(call_node).?.data;
-            self.b.tree.extra_data.items[call_data + 4] = @intFromEnum(child_block);
+            self.b.tree.extra_data.items[call_data + 4] = @backingInt(child_block);
             return call_node;
         } else if (self.tag(0) != .r_brace and self.tag(0) != .eof) {
             const child_stmt = try self.parseStatement();
@@ -795,7 +795,7 @@ pub const Parser = struct {
             const child_end_tok = self.tok_idx;
             const block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], child_end_tok, child_loc);
             const call_data = self.b.tree.getNode(call_node).?.data;
-            self.b.tree.extra_data.items[call_data + 4] = @intFromEnum(block);
+            self.b.tree.extra_data.items[call_data + 4] = @backingInt(block);
             return call_node;
         }
         return call_node;

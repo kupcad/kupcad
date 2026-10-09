@@ -401,7 +401,7 @@ pub const VM = struct {
             const instruction = exec_chunk.code.items[frame.ip];
             frame.ip += 1;
 
-            const op: chunk.OpCode = @enumFromInt(instruction);
+            const op: chunk.OpCode = @fromBackingInt(instruction);
 
             switch (op) {
                 .op_nil => self.push(value.Value.initNil()),
@@ -2797,9 +2797,9 @@ pub const VM = struct {
         if (self.line_index) |li| {
             const line = li.getLine(source_offset) + 1;
             const col = li.getUtf8Column(source_offset) + 1;
-            return std.fmt.allocPrint(allocator, "    from script:{d}:{d}:in '{s}'", .{ line, col, func_name });
+            return allocator.print("    from script:{d}:{d}:in '{s}'", .{ line, col, func_name });
         } else {
-            return std.fmt.allocPrint(allocator, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
+            return allocator.print("    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
         }
     }
 

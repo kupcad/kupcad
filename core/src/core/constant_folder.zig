@@ -53,7 +53,7 @@ const FoldingContext = struct {
                         const new_node_idx = try self.folder.b.numberRaw(val, node.main_token);
 
                         // Mutate the AST by copying the newly created number node over the old binary node
-                        const target_node = &self.folder.b.tree.nodes.items[@intFromEnum(node_idx)];
+                        const target_node = &self.folder.b.tree.nodes.items[@backingInt(node_idx)];
                         const src_node = tree.getNode(new_node_idx).?;
                         target_node.tag = src_node.tag;
                         target_node.data = src_node.data;
@@ -83,7 +83,7 @@ const FoldingContext = struct {
 
                         const new_node_idx = try self.folder.b.numberRaw(val, node.main_token);
 
-                        const target_node = &self.folder.b.tree.nodes.items[@intFromEnum(node_idx)];
+                        const target_node = &self.folder.b.tree.nodes.items[@backingInt(node_idx)];
                         const src_node = tree.getNode(new_node_idx).?;
                         target_node.tag = src_node.tag;
                         target_node.data = src_node.data;

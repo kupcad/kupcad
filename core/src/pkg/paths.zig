@@ -55,5 +55,5 @@ pub fn getGlobalDir(allocator: std.mem.Allocator, env_map: *const std.process.En
     const home_dir = try getHomeDir(allocator, env_map);
     defer allocator.free(home_dir);
 
-    return try std.fmt.allocPrint(allocator, "{s}/.kupcad", .{home_dir});
+    return try allocator.print("{s}/.kupcad", .{home_dir});
 }

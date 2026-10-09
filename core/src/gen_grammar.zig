@@ -104,15 +104,15 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             if (list.items.len == 0) try list.append(alloc, dummy);
 
             // Deduplicate the list using a StringHashMap as a Set
-            var seen = std.StringHashMap(void).init(alloc);
-            defer seen.deinit();
+            var seen: std.StringHashMapUnmanaged(void) = .empty;
+            defer seen.deinit(alloc);
 
             var unique_list = std.ArrayListUnmanaged([]const u8).empty;
             defer unique_list.deinit(alloc);
 
             for (list.items) |item| {
                 if (!seen.contains(item)) {
-                    try seen.put(item, {});
+                    try seen.put(alloc, item, {});
                     try unique_list.append(alloc, item);
                 }
             }
@@ -126,7 +126,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     // Build Keyword Matcher (Keywords use a slightly different regex constraint)
     const kw_joined = try std.mem.join(allocator, "|", keywords.items);
     defer allocator.free(kw_joined);
-    const kw_match = try std.fmt.allocPrint(allocator, "(?<![\\\\w.])({s})(?![\\\\w?!])", .{kw_joined});
+    const kw_match = try allocator.print("(?<![\\\\w.])({s})(?![\\\\w?!])", .{kw_joined});
     defer allocator.free(kw_match);
 
     // Build Method Matchers using the consolidated helper

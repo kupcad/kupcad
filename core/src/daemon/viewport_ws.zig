@@ -110,7 +110,7 @@ pub const ViewportWsServer = struct {
 
     pub fn broadcastSessionMesh(self: *ViewportWsServer, session: *ScriptSession, root_mod_path: []const u8) !void {
         const root_id = session.workspace.path_to_id.get(root_mod_path) orelse return;
-        const node = &session.nodes.items[@intFromEnum(root_id)];
+        const node = &session.nodes.items[@backingInt(root_id)];
         const handle = node.cached_handle orelse return;
 
         // 1. Build the payload OUTSIDE the lock

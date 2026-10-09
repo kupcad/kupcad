@@ -123,20 +123,20 @@ pub const Fixture = struct {
         const vertices = try allocator.alloc(u32, t_arena.vertices.items.len);
         defer allocator.free(vertices);
         for (t_arena.vertices.items, 0..) |v, i| {
-            vertices[i] = @intFromEnum(v.point);
+            vertices[i] = @backingInt(v.point);
         }
 
         const half_edges = try allocator.alloc(FixtureData.SerializedHalfEdge, t_arena.half_edges.items.len);
         defer allocator.free(half_edges);
         for (t_arena.half_edges.items, 0..) |he, i| {
             half_edges[i] = .{
-                .start_vertex = @intFromEnum(he.start_vertex),
-                .twin = @intFromEnum(he.twin),
-                .next = @intFromEnum(he.next),
-                .prev = @intFromEnum(he.prev),
-                .loop_id = @intFromEnum(he.loop_id),
-                .curve_type = @intFromEnum(he.curve.curve_type),
-                .curve_index = @intFromEnum(he.curve.index),
+                .start_vertex = @backingInt(he.start_vertex),
+                .twin = @backingInt(he.twin),
+                .next = @backingInt(he.next),
+                .prev = @backingInt(he.prev),
+                .loop_id = @backingInt(he.loop_id),
+                .curve_type = @backingInt(he.curve.curve_type),
+                .curve_index = @backingInt(he.curve.index),
                 .forward = he.forward,
             };
         }
@@ -145,8 +145,8 @@ pub const Fixture = struct {
         defer allocator.free(loops);
         for (t_arena.loops.items, 0..) |l, i| {
             loops[i] = .{
-                .face_id = @intFromEnum(l.face_id),
-                .first_half_edge = @intFromEnum(l.first_half_edge),
+                .face_id = @backingInt(l.face_id),
+                .first_half_edge = @backingInt(l.first_half_edge),
             };
         }
 
@@ -154,8 +154,8 @@ pub const Fixture = struct {
         defer allocator.free(faces);
         for (t_arena.faces.items, 0..) |f, i| {
             faces[i] = .{
-                .surface_type = @intFromEnum(f.surface.surface_type),
-                .surface_index = @intFromEnum(f.surface.index),
+                .surface_type = @backingInt(f.surface.surface_type),
+                .surface_index = @backingInt(f.surface.index),
                 .forward = f.forward,
                 .loops_start = f.loops_start,
                 .loops_len = f.loops_len,
@@ -182,15 +182,15 @@ pub const Fixture = struct {
 
         const solid_shells = try allocator.alloc(u32, t_arena.solid_shells.items.len);
         defer allocator.free(solid_shells);
-        for (t_arena.solid_shells.items, 0..) |s_idx, i| solid_shells[i] = @intFromEnum(s_idx);
+        for (t_arena.solid_shells.items, 0..) |s_idx, i| solid_shells[i] = @backingInt(s_idx);
 
         const shell_faces = try allocator.alloc(u32, t_arena.shell_faces.items.len);
         defer allocator.free(shell_faces);
-        for (t_arena.shell_faces.items, 0..) |f_idx, i| shell_faces[i] = @intFromEnum(f_idx);
+        for (t_arena.shell_faces.items, 0..) |f_idx, i| shell_faces[i] = @backingInt(f_idx);
 
         const face_loops = try allocator.alloc(u32, t_arena.face_loops.items.len);
         defer allocator.free(face_loops);
-        for (t_arena.face_loops.items, 0..) |l_idx, i| face_loops[i] = @intFromEnum(l_idx);
+        for (t_arena.face_loops.items, 0..) |l_idx, i| face_loops[i] = @backingInt(l_idx);
 
         const data = FixtureData{
             .tolerance = env.vertex_tolerance,
@@ -208,7 +208,7 @@ pub const Fixture = struct {
             .solid_shells = solid_shells,
             .shell_faces = shell_faces,
             .face_loops = face_loops,
-            .target_solid = @intFromEnum(solid_idx),
+            .target_solid = @backingInt(solid_idx),
         };
 
         var out: std.Io.Writer.Allocating = .init(allocator);
@@ -246,19 +246,19 @@ pub const Fixture = struct {
         }
 
         for (data.vertices) |pt_idx| {
-            try t_arena.vertices.append(allocator, .{ .point = @enumFromInt(pt_idx) });
+            try t_arena.vertices.append(allocator, .{ .point = @fromBackingInt(pt_idx) });
         }
 
         for (data.half_edges) |he| {
             try t_arena.half_edges.append(allocator, .{
-                .start_vertex = @enumFromInt(he.start_vertex),
-                .twin = @enumFromInt(he.twin),
-                .next = @enumFromInt(he.next),
-                .prev = @enumFromInt(he.prev),
-                .loop_id = @enumFromInt(he.loop_id),
+                .start_vertex = @fromBackingInt(he.start_vertex),
+                .twin = @fromBackingInt(he.twin),
+                .next = @fromBackingInt(he.next),
+                .prev = @fromBackingInt(he.prev),
+                .loop_id = @fromBackingInt(he.loop_id),
                 .curve = .{
-                    .index = @enumFromInt(he.curve_index),
-                    .curve_type = @enumFromInt(he.curve_type),
+                    .index = @fromBackingInt(he.curve_index),
+                    .curve_type = @fromBackingInt(he.curve_type),
                 },
                 .forward = he.forward,
             });
@@ -266,16 +266,16 @@ pub const Fixture = struct {
 
         for (data.loops) |l| {
             try t_arena.loops.append(allocator, .{
-                .face_id = @enumFromInt(l.face_id),
-                .first_half_edge = @enumFromInt(l.first_half_edge),
+                .face_id = @fromBackingInt(l.face_id),
+                .first_half_edge = @fromBackingInt(l.first_half_edge),
             });
         }
 
         for (data.faces) |f| {
             try t_arena.faces.append(allocator, .{
                 .surface = .{
-                    .index = @enumFromInt(f.surface_index),
-                    .surface_type = @enumFromInt(f.surface_type),
+                    .index = @fromBackingInt(f.surface_index),
+                    .surface_type = @fromBackingInt(f.surface_type),
                 },
                 .forward = f.forward,
                 .loops_start = f.loops_start,
@@ -297,12 +297,12 @@ pub const Fixture = struct {
             });
         }
 
-        for (data.solid_shells) |s_idx| try t_arena.solid_shells.append(allocator, @enumFromInt(s_idx));
-        for (data.shell_faces) |f_idx| try t_arena.shell_faces.append(allocator, @enumFromInt(f_idx));
-        for (data.face_loops) |l_idx| try t_arena.face_loops.append(allocator, @enumFromInt(l_idx));
+        for (data.solid_shells) |s_idx| try t_arena.solid_shells.append(allocator, @fromBackingInt(s_idx));
+        for (data.shell_faces) |f_idx| try t_arena.shell_faces.append(allocator, @fromBackingInt(f_idx));
+        for (data.face_loops) |l_idx| try t_arena.face_loops.append(allocator, @fromBackingInt(l_idx));
 
         return .{
-            .solid_idx = @enumFromInt(data.target_solid),
+            .solid_idx = @fromBackingInt(data.target_solid),
             .env = .{ .vertex_tolerance = data.tolerance },
         };
     }

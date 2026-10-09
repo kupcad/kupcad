@@ -30,7 +30,7 @@ fn cloneAndTransform(
     // Copy vertices
     for (src_t.vertices.items) |v| {
         try dest_t.vertices.append(allocator, .{
-            .point = @enumFromInt(@intFromEnum(v.point) + pt_offset),
+            .point = @fromBackingInt(@backingInt(v.point) + pt_offset),
         });
     }
 
@@ -49,14 +49,14 @@ fn cloneAndTransform(
         const new_twin = if (he.twin == topo_types.NULL_HALF_EDGE)
             topo_types.NULL_HALF_EDGE
         else
-            @as(topo_types.HalfEdgeIndex, @enumFromInt(@intFromEnum(he.twin) + he_offset));
+            @as(topo_types.HalfEdgeIndex, @fromBackingInt(@backingInt(he.twin) + he_offset));
 
         try dest_t.half_edges.append(allocator, .{
             .twin = new_twin,
-            .next = @enumFromInt(@intFromEnum(he.next) + he_offset),
-            .prev = @enumFromInt(@intFromEnum(he.prev) + he_offset),
-            .start_vertex = @enumFromInt(@intFromEnum(he.start_vertex) + v_offset),
-            .loop_id = @enumFromInt(@intFromEnum(he.loop_id) + loop_offset),
+            .next = @fromBackingInt(@backingInt(he.next) + he_offset),
+            .prev = @fromBackingInt(@backingInt(he.prev) + he_offset),
+            .start_vertex = @fromBackingInt(@backingInt(he.start_vertex) + v_offset),
+            .loop_id = @fromBackingInt(@backingInt(he.loop_id) + loop_offset),
             .curve = he.curve,
             .p_curve = he.p_curve,
             .forward = he.forward,
@@ -65,8 +65,8 @@ fn cloneAndTransform(
 
     for (src_t.loops.items) |l| {
         try dest_t.loops.append(allocator, .{
-            .face_id = @enumFromInt(@intFromEnum(l.face_id) + face_offset),
-            .first_half_edge = @enumFromInt(@intFromEnum(l.first_half_edge) + he_offset),
+            .face_id = @fromBackingInt(@backingInt(l.face_id) + face_offset),
+            .first_half_edge = @fromBackingInt(@backingInt(l.first_half_edge) + he_offset),
         });
     }
 
@@ -80,21 +80,21 @@ fn cloneAndTransform(
     }
 
     for (src_t.face_loops.items) |fl| {
-        try dest_t.face_loops.append(allocator, @enumFromInt(@intFromEnum(fl) + loop_offset));
+        try dest_t.face_loops.append(allocator, @fromBackingInt(@backingInt(fl) + loop_offset));
     }
 
     const sh_faces_start: u32 = @intCast(dest_t.shell_faces.items.len);
     for (src_t.shell_faces.items) |sf| {
-        try dest_t.shell_faces.append(allocator, @enumFromInt(@intFromEnum(sf) + face_offset));
+        try dest_t.shell_faces.append(allocator, @fromBackingInt(@backingInt(sf) + face_offset));
     }
 
-    const new_shell_idx: topo_types.ShellIndex = @enumFromInt(dest_t.shells.items.len);
+    const new_shell_idx: topo_types.ShellIndex = @fromBackingInt(@as(u32, @intCast(dest_t.shells.items.len)));
     try dest_t.shells.append(allocator, .{
         .faces_start = sh_faces_start,
         .faces_len = @intCast(src_t.shell_faces.items.len - sh_faces_start),
     });
 
-    const new_solid_idx: topo_types.SolidIndex = @enumFromInt(dest_t.solids.items.len);
+    const new_solid_idx: topo_types.SolidIndex = @fromBackingInt(@as(u32, @intCast(dest_t.solids.items.len)));
     const so_shells_start: u32 = @intCast(dest_t.solid_shells.items.len);
     try dest_t.solid_shells.append(allocator, new_shell_idx);
     try dest_t.solids.append(allocator, .{

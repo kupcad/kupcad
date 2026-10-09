@@ -527,7 +527,7 @@ test "VM: executes Array.map with functional closure block" {
 
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(map_call) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(map_call) + 1);
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
@@ -828,11 +828,11 @@ test "Compiler: compiles block_given? and yield intrinsics natively" {
     try comp.compile(yield_call);
 
     // Verify block_given? compiled to exactly one byte!
-    try testing.expectEqual(chunk.OpCode.op_block_given, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_block_given, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
 
     // Skip op_return (1), then op_constant (2), index (3), op_yield (4)
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_yield, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_yield, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
     try testing.expectEqual(@as(u8, 1), out_chunk.code.items[5]); // 1 arg
 }
 
@@ -853,7 +853,7 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     const params_span = try b.addParams(&.{ p1, p2 });
 
     // Use the exact StringId so the compiler resolves local slot 2 accurately
-    const body = try b.createNode(.identifier, 0, @intFromEnum(args_id));
+    const body = try b.createNode(.identifier, 0, @backingInt(args_id));
     const def_node = try b.defStmt(func_name, params_span, body, false, 0, false, 0);
 
     // 2. AST: func(1, 2, 3, 4)
@@ -883,7 +883,7 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     // Default all nodes to local (so parameters inside the function resolve correctly)
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
     // Force the function definition to be global so the methodCall explicitly finds it
-    symbols.items[@intFromEnum(def_node)] = .{ .kind = .global, .index = 0 };
+    symbols.items[@backingInt(def_node)] = .{ .kind = .global, .index = 0 };
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
@@ -1013,8 +1013,8 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     const params_span = try b.addParams(&.{ p1, p2, p3 });
 
     // Use the exact StringIds so local slots 2 and 3 resolve perfectly
-    const arg_node = try b.createNode(.identifier, 0, @intFromEnum(args_id));
-    const kwarg_node = try b.createNode(.identifier, 0, @intFromEnum(kwargs_id));
+    const arg_node = try b.createNode(.identifier, 0, @backingInt(args_id));
+    const kwarg_node = try b.createNode(.identifier, 0, @backingInt(kwargs_id));
     const ret_arr_span = try b.addNodes(&.{ arg_node, kwarg_node });
     const body = try b.arrayLiteral(ret_arr_span, 0, 0);
     const def_node = try b.defStmt(func_name, params_span, body, false, 0, false, 0);
@@ -1046,7 +1046,7 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     // Default all nodes to local (so parameters inside the function resolve correctly)
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
     // Force the function definition to be global so the methodCall explicitly finds it
-    symbols.items[@intFromEnum(def_node)] = .{ .kind = .global, .index = 0 };
+    symbols.items[@backingInt(def_node)] = .{ .kind = .global, .index = 0 };
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
@@ -1156,8 +1156,8 @@ test "VM: Named Keyword Arguments with default values" {
     const p2 = ast.Param{ .name = h_id, .default_value = h_def, .modifier = null, .is_keyword = true };
     const params_span = try b.addParams(&.{ p1, p2 });
 
-    const w_node = try b.createNode(.identifier, 0, @intFromEnum(w_id));
-    const h_node = try b.createNode(.identifier, 0, @intFromEnum(h_id));
+    const w_node = try b.createNode(.identifier, 0, @backingInt(w_id));
+    const h_node = try b.createNode(.identifier, 0, @backingInt(h_id));
     const ret_arr_span = try b.addNodes(&.{ w_node, h_node });
     const body = try b.arrayLiteral(ret_arr_span, 0, 0);
 
@@ -1181,7 +1181,7 @@ test "VM: Named Keyword Arguments with default values" {
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
-    symbols.items[@intFromEnum(def_node)] = .{ .kind = .global, .index = 0 };
+    symbols.items[@backingInt(def_node)] = .{ .kind = .global, .index = 0 };
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
@@ -1204,8 +1204,8 @@ test "VM: defined? operator evaluates safely without panicking" {
 
     // defined?(missing_var)
     const missing_id = try b.intern("missing_var");
-    const ident_node = try b.createNode(.identifier, 0, @intFromEnum(missing_id));
-    const def_expr = try b.createNode(.defined_expr, 0, @intFromEnum(ident_node));
+    const ident_node = try b.createNode(.identifier, 0, @backingInt(missing_id));
+    const def_expr = try b.createNode(.defined_expr, 0, @backingInt(ident_node));
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -1581,7 +1581,7 @@ test "VM Edge Case: executes 32-bit control flow jump correctly (> 65KB block)" 
     try out_chunk.writeOp(testing.allocator, .op_pop, 0); // pop condition if true
 
     // Pad exactly 70,000 bytes of dummy instructions
-    try out_chunk.code.appendNTimes(testing.allocator, @intFromEnum(chunk.OpCode.op_nil), jump_dist);
+    try out_chunk.code.appendNTimes(testing.allocator, @backingInt(chunk.OpCode.op_nil), jump_dist);
 
     // Landing zone
     try out_chunk.writeOp(testing.allocator, .op_pop, 0); // pop condition if false
@@ -1701,12 +1701,12 @@ test "STL Exporter: exports valid Binary STL file with expected byte structure" 
 
     try testing.expectEqual(.ok, result);
 
-    // 2. Read the generated STL file back using @enumFromInt for std.Io.Limit
+    // 2. Read the generated STL file back using @fromBackingInt for std.Io.Limit
     const file_contents = try cwd.readFileAlloc(
         testing.io,
         test_stl_path,
         testing.allocator,
-        @enumFromInt(10 * 1024 * 1024),
+        @fromBackingInt(10 * 1024 * 1024),
     );
     defer testing.allocator.free(file_contents);
 
@@ -5132,14 +5132,14 @@ test "VM/Compiler: Resolves pre-existing VM globals as variables, preventing fal
 
     // AST: x * 5
     const x_id = try b.intern("x");
-    const x_node = try b.createNode(.identifier, 0, @intFromEnum(x_id));
+    const x_node = try b.createNode(.identifier, 0, @backingInt(x_id));
     const five = try b.number("5", 0);
     const mul_node = try b.binary(.multiply, x_node, five, 0);
 
     // --- NEW: Provide a mock symbols array ---
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(mul_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(mul_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -5157,8 +5157,8 @@ test "VM/Compiler: Resolves pre-existing VM globals as variables, preventing fal
 
     // 2. Verify Bytecode: It should NOT emit op_call(0).
     // It should securely fetch 'x' via op_get_global.
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_multiply, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_multiply, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
 
     // 3. Verify Execution: 100 * 5 = 500
     const res = try executeAndAssertStack(&vm, &out_chunk, 1);
@@ -5173,14 +5173,14 @@ test "VM/Compiler: Seeded REPL locals correctly resolve to offset stack slots" {
 
     // AST: y + 5
     const y_id = try b.intern("y");
-    const y_node = try b.createNode(.identifier, 0, @intFromEnum(y_id));
+    const y_node = try b.createNode(.identifier, 0, @backingInt(y_id));
     const five = try b.number("5", 0);
     const add_node = try b.binary(.add, y_node, five, 0);
 
     // --- NEW: Provide a mock symbols array ---
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(add_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(add_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -5198,7 +5198,7 @@ test "VM/Compiler: Seeded REPL locals correctly resolve to offset stack slots" {
     try comp.compile(add_node);
 
     // 2. Verify it securely targeted the caller's stack slot without using globals
-    try testing.expectEqual(chunk.OpCode.op_get_local, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_get_local, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
     try testing.expectEqual(@as(u8, 1), out_chunk.code.items[1]); // Successfully pointed to Slot 1
 }
 
@@ -5216,7 +5216,7 @@ test "VM/Compiler: Assignments in a seeded context dynamically allocate new slot
     // Trick the compiler into treating `z` as a local, as if we were inside a block scope.
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(assign_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(assign_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -5243,7 +5243,7 @@ test "VM/Compiler: Assignments in a seeded context dynamically allocate new slot
     try comp.compile(assign_node);
 
     // 2. Verify it emitted op_set_local starting at slot 3!
-    try testing.expectEqual(chunk.OpCode.op_set_local, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_set_local, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
     try testing.expectEqual(@as(u8, 3), out_chunk.code.items[3]); // Safely bypassed slots 1 and 2
 }
 
@@ -9843,7 +9843,7 @@ test "VM: Case statement executes fast-path jump table for primitives" {
     // Verify the chunk actually generated the op_switch opcode
     var found_switch = false;
     for (out_chunk.code.items) |byte| {
-        if (byte == @intFromEnum(chunk.OpCode.op_switch)) {
+        if (byte == @backingInt(chunk.OpCode.op_switch)) {
             found_switch = true;
             break;
         }

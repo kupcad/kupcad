@@ -60,7 +60,7 @@ pub fn parse_next(
             }
 
             self.offset = s.offset;
-            return @enumFromInt(operator);
+            return @fromBackingInt(operator);
         } else skip_number(b, &s) catch return null;
     }
 
