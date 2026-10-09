@@ -305,20 +305,7 @@ pub fn main() !void {
     _ = tables.variable_fonts.vvar;
 }
 
-// [ARS] To be replaced by std.mem.Allocator.failing should zig upgrade to 0.16.*
-pub const failing_allocator: std.mem.Allocator = .{
-    .ptr = undefined,
-    .vtable = &vtable,
-};
-const vtable: std.mem.Allocator.VTable = .{
-    .alloc = noAlloc,
-    .resize = std.mem.Allocator.noResize,
-    .remap = std.mem.Allocator.noRemap,
-    .free = std.mem.Allocator.noFree,
-};
-fn noAlloc(_: *anyopaque, _: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
-    return null;
-}
+pub const failing_allocator: std.mem.Allocator = std.testing.failing_allocator;
 
 const unsafe_painter = ttf.tables.colr.Painter{
     .ptr = undefined,

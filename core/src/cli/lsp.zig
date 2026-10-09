@@ -483,7 +483,7 @@ pub const Handler = struct {
         var found_node_idx: ast.NodeIndex = .none;
         for (doc.tree.nodes.items, 0..) |node, i| {
             if (node.main_token == tok_idx) {
-                found_node_idx = @fromBackingInt(i);
+                found_node_idx = @fromBackingInt(@as(u32, @intCast(i)));
                 break;
             }
         }
