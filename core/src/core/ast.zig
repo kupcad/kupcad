@@ -466,9 +466,9 @@ pub const Tree = struct {
         const base = node.data;
         const op_val = self.extra_data.items[base + 1];
         return .{
-            .name = @enumFromInt(self.extra_data.items[base]),
+            .name = @fromBackingInt(self.extra_data.items[base]),
             .op = if (op_val == std.math.maxInt(u32)) null else @fromBackingInt(@as(u5, @intCast(op_val))),
-            .value = @enumFromInt(self.extra_data.items[base + 2]),
+            .value = @fromBackingInt(self.extra_data.items[base + 2]),
         };
     }
 
@@ -478,7 +478,7 @@ pub const Tree = struct {
         return .{
             .lhs = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
             .op = if (op_val == std.math.maxInt(u32)) null else @fromBackingInt(@as(u5, @intCast(op_val))),
-            .value = @enumFromInt(self.extra_data.items[base + 3]),
+            .value = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
@@ -486,10 +486,10 @@ pub const Tree = struct {
         const base = node.data;
         const op_val = self.extra_data.items[base + 2];
         return .{
-            .target = @enumFromInt(self.extra_data.items[base]),
-            .property = @enumFromInt(self.extra_data.items[base + 1]),
+            .target = @fromBackingInt(self.extra_data.items[base]),
+            .property = @fromBackingInt(self.extra_data.items[base + 1]),
             .op = if (op_val == std.math.maxInt(u32)) null else @fromBackingInt(@as(u5, @intCast(op_val))),
-            .value = @enumFromInt(self.extra_data.items[base + 3]),
+            .value = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
@@ -497,10 +497,10 @@ pub const Tree = struct {
         const base = node.data;
         const op_val = self.extra_data.items[base + 2];
         return .{
-            .target = @enumFromInt(self.extra_data.items[base]),
-            .index = @enumFromInt(self.extra_data.items[base + 1]),
+            .target = @fromBackingInt(self.extra_data.items[base]),
+            .index = @fromBackingInt(self.extra_data.items[base + 1]),
             .op = if (op_val == std.math.maxInt(u32)) null else @fromBackingInt(@as(u5, @intCast(op_val))),
-            .value = @enumFromInt(self.extra_data.items[base + 3]),
+            .value = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
@@ -508,8 +508,8 @@ pub const Tree = struct {
         const base = node.data;
         return .{
             .op = @fromBackingInt(@as(u5, @intCast(self.extra_data.items[base]))),
-            .left = @enumFromInt(self.extra_data.items[base + 1]),
-            .right = @enumFromInt(self.extra_data.items[base + 2]),
+            .left = @fromBackingInt(self.extra_data.items[base + 1]),
+            .right = @fromBackingInt(self.extra_data.items[base + 2]),
         };
     }
 
@@ -517,7 +517,7 @@ pub const Tree = struct {
         const base = node.data;
         return .{
             .op = @fromBackingInt(@as(u2, @intCast(self.extra_data.items[base]))),
-            .operand = @enumFromInt(self.extra_data.items[base + 1]),
+            .operand = @fromBackingInt(self.extra_data.items[base + 1]),
         };
     }
 
