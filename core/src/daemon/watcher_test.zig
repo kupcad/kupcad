@@ -10,7 +10,7 @@ test "Daemon Watcher: detects file modification on event loop tick" {
     const tmp_dir_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
     defer testing.allocator.free(tmp_dir_path);
 
-    const file_path = try std.fmt.allocPrint(testing.allocator, "{s}/test_watch_target.kup", .{tmp_dir_path});
+    const file_path = try testing.allocator.print("{s}/test_watch_target.kup", .{tmp_dir_path});
     defer testing.allocator.free(file_path);
 
     // 1. Create a temporary source file inside isolated tmpDir

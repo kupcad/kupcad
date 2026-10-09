@@ -540,9 +540,9 @@ pub const Compiler = struct {
             if (@import("builtin").target.os.tag != .freestanding and @import("builtin").target.os.tag != .wasi) {
                 // Route to the symlinked package workspace created by Resolver.linkWorkspace()
                 if (std.mem.endsWith(u8, path_str, ".kup")) {
-                    allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/{s}", .{path_str});
+                    allocated_path = try self.allocator.print(".kupcad/pkg/{s}", .{path_str});
                 } else {
-                    allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/{s}/{s}", .{ path_str, DEFAULT_IMPORT_ENDPOINT });
+                    allocated_path = try self.allocator.print(".kupcad/pkg/{s}/{s}", .{ path_str, DEFAULT_IMPORT_ENDPOINT });
                 }
                 final_path_str = allocated_path.?;
             }

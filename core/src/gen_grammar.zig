@@ -119,7 +119,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
 
             const joined = try std.mem.join(alloc, "|", unique_list.items);
             defer alloc.free(joined);
-            return std.fmt.allocPrint(alloc, "(?<![\\\\w])({s})(?![\\\\w?!])", .{joined});
+            return alloc.print("(?<![\\\\w])({s})(?![\\\\w?!])", .{joined});
         }
     }.apply;
 

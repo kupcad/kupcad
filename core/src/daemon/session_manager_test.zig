@@ -22,7 +22,7 @@ test "SessionManager: getOrInitializeSession creates and caches sessions" {
     const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
     defer testing.allocator.free(tmp_path);
 
-    const file_path = try std.fmt.allocPrint(testing.allocator, "{s}/test.kup", .{tmp_path});
+    const file_path = try testing.allocator.print("{s}/test.kup", .{tmp_path});
     defer testing.allocator.free(file_path);
 
     const cwd = std.Io.Dir.cwd();
@@ -49,11 +49,11 @@ test "SessionManager: LRU eviction removes oldest sessions when capacity is exce
     const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
     defer testing.allocator.free(tmp_path);
 
-    const p1 = try std.fmt.allocPrint(testing.allocator, "{s}/file1.kup", .{tmp_path});
+    const p1 = try testing.allocator.print("{s}/file1.kup", .{tmp_path});
     defer testing.allocator.free(p1);
-    const p2 = try std.fmt.allocPrint(testing.allocator, "{s}/file2.kup", .{tmp_path});
+    const p2 = try testing.allocator.print("{s}/file2.kup", .{tmp_path});
     defer testing.allocator.free(p2);
-    const p3 = try std.fmt.allocPrint(testing.allocator, "{s}/file3.kup", .{tmp_path});
+    const p3 = try testing.allocator.print("{s}/file3.kup", .{tmp_path});
     defer testing.allocator.free(p3);
 
     const cwd = std.Io.Dir.cwd();

@@ -564,7 +564,7 @@ pub const Handler = struct {
 
                         try hints.append(arena, .{
                             .position = .{ .line = line, .character = char },
-                            .label = .{ .string = try std.fmt.allocPrint(arena, ": {s}", .{type_hint}) },
+                            .label = .{ .string = try arena.print(": {s}", .{type_hint}) },
                             .kind = .Type,
                             .paddingLeft = false,
                             .paddingRight = false,
@@ -600,7 +600,7 @@ pub const Handler = struct {
 
                         try hints.append(arena, .{
                             .position = .{ .line = line, .character = char },
-                            .label = .{ .string = try std.fmt.allocPrint(arena, "{s}:", .{param_names[arg_idx]}) },
+                            .label = .{ .string = try arena.print("{s}:", .{param_names[arg_idx]}) },
                             .kind = .Parameter,
                             .paddingLeft = false,
                             .paddingRight = true,

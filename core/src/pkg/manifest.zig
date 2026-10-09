@@ -91,7 +91,7 @@ pub const Manifest = struct {
             for (keys.items, 0..) |k, i| {
                 const v = self.dependencies.get(k).?;
                 const comma = if (i < keys.items.len - 1) "," else "";
-                const line = try std.fmt.allocPrint(self.allocator, "    \"{s}\": \"{s}\"{s}\n", .{ k, v, comma });
+                const line = try self.allocator.print("    \"{s}\": \"{s}\"{s}\n", .{ k, v, comma });
                 defer self.allocator.free(line);
                 try out_str.appendSlice(self.allocator, line);
             }
