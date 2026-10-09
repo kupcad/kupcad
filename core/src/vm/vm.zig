@@ -655,6 +655,7 @@ pub const VM = struct {
                         };
                     }
 
+                    // SAFETY: Unconditionally populated in all execution branches by the if/else block below
                     var merged_str: value.Value = undefined;
                     if (!use_heap) {
                         merged_str = self.allocateString(stack_out.written()) catch return .runtime_error;
@@ -1819,6 +1820,7 @@ pub const VM = struct {
 
             // --- DOD: Stack buffer for string concats <= 1KB ---
             const total_len = a_str.len + b_str.len;
+            // SAFETY: Unconditionally initialized by string allocation before any subsequent reads
             var str_val: value.Value = undefined;
 
             if (total_len <= MAX_STACK_STRING_LEN) {
