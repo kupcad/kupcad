@@ -10792,3 +10792,49 @@ test "VM: DAG Benchmark - Safely orchestrates 10,000 deeply nested CSG booleans"
     const final_val = vm.pop();
     try std.testing.expect(final_val.isMap());
 }
+
+test "VM Edge Case: Import depth limit prevents host stack overflow" {
+    const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    // 1. Create a secure, in-memory virtual file system[cite: 6, 7]
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    // 2. Override the VM's file system to use the memory VFS[cite: 7]
+    vm.vfs = mem_vfs.vfs();
+
+    // 3. Generate an import chain that safely exceeds the constant limit
+    // (e.g. if MAX_IMPORT_DEPTH is 64, we generate 66 virtual files)
+    const max_chain = VM.MAX_IMPORT_DEPTH + 2;
+    for (0..max_chain) |i| {
+        var name_buf: [32]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buf, "mod_{d}.kcad", .{i});
+
+        var content_buf: [64]u8 = undefined;
+        const content = if (i == max_chain - 1)
+            "exports = 42"
+        else
+            try std.fmt.bufPrint(&content_buf, "import \"mod_{d}.kcad\"", .{i + 1});
+
+        // Write directly to the in-memory sandbox[cite: 6, 7]
+        try vm.vfs.writeFile(name, content);
+    }
+
+    const source = "import \"mod_0.kcad\"";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // This should hit the depth limit of MAX_IMPORT_DEPTH and gracefully throw an ImportError
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.runtime_error, result);
+}

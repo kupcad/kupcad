@@ -121,6 +121,7 @@ pub const VM = struct {
     // safety for infinite loops
     instruction_count: usize,
     instruction_limit: usize,
+    import_depth: u8 = 0,
     // max call stack
     max_call_frames: usize = 100_000,
     /// Set to true during tests to brutally expose unrooted allocations
@@ -129,6 +130,7 @@ pub const VM = struct {
     cancel_token: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     const STACK_GROW_FACTOR: usize = 2;
+    pub const MAX_IMPORT_DEPTH: u8 = 64;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
         var config_stack = std.ArrayListUnmanaged(EngineConfig).empty;
@@ -185,6 +187,7 @@ pub const VM = struct {
             .unwind_err_val = null,
             .instruction_count = 0,
             .instruction_limit = limits.DEFAULT_INSTRUCTION_LIMIT,
+            .import_depth = 0,
         };
 
         // preallocate true, false and nil strings
@@ -792,6 +795,14 @@ pub const VM = struct {
                         continue;
                     };
                     defer self.allocator.free(source);
+
+                    // --- IMPORT DEPTH LIMIT ---
+                    if (self.import_depth >= MAX_IMPORT_DEPTH) {
+                        if (self.throwDynamicError("ImportError: Maximum import depth of 64 exceeded", .{}) != .ok) return .runtime_error;
+                        continue;
+                    }
+                    self.import_depth += 1;
+                    defer self.import_depth -= 1;
 
                     // 3. Parse Document
                     var doc = Document.parse(self.allocator, source) catch {
