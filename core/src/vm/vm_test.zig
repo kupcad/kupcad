@@ -10838,3 +10838,75 @@ test "VM Edge Case: Import depth limit prevents host stack overflow" {
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.runtime_error, result);
 }
+
+test "VM: op_add gracefully falls back to heap for strings exceeding 1KB" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Exponentially double a string's length 11 times.
+    // Length starts at 1, ends at 2^11 = 2048 bytes.
+    // This explicitly forces op_add to breach the 1024 MAX_STACK_STRING_LEN
+    // and utilize the heap fallback path without leaking memory.
+    const source =
+        \\s = "A"
+        \\i = 0
+        \\while i < 11
+        \\  s = s + s
+        \\  i = i + 1
+        \\end
+        \\s.length()
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Execute with strict stack equilibrium to ensure the temporary heap buffer is freed
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try std.testing.expect(result.isNumber());
+    try std.testing.expectEqual(@as(f64, 2048.0), result.asNumber());
+}
+
+test "VM: op_interpolate gracefully falls back to heap for strings exceeding 1KB" {
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Build a 1024-byte string, then interpolate it three times into a single expression.
+    // The resulting string will be 3072 bytes, forcing the FBA to return OutOfMemory,
+    // which triggers the dynamic ArrayList heap fallback.
+    const source =
+        \\base = "A"
+        \\i = 0
+        \\while i < 10
+        \\  base = base + base
+        \\  i = i + 1
+        \\end
+        \\res = "#{base}#{base}#{base}"
+        \\res.length()
+    ;
+
+    var doc = try Document.parse(std.testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(std.testing.allocator);
+
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // Execute with strict stack equilibrium to ensure the ArrayList fallback cleans up correctly
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+
+    try std.testing.expect(result.isNumber());
+    try std.testing.expectEqual(@as(f64, 3072.0), result.asNumber());
+}

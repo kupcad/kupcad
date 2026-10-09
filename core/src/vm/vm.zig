@@ -131,6 +131,7 @@ pub const VM = struct {
 
     const STACK_GROW_FACTOR: usize = 2;
     pub const MAX_IMPORT_DEPTH: u8 = 64;
+    pub const MAX_STACK_STRING_LEN: usize = 1024;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
         var config_stack = std.ArrayListUnmanaged(EngineConfig).empty;
@@ -641,22 +642,30 @@ pub const VM = struct {
                     const count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
 
-                    // --- Scratch Arena Interop ---
-                    const scratch_alloc = self.scratch_arena.allocator();
-                    var out: std.Io.Writer.Allocating = .init(scratch_alloc);
+                    var stack_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
+                    var fba = std.heap.FixedBufferAllocator.init(&stack_buf);
+                    var stack_out: std.Io.Writer.Allocating = .init(fba.allocator());
 
+                    var use_heap = false;
                     const start_idx = self.stack_top - count;
                     for (self.stack[start_idx..self.stack_top]) |val| {
-                        val.stringify(false, &out.writer) catch {
-                            out.deinit();
-                            return .runtime_error;
+                        val.stringify(false, &stack_out.writer) catch {
+                            use_heap = true;
+                            break;
                         };
                     }
 
-                    // Pass scratch output to the GC string intern table
-                    const merged_str = self.allocateString(out.written()) catch {
-                        return .runtime_error;
-                    };
+                    var merged_str: value.Value = undefined;
+                    if (!use_heap) {
+                        merged_str = self.allocateString(stack_out.written()) catch return .runtime_error;
+                    } else {
+                        var heap_out: std.Io.Writer.Allocating = .init(self.allocator);
+                        defer heap_out.deinit();
+                        for (self.stack[start_idx..self.stack_top]) |val| {
+                            val.stringify(false, &heap_out.writer) catch return .runtime_error;
+                        }
+                        merged_str = self.allocateString(heap_out.written()) catch return .runtime_error;
+                    }
 
                     // Pop and release all original stack fragments
                     for (0..count) |_| {
@@ -1808,15 +1817,22 @@ pub const VM = struct {
             const a_str = a_val.asString().chars;
             const b_str = b_val.asString().chars;
 
-            // --- DOD: Scratch Arena String Building ---
-            const scratch_alloc = self.scratch_arena.allocator();
-            const merged = std.fmt.allocPrint(scratch_alloc, "{s}{s}", .{ a_str, b_str }) catch return .runtime_error;
+            // --- DOD: Stack buffer for string concats <= 1KB ---
+            const total_len = a_str.len + b_str.len;
+            var str_val: value.Value = undefined;
 
-            // allocateString seamlessly handles checking the intern table, OR precisely allocating on the GC heap
-            const str_val = self.allocateString(merged) catch {
-                // Removed manual arena reset to protect outer scopes
-                return .runtime_error;
-            };
+            if (total_len <= MAX_STACK_STRING_LEN) {
+                var stack_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
+                @memcpy(stack_buf[0..a_str.len], a_str);
+                @memcpy(stack_buf[a_str.len..total_len], b_str);
+                str_val = self.allocateString(stack_buf[0..total_len]) catch return .runtime_error;
+            } else {
+                const heap_buf = self.allocator.alloc(u8, total_len) catch return .runtime_error;
+                defer self.allocator.free(heap_buf);
+                @memcpy(heap_buf[0..a_str.len], a_str);
+                @memcpy(heap_buf[a_str.len..total_len], b_str);
+                str_val = self.allocateString(heap_buf) catch return .runtime_error;
+            }
 
             self.push(str_val);
             return .ok;
@@ -2385,8 +2401,9 @@ pub const VM = struct {
                             str_val = err_val;
                         } else {
                             // Otherwise, stringify the primitive (number, boolean, etc.)
-                            const scratch_alloc = self.scratch_arena.allocator();
-                            var out: std.Io.Writer.Allocating = .init(scratch_alloc);
+                            var fba_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
+                            var fba = std.heap.FixedBufferAllocator.init(&fba_buf);
+                            var out: std.Io.Writer.Allocating = .init(fba.allocator());
                             err_val.stringify(false, &out.writer) catch |err| {
                                 std.log.err("Error stringifying primitive exception: {}", .{err});
                             };
