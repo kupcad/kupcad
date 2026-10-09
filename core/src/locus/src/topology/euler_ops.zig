@@ -39,11 +39,11 @@ pub fn mev(
     curve_id: geom_types.CurveId,
     target_loop: types.LoopIndex,
 ) EulerError!MevResult {
-    const new_v_idx: types.VertexIndex = @enumFromInt(@as(u32, @intCast(t_arena.vertices.items.len)));
+    const new_v_idx: types.VertexIndex = @fromBackingInt(@as(u32, @intCast(t_arena.vertices.items.len)));
     try t_arena.vertices.append(allocator, .{ .point = point_idx });
 
-    const he_out_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len)));
-    const he_in_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len + 1)));
+    const he_out_idx: types.HalfEdgeIndex = @fromBackingInt(@as(u32, @intCast(t_arena.half_edges.items.len)));
+    const he_in_idx: types.HalfEdgeIndex = @fromBackingInt(@as(u32, @intCast(t_arena.half_edges.items.len + 1)));
 
     // HE Out: v_start -> new_v
     try t_arena.half_edges.append(allocator, .{
@@ -91,17 +91,17 @@ pub fn mef(
     curve_id: geom_types.CurveId,
     surface_id: geom_types.SurfaceId,
 ) EulerError!MefResult {
-    const new_face_idx: types.FaceIndex = @enumFromInt(@as(u32, @intCast(t_arena.faces.items.len)));
-    const new_loop_idx: types.LoopIndex = @enumFromInt(@as(u32, @intCast(t_arena.loops.items.len)));
+    const new_face_idx: types.FaceIndex = @fromBackingInt(@as(u32, @intCast(t_arena.faces.items.len)));
+    const new_loop_idx: types.LoopIndex = @fromBackingInt(@as(u32, @intCast(t_arena.loops.items.len)));
 
-    const he_a_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len)));
-    const he_b_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(t_arena.half_edges.items.len + 1)));
+    const he_a_idx: types.HalfEdgeIndex = @fromBackingInt(@as(u32, @intCast(t_arena.half_edges.items.len)));
+    const he_b_idx: types.HalfEdgeIndex = @fromBackingInt(@as(u32, @intCast(t_arena.half_edges.items.len + 1)));
 
-    const v_a = t_arena.half_edges.items[@intFromEnum(he_a_prev)].targetVertex(t_arena);
-    const v_b = t_arena.half_edges.items[@intFromEnum(he_b_prev)].targetVertex(t_arena);
+    const v_a = t_arena.half_edges.items[@backingInt(he_a_prev)].targetVertex(t_arena);
+    const v_b = t_arena.half_edges.items[@backingInt(he_b_prev)].targetVertex(t_arena);
 
-    const he_a_next_old = t_arena.half_edges.items[@intFromEnum(he_a_prev)].next;
-    const he_b_next_old = t_arena.half_edges.items[@intFromEnum(he_b_prev)].next;
+    const he_a_next_old = t_arena.half_edges.items[@backingInt(he_a_prev)].next;
+    const he_b_next_old = t_arena.half_edges.items[@backingInt(he_b_prev)].next;
 
     // Insert HE A: v_a -> v_b
     try t_arena.half_edges.append(allocator, .{
@@ -126,8 +126,8 @@ pub fn mef(
     });
 
     // Re-link previous half-edges
-    t_arena.half_edges.items[@intFromEnum(he_a_prev)].next = he_a_idx;
-    t_arena.half_edges.items[@intFromEnum(he_b_prev)].next = he_b_idx;
+    t_arena.half_edges.items[@backingInt(he_a_prev)].next = he_a_idx;
+    t_arena.half_edges.items[@backingInt(he_b_prev)].next = he_b_idx;
 
     // Create new Loop and Face
     try t_arena.loops.append(allocator, .{
@@ -148,7 +148,7 @@ pub fn mef(
     // Update loop_id for all half-edges swept into the new face
     var curr = he_a_next_old;
     while (curr != he_b_idx) {
-        const he_ptr = &t_arena.half_edges.items[@intFromEnum(curr)];
+        const he_ptr = &t_arena.half_edges.items[@backingInt(curr)];
         he_ptr.loop_id = new_loop_idx;
         curr = he_ptr.next;
     }
@@ -174,16 +174,16 @@ pub fn kef(
     t_arena: *topo_arena.TopologyArena,
     he_ab_idx: types.HalfEdgeIndex,
 ) EulerError!types.FaceIndex {
-    const he_ab = t_arena.half_edges.items[@intFromEnum(he_ab_idx)];
+    const he_ab = t_arena.half_edges.items[@backingInt(he_ab_idx)];
     const he_ba_idx = he_ab.twin;
     if (he_ba_idx == types.NULL_HALF_EDGE) return error.NonManifoldEdge;
-    const he_ba = t_arena.half_edges.items[@intFromEnum(he_ba_idx)];
+    const he_ba = t_arena.half_edges.items[@backingInt(he_ba_idx)];
 
     const loop_a_idx = he_ab.loop_id;
     const loop_b_idx = he_ba.loop_id;
     if (loop_a_idx == loop_b_idx) return error.InvalidLoopStructure;
 
-    const face_a_idx = t_arena.loops.items[@intFromEnum(loop_a_idx)].face_id;
+    const face_a_idx = t_arena.loops.items[@backingInt(loop_a_idx)].face_id;
 
     // Unlink he_ab and he_ba from their loops
     const ab_prev = he_ab.prev;
@@ -191,19 +191,19 @@ pub fn kef(
     const ba_prev = he_ba.prev;
     const ba_next = he_ba.next;
 
-    t_arena.half_edges.items[@intFromEnum(ab_prev)].next = ba_next;
-    t_arena.half_edges.items[@intFromEnum(ba_next)].prev = ab_prev;
+    t_arena.half_edges.items[@backingInt(ab_prev)].next = ba_next;
+    t_arena.half_edges.items[@backingInt(ba_next)].prev = ab_prev;
 
-    t_arena.half_edges.items[@intFromEnum(ba_prev)].next = ab_next;
-    t_arena.half_edges.items[@intFromEnum(ab_next)].prev = ba_prev;
+    t_arena.half_edges.items[@backingInt(ba_prev)].next = ab_next;
+    t_arena.half_edges.items[@backingInt(ab_next)].prev = ba_prev;
 
     // Point loop_a's first_half_edge to a surviving edge
-    t_arena.loops.items[@intFromEnum(loop_a_idx)].first_half_edge = ab_next;
+    t_arena.loops.items[@backingInt(loop_a_idx)].first_half_edge = ab_next;
 
     // Reassign all half-edges from loop_b to loop_a
     var curr = ba_next;
     while (curr != ab_next) {
-        const he_ptr = &t_arena.half_edges.items[@intFromEnum(curr)];
+        const he_ptr = &t_arena.half_edges.items[@backingInt(curr)];
         he_ptr.loop_id = loop_a_idx;
         curr = he_ptr.next;
     }
@@ -224,11 +224,11 @@ pub fn kev(
     t_arena: *topo_arena.TopologyArena,
     he_out_idx: types.HalfEdgeIndex,
 ) EulerError!void {
-    const he_out = t_arena.half_edges.items[@intFromEnum(he_out_idx)];
+    const he_out = t_arena.half_edges.items[@backingInt(he_out_idx)];
     const he_in_idx = he_out.twin;
     if (he_in_idx == types.NULL_HALF_EDGE) return error.NonManifoldEdge;
 
-    const he_in = t_arena.half_edges.items[@intFromEnum(he_in_idx)];
+    const he_in = t_arena.half_edges.items[@backingInt(he_in_idx)];
     const loop_idx = he_out.loop_id;
 
     const prev_he_idx = he_out.prev;
@@ -236,14 +236,14 @@ pub fn kev(
 
     // Re-link around the collapsed edge pair
     if (prev_he_idx != types.NULL_HALF_EDGE) {
-        t_arena.half_edges.items[@intFromEnum(prev_he_idx)].next = next_he_idx;
+        t_arena.half_edges.items[@backingInt(prev_he_idx)].next = next_he_idx;
     }
     if (next_he_idx != types.NULL_HALF_EDGE) {
-        t_arena.half_edges.items[@intFromEnum(next_he_idx)].prev = prev_he_idx;
+        t_arena.half_edges.items[@backingInt(next_he_idx)].prev = prev_he_idx;
     }
 
     // Update loop starting edge if it pointed to a killed edge
-    const loop_ptr = &t_arena.loops.items[@intFromEnum(loop_idx)];
+    const loop_ptr = &t_arena.loops.items[@backingInt(loop_idx)];
     if (loop_ptr.first_half_edge == he_out_idx or loop_ptr.first_half_edge == he_in_idx) {
         loop_ptr.first_half_edge = next_he_idx;
     }
@@ -263,13 +263,13 @@ pub fn kemr(
     t_arena: *topo_arena.TopologyArena,
     he_a_idx: types.HalfEdgeIndex,
 ) EulerError!KemrResult {
-    const he_a = t_arena.half_edges.items[@intFromEnum(he_a_idx)];
+    const he_a = t_arena.half_edges.items[@backingInt(he_a_idx)];
     const he_b_idx = he_a.twin;
     if (he_b_idx == types.NULL_HALF_EDGE) return error.NonManifoldEdge;
-    const he_b = t_arena.half_edges.items[@intFromEnum(he_b_idx)];
+    const he_b = t_arena.half_edges.items[@backingInt(he_b_idx)];
 
     const orig_loop_idx = he_a.loop_id;
-    const face_idx = t_arena.loops.items[@intFromEnum(orig_loop_idx)].face_id;
+    const face_idx = t_arena.loops.items[@backingInt(orig_loop_idx)].face_id;
 
     const a_prev = he_a.prev;
     const a_next = he_a.next;
@@ -277,32 +277,32 @@ pub fn kemr(
     const b_next = he_b.next;
 
     // Unbridge the loop into two independent closed cycles
-    t_arena.half_edges.items[@intFromEnum(a_prev)].next = b_next;
-    t_arena.half_edges.items[@intFromEnum(b_next)].prev = a_prev;
+    t_arena.half_edges.items[@backingInt(a_prev)].next = b_next;
+    t_arena.half_edges.items[@backingInt(b_next)].prev = a_prev;
 
-    t_arena.half_edges.items[@intFromEnum(b_prev)].next = a_next;
-    t_arena.half_edges.items[@intFromEnum(a_next)].prev = b_prev;
+    t_arena.half_edges.items[@backingInt(b_prev)].next = a_next;
+    t_arena.half_edges.items[@backingInt(a_next)].prev = b_prev;
 
     // Instantiate new Loop for the inner ring
-    const new_loop_idx: types.LoopIndex = @enumFromInt(@as(u32, @intCast(t_arena.loops.items.len)));
+    const new_loop_idx: types.LoopIndex = @fromBackingInt(@as(u32, @intCast(t_arena.loops.items.len)));
     try t_arena.loops.append(allocator, .{
         .face_id = face_idx,
         .first_half_edge = a_next,
     });
 
-    t_arena.loops.items[@intFromEnum(orig_loop_idx)].first_half_edge = b_next;
+    t_arena.loops.items[@backingInt(orig_loop_idx)].first_half_edge = b_next;
 
     // Reassign loop_id for the newly created ring cycle
     var curr = a_next;
     while (curr != b_prev) {
-        const he_ptr = &t_arena.half_edges.items[@intFromEnum(curr)];
+        const he_ptr = &t_arena.half_edges.items[@backingInt(curr)];
         he_ptr.loop_id = new_loop_idx;
         curr = he_ptr.next;
     }
 
     // Attach loop to parent face
     try t_arena.face_loops.append(allocator, new_loop_idx);
-    t_arena.faces.items[@intFromEnum(face_idx)].loops_len += 1;
+    t_arena.faces.items[@backingInt(face_idx)].loops_len += 1;
 
     if (comptime builtin.is_test or builtin.mode == .debug) {
         verifier.validateGraph(t_arena) catch |err| {

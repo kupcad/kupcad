@@ -48,8 +48,8 @@ pub inline fn getVertexPoint(
     g_arena: *const geom_arena.GeometryArena,
     v_idx: types.VertexIndex,
 ) math.Vec3 {
-    const pt_idx = t_arena.vertices.items[@intFromEnum(v_idx)].point;
-    return g_arena.points.items[@intFromEnum(pt_idx)];
+    const pt_idx = t_arena.vertices.items[@backingInt(v_idx)].point;
+    return g_arena.points.items[@backingInt(pt_idx)];
 }
 
 /// Validates next/prev and twin reciprocity for a single half-edge.
@@ -58,28 +58,28 @@ pub fn validateHalfEdgeReciprocity(
     he_idx: types.HalfEdgeIndex,
     require_closed_twin: bool,
 ) ValidationError!void {
-    const he = t_arena.half_edges.items[@intFromEnum(he_idx)];
+    const he = t_arena.half_edges.items[@backingInt(he_idx)];
 
     // Next/Prev Reciprocity
     if (he.next != types.NULL_HALF_EDGE) {
-        const next_he = t_arena.half_edges.items[@intFromEnum(he.next)];
+        const next_he = t_arena.half_edges.items[@backingInt(he.next)];
         if (next_he.prev != he_idx) return error.BrokenLinkedList;
     }
     if (he.prev != types.NULL_HALF_EDGE) {
-        const prev_he = t_arena.half_edges.items[@intFromEnum(he.prev)];
+        const prev_he = t_arena.half_edges.items[@backingInt(he.prev)];
         if (prev_he.next != he_idx) return error.BrokenLinkedList;
     }
 
     // Twin Symmetry & Anti-Parallel Alignment
     if (he.twin != types.NULL_HALF_EDGE) {
-        const twin_idx = @intFromEnum(he.twin);
+        const twin_idx = @backingInt(he.twin);
         if (twin_idx >= t_arena.half_edges.items.len) return error.DanglingTwin;
         const twin_he = t_arena.half_edges.items[twin_idx];
 
         if (twin_he.twin != he_idx) return error.AsymmetricTwin;
 
         if (he.next != types.NULL_HALF_EDGE) {
-            const next_he = t_arena.half_edges.items[@intFromEnum(he.next)];
+            const next_he = t_arena.half_edges.items[@backingInt(he.next)];
             if (twin_he.start_vertex != next_he.start_vertex) return error.AntiParallelTwin;
         }
     } else if (require_closed_twin) {
@@ -90,7 +90,7 @@ pub fn validateHalfEdgeReciprocity(
 /// Pure topological graph verification for atomic operations (no geometry required).
 pub fn validateGraph(t_arena: *const arena.TopologyArena) ValidationError!void {
     for (t_arena.half_edges.items, 0..) |_, i| {
-        const curr_he_idx: types.HalfEdgeIndex = @enumFromInt(@as(u32, @intCast(i)));
+        const curr_he_idx: types.HalfEdgeIndex = @fromBackingInt(@as(u32, @intCast(i)));
         try validateHalfEdgeReciprocity(t_arena, curr_he_idx, false);
     }
 }
@@ -105,7 +105,7 @@ pub fn validateSolid(
 ) ValidationError!void {
     if (!config.enable_checks) return;
 
-    const solid = t_arena.solids.items[@intFromEnum(solid_idx)];
+    const solid = t_arena.solids.items[@backingInt(solid_idx)];
     for (0..solid.shells_len) |s_off| {
         const shell_idx = t_arena.solid_shells.items[solid.shells_start + s_off];
         try validateShell(allocator, t_arena, g_arena, math_env, shell_idx, config);
@@ -120,7 +120,7 @@ fn validateShell(
     shell_idx: types.ShellIndex,
     config: ValidatorConfig,
 ) ValidationError!void {
-    const shell = t_arena.shells.items[@intFromEnum(shell_idx)];
+    const shell = t_arena.shells.items[@backingInt(shell_idx)];
     var visited_vertices = std.AutoHashMap(types.VertexIndex, void).init(allocator);
     defer visited_vertices.deinit();
 
@@ -130,12 +130,12 @@ fn validateShell(
 
     for (0..shell.faces_len) |f_off| {
         const face_idx = t_arena.shell_faces.items[shell.faces_start + f_off];
-        const face = t_arena.faces.items[@intFromEnum(face_idx)];
+        const face = t_arena.faces.items[@backingInt(face_idx)];
         l_count += face.loops_len;
 
         for (0..face.loops_len) |l_off| {
             const loop_idx = t_arena.face_loops.items[face.loops_start + l_off];
-            const loop = t_arena.loops.items[@intFromEnum(loop_idx)];
+            const loop = t_arena.loops.items[@backingInt(loop_idx)];
 
             if (loop.face_id != face_idx) return error.LoopFaceMismatch;
 
@@ -144,8 +144,8 @@ fn validateShell(
 
             while (true) : (steps += 1) {
                 if (steps > 10_000) return error.UnclosedLoop;
-                const he = t_arena.half_edges.items[@intFromEnum(curr_he_idx)];
-                const next_he = t_arena.half_edges.items[@intFromEnum(he.next)];
+                const he = t_arena.half_edges.items[@backingInt(curr_he_idx)];
+                const next_he = t_arena.half_edges.items[@backingInt(he.next)];
                 he_count += 1;
 
                 try visited_vertices.put(he.start_vertex, {});
@@ -185,7 +185,7 @@ fn validateShell(
                 // 6. UV Drift Synchronization Check
                 if (config.check_uv_sync and face.surface.surface_type == .nurbs) {
                     if (he.start_uv) |uv| {
-                        const surf = g_arena.nurbs_surfaces.items[@intFromEnum(face.surface.index)];
+                        const surf = g_arena.nurbs_surfaces.items[@backingInt(face.surface.index)];
                         const pt3d = surf.evaluate(uv[0], uv[1]);
                         if (!math_env.isCoincident(v_start, pt3d)) {
                             return error.UvDrift;
@@ -199,7 +199,7 @@ fn validateShell(
 
             // 7. Loop Winding Order Check vs Surface Normal
             if (config.check_winding and face.surface.surface_type == .plane) {
-                const plane = g_arena.planes.items[@intFromEnum(face.surface.index)];
+                const plane = g_arena.planes.items[@backingInt(face.surface.index)];
                 const surf_norm = math.normalize(math.cross(plane.u_axis, plane.v_axis));
 
                 var cross_sum = math.Vec3{ 0, 0, 0 };
@@ -207,8 +207,8 @@ fn validateShell(
                 var safety: usize = 0;
 
                 while (safety < 1000) : (safety += 1) {
-                    const he = t_arena.half_edges.items[@intFromEnum(c_he_idx)];
-                    const next_he = t_arena.half_edges.items[@intFromEnum(he.next)];
+                    const he = t_arena.half_edges.items[@backingInt(c_he_idx)];
+                    const next_he = t_arena.half_edges.items[@backingInt(he.next)];
                     const v1 = getVertexPoint(t_arena, g_arena, he.start_vertex);
                     const v2 = getVertexPoint(t_arena, g_arena, next_he.start_vertex);
 

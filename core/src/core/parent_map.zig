@@ -43,7 +43,7 @@ const BuilderContext = struct {
         // If there is a parent on the stack, record it as this node's parent
         if (self.map.stack.items.len > 0) {
             const parent_idx = self.map.stack.items[self.map.stack.items.len - 1];
-            self.map.parents[@intFromEnum(node_idx)] = parent_idx;
+            self.map.parents[@backingInt(node_idx)] = parent_idx;
         }
 
         // Push this node onto the stack so it becomes the parent for its children

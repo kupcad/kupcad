@@ -8,7 +8,7 @@ pub const NULL_LEAF = std.math.maxInt(u32);
 pub const BVHNode = struct {
     min: [3]f64,
     max: [3]f64,
-    left: u32, // Index in FlatBVH.nodes. If is_leaf == true, left = @intFromEnum(FaceIndex)
+    left: u32, // Index in FlatBVH.nodes. If is_leaf == true, left = @backingInt(FaceIndex)
     right: u32, // If is_leaf == true, right = NULL_LEAF
     is_leaf: bool,
 
@@ -63,16 +63,16 @@ pub const FlatBVH = struct {
         var min = [3]f64{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
         var max = [3]f64{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
 
-        const face = t_arena.faces.items[@intFromEnum(f_idx)];
+        const face = t_arena.faces.items[@backingInt(f_idx)];
         for (0..face.loops_len) |l_off| {
             const loop_idx = t_arena.face_loops.items[face.loops_start + l_off];
-            const loop = t_arena.loops.items[@intFromEnum(loop_idx)];
+            const loop = t_arena.loops.items[@backingInt(loop_idx)];
             var curr = loop.first_half_edge;
 
             var safety: usize = 0;
             while (safety < 10_000) : (safety += 1) {
-                const he = t_arena.half_edges.items[@intFromEnum(curr)];
-                const pt = g_arena.points.items[@intFromEnum(t_arena.vertices.items[@intFromEnum(he.start_vertex)].point)];
+                const he = t_arena.half_edges.items[@backingInt(curr)];
+                const pt = g_arena.points.items[@backingInt(t_arena.vertices.items[@backingInt(he.start_vertex)].point)];
 
                 min[0] = @min(min[0], pt[0]);
                 min[1] = @min(min[1], pt[1]);
@@ -105,7 +105,7 @@ pub const FlatBVH = struct {
             try self.nodes.append(allocator, .{
                 .min = items[0].min,
                 .max = items[0].max,
-                .left = @intFromEnum(items[0].face),
+                .left = @backingInt(items[0].face),
                 .right = NULL_LEAF,
                 .is_leaf = true,
             });
@@ -184,7 +184,7 @@ pub const FlatBVH = struct {
 
             if (node.intersectsBox(box_min, box_max)) {
                 if (node.is_leaf) {
-                    try out_faces.append(allocator, @enumFromInt(node.left));
+                    try out_faces.append(allocator, @fromBackingInt(node.left));
                 } else {
                     if (node.left != NULL_LEAF) {
                         stack[stack_top] = node.left;

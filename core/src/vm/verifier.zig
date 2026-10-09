@@ -16,9 +16,9 @@ pub fn verifyChunk(c: *const chunk.Chunk) VerifierError!void {
     while (ip < len) {
         const op_raw = c.code.items[ip];
         // Ensure opcode is a valid enum variant
-        if (op_raw > @intFromEnum(chunk.OpCode.op_return)) return error.InvalidOpCode;
+        if (op_raw > @backingInt(chunk.OpCode.op_return)) return error.InvalidOpCode;
 
-        const op: chunk.OpCode = @enumFromInt(op_raw);
+        const op: chunk.OpCode = @fromBackingInt(op_raw);
         ip += 1;
 
         // Verify Operands based on OpCode definitions

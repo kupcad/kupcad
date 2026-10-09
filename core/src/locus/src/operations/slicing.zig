@@ -30,7 +30,7 @@ pub fn trimByPlane(
     _ = offset;
     _ = env;
     // TODO: Implement half-space plane trim
-    return @enumFromInt(0);
+    return @fromBackingInt(0);
 }
 
 pub const SolidPair = struct {
@@ -67,7 +67,7 @@ pub fn splitByPlane(
     _ = offset;
     _ = env;
     // TODO: Implement exact plane bisection
-    return .{ .first = @enumFromInt(0), .second = @enumFromInt(0) };
+    return .{ .first = @fromBackingInt(0), .second = @fromBackingInt(0) };
 }
 
 pub fn sliceMeshToContours(

@@ -62,7 +62,7 @@ fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
     try ast_dumper.dump(allocator, &doc, &out);
 
     // Construct output path and write file
-    const out_path = try std.fmt.allocPrint(allocator, "{s}.dump", .{file_path});
+    const out_path = try allocator.print("{s}.dump", .{file_path});
     defer allocator.free(out_path);
 
     const cwd = std.Io.Dir.cwd();
@@ -114,7 +114,7 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
 
     try disassembler.disassembleChunk(allocator, &main_chunk, "main", &out.writer);
 
-    const out_path = try std.fmt.allocPrint(allocator, "{s}.disasm", .{file_path});
+    const out_path = try allocator.print("{s}.disasm", .{file_path});
     defer allocator.free(out_path);
     const cwd = std.Io.Dir.cwd();
     try cwd.writeFile(init.io, .{
@@ -158,7 +158,7 @@ fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
         try out.writer.print("[{d:0>4}] {s: <20} '{s}'\n", .{ start, @tagName(tag), lexeme });
     }
 
-    const out_path = try std.fmt.allocPrint(allocator, "{s}.lex", .{file_path});
+    const out_path = try allocator.print("{s}.lex", .{file_path});
     defer allocator.free(out_path);
     const cwd = std.Io.Dir.cwd();
     try cwd.writeFile(init.io, .{

@@ -38,7 +38,7 @@ test "Compiler: compiles basic binary addition" {
     try testing.expectEqual(@as(usize, 3), out_chunk.code.items.len);
 
     // Folded Result Node
-    try testing.expectEqual(@as(u8, @intFromEnum(chunk.OpCode.op_constant)), out_chunk.code.items[0]);
+    try testing.expectEqual(@as(u8, @backingInt(chunk.OpCode.op_constant)), out_chunk.code.items[0]);
     try testing.expectEqual(@as(u8, 0), out_chunk.code.items[1]);
     try testing.expectEqual(@as(f64, 15.0), out_chunk.constants.items[0].asNumber());
 }
@@ -73,7 +73,7 @@ test "Compiler: compiles range expression (1..10)" {
     // 8: op_return
 
     try testing.expectEqual(@as(usize, 9), out_chunk.code.items.len);
-    try testing.expectEqual(chunk.OpCode.op_build_range, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_build_range, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
     try testing.expectEqual(@as(u8, 0), out_chunk.code.items[7]);
 }
 
@@ -90,7 +90,7 @@ test "Compiler: compiles compound assignment (x += 5)" {
     // Unmanaged ArrayList and the top-level resolver import
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(assign_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(assign_node) + 1);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -112,11 +112,11 @@ test "Compiler: compiles compound assignment (x += 5)" {
     // op_return
 
     try testing.expectEqual(@as(usize, 9), out_chunk.code.items.len);
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
-    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
-    try testing.expectEqual(chunk.OpCode.op_define_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
+    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[5])));
+    try testing.expectEqual(chunk.OpCode.op_define_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
 }
 
 test "Compiler: compiles safe navigation method call (obj&.cut())" {
@@ -135,7 +135,7 @@ test "Compiler: compiles safe navigation method call (obj&.cut())" {
     // Unmanaged ArrayList and the top-level resolver import
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(safe_call) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(safe_call) + 1);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -154,10 +154,10 @@ test "Compiler: compiles safe navigation method call (obj&.cut())" {
     // op_invoke ('cut')
     // op_return
 
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_jump_if_nil, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
     // op_invoke shifted 1 byte right due to 4-byte jump offset
-    try testing.expectEqual(chunk.OpCode.op_invoke, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
+    try testing.expectEqual(chunk.OpCode.op_invoke, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[7])));
 }
 
 test "Compiler: compiles string interpolation" {
@@ -189,9 +189,9 @@ test "Compiler: compiles string interpolation" {
     // op_interpolate (Takes operand 2 for count)
     // op_return
 
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_interpolate, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_interpolate, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
     try testing.expectEqual(@as(u8, 2), out_chunk.code.items[5]); // 2 parts merged
 }
 
@@ -224,9 +224,9 @@ test "Compiler: compiles import statement" {
     // 3: op_nil (yield nil)
     // 4: op_return
 
-    try testing.expectEqual(chunk.OpCode.op_import, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_nil, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[3])));
+    try testing.expectEqual(chunk.OpCode.op_import, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_nil, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[3])));
 }
 
 test "Compiler: compiles namespace access (Hardware::Screw)" {
@@ -257,8 +257,8 @@ test "Compiler: compiles namespace access (Hardware::Screw)" {
     // 2: op_get_property ("Screw")
     // 4: op_return
 
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_get_property, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_get_property, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
 }
 
 test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
@@ -273,7 +273,7 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
 
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(rescue_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(rescue_node) + 1);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -295,10 +295,10 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     // 12: op_constant (0)
     // 14: op_return
 
-    try testing.expectEqual(chunk.OpCode.op_setup_rescue, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_pop_rescue, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
-    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[8])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[13])));
+    try testing.expectEqual(chunk.OpCode.op_setup_rescue, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_pop_rescue, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[7])));
+    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[8])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[13])));
 }
 
 test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
@@ -321,7 +321,7 @@ test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
 
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(begin_stmt) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(begin_stmt) + 1);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -366,7 +366,7 @@ test "Compiler Edge Case: Compiles empty Hashes and Arrays safely" {
     try comp.compile(arr_node);
     try comp.compile(hash_node);
 
-    try testing.expectEqual(chunk.OpCode.op_build_array, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_build_array, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
     try testing.expectEqual(@as(u8, 0), out_chunk.code.items[1]); // 0 items
 }
 
@@ -400,7 +400,7 @@ test "Compiler: case statements with literals optimize to op_switch" {
     // 0: op_constant (push condition 1)
     // 2: op_switch
     // 3: 1 (case_count)
-    try testing.expectEqual(chunk.OpCode.op_switch, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_switch, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
     try testing.expectEqual(@as(u8, 1), out_chunk.code.items[3]);
 }
 
@@ -466,7 +466,7 @@ test "Compiler Edge Case: compiles array literal with > 255 elements (wide opera
     // Verify op_build_array_wide is present in the bytecode!
     var found_wide = false;
     for (out_chunk.code.items) |byte| {
-        if (byte == @intFromEnum(chunk.OpCode.op_build_array_wide)) found_wide = true;
+        if (byte == @backingInt(chunk.OpCode.op_build_array_wide)) found_wide = true;
     }
 
     // If it fell back to the standard op_build_array, this test will fail
@@ -484,7 +484,7 @@ test "Compiler Edge Case: Prevent stack leaks from break inside expressions" {
     const five = try b.number("5", 0);
 
     // Inject the break statement payload directly
-    const break_node = try b.createNode(.break_stmt, 0, @intFromEnum(five));
+    const break_node = try b.createNode(.break_stmt, 0, @backingInt(five));
     const add_node = try b.binary(.add, ten, break_node, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
@@ -511,7 +511,7 @@ test "Compiler: Prevent stack leaks from next inside expressions" {
 
     // 1. Construct AST manually: 10 + (next)
     const ten = try b.number("10", 0);
-    const next_node = try b.createNode(.next_stmt, 0, @intFromEnum(ast.NodeIndex.none));
+    const next_node = try b.createNode(.next_stmt, 0, @backingInt(ast.NodeIndex.none));
     const add_node = try b.binary(.add, ten, next_node, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
@@ -554,7 +554,7 @@ test "Compiler: op_pop_rescue does not corrupt max_stack_slots calculation" {
 
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @intFromEnum(begin_stmt) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(begin_stmt) + 1);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -587,7 +587,7 @@ test "Compiler: Protects core globals from variable reassignment" {
 
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(assign_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(assign_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -616,7 +616,7 @@ test "Compiler: Protects core globals from function redefinition" {
 
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(def_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(def_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -644,7 +644,7 @@ test "Compiler: Protects core classes from complete reassignment" {
 
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(class_node) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(class_node) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -688,10 +688,10 @@ test "Compiler: Block intermediate expressions are strictly popped" {
     // 5: op_pop         <-- CRITICAL
     // 6: op_constant (30)
     // 8: op_return
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[5])));
     // The final expression (30) should NOT be popped
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
 }
 
 test "Compiler: Method blocks accurately extract local_count for the VM" {
@@ -719,7 +719,7 @@ test "Compiler: Method blocks accurately extract local_count for the VM" {
     // Scan the compiled bytecode to find the closure function object
     var closure_func: ?*value.ObjFunction = null;
     for (out_chunk.code.items, 0..) |byte, i| {
-        if (byte == @intFromEnum(chunk.OpCode.op_closure)) {
+        if (byte == @backingInt(chunk.OpCode.op_closure)) {
             const func_idx = out_chunk.code.items[i + 1];
             closure_func = @as(*value.ObjFunction, @alignCast(@fieldParentPtr("obj", out_chunk.constants.items[func_idx].asObj())));
             break;
@@ -865,7 +865,7 @@ test "Compiler: Large array literals (> 65,535 items) fallback to dynamic build 
     // Verify op_array_push was emitted for dynamic element insertion
     var found_push = false;
     for (out_chunk.code.items) |byte| {
-        if (byte == @intFromEnum(chunk.OpCode.op_array_push)) found_push = true;
+        if (byte == @backingInt(chunk.OpCode.op_array_push)) found_push = true;
     }
     try testing.expect(found_push);
 }
@@ -885,7 +885,7 @@ test "Compiler: compiles compound property assignment (obj.x += 10)" {
     // Provide a generic symbol map to avoid out of bounds
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(prop_assign) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(prop_assign) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -911,12 +911,12 @@ test "Compiler: compiles compound property assignment (obj.x += 10)" {
     // 12: IC High              <-- Inline Cache!
     // 13: IC Low               <-- Inline Cache!
     // 14: op_return
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_get_property, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[3])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
-    try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[9])));
-    try testing.expectEqual(chunk.OpCode.op_set_property, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[10])));
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_get_property, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[3])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[7])));
+    try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[9])));
+    try testing.expectEqual(chunk.OpCode.op_set_property, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[10])));
 }
 
 test "Compiler: compiles compound index assignment (arr[1] *= 2)" {
@@ -933,7 +933,7 @@ test "Compiler: compiles compound index assignment (arr[1] *= 2)" {
 
     var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
-    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @intFromEnum(idx_assign) + 1);
+    try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(idx_assign) + 1);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -957,13 +957,13 @@ test "Compiler: compiles compound index assignment (arr[1] *= 2)" {
     // 9: op_set_index          <-- Consumes the duplicated target/index and the new result
     // 10: op_return
 
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_dup_two, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
-    try testing.expectEqual(chunk.OpCode.op_get_index, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[5])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
-    try testing.expectEqual(chunk.OpCode.op_multiply, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[8])));
-    try testing.expectEqual(chunk.OpCode.op_set_index, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[9])));
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_dup_two, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
+    try testing.expectEqual(chunk.OpCode.op_get_index, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[5])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_multiply, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[8])));
+    try testing.expectEqual(chunk.OpCode.op_set_index, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[9])));
 }
 
 test "Compiler: compiles unary NOT operator gracefully" {
@@ -985,8 +985,8 @@ test "Compiler: compiles unary NOT operator gracefully" {
     defer comp.deinit();
     try comp.compile(not_node);
 
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_not, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[1])));
+    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_not, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[1])));
 }
 
 test "Compiler: compiles export statement natively yielding module" {
@@ -1011,8 +1011,8 @@ test "Compiler: compiles export statement natively yielding module" {
 
     try comp.compile(export_node);
 
-    try testing.expectEqual(chunk.OpCode.op_module, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_module, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
 }
 
 test "Compiler: compiles STL asset import interception" {
@@ -1038,9 +1038,9 @@ test "Compiler: compiles STL asset import interception" {
 
     try comp.compile(import_node);
 
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_call, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
+    try testing.expectEqual(chunk.OpCode.op_call, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
     try testing.expectEqual(@as(u8, 1), out_chunk.code.items[5]); // 1 argument
 }
 
@@ -1106,8 +1106,8 @@ test "Compiler: Multiple assignment optimization skips heap allocation for stati
     var found_build = false;
     var found_unpack = false;
     for (out_chunk.code.items) |byte| {
-        if (byte == @intFromEnum(chunk.OpCode.op_build_array)) found_build = true;
-        if (byte == @intFromEnum(chunk.OpCode.op_unpack)) found_unpack = true;
+        if (byte == @backingInt(chunk.OpCode.op_build_array)) found_build = true;
+        if (byte == @backingInt(chunk.OpCode.op_unpack)) found_unpack = true;
     }
 
     try testing.expect(!found_build);
@@ -1148,7 +1148,7 @@ test "Compiler: Deep spatial tuple destructuring emits recursive unpacks" {
     // Verify op_unpack was emitted exactly twice (once for outer tuple, once for inner (x, y))
     var unpack_count: usize = 0;
     for (child_chunk.?.code.items) |byte| {
-        if (byte == @intFromEnum(chunk.OpCode.op_unpack)) unpack_count += 1;
+        if (byte == @backingInt(chunk.OpCode.op_unpack)) unpack_count += 1;
     }
     try testing.expectEqual(@as(usize, 2), unpack_count);
 }
@@ -1174,7 +1174,7 @@ test "Compiler: compiles bitwise and shift operators" {
     try comp.compile(bin_node);
 
     // Verify correct mapping
-    try testing.expectEqual(chunk.OpCode.op_shift_left, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[4])));
+    try testing.expectEqual(chunk.OpCode.op_shift_left, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
 }
 
 test "Compiler: Logical OR short-circuit stack equilibrium" {
@@ -1271,7 +1271,7 @@ test "Compiler Edge Case: Hash literals with > 255 entries emit op_build_map_wid
     // Verify op_build_map_wide is present in the bytecode!
     var found_wide = false;
     for (out_chunk.code.items) |byte| {
-        if (byte == @intFromEnum(chunk.OpCode.op_build_map_wide)) found_wide = true;
+        if (byte == @backingInt(chunk.OpCode.op_build_map_wide)) found_wide = true;
     }
 
     // If it fell back to the standard op_build_map, this will fail
@@ -1325,7 +1325,7 @@ test "Compiler: Destructuring aborts gracefully without stack corruption" {
         const str = try std.fmt.bufPrint(&buf, "v{d}", .{i});
         const name_id = try b.intern(str);
         // Build raw identifier nodes
-        const id_node = try b.createNode(.identifier, 0, @intFromEnum(name_id));
+        const id_node = try b.createNode(.identifier, 0, @backingInt(name_id));
         try elements.append(testing.allocator, id_node);
     }
 
@@ -1433,7 +1433,7 @@ test "Compiler: Constant Folding optimizer" {
     // 2. Verify Constant Folding completely eliminated the math ops from the bytecode stream
     var has_math = false;
     for (main_chunk.code.items) |byte| {
-        const op: chunk.OpCode = @enumFromInt(byte);
+        const op: chunk.OpCode = @fromBackingInt(byte);
         if (op == .op_multiply or op == .op_add) {
             has_math = true;
         }
@@ -1479,15 +1479,15 @@ test "Compiler: Jump patch alignments for nested A and (B or C)" {
     // 19: op_true (C)
     // 20: op_return (Implicitly added by compile)
 
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[1])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
-    try testing.expectEqual(chunk.OpCode.op_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[8])));
-    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[13])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[18])));
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[19])));
-    try testing.expectEqual(chunk.OpCode.op_return, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[20])));
+    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[1])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[7])));
+    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[8])));
+    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[13])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[18])));
+    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[19])));
+    try testing.expectEqual(chunk.OpCode.op_return, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[20])));
 }
 
 test "Compiler: Jump patch alignments for nested A or (B and C)" {
@@ -1526,15 +1526,15 @@ test "Compiler: Jump patch alignments for nested A or (B and C)" {
     // 19: op_true (C)
     // 20: op_return
 
-    try testing.expectEqual(chunk.OpCode.op_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[1])));
-    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[11])));
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[12])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[13])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[18])));
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[19])));
-    try testing.expectEqual(chunk.OpCode.op_return, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[20])));
+    try testing.expectEqual(chunk.OpCode.op_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[1])));
+    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[11])));
+    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[12])));
+    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[13])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[18])));
+    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[19])));
+    try testing.expectEqual(chunk.OpCode.op_return, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[20])));
 }
 
 test "Compiler: Exhaustive runtime execution of Pratt parser logic jumps" {

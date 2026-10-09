@@ -66,7 +66,7 @@ test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
 
     // 1. Seed physical file WITHOUT creating a DB record
     const cwd = std.Io.Dir.cwd();
-    const file_path = try std.fmt.allocPrint(testing.allocator, "{s}/files/orphan_hash", .{tmp_path});
+    const file_path = try testing.allocator.print("{s}/files/orphan_hash", .{tmp_path});
     defer testing.allocator.free(file_path);
 
     var file = try cwd.createFile(testing.io, file_path, .{});

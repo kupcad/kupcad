@@ -223,14 +223,14 @@ pub const Language = enum(u8) {
     pub fn primary_language(
         self: Language,
     ) []const u8 {
-        return TABLE[@intFromEnum(self)][2];
+        return TABLE[@backingInt(self)][2];
     }
 
     /// Returns a language region.
     pub fn region(
         self: Language,
     ) []const u8 {
-        return TABLE[@intFromEnum(self)][3];
+        return TABLE[@backingInt(self)][3];
     }
 };
 

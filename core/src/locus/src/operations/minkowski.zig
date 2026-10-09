@@ -27,5 +27,5 @@ pub fn minkowskiSumConvex(
     _ = solid_b;
     _ = env;
     // TODO: Implement Quickhull-based Minkowski sum
-    return @enumFromInt(0);
+    return @fromBackingInt(0);
 }

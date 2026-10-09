@@ -401,7 +401,7 @@ pub const VM = struct {
             const instruction = exec_chunk.code.items[frame.ip];
             frame.ip += 1;
 
-            const op: chunk.OpCode = @enumFromInt(instruction);
+            const op: chunk.OpCode = @fromBackingInt(instruction);
 
             switch (op) {
                 .op_nil => self.push(value.Value.initNil()),
@@ -655,6 +655,7 @@ pub const VM = struct {
                         };
                     }
 
+                    // SAFETY: Unconditionally populated in all execution branches by the if/else block below
                     var merged_str: value.Value = undefined;
                     if (!use_heap) {
                         merged_str = self.allocateString(stack_out.written()) catch return .runtime_error;
@@ -1819,6 +1820,7 @@ pub const VM = struct {
 
             // --- DOD: Stack buffer for string concats <= 1KB ---
             const total_len = a_str.len + b_str.len;
+            // SAFETY: Unconditionally initialized by string allocation before any subsequent reads
             var str_val: value.Value = undefined;
 
             if (total_len <= MAX_STACK_STRING_LEN) {
@@ -2797,9 +2799,9 @@ pub const VM = struct {
         if (self.line_index) |li| {
             const line = li.getLine(source_offset) + 1;
             const col = li.getUtf8Column(source_offset) + 1;
-            return std.fmt.allocPrint(allocator, "    from script:{d}:{d}:in '{s}'", .{ line, col, func_name });
+            return allocator.print("    from script:{d}:{d}:in '{s}'", .{ line, col, func_name });
         } else {
-            return std.fmt.allocPrint(allocator, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
+            return allocator.print("    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
         }
     }
 

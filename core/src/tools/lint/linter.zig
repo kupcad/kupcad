@@ -137,7 +137,7 @@ pub const Linter = struct {
     }
 
     pub fn addDiagnostic(self: *Linter, loc: token.Location, severity: LinterSeverity, comptime fmt: []const u8, args: anytype) !void {
-        const msg = try std.fmt.allocPrint(self.allocator, fmt, args);
+        const msg = try self.allocator.print(fmt, args);
         try self.diagnostics.append(self.allocator, .{
             .loc = loc,
             .severity = severity,

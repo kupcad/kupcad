@@ -25,7 +25,7 @@ test "GarbageCollector: prune(true) removes orphaned files and index records" {
 
     // 1. Seed physical file
     const cwd = std.Io.Dir.cwd();
-    const file_path = try std.fmt.allocPrint(testing.allocator, "{s}/files/stale_hash", .{tmp_path});
+    const file_path = try testing.allocator.print("{s}/files/stale_hash", .{tmp_path});
     defer testing.allocator.free(file_path);
 
     var file = try cwd.createFile(testing.io, file_path, .{});
@@ -69,7 +69,7 @@ test "GarbageCollector: prune(false) skips files younger than 7 days" {
 
     // 1. Seed physical file (Age is 0 days because it was just created)
     const cwd = std.Io.Dir.cwd();
-    const file_path = try std.fmt.allocPrint(testing.allocator, "{s}/files/fresh_hash", .{tmp_path});
+    const file_path = try testing.allocator.print("{s}/files/fresh_hash", .{tmp_path});
     defer testing.allocator.free(file_path);
 
     var file = try cwd.createFile(testing.io, file_path, .{});
@@ -104,7 +104,7 @@ test "GarbageCollector: prune(true) skips files actively linked to projects (nli
 
     // 1. Seed physical CAFS file
     const cwd = std.Io.Dir.cwd();
-    const cafs_file_path = try std.fmt.allocPrint(testing.allocator, "{s}/files/active_hash", .{tmp_path});
+    const cafs_file_path = try testing.allocator.print("{s}/files/active_hash", .{tmp_path});
     defer testing.allocator.free(cafs_file_path);
 
     var file = try cwd.createFile(testing.io, cafs_file_path, .{});
@@ -112,7 +112,7 @@ test "GarbageCollector: prune(true) skips files actively linked to projects (nli
     file.close(testing.io);
 
     // 2. Create a physical hardlink simulating an active project using the package
-    const project_link_path = try std.fmt.allocPrint(testing.allocator, "{s}/active_hash_link", .{tmp_path});
+    const project_link_path = try testing.allocator.print("{s}/active_hash_link", .{tmp_path});
     defer testing.allocator.free(project_link_path);
     try std.Io.Dir.hardLink(cwd, cafs_file_path, cwd, project_link_path, testing.io, .{});
 

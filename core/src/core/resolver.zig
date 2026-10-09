@@ -219,15 +219,15 @@ pub const Resolver = struct {
 
         // Check @@ before @ so class variables aren't tagged as instance variables
         if (std.mem.startsWith(u8, name_str, "@@")) {
-            self.symbols[@intFromEnum(node)] = .{ .kind = .global, .index = 0 };
+            self.symbols[@backingInt(node)] = .{ .kind = .global, .index = 0 };
             return;
         }
         if (std.mem.startsWith(u8, name_str, "@")) {
-            self.symbols[@intFromEnum(node)] = .{ .kind = .instance_var, .index = 0 };
+            self.symbols[@backingInt(node)] = .{ .kind = .instance_var, .index = 0 };
             return;
         }
         if (std.mem.startsWith(u8, name_str, "$")) {
-            self.symbols[@intFromEnum(node)] = .{ .kind = .global, .index = 0 };
+            self.symbols[@backingInt(node)] = .{ .kind = .global, .index = 0 };
             return;
         }
 
@@ -235,12 +235,12 @@ pub const Resolver = struct {
         if (self.scopes.items.len > 0) {
             const top_idx = self.scopes.items.len - 1;
             if (try self.resolveInClosure(top_idx, name)) |sym| {
-                self.symbols[@intFromEnum(node)] = sym;
+                self.symbols[@backingInt(node)] = sym;
                 return;
             }
         }
 
-        self.symbols[@intFromEnum(node)] = .{ .kind = .global, .index = 0 };
+        self.symbols[@backingInt(node)] = .{ .kind = .global, .index = 0 };
     }
 };
 
@@ -309,7 +309,7 @@ const ResolverContext = struct {
                 for (tree.getNodes(b.params)) |param_idx| {
                     const param_node = tree.getNode(param_idx).?;
                     if (param_node.tag == .identifier) {
-                        const name_id: ast.StringId = @enumFromInt(param_node.data);
+                        const name_id: ast.StringId = @fromBackingInt(param_node.data);
                         _ = try self.resolver.declareLocal(name_id);
                         try self.resolver.resolveUsage(name_id, param_idx);
                     }
@@ -351,7 +351,7 @@ const ResolverContext = struct {
                 }
             },
             .identifier => {
-                const name_id: ast.StringId = @enumFromInt(node.data);
+                const name_id: ast.StringId = @fromBackingInt(node.data);
                 try self.resolver.resolveUsage(name_id, node_idx);
             },
             else => {},

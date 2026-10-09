@@ -40,7 +40,7 @@ pub const UnusedVarsRule = struct {
                 try engine.declareVar(tree.getString(ds.name), engine.getLoc(node.main_token));
             },
             .identifier => {
-                try engine.markUsed(tree.getString(@as(ast.StringId, @enumFromInt(node.data))));
+                try engine.markUsed(tree.getString(@as(ast.StringId, @fromBackingInt(node.data))));
             },
             .method_call => {
                 const mc = tree.methodCall(node);
@@ -56,7 +56,7 @@ pub const UnusedVarsRule = struct {
 
         switch (node.tag) {
             .identifier => {
-                try engine.declareVar(tree.getString(@as(ast.StringId, @enumFromInt(node.data))), engine.getLoc(node.main_token));
+                try engine.declareVar(tree.getString(@as(ast.StringId, @fromBackingInt(node.data))), engine.getLoc(node.main_token));
             },
             .array_literal => {
                 const span = tree.nodeSpan(node);

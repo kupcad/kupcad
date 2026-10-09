@@ -17,7 +17,7 @@ pub fn disassembleChunk(allocator: std.mem.Allocator, c: *const chunk.Chunk, nam
 
 pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
     const instruction = c.code.items[offset];
-    const op: chunk.OpCode = @enumFromInt(instruction);
+    const op: chunk.OpCode = @fromBackingInt(instruction);
 
     switch (op) {
         .op_return,

@@ -372,7 +372,7 @@ pub fn minimizeNonLinear(
         tol,
         @intCast(max_fev),
     );
-    var status: LMStatus = @enumFromInt(status_int);
+    var status: LMStatus = @fromBackingInt(status_int);
 
     var fvec_buf: [64]f64 = undefined;
     if (num_residuals <= 64) {

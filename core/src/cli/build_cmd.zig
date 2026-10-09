@@ -63,9 +63,9 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     const generated_output = if (output_path == null) blk: {
         const stem = std.fs.path.stem(target_input);
         if (std.fs.path.dirname(target_input)) |dir| {
-            break :blk try std.fmt.allocPrint(allocator, "{s}{c}{s}.{s}", .{ dir, std.fs.path.sep, stem, format });
+            break :blk try allocator.print("{s}{c}{s}.{s}", .{ dir, std.fs.path.sep, stem, format });
         } else {
-            break :blk try std.fmt.allocPrint(allocator, "{s}.{s}", .{ stem, format });
+            break :blk try allocator.print("{s}.{s}", .{ stem, format });
         }
     } else null;
     defer if (generated_output) |p| allocator.free(p);

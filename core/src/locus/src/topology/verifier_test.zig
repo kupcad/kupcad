@@ -28,7 +28,7 @@ test "Verifier: Detects Dangling Twins (Out-of-bounds index)" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // Corrupt graph: set twin to an out-of-bounds index
-    t_arena.half_edges.items[0].twin = @enumFromInt(999999);
+    t_arena.half_edges.items[0].twin = @fromBackingInt(999999);
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
     try std.testing.expectError(error.DanglingTwin, err);
@@ -60,7 +60,7 @@ test "Verifier: Detects Broken Linked Lists (Next/Prev sync)" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // Corrupt graph: point `.next` to an invalid half-edge
-    t_arena.half_edges.items[0].next = @enumFromInt(12);
+    t_arena.half_edges.items[0].next = @fromBackingInt(12);
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
     try std.testing.expectError(error.BrokenLinkedList, err);
@@ -77,7 +77,7 @@ test "Verifier: Detects Asymmetric Twin Links" {
 
     // Corrupt twin reciprocity: HE 0 points to HE 1 as twin, but HE 1 points to HE 5
     const twin_of_0 = t_arena.half_edges.items[0].twin;
-    t_arena.half_edges.items[@intFromEnum(twin_of_0)].twin = @enumFromInt(5);
+    t_arena.half_edges.items[@backingInt(twin_of_0)].twin = @fromBackingInt(5);
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
     try std.testing.expectError(error.AsymmetricTwin, err);
@@ -93,8 +93,8 @@ test "Verifier: Detects Anti-Parallel Twin Orientation Violations" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // Swap twin's start vertex so it is no longer opposite to the original edge direction
-    const twin_idx = @intFromEnum(t_arena.half_edges.items[0].twin);
-    t_arena.half_edges.items[twin_idx].start_vertex = @enumFromInt(0);
+    const twin_idx = @backingInt(t_arena.half_edges.items[0].twin);
+    t_arena.half_edges.items[twin_idx].start_vertex = @fromBackingInt(0);
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
     try std.testing.expectError(error.AntiParallelTwin, err);
@@ -110,7 +110,7 @@ test "Verifier: Detects Loop-Face Discrepancies" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // Mismatch loop's parent face_id reference
-    t_arena.loops.items[0].face_id = @enumFromInt(99);
+    t_arena.loops.items[0].face_id = @fromBackingInt(99);
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
     try std.testing.expectError(error.LoopFaceMismatch, err);
@@ -126,7 +126,7 @@ test "Verifier: Detects NaN / Inf Memory Corruption" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // Inject NaN into a vertex coordinate
-    const pt_idx = @intFromEnum(t_arena.vertices.items[0].point);
+    const pt_idx = @backingInt(t_arena.vertices.items[0].point);
     g_arena.points.items[pt_idx][0] = std.math.nan(f64);
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
@@ -143,8 +143,8 @@ test "Verifier: Detects Degenerate Zero-Length Edges" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // Collapse vertex 1 onto vertex 0 so the edge between them becomes zero length
-    const pt0 = g_arena.points.items[@intFromEnum(t_arena.vertices.items[0].point)];
-    const pt1_idx = @intFromEnum(t_arena.vertices.items[1].point);
+    const pt0 = g_arena.points.items[@backingInt(t_arena.vertices.items[0].point)];
+    const pt1_idx = @backingInt(t_arena.vertices.items[1].point);
     g_arena.points.items[pt1_idx] = pt0;
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{
@@ -163,7 +163,7 @@ test "Verifier: Detects Vertex Displaced From Surface (Coincidence Check)" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // Pull a vertex 50mm off its planar surface
-    const pt_idx = @intFromEnum(t_arena.vertices.items[0].point);
+    const pt_idx = @backingInt(t_arena.vertices.items[0].point);
     g_arena.points.items[pt_idx][2] += 50.0;
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{
@@ -182,9 +182,9 @@ test "Verifier: Detects Infinite / Unclosed Half-Edge Cycles" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // First half edge is 0. Create a 1 <-> 2 cycle that never returns to 0.
-    t_arena.half_edges.items[0].next = @enumFromInt(1);
-    t_arena.half_edges.items[1].next = @enumFromInt(2);
-    t_arena.half_edges.items[2].next = @enumFromInt(1);
+    t_arena.half_edges.items[0].next = @fromBackingInt(1);
+    t_arena.half_edges.items[1].next = @fromBackingInt(2);
+    t_arena.half_edges.items[2].next = @fromBackingInt(1);
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{
         .check_linked_lists = false, // Disable link sync
@@ -229,7 +229,7 @@ test "Verifier: Detects Reverse Prev Link Inconsistency" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // Corrupt `.prev` link on half-edge 1
-    t_arena.half_edges.items[1].prev = @enumFromInt(99);
+    t_arena.half_edges.items[1].prev = @fromBackingInt(99);
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
     try std.testing.expectError(error.BrokenLinkedList, err);
@@ -245,7 +245,7 @@ test "Verifier: Detects HalfEdge Loop Index Mismatch" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // Corrupt half-edge 0's parent loop_id pointer
-    t_arena.half_edges.items[0].loop_id = @enumFromInt(99);
+    t_arena.half_edges.items[0].loop_id = @fromBackingInt(99);
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
     try std.testing.expectError(error.LoopFaceMismatch, err);
@@ -275,7 +275,7 @@ test "Verifier: Solid Isolation Across Multi-Solid Arena" {
 
     // Corrupt cube 2 by severing twin link bidirectionally to leave a true open boundary
     const last_he = t_arena.half_edges.items.len - 1;
-    const twin_he = @intFromEnum(t_arena.half_edges.items[last_he].twin);
+    const twin_he = @backingInt(t_arena.half_edges.items[last_he].twin);
     t_arena.half_edges.items[last_he].twin = topo_types.NULL_HALF_EDGE;
     if (twin_he < t_arena.half_edges.items.len) {
         t_arena.half_edges.items[twin_he].twin = topo_types.NULL_HALF_EDGE;
@@ -318,7 +318,7 @@ test "Verifier: Detects Infinity in Vertex Coordinates" {
     const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
     // Inject Infinity into point 0
-    const pt_idx = @intFromEnum(t_arena.vertices.items[0].point);
+    const pt_idx = @backingInt(t_arena.vertices.items[0].point);
     g_arena.points.items[pt_idx][1] = std.math.inf(f64);
 
     const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
@@ -352,7 +352,7 @@ test "Verifier: Detects NURBS UV Drift Synchronization Error" {
     });
 
     t_arena.faces.items[0].surface = .{
-        .index = @enumFromInt(nurbs_idx),
+        .index = @fromBackingInt(nurbs_idx),
         .surface_type = .nurbs,
     };
 

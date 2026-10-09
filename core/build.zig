@@ -342,12 +342,11 @@ pub fn build(b: *std.Build) void {
         .flags = sqlite_flags,
     });
 
-    const sqlite_c = b.addTranslateC(.{
-        .root_source_file = b.path("vendor/sqlite/sqlite3.h"),
+    const sqlite_mod = b.createModule(.{
+        .root_source_file = b.path("vendor/sqlite/sqlite_bindings.zig"),
         .target = active_target,
         .optimize = optimize,
     });
-    const sqlite_mod = sqlite_c.createModule();
 
     mod.addImport("sqlite", sqlite_mod);
 

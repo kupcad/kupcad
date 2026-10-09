@@ -832,7 +832,7 @@ fn parse_char_string_recursive(
             .vh_curve_to => try p.parse_vh_curve_to(),
             .hv_curve_to => try p.parse_hv_curve_to(),
             .fixed_16_16 => try p.parse_fixed(&s),
-            _ => switch (@intFromEnum(op)) {
+            _ => switch (@backingInt(op)) {
                 // Reserved.
                 0, 2, 9, 13, 15, 16, 17 => return error.InvalidOperator,
                 32...246 => |d| try p.parse_int1(d),

@@ -258,9 +258,9 @@ pub const Compiler = struct {
 
     fn compileIdentifier(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
         // Ensure the Resolver properly mapped this node
-        std.debug.assert(@intFromEnum(node_idx) < self.symbols.len);
+        std.debug.assert(@backingInt(node_idx) < self.symbols.len);
 
-        const sym = self.symbols[@intFromEnum(node_idx)];
+        const sym = self.symbols[@backingInt(node_idx)];
         const name_id = self.tree.stringId(node);
         const name_str = self.tree.getString(name_id);
 
@@ -387,7 +387,7 @@ pub const Compiler = struct {
 
     fn compileAssignment(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
         const assign_payload = self.tree.assignment(node);
-        const sym = self.symbols[@intFromEnum(node_idx)];
+        const sym = self.symbols[@backingInt(node_idx)];
         const name_id = assign_payload.name;
         const name_str = self.tree.getString(name_id);
 
@@ -540,9 +540,9 @@ pub const Compiler = struct {
             if (@import("builtin").target.os.tag != .freestanding and @import("builtin").target.os.tag != .wasi) {
                 // Route to the symlinked package workspace created by Resolver.linkWorkspace()
                 if (std.mem.endsWith(u8, path_str, ".kup")) {
-                    allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/{s}", .{path_str});
+                    allocated_path = try self.allocator.print(".kupcad/pkg/{s}", .{path_str});
                 } else {
-                    allocated_path = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/{s}/{s}", .{ path_str, DEFAULT_IMPORT_ENDPOINT });
+                    allocated_path = try self.allocator.print(".kupcad/pkg/{s}/{s}", .{ path_str, DEFAULT_IMPORT_ENDPOINT });
                 }
                 final_path_str = allocated_path.?;
             }
@@ -652,7 +652,7 @@ pub const Compiler = struct {
         try self.compileClosureBlock(params, body_node, name_str, is_method);
 
         if (node.tag == .def_stmt) {
-            const sym = self.symbols[@intFromEnum(node_idx)];
+            const sym = self.symbols[@backingInt(node_idx)];
             if (self.enclosing == null or sym.kind == .global) {
                 const def_name_str = self.tree.getString(def_name_id);
                 if (manifest.compiler_intrinsics.has(def_name_str)) {
@@ -1459,7 +1459,7 @@ pub const Compiler = struct {
         // Export Fully Qualified Name
         try self.defineFullyQualifiedNamespace(name_str);
 
-        const sym = self.symbols[@intFromEnum(node_idx)];
+        const sym = self.symbols[@backingInt(node_idx)];
         if (self.active_namespaces > 1) {
             try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
         } else if (sym.kind == .local and self.enclosing != null) {

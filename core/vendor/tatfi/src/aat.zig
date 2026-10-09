@@ -390,7 +390,7 @@ pub const StateTable = struct {
         self: StateTable,
         offset: ValueOffset,
     ) ?i16 {
-        var s = parser.Stream.new_at(self.actions, @intFromEnum(offset)) catch return null;
+        var s = parser.Stream.new_at(self.actions, @backingInt(offset)) catch return null;
         return s.read(i16) catch null;
     }
 
@@ -524,7 +524,7 @@ pub fn GenericStateEntry(T: type) type {
         ///
         /// Used by kern::format1 subtable.
         pub fn value_offset(self: Self) ValueOffset {
-            return @enumFromInt(self.flags & 0x3FFF);
+            return @fromBackingInt(self.flags & 0x3FFF);
         }
 
         /// If set, reset the kerning data (clear the stack).
@@ -561,7 +561,7 @@ pub const ValueOffset = enum(u16) {
     ///
     /// After reaching u16::MAX will start from 0.
     pub fn next(self: ValueOffset) ValueOffset {
-        const ret: u16 = @intFromEnum(self) +% 2; // size of u16.
-        return @enumFromInt(ret);
+        const ret: u16 = @backingInt(self) +% 2; // size of u16.
+        return @fromBackingInt(ret);
     }
 };

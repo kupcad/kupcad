@@ -16,7 +16,7 @@ fn expectResolved(res: *const resolver.Resolver, tree: *const ast.Tree, name: []
     var found_match = false;
     for (tree.nodes.items, 0..) |node, i| {
         if (node.tag == .identifier) {
-            const id_str = tree.getString(@as(ast.StringId, @enumFromInt(node.data)));
+            const id_str = tree.getString(@as(ast.StringId, @fromBackingInt(node.data)));
             if (std.mem.eql(u8, id_str, name)) {
                 const sym = res.symbols[i];
                 // Because Parsers often leave "dead" orphan nodes behind when transforming
@@ -232,7 +232,7 @@ test "Resolver: single-level upvalue capture" {
     var lambda_node_idx: ast.NodeIndex = .none;
     for (pt.parser.b.tree.nodes.items, 0..) |node, i| {
         if (node.tag == .lambda_expr) {
-            lambda_node_idx = @enumFromInt(i);
+            lambda_node_idx = @fromBackingInt(@as(u32, @intCast(i)));
             break;
         }
     }
@@ -276,9 +276,9 @@ test "Resolver: deep recursive upvalue capture" {
     for (pt.parser.b.tree.nodes.items, 0..) |node, i| {
         if (node.tag == .lambda_expr) {
             if (inner_lambda == .none) {
-                inner_lambda = @enumFromInt(i);
+                inner_lambda = @fromBackingInt(@as(u32, @intCast(i)));
             } else {
-                outer_lambda = @enumFromInt(i);
+                outer_lambda = @fromBackingInt(@as(u32, @intCast(i)));
             }
         }
     }

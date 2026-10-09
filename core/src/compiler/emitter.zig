@@ -59,7 +59,7 @@ pub fn emitByte(self: *Compiler, byte: u8) CompileError!void {
 }
 
 pub fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
-    try self.emitByte(@intFromEnum(op));
+    try self.emitByte(@backingInt(op));
 
     // Automatically apply static stack effects
     if (getStaticStackEffect(op)) |effect| {

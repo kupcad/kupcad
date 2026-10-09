@@ -76,7 +76,7 @@ pub const Resolver = struct {
         defer fetcher.deinit();
 
         const parsed = try provider.ParsedPackage.parse(pkg_url);
-        const pkg_id = try std.fmt.allocPrint(self.allocator, "{s}-{s}-{s}", .{ parsed.domain, parsed.user, parsed.repo });
+        const pkg_id = try self.allocator.print("{s}-{s}-{s}", .{ parsed.domain, parsed.user, parsed.repo });
         defer self.allocator.free(pkg_id);
 
         // SAFETY: Populated securely by lockfile check or fetcher.fetchCommitSha before use.
@@ -202,7 +202,7 @@ pub const Resolver = struct {
             const pkg_id = entry.key_ptr.*;
             const locked = entry.value_ptr.*;
 
-            const versioned_folder = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/.store/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
+            const versioned_folder = try self.allocator.print(".kupcad/pkg/.store/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
             defer self.allocator.free(versioned_folder);
 
             try fs.makePath(versioned_folder);
@@ -217,21 +217,21 @@ pub const Resolver = struct {
             var rows = try stmt.iterator(struct { file_path: []const u8, file_hash: []const u8 }, .{ pkg_id, locked.resolved });
 
             // Track created directories to minimize redundant VFS syscalls
-            var created_dirs = std.StringHashMap(void).init(self.allocator);
+            var created_dirs: std.StringHashMapUnmanaged(void) = .empty;
             defer {
                 var key_it = created_dirs.keyIterator();
                 while (key_it.next()) |k| self.allocator.free(k.*);
-                created_dirs.deinit();
+                created_dirs.deinit(self.allocator);
             }
 
             while (try rows.next()) |row| {
-                const dest_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ versioned_folder, row.file_path });
+                const dest_path = try self.allocator.print("{s}/{s}", .{ versioned_folder, row.file_path });
                 defer self.allocator.free(dest_path);
 
                 if (std.fs.path.dirname(dest_path)) |parent_dir| {
                     if (!created_dirs.contains(parent_dir)) {
                         try fs.makePath(parent_dir);
-                        try created_dirs.put(try self.allocator.dupe(u8, parent_dir), {});
+                        try created_dirs.put(self.allocator, try self.allocator.dupe(u8, parent_dir), {});
                     }
                 }
 
@@ -239,7 +239,7 @@ pub const Resolver = struct {
             }
 
             if (locked.dependencies.count() > 0) {
-                const nested_pkg_dir_path = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/.store/{s}-{s}/.kupcad/pkg", .{ pkg_id, locked.resolved });
+                const nested_pkg_dir_path = try self.allocator.print(".kupcad/pkg/.store/{s}-{s}/.kupcad/pkg", .{ pkg_id, locked.resolved });
                 defer self.allocator.free(nested_pkg_dir_path);
                 try fs.makePath(nested_pkg_dir_path);
 
@@ -248,14 +248,14 @@ pub const Resolver = struct {
                     const dep_alias = dep_entry.key_ptr.*;
                     const dep_url = dep_entry.value_ptr.*;
                     const parsed = try provider.ParsedPackage.parse(dep_url);
-                    const dep_pkg_id = try std.fmt.allocPrint(self.allocator, "{s}-{s}-{s}", .{ parsed.domain, parsed.user, parsed.repo });
+                    const dep_pkg_id = try self.allocator.print("{s}-{s}-{s}", .{ parsed.domain, parsed.user, parsed.repo });
                     defer self.allocator.free(dep_pkg_id);
 
                     if (self.lockfile.packages.get(dep_pkg_id)) |dep_locked| {
-                        const link_name = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ nested_pkg_dir_path, dep_alias });
+                        const link_name = try self.allocator.print("{s}/{s}", .{ nested_pkg_dir_path, dep_alias });
                         defer self.allocator.free(link_name);
 
-                        const target_path = try std.fmt.allocPrint(self.allocator, "../../../{s}-{s}/pkg", .{ dep_pkg_id, dep_locked.resolved });
+                        const target_path = try self.allocator.print("../../../{s}-{s}/pkg", .{ dep_pkg_id, dep_locked.resolved });
                         defer self.allocator.free(target_path);
 
                         fs.symLink(target_path, link_name) catch |err| log.warn("Failed to create symlink: {}", .{err});
@@ -269,14 +269,14 @@ pub const Resolver = struct {
             const alias = entry.key_ptr.*;
             const url = entry.value_ptr.*;
             const parsed = try provider.ParsedPackage.parse(url);
-            const pkg_id = try std.fmt.allocPrint(self.allocator, "{s}-{s}-{s}", .{ parsed.domain, parsed.user, parsed.repo });
+            const pkg_id = try self.allocator.print("{s}-{s}-{s}", .{ parsed.domain, parsed.user, parsed.repo });
             defer self.allocator.free(pkg_id);
 
             if (self.lockfile.packages.get(pkg_id)) |locked| {
-                const link_name = try std.fmt.allocPrint(self.allocator, ".kupcad/pkg/{s}", .{alias});
+                const link_name = try self.allocator.print(".kupcad/pkg/{s}", .{alias});
                 defer self.allocator.free(link_name);
 
-                const target_path = try std.fmt.allocPrint(self.allocator, ".store/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
+                const target_path = try self.allocator.print(".store/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
                 defer self.allocator.free(target_path);
 
                 fs.symLink(target_path, link_name) catch |err| log.warn("Failed to create symlink: {}", .{err});

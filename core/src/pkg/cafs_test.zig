@@ -18,7 +18,7 @@ test "Cafs: isolates physical filesystem operations using system temp directorie
     defer cafs.deinit();
 
     const cwd = std.Io.Dir.cwd();
-    const files_dir = try std.fmt.allocPrint(testing.allocator, "{s}/files", .{tmp_path});
+    const files_dir = try testing.allocator.print("{s}/files", .{tmp_path});
     defer testing.allocator.free(files_dir);
 
     var dir = try cwd.openDir(testing.io, files_dir, .{});
@@ -38,7 +38,7 @@ test "Cafs: blobPath generates correct absolute paths" {
     var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
     defer cafs.deinit();
 
-    const expected = try std.fmt.allocPrint(testing.allocator, "{s}/files/deadbeef", .{tmp_path});
+    const expected = try testing.allocator.print("{s}/files/deadbeef", .{tmp_path});
     defer testing.allocator.free(expected);
 
     const actual = try cafs.blobPath("deadbeef");
@@ -90,7 +90,7 @@ test "Cafs: extractTarball leverages PID and timestamp for concurrent isolation"
     defer cafs.deinit();
 
     const cwd = std.Io.Dir.cwd();
-    const dummy_tar = try std.fmt.allocPrint(testing.allocator, "{s}/dummy.tar.gz", .{tmp_path});
+    const dummy_tar = try testing.allocator.print("{s}/dummy.tar.gz", .{tmp_path});
     defer testing.allocator.free(dummy_tar);
 
     var f = try cwd.createFile(testing.io, dummy_tar, .{});

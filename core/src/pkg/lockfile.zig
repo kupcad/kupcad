@@ -152,7 +152,7 @@ pub const Lockfile = struct {
                 const locked_pkg = self.packages.get(pkg_id).?;
                 const comma1 = if (i < pkg_keys.items.len - 1) "," else "";
 
-                const pkg_header = try std.fmt.allocPrint(self.allocator, "    \"{s}\": {{\n      \"resolved\": \"{s}\",\n      \"ref\": \"{s}\",\n      \"integrity\": \"{s}\"", .{ pkg_id, locked_pkg.resolved, locked_pkg.ref, locked_pkg.integrity });
+                const pkg_header = try self.allocator.print("    \"{s}\": {{\n      \"resolved\": \"{s}\",\n      \"ref\": \"{s}\",\n      \"integrity\": \"{s}\"", .{ pkg_id, locked_pkg.resolved, locked_pkg.ref, locked_pkg.integrity });
                 defer self.allocator.free(pkg_header);
                 try out_str.appendSlice(self.allocator, pkg_header);
 
@@ -168,7 +168,7 @@ pub const Lockfile = struct {
                     for (dep_keys.items, 0..) |dep_key, j| {
                         const dep_val = locked_pkg.dependencies.get(dep_key).?;
                         const comma2 = if (j < dep_keys.items.len - 1) "," else "";
-                        const dep_line = try std.fmt.allocPrint(self.allocator, "        \"{s}\": \"{s}\"{s}\n", .{ dep_key, dep_val, comma2 });
+                        const dep_line = try self.allocator.print("        \"{s}\": \"{s}\"{s}\n", .{ dep_key, dep_val, comma2 });
                         defer self.allocator.free(dep_line);
                         try out_str.appendSlice(self.allocator, dep_line);
                     }

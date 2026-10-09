@@ -16,11 +16,11 @@ pub const Cafs = struct {
         // Use native I/O for the global CAFS directories
         cwd.createDirPath(io, global_dir_path) catch |err| std.log.warn("Failed to create CAFS dir: {}", .{err});
 
-        const files_path = try std.fmt.allocPrint(allocator, "{s}/files", .{global_dir_path});
+        const files_path = try allocator.print("{s}/files", .{global_dir_path});
         defer allocator.free(files_path);
         cwd.createDirPath(io, files_path) catch |err| std.log.warn("Failed to create CAFS files dir: {}", .{err});
 
-        const tmp_path = try std.fmt.allocPrint(allocator, "{s}/tmp", .{global_dir_path});
+        const tmp_path = try allocator.print("{s}/tmp", .{global_dir_path});
         defer allocator.free(tmp_path);
         cwd.createDirPath(io, tmp_path) catch |err| std.log.warn("Failed to create CAFS tmp dir: {}", .{err});
 
@@ -38,7 +38,7 @@ pub const Cafs = struct {
 
     /// Resolves the absolute physical path of a blob within the CAFS based on its hash
     pub fn blobPath(self: *Cafs, hash_hex: []const u8) ![]const u8 {
-        return std.fmt.allocPrint(self.allocator, "{s}/files/{s}", .{ self.global_dir_path, hash_hex });
+        return self.allocator.print("{s}/files/{s}", .{ self.global_dir_path, hash_hex });
     }
 
     /// Hard links a file from CAFS to the local project store via VFS
@@ -113,7 +113,7 @@ pub const Cafs = struct {
             const rel_path = entry.key_ptr.*;
             const hash_hex = entry.value_ptr.*;
 
-            const dest_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ dest_dir, rel_path });
+            const dest_path = try self.allocator.print("{s}/{s}", .{ dest_dir, rel_path });
             defer self.allocator.free(dest_path);
 
             try self.linkBlob(hash_hex, dest_path);
@@ -138,7 +138,7 @@ pub const Cafs = struct {
         };
 
         // Combine nanosecond timestamp with the PID for collision-proof isolation
-        const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}/tmp_{d}_{d}", .{ self.global_dir_path, std.Io.Clock.real.now(self.io).nanoseconds, pid });
+        const tmp_path = try self.allocator.print("{s}/tmp_{d}_{d}", .{ self.global_dir_path, std.Io.Clock.real.now(self.io).nanoseconds, pid });
         defer self.allocator.free(tmp_path);
 
         try cwd.createDirPath(self.io, tmp_path);
@@ -175,7 +175,7 @@ pub const Cafs = struct {
             const item_rel_path = if (rel_path.len == 0)
                 try self.allocator.dupe(u8, entry.name)
             else
-                try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ rel_path, entry.name });
+                try self.allocator.print("{s}/{s}", .{ rel_path, entry.name });
             defer self.allocator.free(item_rel_path);
 
             switch (entry.kind) {
@@ -206,7 +206,7 @@ pub const Cafs = struct {
 
         var rand_buf: [8]u8 = undefined;
         self.io.random(&rand_buf);
-        const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}/tmp/blob_{x}", .{ self.global_dir_path, &rand_buf });
+        const tmp_path = try self.allocator.print("{s}/tmp/blob_{x}", .{ self.global_dir_path, &rand_buf });
         defer self.allocator.free(tmp_path);
 
         const cwd = std.Io.Dir.cwd();
@@ -227,9 +227,9 @@ pub const Cafs = struct {
         file.close(self.io);
 
         const hash_out = hasher.finalResult();
-        const hash_hex = try std.fmt.allocPrint(self.allocator, "{x}", .{&hash_out});
+        const hash_hex = try self.allocator.print("{x}", .{&hash_out});
 
-        const final_path = try std.fmt.allocPrint(self.allocator, "{s}/files/{s}", .{ self.global_dir_path, hash_hex });
+        const final_path = try self.allocator.print("{s}/files/{s}", .{ self.global_dir_path, hash_hex });
         defer self.allocator.free(final_path);
 
         if (cwd.access(self.io, final_path, .{})) |_| {

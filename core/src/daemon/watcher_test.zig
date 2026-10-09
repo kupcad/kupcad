@@ -10,7 +10,7 @@ test "Daemon Watcher: detects file modification on event loop tick" {
     const tmp_dir_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
     defer testing.allocator.free(tmp_dir_path);
 
-    const file_path = try std.fmt.allocPrint(testing.allocator, "{s}/test_watch_target.kup", .{tmp_dir_path});
+    const file_path = try testing.allocator.print("{s}/test_watch_target.kup", .{tmp_dir_path});
     defer testing.allocator.free(file_path);
 
     // 1. Create a temporary source file inside isolated tmpDir
@@ -32,8 +32,8 @@ test "Daemon Watcher: detects file modification on event loop tick" {
     const root_id = session.workspace.path_to_id.get(file_path).?;
 
     // Clear initial state (global_revision starts at 1)
-    session.nodes.items[@intFromEnum(root_id)].is_stale = false;
-    session.nodes.items[@intFromEnum(root_id)].verified_at = 1;
+    session.nodes.items[@backingInt(root_id)].is_stale = false;
+    session.nodes.items[@backingInt(root_id)].verified_at = 1;
 
     // 3. Initialize Watcher & enable one-shot mode for unit test isolation
     var watcher = try Watcher.init(&session, file_path, testing.io);
@@ -54,7 +54,7 @@ test "Daemon Watcher: detects file modification on event loop tick" {
     // 6. Assert that markFileEdited bumped revision to 2 AND re-evaluation verified the node
     try testing.expectEqual(@as(u64, 2), session.global_revision);
 
-    const node = session.nodes.items[@intFromEnum(root_id)];
+    const node = session.nodes.items[@backingInt(root_id)];
     try testing.expectEqual(@as(u64, 2), node.verified_at);
     try testing.expect(!node.is_stale);
 }

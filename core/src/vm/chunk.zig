@@ -176,7 +176,7 @@ pub const Chunk = struct {
 
     /// Convenience wrapper to write an OpCode enum
     pub fn writeOp(self: *Chunk, allocator: std.mem.Allocator, op: OpCode, source_offset: u32) !void {
-        try self.write(allocator, @intFromEnum(op), source_offset);
+        try self.write(allocator, @backingInt(op), source_offset);
     }
 
     /// Adds a Value to the constant pool and returns its 0-based index

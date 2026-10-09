@@ -84,7 +84,7 @@ pub const ViewportWsServer = struct {
 
             const accept_key = try self.generateAcceptKey(client_key);
 
-            const response = try std.fmt.allocPrint(self.allocator, "HTTP/1.1 101 Switching Protocols\r\n" ++
+            const response = try self.allocator.print("HTTP/1.1 101 Switching Protocols\r\n" ++
                 "Upgrade: websocket\r\n" ++
                 "Connection: Upgrade\r\n" ++
                 "Sec-WebSocket-Accept: {s}\r\n\r\n", .{accept_key});
@@ -110,7 +110,7 @@ pub const ViewportWsServer = struct {
 
     pub fn broadcastSessionMesh(self: *ViewportWsServer, session: *ScriptSession, root_mod_path: []const u8) !void {
         const root_id = session.workspace.path_to_id.get(root_mod_path) orelse return;
-        const node = &session.nodes.items[@intFromEnum(root_id)];
+        const node = &session.nodes.items[@backingInt(root_id)];
         const handle = node.cached_handle orelse return;
 
         // 1. Build the payload OUTSIDE the lock
@@ -182,7 +182,7 @@ pub const ViewportWsServer = struct {
     }
 
     fn generateAcceptKey(self: *ViewportWsServer, client_key: []const u8) ![28]u8 {
-        const concatenated = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ client_key, WS_GUID });
+        const concatenated = try self.allocator.print("{s}{s}", .{ client_key, WS_GUID });
         defer self.allocator.free(concatenated);
 
         var sha1 = std.crypto.hash.Sha1.init(.{});

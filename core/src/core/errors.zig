@@ -29,7 +29,7 @@ pub const Diagnostics = struct {
     }
 
     pub fn add(self: *Diagnostics, loc: token.Location, comptime fmt: []const u8, args: anytype) void {
-        const msg = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
+        const msg = self.allocator.print(fmt, args) catch return;
         self.list.append(self.allocator, .{ .loc = loc, .message = msg }) catch return;
     }
 };

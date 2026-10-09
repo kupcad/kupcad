@@ -20,7 +20,6 @@ pub fn request(
     const port = uri.port orelse default_port;
 
     var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
-
     const host_name = try std.Io.net.HostName.fromUri(uri, &host_buf);
 
     const conn = try client.connectTcpOptions(.{

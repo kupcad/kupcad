@@ -21,7 +21,7 @@ pub const GarbageCollector = struct {
 
     /// Prunes unused blobs from the CAFS and the SQLite index
     pub fn prune(self: *GarbageCollector, force: bool) !void {
-        const files_path = try std.fmt.allocPrint(self.allocator, "{s}/files", .{self.cafs.global_dir_path});
+        const files_path = try self.allocator.print("{s}/files", .{self.cafs.global_dir_path});
         defer self.allocator.free(files_path);
 
         const cwd = std.Io.Dir.cwd();
@@ -55,7 +55,7 @@ pub const GarbageCollector = struct {
             bytes_freed += stat.size;
 
             // Remove from SQLite index
-            const delete_stmt = try std.fmt.allocPrint(self.allocator, "DELETE FROM files WHERE hash = '{s}'", .{entry.name});
+            const delete_stmt = try self.allocator.print("DELETE FROM files WHERE hash = '{s}'", .{entry.name});
             defer self.allocator.free(delete_stmt);
             try self.store.db.exec(delete_stmt, .{}, .{});
         }
@@ -64,7 +64,7 @@ pub const GarbageCollector = struct {
 
         // Update last_prune_time in meta table (Unix epoch seconds)
         const now_sec = @divFloor(now_ts.nanoseconds, std.time.ns_per_s);
-        const update_meta = try std.fmt.allocPrint(self.allocator, "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_prune_time', '{d}')", .{now_sec});
+        const update_meta = try self.allocator.print("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_prune_time', '{d}')", .{now_sec});
         defer self.allocator.free(update_meta);
         try self.store.db.exec(update_meta, .{}, .{});
     }

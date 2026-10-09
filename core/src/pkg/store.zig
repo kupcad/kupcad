@@ -251,7 +251,7 @@ pub const Store = struct {
         hasher.final(&digest);
 
         const hex = std.fmt.bytesToHex(digest, .lower);
-        return std.fmt.allocPrint(allocator, "sha256-{s}", .{hex});
+        return allocator.print("sha256-{s}", .{hex});
     }
 
     /// Checks whether a package commit_sha exists in the offline store

@@ -210,7 +210,7 @@ test "GC: Mass allocation and sweep underflow protection" {
 
     // Allocate and free multiple batches of dynamic strings and closures
     for (0..500) |i| {
-        const str_buf = try std.fmt.allocPrint(testing.allocator, "tmp_string_{d}", .{i});
+        const str_buf = try testing.allocator.print("tmp_string_{d}", .{i});
         defer testing.allocator.free(str_buf);
 
         _ = try vm.allocateString(str_buf);

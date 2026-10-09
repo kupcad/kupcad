@@ -44,7 +44,7 @@ pub const Workspace = struct {
         if (self.path_to_id.get(path)) |existing_id| return existing_id;
 
         const doc = try Document.parseRaw(self.allocator, source);
-        const id: ModuleId = @enumFromInt(self.modules.items.len);
+        const id: ModuleId = @fromBackingInt(@as(u32, @intCast(self.modules.items.len)));
 
         try self.modules.append(self.allocator, .{
             .id = id,
@@ -53,7 +53,7 @@ pub const Workspace = struct {
             .doc = doc,
         });
 
-        try self.path_to_id.put(self.allocator, self.modules.items[@intFromEnum(id)].path, id);
+        try self.path_to_id.put(self.allocator, self.modules.items[@backingInt(id)].path, id);
         return id;
     }
 
@@ -101,7 +101,7 @@ pub const Workspace = struct {
         for (self.modules.items, 0..) |*mod, i| {
             unmet_deps[i] = @intCast(mod.deps.items.len);
             for (mod.deps.items) |dep_id| {
-                try dependents[@intFromEnum(dep_id)].append(self.allocator, @enumFromInt(i));
+                try dependents[@backingInt(dep_id)].append(self.allocator, @fromBackingInt(@as(u32, @intCast(i))));
             }
         }
 
@@ -109,7 +109,7 @@ pub const Workspace = struct {
         defer queue.deinit(self.allocator);
 
         for (unmet_deps, 0..) |unmet, i| {
-            if (unmet == 0) try queue.append(self.allocator, @enumFromInt(i));
+            if (unmet == 0) try queue.append(self.allocator, @fromBackingInt(@as(u32, @intCast(i))));
         }
 
         var sorted = std.ArrayListUnmanaged(ModuleId).empty;
@@ -118,9 +118,9 @@ pub const Workspace = struct {
         while (queue.pop()) |u| {
             try sorted.append(self.allocator, u);
 
-            for (dependents[@intFromEnum(u)].items) |v| {
-                unmet_deps[@intFromEnum(v)] -= 1;
-                if (unmet_deps[@intFromEnum(v)] == 0) {
+            for (dependents[@backingInt(u)].items) |v| {
+                unmet_deps[@backingInt(v)] -= 1;
+                if (unmet_deps[@backingInt(v)] == 0) {
                     try queue.append(self.allocator, v);
                 }
             }

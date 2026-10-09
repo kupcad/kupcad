@@ -26,7 +26,7 @@ fn dumpNode(
     switch (node.tag) {
         .identifier, .string, .symbol => {
             // Extract the StringId from the node's data payload
-            const name_id: ast.StringId = @enumFromInt(node.data);
+            const name_id: ast.StringId = @fromBackingInt(node.data);
             // Look up the actual string text from the AST tree
             const str_content = tree.getString(name_id);
 
@@ -51,8 +51,8 @@ fn dumpNode(
             out.writer.print(" '{s}'", .{@tagName(tree.unaryExpr(node).op)}) catch {};
         },
         .defined_expr => {
-            if (node.data != @intFromEnum(ast.StringId.none)) {
-                out.writer.print("(defined? '{s}')\n", .{doc.tree.getString(@as(ast.StringId, @enumFromInt(node.data)))}) catch {};
+            if (node.data != @backingInt(ast.StringId.none)) {
+                out.writer.print("(defined? '{s}')\n", .{doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data)))}) catch {};
             } else {
                 out.writer.print("(defined?)\n", .{}) catch {};
             }
@@ -61,7 +61,7 @@ fn dumpNode(
     }
 
     // Print Semantic Resolver Scope data (if available)
-    const sym = doc.symbols[@intFromEnum(node_idx)];
+    const sym = doc.symbols[@backingInt(node_idx)];
     if (sym.kind != .unresolved) {
         out.writer.print(" (symbol: {s} slot {d})", .{ @tagName(sym.kind), sym.index }) catch {};
     }
@@ -75,7 +75,7 @@ fn dumpNode(
 
     // Calculate indentation for children
     const next_prefix_chunk = if (is_last) "    " else "│   ";
-    const next_prefix = try std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, next_prefix_chunk });
+    const next_prefix = try allocator.print("{s}{s}", .{ prefix, next_prefix_chunk });
     defer allocator.free(next_prefix);
 
     // Gather children dynamically based on AST Tag

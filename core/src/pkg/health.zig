@@ -58,7 +58,7 @@ pub const Doctor = struct {
         var missing_count: usize = 0;
 
         while (try rows.next()) |row| {
-            const final_path = try std.fmt.allocPrint(self.allocator, "{s}/files/{s}", .{ self.cafs.global_dir_path, row.hash });
+            const final_path = try self.allocator.print("{s}/files/{s}", .{ self.cafs.global_dir_path, row.hash });
             defer self.allocator.free(final_path);
 
             const file_exists = if (cwd.openFile(self.io, final_path, .{})) |f| blk: {
@@ -68,11 +68,11 @@ pub const Doctor = struct {
 
             if (!file_exists) {
                 // Delete from DB so it gets re-downloaded next install
-                const del_files = try std.fmt.allocPrint(self.allocator, "DELETE FROM files WHERE hash = '{s}'", .{row.hash});
+                const del_files = try self.allocator.print("DELETE FROM files WHERE hash = '{s}'", .{row.hash});
                 defer self.allocator.free(del_files);
                 try self.store.db.exec(del_files, .{}, .{});
 
-                const del_pkg = try std.fmt.allocPrint(self.allocator, "DELETE FROM package_files WHERE file_hash = '{s}'", .{row.hash});
+                const del_pkg = try self.allocator.print("DELETE FROM package_files WHERE file_hash = '{s}'", .{row.hash});
                 defer self.allocator.free(del_pkg);
                 try self.store.db.exec(del_pkg, .{}, .{});
 
@@ -90,7 +90,7 @@ pub const Doctor = struct {
     fn healOrphanedBlobs(self: *Doctor) !void {
         log.info("[3/3] Scanning for orphaned physical files... ", .{});
 
-        const files_path = try std.fmt.allocPrint(self.allocator, "{s}/files", .{self.cafs.global_dir_path});
+        const files_path = try self.allocator.print("{s}/files", .{self.cafs.global_dir_path});
         defer self.allocator.free(files_path);
 
         const cwd = std.Io.Dir.cwd();
@@ -106,7 +106,7 @@ pub const Doctor = struct {
             if (entry.kind != .file) continue;
 
             // Check if hash exists in DB
-            const query = try std.fmt.allocPrint(self.allocator, "SELECT 1 FROM files WHERE hash = '{s}'", .{entry.name});
+            const query = try self.allocator.print("SELECT 1 FROM files WHERE hash = '{s}'", .{entry.name});
             defer self.allocator.free(query);
 
             var stmt = try self.store.db.prepare(query);
@@ -116,7 +116,7 @@ pub const Doctor = struct {
                 // File exists physically but not in DB. Re-register it.
                 const stat = try dir.statFile(self.io, entry.name, .{});
 
-                const insert_stmt = try std.fmt.allocPrint(self.allocator, "INSERT INTO files (hash, size, created_at) VALUES ('{s}', {d}, {d})", .{ entry.name, stat.size, now });
+                const insert_stmt = try self.allocator.print("INSERT INTO files (hash, size, created_at) VALUES ('{s}', {d}, {d})", .{ entry.name, stat.size, now });
                 defer self.allocator.free(insert_stmt);
 
                 try self.store.db.exec(insert_stmt, .{}, .{});

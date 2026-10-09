@@ -29,7 +29,7 @@ pub const SelfSubtractionRule = struct {
 
                 if (left.tag == .identifier and right.tag == .identifier) {
                     if (left.data == right.data) {
-                        const var_name = tree.getString(@as(ast.StringId, @enumFromInt(left.data)));
+                        const var_name = tree.getString(@as(ast.StringId, @fromBackingInt(left.data)));
                         try engine.addDiagnostic(engine.getLoc(node.main_token), .warning, "CSG Warning: Self-difference operation ('{s} - {s}') will result in empty geometry.", .{ var_name, var_name });
                     }
                 }

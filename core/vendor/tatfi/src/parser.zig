@@ -52,7 +52,7 @@ pub fn LazyArray(I: type, T: type) type {
                 inline else => |F, tag| {
                     const i = std.mem.readInt(F, bytes, .big);
                     return switch (tag) {
-                        .@"enum" => @enumFromInt(i),
+                        .@"enum" => @fromBackingInt(i),
                         .wrapper => .{i},
                         .fancy_wrapper => .{ .inner = i },
                         .flags => @bitCast(i),
@@ -366,7 +366,7 @@ pub const Stream = struct {
             inline else => |F, tag| {
                 const i = std.mem.readInt(F, bytes[0..size], .big);
                 return switch (tag) {
-                    .@"enum" => @enumFromInt(i),
+                    .@"enum" => @fromBackingInt(i),
                     .wrapper => .{i},
                     .fancy_wrapper => .{ .inner = i },
                     .flags => @bitCast(i),

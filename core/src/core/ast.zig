@@ -375,18 +375,18 @@ pub const Tree = struct {
     /// Safely extracts the StringId payload from a node
     pub inline fn stringId(self: *const Tree, node: *const Node) StringId {
         _ = self;
-        return @as(StringId, @enumFromInt(node.data));
+        return @as(StringId, @fromBackingInt(node.data));
     }
 
     // --- Accessor Helpers ---
     pub fn getNode(self: *const Tree, index: NodeIndex) ?*const Node {
         if (index == .none) return null;
-        return &self.nodes.items[@intFromEnum(index)];
+        return &self.nodes.items[@backingInt(index)];
     }
 
     pub fn getString(self: *const Tree, id: StringId) []const u8 {
         if (id == .none) return "";
-        const span = self.string_spans.items[@intFromEnum(id)];
+        const span = self.string_spans.items[@backingInt(id)];
         return self.string_bytes.items[span.offset .. span.offset + span.length];
     }
 
@@ -443,7 +443,7 @@ pub const Tree = struct {
 
     pub fn nodeIndex(self: *const Tree, node: *const Node) NodeIndex {
         _ = self;
-        return @enumFromInt(node.data);
+        return @fromBackingInt(node.data);
     }
 
     pub fn nodeSpan(self: *const Tree, node: *const Node) Span {
@@ -457,8 +457,8 @@ pub const Tree = struct {
     pub fn singletonClassPayload(self: *const Tree, node: *const Node) SingletonClass {
         const base = node.data;
         return .{
-            .target = @enumFromInt(self.extra_data.items[base]),
-            .body = @enumFromInt(self.extra_data.items[base + 1]),
+            .target = @fromBackingInt(self.extra_data.items[base]),
+            .body = @fromBackingInt(self.extra_data.items[base + 1]),
         };
     }
 
@@ -466,9 +466,9 @@ pub const Tree = struct {
         const base = node.data;
         const op_val = self.extra_data.items[base + 1];
         return .{
-            .name = @enumFromInt(self.extra_data.items[base]),
-            .op = if (op_val == std.math.maxInt(u32)) null else @enumFromInt(op_val),
-            .value = @enumFromInt(self.extra_data.items[base + 2]),
+            .name = @fromBackingInt(self.extra_data.items[base]),
+            .op = if (op_val == std.math.maxInt(u32)) null else @fromBackingInt(@as(u5, @intCast(op_val))),
+            .value = @fromBackingInt(self.extra_data.items[base + 2]),
         };
     }
 
@@ -477,8 +477,8 @@ pub const Tree = struct {
         const op_val = self.extra_data.items[base + 2];
         return .{
             .lhs = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
-            .op = if (op_val == std.math.maxInt(u32)) null else @enumFromInt(op_val),
-            .value = @enumFromInt(self.extra_data.items[base + 3]),
+            .op = if (op_val == std.math.maxInt(u32)) null else @fromBackingInt(@as(u5, @intCast(op_val))),
+            .value = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
@@ -486,10 +486,10 @@ pub const Tree = struct {
         const base = node.data;
         const op_val = self.extra_data.items[base + 2];
         return .{
-            .target = @enumFromInt(self.extra_data.items[base]),
-            .property = @enumFromInt(self.extra_data.items[base + 1]),
-            .op = if (op_val == std.math.maxInt(u32)) null else @enumFromInt(op_val),
-            .value = @enumFromInt(self.extra_data.items[base + 3]),
+            .target = @fromBackingInt(self.extra_data.items[base]),
+            .property = @fromBackingInt(self.extra_data.items[base + 1]),
+            .op = if (op_val == std.math.maxInt(u32)) null else @fromBackingInt(@as(u5, @intCast(op_val))),
+            .value = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
@@ -497,46 +497,46 @@ pub const Tree = struct {
         const base = node.data;
         const op_val = self.extra_data.items[base + 2];
         return .{
-            .target = @enumFromInt(self.extra_data.items[base]),
-            .index = @enumFromInt(self.extra_data.items[base + 1]),
-            .op = if (op_val == std.math.maxInt(u32)) null else @enumFromInt(op_val),
-            .value = @enumFromInt(self.extra_data.items[base + 3]),
+            .target = @fromBackingInt(self.extra_data.items[base]),
+            .index = @fromBackingInt(self.extra_data.items[base + 1]),
+            .op = if (op_val == std.math.maxInt(u32)) null else @fromBackingInt(@as(u5, @intCast(op_val))),
+            .value = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
     pub fn binaryExpr(self: *const Tree, node: *const Node) BinaryExpr {
         const base = node.data;
         return .{
-            .op = @enumFromInt(self.extra_data.items[base]),
-            .left = @enumFromInt(self.extra_data.items[base + 1]),
-            .right = @enumFromInt(self.extra_data.items[base + 2]),
+            .op = @fromBackingInt(@as(u5, @intCast(self.extra_data.items[base]))),
+            .left = @fromBackingInt(self.extra_data.items[base + 1]),
+            .right = @fromBackingInt(self.extra_data.items[base + 2]),
         };
     }
 
     pub fn unaryExpr(self: *const Tree, node: *const Node) UnaryExpr {
         const base = node.data;
         return .{
-            .op = @enumFromInt(self.extra_data.items[base]),
-            .operand = @enumFromInt(self.extra_data.items[base + 1]),
+            .op = @fromBackingInt(@as(u2, @intCast(self.extra_data.items[base]))),
+            .operand = @fromBackingInt(self.extra_data.items[base + 1]),
         };
     }
 
     pub fn ternaryExpr(self: *const Tree, node: *const Node) TernaryExpr {
         const base = node.data;
         return .{
-            .condition = @enumFromInt(self.extra_data.items[base]),
-            .then_branch = @enumFromInt(self.extra_data.items[base + 1]),
-            .else_branch = @enumFromInt(self.extra_data.items[base + 2]),
+            .condition = @fromBackingInt(self.extra_data.items[base]),
+            .then_branch = @fromBackingInt(self.extra_data.items[base + 1]),
+            .else_branch = @fromBackingInt(self.extra_data.items[base + 2]),
         };
     }
 
     pub fn methodCall(self: *const Tree, node: *const Node) MethodCall {
         const base = node.data;
         return .{
-            .receiver = @enumFromInt(self.extra_data.items[base]),
-            .method_name = @enumFromInt(self.extra_data.items[base + 1]),
+            .receiver = @fromBackingInt(self.extra_data.items[base]),
+            .method_name = @fromBackingInt(self.extra_data.items[base + 1]),
             .args = .{ .start = self.extra_data.items[base + 2], .end = self.extra_data.items[base + 3] },
-            .block = @enumFromInt(self.extra_data.items[base + 4]),
+            .block = @fromBackingInt(self.extra_data.items[base + 4]),
             .is_safe = self.extra_data.items[base + 5] != 0,
             .end_token = self.extra_data.items[base + 6],
         };
@@ -546,7 +546,7 @@ pub const Tree = struct {
         const base = node.data;
         return .{
             .args = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
-            .block = @enumFromInt(self.extra_data.items[base + 2]),
+            .block = @fromBackingInt(self.extra_data.items[base + 2]),
             .implicit_args = self.extra_data.items[base + 3] != 0,
         };
     }
@@ -555,7 +555,7 @@ pub const Tree = struct {
         const base = node.data;
         return .{
             .params = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
-            .body = @enumFromInt(self.extra_data.items[base + 2]),
+            .body = @fromBackingInt(self.extra_data.items[base + 2]),
         };
     }
 
@@ -563,8 +563,8 @@ pub const Tree = struct {
         const base = node.data;
         return .{
             .symbols = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
-            .path = @enumFromInt(self.extra_data.items[base + 2]),
-            .attributes = @enumFromInt(self.extra_data.items[base + 3]),
+            .path = @fromBackingInt(self.extra_data.items[base + 2]),
+            .attributes = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
@@ -572,17 +572,17 @@ pub const Tree = struct {
         const base = node.data;
         return .{
             .symbols = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
-            .path = @enumFromInt(self.extra_data.items[base + 2]),
-            .attributes = @enumFromInt(self.extra_data.items[base + 3]),
+            .path = @fromBackingInt(self.extra_data.items[base + 2]),
+            .attributes = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
     pub fn ifStmt(self: *const Tree, node: *const Node) IfStmt {
         const base = node.data;
         return .{
-            .condition = @enumFromInt(self.extra_data.items[base]),
-            .then_branch = @enumFromInt(self.extra_data.items[base + 1]),
-            .else_branch = @enumFromInt(self.extra_data.items[base + 2]),
+            .condition = @fromBackingInt(self.extra_data.items[base]),
+            .then_branch = @fromBackingInt(self.extra_data.items[base + 1]),
+            .else_branch = @fromBackingInt(self.extra_data.items[base + 2]),
             .is_unless = self.extra_data.items[base + 3] != 0,
             .end_token = self.extra_data.items[base + 4],
         };
@@ -591,8 +591,8 @@ pub const Tree = struct {
     pub fn whileStmt(self: *const Tree, node: *const Node) WhileStmt {
         const base = node.data;
         return .{
-            .condition = @enumFromInt(self.extra_data.items[base]),
-            .body = @enumFromInt(self.extra_data.items[base + 1]),
+            .condition = @fromBackingInt(self.extra_data.items[base]),
+            .body = @fromBackingInt(self.extra_data.items[base + 1]),
             .is_until = self.extra_data.items[base + 2] != 0,
         };
     }
@@ -601,7 +601,7 @@ pub const Tree = struct {
         const base = node.data;
         return .{
             .bindings = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
-            .body = @enumFromInt(self.extra_data.items[base + 2]),
+            .body = @fromBackingInt(self.extra_data.items[base + 2]),
             .is_intersection = self.extra_data.items[base + 3] != 0,
         };
     }
@@ -609,18 +609,18 @@ pub const Tree = struct {
     pub fn caseStmt(self: *const Tree, node: *const Node) CaseStmt {
         const base = node.data;
         return .{
-            .condition = @enumFromInt(self.extra_data.items[base]),
+            .condition = @fromBackingInt(self.extra_data.items[base]),
             .when_branches = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
-            .else_branch = @enumFromInt(self.extra_data.items[base + 3]),
+            .else_branch = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
     pub fn defStmt(self: *const Tree, node: *const Node) DefStmt {
         const base = node.data;
         return .{
-            .name = @enumFromInt(self.extra_data.items[base]),
+            .name = @fromBackingInt(self.extra_data.items[base]),
             .params = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
-            .body = @enumFromInt(self.extra_data.items[base + 3]),
+            .body = @fromBackingInt(self.extra_data.items[base + 3]),
             .is_class_method = self.extra_data.items[base + 4] != 0,
             .end_token = self.extra_data.items[base + 5],
             .is_private = self.extra_data.items[base + 6] != 0,
@@ -630,9 +630,9 @@ pub const Tree = struct {
     pub fn classStmt(self: *const Tree, node: *const Node) ClassStmt {
         const base = node.data;
         return .{
-            .name = @enumFromInt(self.extra_data.items[base]),
-            .super_class = @enumFromInt(self.extra_data.items[base + 1]),
-            .body = @enumFromInt(self.extra_data.items[base + 2]),
+            .name = @fromBackingInt(self.extra_data.items[base]),
+            .super_class = @fromBackingInt(self.extra_data.items[base + 1]),
+            .body = @fromBackingInt(self.extra_data.items[base + 2]),
             .end_token = self.extra_data.items[base + 3],
         };
     }
@@ -640,9 +640,9 @@ pub const Tree = struct {
     pub fn moduleStmt(self: *const Tree, node: *const Node) ModuleStmt {
         const base = node.data;
         return .{
-            .name = @enumFromInt(self.extra_data.items[base]),
+            .name = @fromBackingInt(self.extra_data.items[base]),
             .params = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
-            .body = @enumFromInt(self.extra_data.items[base + 3]),
+            .body = @fromBackingInt(self.extra_data.items[base + 3]),
             .end_token = self.extra_data.items[base + 4],
         };
     }
@@ -650,17 +650,17 @@ pub const Tree = struct {
     pub fn beginStmt(self: *const Tree, node: *const Node) BeginStmt {
         const base = node.data;
         return .{
-            .body = @enumFromInt(self.extra_data.items[base]),
+            .body = @fromBackingInt(self.extra_data.items[base]),
             .rescues = .{ .start = self.extra_data.items[base + 1], .end = self.extra_data.items[base + 2] },
-            .ensure_body = @enumFromInt(self.extra_data.items[base + 3]),
+            .ensure_body = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
     pub fn docString(self: *const Tree, node: *const Node) DocString {
         const base = node.data;
         return .{
-            .tag_name = @enumFromInt(self.extra_data.items[base]),
-            .content = @enumFromInt(self.extra_data.items[base + 1]),
+            .tag_name = @fromBackingInt(self.extra_data.items[base]),
+            .content = @fromBackingInt(self.extra_data.items[base + 1]),
         };
     }
 
@@ -684,9 +684,9 @@ pub const Tree = struct {
     pub fn range(self: *const Tree, node: *const Node) Range {
         const base = node.data;
         return .{
-            .start = @enumFromInt(self.extra_data.items[base]),
-            .end = @enumFromInt(self.extra_data.items[base + 1]),
-            .step = @enumFromInt(self.extra_data.items[base + 2]),
+            .start = @fromBackingInt(self.extra_data.items[base]),
+            .end = @fromBackingInt(self.extra_data.items[base + 1]),
+            .step = @fromBackingInt(self.extra_data.items[base + 2]),
             .is_exclusive = self.extra_data.items[base + 3] != 0,
         };
     }
@@ -694,16 +694,16 @@ pub const Tree = struct {
     pub fn indexAccess(self: *const Tree, node: *const Node) IndexAccess {
         const base = node.data;
         return .{
-            .target = @enumFromInt(self.extra_data.items[base]),
-            .index = @enumFromInt(self.extra_data.items[base + 1]),
+            .target = @fromBackingInt(self.extra_data.items[base]),
+            .index = @fromBackingInt(self.extra_data.items[base + 1]),
         };
     }
 
     pub fn rescueModifier(self: *const Tree, node: *const Node) RescueModifier {
         const base = node.data;
         return .{
-            .expr = @enumFromInt(self.extra_data.items[base]),
-            .rescue_expr = @enumFromInt(self.extra_data.items[base + 1]),
+            .expr = @fromBackingInt(self.extra_data.items[base]),
+            .rescue_expr = @fromBackingInt(self.extra_data.items[base + 1]),
         };
     }
 };
@@ -773,7 +773,7 @@ pub const Builder = struct {
             .main_token = main_token,
             .data = data,
         });
-        return @as(NodeIndex, @enumFromInt(index));
+        return @as(NodeIndex, @fromBackingInt(index));
     }
 
     pub fn intern(self: *Builder, str: []const u8) !StringId {
@@ -789,7 +789,7 @@ pub const Builder = struct {
 
         const offset: u32 = @intCast(self.tree.string_bytes.items.len);
         try self.tree.string_bytes.appendSlice(self.allocator, str);
-        const id: StringId = @enumFromInt(self.tree.string_spans.items.len);
+        const id: StringId = @fromBackingInt(@as(u32, @intCast(self.tree.string_spans.items.len)));
         try self.tree.string_spans.append(self.allocator, .{
             .offset = offset,
             .length = @intCast(str.len),
@@ -854,12 +854,12 @@ pub const Builder = struct {
                 try self.tree.extra_data.append(self.allocator, item.end);
             } else if (@typeInfo(T) == .optional) {
                 if (item) |v| {
-                    try self.tree.extra_data.append(self.allocator, @intFromEnum(v));
+                    try self.tree.extra_data.append(self.allocator, @backingInt(v));
                 } else {
                     try self.tree.extra_data.append(self.allocator, std.math.maxInt(u32));
                 }
             } else if (@typeInfo(T) == .@"enum") {
-                try self.tree.extra_data.append(self.allocator, @intFromEnum(item));
+                try self.tree.extra_data.append(self.allocator, @backingInt(item));
             } else {
                 @compileError("Unsupported type for addExtra: " ++ @typeName(T));
             }
@@ -985,23 +985,23 @@ pub const Builder = struct {
 
     pub fn stringNode(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
         const str_id = try self.intern(lexeme_str);
-        return self.createNode(.string, main_token, @intFromEnum(str_id));
+        return self.createNode(.string, main_token, @backingInt(str_id));
     }
 
     pub fn stringNodeUnescaped(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
         const str_id = try self.internUnescaped(lexeme_str);
-        return self.createNode(.string, main_token, @intFromEnum(str_id));
+        return self.createNode(.string, main_token, @backingInt(str_id));
     }
 
     pub fn symbolNode(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
         const clean_str = if (lexeme_str.len > 0 and lexeme_str[0] == ':') lexeme_str[1..] else lexeme_str;
         const str_id = try self.intern(clean_str);
-        return self.createNode(.symbol, main_token, @intFromEnum(str_id));
+        return self.createNode(.symbol, main_token, @backingInt(str_id));
     }
 
     pub fn identifierNode(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
         const str_id = try self.intern(lexeme_str);
-        return self.createNode(.identifier, main_token, @intFromEnum(str_id));
+        return self.createNode(.identifier, main_token, @backingInt(str_id));
     }
 
     pub fn booleanNode(self: *Builder, val: bool, main_token: u24) !NodeIndex {
@@ -1171,27 +1171,27 @@ pub const Builder = struct {
     }
 
     pub fn returnStmt(self: *Builder, val: NodeIndex, main_token: u24) !NodeIndex {
-        return self.createNode(.return_stmt, main_token, @intFromEnum(val));
+        return self.createNode(.return_stmt, main_token, @backingInt(val));
     }
 
     pub fn breakStmt(self: *Builder, val: NodeIndex, main_token: u24) !NodeIndex {
-        return self.createNode(.break_stmt, main_token, @intFromEnum(val));
+        return self.createNode(.break_stmt, main_token, @backingInt(val));
     }
 
     pub fn nextStmt(self: *Builder, val: NodeIndex, main_token: u24) !NodeIndex {
-        return self.createNode(.next_stmt, main_token, @intFromEnum(val));
+        return self.createNode(.next_stmt, main_token, @backingInt(val));
     }
 
     pub fn splatExpr(self: *Builder, expr: NodeIndex, main_token: u24) !NodeIndex {
-        return self.createNode(.splat_expr, main_token, @intFromEnum(expr));
+        return self.createNode(.splat_expr, main_token, @backingInt(expr));
     }
 
     pub fn doubleSplatExpr(self: *Builder, expr: NodeIndex, main_token: u24) !NodeIndex {
-        return self.createNode(.double_splat_expr, main_token, @intFromEnum(expr));
+        return self.createNode(.double_splat_expr, main_token, @backingInt(expr));
     }
 
     pub fn eachExpr(self: *Builder, expr: NodeIndex, main_token: u24) !NodeIndex {
-        return self.createNode(.each_expr, main_token, @intFromEnum(expr));
+        return self.createNode(.each_expr, main_token, @backingInt(expr));
     }
 
     pub fn addDocString(self: *Builder, doc: DocString) !u32 {
