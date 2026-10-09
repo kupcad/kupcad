@@ -1442,3 +1442,141 @@ test "Compiler: Constant Folding optimizer" {
     // The expression "10 * 5.0 + 2" should have been folded at compile time
     try std.testing.expect(!has_math);
 }
+
+test "Compiler: Jump patch alignments for nested A and (B or C)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const A = try b.booleanNode(true, 0);
+    const B = try b.booleanNode(false, 0);
+    const C = try b.booleanNode(true, 0);
+
+    const b_or_c = try b.binary(.logical_or, B, C, 0);
+    const root = try b.binary(.logical_and, A, b_or_c, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(root);
+
+    // Bytecode Alignment Walkthrough:
+    // 0: op_true (A)
+    // 1: op_jump_if_false (AND jump)
+    // 2-5: [4-byte offset]
+    // 6: op_pop (AND pop)
+    // 7: op_false (B)
+    // 8: op_jump_if_false (OR else_jump)
+    // 9-12: [4-byte offset]
+    // 13: op_jump (OR end_jump)
+    // 14-17: [4-byte offset]
+    // 18: op_pop (OR pop)
+    // 19: op_true (C)
+    // 20: op_return (Implicitly added by compile)
+
+    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[1])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[7])));
+    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[8])));
+    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[13])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[18])));
+    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[19])));
+    try testing.expectEqual(chunk.OpCode.op_return, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[20])));
+}
+
+test "Compiler: Jump patch alignments for nested A or (B and C)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const A = try b.booleanNode(false, 0);
+    const B = try b.booleanNode(true, 0);
+    const C = try b.booleanNode(true, 0);
+
+    const b_and_c = try b.binary(.logical_and, B, C, 0);
+    const root = try b.binary(.logical_or, A, b_and_c, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(root);
+
+    // Bytecode Alignment Walkthrough:
+    // 0: op_false (A)
+    // 1: op_jump_if_false (OR else_jump)
+    // 2-5: [4-byte offset]
+    // 6: op_jump (OR end_jump)
+    // 7-10: [4-byte offset]
+    // 11: op_pop (OR pop left)
+    // 12: op_true (B)
+    // 13: op_jump_if_false (AND jump)
+    // 14-17: [4-byte offset]
+    // 18: op_pop (AND pop left)
+    // 19: op_true (C)
+    // 20: op_return
+
+    try testing.expectEqual(chunk.OpCode.op_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[0])));
+    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[1])));
+    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[6])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[11])));
+    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[12])));
+    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[13])));
+    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[18])));
+    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[19])));
+    try testing.expectEqual(chunk.OpCode.op_return, @as(chunk.OpCode, @enumFromInt(out_chunk.code.items[20])));
+}
+
+test "Compiler: Exhaustive runtime execution of Pratt parser logic jumps" {
+    // Tests that the Parser and Compiler integrate perfectly for deeply nested
+    // short-circuit paths. If a jump skips the wrong number of bytes,
+    // the VM will panic trying to execute the jump offset payload as an instruction.
+    const source =
+        \\def test_logic(a, b, c, d)
+        \\  a and (b or c) and d
+        \\end
+        \\
+        \\[
+        \\  test_logic(true, false, false, true),   # true and (false) and true -> false
+        \\  test_logic(true, false, true, false),   # true and (true) and false -> false
+        \\  test_logic(true, true, false, true),    # true and (true) and true -> true
+        \\  test_logic(false, true, true, true),    # false and (...) -> false
+        \\  test_logic(true, false, true, true)     # true and (true) and true -> true
+        \\]
+    ;
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+
+    const result = vm.interpret(&out_chunk);
+    try testing.expectEqual(.ok, result);
+
+    const arr_obj = vm.stack[vm.stack_top - 1].asArray();
+    try testing.expectEqual(@as(usize, 5), arr_obj.items.items.len);
+    try testing.expectEqual(false, arr_obj.items.items[0].asBool());
+    try testing.expectEqual(false, arr_obj.items.items[1].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[2].asBool());
+    try testing.expectEqual(false, arr_obj.items.items[3].asBool());
+    try testing.expectEqual(true, arr_obj.items.items[4].asBool());
+}
