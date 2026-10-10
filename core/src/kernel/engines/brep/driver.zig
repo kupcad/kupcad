@@ -66,6 +66,8 @@ pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHa
 
     for (handles) |h| {
         if (h.engine != .brep_native) continue;
+        if (@intFromPtr(h.ptr) == 0) continue;
+
         const solid: *BrepSolid = @ptrCast(@alignCast(h.ptr));
         try step_solids.append(allocator, .{
             .t_arena = &solid.t_arena,
