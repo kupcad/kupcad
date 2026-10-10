@@ -114,6 +114,11 @@ pub const DAGBuilder = struct {
     fn appendNodeWithRollback(self: *DAGBuilder, new_node: DAGNode, snap: StateSnapshot) !DAGNodeIndex {
         errdefer self.rollback(snap);
 
+        // SAFETY: Prevents the DAG index from reaching the maxInt(u32) sentinel used by Concrete Geometry
+        if (self.nodes.items.len >= std.math.maxInt(u32) - 1) {
+            return error.ExecutionLimitExceeded;
+        }
+
         const hash = self.computeNodeHash(new_node);
         if (self.dedup_map.get(hash)) |existing_idx| {
             // Roll back array mutations if CSE found an existing identical node
