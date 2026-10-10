@@ -9936,7 +9936,7 @@ test "VM: GC marks unwind_err_val during native unwind" {
 
     // Park an un-rooted error string in unwind_err_val
     const err_str = try vm.allocateString("Unwind error protection");
-    vm.unwind_err_val = err_str;
+    try vm.unwind_stack.append(testing.allocator, .{ .err_val = err_str, .stack_top = 0 });
 
     // Force GC cycle
     vm.gc.collectGarbage(&vm, false);
@@ -10038,7 +10038,7 @@ test "VM: Sequential rescued exceptions do not accumulate un-swept memory" {
     _ = try executeAndAssertStack(&vm, &out_chunk, 1);
 
     // Verify unwind state was cleared
-    try testing.expect(vm.unwind_err_val == null);
+    try testing.expectEqual(@as(usize, 0), vm.unwind_stack.items.len);
 
     // Collect garbage and verify all temporary exception objects were swept
     vm.gc.collectGarbage(&vm, false);
@@ -10065,8 +10065,7 @@ test "VM: Uncaught exception state is purged on resetStack" {
 
     // State should be completely cleared by interpret's exit or resetStack
     vm.resetStack();
-    try testing.expect(vm.unwind_err_val == null);
-    try testing.expectEqual(@as(usize, 0), vm.unwind_stack_top);
+    try testing.expectEqual(@as(usize, 0), vm.unwind_stack.items.len);
 }
 
 test "VM: Repeated string interpolation loop recycles scratch arena" {
@@ -10128,8 +10127,7 @@ test "VM: Nested native FFI unwinding clears unwind_err_val at rescue target" {
     _ = try executeAndAssertStack(&vm, &out_chunk, 1);
 
     // Unwind state must be cleared after successfully reaching rescue block
-    try testing.expect(vm.unwind_err_val == null);
-    try testing.expectEqual(@as(usize, 0), vm.unwind_stack_top);
+    try testing.expectEqual(@as(usize, 0), vm.unwind_stack.items.len);
 }
 
 test "VM: Repeated string addition (+ operator) recycles scratch arena" {
@@ -10909,4 +10907,57 @@ test "VM: op_interpolate gracefully falls back to heap for strings exceeding 1KB
 
     try std.testing.expect(result.isNumber());
     try std.testing.expectEqual(@as(f64, 3072.0), result.asNumber());
+}
+
+test "VM: Nested native boundaries unwind exceptions safely without stack corruption" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // Native trampoline that executes a closure passed as argument 0
+    const native_runner = struct {
+        fn run(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+            const vm_ptr = @as(*VM, @ptrCast(@alignCast(v_ptr)));
+            if (arg_count < 1) return error.RuntimeError;
+            const closure_val = args[0];
+            if (!closure_val.isClosure()) return error.RuntimeError;
+            return vm_ptr.callClosureSync(closure_val.asClosure(), &.{});
+        }
+    }.run;
+
+    const native_obj = try vm.gc.allocateNative(&vm, native_runner);
+    try vm.globals.put(vm.gc.trackingAllocator(), "run_closure", value.Value.initObj(&native_obj.obj));
+
+    // Script with nested native boundary re-entrancy:
+    // Outer script -> Native run_closure -> Closure -> Native run_closure -> Closure -> raise
+    const source =
+        \\begin
+        \\  run_closure(-> {
+        \\    run_closure(-> {
+        \\      raise "nested error"
+        \\    })
+        \\  })
+        \\rescue => e
+        \\  e.message
+        \\end
+    ;
+
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try comp.compile(doc.tree.root);
+    const result = vm.interpret(&out_chunk);
+
+    try testing.expectEqual(.ok, result);
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+
+    const rescued_val = vm.stack[0];
+    try testing.expect(rescued_val.isString());
+    try testing.expectEqualStrings("nested error", rescued_val.asString().chars);
 }

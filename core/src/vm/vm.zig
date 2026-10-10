@@ -61,6 +61,11 @@ pub const RescueFrame = struct {
     upvalue_ptr: ?*value.ObjUpvalue,
 };
 
+pub const UnwindFrame = struct {
+    err_val: value.Value,
+    stack_top: usize,
+};
+
 pub const VM = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -113,8 +118,7 @@ pub const VM = struct {
     static_nil: ?*value.ObjString = null,
 
     // --- Track stack state to prevent native FFI corruption ---
-    unwind_stack_top: usize = 0,
-    unwind_err_val: ?value.Value = null,
+    unwind_stack: std.ArrayListUnmanaged(UnwindFrame) = .empty,
 
     config_stack: std.ArrayListUnmanaged(EngineConfig) = .empty,
 
@@ -184,8 +188,7 @@ pub const VM = struct {
             .static_true = null,
             .static_false = null,
             .static_nil = null,
-            .unwind_stack_top = 0,
-            .unwind_err_val = null,
+            .unwind_stack = .empty,
             .instruction_count = 0,
             .instruction_limit = limits.DEFAULT_INSTRUCTION_LIMIT,
             .import_depth = 0,
@@ -228,6 +231,7 @@ pub const VM = struct {
         self.param_registry.deinit(self.allocator);
         self.param_lookup.deinit(self.allocator);
         self.config_stack.deinit(self.allocator);
+        self.unwind_stack.deinit(self.allocator);
         self.materials.deinit(self.allocator);
         self.display_list.deinit(self.allocator);
         self.scratch_arena.deinit();
@@ -1485,8 +1489,7 @@ pub const VM = struct {
     }
 
     pub inline fn clearUnwindState(self: *VM) void {
-        self.unwind_err_val = null;
-        self.unwind_stack_top = 0;
+        self.unwind_stack.clearRetainingCapacity();
     }
 
     pub fn resetStack(self: *VM) void {
@@ -2365,10 +2368,9 @@ pub const VM = struct {
             if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
             if (err == error.Unwind) {
                 // --- Restore Stack corrupted by Native Defers ---
-                if (self.unwind_err_val) |err_val| {
-                    self.stack_top = self.unwind_stack_top;
-                    self.push(err_val);
-                    self.clearUnwindState();
+                if (self.unwind_stack.pop()) |unwind| {
+                    self.stack_top = unwind.stack_top;
+                    self.push(unwind.err_val);
                 }
                 return .ok;
             }
@@ -2506,8 +2508,13 @@ pub const VM = struct {
         self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
 
         // --- Save Unwind State for Native FFI Restoration ---
-        self.unwind_stack_top = r_frame.stack_top;
-        self.unwind_err_val = err_val;
+        self.unwind_stack.append(self.allocator, .{
+            .err_val = err_val,
+            .stack_top = r_frame.stack_top,
+        }) catch {
+            self.reportError("Fatal: Out of memory during exception unwinding.\n", .{});
+            return .runtime_error;
+        };
 
         return .ok;
     }

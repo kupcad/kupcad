@@ -404,10 +404,10 @@ pub const GC = struct {
             self.markValue(val);
         }
 
-        // Protect temporary error value held during native boundary unwinds
-        if (vm.unwind_err_val) |err_val| {
-            self.markValue(err_val);
-        }
+        // Protect error values held across native boundary unwinds
+        for (vm.unwind_stack.items) |u_frame| {
+            self.markValue(u_frame.err_val);
+         }
 
         // --- Protect static interned strings ---
         if (vm.static_true) |s| self.markObject(&s.obj);
