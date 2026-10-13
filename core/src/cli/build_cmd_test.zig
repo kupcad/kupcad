@@ -37,25 +37,39 @@ fn runBuild(args: []const []const u8) !Result {
 /// Temp dir holding `model.kup` with `source`; paths are absolute so cwd does not matter.
 const Fixture = struct {
     tmp: testing.TmpDir,
+    dir: [:0]u8,
     input: []u8,
     output: []u8,
 
     fn init(source: []const u8) !Fixture {
-        var tmp = testing.tmpDir(.{});
+        var tmp = testing.tmpDir(.{ .iterate = true });
         errdefer tmp.cleanup();
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "model.kup", .data = source });
         const dir = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-        defer testing.allocator.free(dir);
+        errdefer testing.allocator.free(dir);
         const input = try std.fs.path.join(testing.allocator, &.{ dir, "model.kup" });
         errdefer testing.allocator.free(input);
         const output = try std.fs.path.join(testing.allocator, &.{ dir, "model.stl" });
-        return .{ .tmp = tmp, .input = input, .output = output };
+        return .{ .tmp = tmp, .dir = dir, .input = input, .output = output };
     }
 
     fn deinit(self: *Fixture) void {
+        testing.allocator.free(self.dir);
         testing.allocator.free(self.input);
         testing.allocator.free(self.output);
         self.tmp.cleanup();
+    }
+
+    /// Absolute path of `name` inside the fixture dir; caller frees.
+    fn path(self: *Fixture, name: []const u8) ![]u8 {
+        return std.fs.path.join(testing.allocator, &.{ self.dir, name });
+    }
+
+    fn entryCount(self: *Fixture) !usize {
+        var it = self.tmp.dir.iterate();
+        var entries: usize = 0;
+        while (try it.next(testing.io)) |_| entries += 1;
+        return entries;
     }
 
     fn build(self: *Fixture) !Result {
@@ -117,4 +131,116 @@ test "build_cmd: valid script succeeds and writes the export" {
     try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
     try testing.expect(std.mem.startsWith(u8, res.text(), "Successfully built "));
     try testing.expect(fx.outputExists());
+}
+
+const STL_HEADER_LEN = 80;
+const STL_COUNT_LEN = 4;
+const STL_TRIANGLE_LEN = 50;
+const GLB_MAGIC = "glTF";
+const STEP_MAGIC = "ISO-10303-21";
+
+/// What an exporter actually wrote, judged by content rather than by file name.
+/// `-f gltf` also yields binary glTF, so there is no separate JSON kind.
+const FileKind = enum { stl, glb, step };
+
+fn detectFileKind(bytes: []const u8) ?FileKind {
+    if (std.mem.startsWith(u8, bytes, GLB_MAGIC)) return .glb;
+    if (std.mem.startsWith(u8, bytes, STEP_MAGIC)) return .step;
+    // Binary STL: 80-byte header, u32 triangle count, then fixed-size triangle records.
+    if (bytes.len >= STL_HEADER_LEN + STL_COUNT_LEN) {
+        const count = std.mem.readInt(u32, bytes[STL_HEADER_LEN..][0..STL_COUNT_LEN], .little);
+        if (bytes.len == STL_HEADER_LEN + STL_COUNT_LEN + @as(usize, count) * STL_TRIANGLE_LEN) return .stl;
+    }
+    return null;
+}
+
+test "build_cmd: detectFileKind recognises each export by content" {
+    var stl_bytes: [STL_HEADER_LEN + STL_COUNT_LEN + STL_TRIANGLE_LEN]u8 = @splat(0);
+    std.mem.writeInt(u32, stl_bytes[STL_HEADER_LEN..][0..STL_COUNT_LEN], 1, .little);
+    try testing.expectEqual(@as(?FileKind, .stl), detectFileKind(&stl_bytes));
+    try testing.expectEqual(@as(?FileKind, .glb), detectFileKind(GLB_MAGIC ++ "\x02\x00\x00\x00"));
+    try testing.expectEqual(@as(?FileKind, .step), detectFileKind(STEP_MAGIC ++ ";\nHEADER;"));
+    try testing.expectEqual(@as(?FileKind, null), detectFileKind(stl_bytes[0 .. stl_bytes.len - 1]));
+}
+
+const FormatCase = struct {
+    /// `-o` file name inside the fixture dir; null omits `-o`.
+    output: ?[]const u8,
+    /// `-f` value; null omits `-f`.
+    format: ?[]const u8 = null,
+    draco: bool = false,
+    expect: union(enum) {
+        /// File name expected in the fixture dir and the format of its bytes.
+        written: struct { name: []const u8, kind: FileKind },
+        /// Trailing part of the error message (absolute paths precede it).
+        rejected: []const u8,
+    },
+};
+
+const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp) or pass --format.\n";
+
+test "build_cmd: output format follows the -o extension and must agree with --format" {
+    const cases = [_]FormatCase{
+        // Extension alone decides, case-insensitively.
+        .{ .output = "part.stl", .expect = .{ .written = .{ .name = "part.stl", .kind = .stl } } },
+        .{ .output = "PART.STL", .expect = .{ .written = .{ .name = "PART.STL", .kind = .stl } } },
+        .{ .output = "part.glb", .expect = .{ .written = .{ .name = "part.glb", .kind = .glb } } },
+        .{ .output = "part.gltf", .expect = .{ .written = .{ .name = "part.gltf", .kind = .glb } } },
+        .{ .output = "part.step", .expect = .{ .written = .{ .name = "part.step", .kind = .step } } },
+        .{ .output = "part.stp", .expect = .{ .written = .{ .name = "part.stp", .kind = .step } } },
+        // An agreeing --format is accepted.
+        .{ .output = "part.stl", .format = "stl", .expect = .{ .written = .{ .name = "part.stl", .kind = .stl } } },
+        .{ .output = "part.Stp", .format = "step", .expect = .{ .written = .{ .name = "part.Stp", .kind = .step } } },
+        // A disagreeing --format is refused rather than writing a mislabeled file.
+        .{ .output = "part.glb", .format = "stl", .expect = .{ .rejected = "Error: --format stl conflicts with output extension .glb\n" } },
+        .{ .output = "part.STL", .format = "glb", .expect = .{ .rejected = "Error: --format glb conflicts with output extension .STL\n" } },
+        .{ .output = "part.stp", .format = "gltf", .expect = .{ .rejected = "Error: --format gltf conflicts with output extension .stp\n" } },
+        // Unrecognized or missing extensions need an explicit --format.
+        .{ .output = "part.obj", .expect = .{ .rejected = UNKNOWN_EXTENSION_HINT } },
+        .{ .output = "part", .expect = .{ .rejected = UNKNOWN_EXTENSION_HINT } },
+        .{ .output = "part.bin", .format = "stl", .expect = .{ .written = .{ .name = "part.bin", .kind = .stl } } },
+        // Without -o the name is derived from the input stem and the format.
+        .{ .output = null, .expect = .{ .written = .{ .name = "model.glb", .kind = .glb } } },
+        .{ .output = null, .format = "stl", .expect = .{ .written = .{ .name = "model.stl", .kind = .stl } } },
+        .{ .output = null, .format = "step", .expect = .{ .written = .{ .name = "model.step", .kind = .step } } },
+        // Draco compression exists only for glTF output.
+        .{ .output = "part.glb", .draco = true, .expect = .{ .written = .{ .name = "part.glb", .kind = .glb } } },
+        .{ .output = "part.stl", .draco = true, .expect = .{ .rejected = "Error: --draco only applies to glb and gltf output, not stl\n" } },
+        .{ .output = null, .format = "step", .draco = true, .expect = .{ .rejected = "Error: --draco only applies to glb and gltf output, not step\n" } },
+    };
+
+    for (cases) |case| {
+        errdefer std.debug.print("case: -o {?s} -f {?s} draco={}\n", .{ case.output, case.format, case.draco });
+
+        var fx = try Fixture.init("cube(10)\n");
+        defer fx.deinit();
+
+        const output_path = if (case.output) |name| try fx.path(name) else null;
+        defer if (output_path) |p| testing.allocator.free(p);
+
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(testing.allocator);
+        try args.append(testing.allocator, fx.input);
+        if (output_path) |p| try args.appendSlice(testing.allocator, &.{ "-o", p });
+        if (case.format) |f| try args.appendSlice(testing.allocator, &.{ "-f", f });
+        if (case.draco) try args.append(testing.allocator, "--draco");
+
+        var res = try runBuild(args.items);
+        defer res.deinit();
+
+        switch (case.expect) {
+            .written => |want| {
+                try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+                const bytes = try fx.tmp.dir.readFileAlloc(testing.io, want.name, testing.allocator, .unlimited);
+                defer testing.allocator.free(bytes);
+                try testing.expectEqual(@as(?FileKind, want.kind), detectFileKind(bytes));
+                try testing.expectEqual(@as(usize, 2), try fx.entryCount()); // model.kup + the export
+            },
+            .rejected => |message| {
+                try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+                try testing.expectStringEndsWith(res.text(), message);
+                try testing.expectEqual(@as(usize, 1), try fx.entryCount()); // only model.kup
+            },
+        }
+    }
 }
