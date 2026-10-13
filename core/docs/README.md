@@ -196,7 +196,7 @@ part = cube(10).material(color: "#FF0000", roughness: 0.2, metallic: 0.8)
 
 ## 8. Module & Asset Imports
 
-KupCAD uses a Content Addressable File System (CAFS) paired with an SQLite cache for dependency management. External solid files are parsed and injected directly into the VM.
+KupCAD uses a Content Addressable File System (CAFS) paired with an SQLite cache for dependency management. Dependencies are declared in `kupcad.json` and pinned in `kupcad.lock` (format 2.0.0) to a commit plus a content integrity hash; `kupcad pkg install` verifies every cached or downloaded package against that hash and fails loudly on a mismatch. Package archives are streamed straight into the CAFS with symlink entries, path escapes and oversized archives rejected (see `architecture.md` §9). External solid files are parsed and injected directly into the VM.
 
 ```ruby
 # 1. Importing native KupCAD modules via isolated lexical scope
@@ -239,10 +239,10 @@ flowchart TD
 
 KupCAD ships as a monolithic executable containing a complete developer toolchain:
 
-* `kupcad lsp`: Language Server Protocol daemon for VS Code, enabling real-time preview gateways.
+* `kupcad lsp`: Language Server Protocol daemon for VS Code, enabling real-time preview gateways. Documents are evaluated on a read-only virtual filesystem, so a script cannot write to disk just by being opened. The viewport WebSocket listens on `127.0.0.1` at `KUPCAD_VIEWPORT_PORT` (default 9001), falls back to a free port when that one is taken, and reports the real port to the editor via the `kupcad/viewportReady` notification.
 * `kupcad fmt`: AST-based Code Formatter.
 * `kupcad check`: Linter catching unused variables, zero-volume operations, and logic errors.
-* `kupcad pkg`: Lockfile-driven dependency resolver fetching GitHub packages into CAFS.
-* `kupcad build`: Multi-Target Exporter (`STEP`, `STL`, `GLB`) with CLI parameter injection.
+* `kupcad pkg`: Lockfile-driven dependency resolver (`add`, `install`, `doctor`) fetching GitHub packages into CAFS under `~/.kupcad` (override with `KUPCAD_HOME`), with lockfile integrity enforcement.
+* `kupcad build`: Multi-Target Exporter (`STEP`, `STL`, `GLB`/`GLTF`, `--draco`) with CLI parameter injection (`--param key=value`). Exits non-zero on any failure, so it is safe to use as a CI step.
 * `kupcad watch`: Real-time incremental rebuilding utilizing the persistent `SessionManager`.
 * `kupcad dev`: VM development toolkit offering `ast-dump`, `disasm`, and `bench`.
