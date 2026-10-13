@@ -5,6 +5,9 @@ const log_helpers = @import("../log.zig");
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
+/// Process exit status for any failed build, so scripts and CI can detect errors.
+const EXIT_FAILURE: u8 = 1;
+
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     var input_path: ?[]const u8 = null;
     var output_path: ?[]const u8 = null;
@@ -20,18 +23,18 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--param")) {
             const pair = args_iter.next() orelse {
                 log_helpers.printStderr(init.io, "Error: Missing key=value after {s}\n", .{arg});
-                return;
+                std.process.exit(EXIT_FAILURE);
             };
             var it = std.mem.splitScalar(u8, pair, '=');
             const key = it.next() orelse continue;
             const val_str = it.next() orelse {
                 log_helpers.printStderr(init.io, "Error: Invalid param format. Use --param key=value.\n", .{});
-                return;
+                std.process.exit(EXIT_FAILURE);
             };
 
             const val = std.fmt.parseFloat(f64, val_str) catch {
                 log_helpers.printStderr(init.io, "Error: Param value must be numeric. Got '{s}'\n", .{val_str});
-                return;
+                std.process.exit(EXIT_FAILURE);
             };
             try cli_params.put(key, val);
         } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
@@ -41,12 +44,12 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         } else if (std.mem.eql(u8, arg, "-f") or std.mem.eql(u8, arg, "--format")) {
             format = args_iter.next() orelse {
                 log_helpers.printStderr(init.io, "Error: Missing format after {s}\n", .{arg});
-                return;
+                std.process.exit(EXIT_FAILURE);
             };
 
             if (!std.mem.eql(u8, format, "stl") and !std.mem.eql(u8, format, "glb") and !std.mem.eql(u8, format, "gltf") and !std.mem.eql(u8, format, "step")) {
                 log_helpers.printStderr(init.io, "Error: Unsupported format '{s}'. Allowed: stl, glb, gltf, step\n", .{format});
-                return;
+                std.process.exit(EXIT_FAILURE);
             }
         } else if (!std.mem.startsWith(u8, arg, "-")) {
             input_path = arg;
@@ -55,7 +58,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     const target_input = input_path orelse {
         log_helpers.printStderr(init.io, "Error: Missing input file path.\n", .{});
-        return;
+        std.process.exit(EXIT_FAILURE);
     };
 
     // --- 2. Determine Final Output Path ---
@@ -79,13 +82,13 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     var session = manager.getOrInitializeSession(target_input) catch |err| {
         log_helpers.printStderr(init.io, "Failed to initialize session: {}\n", .{err});
-        return;
+        std.process.exit(EXIT_FAILURE);
     };
 
     // Use the shared DRY helper to load the CLI arguments into the active VM state
     api.injectParamsIntoVm(&session.vm, cli_params) catch |err| {
         log_helpers.printStderr(init.io, "Failed to inject params: {}\n", .{err});
-        return;
+        std.process.exit(EXIT_FAILURE);
     };
 
     // Force exact analytical representations if STEP export is requested
@@ -105,14 +108,14 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     // Perform Kahn's Topological Sort to execute dependencies from bottom to top
     session.evaluateWorkspace() catch |err| {
         log_helpers.printStderr(init.io, "Build failed: {}\n", .{err});
-        return;
+        std.process.exit(EXIT_FAILURE);
     };
 
     // --- 5. Export Resulting Geometry ---
     // Use the shared DRY helper to pull from the VM stack and create the binary file
     const output_bytes = api.exportModelFromVm(allocator, &session.vm, format, use_draco) catch |err| {
         log_helpers.printStderr(init.io, "Export failed: {}\n", .{err});
-        return;
+        std.process.exit(EXIT_FAILURE);
     };
     defer allocator.free(output_bytes);
 
