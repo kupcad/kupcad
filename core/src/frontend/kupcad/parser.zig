@@ -66,6 +66,9 @@ pub const Parser = struct {
     scratch_alias_pairs: std.ArrayListUnmanaged(ast.AliasPair) = .empty,
 
     pub fn init(tokens: common_token.TokenList(Tag), source: []const u8, allocator: std.mem.Allocator) !Parser {
+        // Token indices are stored as u24 throughout the parser and AST
+        if (tokens.tags.len > limits.MAX_TOKENS) return error.TooManyTokens;
+
         var parser = Parser{
             .tokens = tokens,
             .source = source,
@@ -144,6 +147,19 @@ pub const Parser = struct {
             if (last.loc.offset == loc.offset) return;
         }
         self.diagnostics.add(loc, fmt, args);
+    }
+
+    /// Every construct that nests the AST (expressions, statements, blocks, elsif
+    /// chains, infix chains) must pass through here. The resolver, visitor and
+    /// compiler walk the tree recursively without their own stack guards, so
+    /// bounding tree depth here is what keeps them from overflowing the stack.
+    /// Caller pairs a successful call with `defer self.ast_depth -= 1`.
+    fn enterNesting(self: *Parser) ParseError!void {
+        if (self.ast_depth >= limits.MAX_AST_DEPTH) {
+            self.reportError(self.getLoc(self.tok_idx), "Maximum AST depth exceeded", .{});
+            return ParseError.AstTooDeep;
+        }
+        self.ast_depth += 1;
     }
 
     pub fn synchronize(self: *Parser) void {
@@ -277,6 +293,9 @@ pub const Parser = struct {
     }
 
     pub fn parseBlock(self: *Parser, end_tags: []const Tag) ParseError!ast.NodeIndex {
+        try self.enterNesting();
+        defer self.ast_depth -= 1;
+
         const start_tok = self.tok_idx;
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
@@ -294,7 +313,9 @@ pub const Parser = struct {
             if (self.parseStatement()) |parsed_stmt| {
                 try self.scratch_nodes.append(self.allocator, parsed_stmt);
             } else |err| {
-                if (err == ParseError.OutOfMemory) return err;
+                // Depth errors abort the whole parse: recovering would just re-hit the
+                // limit on every following nested statement and flood diagnostics.
+                if (err == ParseError.OutOfMemory or err == ParseError.AstTooDeep) return err;
                 self.synchronize();
             }
         }
@@ -303,6 +324,9 @@ pub const Parser = struct {
     }
 
     pub fn parseStatement(self: *Parser) ParseError!ast.NodeIndex {
+        // No depth accounting here: the statement parsers that nest (if/def/class/
+        // ...) and parseExpression count themselves, keeping the count ~1:1 with
+        // real tree depth so legitimately deep code isn't rejected early.
         self.skipIgnored();
         const start_idx = self.tok_idx;
 
@@ -506,6 +530,7 @@ pub const Parser = struct {
             self.in_block_params = true;
             const elements = try self.parseCommaSeparated(ast.NodeIndex, &self.scratch_nodes, parseBlockParam, .pipe);
             self.in_block_params = false;
+            try self.checkParamCount(elements.len);
 
             params_len = elements.len;
             _ = try self.expect(.pipe);
@@ -535,6 +560,8 @@ pub const Parser = struct {
     }
 
     fn parseBeginStatement(self: *Parser) ParseError!ast.NodeIndex {
+        try self.enterNesting();
+        defer self.ast_depth -= 1;
         const start_tok = try self.expect(.keyword_begin);
         self.skipIgnored();
         const body = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
@@ -670,6 +697,10 @@ pub const Parser = struct {
     }
 
     fn parseIfOrUnless(self: *Parser, is_unless: bool) ParseError!ast.NodeIndex {
+        // Counted here (not only via parseBlock) because `elsif` recurses directly
+        try self.enterNesting();
+        defer self.ast_depth -= 1;
+
         const start_tok = self.tok_idx;
         self.advance();
         const condition = try self.parseExpression(.none);
@@ -692,6 +723,8 @@ pub const Parser = struct {
     }
 
     fn parseCaseStatement(self: *Parser) ParseError!ast.NodeIndex {
+        try self.enterNesting();
+        defer self.ast_depth -= 1;
         const start_tok = try self.expect(.keyword_case);
         var condition: ast.NodeIndex = .none;
         if (self.tag(0) != .newline and self.tag(0) != .semicolon and self.tag(0) != .keyword_when) {
@@ -736,6 +769,8 @@ pub const Parser = struct {
     }
 
     fn parseWhileStatement(self: *Parser) ParseError!ast.NodeIndex {
+        try self.enterNesting();
+        defer self.ast_depth -= 1;
         const is_until = (self.tag(0) == .keyword_until);
         const start_tok = self.tok_idx;
         self.advance();
@@ -747,6 +782,8 @@ pub const Parser = struct {
     }
 
     fn parseDefStatement(self: *Parser, is_private: bool) ParseError!ast.NodeIndex {
+        try self.enterNesting();
+        defer self.ast_depth -= 1;
         const start_tok = if (is_private) self.tok_idx - 1 else self.tok_idx;
         _ = try self.expect(.keyword_def);
 
@@ -780,6 +817,7 @@ pub const Parser = struct {
                     self.advance();
                 } else break;
             }
+            try self.checkParamCount(self.scratch_params.items.len - s_len);
             params_span = try self.b.addParams(self.scratch_params.items[s_len..]);
         }
 
@@ -828,6 +866,8 @@ pub const Parser = struct {
     }
 
     fn parseModuleStatement(self: *Parser) ParseError!ast.NodeIndex {
+        try self.enterNesting();
+        defer self.ast_depth -= 1;
         const start_tok = try self.expect(.keyword_module);
         const name_idx = if (self.tag(0) == .constant or self.tag(0) == .ident) self.tok_idx else return ParseError.UnexpectedToken;
         self.advance();
@@ -866,6 +906,8 @@ pub const Parser = struct {
     }
 
     fn parseClassStatement(self: *Parser) ParseError!ast.NodeIndex {
+        try self.enterNesting();
+        defer self.ast_depth -= 1;
         const start_tok = try self.expect(.keyword_class);
 
         // Singleton Class (class << self)
@@ -1182,6 +1224,15 @@ pub const Parser = struct {
         };
     }
 
+    /// Parameters occupy u8 frame slots and arity is a u8, so reject oversized
+    /// signatures here with a diagnostic instead of overflowing in the compiler.
+    fn checkParamCount(self: *Parser, count: usize) ParseError!void {
+        if (count > limits.MAX_ARGS) {
+            self.reportError(self.getLoc(self.tok_idx), "Too many parameters ({d}); the maximum is {d}", .{ count, limits.MAX_ARGS });
+            return ParseError.InvalidExpression;
+        }
+    }
+
     fn parseParenParams(self: *Parser) ParseError!ast.Span {
         if (self.tag(0) == .l_paren) {
             self.advance();
@@ -1189,6 +1240,7 @@ pub const Parser = struct {
             defer self.scratch_params.shrinkRetainingCapacity(s_len);
             const elements = try self.parseCommaSeparated(ast.Param, &self.scratch_params, parseParam, .r_paren);
             _ = try self.expect(.r_paren);
+            try self.checkParamCount(elements.len);
             return try self.b.addParams(elements);
         }
         return try self.b.addParams(&.{});
@@ -1242,12 +1294,10 @@ pub const Parser = struct {
     }
 
     pub fn parseExpression(self: *Parser, precedence: Precedence) ParseError!ast.NodeIndex {
-        self.ast_depth += 1;
-        defer self.ast_depth -= 1;
-        if (self.ast_depth > limits.MAX_AST_DEPTH) {
-            self.reportError(self.getLoc(self.tok_idx), "Maximum AST depth exceeded", .{});
-            return ParseError.AstTooDeep;
-        }
+        const entry_depth = self.ast_depth;
+        try self.enterNesting();
+        // The infix loop below also bumps the depth, so restore to the entry value
+        defer self.ast_depth = entry_depth;
 
         self.skipIgnored();
         const start_tok = self.tok_idx;
@@ -1322,6 +1372,11 @@ pub const Parser = struct {
 
             self.skipComments();
             if (@backingInt(precedence) >= @backingInt(self.getInfixPrecedence(self.tag(0)))) break;
+
+            // Left-associative chains (`a + b + c`, `a.b.c`) are built by this loop
+            // without recursing, yet each iteration nests `left` one level deeper.
+            // Count every link so the resulting tree stays within MAX_AST_DEPTH.
+            try self.enterNesting();
 
             const op_tag = self.tag(0);
             left = switch (op_tag) {

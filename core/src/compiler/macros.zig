@@ -7,6 +7,14 @@ pub fn emitAttrReader(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     const clean_name = std.mem.trimStart(u8, prop_name, ":@");
 
     const func = try comp.vm.gc.allocateFunction(comp.vm);
+    // Root the function until it is stored in the constant pool: the name and
+    // child-chunk constants allocated below can trigger a collection.
+    comp.vm.ensureStackCapacity(comp.vm.stack_top + 1) catch return error.OutOfMemory;
+    comp.vm.push(value.Value.initObj(&func.obj));
+    var func_rooted = true;
+    errdefer if (func_rooted) {
+        _ = comp.vm.pop();
+    };
     func.arity = 0;
     func.owns_chunk = true;
 
@@ -36,6 +44,8 @@ pub fn emitAttrReader(comp: *Compiler, prop_name: []const u8, is_singleton: bool
 
     const func_val = value.Value.initObj(&func.obj);
     const func_idx = try comp.makeConstant(func_val);
+    _ = comp.vm.pop();
+    func_rooted = false;
     try comp.emitOpWithOperand(.op_closure, .op_closure_wide, func_idx);
 
     const meth_name_idx = try comp.makeStringConstant(clean_name);
@@ -48,6 +58,14 @@ pub fn emitAttrWriter(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     const clean_name = std.mem.trimStart(u8, prop_name, ":@");
 
     const func = try comp.vm.gc.allocateFunction(comp.vm);
+    // Root the function until it is stored in the constant pool: the name and
+    // child-chunk constants allocated below can trigger a collection.
+    comp.vm.ensureStackCapacity(comp.vm.stack_top + 1) catch return error.OutOfMemory;
+    comp.vm.push(value.Value.initObj(&func.obj));
+    var func_rooted = true;
+    errdefer if (func_rooted) {
+        _ = comp.vm.pop();
+    };
     func.arity = 1;
     func.owns_chunk = true;
 
@@ -84,6 +102,8 @@ pub fn emitAttrWriter(comp: *Compiler, prop_name: []const u8, is_singleton: bool
 
     const func_val = value.Value.initObj(&func.obj);
     const func_idx = try comp.makeConstant(func_val);
+    _ = comp.vm.pop();
+    func_rooted = false;
     try comp.emitOpWithOperand(.op_closure, .op_closure_wide, func_idx);
 
     const meth_name_idx = try comp.makeStringConstant(setter_name);

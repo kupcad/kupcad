@@ -18,7 +18,21 @@ pub const Local = struct {
 pub const LoopState = struct {
     start: usize,
     depth: usize,
+    // Length of the compiler's unwind stack when the loop was entered. `break` and
+    // `next` only unwind the begin/rescue/ensure regions opened inside the loop.
+    unwind_depth: usize = 0,
     exit_jumps: std.ArrayListUnmanaged(usize) = .empty,
+};
+
+/// A lexically enclosing region that a non-local jump (return/break/next) must
+/// leave cleanly. The VM keeps rescue handlers on a runtime stack that is only
+/// popped by `op_pop_rescue` or by a throw, so jumping out without popping leaves
+/// a stale handler that a later, unrelated error would jump back into.
+pub const UnwindEntry = union(enum) {
+    /// An active `op_setup_rescue` handler.
+    rescue_handler,
+    /// An `ensure` body that must run before control leaves the region.
+    ensure_body: ast.NodeIndex,
 };
 
 pub const VarType = enum {

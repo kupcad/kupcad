@@ -23,11 +23,15 @@ pub const CompileError = error{
     ProtectedSymbol,
     CorruptedBytecode,
     VariableAlreadyDeclared,
+    AstTooDeep,
+    TooManyParameters,
+    TooManyInlineCaches,
 };
 
 pub const Upvalue = scope_mod.Upvalue;
 pub const Local = scope_mod.Local;
 pub const LoopState = scope_mod.LoopState;
+pub const UnwindEntry = scope_mod.UnwindEntry;
 
 pub const Compiler = struct {
     allocator: std.mem.Allocator,
@@ -55,6 +59,8 @@ pub const Compiler = struct {
     upvalues: std.ArrayListUnmanaged(Upvalue) = .empty,
     locals: std.ArrayListUnmanaged(Local) = .empty,
     loops: std.ArrayListUnmanaged(LoopState) = .empty,
+    // Enclosing rescue/ensure regions of the current function, innermost last
+    unwind_stack: std.ArrayListUnmanaged(UnwindEntry) = .empty,
 
     // --- DOD Zero-Waste Compilation Buffers ---
     scratch_ops: std.ArrayListUnmanaged(ast.BinaryOp) = .empty,
@@ -143,6 +149,7 @@ pub const Compiler = struct {
             loop.exit_jumps.deinit(self.allocator);
         }
         self.loops.deinit(self.allocator);
+        self.unwind_stack.deinit(self.allocator);
         self.scratch_ops.deinit(self.allocator);
         self.scratch_rights.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
@@ -170,10 +177,12 @@ pub const Compiler = struct {
     fn compileNode(self: *Compiler, node_idx: ast.NodeIndex) CompileError!void {
         if (node_idx == .none) return;
 
-        // AST Depth Breaker
+        // AST Depth Breaker. The parser bounds tree depth already, but trees can be
+        // built programmatically and wrapper nodes (def -> begin -> block) add levels
+        // the parser doesn't count, so this must be a real error, not an assert.
+        if (self.ast_depth >= limits.MAX_AST_DEPTH) return error.AstTooDeep;
         self.ast_depth += 1;
         defer self.ast_depth -= 1;
-        std.debug.assert(self.ast_depth <= limits.MAX_AST_DEPTH);
 
         // Track where we started
         const expected_entry_depth = self.current_stack_depth;
@@ -336,8 +345,42 @@ pub const Compiler = struct {
         } else {
             try self.emitOp(.op_nil);
         }
+        // Leaving the function: every rescue/ensure region in this frame is exited
+        try self.emitUnwind(0);
         try self.emitOp(.op_return);
         self.simulatePush(1); // Equilibrium for dead code
+    }
+
+    /// Emits the cleanup for every unwind region above `target_len`, innermost
+    /// first: `op_pop_rescue` for active handlers and an inline copy of each
+    /// `ensure` body. The value being returned/broken with stays on the stack.
+    fn emitUnwind(self: *Compiler, target_len: usize) CompileError!void {
+        if (self.unwind_stack.items.len <= target_len) return;
+
+        // Snapshot the regions being exited: compiling an inline ensure body may
+        // push/pop its own entries and would otherwise clobber the ones above it.
+        const exited = try self.allocator.dupe(UnwindEntry, self.unwind_stack.items[target_len..]);
+        defer self.allocator.free(exited);
+        defer {
+            self.unwind_stack.shrinkRetainingCapacity(target_len);
+            self.unwind_stack.appendSliceAssumeCapacity(exited);
+        }
+
+        var i = exited.len;
+        while (i > 0) {
+            i -= 1;
+            switch (exited[i]) {
+                .rescue_handler => try self.emitOp(.op_pop_rescue),
+                .ensure_body => |body| {
+                    // Compile the ensure body as if we were already outside its
+                    // region, so a jump inside it doesn't re-run it recursively.
+                    self.unwind_stack.shrinkRetainingCapacity(target_len);
+                    try self.unwind_stack.appendSlice(self.allocator, exited[0..i]);
+                    try self.compileNode(body);
+                    try self.emitOp(.op_pop); // discard ensure block output
+                },
+            }
+        }
     }
 
     fn compileNextStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
@@ -349,13 +392,15 @@ pub const Compiler = struct {
         }
         if (self.loops.items.len > 0) {
             try self.emitOp(.op_pop);
-            const cur_loop = &self.loops.items[self.loops.items.len - 1];
+            const cur_loop = self.loops.items[self.loops.items.len - 1];
 
             if (self.current_stack_depth > cur_loop.depth) return error.UnsupportedScope;
 
+            try self.emitUnwind(cur_loop.unwind_depth);
             try self.emitLoop(cur_loop.start);
             self.simulatePush(1);
         } else if (self.enclosing != null or self.function != null) {
+            try self.emitUnwind(0);
             try self.emitOp(.op_return);
             self.simulatePush(1);
         } else {
@@ -371,13 +416,15 @@ pub const Compiler = struct {
             try self.emitOp(.op_nil);
         }
         if (self.loops.items.len > 0) {
-            const cur_loop = &self.loops.items[self.loops.items.len - 1];
+            const loop_idx = self.loops.items.len - 1;
+            if (self.current_stack_depth > self.loops.items[loop_idx].depth + 1) return error.UnsupportedScope;
 
-            if (self.current_stack_depth > cur_loop.depth + 1) return error.UnsupportedScope;
-
+            try self.emitUnwind(self.loops.items[loop_idx].unwind_depth);
             const jump = try self.emitJump(.op_jump);
-            try cur_loop.exit_jumps.append(self.allocator, jump);
+            // Re-index: compiling an inline ensure body may grow `self.loops`
+            try self.loops.items[loop_idx].exit_jumps.append(self.allocator, jump);
         } else if (self.enclosing != null or self.function != null) {
+            try self.emitUnwind(0);
             try self.emitOp(.op_break_block);
             self.simulatePush(1);
         } else {
@@ -455,7 +502,9 @@ pub const Compiler = struct {
     fn compileRescueModifier(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
         const rm = self.tree.rescueModifier(node);
         const rescue_jump = try self.emitJump(.op_setup_rescue);
+        try self.unwind_stack.append(self.allocator, .rescue_handler);
         try self.compileNode(rm.expr);
+        _ = self.unwind_stack.pop();
         try self.emitOp(.op_pop_rescue);
         const end_jump = try self.emitJump(.op_jump);
 
@@ -923,10 +972,10 @@ pub const Compiler = struct {
     }
 
     // Heuristic Check: Verifies if all when-conditions are literal numbers or strings
-    fn checkJumpTableFeasibility(self: *Compiler, branches: []const ast.WhenBranch, has_cond: bool) ?u16 {
+    fn checkJumpTableFeasibility(self: *Compiler, branches: []const ast.WhenBranch, has_cond: bool) ?usize {
         if (!has_cond) return null;
 
-        var total_conditions: u16 = 0;
+        var total_conditions: usize = 0;
         for (branches) |branch| {
             const conds = self.tree.getNodes(branch.conditions);
             for (conds) |cond_idx| {
@@ -936,6 +985,8 @@ pub const Compiler = struct {
             }
         }
 
+        // The table size is a 16-bit operand; oversized tables use the linear path
+        if (total_conditions > limits.MAX_JUMP_TABLE_CASES) return null;
         return if (total_conditions > 0) total_conditions else null;
     }
 
@@ -944,18 +995,14 @@ pub const Compiler = struct {
         self: *Compiler,
         cs: ast.CaseStmt,
         branches: []const ast.WhenBranch,
-        total_conditions: u16,
+        total_conditions: usize,
         saved_depth: usize,
     ) CompileError!void {
         try self.compileNode(cs.condition);
 
-        const offsets = try self.emitJumpTable(total_conditions);
-        const table_start_offset = offsets.table_start;
-        const default_jump_offset = offsets.default_jump;
-
         const SwitchCase = struct {
             const_idx: u16,
-            jump_offset: u32,
+            branch_idx: usize,
             val: value.Value,
 
             fn lessThan(_: void, a: @This(), b: @This()) bool {
@@ -971,22 +1018,20 @@ pub const Compiler = struct {
                     return std.mem.order(u8, str_a, str_b) == .lt;
                 }
             }
+
+            fn sameKey(a: @This(), b: @This()) bool {
+                return !lessThan({}, a, b) and !lessThan({}, b, a);
+            }
         };
 
+        // Resolve every literal to a constant BEFORE emitting the table: the entry
+        // count is encoded up front and duplicates must be dropped from it.
         var cases = try self.allocator.alloc(SwitchCase, total_conditions);
         defer self.allocator.free(cases);
 
         var condition_idx: usize = 0;
-        var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
-        defer end_jumps.deinit(self.allocator);
-
-        for (branches) |branch| {
-            const body_jump_target = self.current_chunk.code.items.len;
-            const conds = self.tree.getNodes(branch.conditions);
-
-            self.current_stack_depth = saved_depth;
-
-            for (conds) |cond_node_idx| {
+        for (branches, 0..) |branch, branch_idx| {
+            for (self.tree.getNodes(branch.conditions)) |cond_node_idx| {
                 const c_node = self.tree.getNode(cond_node_idx).?;
 
                 var raw_idx: usize = 0;
@@ -998,15 +1043,41 @@ pub const Compiler = struct {
                 }
 
                 const const_idx: u16 = @intCast(raw_idx);
-                const offset: u32 = @intCast(body_jump_target - (default_jump_offset + 4));
-
                 cases[condition_idx] = .{
                     .const_idx = const_idx,
-                    .jump_offset = offset,
+                    .branch_idx = branch_idx,
                     .val = self.current_chunk.constants.items[const_idx],
                 };
                 condition_idx += 1;
             }
+        }
+
+        // `case` takes the FIRST matching `when`, but the VM binary-searches the
+        // table and may land on any of several equal keys. A stable sort keeps
+        // equal keys in source order, so keeping the first of each run preserves
+        // first-match semantics.
+        std.sort.block(SwitchCase, cases, {}, SwitchCase.lessThan);
+        var unique_count: usize = 0;
+        for (cases) |entry| {
+            if (unique_count > 0 and SwitchCase.sameKey(cases[unique_count - 1], entry)) continue;
+            cases[unique_count] = entry;
+            unique_count += 1;
+        }
+        const unique_cases = cases[0..unique_count];
+
+        const offsets = try self.emitJumpTable(@intCast(unique_count));
+        const table_start_offset = offsets.table_start;
+        const default_jump_offset = offsets.default_jump;
+
+        var body_targets = try self.allocator.alloc(usize, branches.len);
+        defer self.allocator.free(body_targets);
+
+        var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+        defer end_jumps.deinit(self.allocator);
+
+        for (branches, 0..) |branch, branch_idx| {
+            body_targets[branch_idx] = self.current_chunk.code.items.len;
+            self.current_stack_depth = saved_depth;
 
             try self.compileNode(branch.body);
             try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
@@ -1017,9 +1088,7 @@ pub const Compiler = struct {
         const d_offset = default_target - (default_jump_offset + 4);
         self.writeJumpOffset(default_jump_offset, d_offset);
 
-        // Sort cases and write jump table
-        std.mem.sort(SwitchCase, cases, {}, SwitchCase.lessThan);
-        self.writeSortedJumpTable(table_start_offset, cases);
+        self.writeSortedJumpTable(table_start_offset, default_jump_offset + 4, unique_cases, body_targets);
 
         self.current_stack_depth = saved_depth;
 
@@ -1036,8 +1105,13 @@ pub const Compiler = struct {
     }
 
     // Helper: Writes sorted cases into the jump table bytecode stream
-    inline fn writeSortedJumpTable(self: *Compiler, table_start_offset: usize, cases: anytype) void {
-        for (cases, 0..) |entry, i| {
+    // Jump offsets are relative to `jump_base` (the byte after the default jump).
+    inline fn writeSortedJumpTable(self: *Compiler, table_start_offset: usize, jump_base: usize, cases: anytype, body_targets: []const usize) void {
+        for (cases, 0..) |case_entry, i| {
+            const entry = .{
+                .const_idx = case_entry.const_idx,
+                .jump_offset = @as(u32, @intCast(body_targets[case_entry.branch_idx] - jump_base)),
+            };
             const table_idx = table_start_offset + (i * 6);
             self.current_chunk.code.items[table_idx] = @intCast((entry.const_idx >> 8) & 0xFF);
             self.current_chunk.code.items[table_idx + 1] = @intCast(entry.const_idx & 0xFF);
@@ -1121,13 +1195,24 @@ pub const Compiler = struct {
         const rescues = self.tree.getRescueClauses(bs.rescues);
         var rescue_jump: usize = 0;
 
+        // The ensure region covers the body and the rescue clauses
+        const unwind_base = self.unwind_stack.items.len;
+        defer self.unwind_stack.shrinkRetainingCapacity(unwind_base);
+        if (bs.ensure_body != .none) {
+            try self.unwind_stack.append(self.allocator, .{ .ensure_body = bs.ensure_body });
+        }
+
         if (rescues.len > 0) {
             rescue_jump = try self.emitJump(.op_setup_rescue);
+            try self.unwind_stack.append(self.allocator, .rescue_handler);
         }
 
         try self.compileNode(bs.body);
 
         if (rescues.len > 0) {
+            // The VM pops the handler itself when it dispatches a throw, so rescue
+            // clause bodies run outside the handler region.
+            _ = self.unwind_stack.pop();
             try self.emitOp(.op_pop_rescue);
         }
 
@@ -1215,6 +1300,7 @@ pub const Compiler = struct {
 
         self.patchJump(end_jump);
 
+        self.unwind_stack.shrinkRetainingCapacity(unwind_base);
         if (bs.ensure_body != .none) {
             try self.compileNode(bs.ensure_body);
             try self.emitOp(.op_pop); // discard ensure block output
@@ -1688,6 +1774,7 @@ pub const Compiler = struct {
         try self.loops.append(self.allocator, .{
             .start = loop_start,
             .depth = self.current_stack_depth,
+            .unwind_depth = self.unwind_stack.items.len,
         });
 
         try self.compileNode(while_payload.condition);
@@ -2166,6 +2253,16 @@ pub const Compiler = struct {
     fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex, func_name: ?[]const u8, is_method: bool) CompileError!void {
         const func = try self.vm.gc.allocateFunction(self.vm);
 
+        // Root the function immediately: it is reachable from nothing else until
+        // it lands in our constant pool, and every allocation below (its name,
+        // the child's constants) may trigger a collection.
+        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
+        self.vm.push(value.Value.initObj(&func.obj));
+        var func_rooted = true;
+        errdefer if (func_rooted) {
+            _ = self.vm.pop();
+        };
+
         // Assign the method name so `super()` can dynamically look up the hierarchy
         if (func_name) |n| {
             const str_val = try self.vm.allocateString(n);
@@ -2173,8 +2270,25 @@ pub const Compiler = struct {
         }
 
         var positional_count: usize = 0;
+        var keyword_count: usize = 0;
         var splat_pos: ?u8 = null;
         var has_kwargs = false;
+
+        // Frame slots and arity are u8 operands. Layout: slot 0 = closure,
+        // 1..N = positionals (+ kwarg map), N+1 = block, then one virtual slot
+        // per keyword param. Reject before any @intCast below can overflow.
+        var needs_kwarg_map = false;
+        for (params) |p| {
+            if (p.is_keyword) keyword_count += 1;
+            if (p.is_keyword or (p.modifier != null and p.modifier.? == .double_splat)) {
+                needs_kwarg_map = true;
+            } else if (p.modifier == null or p.modifier.? == .splat) {
+                positional_count += 1;
+            }
+        }
+        const highest_slot = positional_count + @intFromBool(needs_kwarg_map) + 1 + keyword_count;
+        if (highest_slot > limits.MAX_ARGS) return error.TooManyParameters;
+        positional_count = 0;
 
         for (params) |p| {
             if (p.modifier != null) {
@@ -2195,11 +2309,6 @@ pub const Compiler = struct {
         // Include the implicit block slot in the arity so the VM pads it with nil when omitted
         func.arity = @intCast(positional_count);
         func.splat_pos = splat_pos;
-
-        // Protect the function from GC while compiling the child block!
-        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-        self.vm.push(value.Value.initObj(&func.obj));
-        errdefer _ = self.vm.pop();
 
         const child_chunk = try self.allocator.create(chunk.Chunk);
         child_chunk.* = chunk.Chunk.init();
@@ -2227,6 +2336,9 @@ pub const Compiler = struct {
             .scratch_rights = .empty,
             .current_stack_depth = 0,
             .max_stack_depth = 0,
+            // Carry the recursion depth over: the child compiles on the same native
+            // stack, so nested defs/blocks must count toward the same limit.
+            .ast_depth = self.ast_depth,
             .current_source_offset = self.current_source_offset,
             .max_local_slot = 0,
             .seeded_locals = &.{},
@@ -2331,13 +2443,15 @@ pub const Compiler = struct {
         }
 
         try child_compiler.compile(body_node);
-        _ = self.vm.pop();
 
         // Extract the exact local footprint from the child AFTER compiling
         func.local_count = @max(child_compiler.locals.items.len, child_compiler.max_local_slot + 1);
 
         const func_val = value.Value.initObj(&func.obj);
         const func_idx = try self.makeConstant(func_val);
+        // Now owned by our constant pool; unroot exactly once
+        _ = self.vm.pop();
+        func_rooted = false;
 
         try self.emitOpWithOperand(.op_closure, .op_closure_wide, func_idx);
 

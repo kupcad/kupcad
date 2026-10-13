@@ -63,10 +63,19 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         => {
             return simpleInstruction(@tagName(op), offset, writer);
         },
-        .op_constant, .op_get_global, .op_define_global, .op_set_global, .op_class, .op_method, .op_get_property, .op_set_property, .op_import, .op_class_method, .op_get_class_var, .op_set_class_var, .op_module, .op_set_member, .op_defined => {
+        // Property ops carry a trailing 16-bit inline-cache index after the constant
+        .op_get_property, .op_set_property => {
+            const next = try constantInstruction(@tagName(op), c, offset, false, writer);
+            return inlineCacheOperand(c, next, writer);
+        },
+        .op_get_property_wide, .op_set_property_wide => {
+            const next = try constantInstruction(@tagName(op), c, offset, true, writer);
+            return inlineCacheOperand(c, next, writer);
+        },
+        .op_constant, .op_get_global, .op_define_global, .op_set_global, .op_class, .op_method, .op_import, .op_class_method, .op_get_class_var, .op_set_class_var, .op_module, .op_set_member, .op_defined => {
             return constantInstruction(@tagName(op), c, offset, false, writer);
         },
-        .op_constant_wide, .op_get_global_wide, .op_define_global_wide, .op_set_global_wide, .op_class_wide, .op_method_wide, .op_get_property_wide, .op_set_property_wide, .op_import_wide, .op_class_method_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_module_wide, .op_set_member_wide, .op_defined_wide => {
+        .op_constant_wide, .op_get_global_wide, .op_define_global_wide, .op_set_global_wide, .op_class_wide, .op_method_wide, .op_import_wide, .op_class_method_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_module_wide, .op_set_member_wide, .op_defined_wide => {
             return constantInstruction(@tagName(op), c, offset, true, writer);
         },
         .op_call, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield => {
@@ -97,10 +106,12 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
             return offset + 4;
         },
         .op_invoke => {
-            return invokeInstruction(@tagName(op), c, offset, false, writer);
+            const next = try invokeInstruction(@tagName(op), c, offset, false, writer);
+            return inlineCacheOperand(c, next, writer);
         },
         .op_invoke_wide => {
-            return invokeInstruction(@tagName(op), c, offset, true, writer);
+            const next = try invokeInstruction(@tagName(op), c, offset, true, writer);
+            return inlineCacheOperand(c, next, writer);
         },
         .op_switch => return switchInstruction(@tagName(op), c, offset, false, writer),
         .op_switch_wide => return switchInstruction(@tagName(op), c, offset, true, writer),
@@ -117,6 +128,10 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
 
             // Space-padded left-aligned string, space-padded right-aligned integer
             try writer.print("{s: <16} {d: >4} ", .{ @tagName(op), constant });
+            if (constant >= c.constants.items.len) {
+                try writer.writeAll("<invalid constant>\n");
+                return new_offset;
+            }
             try c.constants.items[constant].stringify(true, writer);
             try writer.writeAll("\n");
 
@@ -137,6 +152,29 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
             return new_offset;
         },
     }
+}
+
+/// Reads a 32-bit big-endian jump offset, matching the VM's readJumpOffset.
+fn readJump(c: *const chunk.Chunk, at: usize) usize {
+    return (@as(usize, c.code.items[at]) << 24) |
+        (@as(usize, c.code.items[at + 1]) << 16) |
+        (@as(usize, c.code.items[at + 2]) << 8) |
+        c.code.items[at + 3];
+}
+
+fn inlineCacheOperand(c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
+    const ic_idx = (@as(u16, c.code.items[offset]) << 8) | c.code.items[offset + 1];
+    try writer.print("{s: <21}| ic {d}\n", .{ "", ic_idx });
+    return offset + 2;
+}
+
+fn printConstant(c: *const chunk.Chunk, index: u16, writer: anytype) !void {
+    // Never trust operands blindly: this tool is used to inspect broken bytecode
+    if (index >= c.constants.items.len) {
+        try writer.writeAll("<invalid constant>");
+        return;
+    }
+    try c.constants.items[index].stringify(true, writer);
 }
 
 fn simpleInstruction(name: []const u8, offset: usize, writer: anytype) !usize {
@@ -164,14 +202,12 @@ fn twoByteInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, wr
 }
 
 fn jumpInstruction(name: []const u8, sign: i32, c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
-    var jump: usize = @as(usize, c.code.items[offset + 1]) << 16;
-    jump |= @as(usize, c.code.items[offset + 2]) << 8;
-    jump |= c.code.items[offset + 3];
-
-    const target = if (sign == 1) offset + 4 + jump else offset + 4 - jump;
+    const jump = readJump(c, offset + 1);
+    const next = offset + 5;
+    const target: isize = if (sign == 1) @as(isize, @intCast(next + jump)) else @as(isize, @intCast(next)) - @as(isize, @intCast(jump));
 
     try writer.print("{s: <16} {d: >4} -> {d}\n", .{ name, offset, target });
-    return offset + 4;
+    return next;
 }
 
 fn constantInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, is_wide: bool, writer: anytype) !usize {
@@ -186,7 +222,7 @@ fn constantInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, i
     }
 
     try writer.print("{s: <16} {d: >4} '", .{ name, constant });
-    try c.constants.items[constant].stringify(true, writer);
+    try printConstant(c, constant, writer);
     try writer.writeAll("'\n");
     return new_offset;
 }
@@ -207,7 +243,7 @@ fn invokeInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, is_
     }
 
     try writer.print("{s: <16} ({d} args) {d: >4} '", .{ name, arg_count, constant });
-    try c.constants.items[constant].stringify(true, writer);
+    try printConstant(c, constant, writer);
     try writer.writeAll("'\n");
     return new_offset;
 }
@@ -226,16 +262,18 @@ fn switchInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, is_
 
     try writer.print("{s:<16} {d} cases\n", .{ name, case_count });
 
+    // Offsets are relative to the byte after the default jump, as in the VM
+    const jump_base = current_offset + @as(usize, case_count) * 6 + 4;
     for (0..case_count) |i| {
-        // Read the full 5-byte jump layout [const_h, const_l, jump_h, jump_m, jump_l]
+        // Entry layout: [const_hi, const_lo, jump_b3, jump_b2, jump_b1, jump_b0]
         const const_idx = (@as(u16, c.code.items[current_offset]) << 8) | c.code.items[current_offset + 1];
-        const jump_offset = (@as(usize, c.code.items[current_offset + 2]) << 16) | (@as(usize, c.code.items[current_offset + 3]) << 8) | c.code.items[current_offset + 4];
-        try writer.print("{s:<20} case {d}: const[{d}] jump +{d} -> {d}\n", .{ "", i, const_idx, jump_offset, current_offset + 5 + jump_offset });
-        current_offset += 5;
+        const jump_offset = readJump(c, current_offset + 2);
+        try writer.print("{s:<20} case {d}: const[{d}] jump +{d} -> {d}\n", .{ "", i, const_idx, jump_offset, jump_base + jump_offset });
+        current_offset += 6;
     }
 
-    const default_jump = (@as(usize, c.code.items[current_offset]) << 16) | (@as(usize, c.code.items[current_offset + 1]) << 8) | c.code.items[current_offset + 2];
-    try writer.print("{s:<20} default: jump +{d} -> {d}\n", .{ "", default_jump, current_offset + 3 + default_jump });
+    const default_jump = readJump(c, current_offset);
+    try writer.print("{s:<20} default: jump +{d} -> {d}\n", .{ "", default_jump, jump_base + default_jump });
 
-    return current_offset + 3;
+    return current_offset + 4;
 }

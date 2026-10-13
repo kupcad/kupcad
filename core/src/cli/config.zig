@@ -3,7 +3,8 @@ const fs = @import("fs.zig");
 const FmtConfig = @import("../tools/fmt/config.zig").Config;
 const LintConfig = @import("../tools/lint/config.zig").Config;
 
-pub const MAX_FILE_SIZE = 1024 * 1024 * 10; // 10MB
+// Shares the frontend's cap so the CLI never accepts a file the parser would reject.
+pub const MAX_FILE_SIZE = @import("../core/limits.zig").MAX_SOURCE_BYTES;
 const DEFAULT_CONFIG_NAME = ".kupcad.json";
 
 pub const ProjectConfig = struct {

@@ -6,6 +6,7 @@ const common_errors = @import("errors.zig");
 const ast = @import("ast.zig");
 const resolver = @import("resolver.zig");
 const parent_map = @import("parent_map.zig");
+const limits = @import("limits.zig");
 
 pub const LineIndex = @import("line_index.zig").LineIndex;
 
@@ -23,6 +24,9 @@ pub const Document = struct {
     closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const resolver.UpvalueCapture),
 
     fn parseInternal(allocator: std.mem.Allocator, source: []const u8, resolve_semantics: bool) !Document {
+        // The CLI caps file size before reading, but LSP/WASM hand us buffers directly
+        if (source.len > limits.MAX_SOURCE_BYTES) return error.SourceTooLarge;
+
         var arena = std.heap.ArenaAllocator.init(allocator);
         errdefer arena.deinit();
         const arena_alloc = arena.allocator();

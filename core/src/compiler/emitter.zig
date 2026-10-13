@@ -50,6 +50,9 @@ pub fn simulatePop(self: *Compiler, count: usize) void {
 
 pub fn emitInlineCacheIndex(self: *Compiler) CompileError!void {
     const ic_idx = self.current_chunk.addInlineCache(self.allocator) catch return error.OutOfMemory;
+    // The index is a 16-bit operand; a larger one would silently alias an earlier
+    // call site's cache and dispatch to the wrong method.
+    if (ic_idx > limits.MAX_INLINE_CACHES) return error.TooManyInlineCaches;
     try self.emitByte(@intCast((ic_idx >> 8) & 0xff));
     try self.emitByte(@intCast(ic_idx & 0xff));
 }
