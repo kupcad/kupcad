@@ -24,6 +24,7 @@ test {
     _ = @import("kernel/regression_ownership_test.zig");
     _ = @import("stdlib/regression_validation_test.zig");
     _ = @import("compiler/regression_limits_test.zig");
+    _ = @import("pkg/regression_security_test.zig");
 
     // Compiler
     _ = @import("compiler/compiler_test.zig");

@@ -11,7 +11,7 @@ test "Store: initializes and runs SQLite migrations in-memory" {
     const row = try stmt.one(struct { user_version: i32 }, .{}, .{});
 
     try testing.expect(row != null);
-    try testing.expectEqual(@as(i32, 2), row.?.user_version); // Expect V2
+    try testing.expectEqual(@as(i32, 3), row.?.user_version); // Expect V3 (composite packages key)
 }
 
 test "Store: registers package and maps associated file hashes" {

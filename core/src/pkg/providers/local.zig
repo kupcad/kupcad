@@ -13,6 +13,9 @@ pub const LocalProvider = struct {
         std.debug.assert(pkg.provider == .local);
 
         const cwd = std.Io.Dir.cwd();
-        return cwd.realPathFileAlloc(io, pkg.repo, allocator);
+        // realPathFileAlloc returns a sentinel slice; re-dupe so callers can free it as []const u8.
+        const real = try cwd.realPathFileAlloc(io, pkg.repo, allocator);
+        defer allocator.free(real);
+        return allocator.dupe(u8, real);
     }
 };

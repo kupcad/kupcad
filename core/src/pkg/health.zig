@@ -57,6 +57,13 @@ pub const Doctor = struct {
         const cwd = std.Io.Dir.cwd();
         var missing_count: usize = 0;
 
+        // Collect first: mutating `files` while stepping a SELECT over it is unsafe.
+        var missing: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer {
+            for (missing.items) |h| self.allocator.free(h);
+            missing.deinit(self.allocator);
+        }
+
         while (try rows.next()) |row| {
             const final_path = try self.allocator.print("{s}/files/{s}", .{ self.cafs.global_dir_path, row.hash });
             defer self.allocator.free(final_path);
@@ -66,18 +73,13 @@ pub const Doctor = struct {
                 break :blk true;
             } else |_| false;
 
-            if (!file_exists) {
-                // Delete from DB so it gets re-downloaded next install
-                const del_files = try self.allocator.print("DELETE FROM files WHERE hash = '{s}'", .{row.hash});
-                defer self.allocator.free(del_files);
-                try self.store.db.exec(del_files, .{}, .{});
+            if (!file_exists) try missing.append(self.allocator, try self.allocator.dupe(u8, row.hash));
+        }
 
-                const del_pkg = try self.allocator.print("DELETE FROM package_files WHERE file_hash = '{s}'", .{row.hash});
-                defer self.allocator.free(del_pkg);
-                try self.store.db.exec(del_pkg, .{}, .{});
-
-                missing_count += 1;
-            }
+        for (missing.items) |hash| {
+            // Evict blob + dependent packages (bound params) so they get re-downloaded next install
+            try self.store.evictBlob(hash);
+            missing_count += 1;
         }
 
         if (missing_count > 0) {
@@ -105,21 +107,17 @@ pub const Doctor = struct {
         while (try it.next(self.io)) |entry| {
             if (entry.kind != .file) continue;
 
-            // Check if hash exists in DB
-            const query = try self.allocator.print("SELECT 1 FROM files WHERE hash = '{s}'", .{entry.name});
-            defer self.allocator.free(query);
-
-            var stmt = try self.store.db.prepare(query);
+            // Check if hash exists in DB (bound params: file names are not trusted SQL)
+            var stmt = try self.store.db.prepare("SELECT 1 FROM files WHERE hash = ?");
             defer stmt.deinit();
 
-            if (try stmt.one(struct { val: i32 }, .{}, .{}) == null) {
+            if (try stmt.one(struct { val: i32 }, .{entry.name}, .{}) == null) {
                 // File exists physically but not in DB. Re-register it.
                 const stat = try dir.statFile(self.io, entry.name, .{});
+                const size: i64 = @intCast(stat.size);
+                const created_at: i64 = @intCast(now);
 
-                const insert_stmt = try self.allocator.print("INSERT INTO files (hash, size, created_at) VALUES ('{s}', {d}, {d})", .{ entry.name, stat.size, now });
-                defer self.allocator.free(insert_stmt);
-
-                try self.store.db.exec(insert_stmt, .{}, .{});
+                try self.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES (?, ?, ?)", .{ entry.name, size, created_at }, .{});
                 orphan_count += 1;
             }
         }

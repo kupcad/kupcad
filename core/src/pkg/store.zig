@@ -4,6 +4,14 @@ const sqlite = @import("sqlite");
 
 const log = std.log.scoped(.pkg);
 
+/// Deletes package_files rows whose (package_id, commit_sha) has no packages row.
+const ORPHAN_PACKAGE_FILES_SQL =
+    \\DELETE FROM package_files WHERE NOT EXISTS (
+    \\    SELECT 1 FROM packages p
+    \\    WHERE p.id = package_files.package_id AND p.commit_sha = package_files.commit_sha
+    \\)
+;
+
 pub const Db = struct {
     handle: ?*sqlite.sqlite3,
 
@@ -152,13 +160,17 @@ pub const Store = struct {
         const db = Db{ .handle = handle };
         var store = Store{ .db = db, .io = io };
 
-        const integrity_stmt = try db.prepare("PRAGMA quick_check");
-        defer integrity_stmt.deinit();
-        const integrity_res = try integrity_stmt.one(struct { result: []const u8 }, .{}, .{});
-        if (integrity_res) |res| {
-            if (!std.mem.eql(u8, res.result, "ok")) {
-                log.err("CRITICAL: SQLite database is corrupted! Self-healing triggered...\n", .{});
-                return error.DatabaseCorrupted;
+        {
+            // Scoped so the statement is finalized before migrations run: an active
+            // statement makes schema changes (DROP TABLE) fail with SQLITE_LOCKED.
+            const integrity_stmt = try db.prepare("PRAGMA quick_check");
+            defer integrity_stmt.deinit();
+            const integrity_res = try integrity_stmt.one(struct { result: []const u8 }, .{}, .{});
+            if (integrity_res) |res| {
+                if (!std.mem.eql(u8, res.result, "ok")) {
+                    log.err("CRITICAL: SQLite database is corrupted! Self-healing triggered...\n", .{});
+                    return error.DatabaseCorrupted;
+                }
             }
         }
 
@@ -171,17 +183,20 @@ pub const Store = struct {
     }
 
     fn runMigrations(self: *Store) !void {
-        const version_stmt = try self.db.prepare("PRAGMA user_version");
-        defer version_stmt.deinit();
-        const current_version_row = try version_stmt.one(struct { user_version: i32 }, .{}, .{});
-        const current_version = if (current_version_row) |row| row.user_version else 0;
+        const current_version = blk: {
+            const version_stmt = try self.db.prepare("PRAGMA user_version");
+            defer version_stmt.deinit();
+            const current_version_row = try version_stmt.one(struct { user_version: i32 }, .{}, .{});
+            break :blk if (current_version_row) |row| row.user_version else 0;
+        };
 
-        const TARGET_VERSION: i32 = 2;
+        const TARGET_VERSION: i32 = 3;
 
         if (current_version < TARGET_VERSION) {
             log.info("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, TARGET_VERSION });
 
             try self.db.exec("BEGIN TRANSACTION", .{}, .{});
+            errdefer self.db.exec("ROLLBACK", .{}, .{}) catch |err| log.err("Rollback failed: {}", .{err});
             if (current_version < 1) {
                 try self.db.exec(
                     \\CREATE TABLE IF NOT EXISTS packages (
@@ -218,6 +233,29 @@ pub const Store = struct {
             if (current_version < 2) {
                 try self.db.exec("ALTER TABLE packages ADD COLUMN integrity TEXT NOT NULL DEFAULT ''", .{}, .{});
             }
+            if (current_version < 3) {
+                // v3: a package may be cached at several commits. The v1 schema keyed
+                // `packages` by id alone, so INSERT OR IGNORE silently dropped every
+                // commit after the first. Rebuild with a composite key.
+                try self.db.exec(
+                    \\CREATE TABLE packages_v3 (
+                    \\    id TEXT NOT NULL,
+                    \\    commit_sha TEXT NOT NULL,
+                    \\    provider TEXT NOT NULL,
+                    \\    created_at INTEGER NOT NULL,
+                    \\    integrity TEXT NOT NULL DEFAULT '',
+                    \\    PRIMARY KEY (id, commit_sha)
+                    \\)
+                , .{}, .{});
+                try self.db.exec(
+                    \\INSERT INTO packages_v3 (id, commit_sha, provider, created_at, integrity)
+                    \\SELECT id, commit_sha, provider, created_at, integrity FROM packages
+                , .{}, .{});
+                try self.db.exec("DROP TABLE packages", .{}, .{});
+                try self.db.exec("ALTER TABLE packages_v3 RENAME TO packages", .{}, .{});
+                // File mappings for commits that the old schema dropped are unreachable.
+                try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{}, .{});
+            }
             const update_pragma = try std.fmt.allocPrint(std.heap.page_allocator, "PRAGMA user_version = {d}", .{TARGET_VERSION});
             defer std.heap.page_allocator.free(update_pragma);
             try self.db.exec(update_pragma, .{}, .{});
@@ -225,8 +263,22 @@ pub const Store = struct {
         }
     }
 
-    /// Computes a deterministic Merkle-style checksum of extracted package files
+    pub const IntegrityAlgo = enum {
+        /// v2 (lockfile >= 2.0.0): length-prefixed fields, unambiguous.
+        current,
+        /// v1 (lockfile 1.x): plain `path || hash` concatenation. Ambiguous
+        /// (("ab","c") == ("a","bc")); only used to verify old lockfiles before upgrading them.
+        legacy,
+    };
+
+    /// Computes a deterministic Merkle-style checksum of extracted package files.
+    /// Each path and hash is length-prefixed (u64 LE) so distinct file maps can
+    /// never produce the same hash input.
     pub fn computeIntegrity(allocator: std.mem.Allocator, files_map: *const std.StringHashMap([]const u8)) ![]const u8 {
+        return computeIntegrityAlgo(allocator, files_map, .current);
+    }
+
+    pub fn computeIntegrityAlgo(allocator: std.mem.Allocator, files_map: *const std.StringHashMap([]const u8), algo: IntegrityAlgo) ![]const u8 {
         var paths = std.ArrayListUnmanaged([]const u8).empty;
         defer paths.deinit(allocator);
 
@@ -243,8 +295,16 @@ pub const Store = struct {
         var hasher = std.crypto.hash.sha2.Sha256.init(.{});
         for (paths.items) |path| {
             const hash = files_map.get(path).?;
-            hasher.update(path);
-            hasher.update(hash);
+            switch (algo) {
+                .current => {
+                    hashLenPrefixed(&hasher, path);
+                    hashLenPrefixed(&hasher, hash);
+                },
+                .legacy => {
+                    hasher.update(path);
+                    hasher.update(hash);
+                },
+            }
         }
 
         var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
@@ -252,6 +312,54 @@ pub const Store = struct {
 
         const hex = std.fmt.bytesToHex(digest, .lower);
         return allocator.print("sha256-{s}", .{hex});
+    }
+
+    fn hashLenPrefixed(hasher: *std.crypto.hash.sha2.Sha256, bytes: []const u8) void {
+        var len_buf: [8]u8 = undefined;
+        std.mem.writeInt(u64, &len_buf, bytes.len, .little);
+        hasher.update(&len_buf);
+        hasher.update(bytes);
+    }
+
+    /// Fails with error.IntegrityMismatch unless `files_map` hashes to `expected`.
+    pub fn verifyIntegrity(
+        allocator: std.mem.Allocator,
+        files_map: *const std.StringHashMap([]const u8),
+        expected: []const u8,
+        algo: IntegrityAlgo,
+    ) !void {
+        const actual = try computeIntegrityAlgo(allocator, files_map, algo);
+        defer allocator.free(actual);
+        if (!std.mem.eql(u8, actual, expected)) return error.IntegrityMismatch;
+    }
+
+    /// Frees a `[path -> hash]` map whose keys and values are owned by `allocator`.
+    pub fn freeFileMap(allocator: std.mem.Allocator, map: *std.StringHashMap([]const u8)) void {
+        var it = map.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            allocator.free(entry.value_ptr.*);
+        }
+        map.deinit();
+    }
+
+    /// Removes a blob from the index *and* invalidates every package that referenced
+    /// it, so a later install re-downloads the package instead of treating a
+    /// partially-deleted package as cached.
+    pub fn evictBlob(self: *Store, hash: []const u8) !void {
+        try self.db.exec("BEGIN TRANSACTION", .{}, .{});
+        errdefer self.db.exec("ROLLBACK", .{}, .{}) catch |err| log.err("Rollback failed: {}", .{err});
+
+        try self.db.exec(
+            \\DELETE FROM packages WHERE EXISTS (
+            \\    SELECT 1 FROM package_files pf
+            \\    WHERE pf.package_id = packages.id AND pf.commit_sha = packages.commit_sha AND pf.file_hash = ?
+            \\)
+        , .{hash}, .{});
+        try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{}, .{});
+        try self.db.exec("DELETE FROM files WHERE hash = ?", .{hash}, .{});
+
+        try self.db.exec("COMMIT", .{}, .{});
     }
 
     /// Checks whether a package commit_sha exists in the offline store
@@ -317,11 +425,17 @@ pub const Store = struct {
         const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
         const now: i64 = @intCast(@divTrunc(now_ns, std.time.ns_per_s));
 
+        // Upsert keyed by (id, commit_sha): a new commit of an existing package must
+        // be recorded, and re-registering the same commit refreshes its metadata.
         const pkg_stmt =
-            \\INSERT OR IGNORE INTO packages (id, commit_sha, provider, integrity, created_at)
+            \\INSERT INTO packages (id, commit_sha, provider, integrity, created_at)
             \\VALUES (?, ?, ?, ?, ?)
+            \\ON CONFLICT(id, commit_sha) DO UPDATE SET provider = excluded.provider, integrity = excluded.integrity
         ;
         try self.db.exec(pkg_stmt, .{ pkg_id, commit_sha, provider_name, integrity, now }, .{});
+
+        // Replace (not merge) the file mapping so it exactly matches the verified content.
+        try self.db.exec("DELETE FROM package_files WHERE package_id = ? AND commit_sha = ?", .{ pkg_id, commit_sha }, .{});
 
         var files_it = files_map.iterator();
         while (files_it.next()) |entry| {

@@ -2,6 +2,14 @@ const std = @import("std");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 
 pub const StringMap = std.StringHashMap([]const u8);
+
+/// 2.0.0: integrity uses length-prefixed hashing (see Store.computeIntegrity).
+pub const LOCKFILE_VERSION = "2.0.0";
+
+/// JSON-escaped, quoted string formatter.
+fn jsonStr(s: []const u8) std.json.Formatter([]const u8) {
+    return std.json.fmt(s, .{});
+}
 pub const PackagesMap = std.StringHashMap(LockedPackage);
 
 const SortUtil = struct {
@@ -37,7 +45,7 @@ pub const Lockfile = struct {
     pub fn init(allocator: std.mem.Allocator) Lockfile {
         return .{
             .allocator = allocator,
-            .version = allocator.dupe(u8, "1.0.0") catch @panic("OOM allocating lockfile version"),
+            .version = allocator.dupe(u8, LOCKFILE_VERSION) catch @panic("OOM allocating lockfile version"),
             .packages = PackagesMap.init(allocator),
         };
     }
@@ -131,9 +139,15 @@ pub const Lockfile = struct {
         return lockfile;
     }
 
+    /// Lockfiles written before 2.0.0 hash integrity with the ambiguous v1 scheme.
+    pub fn usesLegacyIntegrity(self: *const Lockfile) bool {
+        return !std.mem.eql(u8, self.version, LOCKFILE_VERSION);
+    }
+
     pub fn save(self: *Lockfile, fs: Vfs) !void {
-        var out_str: std.ArrayListUnmanaged(u8) = .empty;
-        defer out_str.deinit(self.allocator);
+        var aw: std.Io.Writer.Allocating = .init(self.allocator);
+        defer aw.deinit();
+        const w = &aw.writer;
 
         var pkg_keys: std.ArrayListUnmanaged([]const u8) = .empty;
         defer pkg_keys.deinit(self.allocator);
@@ -142,22 +156,27 @@ pub const Lockfile = struct {
         while (pkg_it.next()) |k| try pkg_keys.append(self.allocator, k.*);
         std.mem.sort([]const u8, pkg_keys.items, {}, SortUtil.lessThan);
 
-        try out_str.appendSlice(self.allocator, "{\n  \"version\": \"");
-        try out_str.appendSlice(self.allocator, self.version);
-        try out_str.appendSlice(self.allocator, "\",\n  \"packages\": {");
+        // Every string goes through the JSON string encoder: ids, refs and aliases
+        // can originate from downloaded manifests, and raw `{s}` interpolation let a
+        // `"` in an alias inject arbitrary lockfile entries.
+        // Saving always upgrades to the current format (integrities were recomputed by the resolver).
+        try w.print("{{\n  \"version\": {f},\n  \"packages\": {{", .{jsonStr(LOCKFILE_VERSION)});
 
         if (pkg_keys.items.len > 0) {
-            try out_str.appendSlice(self.allocator, "\n");
+            try w.writeAll("\n");
             for (pkg_keys.items, 0..) |pkg_id, i| {
                 const locked_pkg = self.packages.get(pkg_id).?;
                 const comma1 = if (i < pkg_keys.items.len - 1) "," else "";
 
-                const pkg_header = try self.allocator.print("    \"{s}\": {{\n      \"resolved\": \"{s}\",\n      \"ref\": \"{s}\",\n      \"integrity\": \"{s}\"", .{ pkg_id, locked_pkg.resolved, locked_pkg.ref, locked_pkg.integrity });
-                defer self.allocator.free(pkg_header);
-                try out_str.appendSlice(self.allocator, pkg_header);
+                try w.print("    {f}: {{\n      \"resolved\": {f},\n      \"ref\": {f},\n      \"integrity\": {f}", .{
+                    jsonStr(pkg_id),
+                    jsonStr(locked_pkg.resolved),
+                    jsonStr(locked_pkg.ref),
+                    jsonStr(locked_pkg.integrity),
+                });
 
                 if (locked_pkg.dependencies.count() > 0) {
-                    try out_str.appendSlice(self.allocator, ",\n      \"dependencies\": {\n");
+                    try w.writeAll(",\n      \"dependencies\": {\n");
 
                     var dep_keys: std.ArrayListUnmanaged([]const u8) = .empty;
                     defer dep_keys.deinit(self.allocator);
@@ -168,23 +187,21 @@ pub const Lockfile = struct {
                     for (dep_keys.items, 0..) |dep_key, j| {
                         const dep_val = locked_pkg.dependencies.get(dep_key).?;
                         const comma2 = if (j < dep_keys.items.len - 1) "," else "";
-                        const dep_line = try self.allocator.print("        \"{s}\": \"{s}\"{s}\n", .{ dep_key, dep_val, comma2 });
-                        defer self.allocator.free(dep_line);
-                        try out_str.appendSlice(self.allocator, dep_line);
+                        try w.print("        {f}: {f}{s}\n", .{ jsonStr(dep_key), jsonStr(dep_val), comma2 });
                     }
-                    try out_str.appendSlice(self.allocator, "      }\n    }");
+                    try w.writeAll("      }\n    }");
                 } else {
-                    try out_str.appendSlice(self.allocator, "\n    }");
+                    try w.writeAll("\n    }");
                 }
 
-                try out_str.appendSlice(self.allocator, comma1);
-                try out_str.appendSlice(self.allocator, "\n");
+                try w.writeAll(comma1);
+                try w.writeAll("\n");
             }
-            try out_str.appendSlice(self.allocator, "  }\n}");
+            try w.writeAll("  }\n}");
         } else {
-            try out_str.appendSlice(self.allocator, "}\n}");
+            try w.writeAll("}\n}");
         }
 
-        try fs.writeFile("kupcad.lock", out_str.items);
+        try fs.writeFile("kupcad.lock", aw.written());
     }
 };

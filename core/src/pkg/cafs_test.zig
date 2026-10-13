@@ -173,7 +173,7 @@ test "Cafs: resolvePackage fast-path short-circuits when package is cached offli
     try store.registerPackage("pkg-cached", "sha-100", "local", "sha256-cached", &files);
 
     // Call resolvePackage with `reader = null` (no network stream)
-    var resolved_map = try cafs.resolvePackage(&store, "pkg-cached", "sha-100", "local", null);
+    var resolved_map = try cafs.resolvePackage(&store, "pkg-cached", "sha-100", "local", null, null);
     defer {
         var it = resolved_map.iterator();
         while (it.next()) |entry| {
@@ -203,7 +203,7 @@ test "Cafs: resolvePackage returns PackageNotFoundOffline on cache miss when rea
     defer store.deinit();
 
     // Attempting offline resolution without pre-seeding or a network reader must fail cleanly
-    const result = cafs.resolvePackage(&store, "non-existent-pkg", "sha-000", "github", null);
+    const result = cafs.resolvePackage(&store, "non-existent-pkg", "sha-000", "github", null, null);
     try testing.expectError(error.PackageNotFoundOffline, result);
 }
 

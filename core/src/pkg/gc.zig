@@ -54,19 +54,19 @@ pub const GarbageCollector = struct {
             pruned_count += 1;
             bytes_freed += stat.size;
 
-            // Remove from SQLite index
-            const delete_stmt = try self.allocator.print("DELETE FROM files WHERE hash = '{s}'", .{entry.name});
-            defer self.allocator.free(delete_stmt);
-            try self.store.db.exec(delete_stmt, .{}, .{});
+            // Remove from the index and invalidate every package that referenced the
+            // blob; otherwise the package still looks cached and linking fails later.
+            // (Bound parameter: file names in the CAFS dir are not trusted SQL.)
+            try self.store.evictBlob(entry.name);
         }
 
         log.info("Pruned {d} files, freeing {d} bytes.\n", .{ pruned_count, bytes_freed });
 
         // Update last_prune_time in meta table (Unix epoch seconds)
         const now_sec = @divFloor(now_ts.nanoseconds, std.time.ns_per_s);
-        const update_meta = try self.allocator.print("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_prune_time', '{d}')", .{now_sec});
-        defer self.allocator.free(update_meta);
-        try self.store.db.exec(update_meta, .{}, .{});
+        var now_buf: [32]u8 = undefined;
+        const now_str = try std.fmt.bufPrint(&now_buf, "{d}", .{now_sec});
+        try self.store.db.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_prune_time', ?)", .{now_str}, .{});
     }
 
     /// Executed post-install. Only runs if 7 days have passed since the last prune.

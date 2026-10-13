@@ -2,13 +2,51 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const Store = @import("store.zig").Store;
+const limits = @import("limits.zig");
 const Sha256 = std.crypto.hash.sha2.Sha256;
+
+const log = std.log.scoped(.pkg);
+
+/// Extra decompressed bytes allowed beyond file contents for tar headers/padding.
+const TAR_METADATA_SLACK_BYTES: u64 = 64 * 1024 * 1024;
+
+pub const ExtractLimits = struct {
+    max_total_bytes: u64 = limits.MAX_EXTRACTED_TOTAL_BYTES,
+    max_file_count: usize = limits.MAX_EXTRACTED_FILE_COUNT,
+};
+
+/// Normalizes a tar entry name into a safe relative path, or fails.
+/// Rejects anything that could resolve outside the package root or that has a
+/// different meaning on another OS (backslashes, drive letters / ADS via ':').
+pub fn sanitizeEntryPath(buffer: []u8, name: []const u8) ![]const u8 {
+    if (name.len == 0 or name[0] == '/') return error.UnsafeArchivePath;
+    var len: usize = 0;
+    var comp_it = std.mem.splitScalar(u8, name, '/');
+    while (comp_it.next()) |component| {
+        if (component.len == 0 or std.mem.eql(u8, component, ".")) continue;
+        if (std.mem.eql(u8, component, "..")) return error.UnsafeArchivePath;
+        for (component) |c| {
+            if (c == 0 or c == '\\' or c == ':') return error.UnsafeArchivePath;
+        }
+        if (len > 0) {
+            if (len >= buffer.len) return error.UnsafeArchivePath;
+            buffer[len] = '/';
+            len += 1;
+        }
+        if (component.len > buffer.len - len) return error.UnsafeArchivePath;
+        @memcpy(buffer[len..][0..component.len], component);
+        len += component.len;
+    }
+    if (len == 0) return error.UnsafeArchivePath;
+    return buffer[0..len];
+}
 
 pub const Cafs = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     global_dir_path: []const u8,
     fs: Vfs,
+    extract_limits: ExtractLimits = .{},
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, global_dir_path: []const u8, fs: Vfs) !Cafs {
         const cwd = std.Io.Dir.cwd();
@@ -41,19 +79,23 @@ pub const Cafs = struct {
         return self.allocator.print("{s}/files/{s}", .{ self.global_dir_path, hash_hex });
     }
 
-    /// Hard links a file from CAFS to the local project store via VFS
+    /// Hard links a file from CAFS to the local project store via VFS.
+    /// The CAFS blob path is absolute and owned by us, so it goes through the
+    /// VFS's trusted-source link API; the destination stays sandboxed.
     pub fn linkBlob(self: *Cafs, hash_hex: []const u8, dest_path: []const u8) !void {
         const source_path = try self.blobPath(hash_hex);
         defer self.allocator.free(source_path);
 
-        self.fs.hardLink(source_path, dest_path) catch |err| switch (err) {
-            error.CrossDeviceLink, error.FileNotFound, error.OperationUnsupported => {
+        self.fs.hardLinkTrusted(source_path, dest_path) catch |err| switch (err) {
+            // NOTE: AccessDenied is deliberately *not* here: it means the sandbox
+            // rejected the destination, and must not be bypassed via writeFile.
+            error.CrossDevice, error.CrossDeviceLink, error.OperationUnsupported, error.LinkQuotaExceeded => {
                 // Fallback: Read physically from CAFS since VFS might be strictly in-memory
+                // or on another device.
                 const cwd = std.Io.Dir.cwd();
 
-                // Securely stream the entire file dynamically to prevent TOCTOU vulnerabilities
-                // caused by relying on potentially stale stat.size attributes.
-                const content = try cwd.readFileAlloc(self.io, source_path, self.allocator, .unlimited);
+                // Stream the whole file (bounded) instead of trusting a possibly stale stat.size.
+                const content = try cwd.readFileAlloc(self.io, source_path, self.allocator, .limited(limits.MAX_BLOB_COPY_BYTES));
                 defer self.allocator.free(content);
 
                 // Write to the destination VFS natively
@@ -73,10 +115,15 @@ pub const Cafs = struct {
         commit_sha: []const u8,
         provider_name: []const u8,
         reader: ?*std.Io.Reader,
+        expected_integrity: ?[]const u8,
     ) !std.StringHashMap([]const u8) {
         // 1. Offline Store Lookup Guard: Fast-path short-circuit
         if (try store.getPackageFiles(self.allocator, pkg_id, commit_sha)) |cached_map| {
-            return cached_map;
+            var map = cached_map;
+            errdefer Store.freeFileMap(self.allocator, &map);
+            // Cached content is verified too: the index may have been tampered with.
+            if (expected_integrity) |expected| try Store.verifyIntegrity(self.allocator, &map, expected, .current);
+            return map;
         }
 
         // 2. Cache Miss: Ensure a valid network stream reader is provided
@@ -96,6 +143,11 @@ pub const Cafs = struct {
         // 4. Compute Merkle integrity & register in SQLite Store
         const integrity = try Store.computeIntegrity(self.allocator, &file_map);
         defer self.allocator.free(integrity);
+
+        // Never register (or hand out) content that doesn't match the pinned integrity.
+        if (expected_integrity) |expected| {
+            if (!std.mem.eql(u8, integrity, expected)) return error.IntegrityMismatch;
+        }
 
         try store.registerPackage(pkg_id, commit_sha, provider_name, integrity, &file_map);
 
@@ -120,6 +172,12 @@ pub const Cafs = struct {
         }
     }
 
+    /// Streams a gzip'd tarball straight into the CAFS without ever materializing
+    /// the archive on disk. Only regular files are ingested:
+    /// - symlink entries are skipped (never created), so a later entry can't write
+    ///   through a planted link to a location outside the package;
+    /// - entry paths are sanitized (no absolute paths, `..`, `\\`, `:` or NUL);
+    /// - total decompressed bytes and file count are capped (gzip / tar bombs).
     pub fn extractTarball(
         self: *Cafs,
         reader: *std.Io.Reader,
@@ -127,81 +185,74 @@ pub const Cafs = struct {
         var window_buffer: [std.compress.flate.max_window_len]u8 = undefined;
         var decompress: std.compress.flate.Decompress = .init(reader, .gzip, &window_buffer);
 
-        const cwd = std.Io.Dir.cwd();
+        // Hard cap on decompressed bytes, including tar headers / padding / skipped
+        // entries, so a tiny archive cannot expand into unbounded work.
+        const max_total = self.extract_limits.max_total_bytes;
+        var limited_buf: [8192]u8 = undefined;
+        var limited: std.Io.Reader.Limited = .init(&decompress.reader, .limited64(max_total + TAR_METADATA_SLACK_BYTES), &limited_buf);
 
-        // Safely resolve a unique Process or Thread ID depending on the OS target
-        const pid: usize = switch (builtin.os.tag) {
-            .linux => @bitCast(@as(isize, std.os.linux.getpid())),
-            .windows => @intCast(std.os.windows.kernel32.GetCurrentProcessId()),
-            .wasi, .freestanding => 0,
-            else => std.Thread.getCurrentId(), // Fallback to OS thread ID for macOS/BSD
-        };
-
-        // Combine nanosecond timestamp with the PID for collision-proof isolation
-        const tmp_path = try self.allocator.print("{s}/tmp_{d}_{d}", .{ self.global_dir_path, std.Io.Clock.real.now(self.io).nanoseconds, pid });
-        defer self.allocator.free(tmp_path);
-
-        try cwd.createDirPath(self.io, tmp_path);
-        defer cwd.deleteTree(self.io, tmp_path) catch |err| std.log.warn("Failed to cleanup CAFS tmp dir: {}", .{err});
-
-        var tmp_dir = try cwd.openDir(self.io, tmp_path, .{ .iterate = true });
-        defer tmp_dir.close(self.io);
-
-        try std.tar.extract(self.io, tmp_dir, &decompress.reader, .{});
+        var file_name_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        var link_name_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        var sanitize_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        var it: std.tar.Iterator = .init(&limited.interface, .{
+            .file_name_buffer = &file_name_buffer,
+            .link_name_buffer = &link_name_buffer,
+        });
 
         var file_map = std.StringHashMap([]const u8).init(self.allocator);
         errdefer {
-            var it = file_map.iterator();
-            while (it.next()) |entry| {
+            var map_it = file_map.iterator();
+            while (map_it.next()) |entry| {
                 self.allocator.free(entry.key_ptr.*);
                 self.allocator.free(entry.value_ptr.*);
             }
             file_map.deinit();
         }
 
-        try self.ingestDir(tmp_dir, "", &file_map);
+        var total_bytes: u64 = 0;
+        while (true) {
+            const maybe_entry = it.next() catch |err| {
+                if (limited.remaining == .nothing) return error.ArchiveTooLarge;
+                return err;
+            };
+            const entry = maybe_entry orelse break;
+
+            switch (entry.kind) {
+                .directory => continue,
+                .sym_link => {
+                    log.warn("Skipping symlink entry '{s}' in package archive (symlinks are never extracted)", .{entry.name});
+                    continue;
+                },
+                .file => {},
+            }
+
+            const rel_path = try sanitizeEntryPath(&sanitize_buffer, entry.name);
+
+            if (file_map.count() >= self.extract_limits.max_file_count) return error.ArchiveTooManyFiles;
+            if (entry.size > max_total - total_bytes) return error.ArchiveTooLarge;
+            total_bytes += entry.size;
+
+            // Duplicate entries would silently replace content after the fact.
+            if (file_map.contains(rel_path)) return error.DuplicateArchiveEntry;
+
+            const hash_hex = self.saveExact(it.reader, entry.size) catch |err| {
+                if (limited.remaining == .nothing) return error.ArchiveTooLarge;
+                return err;
+            };
+            errdefer self.allocator.free(hash_hex);
+            // Content was consumed manually; tell the iterator not to skip it again.
+            it.unread_file_bytes = 0;
+
+            const map_key = try self.allocator.dupe(u8, rel_path);
+            errdefer self.allocator.free(map_key);
+            try file_map.put(map_key, hash_hex);
+        }
 
         return file_map;
     }
 
-    fn ingestDir(
-        self: *Cafs,
-        dir: std.Io.Dir,
-        rel_path: []const u8,
-        file_map: *std.StringHashMap([]const u8),
-    ) !void {
-        var it = dir.iterate();
-        while (try it.next(self.io)) |entry| {
-            const item_rel_path = if (rel_path.len == 0)
-                try self.allocator.dupe(u8, entry.name)
-            else
-                try self.allocator.print("{s}/{s}", .{ rel_path, entry.name });
-            defer self.allocator.free(item_rel_path);
-
-            switch (entry.kind) {
-                .file => {
-                    var file = try dir.openFile(self.io, entry.name, .{});
-                    defer file.close(self.io);
-
-                    var buf: [8192]u8 = undefined;
-                    var file_reader = file.reader(self.io, &buf);
-                    const hash_hex = try self.saveStream(&file_reader.interface);
-
-                    const map_key = try self.allocator.dupe(u8, item_rel_path);
-                    try file_map.put(map_key, hash_hex);
-                },
-                .directory => {
-                    var sub_dir = try dir.openDir(self.io, entry.name, .{ .iterate = true });
-                    defer sub_dir.close(self.io);
-                    try self.ingestDir(sub_dir, item_rel_path, file_map);
-                },
-                else => {},
-            }
-        }
-    }
-
-    /// Streams data into a temporary file, hashes it, applies 0444, and atomically commits it to CAFS
-    fn saveStream(self: *Cafs, reader: *std.Io.Reader) ![]const u8 {
+    /// Streams exactly `size` bytes into a temporary file, hashes it, applies 0444, and atomically commits it to CAFS
+    fn saveExact(self: *Cafs, reader: *std.Io.Reader, size: u64) ![]const u8 {
         var hasher = Sha256.init(.{});
 
         var rand_buf: [8]u8 = undefined;
@@ -210,37 +261,53 @@ pub const Cafs = struct {
         defer self.allocator.free(tmp_path);
 
         const cwd = std.Io.Dir.cwd();
-        var file = try cwd.createFile(self.io, tmp_path, .{ .read = true });
+        var file = try cwd.createFile(self.io, tmp_path, .{ .read = true, .exclusive = true });
+        var committed = false;
+        defer if (!committed) {
+            cwd.deleteFile(self.io, tmp_path) catch |e| std.log.warn("Failed to delete tmp file: {}", .{e});
+        };
+        {
+            defer file.close(self.io);
 
-        var buf: [8192]u8 = undefined;
-        while (true) {
-            const bytes_read = try reader.readSliceShort(&buf);
-            if (bytes_read == 0) break;
+            var buf: [8192]u8 = undefined;
+            var remaining = size;
+            while (remaining > 0) {
+                const n: usize = @intCast(@min(remaining, buf.len));
+                reader.readSliceAll(buf[0..n]) catch |err| switch (err) {
+                    error.EndOfStream => return error.UnexpectedEndOfStream,
+                    else => return err,
+                };
+                hasher.update(buf[0..n]);
+                try file.writeStreamingAll(self.io, buf[0..n]);
+                remaining -= n;
+            }
 
-            hasher.update(buf[0..bytes_read]);
-            try file.writeStreamingAll(self.io, buf[0..bytes_read]);
+            if (builtin.os.tag != .windows) {
+                try file.setPermissions(self.io, std.Io.File.Permissions.fromMode(0o444));
+            }
         }
-
-        if (builtin.os.tag != .windows) {
-            try file.setPermissions(self.io, std.Io.File.Permissions.fromMode(0o444));
-        }
-        file.close(self.io);
 
         const hash_out = hasher.finalResult();
         const hash_hex = try self.allocator.print("{x}", .{&hash_out});
+        errdefer self.allocator.free(hash_hex);
 
         const final_path = try self.allocator.print("{s}/files/{s}", .{ self.global_dir_path, hash_hex });
         defer self.allocator.free(final_path);
 
         if (cwd.access(self.io, final_path, .{})) |_| {
-            try cwd.deleteFile(self.io, tmp_path);
+            // Identical content already stored; the deferred cleanup removes the tmp copy.
         } else |_| {
-            cwd.rename(tmp_path, cwd, final_path, self.io) catch |err| {
-                cwd.deleteFile(self.io, tmp_path) catch |e| std.log.warn("Failed to delete tmp file: {}", .{e});
-                return err;
-            };
+            try cwd.rename(tmp_path, cwd, final_path, self.io);
+            committed = true;
         }
 
         return hash_hex;
+    }
+
+    /// Reads a CAFS blob (trusted, absolute path) with an explicit size cap.
+    pub fn readBlob(self: *Cafs, allocator: std.mem.Allocator, hash_hex: []const u8, max_bytes: usize) ![]u8 {
+        const path = try self.blobPath(hash_hex);
+        defer self.allocator.free(path);
+        return std.Io.Dir.cwd().readFileAlloc(self.io, path, allocator, .limited(max_bytes));
     }
 };

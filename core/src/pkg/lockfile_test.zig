@@ -9,7 +9,7 @@ test "Lockfile: initializes with default version" {
     var lockfile = Lockfile.init(testing.allocator);
     defer lockfile.deinit();
 
-    try testing.expectEqualStrings("1.0.0", lockfile.version);
+    try testing.expectEqualStrings(@import("lockfile.zig").LOCKFILE_VERSION, lockfile.version);
     try testing.expectEqual(@as(usize, 0), lockfile.packages.count());
 }
 
@@ -50,7 +50,7 @@ test "Lockfile: gracefully handles missing lockfiles by returning empty defaults
     var lockfile = try Lockfile.load(testing.allocator, mem_vfs.vfs());
     defer lockfile.deinit();
 
-    try testing.expectEqualStrings("1.0.0", lockfile.version);
+    try testing.expectEqualStrings(@import("lockfile.zig").LOCKFILE_VERSION, lockfile.version);
     try testing.expectEqual(@as(usize, 0), lockfile.packages.count());
 }
 

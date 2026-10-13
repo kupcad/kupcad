@@ -1,4 +1,5 @@
 const std = @import("std");
+const validate = @import("validate.zig");
 
 pub const StringMap = std.StringHashMap([]const u8);
 
@@ -46,20 +47,32 @@ pub const Manifest = struct {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, buffer, .{});
         defer parsed.deinit();
 
+        // Validate the shape instead of `.?`/`.object` panicking on hostile input.
+        if (parsed.value != .object) return error.InvalidManifest;
         const root = parsed.value.object;
+        const name_val = root.get("name") orelse return error.InvalidManifest;
+        const version_val = root.get("version") orelse return error.InvalidManifest;
+        if (name_val != .string or version_val != .string) return error.InvalidManifest;
 
         var manifest = Manifest{
             .allocator = allocator,
-            .name = try allocator.dupe(u8, root.get("name").?.string),
-            .version = try allocator.dupe(u8, root.get("version").?.string),
+            .name = try allocator.dupe(u8, name_val.string),
+            .version = try allocator.dupe(u8, version_val.string),
             .dependencies = StringMap.init(allocator),
         };
+        errdefer manifest.deinit();
 
         if (root.get("dependencies")) |deps_val| {
+            if (deps_val != .object) return error.InvalidManifest;
             var it = deps_val.object.iterator();
             while (it.next()) |entry| {
+                if (entry.value_ptr.* != .string) return error.InvalidManifest;
+                // Aliases become symlink names under .kupcad/pkg/.
+                try validate.validateAlias(entry.key_ptr.*);
                 const key = try allocator.dupe(u8, entry.key_ptr.*);
+                errdefer allocator.free(key);
                 const val = try allocator.dupe(u8, entry.value_ptr.*.string);
+                errdefer allocator.free(val);
                 try manifest.dependencies.put(key, val);
             }
         }
@@ -80,18 +93,17 @@ pub const Manifest = struct {
         while (key_it.next()) |k| try keys.append(self.allocator, k.*);
         std.mem.sort([]const u8, keys.items, {}, SortUtil.lessThan);
 
-        try out_str.appendSlice(self.allocator, "{\n  \"name\": \"");
-        try out_str.appendSlice(self.allocator, self.name);
-        try out_str.appendSlice(self.allocator, "\",\n  \"version\": \"");
-        try out_str.appendSlice(self.allocator, self.version);
-        try out_str.appendSlice(self.allocator, "\",\n  \"dependencies\": {");
+        // All strings are JSON-escaped so a `"` in a name/alias can't inject keys.
+        const header = try self.allocator.print("{{\n  \"name\": {f},\n  \"version\": {f},\n  \"dependencies\": {{", .{ std.json.fmt(self.name, .{}), std.json.fmt(self.version, .{}) });
+        defer self.allocator.free(header);
+        try out_str.appendSlice(self.allocator, header);
 
         if (keys.items.len > 0) {
             try out_str.appendSlice(self.allocator, "\n");
             for (keys.items, 0..) |k, i| {
                 const v = self.dependencies.get(k).?;
                 const comma = if (i < keys.items.len - 1) "," else "";
-                const line = try self.allocator.print("    \"{s}\": \"{s}\"{s}\n", .{ k, v, comma });
+                const line = try self.allocator.print("    {f}: {f}{s}\n", .{ std.json.fmt(k, .{}), std.json.fmt(v, .{}), comma });
                 defer self.allocator.free(line);
                 try out_str.appendSlice(self.allocator, line);
             }
