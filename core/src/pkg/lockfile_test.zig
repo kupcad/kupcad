@@ -108,3 +108,33 @@ test "Lockfile: save upgrades the in-memory version along with the file" {
     try testing.expectEqualStrings(@import("lockfile.zig").LOCKFILE_VERSION, lockfile.version);
     try testing.expect(!try lockfile.usesLegacyIntegrity());
 }
+
+// Audit fix: strings were written unescaped, so a hostile alias or ref could
+// inject keys into kupcad.lock.
+test "Lockfile: strings are JSON-escaped on save" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    const fs = mem_vfs.vfs();
+
+    const evil_alias = "x\": \"injected\", \"y";
+    {
+        var lockfile = Lockfile.init(testing.allocator);
+        defer lockfile.deinit();
+        var deps = StringMap.init(testing.allocator);
+        try deps.put(try testing.allocator.dupe(u8, evil_alias), try testing.allocator.dupe(u8, "github.com/a/b"));
+        try lockfile.packages.put(try testing.allocator.dupe(u8, "github.com-a-p"), .{
+            .resolved = try testing.allocator.dupe(u8, "abc"),
+            .ref = try testing.allocator.dupe(u8, "ma\"in"),
+            .integrity = try testing.allocator.dupe(u8, "sha256-x"),
+            .dependencies = deps,
+        });
+        try lockfile.save(fs);
+    }
+
+    var loaded = try Lockfile.load(testing.allocator, fs);
+    defer loaded.deinit();
+    const pkg = loaded.packages.get("github.com-a-p").?;
+    try testing.expectEqual(@as(usize, 1), pkg.dependencies.count());
+    try testing.expect(pkg.dependencies.get(evil_alias) != null);
+    try testing.expectEqualStrings("ma\"in", pkg.ref);
+}

@@ -10843,3 +10843,331 @@ test "VM: Nested native boundaries unwind exceptions safely without stack corrup
     try testing.expect(rescued_val.isString());
     try testing.expectEqualStrings("nested error", rescued_val.asString().chars);
 }
+
+// --- Unwinding, native boundaries, globals and conversions (Oct 2026 audit) ---
+
+/// Parses + compiles `source` into `out_chunk` and interprets it.
+fn compileAndRun(vm: *VM, out_chunk: *chunk.Chunk, source: []const u8) !InterpretResult {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, out_chunk, vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    return vm.interpret(out_chunk);
+}
+
+fn expectGlobalString(vm: *VM, name: []const u8, expected: []const u8) !void {
+    const val = vm.globals.get(name) orelse return error.MissingGlobal;
+    try testing.expect(val.isString());
+    try testing.expectEqualStrings(expected, val.asString().chars);
+}
+
+// unwind_stack protocol
+
+test "VM: stale unwind entry is not restored by an outer native boundary" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // The first exception is handled without crossing a native and used to leave
+    // its entry behind; the outer `each` then restored "stale" instead of "inner".
+    const source =
+        \\def deep(a, b, c, d, e, f)
+        \\  g = 1
+        \\  h = 2
+        \\  begin
+        \\    raise "stale"
+        \\  rescue => err
+        \\    nil
+        \\  end
+        \\  42
+        \\end
+        \\deep(1, 2, 3, 4, 5, 6)
+        \\result = begin
+        \\  [1].each { |a| [2].each { |b| raise "inner" } }
+        \\rescue => e
+        \\  e.message
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "result", "inner");
+}
+
+var probed_unwind_len: usize = 0;
+fn probeUnwindLen(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    _ = args;
+    const vm_ptr: *VM = @ptrCast(@alignCast(v_ptr));
+    probed_unwind_len = @max(probed_unwind_len, vm_ptr.unwind_stack.items.len);
+    return value.Value.initNil();
+}
+
+test "VM: handled exceptions do not accumulate unwind entries" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    const native_obj = try vm.gc.allocateNative(&vm, probeUnwindLen);
+    try vm.globals.put(vm.gc.trackingAllocator(), "probe_unwind", value.Value.initObj(&native_obj.obj));
+    probed_unwind_len = 0;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    const source =
+        \\i = 0
+        \\while i < 200
+        \\  begin
+        \\    raise "x"
+        \\  rescue => e
+        \\  end
+        \\  i = i + 1
+        \\end
+        \\probe_unwind()
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    // Previously one entry per raise (200), each pinning its exception as a GC root.
+    // Probed mid-run: interpret() clears the stack on exit, so checking afterwards proves nothing.
+    try testing.expect(probed_unwind_len <= 1);
+}
+
+// Bound native methods must use the unwind protocol
+
+test "VM: exception raised in a block passed to a bound native method is rescuable" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    const source =
+        \\m = [1, 2].method(:each)
+        \\result = begin
+        \\  m.call { |x| raise "from bound" }
+        \\  "not rescued"
+        \\rescue => e
+        \\  e.message
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "result", "from bound");
+}
+
+// Double throw: a native that raised must not get a second "Native ... Error"
+
+const native_raise_message = "raised by native";
+
+/// Raises a rescuable exception, then fails with an ordinary error as stdlib natives do.
+fn raiseThenFail(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    _ = args;
+    const vm_ptr: *VM = @ptrCast(@alignCast(v_ptr));
+    _ = vm_ptr.throwDynamicError(native_raise_message, .{});
+    return error.RuntimeError;
+}
+
+fn raiseThenFailInvoke(vm_ptr: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = receiver;
+    _ = method_name;
+    return raiseThenFail(vm_ptr, arg_count, args);
+}
+
+/// Defines `RaisingInit`, a class whose native `initialize` raises.
+fn defineRaisingInitClass(vm: *VM) !void {
+    const name_val = try vm.allocateString("RaisingInit");
+    vm.push(name_val);
+    defer _ = vm.pop();
+    const class_obj = try vm.gc.allocateClass(vm, name_val.asString(), vm.object_class);
+    try vm.globals.put(vm.allocator, "RaisingInit", value.Value.initObj(&class_obj.obj));
+
+    const init_fn = try vm.gc.allocateNative(vm, raiseThenFail);
+    const init_key = try vm.allocateString("initialize");
+    try class_obj.methods.put(vm.gc.trackingAllocator(), init_key, value.Value.initObj(&init_fn.obj));
+}
+
+test "VM: exception raised by a native is thrown once and execution continues" {
+    // Each native boundary that raises: a stdlib method (Array#reduce without a block),
+    // a native constructor, and the host invoke handler (CAD kernel methods).
+    const cases = [_]struct { expr: []const u8, message: []const u8 }{
+        .{ .expr = "[].reduce", .message = "reduce requires a block" },
+        .{ .expr = "RaisingInit.new", .message = native_raise_message },
+        .{ .expr = "5.not_a_method", .message = native_raise_message },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("failing case: {s}\n", .{case.expr});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.mute_errors = true;
+        try defineRaisingInitClass(&vm);
+        vm.host.invoke_handler = raiseThenFailInvoke;
+
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
+
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\inner = 0
+            \\outer = 0
+            \\msg = nil
+            \\begin
+            \\  begin
+            \\    {s}
+            \\  rescue => e
+            \\    inner = inner + 1
+            \\    msg = e.message
+            \\  end
+            \\rescue => e2
+            \\  outer = outer + 1
+            \\end
+            \\after = "continued"
+        , .{case.expr});
+        defer testing.allocator.free(source);
+
+        try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+        try testing.expectEqual(@as(f64, 1), vm.globals.get("inner").?.asNumber());
+        try testing.expectEqual(@as(f64, 0), vm.globals.get("outer").?.asNumber());
+        const msg = vm.globals.get("msg").?;
+        try testing.expect(msg.isString());
+        try testing.expect(std.mem.indexOf(u8, msg.asString().chars, case.message) != null);
+        try expectGlobalString(&vm, "after", "continued");
+    }
+}
+
+// Global keys must outlive the chunk whose constant named them
+
+test "VM: redefining a global on a reused VM after its defining chunk was freed" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    // Each run gets its own chunk, freed afterwards, as the daemon and LSP do
+    const runs = [_][]const u8{
+        "shared_global = \"first run\"",
+        "padding = \"0123456789abcdef0123456789abcdef\"\nshared_global = \"second run\"",
+        "result = shared_global",
+    };
+    var global_count: ?u32 = null;
+    for (runs) |source| {
+        {
+            var run_chunk = chunk.Chunk.init();
+            defer run_chunk.free(testing.allocator);
+            try testing.expectEqual(.ok, try compileAndRun(&vm, &run_chunk, source));
+        }
+        vm.resetStack();
+        // Sweeps the run's constants, including the string naming `shared_global`
+        vm.gc.collectGarbage(&vm, false);
+        if (global_count == null) global_count = vm.globals.count();
+    }
+    try expectGlobalString(&vm, "result", "second run");
+    // A dangling key no longer matches its name, so redefining it used to add a duplicate
+    try testing.expectEqual(global_count.? + 2, vm.globals.count());
+}
+
+// Calling a class directly runs a native initialize
+
+test "VM: class with a native initialize can be called directly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    // Exception's initialize is a native; the call-syntax path used to cast it to a
+    // closure. A closure initialize must yield the instance there too, as with `.new`.
+    const source =
+        \\class Box
+        \\  def initialize(w)
+        \\    @w = w
+        \\  end
+        \\  def width
+        \\    @w
+        \\  end
+        \\end
+        \\box_width = Box(7).width
+        \\err = ArgumentError("bad width")
+        \\direct = err.message
+        \\is_instance = err.is_a?(ArgumentError)
+        \\raised = begin
+        \\  raise ArgumentError("bad height")
+        \\rescue ArgumentError => e
+        \\  e.message
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try testing.expectEqual(@as(f64, 7), vm.globals.get("box_width").?.asNumber());
+    try expectGlobalString(&vm, "direct", "bad width");
+    try testing.expect(vm.globals.get("is_instance").?.asBool());
+    try expectGlobalString(&vm, "raised", "bad height");
+}
+
+// Number -> integer conversions: NaN, inf and out-of-range operands
+
+test "VM: bitwise operands and array indexes reject non-integral numbers" {
+    // `message` set: the expression must raise that; otherwise it evaluates to `number`.
+    // Each case used to reach @intFromFloat unchecked (a panic in Debug, UB in release).
+    const cases = [_]struct { expr: []const u8, number: f64 = 0, message: ?[]const u8 = null }{
+        // Addition shared the bitwise path and converted its operands too
+        .{ .expr = "1e300 + huge", .number = 2e300 },
+        .{ .expr = "inf_v - 1", .number = std.math.inf(f64) },
+        .{ .expr = "inf_v | 1", .message = "RangeError" },
+        // inf - inf is the NaN that reaches bytecode (multiply/divide raise on NaN)
+        .{ .expr = "(inf_v - inf_v) ^ 1", .message = "RangeError" },
+        .{ .expr = "1 & huge", .message = "RangeError" },
+        .{ .expr = "1 << 64", .message = "Shift count" },
+        .{ .expr = "1 >> -1", .message = "Shift count" },
+        .{ .expr = "1 << inf_v", .message = "RangeError" },
+        // In-range behaviour is unchanged: truncation, wrapping `<<`, arithmetic `>>`
+        .{ .expr = "6 & 3", .number = 2 },
+        .{ .expr = "5.9 | 0", .number = 5 },
+        .{ .expr = "-8 >> 1", .number = -4 },
+        .{ .expr = "1 << 63", .number = -0x1p63 },
+        .{ .expr = "[1, 2][inf_v]", .message = "out of bounds" },
+        .{ .expr = "[1, 2][-inf_v]", .message = "out of bounds" },
+        .{ .expr = "[1, 2][huge]", .message = "out of bounds" },
+        .{ .expr = "[1, 2][-1]", .number = 2 },
+        .{ .expr = "a = [1, 2]\n  a[inf_v] = 3", .message = "out of bounds" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("failing case: {s}\n", .{case.expr});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.mute_errors = true;
+
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
+
+        // Operands come from variables so the compiler cannot constant-fold them
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\huge = 1e300
+            \\inf_v = huge * huge
+            \\result = begin
+            \\  {s}
+            \\rescue => e
+            \\  e.message
+            \\end
+        , .{case.expr});
+        defer testing.allocator.free(source);
+
+        try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+        const result = vm.globals.get("result") orelse return error.MissingGlobal;
+        if (case.message) |message| {
+            try testing.expect(result.isString());
+            try testing.expect(std.mem.indexOf(u8, result.asString().chars, message) != null);
+        } else {
+            try testing.expect(result.isNumber());
+            try testing.expectEqual(case.number, result.asNumber());
+        }
+    }
+}

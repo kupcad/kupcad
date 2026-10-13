@@ -1,9 +1,16 @@
 const std = @import("std");
 const testing = std.testing;
 const ast = @import("../../core/ast.zig");
+const chunk = @import("../../vm/chunk.zig");
 const limits = @import("../../core/limits.zig");
+const registry = @import("../../stdlib/registry.zig");
+const token = @import("../../core/token.zig");
+const Compiler = @import("../../compiler/compiler.zig").Compiler;
+const Document = @import("../../core/document.zig").Document;
+const VM = @import("../../vm/vm.zig").VM;
 const ParserTest = @import("../test_utils.zig").ParserTest;
-const Lexer = @import("lexer.zig").Lexer;
+const lexer = @import("lexer.zig");
+const Lexer = lexer.Lexer;
 const Parser = @import("parser.zig").Parser;
 const KTest = ParserTest(Lexer, Parser);
 
@@ -3672,6 +3679,187 @@ test "KupCAD Parser Guardrail: AST Depth Limit Prevention" {
     try testing.expectError(error.AstTooDeep, result);
     try testing.expect(pt.parser.diagnostics.list.items.len > 0);
     try testing.expect(std.mem.indexOf(u8, pt.parser.diagnostics.list.items[0].message, "Maximum AST depth") != null);
+}
+
+// Depth regressions: only parseExpression used to count depth, so statements,
+// blocks and infix chains recursed without a bound in the parser, resolver or
+// compiler.
+
+// Comfortably above MAX_AST_DEPTH so every repro overshoots the limit
+const DEEP: usize = 3000;
+
+/// `prefix * count ++ middle ++ suffix * count ++ tail`
+const NestCase = struct {
+    name: []const u8,
+    prefix: []const u8,
+    middle: []const u8,
+    suffix: []const u8,
+    tail: []const u8 = "",
+    count: usize = DEEP,
+};
+
+fn buildNest(c: NestCase) ![]u8 {
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer buf.deinit(testing.allocator);
+    for (0..c.count) |_| try buf.appendSlice(testing.allocator, c.prefix);
+    try buf.appendSlice(testing.allocator, c.middle);
+    for (0..c.count) |_| try buf.appendSlice(testing.allocator, c.suffix);
+    try buf.appendSlice(testing.allocator, c.tail);
+    return buf.toOwnedSlice(testing.allocator);
+}
+
+fn hasDiagnostic(doc: *const Document, needle: []const u8) bool {
+    for (doc.diagnostics) |d| {
+        if (std.mem.indexOf(u8, d.message, needle) != null) return true;
+    }
+    return false;
+}
+
+/// Parses (with semantic resolution, which walks the whole tree) and asserts the
+/// parser rejected the input with a depth diagnostic, then confirms the
+/// compiler copes with whatever tree was produced.
+fn expectDepthRejected(source: []const u8) !void {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expect(hasDiagnostic(&doc, "Maximum AST depth exceeded"));
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    comp.compile(doc.tree.root) catch |err| try testing.expectEqual(error.AstTooDeep, err);
+}
+
+fn compileOnly(source: []const u8) !void {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+}
+
+test "KupCAD Parser Guardrail: Deeply nested constructs report a depth error" {
+    // Each row used to recurse without a bound (stack overflow in the parser,
+    // resolver or compiler) because only parseExpression counted depth.
+    const cases = [_]NestCase{
+        .{ .name = "if", .prefix = "if true\n", .middle = "1\n", .suffix = "end\n" },
+        .{ .name = "while", .prefix = "while true\n", .middle = "1\n", .suffix = "end\n" },
+        .{ .name = "case", .prefix = "case 1\nwhen 1\n", .middle = "1\n", .suffix = "end\n" },
+        .{ .name = "begin", .prefix = "begin\n", .middle = "1\n", .suffix = "end\n" },
+        .{ .name = "def", .prefix = "def f\n", .middle = "1\n", .suffix = "end\n" },
+        .{ .name = "class", .prefix = "class A\n", .middle = "", .suffix = "end\n" },
+        .{ .name = "module", .prefix = "module M\n", .middle = "", .suffix = "end\n" },
+        .{ .name = "do block", .prefix = "f do\n", .middle = "1\n", .suffix = "end\n" },
+        // `elsif` recurses into parseIfOrUnless directly, not through a block
+        .{ .name = "elsif", .prefix = "", .middle = "if false\n1\n", .suffix = "elsif false\n1\n", .tail = "end\n" },
+        // Infix links are built in a loop but each nests the tree one level deeper
+        .{ .name = "method chain", .prefix = "", .middle = "a", .suffix = ".b" },
+        .{ .name = "binary chain", .prefix = "", .middle = "x = a", .suffix = " + a", .count = 20000 },
+    };
+    for (cases) |c| {
+        const src = try buildNest(c);
+        defer testing.allocator.free(src);
+        expectDepthRejected(src) catch |err| {
+            std.debug.print("depth case '{s}' failed\n", .{c.name});
+            return err;
+        };
+    }
+}
+
+test "KupCAD Parser Guardrail: Nesting below the depth limit still parses and compiles" {
+    // Guards against over-counting: legitimate deep code must not be rejected
+    const cases = [_]NestCase{
+        .{ .name = "binary chain", .prefix = "", .middle = "x = 1", .suffix = " + 1", .count = limits.MAX_AST_DEPTH / 2 },
+        .{ .name = "method chain", .prefix = "", .middle = "x = 1", .suffix = ".to_s", .count = limits.MAX_AST_DEPTH / 2 },
+        .{ .name = "if", .prefix = "if true\n", .middle = "1\n", .suffix = "end\n", .count = limits.MAX_AST_DEPTH / 8 },
+    };
+    for (cases) |c| {
+        const src = try buildNest(c);
+        defer testing.allocator.free(src);
+        compileOnly(src) catch |err| {
+            std.debug.print("depth case '{s}' failed\n", .{c.name});
+            return err;
+        };
+    }
+}
+
+// Parameter-count regression: oversized parameter lists used to overflow the
+// u8 frame-slot math in the compiler instead of being rejected at parse time.
+
+/// `open p0, p1, ... close` with each parameter rendered by `fmt` from its index.
+fn paramList(open: []const u8, comptime fmt: []const u8, count: usize, close: []const u8) ![]u8 {
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer buf.deinit(testing.allocator);
+    try buf.appendSlice(testing.allocator, open);
+    for (0..count) |i| {
+        if (i > 0) try buf.appendSlice(testing.allocator, ", ");
+        try buf.print(testing.allocator, fmt, .{i});
+    }
+    try buf.appendSlice(testing.allocator, close);
+    return buf.toOwnedSlice(testing.allocator);
+}
+
+const ParamCase = struct {
+    name: []const u8,
+    open: []const u8,
+    fmt: enum { positional, keyword },
+    close: []const u8,
+};
+
+fn paramCaseSource(c: ParamCase, count: usize) ![]u8 {
+    return switch (c.fmt) {
+        .positional => paramList(c.open, "p{d}", count, c.close),
+        .keyword => paramList(c.open, "k{d}: 1", count, c.close),
+    };
+}
+
+test "KupCAD Parser Guardrail: More than MAX_ARGS parameters is a parse diagnostic" {
+    const cases = [_]ParamCase{
+        .{ .name = "def positional", .open = "def f(", .fmt = .positional, .close = ")\n  1\nend\n" },
+        .{ .name = "def keyword", .open = "def f(", .fmt = .keyword, .close = ")\n  1\nend\n" },
+        .{ .name = "def without parens", .open = "def f ", .fmt = .positional, .close = "\n  1\nend\n" },
+        .{ .name = "block", .open = "f do |", .fmt = .positional, .close = "|\n  1\nend\n" },
+    };
+    for (cases) |c| {
+        errdefer std.debug.print("param case '{s}' failed\n", .{c.name});
+
+        const over = try paramCaseSource(c, limits.MAX_ARGS + 1);
+        defer testing.allocator.free(over);
+        var doc = try Document.parse(testing.allocator, over);
+        defer doc.deinit();
+        try testing.expect(hasDiagnostic(&doc, "Too many parameters"));
+
+        // Exactly MAX_ARGS is still accepted by the parser
+        const at_limit = try paramCaseSource(c, limits.MAX_ARGS);
+        defer testing.allocator.free(at_limit);
+        var ok_doc = try Document.parse(testing.allocator, at_limit);
+        defer ok_doc.deinit();
+        try testing.expect(!hasDiagnostic(&ok_doc, "Too many parameters"));
+    }
+}
+
+test "KupCAD Parser Guardrail: Parser.init rejects more than MAX_TOKENS tokens" {
+    // Token indices are u24. Only the tag count is checked (before anything is
+    // read), so a tags-only list is enough to hit the cap without ~16M real tokens.
+    const tags = try testing.allocator.alloc(lexer.Tag, limits.MAX_TOKENS + 1);
+    defer testing.allocator.free(tags);
+    @memset(tags, .eof);
+    const tokens: token.TokenList(lexer.Tag) = .{ .tags = tags, .starts = &.{}, .lengths = &.{} };
+    // Not expectError: on failure it would print all 16M tags
+    if (Parser.init(tokens, "", testing.allocator)) |parsed| {
+        var parser = parsed;
+        parser.deinit();
+        return error.TestExpectedTooManyTokens;
+    } else |err| try testing.expectEqual(error.TooManyTokens, err);
 }
 
 test "KupCAD Parser Edge Case: Empty File and Only Comments" {

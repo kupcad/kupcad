@@ -1,10 +1,13 @@
 const std = @import("std");
 const testing = std.testing;
+const chunk = @import("chunk.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const VM = @import("vm.zig").VM;
 const GC = @import("memory.zig").GC;
+const Compiler = @import("../compiler/compiler.zig").Compiler;
+const Document = @import("../core/document.zig").Document;
 
 fn countObjects(gc: *GC) usize {
     var count: usize = 0;
@@ -297,4 +300,47 @@ test "GC Edge Case: Sweep handles OutOfMemory gracefully without panicking" {
 
     // The cache item should survive because eviction was aborted
     try testing.expectEqual(@as(usize, 1), vm.dag_cache.count());
+}
+
+// --- Constants of a chunk under compilation must be GC roots ---
+
+fn expectGlobalString(vm: *VM, name: []const u8, expected: []const u8) !void {
+    const val = vm.globals.get(name) orelse return error.MissingGlobal;
+    try testing.expect(val.isString());
+    try testing.expectEqualStrings(expected, val.asString().chars);
+}
+
+test "GC: string constants survive collections triggered during compilation" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Every later literal allocates and (under stress) collects; before the fix
+    // "FIRST" was referenced only by the unrooted top-level chunk and got swept.
+    vm.gc.stress = true;
+    const source =
+        \\first = "FIRST"
+        \\b = "second literal"
+        \\c = "third literal"
+        \\d = "fourth literal"
+        \\result = first
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // A collection between compile() and interpret() must not sweep constants either
+    vm.gc.collectGarbage(&vm, false);
+    vm.gc.stress = false;
+
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    try expectGlobalString(&vm, "result", "FIRST");
+    // Once the script closure roots the chunk, interpret drops the compile-time registration
+    try testing.expectEqual(@as(usize, 0), vm.gc.live_chunks.chunks.items.len);
 }

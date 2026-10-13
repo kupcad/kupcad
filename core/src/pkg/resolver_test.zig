@@ -4,10 +4,14 @@ const Resolver = @import("resolver.zig").Resolver;
 const Manifest = @import("manifest.zig").Manifest;
 const lockfile_mod = @import("lockfile.zig");
 const Lockfile = lockfile_mod.Lockfile;
+const LockedPackage = lockfile_mod.LockedPackage;
 const StringMap = lockfile_mod.StringMap;
 const Store = @import("store.zig").Store;
 const Cafs = @import("cafs.zig").Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const ParsedPackage = @import("providers/provider.zig").ParsedPackage;
+const helpers = @import("test_helpers.zig");
+const TarEntry = helpers.TarEntry;
 
 const Fixture = struct {
     tmp: testing.TmpDir,
@@ -73,7 +77,52 @@ const Fixture = struct {
         defer testing.allocator.free(content);
         try testing.expectEqualStrings(expected, content);
     }
+
+    /// Writes a tar.gz into the tmp dir, adds it as dependency `alias` and returns
+    /// its package id (caller frees).
+    fn addLocalDep(self: *Fixture, alias: []const u8, entries: []const TarEntry) ![]const u8 {
+        const gz = try helpers.buildTarGz(testing.allocator, entries);
+        defer testing.allocator.free(gz);
+        const path = try std.fmt.allocPrint(testing.allocator, "{s}/{s}.tar.gz", .{ self.tmp_path, alias });
+        defer testing.allocator.free(path);
+        try helpers.writeAbs(path, gz);
+
+        const spec = try std.fmt.allocPrint(testing.allocator, "file:{s}", .{path});
+        errdefer testing.allocator.free(spec);
+        const pkg_id = try (try ParsedPackage.parse(spec)).pkgId(testing.allocator);
+        errdefer testing.allocator.free(pkg_id);
+        const alias_dup = try testing.allocator.dupe(u8, alias);
+        errdefer testing.allocator.free(alias_dup);
+        try self.manifest.dependencies.put(alias_dup, spec);
+        return pkg_id;
+    }
+
+    fn resolve(self: *Fixture) !void {
+        var resolver = Resolver.init(testing.allocator, testing.io, &self.cafs, &self.store, &self.manifest, &self.lockfile);
+        defer resolver.deinit();
+        try resolver.resolve();
+    }
+
+    /// Forgets every cached package so the next resolve takes the download path.
+    fn clearStore(self: *Fixture) !void {
+        self.store.deinit();
+        self.store = try Store.init(testing.io, ":memory:");
+    }
+
+    fn entry(self: *Fixture, pkg_id: []const u8) !*LockedPackage {
+        return self.lockfile.packages.getPtr(pkg_id) orelse error.TestExpectedLockEntry;
+    }
 };
+
+/// Replaces an owned string field (lockfile entries own their strings).
+fn setOwned(field: *[]const u8, value: []const u8) !void {
+    const dup = try testing.allocator.dupe(u8, value);
+    testing.allocator.free(field.*);
+    field.* = dup;
+}
+
+const SAMPLE_PKG = [_]TarEntry{.{ .name = "main.kup", .data = "def f() 1 end" }};
+const BOGUS_INTEGRITY = "sha256-0000000000000000000000000000000000000000000000000000000000000000";
 
 test "Resolver: linkWorkspace links locked packages (flat and nested files) into the store" {
     var fx: Fixture = undefined;
@@ -130,5 +179,182 @@ test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {
         defer files.deinit();
         try fx.addPackage("../evil", "github.com/user/dep", "github.com-user-dep", "commit1", &files);
         try testing.expectError(error.InvalidAlias, fx.link());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// resolve: lockfile pinning, integrity, error propagation (audit fixes)
+// ---------------------------------------------------------------------------
+
+// Audit fix: install errors were swallowed and the install reported success.
+test "Resolver: resolve propagates install errors instead of reporting success" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+
+    try fx.manifest.dependencies.put(try testing.allocator.dupe(u8, "missing"), try testing.allocator.dupe(u8, "file:/nonexistent-kupcad-audit/pkg.tar.gz"));
+    try testing.expectError(error.FileNotFound, fx.resolve());
+}
+
+test "Resolver: resolve verifies cached content against the locked integrity" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const pkg_id = try fx.addLocalDep("dep", &SAMPLE_PKG);
+    defer testing.allocator.free(pkg_id);
+
+    try fx.resolve();
+    const e = try fx.entry(pkg_id);
+    try testing.expect(std.mem.startsWith(u8, e.integrity, "sha256-"));
+    try testing.expect(try fx.store.hasPackage(pkg_id, e.resolved));
+
+    // Re-install against the same lockfile verifies and succeeds
+    try fx.resolve();
+
+    try setOwned(&(try fx.entry(pkg_id)).integrity, BOGUS_INTEGRITY);
+    try testing.expectError(error.IntegrityMismatch, fx.resolve());
+}
+
+test "Resolver: downloads honor the locked commit and integrity" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const pkg_id = try fx.addLocalDep("dep", &SAMPLE_PKG);
+    defer testing.allocator.free(pkg_id);
+    try fx.resolve();
+
+    // Pinned commit + matching integrity, nothing cached: content is fetched and
+    // recorded under the pinned commit, not a freshly derived one.
+    const pinned = "0123456789abcdef0123456789abcdef01234567";
+    try setOwned(&(try fx.entry(pkg_id)).resolved, pinned);
+    try fx.clearStore();
+    try fx.resolve();
+    try testing.expectEqualStrings(pinned, (try fx.entry(pkg_id)).resolved);
+    try testing.expect(try fx.store.hasPackage(pkg_id, pinned));
+
+    // Mismatching download is rejected and never registered in the store.
+    try setOwned(&(try fx.entry(pkg_id)).integrity, BOGUS_INTEGRITY);
+    try fx.clearStore();
+    try testing.expectError(error.IntegrityMismatch, fx.resolve());
+    try testing.expect(!try fx.store.hasPackage(pkg_id, pinned));
+}
+
+test "Resolver: lock entries without integrity are refused" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const pkg_id = try fx.addLocalDep("dep", &SAMPLE_PKG);
+    defer testing.allocator.free(pkg_id);
+    try fx.resolve();
+
+    try setOwned(&(try fx.entry(pkg_id)).integrity, "");
+    try testing.expectError(error.LockfileMissingIntegrity, fx.resolve());
+}
+
+test "Resolver: a pin for a different ref is re-resolved, stale entries dropped" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const pkg_id = try fx.addLocalDep("dep", &SAMPLE_PKG);
+    defer testing.allocator.free(pkg_id);
+    try fx.resolve();
+    const good_integrity = try testing.allocator.dupe(u8, (try fx.entry(pkg_id)).integrity);
+    defer testing.allocator.free(good_integrity);
+
+    // The ref changed in kupcad.json (local deps have ref ""), so the old pin
+    // (with its now-irrelevant integrity) must not be enforced.
+    const e = try fx.entry(pkg_id);
+    try setOwned(&e.ref, "v9");
+    try setOwned(&e.integrity, BOGUS_INTEGRITY);
+
+    // A package no longer in the dependency graph.
+    try fx.lockfile.packages.put(try testing.allocator.dupe(u8, "github.com-gone-pkg"), .{
+        .resolved = try testing.allocator.dupe(u8, "abc"),
+        .ref = try testing.allocator.dupe(u8, "main"),
+        .integrity = try testing.allocator.dupe(u8, BOGUS_INTEGRITY),
+        .dependencies = StringMap.init(testing.allocator),
+    });
+
+    try fx.resolve();
+    const fresh = try fx.entry(pkg_id);
+    try testing.expectEqualStrings("", fresh.ref);
+    try testing.expectEqualStrings(good_integrity, fresh.integrity);
+    try testing.expect(fx.lockfile.packages.get("github.com-gone-pkg") == null);
+}
+
+test "Resolver: 1.x lockfiles verify with the legacy hash and are rewritten as current" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const pkg_id = try fx.addLocalDep("dep", &SAMPLE_PKG);
+    defer testing.allocator.free(pkg_id);
+    try fx.resolve();
+
+    const current = try testing.allocator.dupe(u8, (try fx.entry(pkg_id)).integrity);
+    defer testing.allocator.free(current);
+    const legacy = blk: {
+        var files = (try fx.store.getPackageFiles(testing.allocator, pkg_id, (try fx.entry(pkg_id)).resolved)).?;
+        defer helpers.freeMap(&files);
+        break :blk try Store.computeIntegrityAlgo(testing.allocator, &files, .legacy);
+    };
+    defer testing.allocator.free(legacy);
+    try testing.expect(!std.mem.eql(u8, current, legacy));
+
+    try setOwned(&fx.lockfile.version, "1.0.0");
+    try testing.expect(try fx.lockfile.usesLegacyIntegrity());
+
+    // A 1.x lockfile is checked with the 1.x algorithm, not the current one.
+    try testing.expectError(error.IntegrityMismatch, fx.resolve());
+
+    try setOwned(&(try fx.entry(pkg_id)).integrity, legacy);
+    try fx.resolve();
+    try testing.expectEqualStrings(current, (try fx.entry(pkg_id)).integrity);
+
+    // Saving upgrades the format so the next install uses the current algorithm.
+    const fs = fx.mem_vfs.vfs();
+    try fx.lockfile.save(fs);
+    var reloaded = try Lockfile.load(testing.allocator, fs);
+    defer reloaded.deinit();
+    try testing.expectEqualStrings(lockfile_mod.LOCKFILE_VERSION, reloaded.version);
+    try testing.expect(!try reloaded.usesLegacyIntegrity());
+    try testing.expectEqualStrings(current, reloaded.packages.get(pkg_id).?.integrity);
+
+    // The in-memory lockfile now holds current hashes, so reusing it (without reloading)
+    // must verify with the current algorithm too; it used to stay 1.0.0 and mismatch.
+    try testing.expectEqualStrings(lockfile_mod.LOCKFILE_VERSION, fx.lockfile.version);
+    try fx.resolve();
+}
+
+test "Resolver: forbidden or malformed transitive deps fail the install" {
+    const cases = [_]struct { manifest: []const u8, err: anyerror }{
+        .{ .manifest =
+        \\{"dependencies":{"x":"file:/etc/passwd"}}
+        , .err = error.ForbiddenTransitiveDependency },
+        .{ .manifest =
+        \\{"dependencies":{"x":"127.0.0.1/u/r"}}
+        , .err = error.ForbiddenTransitiveDependency },
+        // Alias from an untrusted kupcad.json is used as a symlink name
+        .{ .manifest =
+        \\{"dependencies":{"../../../../evil":"github.com/a/b"}}
+        , .err = error.InvalidAlias },
+        // Malformed manifests used to be skipped silently (install "succeeded")
+        .{ .manifest =
+        \\{"dependencies":["github.com/a/b"]}
+        , .err = error.InvalidPackageManifest },
+        .{ .manifest =
+        \\{"dependencies":{"x":1}}
+        , .err = error.InvalidPackageManifest },
+        .{ .manifest = "not json", .err = error.InvalidPackageManifest },
+    };
+    for (cases) |c| {
+        var fx: Fixture = undefined;
+        try fx.init();
+        defer fx.deinit();
+        const pkg_id = try fx.addLocalDep("p", &.{.{ .name = "kupcad.json", .data = c.manifest }});
+        defer testing.allocator.free(pkg_id);
+        testing.expectError(c.err, fx.resolve()) catch |err| {
+            std.debug.print("transitive manifest: {s}\n", .{c.manifest});
+            return err;
+        };
     }
 }

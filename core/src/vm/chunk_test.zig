@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const chunk = @import("chunk.zig");
 const value = @import("../core/value.zig");
+const VM = @import("vm.zig").VM;
 
 test "Chunk: add constants to pool" {
     var c = chunk.Chunk.init();
@@ -99,4 +100,30 @@ test "Chunk: getOffset binary search finds exact and floor matches" {
     // If the VM looks for an IP past the end of the debug spans, it should yield the last known offset
     try testing.expectEqual(@as(u32, 130), c.getOffset(50));
     try testing.expectEqual(@as(u32, 130), c.getOffset(9999));
+}
+
+// --- Chunk registry: tracked chunks unregister on free and on VM teardown ---
+
+test "Chunk: registry never holds a freed chunk or outlives its VM" {
+    {
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+
+        var c = chunk.Chunk.init();
+        try vm.gc.trackChunk(&c);
+        try testing.expectEqual(@as(usize, 1), vm.gc.live_chunks.chunks.items.len);
+        c.free(testing.allocator);
+        try testing.expectEqual(@as(usize, 0), vm.gc.live_chunks.chunks.items.len);
+    }
+
+    // A chunk freed after its VM (common for stack chunks) must not touch the destroyed registry
+    var c = chunk.Chunk.init();
+    defer c.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    {
+        errdefer vm.deinit();
+        try vm.gc.trackChunk(&c);
+    }
+    vm.deinit();
+    try testing.expect(c.registry == null);
 }

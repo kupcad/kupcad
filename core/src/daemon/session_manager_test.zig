@@ -105,3 +105,40 @@ test "SessionManager: markUsed reorders the LRU queue and evictLRU drops its hea
 
     sm.mutex.unlock(io);
 }
+
+test "SessionManager: evictLRU never frees a session that is still leased" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(dir);
+    var paths: [3][]u8 = undefined;
+    var n_paths: usize = 0;
+    defer for (paths[0..n_paths]) |p| testing.allocator.free(p);
+    for (&paths, [_][]const u8{ "a.kup", "b.kup", "c.kup" }) |*p, name| {
+        p.* = try std.fs.path.join(testing.allocator, &.{ dir, name });
+        n_paths += 1;
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = name, .data = "" });
+    }
+
+    var manager = SessionManager.init(testing.allocator, testing.io, 1);
+    defer manager.deinit();
+
+    const lease = try manager.acquireSession(paths[0]);
+    const lease2 = try manager.acquireSession(paths[0]); // leases nest
+    try testing.expectEqual(lease.session, lease2.session);
+
+    // Capacity 1: before the fix this evicted (destroyed) the leased session.
+    _ = try manager.getOrInitializeSession(paths[1]);
+    try testing.expect(manager.sessions.get(lease.id) == lease.session);
+    try testing.expectEqual(@as(usize, 2), manager.sessions.count()); // soft limit exceeded
+    lease.session.global_revision += 1; // a use-after-free under the old behaviour
+
+    manager.release(lease2);
+    try testing.expect(manager.isPinned(lease.id));
+    manager.release(lease);
+    try testing.expect(!manager.isPinned(lease.id));
+
+    // Once released it is the LRU victim again.
+    _ = try manager.getOrInitializeSession(paths[2]);
+    try testing.expect(!manager.sessions.contains(lease.id));
+}

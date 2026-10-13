@@ -1,8 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
 const VM = @import("vm.zig").VM;
+const InterpretResult = @import("vm.zig").InterpretResult;
 const chunk = @import("chunk.zig");
 const value = @import("../core/value.zig");
+const registry = @import("../stdlib/registry.zig");
 const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
@@ -996,4 +998,119 @@ test "VM: op_import supports chained aliased re-exports across modules" {
 
     const result_val = vm.globals.get("result") orelse return error.MissingResult;
     try testing.expectEqual(@as(f64, 100.0), result_val.asNumber());
+}
+
+// --- op_import rooting, cache marking, chunk leak (Oct 2026 audit) ---
+
+/// Parses + compiles `source` into `out_chunk` and interprets it.
+fn compileAndRun(vm: *VM, out_chunk: *chunk.Chunk, source: []const u8) !InterpretResult {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, out_chunk, vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    return vm.interpret(out_chunk);
+}
+
+fn expectGlobalString(vm: *VM, name: []const u8, expected: []const u8) !void {
+    const val = vm.globals.get(name) orelse return error.MissingGlobal;
+    try testing.expect(val.isString());
+    try testing.expectEqualStrings(expected, val.asString().chars);
+}
+
+test "VM: op_import cached module results survive GC and re-import" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try mem_vfs.vfs().writeFile("./mod.kup", "Payload = [\"payload\", \"more\"]\nexport Payload");
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.vfs = mem_vfs.vfs();
+    vm.mute_errors = true;
+
+    var first_chunk = chunk.Chunk.init();
+    defer first_chunk.free(testing.allocator);
+    // Stress GC also covers allocateClosure collecting the module's unrooted function
+    vm.gc.stress = true;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &first_chunk, "import \"./mod.kup\"\nnil"));
+
+    // The export module is now referenced only by the import cache
+    vm.gc.collectGarbage(&vm, false);
+    vm.gc.stress = false;
+
+    var second_chunk = chunk.Chunk.init();
+    defer second_chunk.free(testing.allocator);
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &second_chunk, "import { Payload } from \"./mod.kup\"\nresult = Payload[0]"));
+    try expectGlobalString(&vm, "result", "payload");
+    // A cache hit, not a re-import: the key must not borrow the (swept) path constant
+    try testing.expectEqual(@as(u32, 1), vm.modules.count());
+}
+
+test "VM: op_import exception raised inside an imported module is rescued by the importer" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try mem_vfs.vfs().writeFile("./boom.kup", "raise \"module failed\"");
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.vfs = mem_vfs.vfs();
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    // The `begin` sits at the import's stack slot, so a rescued unwind leaves exactly
+    // one value above the module closure's base, the same shape as a normal return.
+    // The import must still be seen as failed: not cached, and raising again when retried.
+    const source =
+        \\first = begin
+        \\  import "./boom.kup"
+        \\  "not rescued"
+        \\rescue => e
+        \\  e.message
+        \\end
+        \\second = begin
+        \\  import "./boom.kup"
+        \\  "served from cache"
+        \\rescue => e
+        \\  e.message
+        \\end
+        \\after = "continued"
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "first", "module failed");
+    try expectGlobalString(&vm, "second", "module failed");
+    try expectGlobalString(&vm, "after", "continued");
+    try testing.expectEqual(@as(u32, 0), vm.modules.count());
+}
+
+test "VM: op_import of a module that fails to compile does not leak its chunk" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    // Parses cleanly but fails to compile (assigning to the protected intrinsic `cube`)
+    try mem_vfs.vfs().writeFile("./bad.kup", "x = \"keep\"\ncube = 1");
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.vfs = mem_vfs.vfs();
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    const source =
+        \\result = begin
+        \\  import "./bad.kup"
+        \\  "imported"
+        \\rescue => e
+        \\  e.message
+        \\end
+    ;
+    // testing.allocator reports the heap chunk as leaked if it is not freed
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    const msg = vm.globals.get("result") orelse return error.MissingGlobal;
+    try testing.expect(std.mem.startsWith(u8, msg.asString().chars, "ImportError: Compilation failed"));
 }

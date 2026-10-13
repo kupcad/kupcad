@@ -487,3 +487,15 @@ test "Manifold Driver: crossSectionArea calculates circle area" {
     const area = driver.driver.crossSectionAreaFn(circ);
     try testing.expect(area > 78.0 and area < 79.0);
 }
+
+test "Manifold Driver: polygonsEvenOdd survives partial allocation failure" {
+    const tri = [_][2]f64{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 } };
+    const contours = [_][]const [2]f64{ &tri, &tri, &tri };
+
+    // Fail each allocation in turn; freeing uninitialized slots used to crash.
+    var fail_index: usize = 0;
+    while (fail_index < 4) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        if (driver.driver.polygonsEvenOddFn(failing.allocator(), &contours)) |cs| driver.driver.destructCrossSectionFn(cs);
+    }
+}

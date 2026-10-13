@@ -1,6 +1,11 @@
 const std = @import("std");
 const testing = std.testing;
-const Store = @import("store.zig").Store;
+const store_mod = @import("store.zig");
+const Store = store_mod.Store;
+const sqlite = @import("sqlite");
+const helpers = @import("test_helpers.zig");
+const freeMap = helpers.freeMap;
+const countRows = helpers.countRows;
 
 test "Store: initializes and runs SQLite migrations in-memory" {
     var store = try Store.init(testing.io, ":memory:");
@@ -12,10 +17,6 @@ test "Store: initializes and runs SQLite migrations in-memory" {
 
     try testing.expect(row != null);
     try testing.expectEqual(@as(i32, 3), row.?.user_version); // Expect V3 (composite packages key)
-}
-
-fn freeMap(map: *std.StringHashMap([]const u8)) void {
-    Store.freeFileMap(testing.allocator, map);
 }
 
 test "Store: registerPackage records metadata and file hashes for lookup" {
@@ -174,4 +175,89 @@ test "Store: keeps several commits of one package with separate file maps" {
     defer freeMap(&cached);
     try testing.expectEqual(@as(usize, 1), cached.count());
     try testing.expectEqualStrings("hashB", cached.get("utils.kup").?);
+}
+
+// Audit fix: databases left by the v2 schema (id-only packages key) must be
+// migrated in place, keeping their rows.
+test "Store: migrates v2 databases to the composite package key" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const db_path = try std.fmt.allocPrintSentinel(testing.allocator, "{s}/index.db", .{root}, 0);
+    defer testing.allocator.free(db_path);
+
+    {
+        // A database exactly as the v2 code left it (id-only primary key), with data.
+        var handle: ?*sqlite.sqlite3 = null;
+        try testing.expectEqual(sqlite.SQLITE_OK, sqlite.sqlite3_open(db_path, &handle));
+        var db = store_mod.Db{ .handle = handle };
+        defer db.deinit();
+        const v2_schema = [_][]const u8{
+            "CREATE TABLE packages (id TEXT PRIMARY KEY, commit_sha TEXT NOT NULL, provider TEXT NOT NULL, created_at INTEGER NOT NULL, integrity TEXT NOT NULL DEFAULT '')",
+            "CREATE TABLE files (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, created_at INTEGER NOT NULL)",
+            "CREATE TABLE package_files (package_id TEXT NOT NULL, commit_sha TEXT NOT NULL, file_path TEXT NOT NULL, file_hash TEXT NOT NULL, PRIMARY KEY (package_id, commit_sha, file_path), FOREIGN KEY (file_hash) REFERENCES files(hash))",
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            "INSERT INTO packages VALUES ('pkg', 'old', 'github', 7, 'sha256-old')",
+            "INSERT INTO files VALUES ('h1', 3, 7)",
+            "INSERT INTO package_files VALUES ('pkg', 'old', 'main.kup', 'h1')",
+            // Mapping of a commit the v2 schema silently dropped from `packages`
+            "INSERT INTO package_files VALUES ('pkg', 'lost', 'main.kup', 'h1')",
+            "INSERT INTO meta VALUES ('last_prune_time', '42')",
+            "PRAGMA user_version = 2",
+        };
+        for (v2_schema) |sql| try db.exec(sql, .{}, .{});
+    }
+
+    var store = try Store.init(testing.io, db_path);
+    defer store.deinit();
+    try testing.expectEqual(@as(i64, 3), try countRows(&store, "SELECT user_version AS n FROM pragma_user_version"));
+
+    // Existing rows survive the table rebuild with all columns intact.
+    {
+        const stmt = try store.db.prepare("SELECT provider, integrity, created_at FROM packages WHERE id = 'pkg' AND commit_sha = 'old'");
+        defer stmt.deinit();
+        const row = (try stmt.one(struct { provider: []const u8, integrity: []const u8, created_at: i64 }, .{}, .{})) orelse return error.TestMissingRow;
+        try testing.expectEqualStrings("github", row.provider);
+        try testing.expectEqualStrings("sha256-old", row.integrity);
+        try testing.expectEqual(@as(i64, 7), row.created_at);
+    }
+    var files = (try store.getPackageFiles(testing.allocator, "pkg", "old")).?;
+    defer freeMap(&files);
+    try testing.expectEqualStrings("h1", files.get("main.kup").?);
+    try testing.expectEqual(@as(i64, 1), try countRows(&store, "SELECT COUNT(*) FROM files"));
+    try testing.expectEqual(@as(i64, 1), try countRows(&store, "SELECT COUNT(*) FROM meta"));
+    // Unreachable mappings are cleaned up.
+    try testing.expectEqual(@as(i64, 0), try countRows(&store, "SELECT COUNT(*) FROM package_files WHERE commit_sha = 'lost'"));
+
+    // A second commit of the same package can now be recorded alongside the first.
+    var new_files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer new_files.deinit();
+    try store.registerPackage("pkg", "new", "github", "sha256-new", &new_files);
+    try testing.expect(try store.hasPackage("pkg", "new"));
+    try testing.expect(try store.hasPackage("pkg", "old"));
+}
+
+// Audit fix: path and hash were concatenated without separators, so different
+// file maps ("ab"->"c" vs "a"->"bc") produced the same integrity.
+test "Store: computeIntegrity input is unambiguous" {
+    var m1 = std.StringHashMap([]const u8).init(testing.allocator);
+    defer m1.deinit();
+    try m1.put("ab", "c");
+    var m2 = std.StringHashMap([]const u8).init(testing.allocator);
+    defer m2.deinit();
+    try m2.put("a", "bc");
+
+    const h1 = try Store.computeIntegrity(testing.allocator, &m1);
+    defer testing.allocator.free(h1);
+    const h2 = try Store.computeIntegrity(testing.allocator, &m2);
+    defer testing.allocator.free(h2);
+    try testing.expect(!std.mem.eql(u8, h1, h2));
+    try Store.verifyIntegrity(testing.allocator, &m1, h1, .current);
+    try testing.expectError(error.IntegrityMismatch, Store.verifyIntegrity(testing.allocator, &m2, h1, .current));
+
+    // The legacy (lockfile 1.x) algorithm is kept, ambiguity included, to verify old lockfiles.
+    const legacy = try Store.computeIntegrityAlgo(testing.allocator, &m1, .legacy);
+    defer testing.allocator.free(legacy);
+    try Store.verifyIntegrity(testing.allocator, &m2, legacy, .legacy);
 }

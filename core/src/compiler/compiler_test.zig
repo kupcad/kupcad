@@ -10,6 +10,53 @@ const Document = @import("../core/document.zig").Document;
 const resolver = @import("../core/resolver.zig");
 const VM = @import("../vm/vm.zig").VM;
 
+const RunResult = struct {
+    status: @import("../vm/vm.zig").InterpretResult,
+    top: value.Value,
+};
+
+/// Compiles and runs `source`, returning the interpreter status and the value
+/// left on the stack (nil if none).
+fn run(vm: *VM, source: []const u8) !RunResult {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const status = vm.interpret(&out_chunk);
+    const top = if (vm.stack_top > 0) vm.stack[vm.stack_top - 1] else value.Value.initNil();
+    return .{ .status = status, .top = top };
+}
+
+fn expectRunsTo(source: []const u8, expected: f64) !void {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const res = try run(&vm, source);
+    try testing.expectEqual(.ok, res.status);
+    try testing.expectEqual(expected, res.top.asNumber());
+}
+
+fn compileOnly(source: []const u8) !void {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+}
+
 test "Compiler: compiles basic binary addition" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -1211,6 +1258,132 @@ test "Compiler Guardrail: Method call exceeding MAX_ARGS triggers error" {
     try testing.expectError(error.TooManyArguments, result);
 }
 
+test "Compiler Guardrail: Rejects programmatically built deep trees" {
+    // The parser bounds depth for source code, but trees built directly with
+    // ast.Builder must be rejected by the compiler itself.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    var node = try b.booleanNode(true, 0);
+    for (0..limits.MAX_AST_DEPTH + 10) |_| node = try b.unary(.not, node, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try testing.expectError(error.AstTooDeep, comp.compile(node));
+}
+
+test "Compiler Guardrail: Nested closures share one depth budget" {
+    // Each closure body compiles in a child Compiler; the child used to restart
+    // at depth 0, so nested lambdas recursed natively without any bound.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const no_params = try b.addParams(&.{});
+    var node = try b.booleanNode(true, 0);
+    for (0..limits.MAX_AST_DEPTH + 10) |_| node = try b.lambdaExpr(no_params, node, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try testing.expectError(error.AstTooDeep, comp.compile(node));
+}
+
+test "Compiler Guardrail: Inline-cache indexes past 16 bits are a compile error" {
+    // Regression: the u16 inline-cache operand used to overflow silently
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(testing.allocator);
+    try buf.appendSlice(testing.allocator, "x = 1\n");
+    for (0..limits.MAX_INLINE_CACHES + 2) |_| try buf.appendSlice(testing.allocator, "x.foo\n");
+
+    var doc = try Document.parse(testing.allocator, buf.items);
+    defer doc.deinit();
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try testing.expectError(error.TooManyInlineCaches, comp.compile(doc.tree.root));
+}
+
+/// A parameter-list shape. Frame layout: slot 0 = closure, then the positionals,
+/// the kwarg map (if any keyword), the block slot, and one slot per keyword;
+/// the highest slot must not exceed MAX_ARGS.
+const SlotShape = struct {
+    name: []const u8,
+    keywords: usize = 0,
+    block_param: bool = false,
+    block_literal: bool = false,
+    /// Most positionals that still fit: one more must be TooManyParameters.
+    max_positionals: usize,
+};
+
+/// `def f(p0.., k0: 1.., &blk)` returning `p{last} + k{last}`, followed by a call
+/// passing 0..positionals-1; or `f do |p0..| 1 end` for block literals.
+fn slotShapeSource(shape: SlotShape, positionals: usize) ![]u8 {
+    const a = testing.allocator;
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer buf.deinit(a);
+    try buf.appendSlice(a, if (shape.block_literal) "f do |" else "def f(");
+    for (0..positionals) |i| try buf.print(a, "{s}p{d}", .{ if (i > 0) ", " else "", i });
+    for (0..shape.keywords) |i| try buf.print(a, ", k{d}: {d}", .{ i, i + 1 });
+    if (shape.block_param) try buf.appendSlice(a, ", &blk");
+    if (shape.block_literal) {
+        try buf.appendSlice(a, "|\n  1\nend\n");
+    } else {
+        try buf.print(a, ")\n  p{d}", .{positionals - 1});
+        if (shape.keywords > 0) try buf.print(a, " + k{d}", .{shape.keywords - 1});
+        try buf.appendSlice(a, "\nend\nf(");
+        for (0..positionals) |i| try buf.print(a, "{s}{d}", .{ if (i > 0) ", " else "", i });
+        try buf.appendSlice(a, ")\n");
+    }
+    return buf.toOwnedSlice(a);
+}
+
+test "Compiler Guardrail: Frame-slot check matches the real slot layout" {
+    const kw = 6;
+    const shapes = [_]SlotShape{
+        // Closure slot + positionals + block slot.
+        .{ .name = "positional only", .max_positionals = limits.MAX_ARGS - 1 },
+        .{ .name = "block literal", .block_literal = true, .max_positionals = limits.MAX_ARGS - 1 },
+        // ... + kwarg map + one virtual slot per keyword.
+        .{ .name = "positional + kwargs", .keywords = kw, .max_positionals = limits.MAX_ARGS - 2 - kw },
+        // &blk reuses the block slot, so it costs nothing extra.
+        .{ .name = "positional + kwargs + &blk", .keywords = kw, .block_param = true, .max_positionals = limits.MAX_ARGS - 2 - kw },
+    };
+    for (shapes) |shape| {
+        errdefer std.debug.print("slot shape '{s}' failed\n", .{shape.name});
+
+        // The largest accepted layout compiles (it used to panic computing the
+        // virtual keyword slots in a u8) and, for defs, binds every slot correctly.
+        const at_max = try slotShapeSource(shape, shape.max_positionals);
+        defer testing.allocator.free(at_max);
+        if (shape.block_literal) {
+            try compileOnly(at_max);
+        } else {
+            const expected = shape.max_positionals - 1 + shape.keywords;
+            try expectRunsTo(at_max, @floatFromInt(expected));
+        }
+
+        // One more positional is a clean compile error, not an overflow.
+        const over = try slotShapeSource(shape, shape.max_positionals + 1);
+        defer testing.allocator.free(over);
+        try testing.expectError(error.TooManyParameters, compileOnly(over));
+    }
+}
+
 test "Compiler Edge Case: Hash literals with > 255 entries emit op_build_map_wide" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -1383,6 +1556,23 @@ test "Compiler: op_switch table entries are emitted in strictly sorted order" {
     try testing.expectEqual(@as(f64, 30.0), val3);
 }
 
+test "Compiler: case with more than MAX_JUMP_TABLE_CASES literal conditions does not overflow" {
+    // The u16 condition counter used to overflow; now falls back to linear compares
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(testing.allocator);
+    try buf.appendSlice(testing.allocator, "case 1\nwhen 1");
+    for (0..limits.MAX_JUMP_TABLE_CASES + 1) |_| try buf.appendSlice(testing.allocator, ",1");
+    try buf.appendSlice(testing.allocator, "\n  10\nend\n");
+    try expectRunsTo(buf.items, 10);
+}
+
+test "Compiler: case with duplicate literal keys keeps first-match order" {
+    // The VM binary-searches the jump table, so equal keys used to resolve to
+    // an arbitrary branch instead of the first `when`.
+    try expectRunsTo("case 1 when 1 then 10 when 1 then 20 end", 10);
+    try expectRunsTo("case \"b\" when \"a\", \"b\" then 1 when \"b\" then 2 else 3 end", 1);
+}
+
 test "Compiler: Constant Folding optimizer" {
     const source = "val = 10 * 5.0 + 2";
 
@@ -1508,4 +1698,166 @@ test "Compiler: Exhaustive runtime execution of Pratt parser logic jumps" {
     try testing.expectEqual(true, arr_obj.items.items[2].asBool());
     try testing.expectEqual(false, arr_obj.items.items[3].asBool());
     try testing.expectEqual(true, arr_obj.items.items[4].asBool());
+}
+
+// --- Non-local jumps out of begin/rescue/ensure must unwind the handler ---
+
+test "Compiler: return inside begin/rescue pops the handler" {
+    const source =
+        \\def f
+        \\  begin
+        \\    return 1
+        \\  rescue => e
+        \\    puts "x"
+        \\  end
+        \\end
+        \\f()
+        \\[1].fetch(99).foo
+    ;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const res = try run(&vm, source);
+    // A clean uncaught runtime error, not a jump into the stale rescue body
+    try testing.expectEqual(.runtime_error, res.status);
+}
+
+test "Compiler: break/next out of begin/rescue pops the handler" {
+    // The inner rescue must be gone once control leaves it, so only the outer
+    // rescue may catch the later error (hits == 1, not 100+). `{0s}` is the
+    // looping construct, `{1s}` the jump keyword.
+    const template =
+        \\def g
+        \\  hits = 0
+        \\  begin
+        \\    {0s}
+        \\      begin
+        \\        {1s}
+        \\      rescue => e
+        \\        hits += 100
+        \\      end
+        \\    end
+        \\    [1].fetch(99).foo
+        \\  rescue => e
+        \\    hits += 1
+        \\  end
+        \\  hits
+        \\end
+        \\g()
+    ;
+    // A `while` loop jumps within the frame; a block returns from its closure
+    const loops = .{ "i = 0\n    while i < 3\n      i += 1", "[1, 2, 3].each do |x|" };
+    inline for (loops) |loop| {
+        inline for (.{ "break", "next" }) |keyword| {
+            expectRunsTo(std.fmt.comptimePrint(template, .{ loop, keyword }), 1) catch |err| {
+                std.debug.print("rescue case '{s}' / '{s}' failed\n", .{ loop, keyword });
+                return err;
+            };
+        }
+    }
+}
+
+test "Compiler: return and break out of begin run the ensure body" {
+    const source =
+        \\def f(log)
+        \\  begin
+        \\    return 1
+        \\  ensure
+        \\    log.push(1)
+        \\  end
+        \\end
+        \\def g(log)
+        \\  while true
+        \\    begin
+        \\      break
+        \\    rescue => e
+        \\      log.push(100)
+        \\    ensure
+        \\      log.push(10)
+        \\    end
+        \\  end
+        \\  log
+        \\end
+        \\log = []
+        \\f(log)
+        \\g(log)
+        \\log.size * 1000 + log[0] + log[1]
+    ;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const res = try run(&vm, source);
+    try testing.expectEqual(.ok, res.status);
+    try testing.expectEqual(@as(f64, 2011), res.top.asNumber());
+}
+
+// --- GC rooting of functions under construction ---
+
+/// A swept ObjFunction is dropped from the GC's tracking list but its pointer
+/// stays in the constant pool, so "every function constant is still tracked"
+/// detects the use-after-free deterministically (the freed slot is often
+/// rewritten by the compiler, so behaviour alone can look fine).
+fn expectFunctionsTracked(vm: *VM, c: *const chunk.Chunk) !void {
+    for (c.constants.items) |val| {
+        if (!val.isObject() or val.asObj().obj_type != .function) continue;
+        const func: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", val.asObj()));
+        var tracked = false;
+        for (vm.gc.functions.items) |f| {
+            if (f == func) tracked = true;
+        }
+        try testing.expect(tracked);
+        if (func.chunk) |c_ptr| try expectFunctionsTracked(vm, @ptrCast(@alignCast(c_ptr)));
+    }
+}
+
+test "Compiler: functions stay rooted while def/attr macros allocate under stress GC" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // `audit_gc_greet` is a top-level def whose name is not interned beforehand,
+    // so allocating its name string collects while the ObjFunction is fresh.
+    // (Method names are interned by makeMethodNameConstant first and can't hit it.)
+    const source =
+        \\def audit_gc_greet(who)
+        \\  "hi " + who
+        \\end
+        \\class Person
+        \\  attr_accessor :name
+        \\  attr_reader :age
+        \\  def initialize(name, age)
+        \\    @name = name
+        \\    @age = age
+        \\  end
+        \\  def label(suffix)
+        \\    "person" + suffix
+        \\  end
+        \\end
+        \\p = Person.new("Leo", 30)
+        \\p.name = "Leon"
+        \\[p.name, p.age, p.label("!"), audit_gc_greet("x")]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // Collect on every allocation: the function's name string and the child
+    // chunk's constants used to be allocated while the ObjFunction was unrooted.
+    vm.gc.stress = true;
+    const compile_result = comp.compile(doc.tree.root);
+    vm.gc.stress = false;
+    try compile_result;
+    try expectFunctionsTracked(&vm, &out_chunk);
+
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    const arr = vm.stack[vm.stack_top - 1].asArray();
+    try testing.expectEqualStrings("Leon", arr.items.items[0].asString().chars);
+    try testing.expectEqual(@as(f64, 30), arr.items.items[1].asNumber());
+    try testing.expectEqualStrings("person!", arr.items.items[2].asString().chars);
+    try testing.expectEqualStrings("hi x", arr.items.items[3].asString().chars);
 }

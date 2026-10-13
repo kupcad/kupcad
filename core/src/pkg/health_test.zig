@@ -4,6 +4,7 @@ const Store = @import("store.zig").Store;
 const Cafs = @import("cafs.zig").Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const Doctor = @import("health.zig").Doctor;
+const writeAbs = @import("test_helpers.zig").writeAbs;
 
 test "Doctor: healMissingBlobs evicts blob and package records when physical files vanish" {
     std.testing.log_level = .err;
@@ -89,4 +90,38 @@ test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
     const row = try stmt.one(struct { size: i64 }, .{}, .{});
     try testing.expect(row != null);
     try testing.expectEqual(@as(i64, 11), row.?.size); // "orphan data".len == 11
+}
+
+// Audit fix: a CAFS file name crafted as SQL was formatted into the lookup, which
+// then matched any row, so the orphan was never indexed. (Prune half: gc_test.zig.)
+test "Doctor: healOrphanedBlobs binds blob names as SQL parameters" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_path);
+
+    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
+    defer cafs.deinit();
+
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+
+    const evil_name = "zz' OR '1'='1";
+    try store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('keep', 0, 0)", .{}, .{});
+    for ([_][]const u8{ "keep", evil_name }, [_][]const u8{ "k", "x" }) |hash, data| {
+        const path = try cafs.blobPath(hash);
+        defer testing.allocator.free(path);
+        try writeAbs(path, data);
+    }
+
+    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store);
+    try doc.run();
+
+    const stmt = try store.db.prepare("SELECT 1 FROM files WHERE hash = ?");
+    defer stmt.deinit();
+    try testing.expect((try stmt.one(struct { v: i32 }, .{evil_name}, .{})) != null);
 }

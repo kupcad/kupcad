@@ -120,3 +120,21 @@ test "Manifest: rejects ill-shaped manifests and unsafe aliases" {
         };
     }
 }
+
+// Audit fix: strings were written unescaped into kupcad.json.
+test "Manifest: strings are JSON-escaped on save" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    const fs = mem_vfs.vfs();
+    {
+        var m = Manifest.init(testing.allocator, "n\"ame");
+        defer m.deinit();
+        try m.dependencies.put(try testing.allocator.dupe(u8, "dep"), try testing.allocator.dupe(u8, "github.com/a/b@v\"1"));
+        try m.save(fs);
+    }
+    var m2 = try Manifest.load(testing.allocator, fs);
+    defer m2.deinit();
+    try testing.expectEqualStrings("n\"ame", m2.name);
+    try testing.expectEqual(@as(usize, 1), m2.dependencies.count());
+    try testing.expectEqualStrings("github.com/a/b@v\"1", m2.dependencies.get("dep").?);
+}

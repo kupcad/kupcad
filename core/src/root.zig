@@ -19,14 +19,6 @@ test {
     _ = @import("api_test.zig");
     _ = @import("gen_grammar_test.zig");
 
-    // Audit regression tests
-    _ = @import("vm/regression_gc_test.zig");
-    _ = @import("kernel/regression_ownership_test.zig");
-    _ = @import("stdlib/regression_validation_test.zig");
-    _ = @import("compiler/regression_limits_test.zig");
-    _ = @import("pkg/regression_security_test.zig");
-    _ = @import("daemon/regression_lsp_test.zig");
-
     // Compiler
     _ = @import("compiler/compiler_test.zig");
 
@@ -49,9 +41,11 @@ test {
     _ = @import("daemon/session_manager_test.zig");
     _ = @import("daemon/session_test.zig");
     _ = @import("daemon/watcher_test.zig");
+    _ = @import("daemon/viewport_ws_test.zig");
 
     // exports
     _ = @import("exporters/3d/gltf_test.zig");
+    _ = @import("exporters/3d/stl_test.zig");
 
     // Frontends
     _ = @import("frontend/kupcad/docstring_test.zig");
@@ -83,6 +77,7 @@ test {
     _ = @import("pkg/health_test.zig");
     _ = @import("pkg/store_test.zig");
     _ = @import("pkg/providers/fetcher_test.zig");
+    _ = @import("pkg/validate_test.zig");
 
     // Stdlib
     _ = @import("stdlib/stdlib_test.zig");
@@ -92,6 +87,7 @@ test {
 
     // Dev tools
     _ = @import("tools/dev/ast_dumper_test.zig");
+    _ = @import("tools/dev/disassembler_test.zig");
 
     // Formatter Tests
     _ = @import("tools/fmt/formatter_test.zig");
@@ -108,6 +104,7 @@ test {
     // VFS
     _ = @import("vfs/memory_test.zig");
     _ = @import("vfs/native_test.zig");
+    _ = @import("vfs/readonly_test.zig");
     _ = @import("vfs/vfs_test.zig");
 
     // VM

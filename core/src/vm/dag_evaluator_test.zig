@@ -6,6 +6,39 @@ const dag = @import("dag.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const registry = @import("../stdlib/registry.zig");
+const InterpretResult = @import("vm.zig").InterpretResult;
+const chunk = @import("chunk.zig");
+const Document = @import("../core/document.zig").Document;
+const Compiler = @import("../compiler/compiler.zig").Compiler;
+
+fn initVm() !VM {
+    var vm = try VM.init(testing.allocator, testing.io);
+    errdefer vm.deinit();
+    vm.mute_errors = true;
+    try registry.registerStandardLibrary(&vm);
+    return vm;
+}
+
+/// Compiles and runs `source` on an existing VM.
+fn runOn(vm: *VM, source: []const u8) !InterpretResult {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    return vm.interpret(&out_chunk);
+}
+
+fn evalVolume(vm: *VM, source: []const u8) !f64 {
+    try testing.expectEqual(InterpretResult.ok, try runOn(vm, source));
+    const result = vm.globals.get("result") orelse return error.NoResult;
+    return result.asNumber();
+}
 
 test "DAG Evaluator: correctly evaluates 3D primitive (Cube)" {
     var vm = try VM.init(testing.allocator, testing.io);
@@ -184,6 +217,32 @@ test "DAG Builder: Dynamic array payloads (Polygons) hash correctly" {
     try testing.expect(p1 != p3);
 }
 
+test "DAG Builder: even-odd polygons with different contour splits are distinct" {
+    var vm = try initVm();
+    defer vm.deinit();
+
+    const pts = [_][2]f64{ .{ 0, 0 }, .{ 10, 0 }, .{ 0, 10 }, .{ 20, 20 }, .{ 30, 20 }, .{ 30, 30 }, .{ 20, 30 }, .{ 40, 40 } };
+
+    // The hash itself must differ (per-contour lengths), not just the
+    // structural check behind it. Fresh builders: hashes are content-based.
+    var scratch_a = dag.DAGBuilder.init(testing.allocator);
+    defer scratch_a.deinit();
+    var scratch_b = dag.DAGBuilder.init(testing.allocator);
+    defer scratch_b.deinit();
+    const ha = scratch_a.node_hashes.items[try scratch_a.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] })];
+    const hb = scratch_b.node_hashes.items[try scratch_b.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] })];
+    try testing.expect(ha != hb);
+
+    const a_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] });
+    const b_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] });
+    try testing.expect(a_idx != b_idx);
+
+    const a_ext = try vm.dag_builder.addExtrude(a_idx, 1, 1, 0, 1, 1);
+    const b_ext = try vm.dag_builder.addExtrude(b_idx, 1, 1, 0, 1, 1);
+    try testing.expectApproxEqAbs(@as(f64, 150.0), kernel.volume(try dag_evaluator.evaluateDAG(&vm, a_ext)), 1e-6);
+    try testing.expectApproxEqAbs(@as(f64, 200.0), kernel.volume(try dag_evaluator.evaluateDAG(&vm, b_ext)), 1e-6);
+}
+
 test "DAG: Builder cleans up payload arrays on OutOfMemory" {
     // Use a FixedBufferAllocator so we can reliably OOM the Arena
     var buffer: [4096]u8 = undefined;
@@ -330,6 +389,26 @@ test "DAG Evaluator: RAM budgeting traps complex meshes" {
     try testing.expectError(error.RamBudgetExceeded, result);
 }
 
+test "DAG Evaluator: evaluation error keeps cache-owned operands alive" {
+    var vm = try initVm();
+    defer vm.deinit(); // the cached cube used to be freed twice here
+
+    const cube_idx = try vm.dag_builder.addCube(1, 1, 1, false);
+    const sphere_idx = try vm.dag_builder.addSphere(5);
+    const union_idx = try vm.dag_builder.addBinary(.union_op, cube_idx, sphere_idx);
+
+    // Cache the cube, then make the sphere blow the vertex budget.
+    const cube_h = try dag_evaluator.evaluateDAG(&vm, cube_idx);
+    vm.config_stack.items[vm.config_stack.items.len - 1].max_vertices = 100;
+
+    try testing.expectError(error.RamBudgetExceeded, dag_evaluator.evaluateDAG(&vm, union_idx));
+
+    // The cached cube must still be the live, cache-owned handle.
+    const again = try dag_evaluator.evaluateDAG(&vm, cube_idx);
+    try testing.expectEqual(cube_h.ptr, again.ptr);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), kernel.volume(again), 1e-9);
+}
+
 test "DAG Evaluator: B-Rep engine config yields a B-Rep cube" {
     var vm = try VM.init(std.testing.allocator, std.testing.io);
     defer vm.deinit();
@@ -343,6 +422,75 @@ test "DAG Evaluator: B-Rep engine config yields a B-Rep cube" {
 
     try testing.expectEqual(geom.EngineType.brep_native, handle.engine);
     try testing.expectEqual(@as(i32, 8), kernel.numVerts(handle));
+}
+
+test "DAG Evaluator: cache is keyed by engine" {
+    var vm = try initVm();
+    defer vm.deinit();
+
+    const small = try vm.dag_builder.addCube(10, 10, 10, false);
+    const big = try vm.dag_builder.addCube(20, 20, 20, false);
+    const diff = try vm.dag_builder.addBinary(.difference_op, big, small);
+
+    const m = try dag_evaluator.evaluateDAG(&vm, small);
+    try testing.expectEqual(geom.EngineType.manifold, m.engine);
+
+    vm.config_stack.items[vm.config_stack.items.len - 1].engine = .brep_native;
+
+    // Before the fix this was a cache hit returning the Manifold handle.
+    const b = try dag_evaluator.evaluateDAG(&vm, small);
+    try testing.expectEqual(geom.EngineType.brep_native, b.engine);
+
+    const d = try dag_evaluator.evaluateDAG(&vm, diff);
+    try testing.expectEqual(geom.EngineType.brep_native, d.engine);
+}
+
+test "DAG Evaluator: GC keeps the B-Rep cache entry of live geometry" {
+    var vm = try initVm();
+    defer vm.deinit();
+
+    // `a` stays rooted as a global, so its cached handle must survive GC.
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm,
+        \\CAD.config(engine: :brep)
+        \\a = cube(10)
+        \\a.volume
+    ));
+    const cached = vm.dag_cache.count();
+    try testing.expect(cached > 0);
+
+    // Eviction must strip the engine salt from the key before the liveness
+    // check, or every B-Rep entry looks dead and is freed.
+    vm.resetStack();
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(cached, vm.dag_cache.count());
+}
+
+test "DAG Evaluator: rejects a DAG mixing engines" {
+    // A decompose result is a `.concrete` leaf that keeps its Manifold handle
+    // after the engine switches, so the union below has mixed operands.
+    var vm = try initVm();
+    defer vm.deinit();
+    try testing.expectEqual(InterpretResult.runtime_error, try runOn(&vm,
+        \\part = cube(10).decompose[0]
+        \\CAD.config(engine: :brep)
+        \\(part + cube(1)).volume
+    ));
+}
+
+test "DAG Evaluator: decompose/simplify results feed later DAG ops" {
+    var vm = try initVm();
+    defer vm.deinit();
+    vm.zealous_gc = true; // concrete handles must survive collection of their ObjGeometry
+
+    try testing.expectApproxEqAbs(@as(f64, 1000.0), try evalVolume(&vm, "result = cube(10).decompose[0].translate(x: 1).volume"), 1e-6);
+    try testing.expectApproxEqAbs(@as(f64, 1000.0), try evalVolume(&vm,
+        \\a = cube(10)
+        \\result = (a.simplify + cube(1)).volume
+    ), 1e-6);
+    try testing.expectApproxEqAbs(@as(f64, 999.0), try evalVolume(&vm,
+        \\parts = cube(10).decompose
+        \\result = (parts[0] - cube(1)).simplify.volume
+    ), 1e-6);
 }
 
 test "DAG Evaluator: respects atomic cancellation token" {

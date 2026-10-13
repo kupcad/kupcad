@@ -163,3 +163,37 @@ test "Driver: STEP Export of CSG Boolean Result" {
 
     try std.testing.expect(std.mem.indexOf(u8, step_bytes, "ISO-10303-21;") != null);
 }
+
+// --- Handle Ownership ---
+
+test "Driver: No-op Ops Return New Handles, Never Their Input" {
+    // Drivers must never return their input handle (single-owner rule).
+    const cube = driver.driver.cubeFn(10, 10, 10, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cube);
+
+    const mat = driver.driver.setMaterialFn(cube, 1) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(mat);
+    try std.testing.expect(mat.ptr != cube.ptr);
+
+    const simp = driver.driver.simplifyFn(cube, 0.01) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(simp);
+    try std.testing.expect(simp.ptr != cube.ptr);
+
+    const parts = driver.driver.decomposeFn(std.testing.allocator, cube) orelse return error.KernelFailed;
+    defer {
+        for (parts) |p| driver.driver.destructFn(p);
+        std.testing.allocator.free(parts);
+    }
+    for (parts) |p| try std.testing.expect(p.ptr != cube.ptr);
+
+    const single = driver.driver.batchBooleanFn(std.testing.allocator, &.{cube}, .union_op) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(single);
+    try std.testing.expect(single.ptr != cube.ptr);
+
+    // B-Rep offset is unimplemented and used to return its input cross-section.
+    const sq = driver.driver.squareFn(10, 10, false) orelse return error.KernelFailed;
+    defer driver.driver.destructCrossSectionFn(sq);
+    const off = driver.driver.offsetFn(sq, 1, 0) orelse return error.KernelFailed;
+    defer driver.driver.destructCrossSectionFn(off);
+    try std.testing.expect(off.ptr != sq.ptr);
+}

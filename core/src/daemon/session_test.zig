@@ -103,6 +103,37 @@ test "ScriptSession: evaluateModule compiles code, stores CAD handle, and applie
     try testing.expect(node2.cached_handle != null);
 }
 
+test "ScriptSession: stores its own copy of the module output" {
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit(); // the cache-owned handle used to be freed twice here
+
+    const file_path = "model.kup";
+    const mod_id = try session.workspace.addModule(file_path, "c = cube(10.0)");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateModule(mod_id);
+
+    const node = &session.nodes.items[@backingInt(mod_id)];
+    const first = node.cached_handle orelse return error.NoHandle;
+
+    // The session copy must survive the DAG cache dropping its entry (what GC
+    // eviction does once no ObjGeometry references the node).
+    var it = session.vm.dag_cache.valueIterator();
+    while (it.next()) |h| kernel.destruct(h.*);
+    session.vm.dag_cache.clearRetainingCapacity();
+    try testing.expectApproxEqAbs(@as(f64, 1000.0), kernel.volume(first), 1e-6);
+
+    // Changing the output destroys the old copy (not the cache's handle).
+    var mod = &session.workspace.modules.items[@backingInt(mod_id)];
+    testing.allocator.free(mod.source);
+    mod.source = try testing.allocator.dupe(u8, "c = cube(20.0)");
+    try session.markFileEdited(file_path);
+    try session.evaluateModule(mod_id);
+
+    const second = session.nodes.items[@backingInt(mod_id)].cached_handle orelse return error.NoHandle;
+    try testing.expectApproxEqAbs(@as(f64, 8000.0), kernel.volume(second), 1e-6);
+}
+
 test "ScriptSession: evaluateWorkspace processes multi-file dependencies and propagates early cutoffs" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();

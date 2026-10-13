@@ -1,22 +1,7 @@
-//! Regression tests for issues found in the Oct 2026 audit.
-//! Area: LSP, viewport WebSocket, workspace, session manager.
-//! (The watcher reload test lives in watcher_test.zig; the wasm Io test in wasm_test.zig.)
-
 const std = @import("std");
 const testing = std.testing;
-
 const ws = @import("viewport_ws.zig");
 const ViewportWsServer = ws.ViewportWsServer;
-const Workspace = @import("../core/workspace.zig").Workspace;
-const SessionManager = @import("session_manager.zig").SessionManager;
-const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
-const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
-const NativeVfs = @import("../vfs/native.zig").NativeVfs;
-const VM = @import("../vm/vm.zig").VM;
-const chunk = @import("../vm/chunk.zig");
-const Compiler = @import("../compiler/compiler.zig").Compiler;
-const registry = @import("../stdlib/registry.zig");
-const api = @import("../api.zig");
 
 /// Upper bound for any condition wait / blocking socket read in these tests.
 const WAIT_TIMEOUT_MS: i64 = 5000;
@@ -49,10 +34,10 @@ fn upgradeRequest(comptime origin_line: []const u8) []const u8 {
 const browser_upgrade_request = upgradeRequest("Origin: " ++ WEBVIEW_ORIGIN ++ "\r\n");
 
 // ---------------------------------------------------------------------------
-// Finding 2: WebSocket handshake / origin / limits (pure parsing)
+// Handshake / Origin / frame limits (pure parsing)
 // ---------------------------------------------------------------------------
 
-test "LSP audit: handshake reader stops at end of headers instead of waiting for EOF" {
+test "ViewportWs: handshake reader stops at end of headers instead of waiting for EOF" {
     // Bytes after the headers model data the peer sends after the upgrade; the old
     // readSliceShort swallowed them (and on a live socket blocked waiting for EOF).
     const trailing = "\x88\x80\x00\x00\x00\x00";
@@ -69,13 +54,14 @@ test "LSP audit: handshake reader stops at end of headers instead of waiting for
     try testing.expectEqualStrings(SEC_WEBSOCKET_ACCEPT, &ws.computeAcceptKey(hs.key));
 }
 
-test "LSP audit: readHttpHeaders rejects oversized requests" {
+test "ViewportWs: readHttpHeaders rejects oversized requests" {
+    // Guards the MAX_HANDSHAKE_BYTES cap on upgrade requests.
     const filler: [ws.MAX_HANDSHAKE_BYTES]u8 = @splat('a');
     var big = std.Io.Reader.fixed("GET / HTTP/1.1\r\nX: " ++ filler ++ "\r\n\r\n");
     try testing.expectError(error.HeaderTooLarge, ws.readHttpHeaders(&big));
 }
 
-test "LSP audit: parseHandshake validates method, Upgrade and key" {
+test "ViewportWs: parseHandshake validates method, Upgrade and key" {
     const key_line = "Sec-WebSocket-Key: " ++ SEC_WEBSOCKET_KEY ++ "\r\n";
     const cases = [_]struct { req: []const u8, err: anyerror }{
         .{ .req = "GET / HTTP/1.1\r\nHost: x\r\n" ++ key_line ++ "\r\n", .err = error.NotWebSocketUpgrade },
@@ -94,7 +80,8 @@ test "LSP audit: parseHandshake validates method, Upgrade and key" {
     try testing.expect(hs.origin == null);
 }
 
-test "LSP audit: Origin allowlist only admits VS Code webviews and the local dev server" {
+test "ViewportWs: Origin allowlist only admits VS Code webviews and the local dev server" {
+    // Guards against foreign web pages opening the viewport socket.
     const cases = [_]struct { origin: ?[]const u8, allowed: bool }{
         .{ .origin = "vscode-webview://abc123", .allowed = true },
         .{ .origin = "http://localhost:5173", .allowed = true },
@@ -114,7 +101,8 @@ test "LSP audit: Origin allowlist only admits VS Code webviews and the local dev
     }
 }
 
-test "LSP audit: incoming frames are bounded and must be masked" {
+test "ViewportWs: incoming frames are bounded and must be masked" {
+    // Guards the incoming frame size cap and RFC 6455 client masking.
     const rejected = [_]struct { bytes: []const u8, err: anyerror }{
         // 127 => 64-bit length of 1 TiB.
         .{ .bytes = "\x82\xff\x00\x00\x01\x00\x00\x00\x00\x00\x01\x02\x03\x04", .err = error.FrameTooLarge },
@@ -141,7 +129,7 @@ test "LSP audit: incoming frames are bounded and must be masked" {
 }
 
 // ---------------------------------------------------------------------------
-// Finding 2: live viewport socket (ephemeral ports, bounded waits)
+// Live viewport socket (ephemeral ports, bounded waits)
 // ---------------------------------------------------------------------------
 
 fn connect(port: u16) !std.Io.net.Stream {
@@ -256,7 +244,7 @@ fn receiveBroadcast(server: *ViewportWsServer, client: *TestClient, payload: []c
     try dog.disarm();
 }
 
-test "LSP audit: live upgrade completes for a browser-sized request and frames are delivered" {
+test "ViewportWs: live upgrade completes for a browser-sized request and frames are delivered" {
     var server = try ViewportWsServer.init(testing.allocator, testing.io, 0);
     defer server.deinit();
     try server.start();
@@ -276,7 +264,7 @@ test "LSP audit: live upgrade completes for a browser-sized request and frames a
     try testing.expectEqualStrings(payload, &got);
 }
 
-test "LSP audit: foreign Origin is refused with 403 and the connection is dropped" {
+test "ViewportWs: foreign Origin is refused with 403 and the connection is dropped" {
     var server = try ViewportWsServer.init(testing.allocator, testing.io, 0);
     defer server.deinit();
     try server.start();
@@ -289,7 +277,7 @@ test "LSP audit: foreign Origin is refused with 403 and the connection is droppe
     try waitForClients(&server, 0);
 }
 
-test "LSP audit: connections are capped, slots are freed on close, deinit wakes stalled handshakes" {
+test "ViewportWs: connections are capped, slots are freed on close, deinit wakes stalled handshakes" {
     var server = try ViewportWsServer.init(testing.allocator, testing.io, 0);
     var server_live = true;
     defer if (server_live) server.deinit();
@@ -327,7 +315,7 @@ test "LSP audit: connections are capped, slots are freed on close, deinit wakes 
     server.deinit();
 }
 
-test "LSP audit: broadcast never blocks on a client that stopped reading" {
+test "ViewportWs: broadcast never blocks on a client that stopped reading" {
     const payload_bytes = 4 * 1024 * 1024; // far beyond kernel socket buffers
     const broadcasts = 8;
 
@@ -355,7 +343,7 @@ test "LSP audit: broadcast never blocks on a client that stopped reading" {
     try testing.expect(elapsed_ms < BROADCAST_BUDGET_MS);
 }
 
-test "LSP audit: a second viewport server falls back instead of sharing the port" {
+test "ViewportWs: a second viewport server falls back instead of sharing the port" {
     // Two LSPs (e.g. two VS Code windows) both prefer the same port. The second used to bind
     // it too (SO_REUSEPORT via `reuse_address`), so a viewer could reach the wrong window.
     var first = try ViewportWsServer.init(testing.allocator, testing.io, 0);
@@ -367,146 +355,4 @@ test "LSP audit: a second viewport server falls back instead of sharing the port
     defer second.deinit();
     try testing.expect(second.port != 0);
     try testing.expect(second.port != taken);
-}
-
-// ---------------------------------------------------------------------------
-// Finding 4: workspace updates
-// ---------------------------------------------------------------------------
-
-test "LSP audit: addModule rejects duplicates; upsertModule replaces source and AST" {
-    var wsp = Workspace.init(testing.allocator);
-    defer wsp.deinit();
-
-    const id = try wsp.addModule("main.kup", "x = 1");
-    // Used to silently return the old id, so the caller's new source was dropped.
-    try testing.expectError(error.DuplicateModule, wsp.addModule("main.kup", "x = 2"));
-    try testing.expectEqualStrings("x = 1", wsp.modules.items[@backingInt(id)].source);
-
-    const new_source = "import \"lib.kup\"\nx = 2";
-    try testing.expectEqual(id, try wsp.upsertModule("main.kup", new_source));
-    try testing.expectEqualStrings(new_source, wsp.modules.items[@backingInt(id)].source);
-    try testing.expectEqual(@as(usize, 1), wsp.modules.items.len);
-
-    // The AST must be re-parsed too, so dependency linking sees the new import.
-    const lib_id = try wsp.upsertModule("lib.kup", "y = 1");
-    try wsp.linkDependencies();
-    const deps = wsp.modules.items[@backingInt(id)].deps.items;
-    try testing.expectEqual(@as(usize, 1), deps.len);
-    try testing.expectEqual(lib_id, deps[0]);
-}
-
-// ---------------------------------------------------------------------------
-// Finding 1: LSP VMs run on a read-only VFS
-// ---------------------------------------------------------------------------
-
-fn runScript(vm: *VM, source: []const u8) !void {
-    var doc = try api.Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-    if (vm.interpret(&out_chunk) != .ok) return error.RuntimeError;
-}
-
-test "LSP audit: sandboxed VM cannot write files via export_stl but can read workspace imports" {
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "victim.stl", .data = "original" });
-
-    var mem = MemoryVfs.init(testing.allocator);
-    defer mem.deinit();
-    var disk_ro = NativeVfs.init(testing.io, tmp.dir);
-    var sandbox = ReadOnlyVfs.init(mem.vfs(), disk_ro.vfs());
-
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    vm.vfs = sandbox.vfs();
-    try registry.registerStandardLibrary(&vm);
-
-    try runScript(&vm, "cube(1).export_stl(\"victim.stl\")\ncube(1).export_stl(\"new.stl\")");
-
-    // Nothing touched on disk (and nothing leaked into the buffer layer either).
-    const victim = try tmp.dir.readFileAlloc(testing.io, "victim.stl", testing.allocator, .limited(1024));
-    defer testing.allocator.free(victim);
-    try testing.expectEqualStrings("original", victim);
-    try testing.expectError(error.FileNotFound, tmp.dir.access(testing.io, "new.stl", .{}));
-    try testing.expectError(error.FileNotFound, sandbox.vfs().readFile(testing.allocator, "new.stl"));
-    try testing.expectEqual(@as(usize, 2), sandbox.discarded_writes);
-
-    // Reads fall through to the jailed workspace view (read-only imports).
-    const read_back = try sandbox.vfs().readFile(testing.allocator, "victim.stl");
-    defer testing.allocator.free(read_back);
-    try testing.expectEqualStrings("original", read_back);
-}
-
-test "LSP audit: ReadOnlyVfs prefers open buffers and discards every mutating call" {
-    var tmp = testing.tmpDir(.{ .iterate = true });
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "lib.kup", .data = "on disk" });
-
-    var mem = MemoryVfs.init(testing.allocator);
-    defer mem.deinit();
-    try mem.vfs().writeFile("lib.kup", "unsaved buffer");
-    var disk_ro = NativeVfs.init(testing.io, tmp.dir);
-    var sandbox = ReadOnlyVfs.init(mem.vfs(), disk_ro.vfs());
-    const v = sandbox.vfs();
-
-    const lib = try v.readFile(testing.allocator, "lib.kup");
-    defer testing.allocator.free(lib);
-    try testing.expectEqualStrings("unsaved buffer", lib);
-
-    try v.makePath("made/dir");
-    try v.writeFile("written.txt", "x");
-    try v.hardLink("lib.kup", "hard.kup");
-    try v.symLink("lib.kup", "sym.kup");
-    try testing.expectError(error.OperationUnsupported, v.hardLinkTrusted("/etc/hosts", "trusted.kup"));
-    try testing.expectEqual(@as(usize, 4), sandbox.discarded_writes);
-
-    var it = tmp.dir.iterate();
-    var entries: usize = 0;
-    while (try it.next(testing.io)) |_| entries += 1;
-    try testing.expectEqual(@as(usize, 1), entries); // only lib.kup
-}
-
-// ---------------------------------------------------------------------------
-// Finding 6: SessionManager eviction vs. in-use sessions
-// ---------------------------------------------------------------------------
-
-test "LSP audit: evictLRU never frees a session that is still leased" {
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(dir);
-    var paths: [3][]u8 = undefined;
-    var n_paths: usize = 0;
-    defer for (paths[0..n_paths]) |p| testing.allocator.free(p);
-    for (&paths, [_][]const u8{ "a.kup", "b.kup", "c.kup" }) |*p, name| {
-        p.* = try std.fs.path.join(testing.allocator, &.{ dir, name });
-        n_paths += 1;
-        try tmp.dir.writeFile(testing.io, .{ .sub_path = name, .data = "" });
-    }
-
-    var manager = SessionManager.init(testing.allocator, testing.io, 1);
-    defer manager.deinit();
-
-    const lease = try manager.acquireSession(paths[0]);
-    const lease2 = try manager.acquireSession(paths[0]); // leases nest
-    try testing.expectEqual(lease.session, lease2.session);
-
-    // Capacity 1: before the fix this evicted (destroyed) the leased session.
-    _ = try manager.getOrInitializeSession(paths[1]);
-    try testing.expect(manager.sessions.get(lease.id) == lease.session);
-    try testing.expectEqual(@as(usize, 2), manager.sessions.count()); // soft limit exceeded
-    lease.session.global_revision += 1; // a use-after-free under the old behaviour
-
-    manager.release(lease2);
-    try testing.expect(manager.isPinned(lease.id));
-    manager.release(lease);
-    try testing.expect(!manager.isPinned(lease.id));
-
-    // Once released it is the LRU victim again.
-    _ = try manager.getOrInitializeSession(paths[2]);
-    try testing.expect(!manager.sessions.contains(lease.id));
 }

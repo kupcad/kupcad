@@ -88,3 +88,25 @@ test "Workspace: failed add/update leave the workspace unchanged" {
     try ws.linkDependencies();
     try testing.expectEqual(@as(usize, 1), ws.modules.items[@backingInt(id)].deps.items.len);
 }
+
+test "Workspace: addModule rejects duplicates; upsertModule replaces source and AST" {
+    var ws = workspace.Workspace.init(testing.allocator);
+    defer ws.deinit();
+
+    const id = try ws.addModule("main.kup", "x = 1");
+    // Used to silently return the old id, so the caller's new source was dropped.
+    try testing.expectError(error.DuplicateModule, ws.addModule("main.kup", "x = 2"));
+    try testing.expectEqualStrings("x = 1", ws.modules.items[@backingInt(id)].source);
+
+    const new_source = "import \"lib.kup\"\nx = 2";
+    try testing.expectEqual(id, try ws.upsertModule("main.kup", new_source));
+    try testing.expectEqualStrings(new_source, ws.modules.items[@backingInt(id)].source);
+    try testing.expectEqual(@as(usize, 1), ws.modules.items.len);
+
+    // The AST must be re-parsed too, so dependency linking sees the new import.
+    const lib_id = try ws.upsertModule("lib.kup", "y = 1");
+    try ws.linkDependencies();
+    const deps = ws.modules.items[@backingInt(id)].deps.items;
+    try testing.expectEqual(@as(usize, 1), deps.len);
+    try testing.expectEqual(lib_id, deps[0]);
+}

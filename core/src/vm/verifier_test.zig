@@ -249,3 +249,19 @@ test "Verifier: op_closure verifies the nested function's chunk" {
     func.chunk = &parent;
     try testing.expectError(error.CorruptedBytecode, verifier.verifyChunk(&parent));
 }
+
+// --- interpret runs the verifier before execution ---
+
+test "Verifier: interpret refuses malformed bytecode instead of indexing out of bounds" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+
+    var c = chunk.Chunk.init();
+    defer c.free(testing.allocator);
+    try c.writeOp(testing.allocator, .op_constant, 0);
+    try c.write(testing.allocator, 200, 0);
+    try c.writeOp(testing.allocator, .op_return, 0);
+
+    try testing.expectEqual(.compile_error, vm.interpret(&c));
+}

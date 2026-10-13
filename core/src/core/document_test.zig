@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const Document = @import("document.zig").Document;
+const limits = @import("limits.zig");
 
 test "Document: parse successfully resolves semantics and parents" {
     const source =
@@ -61,4 +62,13 @@ test "Document: safely handles parsing syntax errors without leaking" {
 
     try testing.expectEqual(@as(usize, 1), raw_doc.diagnostics.len);
     try testing.expectEqualStrings("Invalid expression starting with '}'", raw_doc.diagnostics[0].message);
+}
+
+test "Document: parse rejects sources over MAX_SOURCE_BYTES" {
+    // Regression: LSP/WASM entry points bypass the CLI file cap, so the size
+    // limit must be enforced here as well
+    const src = try testing.allocator.alloc(u8, limits.MAX_SOURCE_BYTES + 1);
+    defer testing.allocator.free(src);
+    @memset(src, ' ');
+    try testing.expectError(error.SourceTooLarge, Document.parse(testing.allocator, src));
 }

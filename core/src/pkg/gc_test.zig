@@ -4,6 +4,7 @@ const Store = @import("store.zig").Store;
 const Cafs = @import("cafs.zig").Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const GarbageCollector = @import("gc.zig").GarbageCollector;
+const countRows = @import("test_helpers.zig").countRows;
 
 const Fixture = struct {
     tmp: testing.TmpDir,
@@ -100,4 +101,50 @@ test "GarbageCollector: prune(true) skips files actively linked to projects (nli
     var gc = fx.gc();
     try gc.prune(true);
     try expectExists(path);
+}
+
+// Audit fix: prune deleted blobs but left their packages looking cached, so
+// linking later failed on the missing files.
+test "GarbageCollector: prune evicts packages whose blobs were deleted" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+
+    testing.allocator.free(try fx.writeBlob("deadbeef", "content"));
+    var files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files.deinit();
+    try files.put("main.kup", "deadbeef");
+    try fx.store.registerPackage("pkg", "c1", "github", "sha256-x", &files);
+
+    // A package that doesn't reference the pruned blob must survive.
+    var other = std.StringHashMap([]const u8).init(testing.allocator);
+    defer other.deinit();
+    try other.put("lib.kup", "keepme");
+    try fx.store.registerPackage("other", "c9", "github", "sha256-y", &other);
+
+    var gc = fx.gc();
+    try gc.prune(true);
+
+    try testing.expect(!try fx.store.hasPackage("pkg", "c1"));
+    try testing.expectEqual(@as(i64, 0), try countRows(&fx.store, "SELECT COUNT(*) FROM package_files WHERE package_id = 'pkg'"));
+    try testing.expect(try fx.store.hasPackage("other", "c9"));
+    try testing.expectEqual(@as(i64, 1), try countRows(&fx.store, "SELECT COUNT(*) FROM package_files WHERE package_id = 'other'"));
+}
+
+// Audit fix: a CAFS file name crafted as SQL was formatted into the DELETE, so
+// prune deleted every `files` row. (Doctor half: health_test.zig.)
+test "GarbageCollector: prune binds blob names as SQL parameters" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+
+    const evil_name = "zz' OR '1'='1";
+    // Only the evil blob is physically present and unreferenced; 'keep' is just a row.
+    try fx.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('keep', 0, 0)", .{}, .{});
+    testing.allocator.free(try fx.writeBlob(evil_name, "x"));
+
+    var gc = fx.gc();
+    try gc.prune(true);
+
+    try testing.expectEqual(@as(i64, 1), try countRows(&fx.store, "SELECT COUNT(*) FROM files WHERE hash = 'keep'"));
 }
