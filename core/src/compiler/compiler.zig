@@ -13,6 +13,13 @@ const emitter_mod = @import("emitter.zig");
 
 const DEFAULT_IMPORT_ENDPOINT = "main.kup";
 
+/// True for a name that can become a function-local: not `@ivar`, `@@cvar`,
+/// `$global` or a Constant, which `classifyStorage` routes by their first char.
+fn isPlainLocalName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    return name[0] != '@' and name[0] != '$' and !std.ascii.isUpper(name[0]);
+}
+
 pub const CompileError = error{
     OutOfMemory,
     UnknownNode,
@@ -73,6 +80,10 @@ pub const Compiler = struct {
 
     seeded_locals: []const []const u8 = &.{},
     seeded_slot_offset: u16 = 0,
+
+    // Hidden frame slot that emitVariableStore parks a value in to reorder the
+    // stack; allocated on first use, once per function.
+    scratch_slot: ?u16 = null,
 
     // --- Mixin Forwarding (Decoupled Modules) ---
     pub const classifyVariable = scope_mod.classifyVariable;
@@ -1422,11 +1433,15 @@ pub const Compiler = struct {
         for (lhs) |l| {
             if (l.name != .none) {
                 const name_id = l.name;
-                const name_str = self.tree.getString(name_id);
-                if (!std.mem.startsWith(u8, name_str, "@@") and
-                    !std.mem.startsWith(u8, name_str, "@") and
+                // Same rule as a plain `name = value`: only plain names inside a
+                // function become new locals. At the top level they are script
+                // globals (top-level slot 0 is the script closure, so a local
+                // there would clobber `self`).
+                if (self.enclosing != null and
+                    isPlainLocalName(self.tree.getString(name_id)) and
                     self.resolveLocal(name_id) == null and
-                    (try self.resolveUpvalue(name_id)) == null)
+                    (try self.resolveUpvalue(name_id)) == null and
+                    !self.isScriptGlobal(name_id))
                 {
                     const slot = self.getNextLocalSlot();
                     try self.addLocal(name_id, slot);
@@ -1953,7 +1968,7 @@ pub const Compiler = struct {
 
     fn emitVariableLoad(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!void {
         const name_str = self.tree.getString(name_id);
-        const classification = try self.classifyVariable(name_id, sym);
+        const classification = try self.classifyStorage(name_id, sym);
 
         switch (classification.kind) {
             .constant => {
@@ -2017,9 +2032,32 @@ pub const Compiler = struct {
         }
     }
 
+    /// `classifyVariable` plus the `$name` sigil. The resolver already marks every
+    /// `$name` read as a global; stores must agree, or `$x = 1` inside a function
+    /// would make a function-local that no other function could read.
+    fn classifyStorage(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!scope_mod.ResolvedVar {
+        if (std.mem.startsWith(u8, self.tree.getString(name_id), "$")) return .{ .kind = .global };
+        return self.classifyVariable(name_id, sym);
+    }
+
+    /// The hidden frame slot behind `scratch_slot`, allocated on first use.
+    fn scratchLocalSlot(self: *Compiler) CompileError!u16 {
+        if (self.scratch_slot) |slot| return slot;
+        // Slot 0 holds the running closure, and at the top level it is also what
+        // `self` reads, so it must never double as scratch. Function compilers
+        // reserve it up front; the top-level compiler does not.
+        if (self.getNextLocalSlot() == 0) try self.addLocal(.none, 0);
+        const slot = self.getNextLocalSlot();
+        try self.addLocal(.none, slot);
+        self.scratch_slot = slot;
+        return slot;
+    }
+
+    /// Stores the value on top of the stack into the named variable and leaves the
+    /// value there, whatever kind of variable the name turns out to be.
     fn emitVariableStore(self: *Compiler, name_id: ast.StringId, sym: resolver.ResolvedSymbol) CompileError!void {
         const name_str = self.tree.getString(name_id);
-        const classification = try self.classifyVariable(name_id, sym);
+        const classification = try self.classifyStorage(name_id, sym);
 
         switch (classification.kind) {
             .constant => {
@@ -2042,10 +2080,19 @@ pub const Compiler = struct {
                 try self.emitOpWithOperand(.op_set_class_var, .op_set_class_var_wide, name_idx);
             },
             .instance_var => {
-                // Instance variables are primarily handled in the Assignment AST node directly
-                // because they require a Stack Swap (`emitPushSelf` -> evaluate RHS -> Assign).
-                // Reaching this branch means we fell through a destructuring assignment or rescue variable mapping.
-                unreachable;
+                // A plain `@x = v` pushes self before evaluating v (compileAssignment).
+                // Here v is already on the stack (a destructured element, a rescued
+                // error), but op_set_property needs [self, v] and the VM has no swap,
+                // so park v in a hidden slot and reload it above self.
+                const scratch = try self.scratchLocalSlot();
+                try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, scratch); // [v]
+                try self.emitPushSelf(); // [v, self]
+                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, scratch); // [v, self, v]
+                const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
+                const name_idx = try self.makeStringConstant(clean_name);
+                try self.emitOpWithOperand(.op_set_property, .op_set_property_wide, name_idx); // [v, v]
+                try self.emitInlineCacheIndex();
+                try self.emitOp(.op_pop); // [v]
             },
             .local => {
                 try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, classification.index);

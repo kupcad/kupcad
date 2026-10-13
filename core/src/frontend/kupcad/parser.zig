@@ -1193,10 +1193,29 @@ pub const Parser = struct {
         return try self.b.addNamedArgs(&.{});
     }
 
+    /// Like Ruby, reject `@x`, `@@x` and `$x` as formal parameters. Reads of such a
+    /// name resolve by its sigil, never to the parameter, and a destructured block
+    /// parameter `|(@x, y)|` would silently assign the receiver's field. The name
+    /// is still consumed, so the rest of the signature parses without follow-on errors.
+    fn expectParamName(self: *Parser) ParseError!u24 {
+        const name_tok = try self.expect(.ident);
+        const name = self.tokens.lexeme(self.source, name_tok);
+        const kind: ?[]const u8 = if (std.mem.startsWith(u8, name, "@@"))
+            "a class variable"
+        else if (std.mem.startsWith(u8, name, "@"))
+            "an instance variable"
+        else if (std.mem.startsWith(u8, name, "$"))
+            "a global variable"
+        else
+            null;
+        if (kind) |k| self.reportError(self.getLoc(name_tok), "A parameter cannot be {s}: '{s}'", .{ k, name });
+        return name_tok;
+    }
+
     fn parseParam(self: *Parser) ParseError!ast.Param {
         const mod = self.parseArgModifier(); // Automatically handles *, **, and &
 
-        const name_tok = try self.expect(.ident);
+        const name_tok = try self.expectParamName();
         const name_id = try self.b.intern(self.tokens.lexeme(self.source, name_tok));
 
         var default_val: ast.NodeIndex = .none;
@@ -1655,18 +1674,17 @@ pub const Parser = struct {
         const start_tok = self.tok_idx;
         if (self.tag(0) == .star) {
             self.advance();
-            const ident_tok = try self.expect(.ident);
+            const ident_tok = try self.expectParamName();
             const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
             return self.b.splatExpr(ident_node, start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .star_star) {
             self.advance();
-            const ident_tok = try self.expect(.ident);
+            const ident_tok = try self.expectParamName();
             const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
             return self.b.doubleSplatExpr(ident_node, start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .ident) {
-            const ident_tok = self.tok_idx;
+            const ident_tok = try self.expectParamName();
             const ident_str = self.tokens.lexeme(self.source, ident_tok);
-            self.advance();
 
             // Check for default value assignment (x = 10)
             if (self.tag(0) == .equal) {

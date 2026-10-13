@@ -1174,6 +1174,222 @@ test "Compiler: Deep spatial tuple destructuring emits recursive unpacks" {
     try testing.expectEqual(@as(usize, 2), unpack_count);
 }
 
+// --- Destructuring and `rescue =>` store into every kind of variable ---
+
+const StoreCase = struct {
+    name: []const u8,
+    source: []const u8,
+    expected: union(enum) { number: f64, string: []const u8 },
+};
+
+// Destructuring and `rescue => target` store a value that is already on the
+// stack, unlike `target = value`, so every target kind needs its own check.
+const store_cases = [_]StoreCase{
+    .{ .name = "ivars from a literal", .expected = .{ .number = 21 }, .source =
+    \\class P
+    \\  def run
+    \\    @a, @b = [1, 2]
+    \\    @a + @b * 10
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "ivars from a runtime array, read by another method", .expected = .{ .number = 43 }, .source =
+    \\class P
+    \\  attr_reader :b
+    \\  def run(pair)
+    \\    @a, @b = pair
+    \\    @a
+    \\  end
+    \\end
+    \\p = P.new
+    \\p.run([3, 4]) + p.b * 10
+    },
+    .{ .name = "ivar splat", .expected = .{ .number = 21 }, .source =
+    \\class P
+    \\  def run
+    \\    @a, *@rest = [1, 2, 3]
+    \\    @a + @rest.size * 10
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "ivars inside a block", .expected = .{ .number = 32 }, .source =
+    \\class P
+    \\  def run
+    \\    [1].each { |x| @a, @b = [x + 1, x + 2] }
+    \\    @a + @b * 10
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "every kind in one statement", .expected = .{ .number = 4321 }, .source =
+    \\class P
+    \\  def run
+    \\    @a, b, @@c, $d = [1, 2, 3, 4]
+    \\    @a + b * 10 + @@c * 100 + $d * 1000
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "rescue into an ivar", .expected = .{ .string = "boom" }, .source =
+    \\class P
+    \\  def run
+    \\    begin
+    \\      raise "boom"
+    \\    rescue => @e
+    \\    end
+    \\    @e.message
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "typed rescue clauses into an ivar", .expected = .{ .string = "typed" }, .source =
+    \\class P
+    \\  def run
+    \\    begin
+    \\      raise(ArgumentError.new("typed"))
+    \\    rescue TypeError => @e
+    \\      return "wrong clause"
+    \\    rescue ArgumentError => @e
+    \\    end
+    \\    @e.message
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "rescue into an ivar inside a block", .expected = .{ .string = "in block" }, .source =
+    \\class P
+    \\  def run
+    \\    [1].each do |x|
+    \\      begin
+    \\        raise "in block"
+    \\      rescue => @e
+    \\      end
+    \\    end
+    \\    @e.message
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "class vars", .expected = .{ .number = 21 }, .source =
+    \\class P
+    \\  def run
+    \\    @@a, @@b = [1, 2]
+    \\    @@a + @@b * 10
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "rescue into a class var", .expected = .{ .string = "cv" }, .source =
+    \\class P
+    \\  def run
+    \\    begin
+    \\      raise "cv"
+    \\    rescue => @@e
+    \\    end
+    \\    @@e.message
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "captured locals from a block", .expected = .{ .number = 32 }, .source =
+    \\def f
+    \\  a = 0
+    \\  b = 0
+    \\  [1].each { |x| a, b = [x + 1, x + 2] }
+    \\  a + b * 10
+    \\end
+    \\f()
+    },
+    .{ .name = "rescue into a captured local", .expected = .{ .string = "inner" }, .source =
+    \\def f
+    \\  e = nil
+    \\  [1].each do |x|
+    \\    begin
+    \\      raise "inner"
+    \\    rescue => e
+    \\    end
+    \\  end
+    \\  e.message
+    \\end
+    \\f()
+    },
+    .{ .name = "$globals from a method are visible to others", .expected = .{ .number = 321 }, .source =
+    \\def set_all
+    \\  $a, $b = [1, 2]
+    \\  $c = 3
+    \\end
+    \\def read_all
+    \\  $a + $b * 10 + $c * 100
+    \\end
+    \\set_all()
+    \\read_all()
+    },
+    .{ .name = "rescue into a $global", .expected = .{ .string = "gv" }, .source =
+    \\def f
+    \\  begin
+    \\    raise "gv"
+    \\  rescue => $e
+    \\  end
+    \\end
+    \\f()
+    \\$e.message
+    },
+    .{ .name = "top-level destructuring keeps self and makes script globals", .expected = .{ .number = 79 }, .source =
+    \\s = self
+    \\a, b = [7, 8]
+    \\def g
+    \\  b + 1
+    \\end
+    \\self == s ? a * 10 + g() : -1
+    },
+};
+
+test "Compiler: destructuring and rescue store into ivars, cvars, globals and captured locals" {
+    for (store_cases) |case| {
+        errdefer std.debug.print("store case '{s}' failed\n", .{case.name});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        const res = try run(&vm, case.source);
+        try testing.expectEqual(.ok, res.status);
+        switch (case.expected) {
+            .number => |n| try testing.expectEqual(n, res.top.asNumber()),
+            .string => |s| {
+                try testing.expect(res.top.isString());
+                try testing.expectEqualStrings(s, res.top.asString().chars);
+            },
+        }
+    }
+}
+
+test "Compiler: sigil parameters and index or attribute destructuring targets get a located parse error" {
+    // Formal parameters follow Ruby: a sigil name is never a parameter. Index and
+    // attribute targets are not destructuring or rescue targets either.
+    const cases = [_]struct { source: []const u8, culprit: []const u8 }{
+        .{ .source = "[[1, 2]].each { |(@a, b)| b }", .culprit = "@a" },
+        .{ .source = "[[1, 2]].each { |(a, @@b)| a }", .culprit = "@@b" },
+        .{ .source = "[1].each { |@a| 1 }", .culprit = "@a" },
+        .{ .source = "[1].each { |*$rest| 1 }", .culprit = "$rest" },
+        .{ .source = "def f(@a)\n  1\nend", .culprit = "@a" },
+        .{ .source = "def f(**@@opts)\n  1\nend", .culprit = "@@opts" },
+        .{ .source = "g = ->($x) { 1 }", .culprit = "$x" },
+        .{ .source = "a = [0, 0]\na[0], b = [1, 2]", .culprit = "," },
+        .{ .source = "o = 1\no.x, y = [1, 2]", .culprit = "," },
+        .{ .source = "begin\n  1\nrescue => o.x\nend", .culprit = "." },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("rejection case '{s}' failed\n", .{case.source});
+        var doc = try Document.parse(testing.allocator, case.source);
+        defer doc.deinit();
+        try testing.expect(doc.diagnostics.len > 0);
+        // Located at the offending token, not at the start of the file
+        const loc = doc.diagnostics[0].loc;
+        try testing.expectEqualStrings(case.culprit, case.source[loc.offset .. loc.offset + loc.length]);
+    }
+}
+
 test "Compiler: compiles bitwise and shift operators" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
