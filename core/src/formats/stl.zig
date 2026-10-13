@@ -1,6 +1,11 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
 
+// Binary STL layout: 80-byte header + u32 triangle count, then 50 bytes per
+// triangle (normal + 3 vertices as f32, plus a u16 attribute count).
+const HEADER_LEN: usize = 84;
+const TRIANGLE_RECORD_LEN: usize = 50;
+
 pub const StlData = struct {
     vertices: []value.Vec3,
     faces: [][3]u32,
@@ -12,15 +17,19 @@ pub const StlData = struct {
 };
 
 pub fn readBinary(allocator: std.mem.Allocator, data: []const u8) !StlData {
-    if (data.len < 84) return error.InvalidStl;
+    if (data.len < HEADER_LEN) return error.InvalidStl;
 
     var offset: usize = 80; // Skip the 80-byte ASCII header
 
-    const num_triangles = std.mem.readInt(u32, data[offset..][0..4], .little);
+    const num_triangles: usize = std.mem.readInt(u32, data[offset..][0..4], .little);
     offset += 4;
 
-    // 84 bytes header + 50 bytes per triangle
-    if (data.len < 84 + num_triangles * 50) return error.InvalidStl;
+    // 84 bytes header + 50 bytes per triangle. Compute in usize: in u32 the
+    // product wraps for counts >= ~86M, passing this check and then reading OOB.
+    // Comparing against data.len also bounds the allocations below by file size.
+    if ((data.len - HEADER_LEN) / TRIANGLE_RECORD_LEN < num_triangles) return error.InvalidStl;
+    // Face indices are u32, so the duplicated vertex count must fit too.
+    if (num_triangles > std.math.maxInt(u32) / 3) return error.InvalidStl;
 
     // A raw STL duplicates 3 vertices per triangle without indexing
     var vertices = std.ArrayListUnmanaged(value.Vec3).empty;
@@ -31,7 +40,7 @@ pub fn readBinary(allocator: std.mem.Allocator, data: []const u8) !StlData {
     try faces.ensureTotalCapacity(allocator, num_triangles);
     errdefer faces.deinit(allocator);
 
-    var i: u32 = 0;
+    var i: usize = 0;
     while (i < num_triangles) : (i += 1) {
         // Skip the normal vector (12 bytes) — Manifold/KupCAD will recalculate it anyway
         offset += 12;
@@ -79,7 +88,7 @@ pub fn readBinary(allocator: std.mem.Allocator, data: []const u8) !StlData {
 // We use `anytype` for writer to perfectly duck-type whatever Io.Writer zig passes it
 pub fn write(mesh: *value.ObjMesh, writer: anytype) !void {
     // 80-byte header
-    var header: [80]u8 = [_]u8{0} ** 80;
+    var header: [80]u8 = @splat(0);
     const title = "KupCAD Export";
     @memcpy(header[0..title.len], title);
     try writer.writeAll(&header);

@@ -30,7 +30,13 @@ fn applyConfigMap(vm: *VM, map: *value.ObjMap, config: *EngineConfig) void {
                 if (tv.isNumber()) config.manifold.tolerance = tv.asNumber();
             }
             if (vm.findMapKeyByString(m, "fixed_segments")) |i| {
-                if (m.map.values()[i].isNumber()) config.manifold.fixed_segments = @intFromFloat(@max(0.0, m.map.values()[i].asNumber()));
+                // Clamp (NaN -> 0 = auto) before @intFromFloat: out-of-range is UB in ReleaseFast,
+                // and this value feeds every getSegments() call, including the kernels' spheres.
+                if (m.map.values()[i].isNumber()) {
+                    const raw = m.map.values()[i].asNumber();
+                    const max_segs: f64 = @floatFromInt(@import("../../core/limits.zig").MAX_SEGMENTS);
+                    config.manifold.fixed_segments = if (std.math.isNan(raw)) 0 else @intFromFloat(std.math.clamp(raw, 0.0, max_segs));
+                }
             }
             if (vm.findMapKeyByString(m, "min_angle_deg")) |i| {
                 if (m.map.values()[i].isNumber()) config.manifold.min_angle_deg = m.map.values()[i].asNumber();

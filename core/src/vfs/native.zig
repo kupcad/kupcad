@@ -55,6 +55,8 @@ pub const NativeVfs = struct {
         const file_size: usize = @intCast(stat.size);
 
         const buffer = try allocator.alloc(u8, file_size);
+        // Free on the short-read error path below; the caller only owns it on success.
+        errdefer allocator.free(buffer);
         const bytes_read = try file.readStreaming(self.io, &.{buffer});
         if (bytes_read != file_size) return error.RuntimeError;
 

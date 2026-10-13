@@ -3,6 +3,10 @@ const value = @import("../core/value.zig");
 const util = @import("methods/util.zig");
 const VM = @import("../vm/vm.zig").VM;
 const text_mod = @import("../core/text.zig");
+const limits = @import("../core/limits.zig");
+
+/// Smallest allowed text() flattening tolerance relative to the glyph size.
+const MIN_TEXT_TOLERANCE_RATIO: f64 = 1e-4;
 
 const ArgParseCtx = struct {
     pos_count: usize,
@@ -33,13 +37,13 @@ fn parseArgs(args: []const value.Value) ArgParseCtx {
     return .{ .pos_count = arg_count, .kwargs = null };
 }
 
-fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
+fn extractGeomOptions(vm: *VM, parsed: ArgParseCtx) !GeomOptions {
     var opts = GeomOptions{};
 
     if (parsed.kwargs) |kw| {
         if (kw.isObject() and kw.asObj().obj_type == .map) {
             const map = kw.asMap();
-            opts = util.parseKwargs(GeomOptions, map);
+            opts = try util.parseKwargs(GeomOptions, vm, map);
 
             if (util.getKey(map, "size")) |v| {
                 if (v.isNumber()) {
@@ -62,21 +66,33 @@ fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
             }
         }
     }
+    try util.requireSegmentCount(vm, opts.segments, "segments");
     return opts;
 }
 
+// NaN compares false against everything, so `val <= 0` alone lets NaN through;
+// infinities are rejected too since no kernel can tessellate them.
 fn requirePositive(vm: *VM, val: f64, name: []const u8) !void {
-    if (val <= 0.0) {
-        vm.reportError("ValueError: '{s}' must be strictly greater than zero, got {d}.\n", .{ name, val });
+    if (!std.math.isFinite(val) or val <= 0.0) {
+        vm.reportError("ValueError: '{s}' must be a finite number greater than zero, got {d}.\n", .{ name, val });
         return error.RuntimeError;
     }
 }
 
 fn requireNonNegative(vm: *VM, val: f64, name: []const u8) !void {
-    if (val < 0.0) {
-        vm.reportError("ValueError: '{s}' cannot be negative, got {d}.\n", .{ name, val });
+    if (!std.math.isFinite(val) or val < 0.0) {
+        vm.reportError("ValueError: '{s}' must be a finite non-negative number, got {d}.\n", .{ name, val });
         return error.RuntimeError;
     }
+}
+
+/// Validates a user-supplied index into an array of length `len`.
+fn checkedIndex(vm: *VM, raw: f64, len: usize, what: []const u8) !usize {
+    if (!std.math.isFinite(raw) or raw < 0.0 or @trunc(raw) != raw or raw >= @as(f64, @floatFromInt(len)) or raw > std.math.maxInt(u32)) {
+        vm.reportError("ValueError: {s} index {d} is out of range (0..{d}).\n", .{ what, raw, len });
+        return error.RuntimeError;
+    }
+    return @intFromFloat(raw);
 }
 
 // --- Filleting Math Helpers ---
@@ -107,7 +123,7 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
     if (round_r) |r| {
         const safe_r = @min(r, @min(hw, hh));
         // Calculate segments per 90-degree arc (minimum 4, or inherited from user's global segments)
-        const total_segs: i32 = if (segs > 0) segs else @intCast(active_config.manifold.getSegments(safe_r));
+        const total_segs: i32 = if (segs > 0) segs else util.clampSegments(active_config.manifold.getSegments(safe_r));
         const arc_segs = @max(1, @as(usize, @intCast(total_segs)) / 4);
         // Build corners Counter-Clockwise
         try pushArc(alloc, &pts, cx + hw - safe_r, cy - hh + safe_r, safe_r, -std.math.pi / 2.0, 0.0, arc_segs); // Bottom-Right
@@ -134,7 +150,7 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
 // --- Methods ---
 pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = try extractGeomOptions(vm, parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) {
         opts.x = args[0].asNumber();
         opts.y = opts.x;
@@ -156,7 +172,7 @@ pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = try extractGeomOptions(vm, parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) {
         opts.x = args[0].asNumber();
         opts.y = opts.x;
@@ -189,7 +205,7 @@ pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = try extractGeomOptions(vm, parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
     if (parsed.pos_count > 1 and args[1].isNumber()) opts.h = args[1].asNumber();
     if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
@@ -204,7 +220,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
 
     if (opts.segments == 0) {
-        opts.segments = @intCast(active_config.manifold.getSegments(@max(r1, r2)));
+        opts.segments = util.clampSegments(active_config.manifold.getSegments(@max(r1, r2)));
     }
 
     var dag_idx: u32 = 0;
@@ -224,7 +240,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
             const safe_r1 = @min(rr, @min(r1, opts.h / 2.0));
             const safe_r2 = @min(rr, @min(r2, opts.h / 2.0));
 
-            const corner_segs: i32 = @intCast(active_config.manifold.getSegments(@max(safe_r1, safe_r2)));
+            const corner_segs: i32 = util.clampSegments(active_config.manifold.getSegments(@max(safe_r1, safe_r2)));
             const arc_segs = @max(1, @as(usize, @intCast(corner_segs)) / 4);
             // Bottom Right Corner (sweep from -90 deg to 0)
             try pushArc(alloc, &pts, r1 - safe_r1, y_min + safe_r1, safe_r1, -std.math.pi / 2.0, 0.0, arc_segs);
@@ -254,7 +270,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = try extractGeomOptions(vm, parsed);
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
     try requirePositive(vm, opts.r, "radius");
     const dag_idx = try vm.dag_builder.addSphere(opts.r);
@@ -263,17 +279,16 @@ pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = try extractGeomOptions(vm, parsed);
 
     if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
     try requirePositive(vm, opts.r, "radius");
 
     if (opts.segments == 0) {
         const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-        opts.segments = @intCast(active_config.manifold.getSegments(opts.r));
+        opts.segments = util.clampSegments(active_config.manifold.getSegments(opts.r));
     }
 
-    try requireNonNegative(vm, @as(f64, @floatFromInt(opts.segments)), "segments");
     const dag_idx = try vm.dag_builder.addCircle(opts.r, opts.segments);
     return try vm.allocateCrossSection(dag_idx);
 }
@@ -312,7 +327,9 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
 
     if (paths_arr) |paths| {
         // Build Multi-Contour Polygon (Supports Holes via Even-Odd rule)
-        var contours = try alloc.alloc([]const [2]f64, paths.len);
+        const contours = try alloc.alloc([]const [2]f64, paths.len);
+        // Initialize so the deferred free is safe if validation fails part-way.
+        @memset(contours, &.{});
         defer {
             for (contours) |c| alloc.free(c);
             alloc.free(contours);
@@ -321,12 +338,12 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
         for (paths, 0..) |path_val, c_idx| {
             if (!path_val.isArray()) return error.RuntimeError;
             const indices = path_val.asArray().items.items;
-            var contour = try alloc.alloc([2]f64, indices.len);
+            const contour = try alloc.alloc([2]f64, indices.len);
+            contours[c_idx] = contour;
 
             for (indices, 0..) |idx_val, p_idx| {
                 if (!idx_val.isNumber()) return error.RuntimeError;
-                const pt_idx: usize = @intFromFloat(idx_val.asNumber());
-                if (pt_idx >= pt_arr.len) return error.RuntimeError;
+                const pt_idx = try checkedIndex(vm, idx_val.asNumber(), pt_arr.len, "polygon path");
 
                 const pt_val = pt_arr[pt_idx];
                 if (!pt_val.isArray()) return error.RuntimeError;
@@ -335,7 +352,6 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
                 contour[p_idx][0] = if (inner.len > 0 and inner[0].isNumber()) inner[0].asNumber() else 0.0;
                 contour[p_idx][1] = if (inner.len > 1 and inner[1].isNumber()) inner[1].asNumber() else 0.0;
             }
-            contours[c_idx] = contour;
         }
         const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours);
         return try vm.allocateCrossSection(dag_idx);
@@ -357,10 +373,10 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    var opts = try extractGeomOptions(vm, parsed);
 
     var sides: i32 = 6; // Default to a hexagon
-    if (parsed.pos_count > 0 and args[0].isNumber()) sides = @intFromFloat(args[0].asNumber());
+    if (parsed.pos_count > 0 and args[0].isNumber()) sides = try util.checkedInt(i32, vm, args[0].asNumber(), "sides");
     if (parsed.pos_count > 1 and args[1].isNumber()) opts.r = args[1].asNumber();
 
     // Check kwargs explicitly for sides/radius if passed
@@ -368,13 +384,13 @@ pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
         if (kw.isObject() and kw.asObj().obj_type == .map) {
             const map = kw.asMap();
             if (util.getKey(map, "sides")) |v| {
-                if (v.isNumber()) sides = @intFromFloat(v.asNumber());
+                if (v.isNumber()) sides = try util.checkedInt(i32, vm, v.asNumber(), "sides");
             }
         }
     }
 
-    if (sides < 3) {
-        vm.reportError("ValueError: 'sides' must be at least 3, got {d}.\n", .{sides});
+    if (sides < 3 or sides > limits.MAX_SEGMENTS) {
+        vm.reportError("ValueError: 'sides' must be between 3 and {d}, got {d}.\n", .{ limits.MAX_SEGMENTS, sides });
         return error.RuntimeError;
     }
     try requirePositive(vm, opts.r, "radius");
@@ -396,7 +412,7 @@ pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
-    const opts = extractGeomOptions(parsed);
+    const opts = try extractGeomOptions(vm, parsed);
 
     var major_r: f64 = 10.0;
     var minor_r: f64 = 2.0;
@@ -422,7 +438,7 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
     const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
 
     // Create a 2D circle using the minor radius
-    const circ_segs = if (opts.segments > 0) opts.segments else @as(i32, @intCast(active_config.manifold.getSegments(minor_r)));
+    const circ_segs = if (opts.segments > 0) opts.segments else util.clampSegments(active_config.manifold.getSegments(minor_r));
     const circ_idx = try vm.dag_builder.addCircle(minor_r, circ_segs);
 
     // Translate the circle outward by the major radius
@@ -430,7 +446,7 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
     const trans_idx = try vm.dag_builder.addCrossSectionTransform(circ_idx, trans_mat);
 
     // Revolve the translated circle 360 degrees around the origin
-    const rev_segs = if (opts.segments > 0) opts.segments else @as(i32, @intCast(active_config.manifold.getSegments(major_r)));
+    const rev_segs = if (opts.segments > 0) opts.segments else util.clampSegments(active_config.manifold.getSegments(major_r));
     const dag_idx = try vm.dag_builder.addRevolve(trans_idx, rev_segs, 360.0);
 
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
@@ -463,9 +479,11 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     for (faces_val, 0..) |f, i| {
         if (!f.isArray()) return error.RuntimeError;
         const f_arr = f.asArray().items.items;
-        faces[i][0] = if (f_arr.len > 0 and f_arr[0].isNumber()) @intFromFloat(f_arr[0].asNumber()) else 0;
-        faces[i][1] = if (f_arr.len > 1 and f_arr[1].isNumber()) @intFromFloat(f_arr[1].asNumber()) else 0;
-        faces[i][2] = if (f_arr.len > 2 and f_arr[2].isNumber()) @intFromFloat(f_arr[2].asNumber()) else 0;
+        for (0..3) |c| {
+            const raw: f64 = if (f_arr.len > c and f_arr[c].isNumber()) f_arr[c].asNumber() else 0.0;
+            // Kernels index points[] directly with these, so they must be in range.
+            faces[i][c] = @intCast(try checkedIndex(vm, raw, pts.len, "polyhedron face"));
+        }
     }
     const dag_idx = try vm.dag_builder.addPolyhedron(pts, faces);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
@@ -523,6 +541,13 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
 
     try requirePositive(vm, size, "size");
     try requirePositive(vm, tolerance, "tolerance");
+    // Bezier flattening recurses until the chord error is below `tolerance`, so the
+    // point count grows ~sqrt(size / tolerance) per curve; a vanishing tolerance
+    // (e.g. 1e-300, whose square underflows to 0) never terminates in practice.
+    if (tolerance < size * MIN_TEXT_TOLERANCE_RATIO) {
+        vm.reportError("ValueError: 'tolerance' must be at least size * {d} ({d}), got {d}.\n", .{ MIN_TEXT_TOLERANCE_RATIO, size * MIN_TEXT_TOLERANCE_RATIO, tolerance });
+        return error.RuntimeError;
+    }
 
     const alloc = vm.scratch_arena.allocator();
 

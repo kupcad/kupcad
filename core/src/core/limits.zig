@@ -20,6 +20,17 @@ pub const DEFAULT_INSTRUCTION_LIMIT: usize = if (builtin.target.cpu.arch == .was
 else
     0;
 
+// Geometry input limits
+// Upper bound for any user-supplied tessellation count (segments, sides, slices,
+// fixed_segments). Chosen so that MAX_SEGMENTS^2 (~4.2M) stays under the default
+// 5M `max_vertices` budget in engine_config.zig: two-parameter surfaces such as a
+// sphere or torus scale quadratically, and that budget is only enforced *after*
+// the kernel has already allocated the mesh.
+pub const MAX_SEGMENTS: i32 = 2048;
+// Upper bound for repeat_linear / repeat_polar copy counts. Each copy adds a
+// translate node plus a union node to the DAG, so this caps DAG growth per call.
+pub const MAX_PATTERN_COUNT: usize = 10_000;
+
 // Frontend & compiler limits
 // Largest source accepted by Document.parse. Matches the CLI's file cap so the
 // LSP and WASM entry points (which bypass the CLI) get the same protection; it

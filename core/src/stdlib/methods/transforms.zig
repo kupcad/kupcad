@@ -3,6 +3,7 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const util = @import("util.zig");
+const limits = @import("../../core/limits.zig");
 
 pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     const vec = try util.parseVec3(args, 0.0);
@@ -244,6 +245,17 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
+/// Validates a pattern copy count. Counts <= 1 keep their old "no-op" meaning,
+/// but NaN/inf/huge values would hit @intFromFloat UB or build millions of DAG nodes.
+fn checkedCount(vm: *VM, raw: f64, what: []const u8) !usize {
+    if (!std.math.isFinite(raw) or raw > @as(f64, @floatFromInt(limits.MAX_PATTERN_COUNT))) {
+        vm.reportError("ValueError: {s} 'count' must be a finite number <= {d}, got {d}.\n", .{ what, limits.MAX_PATTERN_COUNT, raw });
+        return error.RuntimeError;
+    }
+    if (raw < 1.0) return 0;
+    return @intFromFloat(raw);
+}
+
 pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 1 or !args[0].isNumber()) {
@@ -251,7 +263,7 @@ pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Valu
         return error.RuntimeError;
     }
 
-    const count: usize = @intFromFloat(args[0].asNumber());
+    const count = try checkedCount(vm, args[0].asNumber(), "repeat_linear");
     if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
 
     var tx: f64 = 0.0;
@@ -290,7 +302,7 @@ pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value
         return error.RuntimeError;
     }
 
-    const count: usize = @intFromFloat(args[0].asNumber());
+    const count = try checkedCount(vm, args[0].asNumber(), "repeat_polar");
     if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
 
     var total_angle: f64 = 360.0;
