@@ -11,10 +11,27 @@ const kernel = @import("../kernel/kernel.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
 const ScriptSession = @import("../daemon/session.zig").ScriptSession;
-const ViewportWsServer = @import("../daemon/viewport_ws.zig").ViewportWsServer;
+const viewport_ws = @import("../daemon/viewport_ws.zig");
+const ViewportWsServer = viewport_ws.ViewportWsServer;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const Vfs = @import("../vfs/vfs.zig").Vfs;
+const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
 
 const logger = std.log.scoped(.lsp);
+
+/// Instruction budget for hover evaluation so the LSP doesn't hang on infinite loops.
+const HOVER_INSTRUCTION_LIMIT: usize = 500_000;
+/// Custom notification telling the editor where the viewport WebSocket listens.
+pub const VIEWPORT_READY_NOTIFICATION = "kupcad/viewportReady";
+/// Environment variable overriding the preferred viewport port ("0" = always ephemeral).
+pub const VIEWPORT_PORT_ENV = "KUPCAD_VIEWPORT_PORT";
+
+/// Resolves the preferred viewport port from the environment, defaulting to DEFAULT_PORT.
+pub fn preferredViewportPort(environ: *const std.process.Environ.Map) u16 {
+    const raw = environ.get(VIEWPORT_PORT_ENV) orelse return viewport_ws.DEFAULT_PORT;
+    return std.fmt.parseInt(u16, raw, 10) catch viewport_ws.DEFAULT_PORT;
+}
 
 pub const DocumentBuffer = struct {
     uri: []const u8,
@@ -90,13 +107,15 @@ fn getParamNames(method_name: []const u8, pos_count: usize) []const []const u8 {
     return &[_][]const u8{};
 }
 
-fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, doc: *const api.Document, target_node: ast.NodeIndex, writer: anytype) !void {
+/// `sandbox` must be a non-writing VFS (see ReadOnlyVfs): the document is untrusted.
+pub fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, target_node: ast.NodeIndex, writer: anytype) !void {
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
+    // VM.init defaults to a NativeVfs rooted at cwd; replace it before any script code runs.
+    vm.vfs = sandbox;
     vm.mute_errors = true; // Prevent LSP from spamming stderr
 
-    // Set a strict instruction limit so the LSP doesn't hang on infinite loops
-    vm.instruction_limit = 500_000;
+    vm.instruction_limit = HOVER_INSTRUCTION_LIMIT;
 
     try registry.registerStandardLibrary(&vm);
 
@@ -224,16 +243,20 @@ pub const Handler = struct {
     files: std.StringHashMapUnmanaged(DocumentBuffer) = .empty,
 
     session: *ScriptSession,
-    ws_server: *ViewportWsServer,
+    /// Null when the viewport server failed to start; language features keep working.
+    ws_server: ?*ViewportWsServer,
     mem_vfs: *MemoryVfs,
+    /// Read-only VFS every LSP-run VM uses (session + hover).
+    sandbox: *ReadOnlyVfs,
 
     pub fn init(
         allocator: std.mem.Allocator,
         io: std.Io,
         transport: *lsp.Transport,
         session: *ScriptSession,
-        ws_server: *ViewportWsServer,
+        ws_server: ?*ViewportWsServer,
         mem_vfs: *MemoryVfs,
+        sandbox: *ReadOnlyVfs,
     ) Handler {
         return .{
             .allocator = allocator,
@@ -244,7 +267,25 @@ pub const Handler = struct {
             .session = session,
             .ws_server = ws_server,
             .mem_vfs = mem_vfs,
+            .sandbox = sandbox,
         };
+    }
+
+    /// Replaces the module source in the session and re-evaluates, then streams the mesh.
+    /// Uses upsertModule: addModule returns error.DuplicateModule for known paths, and the old
+    /// "catch -> patch source" path never ran, so the viewport kept rendering stale code.
+    fn syncSession(self: *Handler, uri: []const u8, source: []const u8) !void {
+        try self.mem_vfs.vfs().writeFile(uri, source);
+
+        _ = try self.session.workspace.upsertModule(uri, source);
+        try self.session.workspace.linkDependencies();
+        try self.session.buildReverseGraph();
+        try self.session.markFileEdited(uri);
+
+        self.session.evaluateWorkspace() catch |err| self.log("Session evaluation failed: {}", .{err});
+        if (self.ws_server) |ws| {
+            ws.broadcastSessionMesh(self.session, uri) catch |err| self.log("WebSocket Broadcast failed: {}", .{err});
+        }
     }
 
     pub fn deinit(self: *Handler) void {
@@ -313,7 +354,15 @@ pub const Handler = struct {
         };
     }
 
-    pub fn initialized(_: *Handler, _: std.mem.Allocator, _: lsp.types.InitializedParams) void {}
+    pub fn initialized(self: *Handler, arena: std.mem.Allocator, _: lsp.types.InitializedParams) void {
+        // Tell the editor which port the viewport actually bound (it may be ephemeral), so the
+        // extension never has to hard-code it. Sent after `initialized` per LSP lifecycle rules.
+        const ws = self.ws_server orelse return;
+        const Params = struct { port: u16 };
+        self.transport.writeNotification(self.io, arena, VIEWPORT_READY_NOTIFICATION, Params, .{ .port = ws.port }, .{}) catch |err| {
+            self.log("Failed to announce viewport port: {}", .{err});
+        };
+    }
 
     pub fn shutdown(_: *Handler, _: std.mem.Allocator, _: void) ?void {
         return null;
@@ -350,24 +399,7 @@ pub const Handler = struct {
             .doc = parsed_doc,
         });
 
-        // 1. Sync VFS and ScriptSession Pipeline
-        try self.mem_vfs.vfs().writeFile(uri_dup, source_dup);
-
-        _ = self.session.workspace.addModule(uri_dup, source_dup) catch {
-            if (self.session.workspace.path_to_id.get(uri_dup)) |mod_id| {
-                var mod = &self.session.workspace.modules.items[@backingInt(mod_id)];
-                self.allocator.free(mod.source);
-                mod.source = try self.allocator.dupe(u8, source_dup);
-            }
-        };
-
-        try self.session.workspace.linkDependencies();
-        try self.session.buildReverseGraph();
-        try self.session.markFileEdited(uri_dup);
-
-        // 2. Evaluate and Stream
-        self.session.evaluateWorkspace() catch |err| self.log("Session evaluation failed: {}", .{err});
-        self.ws_server.broadcastSessionMesh(self.session, uri_dup) catch |err| self.log("WebSocket Broadcast failed: {}", .{err});
+        try self.syncSession(uri_dup, source_dup);
 
         try self.runDiagnostics(arena, params.textDocument.uri, params.textDocument.text);
     }
@@ -388,24 +420,7 @@ pub const Handler = struct {
                         buf.source = try self.allocator.dupe(u8, doc_change.text);
                         buf.doc = api.Document.parse(self.allocator, buf.source) catch null;
 
-                        // 1. Sync VFS and ScriptSession Pipeline
-                        try self.mem_vfs.vfs().writeFile(params.textDocument.uri, buf.source);
-
-                        _ = self.session.workspace.addModule(params.textDocument.uri, buf.source) catch {
-                            if (self.session.workspace.path_to_id.get(params.textDocument.uri)) |mod_id| {
-                                var mod = &self.session.workspace.modules.items[@backingInt(mod_id)];
-                                self.allocator.free(mod.source);
-                                mod.source = try self.allocator.dupe(u8, buf.source);
-                            }
-                        };
-
-                        try self.session.workspace.linkDependencies();
-                        try self.session.buildReverseGraph();
-                        try self.session.markFileEdited(params.textDocument.uri);
-
-                        // 2. Evaluate and Stream
-                        self.session.evaluateWorkspace() catch |err| self.log("Session evaluation failed: {}", .{err});
-                        self.ws_server.broadcastSessionMesh(self.session, params.textDocument.uri) catch |err| self.log("WebSocket Broadcast failed: {}", .{err});
+                        try self.syncSession(params.textDocument.uri, buf.source);
                     }
                     try self.runDiagnostics(arena, params.textDocument.uri, doc_change.text);
                 },
@@ -512,7 +527,7 @@ pub const Handler = struct {
 
         // LIVE SPATIAL EVALUATION
         // Silently execute and append live Markdown traits
-        writeSpatialHover(arena, self.io, &doc, found_node_idx, &out.writer) catch |err| {
+        writeSpatialHover(arena, self.io, self.sandbox.vfs(), &doc, found_node_idx, &out.writer) catch |err| {
             std.log.err("LSP Hover Evaluation Error: {}", .{err});
         };
 
@@ -835,23 +850,37 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !void {
     var mem_vfs = MemoryVfs.init(allocator);
     defer mem_vfs.deinit();
 
+    // Imports may read workspace files (jailed to cwd by NativeVfs), but never write.
+    var workspace_ro = NativeVfs.init(init.io, std.Io.Dir.cwd());
+    var sandbox = ReadOnlyVfs.init(mem_vfs.vfs(), workspace_ro.vfs());
+
     var session = try ScriptSession.init(allocator, init.io);
     defer session.deinit();
-    session.vm.vfs = mem_vfs.vfs();
+    session.vm.vfs = sandbox.vfs();
 
-    var ws_server = try ViewportWsServer.init(allocator, init.io, 9001);
-    defer ws_server.deinit();
-
-    // 2. Detach the WebSocket server onto a background thread
-    const ws_thread = try std.Thread.spawn(.{}, ViewportWsServer.listenLoop, .{&ws_server});
-    ws_thread.detach();
+    // 2. Viewport WebSocket server. Failure here must not take down language features.
+    const preferred_port = preferredViewportPort(init.environ_map);
+    var ws_storage: ViewportWsServer = undefined;
+    var ws_server: ?*ViewportWsServer = null;
+    if (ViewportWsServer.initWithFallback(allocator, init.io, preferred_port)) |srv| {
+        ws_storage = srv;
+        if (ws_storage.start()) |_| {
+            ws_server = &ws_storage;
+        } else |err| {
+            logger.err("Viewport server failed to start: {}; continuing without it", .{err});
+            ws_storage.deinit();
+        }
+    } else |err| {
+        logger.err("Viewport server unavailable: {}; continuing without it", .{err});
+    }
+    defer if (ws_server) |ws| ws.deinit();
 
     // 3. Bind everything to the LSP Handler
     var read_buffer: [4096]u8 = undefined;
     var stdio_transport: lsp.Transport.Stdio = .init(&read_buffer, .stdin(), .stdout());
     const transport: *lsp.Transport = &stdio_transport.transport;
 
-    var handler = Handler.init(allocator, init.io, transport, &session, &ws_server, &mem_vfs);
+    var handler = Handler.init(allocator, init.io, transport, &session, ws_server, &mem_vfs, &sandbox);
     defer handler.deinit();
 
     try lsp.basic_server.run(

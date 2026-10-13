@@ -7,6 +7,13 @@ const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 // falls back to standard malloc in single-threaded builds.
 const allocator = std.heap.c_allocator;
 
+/// A real Io for the VM. Script features such as `benchmark { }` (Clock.now) and `debugger`
+/// (stdin/stdout) dereference `vm.io`; passing `undefined` trapped the wasm instance.
+/// The single-threaded Threaded backend maps onto WASI clocks/fds and needs no setup.
+fn wasmIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 // --- Global Error State ---
 var last_error_msg: [*]const u8 = "None".ptr;
 
@@ -72,6 +79,7 @@ fn inner_check(source: []const u8) ![]const u8 {
     defer api.freeDiagnostics(allocator, diags);
 
     var line_index = try api.LineIndex.init(allocator, source);
+    defer allocator.free(line_index.line_starts);
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
 
@@ -110,8 +118,9 @@ fn inner_extract_params(source: []const u8) ![]const u8 {
 }
 
 fn inner_build_model(source: []const u8, format: []const u8, use_draco: bool) ![]const u8 {
-    // SAFETY: The undefined IO context is safely unused because we are explicitly providing a vfs_override.
-    return try api.buildModel(allocator, undefined, source, format, use_draco, null, getMemVfs().vfs());
+    // File access still goes through the in-memory VFS override; the Io is only used for
+    // clocks/stdio by stdlib diagnostics and the debugger.
+    return try api.buildModel(allocator, wasmIo(), source, format, use_draco, null, getMemVfs().vfs());
 }
 
 // --- WASM Export Boundaries ---

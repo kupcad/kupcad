@@ -11,7 +11,10 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     var manager = SessionManager.init(allocator, init.io, 1);
     defer manager.deinit();
 
-    var session = try manager.getOrInitializeSession(file_path);
+    // Pin the session: the watcher holds this pointer for the life of the process.
+    const lease = try manager.acquireSession(file_path);
+    defer manager.release(lease);
+    const session = lease.session;
 
     const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
     defer allocator.free(source);

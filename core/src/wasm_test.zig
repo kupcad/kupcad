@@ -293,3 +293,20 @@ test "WASM Math: Pure-Zig Non-Linear LM Solver (Circle-Line Intersection)" {
     try testing.expectApproxEqAbs(expected, vars[0], 1e-4);
     try testing.expectApproxEqAbs(expected, vars[1], 1e-4);
 }
+
+test "WASM Interop: build_model_wasm supports benchmark blocks (vm.io must be a real Io)" {
+    // Audit regression: buildModel used to receive `io = undefined`, so Clock.now in
+    // `benchmark` dereferenced garbage and trapped the instance.
+    const src =
+        \\b = benchmark("t") do
+        \\  1 + 1
+        \\end
+        \\cube(1)
+    ;
+    const fmt = "stl";
+    var out_len: usize = 0;
+    const res = wasm.build_model_wasm(src.ptr, src.len, fmt.ptr, fmt.len, false, &out_len);
+    try testing.expect(res != null);
+    try testing.expect(out_len > 84);
+    wasm.wasm_free(@constCast(res.?), out_len);
+}
