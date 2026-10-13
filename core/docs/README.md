@@ -79,11 +79,14 @@ KupCAD fully supports Ruby-style block execution using `do |args| ... end` or `{
 ```ruby
 # Using the block to generate an array of cylinders
 pegs = []
-(0...3).each do |row|
+[0, 1, 2].each do |row|
   pegs.push(cylinder(r: 2, h: 10).translate(x: row * 10))
 end
 
 ```
+
+> Ranges (`0..3`, `0...3`) are values but have no iteration methods yet: `(0...3).each` and
+> `3.times` are not implemented. Iterate over an array literal or use `while` for now.
 
 ### Native Collections
 
