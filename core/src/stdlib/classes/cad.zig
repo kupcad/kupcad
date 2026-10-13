@@ -3,6 +3,17 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 const EngineConfig = @import("../../core/engine_config.zig").EngineConfig;
+const limits = @import("../../core/limits.zig");
+
+/// Converts a config number to a count in [0, max]. @intFromFloat on NaN or an
+/// out-of-range value panics in Debug and is UB in ReleaseFast, so clamp first;
+/// NaN has no meaningful magnitude and falls back to `nan_default`.
+fn clampedCount(raw: f64, max: u32, nan_default: u32) u32 {
+    if (std.math.isNan(raw)) return nan_default;
+    return @intFromFloat(std.math.clamp(raw, 0.0, @as(f64, @floatFromInt(max))));
+}
+
+const MAX_SEGMENTS_U32: u32 = @intCast(limits.MAX_SEGMENTS);
 
 fn applyConfigMap(vm: *VM, map: *value.ObjMap, config: *EngineConfig) void {
     // --- Engine Selection ---
@@ -30,13 +41,8 @@ fn applyConfigMap(vm: *VM, map: *value.ObjMap, config: *EngineConfig) void {
                 if (tv.isNumber()) config.manifold.tolerance = tv.asNumber();
             }
             if (vm.findMapKeyByString(m, "fixed_segments")) |i| {
-                // Clamp (NaN -> 0 = auto) before @intFromFloat: out-of-range is UB in ReleaseFast,
-                // and this value feeds every getSegments() call, including the kernels' spheres.
-                if (m.map.values()[i].isNumber()) {
-                    const raw = m.map.values()[i].asNumber();
-                    const max_segs: f64 = @floatFromInt(@import("../../core/limits.zig").MAX_SEGMENTS);
-                    config.manifold.fixed_segments = if (std.math.isNan(raw)) 0 else @intFromFloat(std.math.clamp(raw, 0.0, max_segs));
-                }
+                // NaN -> 0 (auto). This value feeds every getSegments() call, including the kernels' spheres.
+                if (m.map.values()[i].isNumber()) config.manifold.fixed_segments = clampedCount(m.map.values()[i].asNumber(), MAX_SEGMENTS_U32, 0);
             }
             if (vm.findMapKeyByString(m, "min_angle_deg")) |i| {
                 if (m.map.values()[i].isNumber()) config.manifold.min_angle_deg = m.map.values()[i].asNumber();
@@ -71,16 +77,17 @@ fn applyConfigMap(vm: *VM, map: *value.ObjMap, config: *EngineConfig) void {
             if (vm.findMapKeyByString(m, "angular_deflection")) |i| {
                 if (m.map.values()[i].isNumber()) config.brep.angular_deflection = m.map.values()[i].asNumber();
             }
+            // NaN keeps the current value: unlike fixed_segments, 0 is not an "auto" sentinel here.
             if (vm.findMapKeyByString(m, "min_circle_segments")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.min_circle_segments = @intFromFloat(@max(0.0, m.map.values()[i].asNumber()));
+                if (m.map.values()[i].isNumber()) config.brep.min_circle_segments = clampedCount(m.map.values()[i].asNumber(), MAX_SEGMENTS_U32, config.brep.min_circle_segments);
             }
 
             // Solvers
             if (vm.findMapKeyByString(m, "max_newton_trials")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.max_newton_trials = @intFromFloat(@max(0.0, m.map.values()[i].asNumber()));
+                if (m.map.values()[i].isNumber()) config.brep.max_newton_trials = clampedCount(m.map.values()[i].asNumber(), limits.MAX_NEWTON_TRIALS, config.brep.max_newton_trials);
             }
             if (vm.findMapKeyByString(m, "max_marching_steps")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.max_marching_steps = @intFromFloat(@max(0.0, m.map.values()[i].asNumber()));
+                if (m.map.values()[i].isNumber()) config.brep.max_marching_steps = clampedCount(m.map.values()[i].asNumber(), limits.MAX_MARCHING_STEPS, config.brep.max_marching_steps);
             }
         }
     }

@@ -30,6 +30,13 @@ pub const MAX_SEGMENTS: i32 = 2048;
 // Upper bound for repeat_linear / repeat_polar copy counts. Each copy adds a
 // translate node plus a union node to the DAG, so this caps DAG growth per call.
 pub const MAX_PATTERN_COUNT: usize = 10_000;
+// Upper bounds for the B-Rep solver iteration budgets set via CAD.config(brep: ...).
+// Both are per-call loops, so an unbounded user value turns one projection or
+// intersection into an effective hang. The caps sit 20x/200x above the defaults
+// in engine_config.zig (50 and 500); Newton converges quadratically, so a root
+// not found within 1000 trials is diverging, not slow.
+pub const MAX_NEWTON_TRIALS: u32 = 1_000;
+pub const MAX_MARCHING_STEPS: u32 = 100_000;
 
 // Frontend & compiler limits
 // Largest source accepted by Document.parse. Matches the CLI's file cap so the

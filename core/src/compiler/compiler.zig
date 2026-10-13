@@ -2371,7 +2371,10 @@ pub const Compiler = struct {
             try child_compiler.addLocal(.none, @intCast(child_compiler.locals.items.len));
         }
 
-        var virtual_slot: u8 = @intCast(positional_count + 2);
+        // u16 like addLocal's slot: the check above caps the LAST keyword's slot at
+        // MAX_ARGS (255), so a u8 counter overflowed on its final `+= 1`, and its
+        // start value (block slot + 1) already overflowed with zero keywords.
+        var virtual_slot: u16 = @intCast(positional_count + 2);
         for (params) |param| {
             if (param.is_keyword) {
                 try child_compiler.addLocal(param.name, virtual_slot);

@@ -350,24 +350,70 @@ test "Audit params: more than MAX_ARGS parameters is a parse diagnostic" {
     }
 }
 
-test "Audit params: frame slot overflow from mixed params is a compile error" {
-    // MAX_ARGS parameters in total pass the parser's count check, but keywords
-    // also need the kwarg map slot, the block slot and one virtual slot each,
-    // which overflows the u8 frame slots.
-    const keywords = 5;
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer buf.deinit(testing.allocator);
-    try buf.appendSlice(testing.allocator, "def f(");
-    for (0..limits.MAX_ARGS - keywords) |i| try buf.print(testing.allocator, "p{d}, ", .{i});
-    for (0..keywords) |i| try buf.print(testing.allocator, "{s}k{d}: 1", .{ if (i > 0) ", " else "", i });
-    try buf.appendSlice(testing.allocator, ")\n  1\nend\n");
-    try testing.expectError(error.TooManyParameters, compileOnly(buf.items));
+/// A parameter-list shape. Frame layout: slot 0 = closure, then the positionals,
+/// the kwarg map (if any keyword), the block slot, and one slot per keyword;
+/// the highest slot must not exceed MAX_ARGS.
+const SlotShape = struct {
+    name: []const u8,
+    keywords: usize = 0,
+    block_param: bool = false,
+    block_literal: bool = false,
+    /// Most positionals that still fit: one more must be TooManyParameters.
+    max_positionals: usize,
+};
 
-    // A near-limit layout still compiles. (MAX_ARGS - 1 positionals pass the
-    // slot check but panic computing the first virtual slot: known bug.)
-    const fits = try paramList("def f(", "p{d}", limits.MAX_ARGS - 2, ")\n  1\nend\n");
-    defer testing.allocator.free(fits);
-    try compileOnly(fits);
+/// `def f(p0.., k0: 1.., &blk)` returning `p{last} + k{last}`, followed by a call
+/// passing 0..positionals-1; or `f do |p0..| 1 end` for block literals.
+fn slotShapeSource(shape: SlotShape, positionals: usize) ![]u8 {
+    const a = testing.allocator;
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer buf.deinit(a);
+    try buf.appendSlice(a, if (shape.block_literal) "f do |" else "def f(");
+    for (0..positionals) |i| try buf.print(a, "{s}p{d}", .{ if (i > 0) ", " else "", i });
+    for (0..shape.keywords) |i| try buf.print(a, ", k{d}: {d}", .{ i, i + 1 });
+    if (shape.block_param) try buf.appendSlice(a, ", &blk");
+    if (shape.block_literal) {
+        try buf.appendSlice(a, "|\n  1\nend\n");
+    } else {
+        try buf.print(a, ")\n  p{d}", .{positionals - 1});
+        if (shape.keywords > 0) try buf.print(a, " + k{d}", .{shape.keywords - 1});
+        try buf.appendSlice(a, "\nend\nf(");
+        for (0..positionals) |i| try buf.print(a, "{s}{d}", .{ if (i > 0) ", " else "", i });
+        try buf.appendSlice(a, ")\n");
+    }
+    return buf.toOwnedSlice(a);
+}
+
+test "Audit params: the frame-slot check matches the real slot layout" {
+    const kw = 6;
+    const shapes = [_]SlotShape{
+        // Closure slot + positionals + block slot.
+        .{ .name = "positional only", .max_positionals = limits.MAX_ARGS - 1 },
+        .{ .name = "block literal", .block_literal = true, .max_positionals = limits.MAX_ARGS - 1 },
+        // ... + kwarg map + one virtual slot per keyword.
+        .{ .name = "positional + kwargs", .keywords = kw, .max_positionals = limits.MAX_ARGS - 2 - kw },
+        // &blk reuses the block slot, so it costs nothing extra.
+        .{ .name = "positional + kwargs + &blk", .keywords = kw, .block_param = true, .max_positionals = limits.MAX_ARGS - 2 - kw },
+    };
+    for (shapes) |shape| {
+        errdefer std.debug.print("slot shape '{s}' failed\n", .{shape.name});
+
+        // The largest accepted layout compiles (it used to panic computing the
+        // virtual keyword slots in a u8) and, for defs, binds every slot correctly.
+        const at_max = try slotShapeSource(shape, shape.max_positionals);
+        defer testing.allocator.free(at_max);
+        if (shape.block_literal) {
+            try compileOnly(at_max);
+        } else {
+            const expected = shape.max_positionals - 1 + shape.keywords;
+            try expectRunsTo(at_max, @floatFromInt(expected));
+        }
+
+        // One more positional is a clean compile error, not an overflow.
+        const over = try slotShapeSource(shape, shape.max_positionals + 1);
+        defer testing.allocator.free(over);
+        try testing.expectError(error.TooManyParameters, compileOnly(over));
+    }
 }
 
 // --- Finding 6: non-local jumps out of begin/rescue/ensure -------------------

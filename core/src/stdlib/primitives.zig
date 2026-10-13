@@ -79,13 +79,6 @@ fn requirePositive(vm: *VM, val: f64, name: []const u8) !void {
     }
 }
 
-fn requireNonNegative(vm: *VM, val: f64, name: []const u8) !void {
-    if (!std.math.isFinite(val) or val < 0.0) {
-        vm.reportError("ValueError: '{s}' must be a finite non-negative number, got {d}.\n", .{ name, val });
-        return error.RuntimeError;
-    }
-}
-
 /// Validates a user-supplied index into an array of length `len`.
 fn checkedIndex(vm: *VM, raw: f64, len: usize, what: []const u8) !usize {
     if (!std.math.isFinite(raw) or raw < 0.0 or @trunc(raw) != raw or raw >= @as(f64, @floatFromInt(len)) or raw > std.math.maxInt(u32)) {

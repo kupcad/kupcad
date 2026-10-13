@@ -121,6 +121,86 @@ test "Regression validation: CAD.config fixed_segments is clamped instead of UB"
     }
 }
 
+test "Regression validation: CAD.config brep counts are clamped instead of UB" {
+    const defaults = @import("../core/engine_config.zig").BRepConfig{};
+    const Field = enum { min_circle_segments, max_newton_trials, max_marching_steps };
+    const Case = struct { src: []const u8, field: Field, expected: u32 };
+    const cases = [_]Case{
+        .{ .src = "CAD.config(brep: { min_circle_segments: 1e12 })", .field = .min_circle_segments, .expected = @intCast(MAX_SEGS) },
+        .{ .src = "CAD.config(brep: { min_circle_segments: 1e400 })", .field = .min_circle_segments, .expected = @intCast(MAX_SEGS) },
+        .{ .src = "CAD.config(brep: { min_circle_segments: -5 })", .field = .min_circle_segments, .expected = 0 },
+        .{ .src = "CAD.config(brep: { min_circle_segments: 32.7 })", .field = .min_circle_segments, .expected = 32 },
+        // NaN keeps the current value (0 is not an "auto" sentinel for these fields).
+        .{ .src = "CAD.config(brep: { min_circle_segments: 1e400 - 1e400 })", .field = .min_circle_segments, .expected = defaults.min_circle_segments },
+        .{ .src = "CAD.config(brep: { max_newton_trials: 1e12 })", .field = .max_newton_trials, .expected = limits.MAX_NEWTON_TRIALS },
+        .{ .src = "CAD.config(brep: { max_newton_trials: 1e400 - 1e400 })", .field = .max_newton_trials, .expected = defaults.max_newton_trials },
+        .{ .src = "CAD.config(brep: { max_newton_trials: 20 })", .field = .max_newton_trials, .expected = 20 },
+        .{ .src = "CAD.config(brep: { max_marching_steps: 1e400 })", .field = .max_marching_steps, .expected = limits.MAX_MARCHING_STEPS },
+        .{ .src = "CAD.config(brep: { max_marching_steps: -1e400 })", .field = .max_marching_steps, .expected = 0 },
+        .{ .src = "CAD.config(brep: { max_marching_steps: 1e400 - 1e400 })", .field = .max_marching_steps, .expected = defaults.max_marching_steps },
+        // CAD.with_config shares the same parsing path.
+        .{ .src = "CAD.with_config({ brep: { max_marching_steps: 1e12 } }) do\n  1\nend", .field = .max_marching_steps, .expected = defaults.max_marching_steps },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        const brep = vm.config_stack.items[vm.config_stack.items.len - 1].brep;
+        const actual = switch (case.field) {
+            .min_circle_segments => brep.min_circle_segments,
+            .max_newton_trials => brep.max_newton_trials,
+            .max_marching_steps => brep.max_marching_steps,
+        };
+        try testing.expectEqual(case.expected, actual);
+    }
+}
+
+test "Regression validation: Array#slice follows Ruby arr[start, len] semantics" {
+    const nil: ?[]const f64 = null;
+    const Case = struct { args: []const u8, expected: ?[]const f64 };
+    const cases = [_]Case{
+        .{ .args = "0, 2", .expected = &.{ 1, 2 } },
+        // Negative starts count from the end (used to panic in @intFromFloat).
+        .{ .args = "-1, 2", .expected = &.{3} },
+        .{ .args = "-3, 2", .expected = &.{ 1, 2 } },
+        .{ .args = "-4, 1", .expected = nil },
+        .{ .args = "-1e400, 1", .expected = nil },
+        // Lengths are clamped to what is available (1e12 used to over-allocate).
+        .{ .args = "1, 1e12", .expected = &.{ 2, 3 } },
+        .{ .args = "1, 1e400", .expected = &.{ 2, 3 } },
+        // start == size is an empty slice; past the end is nil.
+        .{ .args = "3, 1", .expected = &.{} },
+        .{ .args = "4, 1", .expected = nil },
+        .{ .args = "1e12, 1", .expected = nil },
+        .{ .args = "1e400, 1", .expected = nil },
+        .{ .args = "0, -1", .expected = nil },
+        .{ .args = "0, 0", .expected = &.{} },
+        .{ .args = "1.9, 1.9", .expected = &.{2} },
+    };
+    for (cases) |case| {
+        var src_buf: [128]u8 = undefined;
+        const src = try std.fmt.bufPrint(&src_buf, "r = [1, 2, 3].slice({s})", .{case.args});
+        errdefer std.debug.print("script: {s}\n", .{src});
+        var vm = try initVm();
+        defer vm.deinit();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, src));
+        const r = vm.globals.get("r") orelse return error.MissingGlobal;
+        const expected = case.expected orelse {
+            try testing.expect(r.isNil());
+            continue;
+        };
+        try testing.expect(r.isArray());
+        const items = r.asArray().items.items;
+        try testing.expectEqual(expected.len, items.len);
+        for (expected, items) |e, item| try testing.expectEqual(e, item.asNumber());
+    }
+    try expectAll(.runtime_error, &.{
+        "[1, 2, 3].slice(1e400 - 1e400, 1)",
+        "[1, 2, 3].slice(0, 1e400 - 1e400)",
+    });
+}
+
 test "Regression validation: dimensions and sweep parameters reject NaN and inf" {
     try expectAll(.runtime_error, &.{
         "cube(1e400 - 1e400)",

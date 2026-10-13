@@ -42,23 +42,33 @@ pub fn arrayUnshift(vm: *VM, arr: *value.ObjArray, val: value.Value) !value.Valu
     return value.Value.initObj(&arr.obj);
 }
 
-/// Array#slice(start, len)
+/// Array#slice(start, len), Ruby `arr[start, len]` semantics: fractional
+/// arguments truncate, a negative start counts from the end, a start outside
+/// 0..size or a negative length is nil, and the length is clamped to the
+/// elements available (so start == size yields []).
 pub fn arraySlice(vm: *VM, arr: *value.ObjArray, start_num: f64, len_num: f64) !value.Value {
-    const start_idx: usize = @intFromFloat(start_num);
-    const length: usize = @intFromFloat(len_num);
+    if (std.math.isNan(start_num) or std.math.isNan(len_num)) {
+        _ = vm.throwDynamicError("ValueError: Array#slice arguments must be numbers, got NaN.\n", .{});
+        return error.RuntimeError;
+    }
+    // Resolve everything in f64 first: @intFromFloat on a negative or huge value
+    // panics in Debug and is UB in ReleaseFast, and an unclamped length used to
+    // drive ensureTotalCapacity (a 1e12 length tried to allocate 8 TB).
+    const size: f64 = @floatFromInt(arr.items.items.len);
+    var start = @trunc(start_num);
+    if (start < 0) start += size;
+    const len = @trunc(len_num);
+    if (start < 0 or start > size or len < 0) return value.Value.initNil();
+
+    const start_idx: usize = @intFromFloat(start);
+    const count: usize = @intFromFloat(@min(len, size - start));
 
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
     const new_arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&new_arr.obj));
-    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), length);
-
-    var idx: usize = 0;
-    while (idx < length and start_idx + idx < arr.items.items.len) : (idx += 1) {
-        const item = arr.items.items[start_idx + idx];
-        new_arr.items.appendAssumeCapacity(item);
-    }
+    try new_arr.items.appendSlice(vm.gc.trackingAllocator(), arr.items.items[start_idx..][0..count]);
     return value.Value.initObj(&new_arr.obj);
 }
 
