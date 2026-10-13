@@ -459,7 +459,7 @@ test "Stdlib: repeat counts reject NaN and values above MAX_PATTERN_COUNT" {
 
 // --- Range iteration and Number#times/upto/downto ---
 
-const MAX_ITER = limits.MAX_RANGE_ITERATIONS;
+const MAX_MATERIALIZE = limits.MAX_RANGE_MATERIALIZE;
 
 /// What a script leaves in the global `r`.
 const Expected = union(enum) {
@@ -575,7 +575,7 @@ test "Stdlib: break, next, return and exceptions inside range and times blocks" 
 }
 
 test "Stdlib: range and times errors are rescuable ValueErrors with the real message" {
-    const max_iter = std.fmt.comptimePrint("{d}", .{MAX_ITER});
+    const max_mat = std.fmt.comptimePrint("{d}", .{MAX_MATERIALIZE});
     const cases = [_]struct { src: []const u8, prefix: []const u8 }{
         .{ .src = "2.5.times { }", .prefix = "ValueError: times requires an integer" },
         .{ .src = "(1e400 - 1e400).times { }", .prefix = "ValueError: times requires an integer" },
@@ -588,10 +588,13 @@ test "Stdlib: range and times errors are rescuable ValueErrors with the real mes
         .{ .src = "(0..(1e400 - 1e400)).size", .prefix = "ValueError: Range#size requires finite bounds" },
         .{ .src = "1.upto(2.5) { }", .prefix = "ValueError: upto requires an integer" },
         .{ .src = "1.5.downto(0) { }", .prefix = "ValueError: downto requires an integer" },
-        // One past the cap is rejected before the loop starts (no hang, no partial work).
-        .{ .src = "(0.." ++ max_iter ++ ").each { |i| }", .prefix = "ValueError: Range#each would iterate" },
-        .{ .src = "(0..1e12).to_a", .prefix = "ValueError: Range#to_a would iterate" },
-        .{ .src = "(" ++ max_iter ++ " + 1).times { }", .prefix = "ValueError: times would iterate" },
+        // Building an array one past the cap is rejected before anything is allocated.
+        .{ .src = "(0.." ++ max_mat ++ ").to_a", .prefix = "ValueError: Range#to_a would build an array" },
+        .{ .src = "(0.." ++ max_mat ++ ").map { |i| i }", .prefix = "ValueError: Range#map would build an array" },
+        .{ .src = "(0..1e12).to_a", .prefix = "ValueError: Range#to_a would build an array" },
+        // Past 2^53 the values stop being distinct floats, so iteration would be wrong.
+        .{ .src = "(0..1e17).each { |i| }", .prefix = "ValueError: Range#each would iterate" },
+        .{ .src = "1e17.times { }", .prefix = "ValueError: times would iterate" },
     };
     for (cases) |case| {
         var src_buf: [256]u8 = undefined;
@@ -606,10 +609,34 @@ test "Stdlib: range and times errors are rescuable ValueErrors with the real mes
     }
     // Uncaught, the same errors fail the script.
     try expectAll(.runtime_error, &.{ "2.5.times { }", "(0..3).each", "(0..3).step(0)" });
-    // Exactly at the cap is allowed: size doesn't iterate, so this stays cheap.
+}
+
+test "Stdlib: block iteration is not capped, only array building is" {
     try expectGlobalR(&.{
-        .{ .src = "r = (1.." ++ max_iter ++ ").size", .expected = .{ .num = @floatFromInt(MAX_ITER) } },
+        // Far past the array cap: each/times/upto run until the block breaks out.
+        .{ .src = "r = (0..1e12).each { |i| break i if i == 5 }", .expected = .{ .num = 5 } },
+        .{ .src = "r = 1e12.times { |i| break i if i == 3 }", .expected = .{ .num = 3 } },
+        .{ .src = "r = 0.upto(1e12) { |i| break i if i == 7 }", .expected = .{ .num = 7 } },
+        .{ .src = "r = 1e12.downto(0) { |i| break i if i < 1e12 - 2 }", .expected = .{ .num = 1e12 - 3 } },
+        // size is arithmetic, so it has no cap at all.
+        .{ .src = "r = (0..1e12).size", .expected = .{ .num = 1e12 + 1 } },
+        .{ .src = "r = (1.." ++ std.fmt.comptimePrint("{d}", .{MAX_MATERIALIZE}) ++ ").size", .expected = .{ .num = @floatFromInt(MAX_MATERIALIZE) } },
     });
+}
+
+test "Stdlib: the instruction budget stops an uncapped range loop" {
+    // Without a count cap, the instruction budget (and cancellation, checked in the same
+    // loop) is what bounds `(0..1e12).each`: every block call goes through the dispatch loop.
+    const budget = 10_000;
+    for ([_][]const u8{ "(0..1e12).each { |i| }", "1e12.times { }", "0.upto(1e12) { }" }) |src| {
+        errdefer std.debug.print("script: {s}\n", .{src});
+        var vm = try initVm();
+        defer vm.deinit();
+        vm.instruction_limit = budget;
+        // Same outcome as a runaway `while` loop under the same budget.
+        try testing.expectEqual(InterpretResult.execution_limit_exceeded, try runOn(&vm, src));
+        try testing.expect(vm.instruction_count > budget);
+    }
 }
 
 test "Stdlib: the docs (0...3).each example builds three pegs" {

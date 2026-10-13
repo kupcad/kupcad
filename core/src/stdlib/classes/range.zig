@@ -27,8 +27,8 @@ pub fn rangeToA(vm: *VM, r: *value.ObjRange) !value.Value {
 
 /// Range#size / #length / #count
 pub fn rangeSize(vm: *VM, r: *value.ObjRange) !value.Value {
-    const n = try iteration.checkedCount(vm, spanOf(r), "Range#size");
-    return value.Value.initNumber(@floatFromInt(n));
+    // Pure arithmetic: no iteration, so no cap.
+    return value.Value.initNumber(try iteration.validatedCount(vm, spanOf(r), "Range#size"));
 }
 
 /// Range#include?(x) / #cover?(x): same rule as `case`/`when` matching in the VM; x

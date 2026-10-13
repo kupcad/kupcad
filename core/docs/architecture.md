@@ -320,6 +320,7 @@ KupCAD evaluates untrusted scripts in three places — the CLI, the LSP (just by
 | `MAX_CONSTANTS`, `MAX_INLINE_CACHES`, `MAX_JUMP_TABLE_CASES` | 65 535 | 16-bit bytecode operands; larger `case` tables fall back to linear compares |
 | `MAX_SEGMENTS` | 2048 | Every tessellation count (segments, sides, slices, `fixed_segments`); auto-computed counts are clamped |
 | `MAX_PATTERN_COUNT` | 10 000 | `repeat_linear` / `repeat_polar` |
+| `MAX_RANGE_MATERIALIZE` | 10 000 000 | Arrays built from ranges (`to_a`, `map`'s result); block iteration (`each`, `times`) is bounded by the instruction budget instead |
 | `MAX_NEWTON_TRIALS`, `MAX_MARCHING_STEPS` | 1000 / 100 000 | B-Rep solver budgets set via `CAD.config` |
 | `EngineConfig.max_vertices` | 5 M | Post-kernel RAM budget (`RamBudgetExceeded`) |
 | `MAX_ARCHIVE_DOWNLOAD_BYTES`, `MAX_EXTRACTED_TOTAL_BYTES`, `MAX_EXTRACTED_FILE_COUNT` | 256 MiB / 1 GiB / 50 000 | Package downloads and extraction |
