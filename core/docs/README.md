@@ -90,7 +90,31 @@ end
 
 ```
 
-`break value` inside a block ends the iteration and becomes the method's return value; `next` skips to the next element. A `return` inside a block leaves only the block, not the enclosing `def`.
+`break value` inside a block ends the iteration and becomes the method's return value; `next` skips to the next element.
+
+### Differences from Ruby
+
+KupCAD borrows Ruby's syntax but deliberately keeps a simpler model; these are design choices, not missing features:
+
+* **`return` inside a block leaves only the block**, not the enclosing `def`. Use `break value` to stop an iteration and hand back a result.
+* **Visibility is declared per method.** Write `private def helper ... end` (or `public def`); there are no section-style `private` / `protected` lines that change the visibility of the methods after them, and there is no `protected`. A private method can be called from inside its class (including on another instance of the same class) but not from outside.
+* **Methods on the current object are called through `self.`** — a bare `plate` inside a method is resolved as a variable, not as a method call.
+
+```ruby
+class Bracket
+  def build
+    self.plate.difference(self.holes)
+  end
+
+  private def plate
+    cube(x: 40, y: 20, z: 3)
+  end
+
+  private def holes
+    cylinder(r: 2, h: 10).translate(x: 10, y: 10)
+  end
+end
+```
 
 ### Native Collections
 
