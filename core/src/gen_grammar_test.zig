@@ -14,13 +14,25 @@ test "gen_grammar: generates valid JSON using std.json" {
         return error.TestUnexpectedResult;
     }
 
-    try testing.expect(std.mem.indexOf(u8, output, "\"source.kupcad\"") != null);
+    // Must be well-formed JSON with the expected scope
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, output, .{});
+    defer parsed.deinit();
+    try testing.expectEqualStrings("source.kupcad", parsed.value.object.get("scopeName").?.string);
 
-    // Verify it actually extracted keywords natively from KupCAD Lexer
-    try testing.expect(std.mem.indexOf(u8, output, "class") != null);
-    try testing.expect(std.mem.indexOf(u8, output, "def") != null);
+    // Keywords come from the KupCAD lexer, methods from the stdlib manifest.
+    // Whole-word matches: a bare substring "def" would also match "default".
+    for ([_][]const u8{ "class", "def", "cube", "translate" }) |word| {
+        try testing.expect(containsWord(output, word));
+    }
+}
 
-    // Verify it actually extracted methods natively from the Stdlib Manifest
-    try testing.expect(std.mem.indexOf(u8, output, "cube") != null);
-    try testing.expect(std.mem.indexOf(u8, output, "translate") != null);
+fn containsWord(haystack: []const u8, word: []const u8) bool {
+    var start: usize = 0;
+    while (std.mem.indexOfPos(u8, haystack, start, word)) |i| : (start = i + 1) {
+        const before_ok = i == 0 or !std.ascii.isAlphanumeric(haystack[i - 1]);
+        const end = i + word.len;
+        const after_ok = end == haystack.len or !std.ascii.isAlphanumeric(haystack[end]);
+        if (before_ok and after_ok) return true;
+    }
+    return false;
 }

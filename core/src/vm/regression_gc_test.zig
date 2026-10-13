@@ -3,7 +3,6 @@
 const std = @import("std");
 const testing = std.testing;
 const chunk = @import("chunk.zig");
-const verifier = @import("verifier.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
@@ -63,20 +62,32 @@ test "GC regression: string constants survive collections triggered during compi
 
     try testing.expectEqual(.ok, vm.interpret(&out_chunk));
     try expectGlobalString(&vm, "result", "FIRST");
+    // Once the script closure roots the chunk, interpret drops the compile-time registration
+    try testing.expectEqual(@as(usize, 0), vm.gc.live_chunks.chunks.items.len);
 }
 
-test "GC regression: chunk registry is cleared when a chunk is freed" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
+test "GC regression: chunk registry never holds a freed chunk or outlives its VM" {
     {
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+
         var c = chunk.Chunk.init();
-        defer c.free(testing.allocator);
         try vm.gc.trackChunk(&c);
         try testing.expectEqual(@as(usize, 1), vm.gc.live_chunks.chunks.items.len);
+        c.free(testing.allocator);
+        try testing.expectEqual(@as(usize, 0), vm.gc.live_chunks.chunks.items.len);
     }
-    try testing.expectEqual(@as(usize, 0), vm.gc.live_chunks.chunks.items.len);
+
+    // A chunk freed after its VM (common for stack chunks) must not touch the destroyed registry
+    var c = chunk.Chunk.init();
+    defer c.free(testing.allocator);
+    var vm = try VM.init(testing.allocator, testing.io);
+    {
+        errdefer vm.deinit();
+        try vm.gc.trackChunk(&c);
+    }
+    vm.deinit();
+    try testing.expect(c.registry == null);
 }
 
 // --- Finding 2: unwind_stack protocol ---
@@ -112,7 +123,6 @@ test "GC regression: stale unwind entry is not restored by an outer native bound
     ;
     try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
     try expectGlobalString(&vm, "result", "inner");
-    try testing.expectEqual(@as(usize, 0), vm.unwind_stack.items.len);
 }
 
 var probed_unwind_len: usize = 0;
@@ -149,7 +159,8 @@ test "GC regression: handled exceptions do not accumulate unwind entries" {
         \\probe_unwind()
     ;
     try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
-    // Previously one entry per raise (200), each pinning its exception as a GC root
+    // Previously one entry per raise (200), each pinning its exception as a GC root.
+    // Probed mid-run: interpret() clears the stack on exit, so checking afterwards proves nothing.
     try testing.expect(probed_unwind_len <= 1);
 }
 
@@ -204,6 +215,38 @@ test "GC regression: cached module results survive GC and re-import" {
     defer second_chunk.free(testing.allocator);
     try testing.expectEqual(.ok, try compileAndRun(&vm, &second_chunk, "import { Payload } from \"./mod.kup\"\nresult = Payload[0]"));
     try expectGlobalString(&vm, "result", "payload");
+    // A cache hit, not a re-import: the key must not borrow the (swept) path constant
+    try testing.expectEqual(@as(u32, 1), vm.modules.count());
+}
+
+test "GC regression: exception raised inside an imported module is rescued by the importer" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try mem_vfs.vfs().writeFile("./boom.kup", "raise \"module failed\"");
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.vfs = mem_vfs.vfs();
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    // Guards user-visible behaviour only. Known bug: callClosureSync misreads this unwind
+    // as a normal return (stack_top == base_slot + 1), so the exception gets cached as the
+    // module's value and op_import's error.Unwind branch is not reached.
+    const source =
+        \\result = begin
+        \\  import "./boom.kup"
+        \\  "not rescued"
+        \\rescue => e
+        \\  e.message
+        \\end
+        \\after = "continued"
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "result", "module failed");
+    try expectGlobalString(&vm, "after", "continued");
 }
 
 test "GC regression: import whose compilation fails does not leak its chunk" {
@@ -234,46 +277,7 @@ test "GC regression: import whose compilation fails does not leak its chunk" {
     try testing.expect(std.mem.startsWith(u8, msg.asString().chars, "ImportError: Compilation failed"));
 }
 
-// --- Finding 5: verifier coverage ---
-
-test "GC regression: verifier rejects out-of-range constant indexes" {
-    const ops = [_]chunk.OpCode{ .op_constant, .op_get_global, .op_define_global, .op_set_global, .op_import, .op_class, .op_method };
-    for (ops) |op| {
-        var c = chunk.Chunk.init();
-        defer c.free(testing.allocator);
-        try c.writeOp(testing.allocator, op, 0);
-        try c.write(testing.allocator, 7, 0); // no constants at all
-        try c.writeOp(testing.allocator, .op_return, 0);
-        try testing.expectError(error.InvalidConstantIndex, verifier.verifyChunk(&c));
-    }
-
-    var wide = chunk.Chunk.init();
-    defer wide.free(testing.allocator);
-    _ = try wide.addConstant(testing.allocator, value.Value.initNumber(1));
-    try wide.writeOp(testing.allocator, .op_constant_wide, 0);
-    try wide.write(testing.allocator, 0x01, 0);
-    try wide.write(testing.allocator, 0x00, 0);
-    try wide.writeOp(testing.allocator, .op_return, 0);
-    try testing.expectError(error.InvalidConstantIndex, verifier.verifyChunk(&wide));
-}
-
-test "GC regression: verifier rejects jumps into the middle of an instruction" {
-    var c = chunk.Chunk.init();
-    defer c.free(testing.allocator);
-    _ = try c.addConstant(testing.allocator, value.Value.initNumber(1));
-
-    // op_jump +1 lands on the operand byte of the following op_constant
-    try c.writeOp(testing.allocator, .op_jump, 0);
-    for ([_]u8{ 0, 0, 0, 1 }) |b| try c.write(testing.allocator, b, 0);
-    try c.writeOp(testing.allocator, .op_constant, 0);
-    try c.write(testing.allocator, 0, 0);
-    try c.writeOp(testing.allocator, .op_return, 0);
-    try testing.expectError(error.InvalidJumpOffset, verifier.verifyChunk(&c));
-
-    // The same jump to an instruction boundary (+2) is accepted
-    c.code.items[4] = 2;
-    try verifier.verifyChunk(&c);
-}
+// --- Finding 5: verifier runs before execution (opcode-level checks live in verifier_test.zig) ---
 
 test "GC regression: interpret refuses malformed bytecode instead of indexing out of bounds" {
     var vm = try VM.init(testing.allocator, testing.io);
@@ -289,40 +293,82 @@ test "GC regression: interpret refuses malformed bytecode instead of indexing ou
     try testing.expectEqual(.compile_error, vm.interpret(&c));
 }
 
-// --- Double throw: a native that raised must not get a second "Native Execution Error" ---
+// --- Double throw: a native that raised must not get a second "Native ... Error" ---
+
+const native_raise_message = "raised by native";
+
+/// Raises a rescuable exception, then fails with an ordinary error as stdlib natives do.
+fn raiseThenFail(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = arg_count;
+    _ = args;
+    const vm_ptr: *VM = @ptrCast(@alignCast(v_ptr));
+    _ = vm_ptr.throwDynamicError(native_raise_message, .{});
+    return error.RuntimeError;
+}
+
+fn raiseThenFailInvoke(vm_ptr: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+    _ = receiver;
+    _ = method_name;
+    return raiseThenFail(vm_ptr, arg_count, args);
+}
+
+/// Defines `RaisingInit`, a class whose native `initialize` raises.
+fn defineRaisingInitClass(vm: *VM) !void {
+    const name_val = try vm.allocateString("RaisingInit");
+    vm.push(name_val);
+    defer _ = vm.pop();
+    const class_obj = try vm.gc.allocateClass(vm, name_val.asString(), vm.object_class);
+    try vm.globals.put(vm.allocator, "RaisingInit", value.Value.initObj(&class_obj.obj));
+
+    const init_fn = try vm.gc.allocateNative(vm, raiseThenFail);
+    const init_key = try vm.allocateString("initialize");
+    try class_obj.methods.put(vm.gc.trackingAllocator(), init_key, value.Value.initObj(&init_fn.obj));
+}
 
 test "GC regression: exception raised by a native is thrown once and execution continues" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-    vm.mute_errors = true;
+    // Each native boundary that raises: a stdlib method (Array#reduce without a block),
+    // a native constructor, and the host invoke handler (CAD kernel methods).
+    const cases = [_]struct { expr: []const u8, message: []const u8 }{
+        .{ .expr = "[].reduce", .message = "reduce requires a block" },
+        .{ .expr = "RaisingInit.new", .message = native_raise_message },
+        .{ .expr = "5.not_a_method", .message = native_raise_message },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("failing case: {s}\n", .{case.expr});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.mute_errors = true;
+        try defineRaisingInitClass(&vm);
+        vm.host.invoke_handler = raiseThenFailInvoke;
 
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
 
-    // Array#reduce without a block calls throwDynamicError and then returns
-    // error.RuntimeError; executeNative used to raise again from the handler.
-    const source =
-        \\inner = 0
-        \\outer = 0
-        \\msg = nil
-        \\begin
-        \\  begin
-        \\    [].reduce
-        \\  rescue => e
-        \\    inner = inner + 1
-        \\    msg = e.message
-        \\  end
-        \\rescue => e2
-        \\  outer = outer + 1
-        \\end
-        \\after = "continued"
-    ;
-    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
-    try testing.expectEqual(@as(f64, 1), vm.globals.get("inner").?.asNumber());
-    try testing.expectEqual(@as(f64, 0), vm.globals.get("outer").?.asNumber());
-    const msg = vm.globals.get("msg").?;
-    try testing.expect(msg.isString());
-    try testing.expect(std.mem.indexOf(u8, msg.asString().chars, "reduce requires a block") != null);
-    try expectGlobalString(&vm, "after", "continued");
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\inner = 0
+            \\outer = 0
+            \\msg = nil
+            \\begin
+            \\  begin
+            \\    {s}
+            \\  rescue => e
+            \\    inner = inner + 1
+            \\    msg = e.message
+            \\  end
+            \\rescue => e2
+            \\  outer = outer + 1
+            \\end
+            \\after = "continued"
+        , .{case.expr});
+        defer testing.allocator.free(source);
+
+        try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+        try testing.expectEqual(@as(f64, 1), vm.globals.get("inner").?.asNumber());
+        try testing.expectEqual(@as(f64, 0), vm.globals.get("outer").?.asNumber());
+        const msg = vm.globals.get("msg").?;
+        try testing.expect(msg.isString());
+        try testing.expect(std.mem.indexOf(u8, msg.asString().chars, case.message) != null);
+        try expectGlobalString(&vm, "after", "continued");
+    }
 }

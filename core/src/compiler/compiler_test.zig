@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
+const limits = @import("../core/limits.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("compiler.zig").Compiler;
@@ -27,9 +28,8 @@ test "Compiler: compiles basic binary addition" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Pass &vm as the 5th argument
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(bin_node);
 
     // Bytecode Expected (Folded):
@@ -61,7 +61,7 @@ test "Compiler: compiles range expression (1..10)" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(range_node);
 
     // Bytecode expected:
@@ -100,7 +100,7 @@ test "Compiler: compiles compound assignment (x += 5)" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(assign_node);
 
     // Bytecode expected for `x += 5` at top level:
@@ -145,7 +145,7 @@ test "Compiler: compiles safe navigation method call (obj&.cut())" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(safe_call);
 
     // Bytecode expected:
@@ -180,7 +180,7 @@ test "Compiler: compiles string interpolation" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(interp_node);
 
     // Bytecode Expected:
@@ -215,7 +215,7 @@ test "Compiler: compiles import statement" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(import_node);
 
     // Expected Bytecode:
@@ -249,7 +249,7 @@ test "Compiler: compiles namespace access (Hardware::Screw)" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(namespace_node);
 
     // Expected Bytecode:
@@ -283,7 +283,7 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(rescue_node);
 
     // Expected Bytecode:
@@ -332,11 +332,12 @@ test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
 
-    // We are ensuring the complex `op_is_instance` dynamic routing compiles without crashing
     try comp.compile(begin_stmt);
 
-    // The setup, type check duping, and routing generates a significant amount of bytecode
-    try testing.expect(out_chunk.code.items.len > 10);
+    // The handler is installed first, and the typed clause routes through op_is_instance
+    try testing.expectEqual(chunk.OpCode.op_setup_rescue, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expect(std.mem.indexOfScalar(u8, out_chunk.code.items, @backingInt(chunk.OpCode.op_is_instance)) != null);
+    try testing.expect(std.mem.indexOfScalar(u8, out_chunk.code.items, @backingInt(chunk.OpCode.op_pop_rescue)) != null);
 }
 
 test "Compiler Edge Case: Compiles empty Hashes and Arrays safely" {
@@ -393,7 +394,7 @@ test "Compiler: case statements with literals optimize to op_switch" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(case_node);
 
     // Verify the fast-path OP_SWITCH was emitted
@@ -426,7 +427,7 @@ test "Compiler: correctly maps AST token offsets into DebugSpans" {
     defer vm.deinit();
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &token_starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(bin_node);
 
     // Verify the DebugSpans caught the offsets from the token_starts array
@@ -443,11 +444,11 @@ test "Compiler Edge Case: compiles array literal with > 255 elements (wide opera
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    // Generate 300 literal "1" nodes
+    // One more element than a u8 count operand can hold
     var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
     defer elements.deinit(testing.allocator);
 
-    for (0..300) |_| {
+    for (0..limits.MAX_SHORT_CONSTANTS + 1) |_| {
         const num = try b.number("1", 0);
         try elements.append(testing.allocator, num);
     }
@@ -473,60 +474,33 @@ test "Compiler Edge Case: compiles array literal with > 255 elements (wide opera
     try testing.expect(found_wide);
 }
 
-test "Compiler Edge Case: Prevent stack leaks from break inside expressions" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
+test "Compiler Edge Case: Prevent stack leaks from break/next inside expressions" {
+    // `10 + (break 5)` / `10 + next`: jumping out with the left operand still on
+    // the stack must be rejected instead of leaking a slot.
+    inline for (.{ ast.Tag.break_stmt, ast.Tag.next_stmt }) |tag| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var b = ast.Builder.init(arena.allocator());
+        defer b.deinit();
 
-    // 1. Construct AST manually to bypass the parser: 10 + (break 5)
-    const ten = try b.number("10", 0);
-    const five = try b.number("5", 0);
+        // Built manually to bypass the parser
+        const ten = try b.number("10", 0);
+        const payload = if (tag == .break_stmt) try b.number("5", 0) else ast.NodeIndex.none;
+        const jump_node = try b.createNode(tag, 0, @backingInt(payload));
+        const add_node = try b.binary(.add, ten, jump_node, 0);
 
-    // Inject the break statement payload directly
-    const break_node = try b.createNode(.break_stmt, 0, @backingInt(five));
-    const add_node = try b.binary(.add, ten, break_node, 0);
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
 
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
+        var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+        defer comp.deinit();
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit();
-
-    // 2. Inject a fake loop state into the compiler so it permits the break
-    try comp.loops.append(comp.allocator, .{ .start = 0, .depth = 0 });
-
-    // 3. Compile the addition. The compiler will catch the depth mismatch and abort!
-    const result = comp.compile(add_node);
-    try testing.expectError(error.UnsupportedScope, result);
-}
-
-test "Compiler: Prevent stack leaks from next inside expressions" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
-
-    // 1. Construct AST manually: 10 + (next)
-    const ten = try b.number("10", 0);
-    const next_node = try b.createNode(.next_stmt, 0, @backingInt(ast.NodeIndex.none));
-    const add_node = try b.binary(.add, ten, next_node, 0);
-
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit();
-
-    // 2. Inject a fake loop state
-    try comp.loops.append(comp.allocator, .{ .start = 0, .depth = 0 });
-
-    const result = comp.compile(add_node);
-    try testing.expectError(error.UnsupportedScope, result);
+        // A fake loop so the jump itself is permitted
+        try comp.loops.append(comp.allocator, .{ .start = 0, .depth = 0 });
+        try testing.expectError(error.UnsupportedScope, comp.compile(add_node));
+    }
 }
 
 test "Compiler: op_pop_rescue does not corrupt max_stack_slots calculation" {
@@ -837,8 +811,8 @@ test "Compiler: Large array literals (> 65,535 items) fallback to dynamic build 
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    // Create an array literal with 70,000 elements
-    const elem_count: usize = 70000;
+    // One more element than op_build_array_wide's u16 count can hold
+    const elem_count: usize = limits.MAX_CONSTANTS + 1;
     var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
     defer elements.deinit(testing.allocator);
 
@@ -1216,8 +1190,7 @@ test "Compiler Guardrail: Method call exceeding MAX_ARGS triggers error" {
     defer args.deinit(testing.allocator);
 
     const val = try b.number("1", 0);
-    // Push 256 arguments (VM limits MAX_ARGS to 255)
-    for (0..256) |_| {
+    for (0..limits.MAX_ARGS + 1) |_| {
         try args.append(testing.allocator, .{ .name = .none, .value = val, .modifier = null });
     }
 
@@ -1247,9 +1220,9 @@ test "Compiler Edge Case: Hash literals with > 255 entries emit op_build_map_wid
     var entries: std.ArrayListUnmanaged(ast.HashEntry) = .empty;
     defer entries.deinit(testing.allocator);
 
-    // Generate a hash with 300 entries (exceeds 255 1-byte limit)
+    // One more entry than a u8 count operand can hold
     const val = try b.number("1", 0);
-    for (0..300) |i| {
+    for (0..limits.MAX_SHORT_CONSTANTS + 1) |i| {
         var buf: [10]u8 = undefined;
         const key_str = try std.fmt.bufPrint(&buf, "k{d}", .{i});
         const key = try b.stringNode(key_str, 0);
@@ -1316,11 +1289,11 @@ test "Compiler: Destructuring aborts gracefully without stack corruption" {
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    // Generate 300 identifier nodes to breach MAX_SHORT_CONSTANTS (255)
+    // One more identifier than MAX_SHORT_CONSTANTS
     var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
     defer elements.deinit(testing.allocator);
 
-    for (0..300) |i| {
+    for (0..limits.MAX_SHORT_CONSTANTS + 1) |i| {
         var buf: [16]u8 = undefined;
         const str = try std.fmt.bufPrint(&buf, "v{d}", .{i});
         const name_id = try b.intern(str);
@@ -1332,7 +1305,7 @@ test "Compiler: Destructuring aborts gracefully without stack corruption" {
     const span = try b.addNodes(elements.items);
     const tuple_node = try b.arrayLiteral(span, 0, 0);
 
-    // Pass the massive array destructuring node as a parameter to a block: `do |(v0...v299)|`
+    // Pass the massive array destructuring node as a parameter to a block: `do |(v0...v255)|`
     const block_node = try b.block(&.{tuple_node}, &.{}, 0, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
@@ -1443,98 +1416,54 @@ test "Compiler: Constant Folding optimizer" {
     try std.testing.expect(!has_math);
 }
 
-test "Compiler: Jump patch alignments for nested A and (B or C)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
+test "Compiler: Jump patch alignments for nested and/or" {
+    // Each jump carries a 4-byte offset; the listed opcodes must sit exactly at
+    // these offsets or a jump would land inside an operand.
+    const OpAt = struct { usize, chunk.OpCode };
+    const cases = [_]struct {
+        outer: ast.BinaryOp,
+        inner: ast.BinaryOp,
+        a: bool,
+        expected: []const OpAt,
+    }{
+        // A and (B or C)
+        .{ .outer = .logical_and, .inner = .logical_or, .a = true, .expected = &.{
+            .{ 0, .op_true },  .{ 1, .op_jump_if_false }, .{ 6, .op_pop },
+            .{ 7, .op_false }, .{ 8, .op_jump_if_false }, .{ 13, .op_jump },
+            .{ 18, .op_pop },  .{ 19, .op_true },         .{ 20, .op_return },
+        } },
+        // A or (B and C)
+        .{ .outer = .logical_or, .inner = .logical_and, .a = false, .expected = &.{
+            .{ 0, .op_false }, .{ 1, .op_jump_if_false }, .{ 6, .op_jump },
+            .{ 11, .op_pop },  .{ 12, .op_true },         .{ 13, .op_jump_if_false },
+            .{ 18, .op_pop },  .{ 19, .op_true },         .{ 20, .op_return },
+        } },
+    };
 
-    const A = try b.booleanNode(true, 0);
-    const B = try b.booleanNode(false, 0);
-    const C = try b.booleanNode(true, 0);
+    for (cases) |c| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var b = ast.Builder.init(arena.allocator());
+        defer b.deinit();
 
-    const b_or_c = try b.binary(.logical_or, B, C, 0);
-    const root = try b.binary(.logical_and, A, b_or_c, 0);
+        // Operands: A, B = !A, C = true
+        const lhs = try b.booleanNode(c.a, 0);
+        const inner = try b.binary(c.inner, try b.booleanNode(!c.a, 0), try b.booleanNode(true, 0), 0);
+        const root = try b.binary(c.outer, lhs, inner, 0);
 
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(root);
+        var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+        defer comp.deinit();
+        try comp.compile(root);
 
-    // Bytecode Alignment Walkthrough:
-    // 0: op_true (A)
-    // 1: op_jump_if_false (AND jump)
-    // 2-5: [4-byte offset]
-    // 6: op_pop (AND pop)
-    // 7: op_false (B)
-    // 8: op_jump_if_false (OR else_jump)
-    // 9-12: [4-byte offset]
-    // 13: op_jump (OR end_jump)
-    // 14-17: [4-byte offset]
-    // 18: op_pop (OR pop)
-    // 19: op_true (C)
-    // 20: op_return (Implicitly added by compile)
-
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[1])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
-    try testing.expectEqual(chunk.OpCode.op_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[7])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[8])));
-    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[13])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[18])));
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[19])));
-    try testing.expectEqual(chunk.OpCode.op_return, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[20])));
-}
-
-test "Compiler: Jump patch alignments for nested A or (B and C)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
-
-    const A = try b.booleanNode(false, 0);
-    const B = try b.booleanNode(true, 0);
-    const C = try b.booleanNode(true, 0);
-
-    const b_and_c = try b.binary(.logical_and, B, C, 0);
-    const root = try b.binary(.logical_or, A, b_and_c, 0);
-
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(root);
-
-    // Bytecode Alignment Walkthrough:
-    // 0: op_false (A)
-    // 1: op_jump_if_false (OR else_jump)
-    // 2-5: [4-byte offset]
-    // 6: op_jump (OR end_jump)
-    // 7-10: [4-byte offset]
-    // 11: op_pop (OR pop left)
-    // 12: op_true (B)
-    // 13: op_jump_if_false (AND jump)
-    // 14-17: [4-byte offset]
-    // 18: op_pop (AND pop left)
-    // 19: op_true (C)
-    // 20: op_return
-
-    try testing.expectEqual(chunk.OpCode.op_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[1])));
-    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[11])));
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[12])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[13])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[18])));
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[19])));
-    try testing.expectEqual(chunk.OpCode.op_return, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[20])));
+        for (c.expected) |e| {
+            try testing.expectEqual(e[1], @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[e[0]])));
+        }
+    }
 }
 
 test "Compiler: Exhaustive runtime execution of Pratt parser logic jumps" {

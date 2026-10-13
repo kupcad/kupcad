@@ -3,19 +3,21 @@ const testing = std.testing;
 const linter = @import("linter.zig");
 const parser_mod = @import("../../frontend/kupcad/parser.zig");
 const lexer_mod = @import("../../frontend/kupcad/lexer.zig");
+const limits = @import("../../core/limits.zig");
 
 test "Linter: Registers default rules based on config" {
     var engine = linter.Linter.init(testing.allocator, .{});
     defer engine.deinit();
 
     try engine.registerDefaultRules();
-    try testing.expect(engine.rules.items.len > 0);
+    // Every rule is enabled by default
+    try testing.expectEqual(@as(usize, 5), engine.rules.items.len);
 
     // Check that our first registered rule is the NegativeDimRule, which returns the name below:
     try testing.expectEqualStrings("Negative Dimension Check", engine.rules.items[0].vtable.name(engine.rules.items[0].ptr));
 }
 
-test "Linter: Scope shadowing inside blocks (do ... end) and lambdas" {
+test "Linter: Scope shadowing inside blocks (do ... end)" {
     const source =
         \\a = 10
         \\block do |a|
@@ -50,7 +52,8 @@ test "Linter: Scope shadowing inside blocks (do ... end) and lambdas" {
 }
 
 test "Linter: Iterative traversal prevents stack overflow on deeply nested AST" {
-    const depth: usize = 500;
+    // Deep, but still within the parser's MAX_AST_DEPTH for nested `if`
+    const depth: usize = limits.MAX_AST_DEPTH / 3;
     var source_buf = std.ArrayListUnmanaged(u8).empty;
     defer source_buf.deinit(testing.allocator);
 
@@ -71,6 +74,7 @@ test "Linter: Iterative traversal prevents stack overflow on deeply nested AST" 
     var parser = try parser_mod.Parser.init(tokens, source_buf.items, arena.allocator());
     const root = try parser.parseProgram();
 
-    // Verify linter runs on 500-deep nested AST without stack overflow
+    // The parser must accept the whole tree, or the linter would see a shallow one
+    try testing.expectEqual(@as(usize, 0), parser.diagnostics.list.items.len);
     try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
 }

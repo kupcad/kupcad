@@ -48,7 +48,7 @@ fn runScript(source: []const u8) !InterpretResult {
 
 // --- Finding 1: drivers must never return their input handle ---
 
-test "Regression ownership: brep material/decompose/simplify return new handles" {
+test "Regression ownership: brep no-op ops return new handles, never their input" {
     const cube = kernel.cube(.brep_native, 10, 10, 10, false) orelse return error.KernelFailed;
     defer kernel.destruct(cube);
 
@@ -70,6 +70,13 @@ test "Regression ownership: brep material/decompose/simplify return new handles"
     const single = kernel.batchBoolean(testing.allocator, &.{cube}, .union_op) orelse return error.KernelFailed;
     defer kernel.destruct(single);
     try testing.expect(single.ptr != cube.ptr);
+
+    // B-Rep offset is unimplemented and used to return its input cross-section.
+    const sq = kernel.square(.brep_native, 10, 10, false) orelse return error.KernelFailed;
+    defer kernel.destructCrossSection(sq);
+    const off = kernel.offset(sq, 1, 0) orelse return error.KernelFailed;
+    defer kernel.destructCrossSection(off);
+    try testing.expect(off.ptr != sq.ptr);
 }
 
 test "Regression ownership: brep scripts using material/decompose/simplify do not double free" {
@@ -135,6 +142,26 @@ test "Regression ownership: dag cache is keyed by engine" {
     try testing.expectEqual(geom.EngineType.brep_native, d.engine);
 }
 
+test "Regression ownership: GC keeps the B-Rep cache entry of live geometry" {
+    var vm = try initVm();
+    defer vm.deinit();
+
+    // `a` stays rooted as a global, so its cached handle must survive GC.
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm,
+        \\CAD.config(engine: :brep)
+        \\a = cube(10)
+        \\a.volume
+    ));
+    const cached = vm.dag_cache.count();
+    try testing.expect(cached > 0);
+
+    // Eviction must strip the engine salt from the key before the liveness
+    // check, or every B-Rep entry looks dead and is freed.
+    vm.resetStack();
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(cached, vm.dag_cache.count());
+}
+
 test "Regression ownership: mixed-engine operands are rejected at runtime" {
     const m = kernel.cube(.manifold, 10, 10, 10, false) orelse return error.KernelFailed;
     defer kernel.destruct(m);
@@ -149,6 +176,16 @@ test "Regression ownership: mixed-engine operands are rejected at runtime" {
     try testing.expectEqual(@as(f64, 0.0), kernel.minGap(m, b, 1.0));
 }
 
+test "Regression ownership: evaluator rejects a DAG mixing engines" {
+    // A decompose result is a `.concrete` leaf that keeps its Manifold handle
+    // after the engine switches, so the union below has mixed operands.
+    try testing.expectEqual(InterpretResult.runtime_error, try runScript(
+        \\part = cube(10).decompose[0]
+        \\CAD.config(engine: :brep)
+        \\(part + cube(1)).volume
+    ));
+}
+
 // --- Finding 4: CSE dedup ---
 
 test "Regression ownership: even-odd polygons with different contour splits are distinct" {
@@ -156,6 +193,17 @@ test "Regression ownership: even-odd polygons with different contour splits are 
     defer vm.deinit();
 
     const pts = [_][2]f64{ .{ 0, 0 }, .{ 10, 0 }, .{ 0, 10 }, .{ 20, 20 }, .{ 30, 20 }, .{ 30, 30 }, .{ 20, 30 }, .{ 40, 40 } };
+
+    // The hash itself must differ (per-contour lengths), not just the
+    // structural check behind it. Fresh builders: hashes are content-based.
+    var scratch_a = dag.DAGBuilder.init(testing.allocator);
+    defer scratch_a.deinit();
+    var scratch_b = dag.DAGBuilder.init(testing.allocator);
+    defer scratch_b.deinit();
+    const ha = scratch_a.node_hashes.items[try scratch_a.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] })];
+    const hb = scratch_b.node_hashes.items[try scratch_b.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] })];
+    try testing.expect(ha != hb);
+
     const a_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] });
     const b_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] });
     try testing.expect(a_idx != b_idx);
@@ -167,8 +215,10 @@ test "Regression ownership: even-odd polygons with different contour splits are 
 }
 
 test "Regression ownership: polyhedron hash separates points and faces" {
-    var builder = dag.DAGBuilder.init(testing.allocator);
-    defer builder.deinit();
+    var b1 = dag.DAGBuilder.init(testing.allocator);
+    defer b1.deinit();
+    var b2 = dag.DAGBuilder.init(testing.allocator);
+    defer b2.deinit();
 
     // The last point of `pts1` has the exact bytes of the first two faces of
     // `faces2`, so both pts++faces byte streams are identical.
@@ -179,9 +229,10 @@ test "Regression ownership: polyhedron hash separates points and faces" {
     const pts2 = [_][3]f64{.{ 0, 0, 0 }};
     const faces2 = [_][3]u32{ shifted[0], shifted[1], .{ 6, 7, 8 } };
 
-    const p1 = try builder.addPolyhedron(&pts1, &faces1);
-    const p2 = try builder.addPolyhedron(&pts2, &faces2);
-    try testing.expect(p1 != p2);
+    // Separate builders, so a structural-equality fallback cannot hide a collision.
+    const p1 = try b1.addPolyhedron(&pts1, &faces1);
+    const p2 = try b2.addPolyhedron(&pts2, &faces2);
+    try testing.expect(b1.node_hashes.items[p1] != b2.node_hashes.items[p2]);
 }
 
 test "Regression ownership: a raw hash collision does not merge different nodes" {
@@ -249,7 +300,7 @@ test "Regression ownership: ghost display list survives garbage collection" {
 
     // Nothing roots the ghost geometry; a GC evicts its dag_cache entry.
     vm.resetStack();
-    vm.gc.collectGarbage(&vm, true);
+    vm.gc.collectGarbage(&vm, false);
     try testing.expectEqual(@as(u32, 0), vm.dag_cache.count());
 
     try testing.expectApproxEqAbs(@as(f64, 1000.0), kernel.volume(vm.display_list.items[0]), 1e-6);

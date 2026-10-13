@@ -135,6 +135,14 @@ test "Driver: Convex Hull (Single and Batch)" {
     defer driver.driver.destructFn(hull1);
 
     try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(hull1));
+
+    // Hull of two disjoint boxes along X is a single box: 8 corners.
+    const cube2 = driver.driver.translateFn(cube1, 20, 0, 0) orelse return error.Translate;
+    defer driver.driver.destructFn(cube2);
+    const hull2 = driver.driver.batchHullFn(std.testing.allocator, &.{ cube1, cube2 }) orelse return error.Hull;
+    defer driver.driver.destructFn(hull2);
+
+    try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(hull2));
 }
 
 test "Driver: STEP Export of CSG Boolean Result" {

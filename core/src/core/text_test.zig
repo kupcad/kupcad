@@ -34,9 +34,8 @@ test "Text Engine: Extracts flat 2D polygons from text string and kerning" {
     var polygons = try text.extractText(testing.allocator, &face, "CAD", 10.0, 0.1, .left, .baseline);
     defer polygons.deinit(testing.allocator);
 
-    // "CAD" should produce at least 4 distinct closed contours
-    // (C=1, A=2 (outer+inner hole), D=2 (outer+inner hole)).
-    // Actual number depends on font specifics, but MUST be > 3!
+    // "CAD" is typically 5 closed contours (C, A + hole, D + hole); require
+    // at least one per glyph to stay font-agnostic.
     try testing.expect(polygons.contours.items.len >= 3);
 
     const first_contour = polygons.contours.items[0];

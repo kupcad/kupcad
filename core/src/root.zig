@@ -65,6 +65,7 @@ test {
     _ = @import("kernel/engines/brep/driver_test.zig");
 
     // CLI & Config Tests
+    _ = @import("cli/build_cmd_test.zig");
     _ = @import("cli/config_test.zig");
     _ = @import("cli/options_test.zig");
     _ = @import("cli/walker_test.zig");

@@ -85,9 +85,7 @@ test "ScriptSession: evaluateModule compiles code, stores CAD handle, and applie
     try testing.expectApproxEqAbs(@as(f64, 1000.0), vol, 1e-4);
 
     // 2. Modify code to yield the identical output geometry (variable renaming)
-    var mod = &session.workspace.modules.items[@backingInt(mod_id)];
-    testing.allocator.free(mod.source);
-    mod.source = try testing.allocator.dupe(u8, "box = cube(10.0)");
+    try session.workspace.updateModuleSource(mod_id, "box = cube(10.0)");
 
     try session.markFileEdited(file_path);
 
@@ -144,9 +142,7 @@ test "ScriptSession: evaluateWorkspace processes multi-file dependencies and pro
     const new_leaf_source = "c = cube(x: 10.0, y: 10.0, z: 10.0); export c;";
     try mem_vfs.vfs().writeFile(leaf_path, new_leaf_source);
 
-    var mod_leaf = &session.workspace.modules.items[@backingInt(leaf_id)];
-    testing.allocator.free(mod_leaf.source);
-    mod_leaf.source = try testing.allocator.dupe(u8, new_leaf_source);
+    try session.workspace.updateModuleSource(leaf_id, new_leaf_source);
 
     // Invalidates leaf.kup and reverse-BFS invalidates root.kup
     try session.markFileEdited(leaf_path);
@@ -199,9 +195,7 @@ test "ScriptSession: deep dependency chain short-circuits propagation on identic
     const new_a_source = "x = cube(10.0); out = x; export out;";
     try mem_vfs.vfs().writeFile("./a.kup", new_a_source);
 
-    var mod_a = &session.workspace.modules.items[@backingInt(a_id)];
-    testing.allocator.free(mod_a.source);
-    mod_a.source = try testing.allocator.dupe(u8, new_a_source);
+    try session.workspace.updateModuleSource(a_id, new_a_source);
 
     try session.markFileEdited("./a.kup");
     try session.evaluateWorkspace();
@@ -247,9 +241,7 @@ test "ScriptSession: gracefully halts evaluation on syntax error and leaves down
     const bad_a_source = "out = cube(10.0; export out;";
     try mem_vfs.vfs().writeFile("./a.kup", bad_a_source);
 
-    var mod_a = &session.workspace.modules.items[@backingInt(a_id)];
-    testing.allocator.free(mod_a.source);
-    mod_a.source = try testing.allocator.dupe(u8, bad_a_source);
+    try session.workspace.updateModuleSource(a_id, bad_a_source);
 
     try session.markFileEdited("./a.kup");
 

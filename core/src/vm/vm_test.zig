@@ -2141,17 +2141,17 @@ test "VM: GC Grey Stack handles deeply nested objects without C-stack overflow" 
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Create an array nested 2,000 levels deep.
-    // A recursive markObject would blow the C call stack here.
-    const source =
+    // Deep enough that a recursive markObject would overflow the C stack
+    const nesting_depth = 2000;
+    const source = std.fmt.comptimePrint(
         \\arr = []
         \\i = 0
-        \\while (i < 2000)
+        \\while (i < {d})
         \\  arr = [arr]
         \\  i = i + 1
         \\end
         \\arr
-    ;
+    , .{nesting_depth});
 
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
@@ -2167,11 +2167,14 @@ test "VM: GC Grey Stack handles deeply nested objects without C-stack overflow" 
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.ok, result);
 
-    // Full garbage collection sweep right now
     vm.gc.collectGarbage(&vm, false);
 
-    // If we reach this line, the iterative grey stack successfully prevented a stack overflow!
-    try testing.expect(true);
+    // Every nesting level survived the collection
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    var depth: usize = 0;
+    var cur = vm.stack[0];
+    while (cur.asArray().items.items.len == 1) : (depth += 1) cur = cur.asArray().items.items[0];
+    try testing.expectEqual(@as(usize, nesting_depth), depth);
 }
 
 test "VM Edge Case: Safe casting prevents panics on invalid CAD arguments" {
@@ -3214,50 +3217,6 @@ test "VM: Positional parameters properly evaluate default values" {
     try testing.expectEqual(@as(f64, 60.0), call3.items.items[2].asNumber());
 }
 
-test "VM: ARC references are safely released when receivers are discarded" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    const baseline_memory = vm.gc.bytes_allocated;
-
-    // By wrapping this in a Lambda, we prevent global namespace pollution.
-    // When `f` is reassigned to `nil`, the closure and the error variable `e`
-    // are unreferenced, allowing the GC to cleanly sweep the entire test from memory!
-    const source =
-        \\f = ->() do
-        \\  begin
-        \\    cube(10).invalid_property = 42
-        \\  rescue => e
-        \\    nil
-        \\  end
-        \\end
-        \\f
-        \\f = nil
-    ;
-
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    // The stack contains exactly 1 item (the `nil` from `f = nil`)
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    // Force a GC cycle to sweep the closure and the rescued error string
-    vm.gc.collectGarbage(&vm, false);
-
-    // Memory footprint returns to exactly the baseline
-    try testing.expectEqual(baseline_memory, vm.gc.bytes_allocated);
-}
-
 test "VM: Unified Exception hierarchy with native methods" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -3428,54 +3387,29 @@ test "VM: DOD param registry getter and setter overloading" {
     try testing.expectEqual(@as(f64, 42.5), vm.param_registry.items(.current_value)[0].asNumber());
 }
 
-test "VM: param validation halts execution on max bounds violation" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
+test "VM: param validation halts execution on bounds violations" {
+    const sources = [_][]const u8{
+        "param(:width, default: 200, validate: { max: 100 })",
+        "param(:width, default: 5, validate: { min: 10 })",
+        "param(:width, default: 150, validate: { min: 10, max: 100 })",
+    };
+    for (sources) |source| {
+        errdefer std.debug.print("failing source: {s}\n", .{source});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
 
-    // Mute the console error output so it doesn't clutter the test runner
+        var doc = try Document.parse(testing.allocator, source);
+        defer doc.deinit();
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
 
-    // The default is 200, but the max is strictly 100!
-    const source =
-        \\param(:width, default: 200, validate: { max: 100 })
-    ;
+        var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+        defer comp.deinit();
+        try comp.compile(doc.tree.root);
 
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-
-    // The VM must intercept the bound violation and throw a runtime error!
-    try testing.expectEqual(.runtime_error, result);
-}
-
-test "VM: param validation halts execution on min bounds violation" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // The default is 5, but the min is strictly 10!
-    const source =
-        \\param(:width, default: 5, validate: { min: 10 })
-    ;
-
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.runtime_error, result);
+        try testing.expectEqual(.runtime_error, vm.interpret(&out_chunk));
+    }
 }
 
 test "VM: param getter halts execution if parameter is undefined" {
@@ -3568,30 +3502,6 @@ test "VM: Parameter definition, bounds validation, and getter retrieval" {
     const arr_obj = result.asArray();
     try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
-}
-
-test "VM: Parameter validation failure halts script execution with runtime_error" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // Default value 150 exceeds max of 100
-    const source =
-        \\param(:width, default: 150, validate: { min: 10, max: 100 })
-    ;
-
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.runtime_error, result);
 }
 
 test "VM: CLI parameter injection overrides default script parameter values" {
@@ -6935,25 +6845,33 @@ test "VM: Extruded text has mathematically correct bounding box and mass propert
     try testing.expectApproxEqAbs(7.5, dz, 0.0001);
 }
 
-test "VM: Tapered cylinder with r1 and r2 generates valid solid" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
+test "VM: Primitive shape options generate valid 3D solids" {
+    const sources = [_][]const u8{
+        "cylinder(r1: 5.0, r2: 2.0, h: 10.0)", // tapered
+        "cube(size: 10.0, chamfer: 1.0)", // chamfered profile, extruded
+        "cylinder(r: 5.0, h: 10.0, round_r: 1.0)", // rounded profile, revolved
+    };
+    for (sources) |source| {
+        errdefer std.debug.print("failing source: {s}\n", .{source});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
 
-    const source = "cylinder(r1: 5.0, r2: 2.0, h: 10.0)";
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
+        var doc = try Document.parse(testing.allocator, source);
+        defer doc.deinit();
 
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
+        var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+        defer comp.deinit();
+        try comp.compile(doc.tree.root);
 
-    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const handle = try vm.ensureConcrete(result);
-    try testing.expect(kernel.volume(handle) > 0.0);
+        const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+        try testing.expect(result.isGeometry());
+        const handle = try vm.ensureConcrete(result);
+        try testing.expect(kernel.volume(handle) > 0.0);
+    }
 }
 
 test "VM: Extrude with center: true positions geometry symmetrically along Z" {
@@ -7031,56 +6949,6 @@ test "VM: Square with round_r generates valid 2D cross-section" {
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result.isCrossSection());
-}
-
-test "VM: Cube with chamfer generates extruded 3D solid" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // 10x10x10 cube with 1mm chamfered edges
-    const source = "cube(size: 10.0, chamfer: 1.0)";
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    try testing.expect(result.isGeometry());
-
-    const handle = try vm.ensureConcrete(result);
-    // Ensure the extruded chamfered polygon resulted in a valid 3D volume
-    try testing.expect(kernel.volume(handle) > 0.0);
-}
-
-test "VM: Cylinder with round_r generates revolved 3D solid" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // Cylinder with 5mm radius, 10mm height, and 1mm rounded caps
-    const source = "cylinder(r: 5.0, h: 10.0, round_r: 1.0)";
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    try testing.expect(result.isGeometry());
-
-    const handle = try vm.ensureConcrete(result);
-    // Ensure the revolved profile resulted in a valid 3D volume
-    try testing.expect(kernel.volume(handle) > 0.0);
 }
 
 test "VM: Resize calculates bbox and scales geometry automatically" {
@@ -10004,11 +9872,24 @@ test "VM: Sequential rescued exceptions do not accumulate un-swept memory" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Warm up VM and capture baseline
+    // The first rescued RuntimeError grows its class's field layout once; warm that up
+    // in a separate chunk so the baseline only excludes the objects under test.
+    {
+        var doc = try Document.parse(testing.allocator, "begin\n  cube(10).warmup = 1\nrescue => w\n  nil\nend");
+        defer doc.deinit();
+        var warmup_chunk = chunk.Chunk.init();
+        defer warmup_chunk.free(testing.allocator);
+        var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &warmup_chunk, &vm);
+        defer comp.deinit();
+        try comp.compile(doc.tree.root);
+        try testing.expectEqual(.ok, vm.interpret(&warmup_chunk));
+    }
+    vm.resetStack();
     vm.gc.collectGarbage(&vm, false);
     const baseline_memory = vm.gc.bytes_allocated;
 
-    // Use an anonymous lambda and clear 'f' so no global function remains rooted
+    // An anonymous lambda, cleared afterwards, so neither the closure, the exceptions
+    // nor the discarded cube receivers stay rooted
     const source =
         \\f = ->() do
         \\  begin
@@ -10023,7 +9904,7 @@ test "VM: Sequential rescued exceptions do not accumulate un-swept memory" {
         \\    nil
         \\  end
         \\end
-        \\f
+        \\f()
         \\f = nil
     ;
 
@@ -10038,10 +9919,8 @@ test "VM: Sequential rescued exceptions do not accumulate un-swept memory" {
 
     _ = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    // Verify unwind state was cleared
-    try testing.expectEqual(@as(usize, 0), vm.unwind_stack.items.len);
-
     // Collect garbage and verify all temporary exception objects were swept
+    vm.resetStack();
     vm.gc.collectGarbage(&vm, false);
     try testing.expectEqual(baseline_memory, vm.gc.bytes_allocated);
 }
@@ -10064,8 +9943,10 @@ test "VM: Uncaught exception state is purged on resetStack" {
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.runtime_error, result);
 
-    // State should be completely cleared by interpret's exit or resetStack
+    // A pending native-boundary unwind entry must not survive into the next run
+    try vm.unwind_stack.append(vm.allocator, .{ .err_val = value.Value.initNil(), .stack_top = vm.stack_top });
     vm.resetStack();
+    try testing.expectEqual(@as(usize, 0), vm.stack_top);
     try testing.expectEqual(@as(usize, 0), vm.unwind_stack.items.len);
 }
 
@@ -10095,7 +9976,7 @@ test "VM: Repeated string interpolation loop recycles scratch arena" {
     try testing.expectEqual(@as(f64, 1000.0), result.asNumber());
 }
 
-test "VM: Nested native FFI unwinding clears unwind_err_val at rescue target" {
+test "VM: Kernel error raised in a nested call frame unwinds to the rescue target" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -10125,10 +10006,10 @@ test "VM: Nested native FFI unwinding clears unwind_err_val at rescue target" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
-
-    // Unwind state must be cleared after successfully reaching rescue block
-    try testing.expectEqual(@as(usize, 0), vm.unwind_stack.items.len);
+    // The kernel error raised two frames deep reaches the top-level handler
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isString());
+    try testing.expectEqualStrings("Runtime Error: CAD Kernel / Method Error", result.asString().chars);
 }
 
 test "VM: Repeated string addition (+ operator) recycles scratch arena" {

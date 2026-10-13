@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const ast = @import("../../core/ast.zig");
+const limits = @import("../../core/limits.zig");
 const ParserTest = @import("../test_utils.zig").ParserTest;
 const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("parser.zig").Parser;
@@ -723,20 +724,24 @@ test "KupCAD Parser: Begin / Rescue / Ensure" {
     try testing.expectEqualStrings("clean", tree.getString(tree.methodCall(ensure_stmt0).method_name));
 }
 
-test "KupCAD Parser: Object Property Assignment" {
-    const source = "box.width = 100";
-    var pt = try KTest.init(source);
-    defer pt.deinit();
-    const tree = &pt.parser.b.tree;
+test "KupCAD Parser: Plain and Compound Property Assignment" {
+    const cases = [_]struct { source: []const u8, target: []const u8, property: []const u8, op: ?ast.BinaryOp, value: f64 }{
+        .{ .source = "box.width = 100", .target = "box", .property = "width", .op = null, .value = 100 },
+        .{ .source = "obj.x += 10", .target = "obj", .property = "x", .op = .add, .value = 10 },
+    };
+    for (cases) |c| {
+        var pt = try KTest.init(c.source);
+        defer pt.deinit();
+        const tree = &pt.parser.b.tree;
 
-    const stmt_idx = try pt.parser.parseStatement();
-    const stmt = pt.getNode(stmt_idx);
-    try testing.expectEqual(ast.Tag.property_assignment, stmt.tag);
-    const pa = tree.propertyAssignment(stmt);
-
-    try testing.expectEqualStrings("box", tree.getString(@as(ast.StringId, @fromBackingInt(pt.getNode(pa.target).data))));
-    try testing.expectEqualStrings("width", tree.getString(pa.property));
-    try testing.expectEqual(@as(f64, 100.0), tree.number(pt.getNode(pa.value)));
+        const stmt = pt.getNode(try pt.parser.parseStatement());
+        try testing.expectEqual(ast.Tag.property_assignment, stmt.tag);
+        const pa = tree.propertyAssignment(stmt);
+        try testing.expectEqualStrings(c.target, tree.getString(@as(ast.StringId, @fromBackingInt(pt.getNode(pa.target).data))));
+        try testing.expectEqualStrings(c.property, tree.getString(pa.property));
+        try testing.expectEqual(c.op, pa.op);
+        try testing.expectEqual(c.value, tree.number(pt.getNode(pa.value)));
+    }
 }
 
 test "KupCAD Parser: Receiver Command Syntax" {
@@ -2166,12 +2171,14 @@ test "KupCAD Parser: Empty Literals and Blocks" {
     const s1_idx = try pt.parser.parseStatement();
     const s1 = pt.getNode(s1_idx);
     const arr_node = pt.getNode(tree.assignment(s1).value);
+    try testing.expectEqual(ast.Tag.array_literal, arr_node.tag);
     const arr_elems = tree.getNodes(tree.nodeSpan(arr_node));
     try testing.expectEqual(@as(usize, 0), arr_elems.len);
 
     const s2_idx = try pt.parser.parseStatement();
     const s2 = pt.getNode(s2_idx);
     const hash_node = pt.getNode(tree.assignment(s2).value);
+    try testing.expectEqual(ast.Tag.hash_literal, hash_node.tag);
     const hash_entries = tree.getHashEntries(tree.nodeSpan(hash_node));
     try testing.expectEqual(@as(usize, 0), hash_entries.len);
 
@@ -2862,40 +2869,6 @@ test "KupCAD Parser: Standard Block While and Until Loops" {
     try testing.expectEqual(ast.BinaryOp.subtract, tree.assignment(until_assign).op.?);
 }
 
-test "KupCAD Parser: Index Compound Assignment" {
-    const source = "arr[0] *= 5";
-    var pt = try KTest.init(source);
-    defer pt.deinit();
-    const tree = &pt.parser.b.tree;
-
-    const stmt_idx = try pt.parser.parseStatement();
-    const stmt = pt.getNode(stmt_idx);
-
-    try testing.expectEqual(ast.Tag.index_assignment, stmt.tag);
-    const ia = tree.indexAssignment(stmt);
-    try testing.expectEqualStrings("arr", tree.getString(@as(ast.StringId, @fromBackingInt(pt.getNode(ia.target).data))));
-    try testing.expectEqual(@as(f64, 0.0), tree.number(pt.getNode(ia.index)));
-    try testing.expectEqual(ast.BinaryOp.multiply, ia.op.?);
-    try testing.expectEqual(@as(f64, 5.0), tree.number(pt.getNode(ia.value)));
-}
-
-test "KupCAD Parser: Property Compound Assignment" {
-    const source = "obj.x += 10";
-    var pt = try KTest.init(source);
-    defer pt.deinit();
-    const tree = &pt.parser.b.tree;
-
-    const stmt_idx = try pt.parser.parseStatement();
-    const stmt = pt.getNode(stmt_idx);
-
-    try testing.expectEqual(ast.Tag.property_assignment, stmt.tag);
-    const pa = tree.propertyAssignment(stmt);
-    try testing.expectEqualStrings("obj", tree.getString(@as(ast.StringId, @fromBackingInt(pt.getNode(pa.target).data))));
-    try testing.expectEqualStrings("x", tree.getString(pa.property));
-    try testing.expectEqual(ast.BinaryOp.add, pa.op.?);
-    try testing.expectEqual(@as(f64, 10.0), tree.number(pt.getNode(pa.value)));
-}
-
 test "KupCAD Parser: Strict Index Assignment Rejects Spaces" {
     const source = "arr [ 0 ] *= 5";
     var pt = try KTest.init(source);
@@ -2989,47 +2962,6 @@ test "KupCAD Parser: Deep recursion safety (Stack Overflow Prevention)" {
 
     try testing.expectEqual(ast.Tag.number, expr.tag);
     try testing.expectEqual(@as(f64, 1.0), pt.parser.b.tree.number(expr));
-}
-
-test "KupCAD Parser: Right-Associative Assignment Chaining" {
-    var pt = try KTest.init("a = b = c = 1");
-    defer pt.deinit();
-    const tree = &pt.parser.b.tree;
-
-    const stmt_idx = try pt.parser.parseStatement();
-    const stmt = pt.getNode(stmt_idx);
-
-    try testing.expectEqual(ast.Tag.assignment, stmt.tag);
-    const a_assign = tree.assignment(stmt);
-    try testing.expectEqualStrings("a", tree.getString(a_assign.name));
-
-    const b_assign_node = pt.getNode(a_assign.value);
-    try testing.expectEqual(ast.Tag.assignment, b_assign_node.tag);
-    const b_assign = tree.assignment(b_assign_node);
-    try testing.expectEqualStrings("b", tree.getString(b_assign.name));
-
-    const c_assign_node = pt.getNode(b_assign.value);
-    try testing.expectEqual(ast.Tag.assignment, c_assign_node.tag);
-    const c_assign = tree.assignment(c_assign_node);
-    try testing.expectEqualStrings("c", tree.getString(c_assign.name));
-
-    try testing.expectEqual(@as(f64, 1.0), tree.number(pt.getNode(c_assign.value)));
-}
-
-test "KupCAD Parser: Empty Arrays and Hashes" {
-    var pt = try KTest.init("[]\n{}");
-    defer pt.deinit();
-    const tree = &pt.parser.b.tree;
-
-    const arr_idx = try pt.parser.parseStatement();
-    const arr = pt.getNode(arr_idx);
-    try testing.expectEqual(ast.Tag.array_literal, arr.tag);
-    try testing.expectEqual(@as(usize, 0), tree.getNodes(tree.nodeSpan(arr)).len);
-
-    const hash_idx = try pt.parser.parseStatement();
-    const hash = pt.getNode(hash_idx);
-    try testing.expectEqual(ast.Tag.hash_literal, hash.tag);
-    try testing.expectEqual(@as(usize, 0), tree.getHashEntries(tree.nodeSpan(hash)).len);
 }
 
 test "AST Builder: Contiguous String Interner tightly packs bytes" {
@@ -3723,8 +3655,7 @@ test "KupCAD: Unary Minus vs Method Call Precedence" {
 }
 
 test "KupCAD Parser Guardrail: AST Depth Limit Prevention" {
-    // We simulate exceeding the limit. If MAX_AST_DEPTH is 1500, we nest 1501 times.
-    const depth: usize = 1505;
+    const depth: usize = limits.MAX_AST_DEPTH + 5;
     var source_buf = std.ArrayListUnmanaged(u8).empty;
     defer source_buf.deinit(testing.allocator);
 

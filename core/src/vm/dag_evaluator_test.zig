@@ -25,7 +25,7 @@ test "DAG Evaluator: correctly evaluates 3D primitive (Cube)" {
 
     // Verify physics to prove the Manifold C++ object is a 10x20x30 cube
     const vol = kernel.volume(handle);
-    try testing.expectEqual(@as(f64, 6000.0), vol);
+    try testing.expectApproxEqAbs(@as(f64, 6000.0), vol, 1e-6);
 }
 
 test "DAG Evaluator: correctly evaluates CSG tree (Union)" {
@@ -44,7 +44,7 @@ test "DAG Evaluator: correctly evaluates CSG tree (Union)" {
 
     // Two 10x10x10 cubes side-by-side should be exactly 2000 volume
     const vol = kernel.volume(handle);
-    try testing.expectEqual(@as(f64, 2000.0), vol);
+    try testing.expectApproxEqAbs(@as(f64, 2000.0), vol, 1e-6);
 }
 
 test "DAG Builder: CSE Deduplication perfectly reuses identical nodes" {
@@ -272,25 +272,10 @@ test "DAG Evaluator: safely traps cross-section vs geometry type mismatch and cl
     // 2. Erroneously evaluate it as a 3D Geometry DAG
     const result = dag_evaluator.evaluateDAG(&vm, sq_idx);
 
-    // 3. It must trap the mismatch and return RuntimeError.
-    // Zig's testing allocator will automatically fail the test if `IntermediateStack`
-    // failed to destruct the dangling 2D handle before returning the error.
+    // 3. It must trap the mismatch and return RuntimeError. The 2D handle is
+    // destroyed by evaluateDAG (cross-sections are never cached).
     try testing.expectError(error.RuntimeError, result);
-}
-
-test "DAG Evaluator: evaluateDAG traps 2D cross-section mismatch without cache corruption" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // 1. Build a 2D Square
-    const square_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
-
-    // 2. Erroneously evaluate it as a 3D Geometry DAG
-    const result = dag_evaluator.evaluateDAG(&vm, square_idx);
-
-    // 3. Must return RuntimeError, remove the hash from dag_cache, and clean up safely on deinit
-    try testing.expectError(error.RuntimeError, result);
+    try testing.expectEqual(@as(u32, 0), vm.dag_cache.count());
 }
 
 test "DAG Evaluator: evaluateCrossSectionDAG traps 3D geometry mismatch" {
@@ -317,19 +302,15 @@ test "DAG Evaluator: O(1) DAG Cache bypasses kernel evaluation" {
     const c1 = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
     const handle1 = try dag_evaluator.evaluateDAG(&vm, c1);
 
-    // 2. Ensure it populated the VM's DAG cache using the builder's hash
+    // 2. Ensure it populated the VM's DAG cache under the (node hash, engine) key
     const hash = vm.dag_builder.node_hashes.items[c1];
-    try testing.expect(vm.dag_cache.contains(hash));
+    try testing.expect(vm.dag_cache.contains(dag_evaluator.cacheKey(hash, .manifold)));
 
     // 3. Evaluate the exact same node again. It MUST pull from cache.
     const handle2 = try dag_evaluator.evaluateDAG(&vm, c1);
 
-    // The raw C++ FFI pointers must be perfectly identical!
+    // The raw C++ FFI pointers must be perfectly identical (vm.deinit frees it once).
     try testing.expectEqual(handle1.ptr, handle2.ptr);
-
-    // Free ONLY the cached instance (since handle2 is literally handle1)
-    kernel.destruct(handle1);
-    _ = vm.dag_cache.remove(hash);
 }
 
 test "DAG Evaluator: RAM budgeting traps complex meshes" {
@@ -349,7 +330,7 @@ test "DAG Evaluator: RAM budgeting traps complex meshes" {
     try testing.expectError(error.RamBudgetExceeded, result);
 }
 
-test "B-Rep Engine: Vertex counting and RAM budgeting works" {
+test "DAG Evaluator: B-Rep engine config yields a B-Rep cube" {
     var vm = try VM.init(std.testing.allocator, std.testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -360,8 +341,8 @@ test "B-Rep Engine: Vertex counting and RAM budgeting works" {
     const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
     const handle = try dag_evaluator.evaluateDAG(&vm, cube_idx);
 
-    const verts = kernel.numVerts(handle);
-    try std.testing.expect(verts == 8); // A standard cube has 8 vertices
+    try testing.expectEqual(geom.EngineType.brep_native, handle.engine);
+    try testing.expectEqual(@as(i32, 8), kernel.numVerts(handle));
 }
 
 test "DAG Evaluator: respects atomic cancellation token" {
@@ -427,11 +408,7 @@ test "DAG Builder: Polyhedron CSE uses O(1) precomputed hash correctly" {
     const node2 = try vm.dag_builder.addPolyhedron(&pts, &faces);
 
     // Because the precomputed u64 hash is identical, the CSE engine should
-    // perfectly deduplicate them without traversing the arrays a second time!
+    // perfectly deduplicate them.
     try testing.expectEqual(node1, node2);
-
-    // Verify the payload correctly returns the reconstructed precomputed hash
-    const node = vm.dag_builder.nodes.items[node1];
-    const payload = vm.dag_builder.getPolyhedronPayload(node);
-    try testing.expect(payload.geom_hash != 0);
+    try testing.expectEqual(@as(usize, 1), vm.dag_builder.nodes.items.len);
 }

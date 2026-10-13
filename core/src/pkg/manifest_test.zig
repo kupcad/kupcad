@@ -88,3 +88,35 @@ test "Manifest: forward compatibility (ignores unknown JSON fields)" {
     try testing.expectEqualStrings("future-app", manifest.name);
     try testing.expectEqualStrings("2.0.0", manifest.version);
 }
+
+// Audit fix: hostile manifests used to panic on `.?`/`.object` and unvalidated
+// aliases became symlink names under .kupcad/pkg/.
+test "Manifest: rejects ill-shaped manifests and unsafe aliases" {
+    const cases = [_]struct { json: []const u8, err: anyerror }{
+        .{ .json = "[]", .err = error.InvalidManifest },
+        .{ .json =
+        \\{"version":"1.0.0"}
+        , .err = error.InvalidManifest },
+        .{ .json =
+        \\{"name":"a","version":1}
+        , .err = error.InvalidManifest },
+        .{ .json =
+        \\{"name":"a","version":"1.0.0","dependencies":["x"]}
+        , .err = error.InvalidManifest },
+        .{ .json =
+        \\{"name":"a","version":"1.0.0","dependencies":{"x":1}}
+        , .err = error.InvalidManifest },
+        .{ .json =
+        \\{"name":"a","version":"1.0.0","dependencies":{"ok":"github.com/a/b","../evil":"github.com/a/b"}}
+        , .err = error.InvalidAlias },
+    };
+    for (cases) |c| {
+        var mem_vfs = MemoryVfs.init(testing.allocator);
+        defer mem_vfs.deinit();
+        try mem_vfs.vfs().writeFile("kupcad.json", c.json);
+        testing.expectError(c.err, Manifest.load(testing.allocator, mem_vfs.vfs())) catch |err| {
+            std.debug.print("manifest: {s}\n", .{c.json});
+            return err;
+        };
+    }
+}

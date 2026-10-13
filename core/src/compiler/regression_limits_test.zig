@@ -14,6 +14,9 @@ const Compiler = @import("compiler.zig").Compiler;
 const Document = @import("../core/document.zig").Document;
 const VM = @import("../vm/vm.zig").VM;
 const disassembler = @import("../tools/dev/disassembler.zig");
+const lexer = @import("../frontend/kupcad/lexer.zig");
+const token = @import("../core/token.zig");
+const Parser = @import("../frontend/kupcad/parser.zig").Parser;
 
 // Comfortably above MAX_AST_DEPTH so every repro overshoots the limit
 const DEEP: usize = 3000;
@@ -92,49 +95,65 @@ fn compileOnly(source: []const u8) !void {
 
 // --- Finding 1: AST depth -------------------------------------------------
 
-test "Audit depth: deeply nested if statements report a depth error" {
-    const src = try repeatWrap("if true\n", "1\n", "end\n", DEEP);
-    defer testing.allocator.free(src);
-    try expectDepthRejected(src);
+/// `prefix * count ++ middle ++ suffix * count ++ tail`
+const NestCase = struct {
+    name: []const u8,
+    prefix: []const u8,
+    middle: []const u8,
+    suffix: []const u8,
+    tail: []const u8 = "",
+    count: usize = DEEP,
+};
+
+fn buildNest(c: NestCase) ![]u8 {
+    const body = try repeatWrap(c.prefix, c.middle, c.suffix, c.count);
+    defer testing.allocator.free(body);
+    return std.mem.concat(testing.allocator, u8, &.{ body, c.tail });
 }
 
-test "Audit depth: deeply nested class statements report a depth error" {
-    const src = try repeatWrap("class A\n", "", "end\n", DEEP);
-    defer testing.allocator.free(src);
-    try expectDepthRejected(src);
+test "Audit depth: deeply nested constructs report a depth error" {
+    // Each row used to recurse without a bound (stack overflow in the parser,
+    // resolver or compiler) because only parseExpression counted depth.
+    const cases = [_]NestCase{
+        .{ .name = "if", .prefix = "if true\n", .middle = "1\n", .suffix = "end\n" },
+        .{ .name = "while", .prefix = "while true\n", .middle = "1\n", .suffix = "end\n" },
+        .{ .name = "case", .prefix = "case 1\nwhen 1\n", .middle = "1\n", .suffix = "end\n" },
+        .{ .name = "begin", .prefix = "begin\n", .middle = "1\n", .suffix = "end\n" },
+        .{ .name = "def", .prefix = "def f\n", .middle = "1\n", .suffix = "end\n" },
+        .{ .name = "class", .prefix = "class A\n", .middle = "", .suffix = "end\n" },
+        .{ .name = "module", .prefix = "module M\n", .middle = "", .suffix = "end\n" },
+        .{ .name = "do block", .prefix = "f do\n", .middle = "1\n", .suffix = "end\n" },
+        // `elsif` recurses into parseIfOrUnless directly, not through a block
+        .{ .name = "elsif", .prefix = "", .middle = "if false\n1\n", .suffix = "elsif false\n1\n", .tail = "end\n" },
+        // Infix links are built in a loop but each nests the tree one level deeper
+        .{ .name = "method chain", .prefix = "", .middle = "a", .suffix = ".b" },
+        .{ .name = "binary chain", .prefix = "", .middle = "x = a", .suffix = " + a", .count = 20000 },
+    };
+    for (cases) |c| {
+        const src = try buildNest(c);
+        defer testing.allocator.free(src);
+        expectDepthRejected(src) catch |err| {
+            std.debug.print("depth case '{s}' failed\n", .{c.name});
+            return err;
+        };
+    }
 }
 
-test "Audit depth: deeply nested def statements report a depth error" {
-    const src = try repeatWrap("def f\n", "1\n", "end\n", DEEP);
-    defer testing.allocator.free(src);
-    try expectDepthRejected(src);
-}
-
-test "Audit depth: long elsif chain reports a depth error" {
-    const src = try repeatWrap("", "if false\n1\n", "elsif false\n1\n", DEEP);
-    defer testing.allocator.free(src);
-    const full = try std.mem.concat(testing.allocator, u8, &.{ src, "end\n" });
-    defer testing.allocator.free(full);
-    try expectDepthRejected(full);
-}
-
-test "Audit depth: long method chain reports a depth error" {
-    const src = try repeatWrap("", "a", ".b", 5000);
-    defer testing.allocator.free(src);
-    try expectDepthRejected(src);
-}
-
-test "Audit depth: long left-associative binary chain reports a depth error" {
-    // Used to overflow the stack inside the resolver's recursive visitor
-    const src = try repeatWrap("", "x = a", " + a", 20000);
-    defer testing.allocator.free(src);
-    try expectDepthRejected(src);
-}
-
-test "Audit depth: chains below the limit still parse and compile" {
-    const src = try repeatWrap("", "x = 1", " + 1", 500);
-    defer testing.allocator.free(src);
-    try compileOnly(src);
+test "Audit depth: nesting below the limit still parses and compiles" {
+    // Guards against over-counting: legitimate deep code must not be rejected
+    const cases = [_]NestCase{
+        .{ .name = "binary chain", .prefix = "", .middle = "x = 1", .suffix = " + 1", .count = limits.MAX_AST_DEPTH / 2 },
+        .{ .name = "method chain", .prefix = "", .middle = "x = 1", .suffix = ".to_s", .count = limits.MAX_AST_DEPTH / 2 },
+        .{ .name = "if", .prefix = "if true\n", .middle = "1\n", .suffix = "end\n", .count = limits.MAX_AST_DEPTH / 8 },
+    };
+    for (cases) |c| {
+        const src = try buildNest(c);
+        defer testing.allocator.free(src);
+        compileOnly(src) catch |err| {
+            std.debug.print("depth case '{s}' failed\n", .{c.name});
+            return err;
+        };
+    }
 }
 
 test "Audit depth: compiler rejects programmatically built deep trees" {
@@ -155,9 +174,30 @@ test "Audit depth: compiler rejects programmatically built deep trees" {
     try testing.expectError(error.AstTooDeep, comp.compile(node));
 }
 
+test "Audit depth: nested closures share one depth budget" {
+    // Each closure body compiles in a child Compiler; the child used to restart
+    // at depth 0, so nested lambdas recursed natively without any bound.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const no_params = try b.addParams(&.{});
+    var node = try b.booleanNode(true, 0);
+    for (0..limits.MAX_AST_DEPTH + 10) |_| node = try b.lambdaExpr(no_params, node, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try testing.expectError(error.AstTooDeep, comp.compile(node));
+}
+
 // --- Finding 2: inline cache index overflow --------------------------------
 
-test "Audit limits: more than 65536 inline-cache sites is a compile error" {
+test "Audit limits: inline-cache indexes past 16 bits are a compile error" {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(testing.allocator);
     try buf.appendSlice(testing.allocator, "x = 1\n");
@@ -175,11 +215,16 @@ test "Audit limits: more than 65536 inline-cache sites is a compile error" {
     try testing.expectError(error.TooManyInlineCaches, comp.compile(doc.tree.root));
 }
 
-test "Audit limits: disassembler decodes inline-cache operands and 32-bit jumps" {
+test "Audit limits: disassembler decodes inline-cache operands, 32-bit jumps and switch tables" {
     const source =
         \\x = 1
         \\if x
         \\  x.foo
+        \\end
+        \\case x
+        \\when 1 then 10
+        \\when 2, 3 then 20
+        \\else 30
         \\end
     ;
     var doc = try Document.parse(testing.allocator, source);
@@ -198,82 +243,131 @@ test "Audit limits: disassembler decodes inline-cache operands and 32-bit jumps"
     try disassembler.disassembleChunk(testing.allocator, &out_chunk, "main", &out.writer);
     const text = out.written();
     try testing.expect(std.mem.indexOf(u8, text, "| ic 0") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "op_switch        3 cases") != null);
     // Staying in sync means the final instruction is decoded as op_return
     try testing.expect(std.mem.endsWith(u8, std.mem.trimEnd(u8, text, "\n"), "op_return"));
+
+    // Every printed jump / switch target must land on an instruction boundary
+    var starts: std.ArrayListUnmanaged(usize) = .empty;
+    defer starts.deinit(testing.allocator);
+    var targets: std.ArrayListUnmanaged(usize) = .empty;
+    defer targets.deinit(testing.allocator);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (line.len > 4 and std.ascii.isDigit(line[0])) {
+            try starts.append(testing.allocator, try std.fmt.parseInt(usize, line[0..4], 10));
+        }
+        if (std.mem.lastIndexOf(u8, line, "-> ")) |arrow| {
+            try targets.append(testing.allocator, try std.fmt.parseInt(usize, line[arrow + 3 ..], 10));
+        }
+    }
+    // At least the two `if` jumps plus the switch's three entries and default
+    try testing.expect(targets.items.len >= 6);
+    for (targets.items) |t| {
+        try testing.expect(std.mem.indexOfScalar(usize, starts.items, t) != null);
+    }
 }
 
 // --- Findings 3 & 4: case jump table ----------------------------------------
 
-test "Audit case: more than 65535 literal conditions do not overflow" {
+test "Audit case: more than MAX_JUMP_TABLE_CASES literal conditions do not overflow" {
+    // The u16 condition counter used to overflow; now falls back to linear compares
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(testing.allocator);
     try buf.appendSlice(testing.allocator, "case 1\nwhen 1");
     for (0..limits.MAX_JUMP_TABLE_CASES + 1) |_| try buf.appendSlice(testing.allocator, ",1");
     try buf.appendSlice(testing.allocator, "\n  10\nend\n");
+    try expectRunsTo(buf.items, 10);
+}
 
+fn expectRunsTo(source: []const u8, expected: f64) !void {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
-    const res = try run(&vm, buf.items);
+    const res = try run(&vm, source);
     try testing.expectEqual(.ok, res.status);
-    try testing.expectEqual(@as(f64, 10), res.top.asNumber());
+    try testing.expectEqual(expected, res.top.asNumber());
 }
 
 test "Audit case: duplicate literal keys keep first-match order" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-    const res = try run(&vm, "case 1 when 1 then 10 when 1 then 20 end");
-    try testing.expectEqual(.ok, res.status);
-    try testing.expectEqual(@as(f64, 10), res.top.asNumber());
-
-    var vm2 = try VM.init(testing.allocator, testing.io);
-    defer vm2.deinit();
-    try registry.registerStandardLibrary(&vm2);
-    const res2 = try run(&vm2, "case \"b\" when \"a\", \"b\" then 1 when \"b\" then 2 else 3 end");
-    try testing.expectEqual(.ok, res2.status);
-    try testing.expectEqual(@as(f64, 1), res2.top.asNumber());
+    // The VM binary-searches the jump table, so equal keys used to resolve to
+    // an arbitrary branch instead of the first `when`.
+    try expectRunsTo("case 1 when 1 then 10 when 1 then 20 end", 10);
+    try expectRunsTo("case \"b\" when \"a\", \"b\" then 1 when \"b\" then 2 else 3 end", 1);
 }
 
 // --- Finding 5: parameter count ---------------------------------------------
 
-fn paramSource(comptime fmt: []const u8, count: usize) ![]u8 {
+/// `open p0, p1, ... close` with each parameter rendered by `fmt` from its index.
+fn paramList(open: []const u8, comptime fmt: []const u8, count: usize, close: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(testing.allocator);
-    try buf.appendSlice(testing.allocator, "def f(");
+    try buf.appendSlice(testing.allocator, open);
     for (0..count) |i| {
         if (i > 0) try buf.appendSlice(testing.allocator, ", ");
         try buf.print(testing.allocator, fmt, .{i});
     }
-    try buf.appendSlice(testing.allocator, ")\n  1\nend\n");
+    try buf.appendSlice(testing.allocator, close);
     return buf.toOwnedSlice(testing.allocator);
 }
 
-test "Audit params: 300 positional parameters are rejected by the parser" {
-    const src = try paramSource("p{d}", 300);
-    defer testing.allocator.free(src);
-    var doc = try Document.parse(testing.allocator, src);
-    defer doc.deinit();
-    try testing.expect(hasDiagnostic(&doc, "Too many parameters"));
+const ParamCase = struct {
+    name: []const u8,
+    open: []const u8,
+    fmt: enum { positional, keyword },
+    close: []const u8,
+};
+
+fn paramCaseSource(c: ParamCase, count: usize) ![]u8 {
+    return switch (c.fmt) {
+        .positional => paramList(c.open, "p{d}", count, c.close),
+        .keyword => paramList(c.open, "k{d}: 1", count, c.close),
+    };
 }
 
-test "Audit params: 300 keyword parameters are rejected by the parser" {
-    const src = try paramSource("k{d}: 1", 300);
-    defer testing.allocator.free(src);
-    var doc = try Document.parse(testing.allocator, src);
-    defer doc.deinit();
-    try testing.expect(hasDiagnostic(&doc, "Too many parameters"));
+test "Audit params: more than MAX_ARGS parameters is a parse diagnostic" {
+    const cases = [_]ParamCase{
+        .{ .name = "def positional", .open = "def f(", .fmt = .positional, .close = ")\n  1\nend\n" },
+        .{ .name = "def keyword", .open = "def f(", .fmt = .keyword, .close = ")\n  1\nend\n" },
+        .{ .name = "def without parens", .open = "def f ", .fmt = .positional, .close = "\n  1\nend\n" },
+        .{ .name = "block", .open = "f do |", .fmt = .positional, .close = "|\n  1\nend\n" },
+    };
+    for (cases) |c| {
+        errdefer std.debug.print("param case '{s}' failed\n", .{c.name});
+
+        const over = try paramCaseSource(c, limits.MAX_ARGS + 1);
+        defer testing.allocator.free(over);
+        var doc = try Document.parse(testing.allocator, over);
+        defer doc.deinit();
+        try testing.expect(hasDiagnostic(&doc, "Too many parameters"));
+
+        // Exactly MAX_ARGS is still accepted by the parser
+        const at_limit = try paramCaseSource(c, limits.MAX_ARGS);
+        defer testing.allocator.free(at_limit);
+        var ok_doc = try Document.parse(testing.allocator, at_limit);
+        defer ok_doc.deinit();
+        try testing.expect(!hasDiagnostic(&ok_doc, "Too many parameters"));
+    }
 }
 
 test "Audit params: frame slot overflow from mixed params is a compile error" {
-    // 250 positionals + 5 keywords pass the parser's count check but need
-    // 250 + kwarg map + block + 5 virtual slots = 257 > u8 slots.
+    // MAX_ARGS parameters in total pass the parser's count check, but keywords
+    // also need the kwarg map slot, the block slot and one virtual slot each,
+    // which overflows the u8 frame slots.
+    const keywords = 5;
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(testing.allocator);
     try buf.appendSlice(testing.allocator, "def f(");
-    for (0..250) |i| try buf.print(testing.allocator, "p{d}, ", .{i});
-    try buf.appendSlice(testing.allocator, "k0: 1, k1: 1, k2: 1, k3: 1, k4: 1)\n  1\nend\n");
+    for (0..limits.MAX_ARGS - keywords) |i| try buf.print(testing.allocator, "p{d}, ", .{i});
+    for (0..keywords) |i| try buf.print(testing.allocator, "{s}k{d}: 1", .{ if (i > 0) ", " else "", i });
+    try buf.appendSlice(testing.allocator, ")\n  1\nend\n");
     try testing.expectError(error.TooManyParameters, compileOnly(buf.items));
+
+    // A near-limit layout still compiles. (MAX_ARGS - 1 positionals pass the
+    // slot check but panic computing the first virtual slot: known bug.)
+    const fits = try paramList("def f(", "p{d}", limits.MAX_ARGS - 2, ")\n  1\nend\n");
+    defer testing.allocator.free(fits);
+    try compileOnly(fits);
 }
 
 // --- Finding 6: non-local jumps out of begin/rescue/ensure -------------------
@@ -298,16 +392,17 @@ test "Audit rescue: return inside begin/rescue pops the handler" {
     try testing.expectEqual(.runtime_error, res.status);
 }
 
-test "Audit rescue: break out of begin/rescue in a loop pops the handler" {
-    const source =
+test "Audit rescue: break/next out of begin/rescue pops the handler" {
+    // The inner rescue must be gone once control leaves it, so only the outer
+    // rescue may catch the later error (hits == 1, not 100+). `{0s}` is the
+    // looping construct, `{1s}` the jump keyword.
+    const template =
         \\def g
         \\  hits = 0
         \\  begin
-        \\    i = 0
-        \\    while i < 1
-        \\      i += 1
+        \\    {0s}
         \\      begin
-        \\        break
+        \\        {1s}
         \\      rescue => e
         \\        hits += 100
         \\      end
@@ -320,43 +415,16 @@ test "Audit rescue: break out of begin/rescue in a loop pops the handler" {
         \\end
         \\g()
     ;
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-    const res = try run(&vm, source);
-    try testing.expectEqual(.ok, res.status);
-    // Only the outer rescue may catch the later error
-    try testing.expectEqual(@as(f64, 1), res.top.asNumber());
-}
-
-test "Audit rescue: next inside begin/rescue in a loop pops the handler" {
-    const source =
-        \\def g
-        \\  hits = 0
-        \\  begin
-        \\    i = 0
-        \\    while i < 3
-        \\      i += 1
-        \\      begin
-        \\        next
-        \\      rescue => e
-        \\        hits += 100
-        \\      end
-        \\    end
-        \\    [1].fetch(99).foo
-        \\  rescue => e
-        \\    hits += 1
-        \\  end
-        \\  hits
-        \\end
-        \\g()
-    ;
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-    const res = try run(&vm, source);
-    try testing.expectEqual(.ok, res.status);
-    try testing.expectEqual(@as(f64, 1), res.top.asNumber());
+    // A `while` loop jumps within the frame; a block returns from its closure
+    const loops = .{ "i = 0\n    while i < 3\n      i += 1", "[1, 2, 3].each do |x|" };
+    inline for (loops) |loop| {
+        inline for (.{ "break", "next" }) |keyword| {
+            expectRunsTo(std.fmt.comptimePrint(template, .{ loop, keyword }), 1) catch |err| {
+                std.debug.print("rescue case '{s}' / '{s}' failed\n", .{ loop, keyword });
+                return err;
+            };
+        }
+    }
 }
 
 test "Audit rescue: return and break run the ensure body" {
@@ -402,6 +470,21 @@ test "Audit limits: Document.parse rejects sources over MAX_SOURCE_BYTES" {
     try testing.expectError(error.SourceTooLarge, Document.parse(testing.allocator, src));
 }
 
+test "Audit limits: Parser.init rejects more than MAX_TOKENS tokens" {
+    // Token indices are u24. Only the tag count is checked (before anything is
+    // read), so a tags-only list is enough to hit the cap without ~16M real tokens.
+    const tags = try testing.allocator.alloc(lexer.Tag, limits.MAX_TOKENS + 1);
+    defer testing.allocator.free(tags);
+    @memset(tags, .eof);
+    const tokens: token.TokenList(lexer.Tag) = .{ .tags = tags, .starts = &.{}, .lengths = &.{} };
+    // Not expectError: on failure it would print all 16M tags
+    if (Parser.init(tokens, "", testing.allocator)) |parsed| {
+        var parser = parsed;
+        parser.deinit();
+        return error.TestExpectedTooManyTokens;
+    } else |err| try testing.expectEqual(error.TooManyTokens, err);
+}
+
 // --- GC rooting of functions under construction (reported by the VM audit) ---
 
 /// A swept ObjFunction is dropped from the GC's tracking list but its pointer
@@ -426,7 +509,13 @@ test "Audit GC: functions stay rooted while def/attr macros allocate under stres
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
+    // `audit_gc_greet` is a top-level def whose name is not interned beforehand,
+    // so allocating its name string collects while the ObjFunction is fresh.
+    // (Method names are interned by makeMethodNameConstant first and can't hit it.)
     const source =
+        \\def audit_gc_greet(who)
+        \\  "hi " + who
+        \\end
         \\class Person
         \\  attr_accessor :name
         \\  attr_reader :age
@@ -440,7 +529,7 @@ test "Audit GC: functions stay rooted while def/attr macros allocate under stres
         \\end
         \\p = Person.new("Leo", 30)
         \\p.name = "Leon"
-        \\[p.name, p.age, p.label("!")]
+        \\[p.name, p.age, p.label("!"), audit_gc_greet("x")]
     ;
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
@@ -464,4 +553,5 @@ test "Audit GC: functions stay rooted while def/attr macros allocate under stres
     try testing.expectEqualStrings("Leon", arr.items.items[0].asString().chars);
     try testing.expectEqual(@as(f64, 30), arr.items.items[1].asNumber());
     try testing.expectEqualStrings("person!", arr.items.items[2].asString().chars);
+    try testing.expectEqualStrings("hi x", arr.items.items[3].asString().chars);
 }

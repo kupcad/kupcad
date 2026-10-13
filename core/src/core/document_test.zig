@@ -18,8 +18,9 @@ test "Document: parse successfully resolves semantics and parents" {
     try testing.expectEqualStrings("# A comment", doc.comments[0].lexeme);
 
     // Verify semantic side-tables were fully populated!
-    try testing.expect(doc.symbols.len > 0);
-    try testing.expect(doc.parents.len > 0);
+    // One entry per AST node
+    try testing.expectEqual(doc.tree.nodes.items.len, doc.symbols.len);
+    try testing.expectEqual(doc.tree.nodes.items.len, doc.parents.len);
     try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
 }
 

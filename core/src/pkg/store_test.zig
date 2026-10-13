@@ -14,49 +14,66 @@ test "Store: initializes and runs SQLite migrations in-memory" {
     try testing.expectEqual(@as(i32, 3), row.?.user_version); // Expect V3 (composite packages key)
 }
 
-test "Store: registers package and maps associated file hashes" {
-    var store = try Store.init(testing.io, ":memory:");
-    defer store.deinit();
-
-    var files = std.StringHashMap([]const u8).init(testing.allocator);
-    defer files.deinit();
-    try files.put("math.kup", "aabbccddeeff");
-
-    try store.registerPackage("test-pkg", "commit123", "github", "sha256-mockhash", &files);
-
-    const pkg_stmt = try store.db.prepare("SELECT provider, integrity, created_at FROM packages WHERE id = 'test-pkg'");
-    defer pkg_stmt.deinit();
-    const pkg_row = try pkg_stmt.one(struct { provider: []const u8, integrity: []const u8, created_at: i64 }, .{}, .{});
-
-    try testing.expect(pkg_row != null);
-    try testing.expectEqualStrings("github", pkg_row.?.provider);
-    try testing.expectEqualStrings("sha256-mockhash", pkg_row.?.integrity);
-
-    const file_stmt = try store.db.prepare("SELECT file_hash FROM package_files WHERE file_path = 'math.kup'");
-    defer file_stmt.deinit();
-    const file_row = try file_stmt.one(struct { file_hash: []const u8 }, .{}, .{});
-
-    try testing.expect(file_row != null);
-    try testing.expectEqualStrings("aabbccddeeff", file_row.?.file_hash);
+fn freeMap(map: *std.StringHashMap([]const u8)) void {
+    Store.freeFileMap(testing.allocator, map);
 }
 
-test "Store: registerPackage is idempotent and safely ignores duplicates" {
+test "Store: registerPackage records metadata and file hashes for lookup" {
     var store = try Store.init(testing.io, ":memory:");
     defer store.deinit();
 
+    try testing.expect(!try store.hasPackage("github.com-kupcad-std", "commit-abc"));
+    try testing.expect((try store.getPackageFiles(testing.allocator, "github.com-kupcad-std", "commit-abc")) == null);
+
     var files = std.StringHashMap([]const u8).init(testing.allocator);
     defer files.deinit();
-    try files.put("main.kup", "hash123");
+    try files.put("lib/main.kup", "hash_main_123");
+    try files.put("kupcad.json", "hash_json_456");
+    try store.registerPackage("github.com-kupcad-std", "commit-abc", "github", "sha256-mockhash", &files);
 
-    try store.registerPackage("pkg-a", "commit-a", "git", "sha256-mock", &files);
-    try store.registerPackage("pkg-a", "commit-a", "git", "sha256-mock", &files);
+    try testing.expect(try store.hasPackage("github.com-kupcad-std", "commit-abc"));
+    try testing.expect(!try store.hasPackage("github.com-kupcad-std", "commit-other"));
 
-    const stmt = try store.db.prepare("SELECT COUNT(*) as count FROM packages WHERE id = 'pkg-a'");
+    const pkg_stmt = try store.db.prepare("SELECT provider, integrity FROM packages WHERE id = 'github.com-kupcad-std'");
+    defer pkg_stmt.deinit();
+    const pkg_row = (try pkg_stmt.one(struct { provider: []const u8, integrity: []const u8 }, .{}, .{})) orelse return error.MissingRow;
+    try testing.expectEqualStrings("github", pkg_row.provider);
+    try testing.expectEqualStrings("sha256-mockhash", pkg_row.integrity);
+
+    var cached = (try store.getPackageFiles(testing.allocator, "github.com-kupcad-std", "commit-abc")).?;
+    defer freeMap(&cached);
+    try testing.expectEqual(@as(usize, 2), cached.count());
+    try testing.expectEqualStrings("hash_main_123", cached.get("lib/main.kup").?);
+    try testing.expectEqualStrings("hash_json_456", cached.get("kupcad.json").?);
+}
+
+// Audit fix: re-registering used INSERT OR IGNORE (stale integrity kept) and
+// merged file mappings instead of replacing them with the verified content.
+test "Store: re-registering a commit refreshes metadata and replaces the file mapping" {
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+
+    var old_files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer old_files.deinit();
+    try old_files.put("main.kup", "hash-old");
+    try old_files.put("removed.kup", "hash-removed");
+    try store.registerPackage("pkg-a", "commit-a", "git", "sha256-old", &old_files);
+
+    var new_files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer new_files.deinit();
+    try new_files.put("main.kup", "hash-new");
+    try store.registerPackage("pkg-a", "commit-a", "git", "sha256-new", &new_files);
+
+    const stmt = try store.db.prepare("SELECT COUNT(*) AS count, MAX(integrity) AS integrity FROM packages WHERE id = 'pkg-a'");
     defer stmt.deinit();
+    const row = (try stmt.one(struct { count: i64, integrity: []const u8 }, .{}, .{})) orelse return error.MissingRow;
+    try testing.expectEqual(@as(i64, 1), row.count);
+    try testing.expectEqualStrings("sha256-new", row.integrity);
 
-    const row = try stmt.one(struct { count: i32 }, .{}, .{});
-    try testing.expect(row != null);
-    try testing.expectEqual(@as(i32, 1), row.?.count);
+    var cached = (try store.getPackageFiles(testing.allocator, "pkg-a", "commit-a")).?;
+    defer freeMap(&cached);
+    try testing.expectEqual(@as(usize, 1), cached.count());
+    try testing.expectEqualStrings("hash-new", cached.get("main.kup").?);
 }
 
 test "Store: gracefully handles packages with zero files" {
@@ -133,7 +150,9 @@ test "Store: computeIntegrity handles empty packages" {
     try testing.expectEqualStrings("sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", hash);
 }
 
-test "Store: statement tuple bindings correctly filter query results" {
+// Audit fix: the v1 schema keyed `packages` by id, silently dropping every
+// commit of a package after the first.
+test "Store: keeps several commits of one package with separate file maps" {
     var store = try Store.init(testing.io, ":memory:");
     defer store.deinit();
 
@@ -145,24 +164,14 @@ test "Store: statement tuple bindings correctly filter query results" {
     defer files_b.deinit();
     try files_b.put("utils.kup", "hashB");
 
-    // Register two different commits for the same package
     try store.registerPackage("pkg-test", "commit1", "git", "sha256-1", &files_a);
     try store.registerPackage("pkg-test", "commit2", "git", "sha256-2", &files_b);
 
-    const query =
-        \\SELECT file_path, file_hash FROM package_files
-        \\WHERE package_id = ? AND commit_sha = ?
-    ;
-    var stmt = try store.db.prepare(query);
-    defer stmt.deinit();
+    try testing.expect(try store.hasPackage("pkg-test", "commit1"));
+    try testing.expect(try store.hasPackage("pkg-test", "commit2"));
 
-    // Query specifically for commit2
-    var rows = try stmt.iterator(struct { file_path: []const u8, file_hash: []const u8 }, .{ "pkg-test", "commit2" });
-
-    const row = (try rows.next()) orelse return error.MissingRow;
-    try testing.expectEqualStrings("utils.kup", row.file_path);
-    try testing.expectEqualStrings("hashB", row.file_hash);
-
-    // Ensure it strictly bound the arguments and didn't bleed into commit1
-    try testing.expect((try rows.next()) == null);
+    var cached = (try store.getPackageFiles(testing.allocator, "pkg-test", "commit2")).?;
+    defer freeMap(&cached);
+    try testing.expectEqual(@as(usize, 1), cached.count());
+    try testing.expectEqualStrings("hashB", cached.get("utils.kup").?);
 }

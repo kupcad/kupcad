@@ -2,6 +2,10 @@
 //!
 //! Stdlib input validation: user-supplied numbers must be rejected with a clean
 //! runtime error before they reach @intFromFloat (UB in ReleaseFast) or a kernel.
+//!
+//! The scripts below only build DAG nodes (geometry is evaluated lazily), so a
+//! runtime error can only come from argument validation, not from a kernel.
+//! `1e400` is +inf and `1e400 - 1e400` is NaN (the VM traps `0.0 / 0.0` itself).
 
 const std = @import("std");
 const testing = std.testing;
@@ -14,93 +18,157 @@ const registry = @import("registry.zig");
 const limits = @import("../core/limits.zig");
 const stl_format = @import("../formats/stl.zig");
 const stl_import = @import("../exporters/3d/stl.zig");
-const topo_arena = @import("../locus/src/topology/arena.zig");
-const geom_arena = @import("../locus/src/geometry/arena.zig");
-const generators = @import("../locus/src/operations/generators.zig");
 
-/// Compiles and runs `source`, returning the interpreter result. Errors are
-/// muted because the test runner treats logged errors as failures.
-fn runScript(source: []const u8) !InterpretResult {
+const print = std.fmt.comptimePrint;
+const MAX_SEGS = limits.MAX_SEGMENTS;
+const MAX_COUNT = limits.MAX_PATTERN_COUNT;
+
+fn initVm() !VM {
     var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
+    errdefer vm.deinit();
+    // Errors are muted because the test runner treats logged errors as failures.
     vm.mute_errors = true;
     try registry.registerStandardLibrary(&vm);
+    return vm;
+}
 
+fn runOn(vm: *VM, source: []const u8) !InterpretResult {
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     return vm.interpret(&out_chunk);
 }
 
-fn expectRuntimeError(source: []const u8) !void {
-    try testing.expectEqual(InterpretResult.runtime_error, try runScript(source));
+fn runScript(source: []const u8) !InterpretResult {
+    var vm = try initVm();
+    defer vm.deinit();
+    return runOn(&vm, source);
 }
 
-test "Regression validation: i32 kwargs reject huge and NaN values" {
-    try expectRuntimeError("cylinder(r: 1, h: 1, segments: 1e12)");
-    try expectRuntimeError("cylinder(r: 1, h: 1, segments: 1e400 - 1e400)");
-    try expectRuntimeError("square(10).extrude(5, slices: -1e12)");
-    try expectRuntimeError("square(10).helix(slices: 1e400 - 1e400)");
+/// Runs each script on a fresh VM and expects `expected`; names the offending script on failure.
+fn expectAll(expected: InterpretResult, sources: []const []const u8) !void {
+    for (sources) |src| {
+        errdefer std.debug.print("script: {s}\n", .{src});
+        try testing.expectEqual(expected, try runScript(src));
+    }
 }
 
-test "Regression validation: segment counts are capped by MAX_SEGMENTS" {
-    try expectRuntimeError("cylinder(r: 1, h: 1, segments: 2e9)");
-    try expectRuntimeError("circle(r: 1, segments: 1e6)");
-    try expectRuntimeError("torus(10, 2, segments: 100000)");
-    try expectRuntimeError("regular_polygon(1e6, 5)");
-    try expectRuntimeError("regular_polygon(sides: 1e400 - 1e400)");
-    try expectRuntimeError("square(10).extrude(5, slices: 100000)");
-    // Sane values still work.
-    try testing.expectEqual(InterpretResult.ok, try runScript("cylinder(r: 1, h: 1, segments: 32)"));
+test "Regression validation: integer kwargs reject NaN, inf and out-of-i32 values" {
+    try expectAll(.runtime_error, &.{
+        "cylinder(r: 1, h: 1, segments: 1e12)",
+        "cylinder(r: 1, h: 1, segments: 1e400)",
+        "cylinder(r: 1, h: 1, segments: 1e400 - 1e400)",
+        "square(10).extrude(5, slices: -1e12)",
+        "square(10).helix(slices: 1e400 - 1e400)",
+        "regular_polygon(sides: 1e12, r: 5)",
+        "regular_polygon(1e400, 5)",
+    });
+}
+
+test "Regression validation: tessellation counts are capped at MAX_SEGMENTS" {
+    try expectAll(.runtime_error, &.{
+        print("cylinder(r: 1, h: 1, segments: {d})", .{MAX_SEGS + 1}),
+        print("circle(r: 1, segments: {d})", .{MAX_SEGS + 1}),
+        print("torus(10, 2, segments: {d})", .{MAX_SEGS + 1}),
+        print("regular_polygon({d}, 5)", .{MAX_SEGS + 1}),
+        print("regular_polygon(sides: {d})", .{MAX_SEGS + 1}),
+        print("square(10).extrude(5, slices: {d})", .{MAX_SEGS + 1}),
+        print("square(10).helix(slices: {d})", .{MAX_SEGS + 1}),
+    });
+    try expectAll(.ok, &.{
+        print("cylinder(r: 1, h: 1, segments: {d})", .{MAX_SEGS}),
+        print("regular_polygon({d}, 5)", .{MAX_SEGS}),
+        print("square(10).extrude(5, slices: {d})", .{MAX_SEGS}),
+    });
+}
+
+test "Regression validation: auto-computed segment counts are clamped to MAX_SEGMENTS" {
+    var vm = try initVm();
+    defer vm.deinit();
+
+    // min_angle_deg 0.1 asks getSegments() for 3600 segments on a large circle.
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm,
+        \\CAD.config(manifold: { min_angle_deg: 0.1, min_segment_len: 0.01 })
+        \\c = circle(r: 1000)
+    ));
+    const c = vm.globals.get("c") orelse return error.MissingGlobal;
+    const node = vm.dag_builder.nodes.items[c.asCrossSection().dag_idx];
+    try testing.expectEqual(MAX_SEGS, vm.dag_builder.getCirclePayload(node).segments);
 }
 
 test "Regression validation: CAD.config fixed_segments is clamped instead of UB" {
-    try testing.expectEqual(InterpretResult.ok, try runScript(
-        \\CAD.config(manifold: { fixed_segments: 1e12 })
-        \\CAD.config(manifold: { fixed_segments: 1e400 - 1e400 })
-    ));
+    var vm = try initVm();
+    defer vm.deinit();
+    const Case = struct { src: []const u8, expected: u32 };
+    const cases = [_]Case{
+        .{ .src = "CAD.config(manifold: { fixed_segments: 1e12 })", .expected = @intCast(MAX_SEGS) },
+        .{ .src = "CAD.config(manifold: { fixed_segments: 1e400 })", .expected = @intCast(MAX_SEGS) },
+        .{ .src = "CAD.config(manifold: { fixed_segments: 1e400 - 1e400 })", .expected = 0 },
+        .{ .src = "CAD.config(manifold: { fixed_segments: -5 })", .expected = 0 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        const config = vm.config_stack.items[vm.config_stack.items.len - 1];
+        try testing.expectEqual(case.expected, config.manifold.fixed_segments);
+    }
 }
 
-test "Regression validation: positive/non-negative checks reject NaN and inf" {
-    try expectRuntimeError("cube(1e400 - 1e400)");
-    try expectRuntimeError("sphere(1e400)");
-    try expectRuntimeError("cylinder(r: Math.sqrt(-1), h: 1)");
+test "Regression validation: dimensions and sweep parameters reject NaN and inf" {
+    try expectAll(.runtime_error, &.{
+        "cube(1e400 - 1e400)",
+        "sphere(1e400)",
+        "cylinder(r: Math.sqrt(-1), h: 1)",
+        "square(10).extrude(1e400 - 1e400)",
+        "square(10).extrude(5, twist: 1e400)",
+        "square(10).extrude(5, scale: 1e400 - 1e400)",
+        "square(10).helix(1e400)",
+        "square(10).helix(5, 1e400 - 1e400)",
+        "square(10).translate(x: 20).revolve(1e400 - 1e400)",
+        "square(10).loft(circle(r: 5), 1e400)",
+    });
 }
 
 test "Regression validation: text tolerance cannot be vanishingly small" {
-    try expectRuntimeError("text(\"A\", tolerance: 1e-300)");
+    try expectAll(.runtime_error, &.{
+        // Degenerate: its square underflows to 0 in the Bezier flattening test.
+        "text(\"A\", tolerance: 1e-300)",
+        // The minimum is relative to the glyph size (0.05 is fine at the default size).
+        "text(\"A\", size: 1000, tolerance: 0.05)",
+    });
 }
 
-test "Regression validation: polyhedron face indices are bounds-checked" {
-    try expectRuntimeError("polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[-1,2,3]])");
-    try expectRuntimeError("polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[99,2,3]])");
-    try expectRuntimeError("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,-1]])");
+test "Regression validation: polyhedron and polygon path indices are bounds-checked" {
+    try expectAll(.runtime_error, &.{
+        "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[-1,2,3]])",
+        "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[4,2,3]])",
+        "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[1e400 - 1e400,2,3]])",
+        "polygon([[0,0],[1,0],[0,1]], paths: [[0,1,-1]])",
+        "polygon([[0,0],[1,0],[0,1]], paths: [[0,1,1.5]])",
+        // An error in a later path used to free the uninitialised contour slots.
+        "polygon([[0,0],[1,0],[0,1]], paths: [[0,1,2],[0,1,3]])",
+    });
 }
 
-test "Regression validation: repeat counts reject NaN and huge values" {
-    try expectRuntimeError("cube(1).repeat_linear(1e12, [2, 0, 0])");
-    try expectRuntimeError("cube(1).repeat_polar(1e400 - 1e400)");
-    // Negative counts keep their historical no-op meaning.
-    try testing.expectEqual(InterpretResult.ok, try runScript("cube(1).repeat_linear(-5, [2, 0, 0])"));
-}
-
-test "Regression validation: B-Rep buildPolyhedron rejects out-of-range face indices" {
-    const alloc = testing.allocator;
-    var t_arena = topo_arena.TopologyArena.init();
-    defer t_arena.deinit(alloc);
-    var g_arena = geom_arena.GeometryArena.init();
-    defer g_arena.deinit(alloc);
-
-    const pts = [_][3]f64{ .{ 0, 0, 0 }, .{ 10, 0, 0 }, .{ 0, 10, 0 }, .{ 0, 0, 10 } };
-    const faces = [_][3]u32{ .{ 0, 2, 1 }, .{ 0, 1, 3 }, .{ 1, 2, 3 }, .{ 99, 0, 3 } };
-    try testing.expectError(error.InvalidFaceIndex, generators.buildPolyhedron(alloc, &t_arena, &g_arena, &pts, &faces));
+test "Regression validation: repeat counts reject NaN and values above MAX_PATTERN_COUNT" {
+    try expectAll(.runtime_error, &.{
+        print("cube(1).repeat_linear({d}, [2, 0, 0])", .{MAX_COUNT + 1}),
+        "cube(1).repeat_linear(1e400, [2, 0, 0])",
+        print("cube(1).repeat_polar({d})", .{MAX_COUNT + 1}),
+        "cube(1).repeat_polar(1e400 - 1e400)",
+    });
+    // Negative counts are a no-op (they used to panic in @intFromFloat to usize).
+    try expectAll(.ok, &.{
+        "cube(1).repeat_linear(-5, [2, 0, 0])",
+        "cube(1).repeat_polar(-5)",
+    });
 }
 
 test "Regression validation: binary STL triangle count cannot wrap the length check" {

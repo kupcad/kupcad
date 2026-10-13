@@ -51,8 +51,8 @@ test "OpenSCAD Lexer: Block comments and booleans" {
         t(.keyword_false, "false"),                              t(.r_paren, ")"),
         t(.l_brace, "{"),                                        t(.ident, "cube"),
         t(.l_paren, "("),                                        t(.keyword_undef, "undef"),
-        t(.r_paren, ")"), t(.semicolon, ";"), // Added this back!
-        t(.r_brace, "}"), t(.eof, ""),
+        t(.r_paren, ")"),                                        t(.semicolon, ";"),
+        t(.r_brace, "}"),                                        t(.eof, ""),
     });
 }
 

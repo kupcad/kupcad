@@ -65,13 +65,5 @@ test "ProjectConfig: gracefully fails on malformed JSON" {
         \\}
     ;
 
-    const result = ProjectConfig.parse(testing.allocator, json_source);
-
-    // Assert that the parsing returns an error instead of crashing/panicking
-    if (result) |_| {
-        try testing.expect(false); // Force test failure if it accidentally succeeds
-    } else |_| {
-        // Validate that an error was safely caught and returned
-        try testing.expect(true);
-    }
+    try testing.expectError(error.SyntaxError, ProjectConfig.parse(testing.allocator, json_source));
 }

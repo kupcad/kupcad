@@ -8,7 +8,30 @@ const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 /// Process exit status for any failed build, so scripts and CI can detect errors.
 const EXIT_FAILURE: u8 = 1;
 
+pub const Outcome = enum { success, failure };
+
+/// Where `run` reports. By default it prints to the process streams; tests set `capture`.
+pub const Reporter = struct {
+    io: std.Io,
+    capture: ?*std.Io.Writer = null,
+
+    fn err(self: Reporter, comptime fmt: []const u8, args: anytype) void {
+        if (self.capture) |w| w.print(fmt, args) catch {} else log_helpers.printStderr(self.io, fmt, args);
+    }
+
+    fn out(self: Reporter, comptime fmt: []const u8, args: anytype) void {
+        if (self.capture) |w| w.print(fmt, args) catch {} else log_helpers.printStdout(self.io, fmt, args);
+    }
+};
+
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
+    if (try run(allocator, args_iter, .{ .io = init.io }) == .failure) std.process.exit(EXIT_FAILURE);
+}
+
+/// Runs `kupcad build` with the remaining CLI arguments (`args_iter` needs `next() ?[]const u8`).
+/// User-facing failures are reported and return `.failure`; unexpected errors propagate.
+pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter) !Outcome {
+    const io = reporter.io;
     var input_path: ?[]const u8 = null;
     var output_path: ?[]const u8 = null;
     var format: []const u8 = "glb";
@@ -22,19 +45,19 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--param")) {
             const pair = args_iter.next() orelse {
-                log_helpers.printStderr(init.io, "Error: Missing key=value after {s}\n", .{arg});
-                std.process.exit(EXIT_FAILURE);
+                reporter.err("Error: Missing key=value after {s}\n", .{arg});
+                return .failure;
             };
             var it = std.mem.splitScalar(u8, pair, '=');
             const key = it.next() orelse continue;
             const val_str = it.next() orelse {
-                log_helpers.printStderr(init.io, "Error: Invalid param format. Use --param key=value.\n", .{});
-                std.process.exit(EXIT_FAILURE);
+                reporter.err("Error: Invalid param format. Use --param key=value.\n", .{});
+                return .failure;
             };
 
             const val = std.fmt.parseFloat(f64, val_str) catch {
-                log_helpers.printStderr(init.io, "Error: Param value must be numeric. Got '{s}'\n", .{val_str});
-                std.process.exit(EXIT_FAILURE);
+                reporter.err("Error: Param value must be numeric. Got '{s}'\n", .{val_str});
+                return .failure;
             };
             try cli_params.put(key, val);
         } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
@@ -43,13 +66,13 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             use_draco = true;
         } else if (std.mem.eql(u8, arg, "-f") or std.mem.eql(u8, arg, "--format")) {
             format = args_iter.next() orelse {
-                log_helpers.printStderr(init.io, "Error: Missing format after {s}\n", .{arg});
-                std.process.exit(EXIT_FAILURE);
+                reporter.err("Error: Missing format after {s}\n", .{arg});
+                return .failure;
             };
 
             if (!std.mem.eql(u8, format, "stl") and !std.mem.eql(u8, format, "glb") and !std.mem.eql(u8, format, "gltf") and !std.mem.eql(u8, format, "step")) {
-                log_helpers.printStderr(init.io, "Error: Unsupported format '{s}'. Allowed: stl, glb, gltf, step\n", .{format});
-                std.process.exit(EXIT_FAILURE);
+                reporter.err("Error: Unsupported format '{s}'. Allowed: stl, glb, gltf, step\n", .{format});
+                return .failure;
             }
         } else if (!std.mem.startsWith(u8, arg, "-")) {
             input_path = arg;
@@ -57,8 +80,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     }
 
     const target_input = input_path orelse {
-        log_helpers.printStderr(init.io, "Error: Missing input file path.\n", .{});
-        std.process.exit(EXIT_FAILURE);
+        reporter.err("Error: Missing input file path.\n", .{});
+        return .failure;
     };
 
     // --- 2. Determine Final Output Path ---
@@ -77,18 +100,18 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     // --- 3. Setup Persistent Session Manager ---
     // We use a capacity of 1 since this is a one-shot CLI command.
-    var manager = SessionManager.init(allocator, init.io, 1);
+    var manager = SessionManager.init(allocator, io, 1);
     defer manager.deinit();
 
     var session = manager.getOrInitializeSession(target_input) catch |err| {
-        log_helpers.printStderr(init.io, "Failed to initialize session: {}\n", .{err});
-        std.process.exit(EXIT_FAILURE);
+        reporter.err("Failed to initialize session: {}\n", .{err});
+        return .failure;
     };
 
     // Use the shared DRY helper to load the CLI arguments into the active VM state
     api.injectParamsIntoVm(&session.vm, cli_params) catch |err| {
-        log_helpers.printStderr(init.io, "Failed to inject params: {}\n", .{err});
-        std.process.exit(EXIT_FAILURE);
+        reporter.err("Failed to inject params: {}\n", .{err});
+        return .failure;
     };
 
     // Force exact analytical representations if STEP export is requested
@@ -97,7 +120,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     }
 
     // --- 4. Evaluate the Workspace ---
-    const source = try fs.readFileLimit(init.io, allocator, target_input, MAX_FILE_SIZE);
+    const source = try fs.readFileLimit(io, allocator, target_input, MAX_FILE_SIZE);
     defer allocator.free(source);
 
     // Feed the source into the Workspace so it can parse imports and build the dependency graph
@@ -107,24 +130,25 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     // Perform Kahn's Topological Sort to execute dependencies from bottom to top
     session.evaluateWorkspace() catch |err| {
-        log_helpers.printStderr(init.io, "Build failed: {}\n", .{err});
-        std.process.exit(EXIT_FAILURE);
+        reporter.err("Build failed: {}\n", .{err});
+        return .failure;
     };
 
     // --- 5. Export Resulting Geometry ---
     // Use the shared DRY helper to pull from the VM stack and create the binary file
     const output_bytes = api.exportModelFromVm(allocator, &session.vm, format, use_draco) catch |err| {
-        log_helpers.printStderr(init.io, "Export failed: {}\n", .{err});
-        std.process.exit(EXIT_FAILURE);
+        reporter.err("Export failed: {}\n", .{err});
+        return .failure;
     };
     defer allocator.free(output_bytes);
 
     // Write the final binary bytes to the filesystem
     const cwd = std.Io.Dir.cwd();
-    try cwd.writeFile(init.io, .{
+    try cwd.writeFile(io, .{
         .sub_path = final_output,
         .data = output_bytes,
     });
 
-    log_helpers.printStdout(init.io, "Successfully built {s} ({d} bytes)\n", .{ final_output, output_bytes.len });
+    reporter.out("Successfully built {s} ({d} bytes)\n", .{ final_output, output_bytes.len });
+    return .success;
 }

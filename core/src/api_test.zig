@@ -20,12 +20,7 @@ test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
     const diags = try api.checkCode(allocator, bad_code, .{});
     defer api.freeDiagnostics(allocator, diags);
 
-    // Must surface exactly 5 diagnostics:
-    // 1. Unused variable 'unused_var'
-    // 2. Unused variable 'check_flow'
-    // 3. Self-subtraction
-    // 4. Unreachable code
-    // 5. Missing Param Doc
+    // Unused 'unused_var', unused 'check_flow', self-subtraction, unreachable code.
     try testing.expectEqual(@as(usize, 4), diags.len);
 
     var found_csg = false;
@@ -61,6 +56,7 @@ test "API: benchmarkScript completes successfully on valid code" {
     defer out.deinit();
 
     try api.benchmarkScript(testing.allocator, source, testing.io, &out.writer);
+    try testing.expect(out.written().len > 0);
 }
 
 test "API: benchmarkScript propagates errors on syntax failure" {

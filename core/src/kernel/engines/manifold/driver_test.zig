@@ -447,7 +447,9 @@ test "Manifold Driver: simplify reduces coplanar triangle count on sliced meshes
 
     // Apply coplanar simplification directly through the driver interface
     const simplified = driver.driver.simplifyFn(ext, 1e-5) orelse return error.SimplifyFailed;
-    defer if (simplified.ptr != ext.ptr) driver.driver.destructFn(simplified);
+    defer driver.driver.destructFn(simplified);
+    // Single-owner rule: always a new handle, never the input.
+    try testing.expect(simplified.ptr != ext.ptr);
 
     const simplified_mesh = driver.driver.getMeshFn(testing.allocator, simplified) orelse return error.MeshFailed;
     defer {

@@ -3,14 +3,6 @@ const testing = std.testing;
 const SessionManager = @import("session_manager.zig").SessionManager;
 const ScriptSession = @import("session.zig").ScriptSession;
 
-test "SessionManager: initializes and respects max_sessions capacity" {
-    var manager = SessionManager.init(testing.allocator, testing.io, 2);
-    defer manager.deinit();
-
-    try testing.expectEqual(@as(usize, 2), manager.max_sessions);
-    try testing.expectEqual(@as(usize, 0), manager.sessions.count());
-}
-
 test "SessionManager: getOrInitializeSession creates and caches sessions" {
     var manager = SessionManager.init(testing.allocator, testing.io, 2);
     defer manager.deinit();
@@ -28,6 +20,7 @@ test "SessionManager: getOrInitializeSession creates and caches sessions" {
     const cwd = std.Io.Dir.cwd();
     try cwd.writeFile(testing.io, .{ .sub_path = file_path, .data = "cube(10)" });
 
+    try testing.expectEqual(@as(usize, 0), manager.sessions.count());
     const session1 = try manager.getOrInitializeSession(file_path);
     try testing.expectEqual(@as(usize, 1), manager.sessions.count());
     try testing.expectEqual(@as(usize, 1), manager.lru_queue.items.len);
@@ -79,7 +72,7 @@ test "SessionManager: LRU eviction removes oldest sessions when capacity is exce
     try testing.expect(!manager.sessions.contains(id1));
 }
 
-test "SessionManager: Thread-safe double-checked LRU queue" {
+test "SessionManager: markUsed reorders the LRU queue and evictLRU drops its head" {
     const io = std.testing.io;
     var sm = SessionManager.init(std.testing.allocator, io, 2);
     defer sm.deinit();

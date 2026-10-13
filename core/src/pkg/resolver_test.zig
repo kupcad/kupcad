@@ -4,126 +4,131 @@ const Resolver = @import("resolver.zig").Resolver;
 const Manifest = @import("manifest.zig").Manifest;
 const lockfile_mod = @import("lockfile.zig");
 const Lockfile = lockfile_mod.Lockfile;
-const LockedPackage = lockfile_mod.LockedPackage;
 const StringMap = lockfile_mod.StringMap;
 const Store = @import("store.zig").Store;
 const Cafs = @import("cafs.zig").Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
-test "Resolver: linkWorkspace builds correct symlink and hardlink trees" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
+const Fixture = struct {
+    tmp: testing.TmpDir,
+    tmp_path: [:0]u8,
+    mem_vfs: MemoryVfs,
+    cafs: Cafs,
+    store: Store,
+    manifest: Manifest,
+    lockfile: Lockfile,
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
+    fn init(self: *Fixture) !void {
+        self.tmp = testing.tmpDir(.{});
+        errdefer self.tmp.cleanup();
+        self.tmp_path = try self.tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+        errdefer testing.allocator.free(self.tmp_path);
+        self.mem_vfs = MemoryVfs.init(testing.allocator);
+        errdefer self.mem_vfs.deinit();
+        self.cafs = try Cafs.init(testing.allocator, testing.io, self.tmp_path, self.mem_vfs.vfs());
+        errdefer self.cafs.deinit();
+        self.store = try Store.init(testing.io, ":memory:");
+        self.manifest = Manifest.init(testing.allocator, "test-app");
+        self.lockfile = Lockfile.init(testing.allocator);
+    }
 
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
+    fn deinit(self: *Fixture) void {
+        self.lockfile.deinit();
+        self.manifest.deinit();
+        self.store.deinit();
+        self.cafs.deinit();
+        self.mem_vfs.deinit();
+        testing.allocator.free(self.tmp_path);
+        self.tmp.cleanup();
+    }
 
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
+    fn writeBlob(self: *Fixture, hash: []const u8, data: []const u8) !void {
+        const path = try self.cafs.blobPath(hash);
+        defer testing.allocator.free(path);
+        var f = try std.Io.Dir.cwd().createFile(testing.io, path, .{});
+        defer f.close(testing.io);
+        try f.writeStreamingAll(testing.io, data);
+    }
 
-    var store = try Store.init(testing.io, ":memory:");
-    defer store.deinit();
+    /// Records `pkg_id@commit` in the store, lockfile and manifest (as `alias`).
+    fn addPackage(self: *Fixture, alias: []const u8, url: []const u8, pkg_id: []const u8, commit: []const u8, files: *std.StringHashMap([]const u8)) !void {
+        try self.store.registerPackage(pkg_id, commit, "github", "sha256-mock", files);
+        try self.lockfile.packages.put(try testing.allocator.dupe(u8, pkg_id), .{
+            .resolved = try testing.allocator.dupe(u8, commit),
+            .ref = try testing.allocator.dupe(u8, "main"),
+            .integrity = try testing.allocator.dupe(u8, "sha256-mock"),
+            .dependencies = StringMap.init(testing.allocator),
+        });
+        try self.manifest.dependencies.put(try testing.allocator.dupe(u8, alias), try testing.allocator.dupe(u8, url));
+    }
 
-    var manifest = Manifest.init(testing.allocator, "test-app");
-    defer manifest.deinit();
+    fn link(self: *Fixture) !void {
+        var resolver = Resolver.init(testing.allocator, testing.io, &self.cafs, &self.store, &self.manifest, &self.lockfile);
+        defer resolver.deinit();
+        try resolver.linkWorkspace(self.mem_vfs.vfs());
+    }
 
-    var lockfile = Lockfile.init(testing.allocator);
-    defer lockfile.deinit();
+    fn expectFile(self: *Fixture, path: []const u8, expected: []const u8) !void {
+        const content = try self.mem_vfs.vfs().readFile(testing.allocator, path);
+        defer testing.allocator.free(content);
+        try testing.expectEqualStrings(expected, content);
+    }
+};
 
-    // 1. Mock a physical downloaded package file in CAFS
-    const hash = "1234567890abcdef";
-    const blob_path = try cafs.blobPath(hash);
-    defer testing.allocator.free(blob_path);
+test "Resolver: linkWorkspace links locked packages (flat and nested files) into the store" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
 
-    var f = try std.Io.Dir.cwd().createFile(testing.io, blob_path, .{});
-    try f.writeStreamingAll(testing.io, "def init() 10 end");
-    f.close(testing.io);
+    try fx.writeBlob("1234567890abcdef", "def init() 10 end");
+    try fx.writeBlob("hash1", "mock content");
 
-    // 2. Register the fake package in the SQLite Store
     var files = std.StringHashMap([]const u8).init(testing.allocator);
     defer files.deinit();
-    try files.put("main.kup", hash);
-    try store.registerPackage("github.com-user-testpkg", "commit1", "github", "sha256-mock", &files);
-
-    // 3. Register the package constraints in the Lockfile
-    const deps = StringMap.init(testing.allocator);
-    const locked = LockedPackage{
-        .resolved = try testing.allocator.dupe(u8, "commit1"),
-        .ref = try testing.allocator.dupe(u8, "main"),
-        .integrity = try testing.allocator.dupe(u8, "sha256-mock"),
-        .dependencies = deps,
-    };
-    try lockfile.packages.put(try testing.allocator.dupe(u8, "github.com-user-testpkg"), locked);
-
-    // 4. Inject it into the project Manifest
-    try manifest.dependencies.put(try testing.allocator.dupe(u8, "testpkg"), try testing.allocator.dupe(u8, "github.com/user/testpkg"));
-
-    // 5. Execute Linker
-    var resolver = Resolver.init(testing.allocator, testing.io, &cafs, &store, &manifest, &lockfile);
-    try resolver.linkWorkspace(mem_vfs.vfs());
-
-    // 6. Verify the VFS routed everything accurately into the locked workspace
-    const content = try mem_vfs.vfs().readFile(testing.allocator, ".kupcad/pkg/.store/github.com-user-testpkg-commit1/pkg/main.kup");
-    defer testing.allocator.free(content);
-
-    try testing.expectEqualStrings("def init() 10 end", content);
-}
-
-test "Resolver: linkWorkspace efficiently caches directory creations for deep trees" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
-
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
-
-    var store = try Store.init(testing.io, ":memory:");
-    defer store.deinit();
-
-    var manifest = Manifest.init(testing.allocator, "test-app");
-    defer manifest.deinit();
-
-    var lockfile = Lockfile.init(testing.allocator);
-    defer lockfile.deinit();
-
-    // 1. Mock a package with multiple files in the same deep directory
-    var files = std.StringHashMap([]const u8).init(testing.allocator);
-    defer files.deinit();
+    try files.put("main.kup", "1234567890abcdef");
+    // Several files in one deep directory share the cached directory creation.
     try files.put("src/deep/nested/a.kup", "hash1");
     try files.put("src/deep/nested/b.kup", "hash1");
-    try files.put("src/deep/nested/c.kup", "hash1");
+    try fx.addPackage("testpkg", "github.com/user/testpkg", "github.com-user-testpkg", "commit1", &files);
 
-    const blob_path = try cafs.blobPath("hash1");
-    defer testing.allocator.free(blob_path);
-    var f = try std.Io.Dir.cwd().createFile(testing.io, blob_path, .{});
-    try f.writeStreamingAll(testing.io, "mock content");
-    f.close(testing.io);
+    try fx.link();
 
-    try store.registerPackage("nested-pkg", "commit-nest", "local", "sha256-mock", &files);
+    const store_dir = ".kupcad/pkg/.store/github.com-user-testpkg-commit1/pkg";
+    try fx.expectFile(store_dir ++ "/main.kup", "def init() 10 end");
+    try fx.expectFile(store_dir ++ "/src/deep/nested/a.kup", "mock content");
+    try fx.expectFile(store_dir ++ "/src/deep/nested/b.kup", "mock content");
+}
 
-    const deps = @import("lockfile.zig").StringMap.init(testing.allocator);
-    const locked = LockedPackage{
-        .resolved = try testing.allocator.dupe(u8, "commit-nest"),
-        .ref = try testing.allocator.dupe(u8, "main"),
-        .integrity = try testing.allocator.dupe(u8, "sha256-mock"),
-        .dependencies = deps,
-    };
-    try lockfile.packages.put(try testing.allocator.dupe(u8, "nested-pkg"), locked);
-    try manifest.dependencies.put(try testing.allocator.dupe(u8, "nested"), try testing.allocator.dupe(u8, "github.com/user/nested"));
-
-    var resolver = Resolver.init(testing.allocator, testing.io, &cafs, &store, &manifest, &lockfile);
-    try resolver.linkWorkspace(mem_vfs.vfs());
-
-    // Verify files were linked successfully
-    const content = try mem_vfs.vfs().readFile(testing.allocator, ".kupcad/pkg/.store/nested-pkg-commit-nest/pkg/src/deep/nested/c.kup");
-    defer testing.allocator.free(content);
-
-    try testing.expectEqualStrings("mock content", content);
+// Lockfile and store values are joined into filesystem paths; a tampered
+// kupcad.lock or index must not be able to place files outside the store.
+test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {
+    {
+        var fx: Fixture = undefined;
+        try fx.init();
+        defer fx.deinit();
+        var files = std.StringHashMap([]const u8).init(testing.allocator);
+        defer files.deinit();
+        try fx.addPackage("dep", "github.com/user/dep", "github.com-user-dep", "../../../../escape", &files);
+        try testing.expectError(error.InvalidPathSegment, fx.link());
+    }
+    {
+        var fx: Fixture = undefined;
+        try fx.init();
+        defer fx.deinit();
+        try fx.writeBlob("h", "x");
+        var files = std.StringHashMap([]const u8).init(testing.allocator);
+        defer files.deinit();
+        try files.put("../../../../../escape.kup", "h");
+        try fx.addPackage("dep", "github.com/user/dep", "github.com-user-dep", "commit1", &files);
+        try testing.expectError(error.UnsafeArchivePath, fx.link());
+    }
+    {
+        var fx: Fixture = undefined;
+        try fx.init();
+        defer fx.deinit();
+        var files = std.StringHashMap([]const u8).init(testing.allocator);
+        defer files.deinit();
+        try fx.addPackage("../evil", "github.com/user/dep", "github.com-user-dep", "commit1", &files);
+        try testing.expectError(error.InvalidAlias, fx.link());
+    }
 }

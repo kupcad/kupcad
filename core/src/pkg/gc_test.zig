@@ -5,121 +5,99 @@ const Cafs = @import("cafs.zig").Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const GarbageCollector = @import("gc.zig").GarbageCollector;
 
+const Fixture = struct {
+    tmp: testing.TmpDir,
+    tmp_path: [:0]u8,
+    mem_vfs: MemoryVfs,
+    cafs: Cafs,
+    store: Store,
+
+    fn init(self: *Fixture) !void {
+        self.tmp = testing.tmpDir(.{});
+        errdefer self.tmp.cleanup();
+        self.tmp_path = try self.tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+        errdefer testing.allocator.free(self.tmp_path);
+        self.mem_vfs = MemoryVfs.init(testing.allocator);
+        errdefer self.mem_vfs.deinit();
+        self.cafs = try Cafs.init(testing.allocator, testing.io, self.tmp_path, self.mem_vfs.vfs());
+        errdefer self.cafs.deinit();
+        self.store = try Store.init(testing.io, ":memory:");
+    }
+
+    fn deinit(self: *Fixture) void {
+        self.store.deinit();
+        self.cafs.deinit();
+        self.mem_vfs.deinit();
+        testing.allocator.free(self.tmp_path);
+        self.tmp.cleanup();
+    }
+
+    fn gc(self: *Fixture) GarbageCollector {
+        return GarbageCollector.init(testing.allocator, testing.io, &self.cafs, &self.store);
+    }
+
+    /// Writes a blob just now (age 0) and returns its absolute path (caller frees).
+    fn writeBlob(self: *Fixture, hash: []const u8, data: []const u8) ![]const u8 {
+        const path = try self.cafs.blobPath(hash);
+        errdefer testing.allocator.free(path);
+        var f = try std.Io.Dir.cwd().createFile(testing.io, path, .{});
+        defer f.close(testing.io);
+        try f.writeStreamingAll(testing.io, data);
+        return path;
+    }
+};
+
+fn expectExists(path: []const u8) !void {
+    std.Io.Dir.cwd().access(testing.io, path, .{}) catch return error.ShouldNotHaveBeenDeleted;
+}
+
 test "GarbageCollector: prune(true) removes orphaned files and index records" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const path = try fx.writeBlob("stale_hash", "old data");
+    defer testing.allocator.free(path);
+    try fx.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('stale_hash', 8, 0)", .{}, .{});
 
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
-
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
-
-    var store = try Store.init(testing.io, ":memory:");
-    defer store.deinit();
-
-    var gc = GarbageCollector.init(testing.allocator, testing.io, &cafs, &store);
-
-    // 1. Seed physical file
-    const cwd = std.Io.Dir.cwd();
-    const file_path = try testing.allocator.print("{s}/files/stale_hash", .{tmp_path});
-    defer testing.allocator.free(file_path);
-
-    var file = try cwd.createFile(testing.io, file_path, .{});
-    try file.writeStreamingAll(testing.io, "old data");
-    file.close(testing.io);
-
-    // 2. Seed DB record
-    try store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('stale_hash', 8, 0)", .{}, .{});
-
-    // 3. Force Prune
+    var gc = fx.gc();
     try gc.prune(true);
 
-    // 4. Verify physical deletion
-    const file_opened = cwd.openFile(testing.io, file_path, .{});
-    try testing.expectError(error.FileNotFound, file_opened);
-
-    // 5. Verify DB deletion
-    const stmt = try store.db.prepare("SELECT 1 FROM files WHERE hash = 'stale_hash'");
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, path, .{}));
+    const stmt = try fx.store.db.prepare("SELECT 1 FROM files WHERE hash = 'stale_hash'");
     defer stmt.deinit();
-    const row = try stmt.one(struct { val: i32 }, .{}, .{});
-    try testing.expect(row == null);
+    try testing.expect((try stmt.one(struct { val: i32 }, .{}, .{})) == null);
 }
 
 test "GarbageCollector: prune(false) skips files younger than 7 days" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const path = try fx.writeBlob("fresh_hash", "fresh data");
+    defer testing.allocator.free(path);
 
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
-
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
-
-    var store = try Store.init(testing.io, ":memory:");
-    defer store.deinit();
-
-    var gc = GarbageCollector.init(testing.allocator, testing.io, &cafs, &store);
-
-    // 1. Seed physical file (Age is 0 days because it was just created)
-    const cwd = std.Io.Dir.cwd();
-    const file_path = try testing.allocator.print("{s}/files/fresh_hash", .{tmp_path});
-    defer testing.allocator.free(file_path);
-
-    var file = try cwd.createFile(testing.io, file_path, .{});
-    try file.writeStreamingAll(testing.io, "fresh data");
-    file.close(testing.io);
-
-    // 2. Force Prune with force=false
+    var gc = fx.gc();
     try gc.prune(false);
-
-    // 3. Verify physical file was SPARED
-    var spared_file = cwd.openFile(testing.io, file_path, .{}) catch return error.ShouldNotHaveBeenDeleted;
-    spared_file.close(testing.io);
+    try expectExists(path);
 }
 
 test "GarbageCollector: prune(true) skips files actively linked to projects (nlink > 1)" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const path = try fx.writeBlob("active_hash", "active data");
+    defer testing.allocator.free(path);
 
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
-
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
-
-    var store = try Store.init(testing.io, ":memory:");
-    defer store.deinit();
-
-    var gc = GarbageCollector.init(testing.allocator, testing.io, &cafs, &store);
-
-    // 1. Seed physical CAFS file
+    // A hard link simulates a project that uses the blob.
     const cwd = std.Io.Dir.cwd();
-    const cafs_file_path = try testing.allocator.print("{s}/files/active_hash", .{tmp_path});
-    defer testing.allocator.free(cafs_file_path);
+    const project_link = try testing.allocator.print("{s}/active_hash_link", .{fx.tmp_path});
+    defer testing.allocator.free(project_link);
+    try std.Io.Dir.hardLink(cwd, path, cwd, project_link, testing.io, .{});
 
-    var file = try cwd.createFile(testing.io, cafs_file_path, .{});
-    try file.writeStreamingAll(testing.io, "active data");
-    file.close(testing.io);
-
-    // 2. Create a physical hardlink simulating an active project using the package
-    const project_link_path = try testing.allocator.print("{s}/active_hash_link", .{tmp_path});
-    defer testing.allocator.free(project_link_path);
-    try std.Io.Dir.hardLink(cwd, cafs_file_path, cwd, project_link_path, testing.io, .{});
-
-    // 3. Force Prune! (Force overrides age, but NOT nlink)
+    // force overrides age, but not nlink
+    var gc = fx.gc();
     try gc.prune(true);
-
-    // 4. Verify physical file was SPARED because its link count is 2
-    var spared_file = cwd.openFile(testing.io, cafs_file_path, .{}) catch return error.ShouldNotHaveBeenDeleted;
-    spared_file.close(testing.io);
+    try expectExists(path);
 }

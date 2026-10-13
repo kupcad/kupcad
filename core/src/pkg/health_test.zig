@@ -5,7 +5,7 @@ const Cafs = @import("cafs.zig").Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const Doctor = @import("health.zig").Doctor;
 
-test "Doctor: healMissingBlobs evicts DB records when physical files vanish" {
+test "Doctor: healMissingBlobs evicts blob and package records when physical files vanish" {
     std.testing.log_level = .err;
 
     var mem_vfs = MemoryVfs.init(testing.allocator);
@@ -25,9 +25,11 @@ test "Doctor: healMissingBlobs evicts DB records when physical files vanish" {
 
     var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store);
 
-    // 1. Seed DB record without creating the physical file
-    try store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('missing_hash', 10, 0)", .{}, .{});
-    try store.db.exec("INSERT INTO package_files (package_id, commit_sha, file_path, file_hash) VALUES ('pkg', 'sha', 'path', 'missing_hash')", .{}, .{});
+    // 1. Register a package whose blob is not on disk
+    var files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files.deinit();
+    try files.put("path", "missing_hash");
+    try store.registerPackage("pkg", "sha", "github", "sha256-x", &files);
 
     // 2. Heal
     try doc.run(); // Executes all healing routines
@@ -42,6 +44,10 @@ test "Doctor: healMissingBlobs evicts DB records when physical files vanish" {
     defer stmt2.deinit();
     const row2 = try stmt2.one(struct { val: i32 }, .{}, .{});
     try testing.expect(row2 == null);
+
+    // The package itself is evicted too, otherwise it still looks cached and
+    // linking fails on the missing blob (audit fix).
+    try testing.expect(!try store.hasPackage("pkg", "sha"));
 }
 
 test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {

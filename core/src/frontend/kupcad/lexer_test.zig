@@ -329,31 +329,6 @@ test "KupCAD Lexer: Hash label vs Symbol ambiguity without spaces" {
     });
 }
 
-test "KupCAD Lexer: Deeply Nested String Interpolation gracefully fails" {
-    // 65 levels deep (exceeds the [64]InterpState stack size)
-    const source = comptime blk: {
-        var res: []const u8 = "";
-        for (0..65) |_| res = res ++ "\"#{ ";
-        res = res ++ "\"deep\"";
-        for (0..65) |_| res = res ++ " }\"";
-        break :blk res;
-    };
-    var lexer = Lexer.init(source, 0);
-
-    var has_invalid = false;
-    while (true) {
-        const tok = lexer.next();
-        if (tok.tag == .eof) break;
-        if (tok.tag == .invalid) {
-            has_invalid = true;
-            try testing.expectEqualStrings("Interpolation depth exceeded", tok.lexeme);
-            break;
-        }
-    }
-
-    try testing.expect(has_invalid);
-}
-
 test "KupCAD Lexer: EOF handling for unclosed strings and interpolations" {
     // Unclosed standard string
     var lexer1 = Lexer.init("\"unclosed string...", 0);
@@ -922,12 +897,15 @@ test "KupCAD Lexer: Chained operators with trailing underscores" {
 }
 
 test "Lexer: String interpolation limits" {
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
+    // Nesting is bounded by the lexer's fixed interpolation stack
+    const max_depth = @typeInfo(@FieldType(Lexer, "interp_stack")).array.len;
 
-    // Helper to build dynamically nested strings: "#{ "#{ ... }" }"
+    // Builds dynamically nested strings: "#{ "#{ ... }" }"
     const buildNestedString = struct {
         fn build(alloc: std.mem.Allocator, depth: usize) ![]u8 {
             var buf: std.ArrayListUnmanaged(u8) = .empty;
+            errdefer buf.deinit(alloc);
             for (0..depth) |_| try buf.appendSlice(alloc, "\"#{");
             try buf.appendSlice(alloc, "1");
             for (0..depth) |_| try buf.appendSlice(alloc, "}\"");
@@ -935,28 +913,27 @@ test "Lexer: String interpolation limits" {
         }
     }.build;
 
-    // 1. Test exactly at the 64-level limit (Should Pass)
-    const valid_source = try buildNestedString(allocator, 64);
+    // Exactly at the limit lexes cleanly
+    const valid_source = try buildNestedString(allocator, max_depth);
     defer allocator.free(valid_source);
-
     var valid_lexer = Lexer.init(valid_source, 0);
     var valid_token = valid_lexer.next();
-    var hit_error = false;
     while (valid_token.tag != .eof) : (valid_token = valid_lexer.next()) {
-        if (valid_token.tag == .invalid) hit_error = true;
+        try std.testing.expect(valid_token.tag != .invalid);
     }
-    try std.testing.expect(!hit_error);
 
-    // 2. Test exceeding the 64-level limit (Should safely emit an error, not panic)
-    const invalid_source = try buildNestedString(allocator, 65);
+    // One level deeper yields an .invalid token instead of overflowing the stack
+    const invalid_source = try buildNestedString(allocator, max_depth + 1);
     defer allocator.free(invalid_source);
-
     var invalid_lexer = Lexer.init(invalid_source, 0);
     var invalid_token = invalid_lexer.next();
-    hit_error = false;
+    var hit_error = false;
     while (invalid_token.tag != .eof) : (invalid_token = invalid_lexer.next()) {
-        if (invalid_token.tag == .invalid) hit_error = true;
+        if (invalid_token.tag == .invalid) {
+            try testing.expectEqualStrings("Interpolation depth exceeded", invalid_token.lexeme);
+            hit_error = true;
+            break;
+        }
     }
-    // We expect the bounds-check to catch the 65th level and yield an .invalid token
     try std.testing.expect(hit_error);
 }

@@ -44,45 +44,20 @@ test "Constant Folder: folds unary and binary operations together" {
     try testing.expectEqual(@as(usize, 3), f.folded_count); // Add, Negate, Multiply
 }
 
-test "ConstantFolder: prevents folding division by zero" {
-    const source = "val = 10 / 0";
-    var pt = try KTest.init(source);
-    defer pt.deinit();
+test "ConstantFolder: leaves non-finite results unfolded" {
+    // Division/modulo by zero and overflow to Inf must stay runtime operations
+    const sources = [_][]const u8{ "val = 10 / 0", "val = 1e300 * 1e300", "val = 10 % 0.0" };
+    for (sources) |source| {
+        var pt = try KTest.init(source);
+        defer pt.deinit();
+        const tree = &pt.parser.b.tree;
 
-    const root_idx = try pt.parser.parseProgram();
+        const root_idx = try pt.parser.parseProgram();
+        var f = folder.ConstantFolder{ .b = &pt.parser.b };
+        try f.fold(root_idx);
 
-    var f = folder.ConstantFolder{ .b = &pt.parser.b };
-    try f.fold(root_idx);
-
-    // Folder should abort, leaving the binary expression exactly as it was
-    try testing.expectEqual(@as(usize, 0), f.folded_count);
-}
-
-test "ConstantFolder: prevents folding Infinity overflows" {
-    // 1e300 * 1e300 will exceed f64 limits and evaluate to +Inf
-    const source = "val = 1e300 * 1e300";
-    var pt = try KTest.init(source);
-    defer pt.deinit();
-
-    const root_idx = try pt.parser.parseProgram();
-
-    var f = folder.ConstantFolder{ .b = &pt.parser.b };
-    try f.fold(root_idx);
-
-    // Folder should catch the Inf and abort
-    try testing.expectEqual(@as(usize, 0), f.folded_count);
-}
-
-test "ConstantFolder: prevents folding Modulo by zero" {
-    const source = "val = 10 % 0.0";
-    var pt = try KTest.init(source);
-    defer pt.deinit();
-
-    const root_idx = try pt.parser.parseProgram();
-
-    var f = folder.ConstantFolder{ .b = &pt.parser.b };
-    try f.fold(root_idx);
-
-    // Folder should catch the modulo by zero and abort
-    try testing.expectEqual(@as(usize, 0), f.folded_count);
+        try testing.expectEqual(@as(usize, 0), f.folded_count);
+        const stmt = pt.getNode(tree.getNodes(tree.block(pt.getNode(root_idx)).stmts)[0]);
+        try testing.expectEqual(ast.Tag.binary_op, pt.getNode(tree.assignment(stmt).value).tag);
+    }
 }

@@ -116,21 +116,24 @@ test "Verifier: Detects Loop-Face Discrepancies" {
     try std.testing.expectError(error.LoopFaceMismatch, err);
 }
 
-test "Verifier: Detects NaN / Inf Memory Corruption" {
+test "Verifier: Detects NaN / Inf vertex coordinates" {
     const alloc = std.testing.allocator;
-    var t_arena = topo_arena.TopologyArena.init();
-    defer t_arena.deinit(alloc);
-    var g_arena = geom_arena.GeometryArena.init();
-    defer g_arena.deinit(alloc);
+    const Case = struct { axis: usize, val: f64 };
+    for ([_]Case{ .{ .axis = 0, .val = std.math.nan(f64) }, .{ .axis = 1, .val = std.math.inf(f64) } }) |case| {
+        var t_arena = topo_arena.TopologyArena.init();
+        defer t_arena.deinit(alloc);
+        var g_arena = geom_arena.GeometryArena.init();
+        defer g_arena.deinit(alloc);
 
-    const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
+        const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
 
-    // Inject NaN into a vertex coordinate
-    const pt_idx = @backingInt(t_arena.vertices.items[0].point);
-    g_arena.points.items[pt_idx][0] = std.math.nan(f64);
+        // Inject a non-finite value into one vertex coordinate
+        const pt_idx = @backingInt(t_arena.vertices.items[0].point);
+        g_arena.points.items[pt_idx][case.axis] = case.val;
 
-    const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
-    try std.testing.expectError(error.NaNOrInfCoordinate, err);
+        const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
+        try std.testing.expectError(error.NaNOrInfCoordinate, err);
+    }
 }
 
 test "Verifier: Detects Degenerate Zero-Length Edges" {
@@ -306,23 +309,6 @@ test "Verifier: Detects Invalid Winding Order on Inverted Outer Loop" {
         .check_coincidence = false, // Disable coincidence check to isolate winding calculation
     });
     try std.testing.expectError(error.InvalidWindingOrder, err);
-}
-
-test "Verifier: Detects Infinity in Vertex Coordinates" {
-    const alloc = std.testing.allocator;
-    var t_arena = topo_arena.TopologyArena.init();
-    defer t_arena.deinit(alloc);
-    var g_arena = geom_arena.GeometryArena.init();
-    defer g_arena.deinit(alloc);
-
-    const solid_idx = try generators.generateCube(alloc, &t_arena, &g_arena, 10, 10, 10, true);
-
-    // Inject Infinity into point 0
-    const pt_idx = @backingInt(t_arena.vertices.items[0].point);
-    g_arena.points.items[pt_idx][1] = std.math.inf(f64);
-
-    const err = verifier.validateSolid(alloc, &t_arena, &g_arena, .{}, solid_idx, .{});
-    try std.testing.expectError(error.NaNOrInfCoordinate, err);
 }
 
 test "Verifier: Detects NURBS UV Drift Synchronization Error" {

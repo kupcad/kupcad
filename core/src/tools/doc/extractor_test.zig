@@ -16,7 +16,7 @@ test "Extractor: Parses Presentation Data and Param UI Config into Schema" {
         \\param(:verbose, default: true)
     ;
 
-    var doc = try Document.parse(arena.allocator(), source);
+    var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
 
     const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
@@ -53,7 +53,7 @@ test "Extractor: Parses Param within Assignments" {
         \\standoff_dia  = param(:standoff_dia, default: 5.0)
     ;
 
-    var doc = try Document.parse(arena.allocator(), source);
+    var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
 
     const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
