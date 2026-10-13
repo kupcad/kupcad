@@ -232,21 +232,29 @@ test "GC regression: exception raised inside an imported module is rescued by th
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    // Guards user-visible behaviour only. Known bug: callClosureSync misreads this unwind
-    // as a normal return (stack_top == base_slot + 1), so the exception gets cached as the
-    // module's value and op_import's error.Unwind branch is not reached.
+    // The `begin` sits at the import's stack slot, so a rescued unwind leaves exactly
+    // one value above the module closure's base, the same shape as a normal return.
+    // The import must still be seen as failed: not cached, and raising again when retried.
     const source =
-        \\result = begin
+        \\first = begin
         \\  import "./boom.kup"
         \\  "not rescued"
+        \\rescue => e
+        \\  e.message
+        \\end
+        \\second = begin
+        \\  import "./boom.kup"
+        \\  "served from cache"
         \\rescue => e
         \\  e.message
         \\end
         \\after = "continued"
     ;
     try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
-    try expectGlobalString(&vm, "result", "module failed");
+    try expectGlobalString(&vm, "first", "module failed");
+    try expectGlobalString(&vm, "second", "module failed");
     try expectGlobalString(&vm, "after", "continued");
+    try testing.expectEqual(@as(u32, 0), vm.modules.count());
 }
 
 test "GC regression: import whose compilation fails does not leak its chunk" {
@@ -370,5 +378,135 @@ test "GC regression: exception raised by a native is thrown once and execution c
         try testing.expect(msg.isString());
         try testing.expect(std.mem.indexOf(u8, msg.asString().chars, case.message) != null);
         try expectGlobalString(&vm, "after", "continued");
+    }
+}
+
+// --- Global keys must outlive the chunk whose constant named them ---
+
+test "GC regression: redefining a global on a reused VM after its defining chunk was freed" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    // Each run gets its own chunk, freed afterwards, as the daemon and LSP do
+    const runs = [_][]const u8{
+        "shared_global = \"first run\"",
+        "padding = \"0123456789abcdef0123456789abcdef\"\nshared_global = \"second run\"",
+        "result = shared_global",
+    };
+    var global_count: ?u32 = null;
+    for (runs) |source| {
+        {
+            var run_chunk = chunk.Chunk.init();
+            defer run_chunk.free(testing.allocator);
+            try testing.expectEqual(.ok, try compileAndRun(&vm, &run_chunk, source));
+        }
+        vm.resetStack();
+        // Sweeps the run's constants, including the string naming `shared_global`
+        vm.gc.collectGarbage(&vm, false);
+        if (global_count == null) global_count = vm.globals.count();
+    }
+    try expectGlobalString(&vm, "result", "second run");
+    // A dangling key no longer matches its name, so redefining it used to add a duplicate
+    try testing.expectEqual(global_count.? + 2, vm.globals.count());
+}
+
+// --- Calling a class directly runs a native initialize ---
+
+test "GC regression: class with a native initialize can be called directly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    // Exception's initialize is a native; the call-syntax path used to cast it to a
+    // closure. A closure initialize must yield the instance there too, as with `.new`.
+    const source =
+        \\class Box
+        \\  def initialize(w)
+        \\    @w = w
+        \\  end
+        \\  def width
+        \\    @w
+        \\  end
+        \\end
+        \\box_width = Box(7).width
+        \\err = ArgumentError("bad width")
+        \\direct = err.message
+        \\is_instance = err.is_a?(ArgumentError)
+        \\raised = begin
+        \\  raise ArgumentError("bad height")
+        \\rescue ArgumentError => e
+        \\  e.message
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try testing.expectEqual(@as(f64, 7), vm.globals.get("box_width").?.asNumber());
+    try expectGlobalString(&vm, "direct", "bad width");
+    try testing.expect(vm.globals.get("is_instance").?.asBool());
+    try expectGlobalString(&vm, "raised", "bad height");
+}
+
+// --- Number -> integer conversions: NaN, inf and out-of-range operands ---
+
+test "GC regression: bitwise operands and array indexes reject non-integral numbers" {
+    // `message` set: the expression must raise that; otherwise it evaluates to `number`.
+    // Each case used to reach @intFromFloat unchecked (a panic in Debug, UB in release).
+    const cases = [_]struct { expr: []const u8, number: f64 = 0, message: ?[]const u8 = null }{
+        // Addition shared the bitwise path and converted its operands too
+        .{ .expr = "1e300 + huge", .number = 2e300 },
+        .{ .expr = "inf_v - 1", .number = std.math.inf(f64) },
+        .{ .expr = "inf_v | 1", .message = "RangeError" },
+        // inf - inf is the NaN that reaches bytecode (multiply/divide raise on NaN)
+        .{ .expr = "(inf_v - inf_v) ^ 1", .message = "RangeError" },
+        .{ .expr = "1 & huge", .message = "RangeError" },
+        .{ .expr = "1 << 64", .message = "Shift count" },
+        .{ .expr = "1 >> -1", .message = "Shift count" },
+        .{ .expr = "1 << inf_v", .message = "RangeError" },
+        // In-range behaviour is unchanged: truncation, wrapping `<<`, arithmetic `>>`
+        .{ .expr = "6 & 3", .number = 2 },
+        .{ .expr = "5.9 | 0", .number = 5 },
+        .{ .expr = "-8 >> 1", .number = -4 },
+        .{ .expr = "1 << 63", .number = -0x1p63 },
+        .{ .expr = "[1, 2][inf_v]", .message = "out of bounds" },
+        .{ .expr = "[1, 2][-inf_v]", .message = "out of bounds" },
+        .{ .expr = "[1, 2][huge]", .message = "out of bounds" },
+        .{ .expr = "[1, 2][-1]", .number = 2 },
+        .{ .expr = "a = [1, 2]\n  a[inf_v] = 3", .message = "out of bounds" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("failing case: {s}\n", .{case.expr});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.mute_errors = true;
+
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
+
+        // Operands come from variables so the compiler cannot constant-fold them
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\huge = 1e300
+            \\inf_v = huge * huge
+            \\result = begin
+            \\  {s}
+            \\rescue => e
+            \\  e.message
+            \\end
+        , .{case.expr});
+        defer testing.allocator.free(source);
+
+        try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+        const result = vm.globals.get("result") orelse return error.MissingGlobal;
+        if (case.message) |message| {
+            try testing.expect(result.isString());
+            try testing.expect(std.mem.indexOf(u8, result.asString().chars, message) != null);
+        } else {
+            try testing.expect(result.isNumber());
+            try testing.expectEqual(case.number, result.asNumber());
+        }
     }
 }

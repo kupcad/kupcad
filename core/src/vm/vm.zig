@@ -92,6 +92,9 @@ pub const VM = struct {
     debugger_step_handler: ?*const fn (vm: *VM) void = null,
 
     globals: std.StringHashMapUnmanaged(value.Value),
+    // Owned copies of the global names defined by bytecode (see defineGlobal); keys
+    // registered by the host are static literals and are not in here.
+    owned_global_keys: std.ArrayListUnmanaged([]const u8) = .empty,
     modules: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
     symbols: std.StringHashMapUnmanaged(*value.ObjSymbol),
@@ -240,6 +243,8 @@ pub const VM = struct {
 
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
+        for (self.owned_global_keys.items) |key| self.allocator.free(key);
+        self.owned_global_keys.deinit(self.allocator);
         var module_keys = self.modules.keyIterator();
         while (module_keys.next()) |key| self.allocator.free(key.*);
         self.modules.deinit(self.allocator);
@@ -918,7 +923,7 @@ pub const VM = struct {
                     var final_res = res;
                     if (self.globals.get("__exports__")) |exp_mod| {
                         final_res = exp_mod;
-                        _ = self.globals.remove("__exports__");
+                        self.removeGlobal("__exports__");
                     }
 
                     // 7. Cache the actual finalized module and yield result
@@ -1078,7 +1083,7 @@ pub const VM = struct {
                 .op_define_global, .op_define_global_wide => {
                     const name_str = self.readStringOperand(exec_chunk, frame, op == .op_define_global_wide);
                     const val = self.pop();
-                    self.globals.put(self.allocator, name_str, val) catch return .runtime_error;
+                    self.defineGlobal(name_str, val) catch return .runtime_error;
                 },
                 .op_get_property, .op_get_property_wide => {
                     const is_wide = op == .op_get_property_wide;
@@ -1562,6 +1567,32 @@ pub const VM = struct {
         if (self.modules.fetchRemove(path)) |kv| self.allocator.free(kv.key);
     }
 
+    /// Global assignment from bytecode. Like the import cache, new keys are owned
+    /// copies: the name comes from a constant ObjString that is swept once its chunk
+    /// is freed, while the global lives on into the next run of a reused VM.
+    fn defineGlobal(self: *VM, name: []const u8, val: value.Value) !void {
+        try self.owned_global_keys.ensureUnusedCapacity(self.allocator, 1);
+        const gop = try self.globals.getOrPut(self.allocator, name);
+        if (!gop.found_existing) {
+            gop.key_ptr.* = self.allocator.dupe(u8, name) catch |err| {
+                self.globals.removeByPtr(gop.key_ptr);
+                return err;
+            };
+            self.owned_global_keys.appendAssumeCapacity(gop.key_ptr.*);
+        }
+        gop.value_ptr.* = val;
+    }
+
+    fn removeGlobal(self: *VM, name: []const u8) void {
+        const kv = self.globals.fetchRemove(name) orelse return;
+        for (self.owned_global_keys.items, 0..) |key, i| {
+            if (key.ptr != kv.key.ptr) continue;
+            self.allocator.free(key);
+            _ = self.owned_global_keys.swapRemove(i);
+            return;
+        }
+    }
+
     pub inline fn clearUnwindState(self: *VM) void {
         self.unwind_stack.clearRetainingCapacity();
     }
@@ -1787,6 +1818,7 @@ pub const VM = struct {
         try self.frames.ensureUnusedCapacity(self.allocator, 1);
 
         const target_depth = self.frames.items.len;
+        const throw_seq = self.throw_seq;
         const provided_args = args.len;
         const expected_args = closure.function.arity;
 
@@ -1823,9 +1855,10 @@ pub const VM = struct {
         if (res == .block_break) return error.BlockBreak;
         if (res == .runtime_error) return error.FatalError;
 
-        // If the stack top shrunk BELOW our base slot, it means a rescue block
-        // OUTSIDE of this native call caught an exception and unwound the stack past us
-        if (self.stack_top < base_slot + 1) return error.Unwind;
+        // A rescue OUTSIDE this call caught an exception and unwound past us. The stack
+        // height can't tell: a handler whose region starts at our base slot leaves exactly
+        // one value (the error) there, like a normal return. The throw's target can.
+        if (self.unwoundPast(throw_seq, target_depth)) return error.Unwind;
 
         if (res != .ok) return error.FatalError;
 
@@ -1871,25 +1904,51 @@ pub const VM = struct {
         return null;
     }
 
+    const BITWISE_INT_BITS: i64 = @bitSizeOf(i64);
+    // 2^63: the smallest float magnitude outside i64 (-2^63 itself still fits)
+    const I64_FLOAT_BOUND: f64 = 0x1p63;
+
+    /// The i64 a number stands for in a bitwise op (truncated toward zero), or null
+    /// when it is NaN, infinite or outside i64.
+    fn bitwiseOperand(num: f64) ?i64 {
+        if (!std.math.isFinite(num) or num < -I64_FLOAT_BOUND or num >= I64_FLOAT_BOUND) return null;
+        return @intFromFloat(num);
+    }
+
     fn executeBinaryArithmetic(self: *VM, op: chunk.OpCode) InterpretResult {
         const b_val = self.pop();
         const a_val = self.pop();
         if (a_val.isNumber() and b_val.isNumber()) {
-            const a_int: i64 = @intFromFloat(a_val.asNumber());
-            const b_int: i64 = @intFromFloat(b_val.asNumber());
+            const a_num = a_val.asNumber();
+            const b_num = b_val.asNumber();
+            if (op == .op_add or op == .op_subtract) {
+                self.push(value.Value.initNumber(if (op == .op_add) a_num + b_num else a_num - b_num));
+                return .ok;
+            }
 
-            const res = switch (op) {
-                .op_add => a_val.asNumber() + b_val.asNumber(),
-                .op_subtract => a_val.asNumber() - b_val.asNumber(),
-                .op_bitwise_and => @as(f64, @floatFromInt(@as(i64, @intFromFloat(a_val.asNumber())) & @as(i64, @intFromFloat(b_val.asNumber())))),
-                .op_bitwise_or => @as(f64, @floatFromInt(a_int | b_int)),
-                .op_bitwise_xor => @as(f64, @floatFromInt(a_int ^ b_int)),
-                .op_shift_left => @as(f64, @floatFromInt(a_int << @as(u6, @intCast(b_int & 63)))),
-                .op_shift_right => @as(f64, @floatFromInt(a_int >> @as(u6, @intCast(b_int & 63)))),
+            // @intFromFloat is illegal for NaN/inf/out-of-range operands, so bitwise
+            // operands must be checked first; fractions still truncate toward zero.
+            const a_int = bitwiseOperand(a_num) orelse
+                return self.throwDynamicError("RangeError: Bitwise operand {d} is not a finite 64-bit integer.", .{a_num});
+            const b_int = bitwiseOperand(b_num) orelse
+                return self.throwDynamicError("RangeError: Bitwise operand {d} is not a finite 64-bit integer.", .{b_num});
+
+            const res: i64 = switch (op) {
+                .op_bitwise_and => a_int & b_int,
+                .op_bitwise_or => a_int | b_int,
+                .op_bitwise_xor => a_int ^ b_int,
+                .op_shift_left, .op_shift_right => blk: {
+                    if (b_int < 0 or b_int >= BITWISE_INT_BITS) {
+                        return self.throwDynamicError("RangeError: Shift count {d} is outside 0..{d}.", .{ b_int, BITWISE_INT_BITS - 1 });
+                    }
+                    const count: std.math.Log2Int(i64) = @intCast(b_int);
+                    // `<<` wraps bits shifted out of the top; `>>` is arithmetic (sign-filling)
+                    break :blk if (op == .op_shift_left) a_int << count else a_int >> count;
+                },
                 else => unreachable,
             };
 
-            self.push(value.Value.initNumber(res));
+            self.push(value.Value.initNumber(@floatFromInt(res)));
             return .ok;
         } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .string and b_val.asObj().obj_type == .string) {
             const a_str = a_val.asString().chars;
@@ -2005,34 +2064,7 @@ pub const VM = struct {
 
         if (receiver.isClass()) {
             if (std.mem.eql(u8, method_name_str, "new")) {
-                const class_to_instantiate = receiver.asClass();
-                const instance = self.gc.allocateInstance(self, class_to_instantiate) catch return .runtime_error;
-                self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
-
-                const init_name_val = self.allocateString("initialize") catch return .runtime_error;
-                if (self.findMethod(class_to_instantiate, init_name_val)) |init_method| {
-                    if (init_method.isClosure()) {
-                        self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, true) catch return .runtime_error;
-                        return .ok;
-                    } else if (init_method.isNative()) {
-                        const native_obj = init_method.asNative();
-                        const caller_depth = self.frames.items.len;
-                        const throw_seq = self.throw_seq;
-                        _ = native_obj.function(self, arg_count, args_ptr) catch |err| {
-                            if (err == error.Unwind) {
-                                self.restoreAfterUnwind(caller_depth);
-                                return .ok;
-                            }
-                            if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
-                            if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
-                            return self.throwDynamicError("Runtime Error: Native Constructor Error", .{});
-                        };
-                        self.popAndRelease(arg_count);
-                        return .ok;
-                    }
-                }
-                if (arg_count > 0) return self.throwDynamicError("Runtime Error: Expected 0 args for default constructor.\n", .{});
-                return .ok;
+                return self.constructInstance(receiver.asClass(), arg_count, base_slot);
             }
 
             const resolved = self.findClassMethodWithPrivacy(receiver.asClass(), method_name_val);
@@ -2296,10 +2328,12 @@ pub const VM = struct {
         _ = self;
         const num_idx = index_val.asNumber();
 
-        // Prevent floats like `1.5` or `NaN` from succeeding
+        // Prevent floats like `1.5`, `NaN` or `inf` (trunc(inf) == inf) from succeeding,
+        // and keep @intFromFloat below in range: any valid index is at most arr_len.
         if (std.math.isNan(num_idx) or std.math.trunc(num_idx) != num_idx) {
             return error.RuntimeError;
         }
+        if (@abs(num_idx) > @as(f64, @floatFromInt(arr_len))) return error.RuntimeError;
 
         if (num_idx < 0) {
             const offset: usize = @intFromFloat(-num_idx);
@@ -2413,23 +2447,53 @@ pub const VM = struct {
         } else if (callee.isClosure()) {
             self.dispatchClosure(callee.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
         } else if (callee.isClass()) {
-            const class_obj = callee.asClass();
-            const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
-            self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj);
-
-            const init_key = self.allocateString("initialize") catch return .runtime_error;
-            if (self.findMethod(class_obj, init_key)) |init_method| {
-                self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
-            } else if (arg_count > 0) {
-                self.runtimeError("Runtime Error: Expected 0 args for default constructor.\n", .{});
-                return .runtime_error;
-            }
+            // `Klass(args)` is sugar for `Klass.new(args)`
+            return self.constructInstance(callee.asClass(), arg_count, base_slot);
         } else if (arg_count == 0) {
             // Bare identifier evaluation of a non-callable value: leave value on stack
             return .ok;
         } else {
             return self.throwDynamicError("Runtime Error: Can only call functions and classes.", .{});
         }
+        return .ok;
+    }
+
+    /// Instantiates `class_obj` for a call whose receiver sits at `base_slot` with
+    /// `arg_count` arguments above it, running `initialize` (a closure or a native,
+    /// e.g. Exception's) if the class has one. Leaves the instance at `base_slot`.
+    fn constructInstance(self: *VM, class_obj: *value.ObjClass, arg_count: u8, base_slot: usize) InterpretResult {
+        const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
+        self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
+
+        const init_name_val = self.allocateString("initialize") catch return .runtime_error;
+        const init_method = self.findMethod(class_obj, init_name_val) orelse {
+            if (arg_count > 0) return self.throwDynamicError("Runtime Error: Expected 0 args for default constructor.\n", .{});
+            return .ok;
+        };
+
+        if (init_method.isClosure()) {
+            // is_constructor: op_return yields the instance, not initialize's last value
+            self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, true) catch return .runtime_error;
+            return .ok;
+        }
+        if (!init_method.isNative()) return self.throwDynamicError("TypeError: '{s}#initialize' is not callable.", .{class_obj.name.chars});
+
+        const native_obj = init_method.asNative();
+        const args_ptr = self.stack.ptr + base_slot + 1;
+        const caller_depth = self.frames.items.len;
+        const throw_seq = self.throw_seq;
+        // The native's return value is discarded: a constructor always yields the instance
+        _ = native_obj.function(self, arg_count, args_ptr) catch |err| {
+            if (err == error.Unwind) {
+                self.restoreAfterUnwind(caller_depth);
+                return .ok;
+            }
+            if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
+            if (err == error.FatalError) return .runtime_error;
+            if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
+            return self.throwDynamicError("Runtime Error: Native Constructor Error", .{});
+        };
+        self.popAndRelease(arg_count);
         return .ok;
     }
 
@@ -2477,6 +2541,14 @@ pub const VM = struct {
         self.stack_top = unwind.stack_top;
         self.push(unwind.err_val);
         if (caller_depth <= unwind.frame_count) _ = self.unwind_stack.pop();
+    }
+
+    /// True when a throw since `throw_seq` was sampled is being handled at or below
+    /// `caller_depth` frames, i.e. it unwound the call made from that depth.
+    fn unwoundPast(self: *VM, throw_seq: u64, caller_depth: usize) bool {
+        if (self.throw_seq == throw_seq) return false;
+        const target = self.last_throw_target orelse return false;
+        return target <= caller_depth;
     }
 
     /// A native failed with an ordinary error after `throw_seq` was sampled. If it
