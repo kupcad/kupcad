@@ -64,6 +64,7 @@ pub fn nativeAssert(vm: *VM, args: []const value.Value) anyerror!value.Value {
         }
 
         // Construct and Throw Exception
+        vm.push(msg_val); // A fresh message is otherwise unrooted while the instance is allocated
         const inst = try vm.gc.allocateInstance(vm, err_class);
         vm.push(value.Value.initObj(&inst.obj)); // Protect from GC
 
@@ -79,6 +80,7 @@ pub fn nativeAssert(vm: *VM, args: []const value.Value) anyerror!value.Value {
         } else |_| {}
 
         _ = vm.pop(); // Unprotect
+        _ = vm.pop(); // msg_val, now held by the instance
 
         // Throw directly into the VM's rescue system
         vm.push(value.Value.initObj(&inst.obj));

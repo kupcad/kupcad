@@ -11171,3 +11171,127 @@ test "VM: bitwise operands and array indexes reject non-integral numbers" {
         }
     }
 }
+
+// Exception construction under a collecting GC
+
+/// compileAndRun with a collection on every allocation. Stress is switched off
+/// again before returning so the test's `vm.deinit` runs normally.
+fn compileAndRunStressed(vm: *VM, out_chunk: *chunk.Chunk, source: []const u8) !InterpretResult {
+    vm.gc.stress = true;
+    defer vm.gc.stress = false;
+    return compileAndRun(vm, out_chunk, source);
+}
+
+test "VM: raise of a non-exception payload wraps it in a RuntimeError that survives collection" {
+    // executeThrow allocated the wrapping RuntimeError, then the payload's message
+    // string, and only rooted the instance afterwards: that collection freed it.
+    const cases = [_]struct { payload: []const u8, message: []const u8 }{
+        .{ .payload = "42", .message = "42" },
+        .{ .payload = "1.5", .message = "1.5" },
+        .{ .payload = "[1]", .message = "[1]" },
+        .{ .payload = "{a: 1}", .message = "{:a: 1}" }, // Value.stringify's map format
+        .{ .payload = "true", .message = "true" },
+        .{ .payload = "false", .message = "false" },
+        .{ .payload = "nil", .message = "nil" },
+        .{ .payload = ":sym", .message = ":sym" },
+        .{ .payload = "1..3", .message = "1..3" },
+        // A String payload is the message as-is
+        .{ .payload = "\"bo\" + \"om\"", .message = "boom" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("failing payload: {s}\n", .{case.payload});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.mute_errors = true;
+
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
+
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\result = begin
+            \\  raise({s})
+            \\rescue RuntimeError => e
+            \\  trace = e.backtrace[0]
+            \\  e.message
+            \\end
+            \\after = "continued"
+        , .{case.payload});
+        defer testing.allocator.free(source);
+
+        try testing.expectEqual(.ok, try compileAndRunStressed(&vm, &out_chunk, source));
+        try expectGlobalString(&vm, "result", case.message);
+        try expectGlobalString(&vm, "after", "continued");
+        const trace = vm.globals.get("trace") orelse return error.MissingGlobal;
+        try testing.expect(trace.isString());
+        try testing.expect(std.mem.indexOf(u8, trace.asString().chars, "from script") != null);
+    }
+}
+
+test "VM: uncaught raise of a number is a runtime error under stress GC" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    try testing.expectEqual(.runtime_error, try compileAndRunStressed(&vm, &out_chunk, "x = 1\nraise 42\nx = 2"));
+    try testing.expectEqual(@as(f64, 1), vm.globals.get("x").?.asNumber());
+}
+
+test "VM: repeated raise and rescue of numbers under stress GC keeps every message" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Each iteration collects several times while a fresh exception is being built
+    const source =
+        \\matched = 0
+        \\200.times do |i|
+        \\  m = begin
+        \\    raise i
+        \\  rescue RuntimeError => e
+        \\    e.message
+        \\  end
+        \\  if m == i.to_s
+        \\    matched = matched + 1
+        \\  end
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRunStressed(&vm, &out_chunk, source));
+    try testing.expectEqual(@as(f64, 200), vm.globals.get("matched").?.asNumber());
+}
+
+test "VM: assert keeps its message rooted while it allocates the exception" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Both the default message and a block's result were only held in a Zig
+    // local while the AssertionError instance was allocated.
+    const source =
+        \\default_msg = begin
+        \\  assert(false)
+        \\rescue AssertionError => e
+        \\  e.message
+        \\end
+        \\block_msg = begin
+        \\  assert(nil) { "lazy " + "msg" }
+        \\rescue AssertionError => e
+        \\  e.message
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRunStressed(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "default_msg", "Assertion failed.");
+    try expectGlobalString(&vm, "block_msg", "lazy msg");
+}

@@ -2570,10 +2570,15 @@ pub const VM = struct {
         var err_val = self.stack[self.stack_top - 1];
 
         // --- Auto-wrap primitives in RuntimeError ---
+        // Each allocation below can collect, and Zig locals are not GC roots: every
+        // new object goes onto the stack as soon as it exists.
         if (!err_val.isInstance() and !err_val.isClass()) {
             if (self.globals.get("RuntimeError")) |rt_class_val| {
                 if (rt_class_val.isClass()) {
                     if (self.gc.allocateInstance(self, rt_class_val.asClass()) catch null) |inst| {
+                        const inst_val = value.Value.initObj(&inst.obj);
+                        self.push(inst_val);
+
                         var str_val: ?value.Value = null;
 
                         // If it's already a string, use it directly!
@@ -2591,12 +2596,12 @@ pub const VM = struct {
                         }
 
                         if (str_val) |s_val| {
-                            self.push(value.Value.initObj(&inst.obj));
-
+                            self.push(s_val); // Protect until the instance holds it
                             const msg_key = self.allocateString("message") catch return .runtime_error;
                             self.setInstanceField(inst, msg_key, s_val, null) catch |err| {
                                 std.log.err("Error setting exception message: {}", .{err});
                             };
+                            _ = self.pop();
 
                             // --- EAGER BACKTRACE CAPTURE ---
                             if (self.buildBacktrace() catch null) |bt_arr| {
@@ -2608,16 +2613,17 @@ pub const VM = struct {
                                 _ = self.pop();
                             }
 
+                            // The instance takes over the thrown slot, which keeps it rooted until it is popped
                             _ = self.pop();
-                            err_val = value.Value.initObj(&inst.obj); // Overwrite the thrown value!
+                            self.stack[self.stack_top - 1] = inst_val;
+                            err_val = inst_val; // Overwrite the thrown value!
+                        } else {
+                            _ = self.pop(); // No message: drop the instance and throw the payload as-is
                         }
                     }
                 }
             }
         }
-
-        // Now pop it safely to complete the conceptual op_throw
-        _ = self.pop();
 
         self.throw_seq +%= 1;
         self.last_throw_target = if (self.rescue_frames.items.len > 0)
@@ -2626,6 +2632,10 @@ pub const VM = struct {
             null;
 
         if (self.rescue_frames.items.len == 0) {
+            // Pop only once reporting is done: the key lookups below allocate, and the
+            // thrown value must stay rooted in its stack slot until then.
+            defer _ = self.pop();
+
             // We removed the [Uncaught Exception] header
             if (err_val.isObject() and err_val.asObj().obj_type == .string) {
                 const str = err_val.asString().chars;
@@ -2677,6 +2687,9 @@ pub const VM = struct {
             }
             return .runtime_error;
         }
+
+        // Complete the conceptual op_throw; nothing allocates before the handler re-pushes err_val
+        _ = self.pop();
 
         const r_frame = self.rescue_frames.pop().?;
         self.closeUpvalues(&self.stack[r_frame.stack_top]);
@@ -2942,10 +2955,12 @@ pub const VM = struct {
                     self.push(value.Value.initObj(&inst.obj));
 
                     if (self.allocateString(msg) catch null) |str_val| {
+                        self.push(str_val); // Protect until the instance holds it
                         const msg_key = self.allocateString("message") catch return .runtime_error;
                         self.setInstanceField(inst, msg_key, str_val, null) catch |err| {
                             std.log.err("Error setting dynamic exception message: {}", .{err});
                         };
+                        _ = self.pop();
 
                         // --- EAGER BACKTRACE CAPTURE ---
                         if (self.buildBacktrace() catch null) |bt_arr| {
