@@ -519,7 +519,7 @@ test "pkg security: 1.x lockfiles verify with the legacy hash and are rewritten 
     try testing.expect(!std.mem.eql(u8, current, legacy));
 
     try setOwned(&fx.lockfile.version, "1.0.0");
-    try testing.expect(fx.lockfile.usesLegacyIntegrity());
+    try testing.expect(try fx.lockfile.usesLegacyIntegrity());
 
     // A 1.x lockfile is checked with the 1.x algorithm, not the current one.
     try testing.expectError(error.IntegrityMismatch, fx.resolve());
@@ -534,8 +534,13 @@ test "pkg security: 1.x lockfiles verify with the legacy hash and are rewritten 
     var reloaded = try Lockfile.load(testing.allocator, fs);
     defer reloaded.deinit();
     try testing.expectEqualStrings(lockfile_mod.LOCKFILE_VERSION, reloaded.version);
-    try testing.expect(!reloaded.usesLegacyIntegrity());
+    try testing.expect(!try reloaded.usesLegacyIntegrity());
     try testing.expectEqualStrings(current, reloaded.packages.get(pkg_id).?.integrity);
+
+    // The in-memory lockfile now holds current hashes, so reusing it (without reloading)
+    // must verify with the current algorithm too; it used to stay 1.0.0 and mismatch.
+    try testing.expectEqualStrings(lockfile_mod.LOCKFILE_VERSION, fx.lockfile.version);
+    try fx.resolve();
 }
 
 test "pkg security: forbidden or malformed transitive deps fail the install" {

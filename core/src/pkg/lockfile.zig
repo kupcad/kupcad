@@ -1,10 +1,17 @@
 const std = @import("std");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
+const semver = @import("../core/semver.zig");
+
+const log = std.log.scoped(.pkg);
 
 pub const StringMap = std.StringHashMap([]const u8);
 
 /// 2.0.0: integrity uses length-prefixed hashing (see Store.computeIntegrity).
 pub const LOCKFILE_VERSION = "2.0.0";
+/// 1.x: integrity uses the ambiguous v1 hashing (Store.IntegrityAlgo.legacy).
+const LEGACY_LOCKFILE_MAJOR = 1;
+/// Must match LOCKFILE_VERSION's major; any 2.x is hashed with the current scheme.
+const CURRENT_LOCKFILE_MAJOR = 2;
 
 /// JSON-escaped, quoted string formatter.
 fn jsonStr(s: []const u8) std.json.Formatter([]const u8) {
@@ -84,6 +91,12 @@ pub const Lockfile = struct {
                 lockfile.version = try allocator.dupe(u8, v.string);
             }
         }
+        // Reject unknown formats up front: verifying a newer lockfile with our hash
+        // scheme would only surface later as a misleading IntegrityMismatch.
+        _ = lockfile.usesLegacyIntegrity() catch |err| {
+            log.warn("kupcad.lock version \"{s}\" is not supported (this kupcad reads {d}.x and {d}.x lockfiles); upgrade kupcad or delete kupcad.lock to re-resolve", .{ lockfile.version, LEGACY_LOCKFILE_MAJOR, CURRENT_LOCKFILE_MAJOR });
+            return err;
+        };
 
         if (root.object.get("packages")) |pkgs| {
             if (pkgs == .object) {
@@ -139,12 +152,22 @@ pub const Lockfile = struct {
         return lockfile;
     }
 
-    /// Lockfiles written before 2.0.0 hash integrity with the ambiguous v1 scheme.
-    pub fn usesLegacyIntegrity(self: *const Lockfile) bool {
-        return !std.mem.eql(u8, self.version, LOCKFILE_VERSION);
+    /// 1.x lockfiles hash integrity with the ambiguous v1 scheme, 2.x with the current one.
+    /// Any other (or unparseable) version is a format this build cannot verify.
+    pub fn usesLegacyIntegrity(self: *const Lockfile) error{UnsupportedLockfileVersion}!bool {
+        const v = semver.Version.parse(self.version) catch return error.UnsupportedLockfileVersion;
+        return switch (v.major) {
+            LEGACY_LOCKFILE_MAJOR => true,
+            CURRENT_LOCKFILE_MAJOR => false,
+            else => error.UnsupportedLockfileVersion,
+        };
     }
 
     pub fn save(self: *Lockfile, fs: Vfs) !void {
+        // Allocated before writing so the in-memory version can't lag the file on OOM.
+        const saved_version = try self.allocator.dupe(u8, LOCKFILE_VERSION);
+        errdefer self.allocator.free(saved_version);
+
         var aw: std.Io.Writer.Allocating = .init(self.allocator);
         defer aw.deinit();
         const w = &aw.writer;
@@ -203,5 +226,10 @@ pub const Lockfile = struct {
         }
 
         try fs.writeFile("kupcad.lock", aw.written());
+
+        // The file is now current-format; a reused in-memory lockfile must verify with
+        // the current hash too, not the legacy one it was loaded with.
+        self.allocator.free(self.version);
+        self.version = saved_version;
     }
 };

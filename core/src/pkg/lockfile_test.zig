@@ -63,3 +63,48 @@ test "Lockfile: rejects malformed JSON payloads safely" {
     const result = Lockfile.load(testing.allocator, mem_vfs.vfs());
     try testing.expectError(error.UnexpectedToken, result);
 }
+
+fn loadVersion(mem_vfs: *MemoryVfs, version: []const u8) !Lockfile {
+    const content = try std.fmt.allocPrint(testing.allocator, "{{\"version\":\"{s}\",\"packages\":{{}}}}", .{version});
+    defer testing.allocator.free(content);
+    try mem_vfs.vfs().writeFile("kupcad.lock", content);
+    return Lockfile.load(testing.allocator, mem_vfs.vfs());
+}
+
+test "Lockfile: integrity scheme follows the major version; unknown majors are rejected" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    const known = [_]struct { version: []const u8, legacy: bool }{
+        .{ .version = "1.0.0", .legacy = true },
+        .{ .version = "1.4.2", .legacy = true },
+        .{ .version = "2.0.0", .legacy = false },
+        // A minor bump must not flip to the legacy hash (it used to: anything != 2.0.0).
+        .{ .version = "2.1.0", .legacy = false },
+    };
+    for (known) |case| {
+        var lockfile = try loadVersion(&mem_vfs, case.version);
+        defer lockfile.deinit();
+        try testing.expectEqual(case.legacy, try lockfile.usesLegacyIntegrity());
+    }
+
+    // A newer (or garbled) format fails at load with a clear error, instead of
+    // being verified as 1.x and reported later as an IntegrityMismatch.
+    for ([_][]const u8{ "3.0.0", "0.9.0", "not-a-version" }) |version| {
+        try testing.expectError(error.UnsupportedLockfileVersion, loadVersion(&mem_vfs, version));
+    }
+}
+
+test "Lockfile: save upgrades the in-memory version along with the file" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    var lockfile = try loadVersion(&mem_vfs, "1.0.0");
+    defer lockfile.deinit();
+    try testing.expect(try lockfile.usesLegacyIntegrity());
+
+    try lockfile.save(mem_vfs.vfs());
+    // A reused lockfile used to keep "1.0.0" and verify the freshly written hashes as legacy.
+    try testing.expectEqualStrings(@import("lockfile.zig").LOCKFILE_VERSION, lockfile.version);
+    try testing.expect(!try lockfile.usesLegacyIntegrity());
+}

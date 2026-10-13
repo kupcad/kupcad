@@ -220,7 +220,7 @@ pub const Resolver = struct {
                 log.warn("kupcad.lock entry for {s} has no integrity; refusing to install unverified content", .{pkg_id});
                 return error.LockfileMissingIntegrity;
             }
-            const algo: Store.IntegrityAlgo = if (self.lockfile.usesLegacyIntegrity()) .legacy else .current;
+            const algo: Store.IntegrityAlgo = if (try self.lockfile.usesLegacyIntegrity()) .legacy else .current;
             Store.verifyIntegrity(self.allocator, &files, expected, algo) catch |err| {
                 log.warn("Integrity mismatch for {s}@{s}: kupcad.lock expects {s}, got {s}", .{ pkg_id, pinned_commit.?, expected, integrity_hash });
                 return err;
