@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
 const dag = @import("dag.zig");
+const verifier = @import("verifier.zig");
 const limits = @import("../core/limits.zig");
 const value = @import("../core/value.zig");
 const parameters = @import("../core/parameters.zig");
@@ -61,9 +62,19 @@ pub const RescueFrame = struct {
     upvalue_ptr: ?*value.ObjUpvalue,
 };
 
+/// Pending exception transfer across a native (Zig) boundary.
+///
+/// executeThrow pops frames down to the rescuing frame immediately, but every
+/// native between the raise and the handler still has to return error.Unwind,
+/// and its defers (HandleScope etc.) can rewrite stack_top on the way out. Each
+/// boundary re-applies `stack_top` + `err_val`; the boundary whose caller frame
+/// owns the handler (`frame_count`) consumes the entry. At most one entry is live:
+/// no bytecode runs while an unwind propagates, so a new throw supersedes any
+/// entry left behind by a handler reached without crossing a native.
 pub const UnwindFrame = struct {
     err_val: value.Value,
     stack_top: usize,
+    frame_count: usize = 0,
 };
 
 pub const VM = struct {
@@ -119,6 +130,12 @@ pub const VM = struct {
 
     // --- Track stack state to prevent native FFI corruption ---
     unwind_stack: std.ArrayListUnmanaged(UnwindFrame) = .empty,
+    // Bumped by every executeThrow so a native boundary can tell that the native
+    // already raised (e.g. throwDynamicError + `return error.RuntimeError`) and must
+    // not raise a second "Native Execution Error" on top of it.
+    throw_seq: u64 = 0,
+    // frame_count of the rescuing frame for the latest throw, null if it was uncaught.
+    last_throw_target: ?usize = null,
 
     config_stack: std.ArrayListUnmanaged(EngineConfig) = .empty,
 
@@ -223,6 +240,8 @@ pub const VM = struct {
 
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
+        var module_keys = self.modules.keyIterator();
+        while (module_keys.next()) |key| self.allocator.free(key.*);
         self.modules.deinit(self.allocator);
         self.strings.deinit(self.allocator);
         self.symbols.deinit(self.allocator);
@@ -303,6 +322,10 @@ pub const VM = struct {
         self.frames.ensureTotalCapacity(self.allocator, 64) catch return .runtime_error;
         self.stack_top = 0;
 
+        // The dispatch loop indexes constants/caches and follows jumps unchecked
+        // for speed, so malformed bytecode must be rejected once, up front.
+        if (!self.verifyBytecode(execution_chunk)) return .compile_error;
+
         const func = self.gc.allocateFunction(self) catch return .runtime_error;
         func.chunk = execution_chunk;
         func.owns_chunk = false;
@@ -316,6 +339,11 @@ pub const VM = struct {
         // Swap func for closure on stack
         _ = self.pop();
         self.push(value.Value.initObj(&closure.obj));
+
+        // The script closure now roots the chunk's constants for the whole run, so
+        // the compile-time registration (see chunk.ChunkRegistry) can be dropped;
+        // afterwards the constants are collectable like any other unreferenced value.
+        if (execution_chunk.registry) |r| r.untrack(execution_chunk);
 
         // Pad the top-level script frame for its local variables
         const total_locals = func.local_count;
@@ -801,7 +829,7 @@ pub const VM = struct {
                     const source = self.vfs.readFile(self.allocator, path_str) catch {
                         if (self.host.import_handler) |handler| {
                             const module_obj = handler(self, path_str) catch return .runtime_error;
-                            self.modules.put(self.allocator, path_str, module_obj) catch return .runtime_error;
+                            self.cacheModule(path_str, module_obj) catch return .runtime_error;
                             self.push(module_obj);
                             continue;
                         }
@@ -833,10 +861,13 @@ pub const VM = struct {
                     // 4. Compile recursively
                     const heap_chunk = self.allocator.create(chunk.Chunk) catch return .runtime_error;
                     heap_chunk.* = chunk.Chunk.init();
-                    errdefer {
+                    // `errdefer` never fires here (this function returns InterpretResult, not an
+                    // error union), so ownership is tracked explicitly until a function owns the chunk.
+                    var chunk_owned_by_func = false;
+                    defer if (!chunk_owned_by_func) {
                         heap_chunk.free(self.allocator);
                         self.allocator.destroy(heap_chunk);
-                    }
+                    };
 
                     var comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, heap_chunk, self);
                     defer comp.deinit();
@@ -846,24 +877,38 @@ pub const VM = struct {
                         continue;
                     };
 
+                    if (!self.verifyBytecode(heap_chunk)) {
+                        if (self.throwDynamicError("ImportError: Invalid bytecode for '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        continue;
+                    }
+
                     // 5. Setup Closure
                     const func = self.gc.allocateFunction(self) catch return .runtime_error;
                     func.chunk = heap_chunk;
                     func.owns_chunk = true;
                     func.local_count = heap_chunk.local_count;
+                    chunk_owned_by_func = true; // freed with func by the GC from here on
 
+                    // Root func while allocateClosure may collect
+                    self.push(value.Value.initObj(&func.obj));
                     const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
+                    _ = self.pop();
 
                     // --- CIRCULAR DEPENDENCY: Register Sentinel ---
-                    self.modules.put(self.allocator, path_str, value.Value.initNil()) catch return .runtime_error;
+                    self.cacheModule(path_str, value.Value.initNil()) catch return .runtime_error;
 
                     // 6. Execute synchronously
+                    const import_depth = self.frames.items.len;
                     const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
                         // Clean up the sentinel on failure so it can be retried later if caught
-                        _ = self.modules.remove(path_str);
+                        self.uncacheModule(path_str);
 
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
-                        if (err == error.Unwind) return .ok; // Stack safely unwound by inner exception
+                        if (err == error.Unwind) {
+                            // Stack unwound by an exception raised inside the module; resume at the handler
+                            self.restoreAfterUnwind(import_depth);
+                            continue;
+                        }
                         return .runtime_error;
                     };
 
@@ -875,7 +920,7 @@ pub const VM = struct {
                     }
 
                     // 7. Cache the actual finalized module and yield result
-                    self.modules.put(self.allocator, path_str, final_res) catch return .runtime_error;
+                    self.cacheModule(path_str, final_res) catch return .runtime_error;
                     self.push(final_res);
                 },
                 .op_get_upvalue => {
@@ -1201,6 +1246,7 @@ pub const VM = struct {
                     const yield_args = args_ptr[0..yield_arg_count];
 
                     // Safely propagate limits through native yields
+                    const yield_depth = self.frames.items.len;
                     const result = self.callClosureSync(block_closure, yield_args) catch |err| {
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
                         if (err == error.BlockBreak) {
@@ -1218,6 +1264,7 @@ pub const VM = struct {
                         if (err == error.Unwind) {
                             // The stack has been forcefully unwound past this frame.
                             // Continue the run loop to either execute the rescue handler or terminate natively.
+                            self.restoreAfterUnwind(yield_depth);
                             continue;
                         }
                         return .runtime_error;
@@ -1486,6 +1533,31 @@ pub const VM = struct {
     inline fn popAndRelease(self: *VM, count: usize) void {
         std.debug.assert(self.stack_top >= count);
         self.shrinkStack(self.stack_top - count);
+    }
+
+    fn verifyBytecode(self: *VM, c: *const chunk.Chunk) bool {
+        verifier.verifyChunkWithAllocator(self.allocator, c) catch |err| {
+            self.reportError("Fatal: Bytecode verification failed: {s}\n", .{@errorName(err)});
+            return false;
+        };
+        return true;
+    }
+
+    /// Import cache insert. Keys are owned copies: the path slice comes from a
+    /// constant ObjString that can be swept while the cache entry lives on.
+    fn cacheModule(self: *VM, path: []const u8, val: value.Value) !void {
+        const gop = try self.modules.getOrPut(self.allocator, path);
+        if (!gop.found_existing) {
+            gop.key_ptr.* = self.allocator.dupe(u8, path) catch |err| {
+                self.modules.removeByPtr(gop.key_ptr);
+                return err;
+            };
+        }
+        gop.value_ptr.* = val;
+    }
+
+    fn uncacheModule(self: *VM, path: []const u8) void {
+        if (self.modules.fetchRemove(path)) |kv| self.allocator.free(kv.key);
     }
 
     pub inline fn clearUnwindState(self: *VM) void {
@@ -1942,7 +2014,15 @@ pub const VM = struct {
                         return .ok;
                     } else if (init_method.isNative()) {
                         const native_obj = init_method.asNative();
-                        _ = native_obj.function(self, arg_count, args_ptr) catch {
+                        const caller_depth = self.frames.items.len;
+                        const throw_seq = self.throw_seq;
+                        _ = native_obj.function(self, arg_count, args_ptr) catch |err| {
+                            if (err == error.Unwind) {
+                                self.restoreAfterUnwind(caller_depth);
+                                return .ok;
+                            }
+                            if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
+                            if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
                             return self.throwDynamicError("Runtime Error: Native Constructor Error", .{});
                         };
                         self.popAndRelease(arg_count);
@@ -2023,18 +2103,17 @@ pub const VM = struct {
                 self.dispatchClosure(bound.method.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
                 return .ok;
             } else if (bound.method.isNative()) {
-                const native_obj = bound.method.asNative();
-                const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
-                self.popAndRelease(arg_count + 1);
-                self.stack.ptr[self.stack_top] = result;
-                self.stack_top += 1;
-                return .ok;
+                // Same error protocol as any native call (a block raising inside it must unwind)
+                return self.executeNative(bound.method.asNative(), arg_count, args_ptr, method_name_str);
             }
         }
 
         // --- 3. FALLBACK: NATIVE C++ KERNEL METHODS (Geometry) ---
         if (self.host.invoke_handler) |handler| {
+            const caller_depth = self.frames.items.len;
+            const throw_seq = self.throw_seq;
             const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch {
+                if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
                 return self.throwDynamicError("Runtime Error: CAD Kernel / Method Error", .{});
             };
 
@@ -2322,12 +2401,9 @@ pub const VM = struct {
             if (bound.method.isClosure()) {
                 self.dispatchClosure(bound.method.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
             } else if (bound.method.isNative()) {
-                const native_obj = bound.method.asNative();
+                // Same error protocol as any native call (a block raising inside it must unwind)
                 const args_ptr = self.stack.ptr + base_slot + 1;
-                const result = native_obj.function(self, arg_count, args_ptr) catch return .runtime_error;
-                self.popAndRelease(arg_count + 1);
-                self.stack.ptr[self.stack_top] = result;
-                self.stack_top += 1;
+                return self.executeNative(bound.method.asNative(), arg_count, args_ptr, "bound_native");
             }
         } else if (callee.isNative()) {
             const args_ptr = self.stack.ptr + base_slot + 1;
@@ -2356,6 +2432,10 @@ pub const VM = struct {
     }
 
     inline fn executeNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, args_ptr: [*]value.Value, func_name: []const u8) InterpretResult {
+        // Depth of the calling frame, captured before an unwind can pop it
+        const caller_depth = self.frames.items.len;
+        const throw_seq = self.throw_seq;
+
         // --- PROFILER: Native Enter ---
         if (self.profiler) |p| p.enterFrame(func_name) catch |err| {
             std.log.err("Profiler error: {}", .{err});
@@ -2367,14 +2447,11 @@ pub const VM = struct {
             };
             if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
             if (err == error.Unwind) {
-                // --- Restore Stack corrupted by Native Defers ---
-                if (self.unwind_stack.pop()) |unwind| {
-                    self.stack_top = unwind.stack_top;
-                    self.push(unwind.err_val);
-                }
+                self.restoreAfterUnwind(caller_depth);
                 return .ok;
             }
             if (err == error.FatalError) return .runtime_error;
+            if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
             return self.throwDynamicError("Runtime Error: Native Execution Error", .{});
         };
 
@@ -2386,6 +2463,29 @@ pub const VM = struct {
         self.popAndRelease(arg_count + 1);
         self.stack.ptr[self.stack_top] = result;
         self.stack_top += 1;
+        return .ok;
+    }
+
+    /// Called when a native (or sync closure call) started at `caller_depth` frames
+    /// returned error.Unwind. Re-applies the handler's stack layout, which native
+    /// defers may have clobbered, and consumes the entry once the boundary sits in
+    /// the frame that owns the rescue handler.
+    fn restoreAfterUnwind(self: *VM, caller_depth: usize) void {
+        const unwind = self.unwind_stack.getLastOrNull() orelse return;
+        self.stack_top = unwind.stack_top;
+        self.push(unwind.err_val);
+        if (caller_depth <= unwind.frame_count) _ = self.unwind_stack.pop();
+    }
+
+    /// A native failed with an ordinary error after `throw_seq` was sampled. If it
+    /// already raised an exception that unwound to (or past) its caller's frame, that
+    /// exception stands: resume at its handler, or stop if it was uncaught. A throw that
+    /// was rescued deeper, inside the native's own callbacks, does not count.
+    fn alreadyThrown(self: *VM, throw_seq: u64, caller_depth: usize) ?InterpretResult {
+        if (self.throw_seq == throw_seq) return null;
+        const target = self.last_throw_target orelse return .runtime_error;
+        if (target > caller_depth) return null;
+        self.restoreAfterUnwind(caller_depth);
         return .ok;
     }
 
@@ -2442,6 +2542,12 @@ pub const VM = struct {
 
         // Now pop it safely to complete the conceptual op_throw
         _ = self.pop();
+
+        self.throw_seq +%= 1;
+        self.last_throw_target = if (self.rescue_frames.items.len > 0)
+            self.rescue_frames.items[self.rescue_frames.items.len - 1].frame_count
+        else
+            null;
 
         if (self.rescue_frames.items.len == 0) {
             // We removed the [Uncaught Exception] header
@@ -2508,9 +2614,12 @@ pub const VM = struct {
         self.frames.items[self.frames.items.len - 1].ip = r_frame.handler_ip;
 
         // --- Save Unwind State for Native FFI Restoration ---
+        // Any older entry belongs to an exception whose handler already runs (see UnwindFrame).
+        self.clearUnwindState();
         self.unwind_stack.append(self.allocator, .{
             .err_val = err_val,
             .stack_top = r_frame.stack_top,
+            .frame_count = r_frame.frame_count,
         }) catch {
             self.reportError("Fatal: Out of memory during exception unwinding.\n", .{});
             return .runtime_error;

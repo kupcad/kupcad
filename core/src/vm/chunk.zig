@@ -144,6 +144,44 @@ pub const DebugSpan = struct {
     source_offset: u32,
 };
 
+/// Set of live chunks whose constant pools are GC roots.
+///
+/// A chunk under compilation is not reachable from any ObjFunction yet (the
+/// top-level chunk only gets wrapped in interpret(), an imported module's chunk
+/// only after compile() returns), so constants copied into it would otherwise be
+/// swept by a GC triggered mid-compile. Chunks register themselves on the first
+/// heap constant and unregister in Chunk.free, so the registry never holds a
+/// dangling chunk pointer.
+pub const ChunkRegistry = struct {
+    chunks: std.ArrayListUnmanaged(*Chunk) = .empty,
+
+    pub fn track(self: *ChunkRegistry, allocator: std.mem.Allocator, c: *Chunk) !void {
+        if (c.registry != null) return;
+        try self.chunks.append(allocator, c);
+        c.registry = self;
+        c.registry_index = self.chunks.items.len - 1;
+    }
+
+    pub fn untrack(self: *ChunkRegistry, c: *Chunk) void {
+        const idx = c.registry_index;
+        std.debug.assert(idx < self.chunks.items.len and self.chunks.items[idx] == c);
+        _ = self.chunks.swapRemove(idx);
+        if (idx < self.chunks.items.len) self.chunks.items[idx].registry_index = idx;
+        c.registry = null;
+        c.registry_index = 0;
+    }
+
+    /// Detaches every still-registered chunk (e.g. a stack chunk freed after
+    /// its VM) so a later Chunk.free does not touch the destroyed registry.
+    pub fn deinit(self: *ChunkRegistry, allocator: std.mem.Allocator) void {
+        for (self.chunks.items) |c| {
+            c.registry = null;
+            c.registry_index = 0;
+        }
+        self.chunks.deinit(allocator);
+    }
+};
+
 pub const Chunk = struct {
     code: std.ArrayListUnmanaged(u8),
     inline_caches: std.ArrayListUnmanaged(InlineCache),
@@ -152,6 +190,10 @@ pub const Chunk = struct {
     max_stack_slots: usize,
     local_count: usize,
     local_names: std.ArrayListUnmanaged([]const u8), // For REPL introspection
+    // GC root registration (see ChunkRegistry). A registered chunk must not be
+    // moved by value, since the registry stores its address.
+    registry: ?*ChunkRegistry = null,
+    registry_index: usize = 0,
 
     pub fn init() Chunk {
         return .{
@@ -219,6 +261,7 @@ pub const Chunk = struct {
     }
 
     pub fn free(self: *Chunk, allocator: std.mem.Allocator) void {
+        if (self.registry) |r| r.untrack(self);
         self.code.deinit(allocator);
         self.inline_caches.deinit(allocator);
         self.debug_spans.deinit(allocator);

@@ -77,6 +77,11 @@ pub fn makeConstant(self: *Compiler, val: value.Value) CompileError!usize {
         if (self.vm.valuesEqual(existing, val)) return i;
     }
 
+    // A top-level chunk (no ObjFunction yet) is not reachable from any root until
+    // interpret()/op_import wraps it; register it so heap constants survive a GC
+    // triggered mid-compile. Nested chunks are traced through their ObjFunction,
+    // which compileClosureBlock keeps on the VM stack while compiling.
+    if (val.isObject() and self.function == null) self.vm.gc.trackChunk(self.current_chunk) catch return error.OutOfMemory;
     const index = self.current_chunk.addConstant(self.allocator, val) catch return error.OutOfMemory;
     if (index > limits.MAX_CONSTANTS) return error.TooManyConstants;
     return index;

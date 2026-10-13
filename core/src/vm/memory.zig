@@ -43,6 +43,13 @@ pub const GC = struct {
     // --- GC State ---
     is_gc_running: bool = false,
 
+    /// Test-only: collect on every object allocation so unrooted temporaries
+    /// are swept deterministically instead of only past the byte threshold.
+    stress: bool = false,
+
+    /// Chunks whose constant pools are roots (see chunk.ChunkRegistry).
+    live_chunks: chunk.ChunkRegistry = .{},
+
     const HEAP_GROW_FACTOR: usize = 2;
 
     pub fn init(allocator: std.mem.Allocator) GC {
@@ -57,6 +64,7 @@ pub const GC = struct {
 
     pub fn deinit(self: *GC) void {
         self.gray_stack.deinit(self.allocator);
+        self.live_chunks.deinit(self.allocator);
 
         // Clean up tracking arrays
         self.strings.deinit(self.allocator);
@@ -78,6 +86,11 @@ pub const GC = struct {
         self.cross_sections.deinit(self.allocator);
         self.assemblies.deinit(self.allocator);
         self.workplanes.deinit(self.allocator);
+    }
+
+    /// Registers a chunk's constant pool as a GC root until the chunk is freed.
+    pub fn trackChunk(self: *GC, c: *chunk.Chunk) !void {
+        try self.live_chunks.track(self.allocator, c);
     }
 
     // --- Dynamic Tracking Allocator Interface ---
@@ -188,7 +201,7 @@ pub const GC = struct {
 
     /// Generic allocator that appends directly to the specific tracking list
     inline fn allocateObject(self: *GC, vm: *VM, comptime T: type, list: *std.ArrayListUnmanaged(*T), obj_type: value.ObjType) !*T {
-        if (self.bytes_allocated + @sizeOf(T) > self.next_gc_threshold) {
+        if (self.stress or self.bytes_allocated + @sizeOf(T) > self.next_gc_threshold) {
             self.collectGarbage(vm, false);
         }
 
@@ -407,7 +420,19 @@ pub const GC = struct {
         // Protect error values held across native boundary unwinds
         for (vm.unwind_stack.items) |u_frame| {
             self.markValue(u_frame.err_val);
-         }
+        }
+
+        // Constants of chunks still being compiled (or not yet wrapped in a function)
+        for (self.live_chunks.chunks.items) |c| {
+            for (c.constants.items) |val| self.markValue(val);
+        }
+
+        // Import cache: a module's result is only referenced from here once its
+        // top-level closure has returned, and later imports push it straight from the cache.
+        var modules_it = vm.modules.valueIterator();
+        while (modules_it.next()) |val| {
+            self.markValue(val.*);
+        }
 
         // --- Protect static interned strings ---
         if (vm.static_true) |s| self.markObject(&s.obj);

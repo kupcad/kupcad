@@ -301,6 +301,7 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
     try out_chunk.writeOp(testing.allocator, .op_jump, 0);
     try out_chunk.write(testing.allocator, 0, 0);
     try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0);
     try out_chunk.write(testing.allocator, 4, 0);
 
     // --- RESCUE HANDLER ---

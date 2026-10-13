@@ -19,6 +19,9 @@ test {
     _ = @import("api_test.zig");
     _ = @import("gen_grammar_test.zig");
 
+    // Audit regression tests
+    _ = @import("vm/regression_gc_test.zig");
+
     // Compiler
     _ = @import("compiler/compiler_test.zig");
 
