@@ -62,6 +62,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.string_class = try defineBuiltinClass(vm, "String", vm.object_class);
     vm.map_class = try defineBuiltinClass(vm, "Map", vm.object_class);
     vm.number_class = try defineBuiltinClass(vm, "Number", vm.object_class);
+    vm.range_class = try defineBuiltinClass(vm, "Range", vm.object_class);
     vm.symbol_class = try defineBuiltinClass(vm, "Symbol", vm.object_class);
     vm.boolean_class = try defineBuiltinClass(vm, "Boolean", vm.object_class);
     vm.bbox_class = try defineBuiltinClass(vm, "BoundingBox", vm.object_class);

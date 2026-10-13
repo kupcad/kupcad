@@ -118,6 +118,7 @@ pub const VM = struct {
     array_class: ?*value.ObjClass = null,
     map_class: ?*value.ObjClass = null,
     number_class: ?*value.ObjClass = null,
+    range_class: ?*value.ObjClass = null,
     symbol_class: ?*value.ObjClass = null,
     boolean_class: ?*value.ObjClass = null,
     bbox_class: ?*value.ObjClass = null,
@@ -2363,6 +2364,7 @@ pub const VM = struct {
                 .array => return self.array_class,
                 .map => return self.map_class,
                 .bbox => return self.bbox_class,
+                .range => return self.range_class,
                 else => return null,
             }
         } else if (receiver.isNumber()) {
@@ -2713,6 +2715,7 @@ pub const VM = struct {
                     .array => return c == self.array_class,
                     .map => return c == self.map_class,
                     .symbol => return c == self.symbol_class,
+                    .range => return c == self.range_class,
                     else => return false,
                 }
             } else if (test_val.isNumber()) {

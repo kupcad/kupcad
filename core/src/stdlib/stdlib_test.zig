@@ -456,3 +456,188 @@ test "Stdlib: repeat counts reject NaN and values above MAX_PATTERN_COUNT" {
         "cube(1).repeat_polar(-5)",
     });
 }
+
+// --- Range iteration and Number#times/upto/downto ---
+
+const MAX_ITER = limits.MAX_RANGE_ITERATIONS;
+
+/// What a script leaves in the global `r`.
+const Expected = union(enum) {
+    nums: []const f64,
+    num: f64,
+    boolean: bool,
+    str: []const u8,
+};
+
+const IterCase = struct { src: []const u8, expected: Expected };
+
+fn expectGlobalR(cases: []const IterCase) !void {
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        const r = vm.globals.get("r") orelse return error.MissingGlobal;
+        switch (case.expected) {
+            .nums => |want| {
+                try testing.expect(r.isArray());
+                const items = r.asArray().items.items;
+                try testing.expectEqual(want.len, items.len);
+                for (want, items) |w, item| try testing.expectApproxEqAbs(w, item.asNumber(), 1e-12);
+            },
+            .num => |want| try testing.expectEqual(want, r.asNumber()),
+            .boolean => |want| try testing.expectEqual(want, r.asBool()),
+            .str => |want| {
+                try testing.expect(r.isString());
+                try testing.expectEqualStrings(want, r.asString().chars);
+            },
+        }
+    }
+}
+
+test "Stdlib: Range#to_a and #step follow Ruby's step semantics" {
+    try expectGlobalR(&.{
+        .{ .src = "r = (0..3).to_a", .expected = .{ .nums = &.{ 0, 1, 2, 3 } } },
+        .{ .src = "r = (0...3).to_a", .expected = .{ .nums = &.{ 0, 1, 2 } } },
+        .{ .src = "r = (0..0).to_a", .expected = .{ .nums = &.{0} } },
+        .{ .src = "r = (0...0).to_a", .expected = .{ .nums = &.{} } },
+        .{ .src = "r = (5..1).to_a", .expected = .{ .nums = &.{} } },
+        .{ .src = "r = (-2..1).to_a", .expected = .{ .nums = &.{ -2, -1, 0, 1 } } },
+        .{ .src = "r = (1..10).step(3).to_a", .expected = .{ .nums = &.{ 1, 4, 7, 10 } } },
+        .{ .src = "r = (0...9).step(3).to_a", .expected = .{ .nums = &.{ 0, 3, 6 } } },
+        .{ .src = "r = (10..1).step(-3).to_a", .expected = .{ .nums = &.{ 10, 7, 4, 1 } } },
+        .{ .src = "r = (10...0).step(-5).to_a", .expected = .{ .nums = &.{ 10, 5 } } },
+        .{ .src = "r = (1..5).step(-1).to_a", .expected = .{ .nums = &.{} } },
+        .{ .src = "r = (0..1).step(0.25).to_a", .expected = .{ .nums = &.{ 0, 0.25, 0.5, 0.75, 1 } } },
+        // 0.3 / 0.1 is 2.9999999999999996: the epsilon allowance keeps the end value.
+        .{ .src = "r = (0..0.3).step(0.1).to_a", .expected = .{ .nums = &.{ 0, 0.1, 0.2, 0.3 } } },
+        .{ .src = "r = (0...0.3).step(0.1).to_a", .expected = .{ .nums = &.{ 0, 0.1, 0.2 } } },
+        .{ .src = "r = (0..3).map { |i| i * i }", .expected = .{ .nums = &.{ 0, 1, 4, 9 } } },
+        .{ .src = "r = []\n(0...3).each { |i| r.push(i) }", .expected = .{ .nums = &.{ 0, 1, 2 } } },
+        .{ .src = "r = []\n(0..2).each { |i| (0..1).each { |j| r.push(i * 10 + j) } }", .expected = .{ .nums = &.{ 0, 1, 10, 11, 20, 21 } } },
+    });
+}
+
+test "Stdlib: Range query methods" {
+    try expectGlobalR(&.{
+        .{ .src = "r = (0..3).size", .expected = .{ .num = 4 } },
+        .{ .src = "r = (0...3).length", .expected = .{ .num = 3 } },
+        .{ .src = "r = (5..1).count", .expected = .{ .num = 0 } },
+        .{ .src = "r = (0..3).include?(3)", .expected = .{ .boolean = true } },
+        .{ .src = "r = (0...3).include?(3)", .expected = .{ .boolean = false } },
+        .{ .src = "r = (0..3).cover?(1.5)", .expected = .{ .boolean = true } },
+        .{ .src = "r = (0..3).include?(-1)", .expected = .{ .boolean = false } },
+        .{ .src = "r = (0..3).include?(\"1\")", .expected = .{ .boolean = false } },
+        .{ .src = "r = (2..5).first", .expected = .{ .num = 2 } },
+        .{ .src = "r = (2...5).last", .expected = .{ .num = 5 } },
+        .{ .src = "r = (0...3).exclusive?", .expected = .{ .boolean = true } },
+        .{ .src = "r = (0..3).exclusive?", .expected = .{ .boolean = false } },
+        .{ .src = "r = (0...3).to_s", .expected = .{ .str = "0...3" } },
+        .{ .src = "r = (0..2.5).to_s", .expected = .{ .str = "0..2.5" } },
+        .{ .src = "r = (0..3).is_a?(Range)", .expected = .{ .boolean = true } },
+        .{ .src = "r = (1..2).step(0.5).exclusive?", .expected = .{ .boolean = false } },
+        .{ .src = "r = case (1..2)\n  when Range\n    \"range\"\n  else\n    \"other\"\nend", .expected = .{ .str = "range" } },
+    });
+}
+
+test "Stdlib: Number#times, #upto and #downto" {
+    try expectGlobalR(&.{
+        .{ .src = "r = []\n3.times { |i| r.push(i) }", .expected = .{ .nums = &.{ 0, 1, 2 } } },
+        .{ .src = "r = []\n0.times { |i| r.push(i) }", .expected = .{ .nums = &.{} } },
+        .{ .src = "r = []\n(-2).times { |i| r.push(i) }", .expected = .{ .nums = &.{} } },
+        .{ .src = "r = 3.times { }", .expected = .{ .num = 3 } },
+        .{ .src = "r = []\n5.upto(7) { |i| r.push(i) }", .expected = .{ .nums = &.{ 5, 6, 7 } } },
+        .{ .src = "r = []\n5.upto(3) { |i| r.push(i) }", .expected = .{ .nums = &.{} } },
+        .{ .src = "r = []\n3.downto(1) { |i| r.push(i) }", .expected = .{ .nums = &.{ 3, 2, 1 } } },
+        .{ .src = "r = []\n1.downto(3) { |i| r.push(i) }", .expected = .{ .nums = &.{} } },
+        .{ .src = "r = 2.upto(4) { }", .expected = .{ .num = 2 } },
+    });
+}
+
+test "Stdlib: break, next, return and exceptions inside range and times blocks" {
+    try expectGlobalR(&.{
+        // `break value` becomes the method's return value; without break, each returns the receiver.
+        .{ .src = "r = (0..5).each { |i| break i * 10 if i == 2 }", .expected = .{ .num = 20 } },
+        .{ .src = "r = (0..5).map { |i| break 42 if i == 3\n i }", .expected = .{ .num = 42 } },
+        .{ .src = "r = 10.times { |i| break i if i == 4 }", .expected = .{ .num = 4 } },
+        .{ .src = "r = (0..2).each { |i| }.to_s", .expected = .{ .str = "0..2" } },
+        .{ .src = "r = []\n(0..4).each { |i| next if i % 2 == 1\n r.push(i) }", .expected = .{ .nums = &.{ 0, 2, 4 } } },
+        .{ .src = "r = (0..3).map { |i| next 0 if i == 1\n i }", .expected = .{ .nums = &.{ 0, 0, 2, 3 } } },
+        .{ .src = "r = begin\n  (0..3).each { |i| raise \"boom\" if i == 2 }\nrescue => e\n  e.message\nend", .expected = .{ .str = "boom" } },
+        .{ .src = "r = []\nbegin\n  (0..3).map { |i| r.push(i)\n raise \"stop\" if i == 1\n i }\nrescue => e\n  r.push(99)\nend", .expected = .{ .nums = &.{ 0, 1, 99 } } },
+    });
+    // `return` inside a block leaves only the block in KupCAD (same as Array#each);
+    // this guards that it unwinds cleanly through the native loop.
+    try expectAll(.ok, &.{
+        "def f(limit)\n  (0..limit).each { |i| return i if i > 2 }\n  -1\nend\nf(10)",
+        "def g\n  3.times { |i| return i }\n  0\nend\ng()",
+    });
+}
+
+test "Stdlib: range and times errors are rescuable ValueErrors with the real message" {
+    const max_iter = std.fmt.comptimePrint("{d}", .{MAX_ITER});
+    const cases = [_]struct { src: []const u8, prefix: []const u8 }{
+        .{ .src = "2.5.times { }", .prefix = "ValueError: times requires an integer" },
+        .{ .src = "(1e400 - 1e400).times { }", .prefix = "ValueError: times requires an integer" },
+        .{ .src = "3.times", .prefix = "ValueError: times requires a block" },
+        .{ .src = "(0..3).each", .prefix = "ValueError: Range#each requires a block" },
+        .{ .src = "(0..3).map", .prefix = "ValueError: Range#map requires a block" },
+        .{ .src = "(0..3).step(0)", .prefix = "ValueError: Range#step requires a finite, non-zero step" },
+        .{ .src = "(0..3).step(1e400)", .prefix = "ValueError: Range#step requires a finite, non-zero step" },
+        .{ .src = "(0..1e400).to_a", .prefix = "ValueError: Range#to_a requires finite bounds" },
+        .{ .src = "(0..(1e400 - 1e400)).size", .prefix = "ValueError: Range#size requires finite bounds" },
+        .{ .src = "1.upto(2.5) { }", .prefix = "ValueError: upto requires an integer" },
+        .{ .src = "1.5.downto(0) { }", .prefix = "ValueError: downto requires an integer" },
+        // One past the cap is rejected before the loop starts (no hang, no partial work).
+        .{ .src = "(0.." ++ max_iter ++ ").each { |i| }", .prefix = "ValueError: Range#each would iterate" },
+        .{ .src = "(0..1e12).to_a", .prefix = "ValueError: Range#to_a would iterate" },
+        .{ .src = "(" ++ max_iter ++ " + 1).times { }", .prefix = "ValueError: times would iterate" },
+    };
+    for (cases) |case| {
+        var src_buf: [256]u8 = undefined;
+        const src = try std.fmt.bufPrint(&src_buf, "r = begin\n  {s}\n  \"no error\"\nrescue => e\n  e.message\nend", .{case.src});
+        errdefer std.debug.print("script: {s}\n", .{src});
+        var vm = try initVm();
+        defer vm.deinit();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, src));
+        const r = vm.globals.get("r") orelse return error.MissingGlobal;
+        try testing.expect(r.isString());
+        try testing.expect(std.mem.startsWith(u8, r.asString().chars, case.prefix));
+    }
+    // Uncaught, the same errors fail the script.
+    try expectAll(.runtime_error, &.{ "2.5.times { }", "(0..3).each", "(0..3).step(0)" });
+    // Exactly at the cap is allowed: size doesn't iterate, so this stays cheap.
+    try expectGlobalR(&.{
+        .{ .src = "r = (1.." ++ max_iter ++ ").size", .expected = .{ .num = @floatFromInt(MAX_ITER) } },
+    });
+}
+
+test "Stdlib: the docs (0...3).each example builds three pegs" {
+    try expectGlobalR(&.{.{
+        .src =
+        \\pegs = []
+        \\(0...3).each do |row|
+        \\  pegs.push(cylinder(r: 2, h: 10).translate(x: row * 10))
+        \\end
+        \\r = pegs.length
+        ,
+        .expected = .{ .num = 3 },
+    }});
+}
+
+test "Stdlib: Range#map keeps its result array and block results alive across GC" {
+    var vm = try initVm();
+    defer vm.deinit();
+    // Collect on every allocation: an unrooted result array or element would be swept here.
+    vm.gc.stress = true;
+    defer vm.gc.stress = false;
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "r = (0..200).map { |i| \"s\" + i.to_s }"));
+    const r = vm.globals.get("r") orelse return error.MissingGlobal;
+    const items = r.asArray().items.items;
+    try testing.expectEqual(@as(usize, 201), items.len);
+    var buf: [16]u8 = undefined;
+    for (items, 0..) |item, i| {
+        try testing.expect(item.isString());
+        try testing.expectEqualStrings(try std.fmt.bufPrint(&buf, "s{d}", .{i}), item.asString().chars);
+    }
+}

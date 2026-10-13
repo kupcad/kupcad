@@ -37,6 +37,11 @@ pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
     else
         error.RuntimeError;
 
+    if (T == *value.ObjRange) return if (val.isObject() and val.asObj().obj_type == .range)
+        val.asRange()
+    else
+        error.RuntimeError;
+
     if (T == *value.ObjClosure) return if (val.isClosure())
         val.asClosure()
     else

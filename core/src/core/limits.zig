@@ -30,6 +30,10 @@ pub const MAX_SEGMENTS: i32 = 2048;
 // Upper bound for repeat_linear / repeat_polar copy counts. Each copy adds a
 // translate node plus a union node to the DAG, so this caps DAG growth per call.
 pub const MAX_PATTERN_COUNT: usize = 10_000;
+// Upper bound for one native iteration (Range#each/map/to_a, Number#times/upto/downto).
+// These loops run inside a native call, so an accidental `(0..1e18).each` would never
+// return to the dispatch loop's instruction budget; a `while` loop stays interruptible.
+pub const MAX_RANGE_ITERATIONS: usize = 10_000_000;
 // Upper bounds for the B-Rep solver iteration budgets set via CAD.config(brep: ...).
 // Both are per-call loops, so an unbounded user value turns one projection or
 // intersection into an effective hang. The caps sit 20x/200x above the defaults

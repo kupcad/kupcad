@@ -79,18 +79,23 @@ KupCAD fully supports Ruby-style block execution using `do |args| ... end` or `{
 ```ruby
 # Using the block to generate an array of cylinders
 pegs = []
-[0, 1, 2].each do |row|
+(0...3).each do |row|
   pegs.push(cylinder(r: 2, h: 10).translate(x: row * 10))
 end
 
+# Counted loops
+4.times { |i| puts(i) }            # 0, 1, 2, 3
+1.upto(3) { |i| puts(i) }          # 1, 2, 3
+3.downto(1) { |i| puts(i) }        # 3, 2, 1
+
 ```
 
-> Ranges (`0..3`, `0...3`) are values but have no iteration methods yet: `(0...3).each` and
-> `3.times` are not implemented. Iterate over an array literal or use `while` for now.
+`break value` inside a block ends the iteration and becomes the method's return value; `next` skips to the next element. A `return` inside a block leaves only the block, not the enclosing `def`.
 
 ### Native Collections
 
 * **Arrays**: Exposes functional mutators (`.push`, `.pop`, `.shift`, `.unshift`, `.slice`, `.join`), iterators (`.each`, `.map`, `.filter`, `.reduce`), and native numeric reducers (`.max`, `.min`, `.sum`, `.sort`).
+* **Ranges**: `a..b` (inclusive) and `a...b` (exclusive) iterate with `.each` and `.map`, materialize with `.to_a`, and support `.size`, `.include?` / `.cover?`, `.first`, `.last`, `.exclusive?` and `.step(n)` (`(0..1).step(0.25).to_a` → `[0, 0.25, 0.5, 0.75, 1]`; negative steps count down). A single iteration is capped at 10,000,000 values; use `while` for longer loops. Numbers add `.times`, `.upto(n)` and `.downto(n)`, which require integers.
 * **Maps**: Exposes key/value manipulation (`.keys`, `.values`, `.key?`, `.delete`, `.get`, `.merge`, `.empty?`). Keys can be swapped dynamically via `.symbolize_keys` and `.stringify_keys`.
 
 ### Strings, Symbols & Math

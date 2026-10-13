@@ -5,6 +5,7 @@ const array_class = @import("classes/array.zig");
 const map_class = @import("classes/map.zig");
 const string_class = @import("classes/string.zig");
 const number_class = @import("classes/number.zig");
+const range_class = @import("classes/range.zig");
 const symbol_class = @import("classes/symbol.zig");
 const boolean_class = @import("classes/boolean.zig");
 const bbox_class = @import("classes/bbox.zig");
@@ -31,6 +32,9 @@ pub fn registerCoreClasses(vm: *VM) !void {
     }
     if (vm.number_class) |cls| {
         for (number_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
+    }
+    if (vm.range_class) |cls| {
+        for (range_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
     }
     if (vm.symbol_class) |cls| {
         for (symbol_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
