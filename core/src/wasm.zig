@@ -15,7 +15,28 @@ fn wasmIo() std.Io {
 }
 
 // --- Global Error State ---
-var last_error_msg: [*]const u8 = "None".ptr;
+/// Longest message `get_last_error` returns; longer ones are cut at a UTF-8 boundary.
+pub const MAX_ERROR_MSG_LEN = 1024;
+
+// Messages are copied in, so they may come from memory freed right after (e.g. the VM's).
+// The array's sentinel keeps even a full-length message NUL-terminated for JS.
+var last_error_buf: [MAX_ERROR_MSG_LEN:0]u8 = blk: {
+    var buf: [MAX_ERROR_MSG_LEN:0]u8 = @splat(0);
+    const initial = "None";
+    @memcpy(buf[0..initial.len], initial);
+    break :blk buf;
+};
+
+fn setLastError(msg: []const u8) void {
+    var len = @min(msg.len, MAX_ERROR_MSG_LEN);
+    // JS decodes the bytes as UTF-8: a continuation byte (0b10xxxxxx) at the cut means the
+    // sequence it belongs to started earlier, so cut before that sequence instead.
+    if (len < msg.len) {
+        while (len > 0 and msg[len] & 0b1100_0000 == 0b1000_0000) len -= 1;
+    }
+    @memcpy(last_error_buf[0..len], msg[0..len]);
+    if (len < MAX_ERROR_MSG_LEN) last_error_buf[len] = 0;
+}
 
 // --- Global VFS State ---
 // SAFETY: Initialized securely in getMemVfs() before any external access.
@@ -30,8 +51,8 @@ fn getMemVfs() *MemoryVfs {
     return &global_mem_vfs;
 }
 
-pub export fn get_last_error() [*]const u8 {
-    return last_error_msg;
+pub export fn get_last_error() [*:0]const u8 {
+    return &last_error_buf;
 }
 
 pub export fn wasm_alloc(len: usize) ?[*]u8 {
@@ -117,10 +138,10 @@ fn inner_extract_params(source: []const u8) ![]const u8 {
     return try out.toOwnedSlice();
 }
 
-fn inner_build_model(source: []const u8, format: []const u8, use_draco: bool) ![]const u8 {
+fn inner_build_model(source: []const u8, format: []const u8, use_draco: bool, diagnostic: *api.BuildDiagnostic) ![]const u8 {
     // File access still goes through the in-memory VFS override; the Io is only used for
     // clocks/stdio by stdlib diagnostics and the debugger.
-    return try api.buildModel(allocator, wasmIo(), source, format, use_draco, null, getMemVfs().vfs());
+    return try api.buildModelWithDiagnostic(allocator, wasmIo(), source, format, use_draco, null, getMemVfs().vfs(), diagnostic);
 }
 
 // --- WASM Export Boundaries ---
@@ -133,7 +154,7 @@ pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize, out_l
         out_len.* = res.len;
         return res.ptr;
     } else |err| {
-        last_error_msg = if (err == error.SyntaxError) "Syntax Error".ptr else "Internal Formatting Error".ptr;
+        setLastError(if (err == error.SyntaxError) "Syntax Error" else "Internal Formatting Error");
         out_len.* = 0;
         return null;
     }
@@ -145,7 +166,7 @@ pub export fn extract_params_wasm(source_ptr: [*]const u8, source_len: usize, ou
         out_len.* = res.len;
         return res.ptr;
     } else |_| {
-        last_error_msg = "Extraction Error".ptr;
+        setLastError("Extraction Error");
         out_len.* = 0;
         return null;
     }
@@ -157,7 +178,7 @@ pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize, out_le
         out_len.* = res.len;
         return res.ptr;
     } else |_| {
-        last_error_msg = "Internal Linter Error".ptr;
+        setLastError("Internal Linter Error");
         out_len.* = 0;
         return null;
     }
@@ -174,16 +195,24 @@ pub export fn build_model_wasm(
     const source = source_ptr[0..source_len];
     const format = format_ptr[0..format_len];
 
-    if (inner_build_model(source, format, use_draco)) |res| {
+    var diagnostic: api.BuildDiagnostic = .{};
+    defer diagnostic.deinit(allocator);
+
+    if (inner_build_model(source, format, use_draco, &diagnostic)) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |err| {
-        if (err == error.SyntaxError) {
-            last_error_msg = "Syntax Error".ptr;
+        if (diagnostic.message) |msg| {
+            // "line:col: message" for syntax errors, the uncaught error for runtime ones
+            setLastError(msg);
+        } else if (err == error.SyntaxError) {
+            setLastError("Syntax Error");
         } else if (err == error.UnsupportedFormat) {
-            last_error_msg = "Unsupported Format".ptr;
+            setLastError("Unsupported Format");
         } else {
-            last_error_msg = "Build Error".ptr;
+            // e.g. NoGeometry or a compile error: the name still says more than nothing
+            var buf: [MAX_ERROR_MSG_LEN]u8 = undefined;
+            setLastError(std.fmt.bufPrint(&buf, "Build Error: {s}", .{@errorName(err)}) catch "Build Error");
         }
         out_len.* = 0;
         return null;

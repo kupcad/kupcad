@@ -21,6 +21,7 @@ pub const Document = @import("core/document.zig").Document;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 pub const LinterDiagnostic = @import("tools/lint/linter.zig").LinterDiagnostic;
+pub const Diagnostic = @import("core/errors.zig").Diagnostic;
 
 /// Formats an already parsed Document. Caller owns the returned slice.
 pub fn formatDocument(allocator: std.mem.Allocator, doc: *const Document, config: FormatterConfig) ![]const u8 {
@@ -209,7 +210,30 @@ pub fn exportModelFromVm(
     }
 }
 
-/// Safely frees an array of LinterDiagnostics and their inner allocated strings.
+/// Why a build failed, in words a script author can act on. Filled by
+/// `buildModelWithDiagnostic`; `message` is owned by the allocator passed to it.
+pub const BuildDiagnostic = struct {
+    /// "line:col: message" for a syntax error, or the error as the CLI prints it
+    /// (e.g. "RuntimeError: ...") when running or exporting the script failed.
+    /// Null when the failure has no message (e.g. out of memory or an unsupported format).
+    message: ?[]u8 = null,
+
+    pub fn deinit(self: *BuildDiagnostic, allocator: std.mem.Allocator) void {
+        if (self.message) |msg| allocator.free(msg);
+        self.* = .{};
+    }
+};
+
+/// Renders a parse diagnostic as "line:col: message" with the 1-based line and UTF-8 byte
+/// column that `kupcad check` prints. Caller owns the returned slice.
+pub fn formatDiagnostic(allocator: std.mem.Allocator, line_index: *const LineIndex, diagnostic: Diagnostic) ![]u8 {
+    const line = line_index.getLine(diagnostic.loc.offset) + 1;
+    const col = line_index.getUtf8Column(diagnostic.loc.offset) + 1;
+    return allocator.print("{d}:{d}: {s}", .{ line, col, diagnostic.message });
+}
+
+/// Runs `source` and exports the resulting geometry as `format`. Caller owns the bytes.
+/// Fails with error.SyntaxError if the script does not parse cleanly.
 pub fn buildModel(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -219,8 +243,30 @@ pub fn buildModel(
     cli_params: ?std.StringHashMap(f64),
     vfs_override: ?Vfs,
 ) ![]const u8 {
+    return buildModelWithDiagnostic(allocator, io, source, format, use_draco, cli_params, vfs_override, null);
+}
+
+/// `buildModel` that also explains a failure: when the build fails with a message and
+/// `diagnostic` is given, `diagnostic.message` is set to it. Pass a fresh `.{}`.
+pub fn buildModelWithDiagnostic(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    source: []const u8,
+    format: []const u8,
+    use_draco: bool,
+    cli_params: ?std.StringHashMap(f64),
+    vfs_override: ?Vfs,
+    diagnostic: ?*BuildDiagnostic,
+) ![]const u8 {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
+
+    // The parser recovers by dropping what it cannot read, so compiling the tree anyway
+    // would export a model with statements silently missing.
+    if (doc.diagnostics.len > 0) {
+        if (diagnostic) |d| d.message = formatDiagnostic(allocator, &doc.line_index, doc.diagnostics[0]) catch null;
+        return error.SyntaxError;
+    }
 
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
@@ -247,12 +293,28 @@ pub fn buildModel(
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
-    if (result != .ok) return error.RuntimeError;
+    if (result != .ok) {
+        if (diagnostic) |d| d.message = dupeVmError(allocator, &vm);
+        return error.RuntimeError;
+    }
+    // Whatever was reported during a run that still succeeded did not fail it.
+    vm.clearLastError();
 
-    // Route to the new DRY exporter helper!
-    return try exportModelFromVm(allocator, &vm, format, use_draco);
+    // Geometry is evaluated lazily, so kernel errors (e.g. the mesh budget) surface here.
+    return exportModelFromVm(allocator, &vm, format, use_draco) catch |err| {
+        if (diagnostic) |d| d.message = dupeVmError(allocator, &vm);
+        return err;
+    };
 }
 
+/// Copies the VM's record of the error that failed it; null if there is none or on OOM,
+/// since the caller is already failing and the message is only a courtesy.
+fn dupeVmError(allocator: std.mem.Allocator, vm: *const VM) ?[]u8 {
+    const msg = vm.last_error orelse return null;
+    return allocator.dupe(u8, msg) catch null;
+}
+
+/// Safely frees an array of LinterDiagnostics and their inner allocated strings.
 pub fn freeDiagnostics(allocator: std.mem.Allocator, diags: []LinterDiagnostic) void {
     for (diags) |d| allocator.free(d.message);
     allocator.free(diags);

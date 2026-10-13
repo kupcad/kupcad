@@ -89,3 +89,138 @@ test "API: benchmarkScript handles empty source code cleanly" {
     // Ensures zero-instruction scripts compile and profile without underflowing or panicking
     try api.benchmarkScript(testing.allocator, "", testing.io, &out.writer);
 }
+
+// The parser recovers from `y = )` by dropping the statement; building that tree used to
+// export the cube as if the script were fine.
+const syntax_broken_source =
+    \\x = 1
+    \\y = )
+    \\cube(x)
+;
+
+test "API: buildModel rejects a script with syntax errors instead of dropping statements" {
+    try testing.expectError(
+        error.SyntaxError,
+        api.buildModel(testing.allocator, testing.io, syntax_broken_source, "stl", false, null, null),
+    );
+}
+
+test "API: buildModelWithDiagnostic reports the first syntax error as line:col: message" {
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(testing.allocator);
+
+    try testing.expectError(
+        error.SyntaxError,
+        api.buildModelWithDiagnostic(testing.allocator, testing.io, syntax_broken_source, "stl", false, null, null, &diag),
+    );
+    try testing.expectEqualStrings("2:5: Invalid expression starting with ')'", diag.message.?);
+}
+
+test "API: buildModelWithDiagnostic returns model bytes and no message for a valid script" {
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(testing.allocator);
+
+    const bytes = try api.buildModelWithDiagnostic(testing.allocator, testing.io, "cube(10)", "stl", false, null, null, &diag);
+    defer testing.allocator.free(bytes);
+
+    // 80-byte header + u32 triangle count + 12 triangles of 50 bytes each
+    try testing.expectEqual(@as(usize, 84 + 12 * 50), bytes.len);
+    try testing.expect(diag.message == null);
+}
+
+test "API: buildModelWithDiagnostic reports the uncaught runtime error, not a rescued one" {
+    // Math.sign reports its error before failing; once that is rescued, the report must
+    // not shadow the error that actually ends the run.
+    const source =
+        \\begin
+        \\  Math.sign("x")
+        \\rescue => e
+        \\  e
+        \\end
+        \\raise "Plate too thin"
+        \\cube(1)
+    ;
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(testing.allocator);
+
+    try testing.expectError(
+        error.RuntimeError,
+        api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
+    );
+    try testing.expectEqualStrings("RuntimeError: Plate too thin", diag.message.?);
+}
+
+test "API: buildModelWithDiagnostic reports VM runtime errors as the CLI prints them" {
+    const source =
+        \\def bad_fn()
+        \\  undefined_var + 10
+        \\end
+        \\bad_fn()
+        \\cube(1)
+    ;
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(testing.allocator);
+
+    try testing.expectError(
+        error.RuntimeError,
+        api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
+    );
+    // Only the class prefix and the VM's text are pinned, not how they are joined.
+    const msg = diag.message.?;
+    try testing.expect(std.mem.startsWith(u8, msg, "RuntimeError: "));
+    try testing.expect(std.mem.endsWith(u8, msg, "Undefined variable 'undefined_var'"));
+}
+
+test "API: buildModelWithDiagnostic keeps a native's own message over the generic boundary error" {
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(testing.allocator);
+
+    try testing.expectError(
+        error.RuntimeError,
+        api.buildModelWithDiagnostic(testing.allocator, testing.io, "Math.sign(\"x\")", "stl", false, null, null, &diag),
+    );
+    const msg = diag.message.?;
+    try testing.expect(std.mem.indexOf(u8, msg, "Math.sign expects a number") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "Native Execution Error") == null);
+}
+
+test "API: buildModelWithDiagnostic sets no message when nothing was reported" {
+    // A rescued native report must not resurface as the reason for a later export failure.
+    const source =
+        \\begin
+        \\  Math.sign("x")
+        \\rescue => e
+        \\  e
+        \\end
+        \\x = 1
+    ;
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(testing.allocator);
+
+    try testing.expectError(
+        error.NoGeometry,
+        api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
+    );
+    try testing.expect(diag.message == null);
+}
+
+test "API: buildModelWithDiagnostic reports an error raised while exporting" {
+    // Geometry is lazy, so the run succeeds and the engine mismatch only surfaces when
+    // the export evaluates the DAG: `part` is a concrete Manifold leaf, `cube(1)` is B-Rep.
+    const source =
+        \\part = cube(10).decompose[0]
+        \\CAD.config(engine: :brep)
+        \\part + cube(1)
+    ;
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(testing.allocator);
+
+    try testing.expectError(
+        error.EngineMismatch,
+        api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
+    );
+    try testing.expectEqualStrings(
+        "Runtime Error: cannot combine manifold and brep_native geometry in one operation.",
+        diag.message.?,
+    );
+}

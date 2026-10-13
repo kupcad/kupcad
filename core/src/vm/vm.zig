@@ -111,6 +111,10 @@ pub const VM = struct {
     dag_builder: dag.DAGBuilder,
     dag_cache: std.AutoHashMapUnmanaged(u64, geom.GeometryHandle) = .empty,
     mute_errors: bool = false,
+    /// The first error reported since the run started or the last exception was rescued,
+    /// as printed to stderr (e.g. "ValueError: ..."): what failed the run. Kept even with
+    /// `mute_errors`, so embedders (api, wasm) can show it. Owned by `allocator`.
+    last_error: ?[]u8 = null,
     step_mode: bool = false,
 
     // std classes
@@ -225,6 +229,7 @@ pub const VM = struct {
 
     pub fn deinit(self: *VM) void {
         self.resetStack();
+        self.clearLastError();
 
         self.gc.collectGarbage(self, true);
         // --- GC Teardown Memory Assert ---
@@ -325,6 +330,7 @@ pub const VM = struct {
     pub fn interpret(self: *VM, execution_chunk: *chunk.Chunk) InterpretResult {
         self.instruction_count = 0; // Reset gas on fresh run
         self.clearUnwindState();
+        self.clearLastError();
         self.frames.clearRetainingCapacity();
         // Start small (64 initial frames) and let it grow dynamically
         self.frames.ensureTotalCapacity(self.allocator, 64) catch return .runtime_error;
@@ -2705,6 +2711,8 @@ pub const VM = struct {
         // --- Save Unwind State for Native FFI Restoration ---
         // Any older entry belongs to an exception whose handler already runs (see UnwindFrame).
         self.clearUnwindState();
+        // Handled: what was reported on the way here (e.g. by a native) failed nothing.
+        self.clearLastError();
         self.unwind_stack.append(self.allocator, .{
             .err_val = err_val,
             .stack_top = r_frame.stack_top,
@@ -2998,9 +3006,25 @@ pub const VM = struct {
     }
 
     pub fn reportError(self: *VM, comptime fmt: []const u8, args: anytype) void {
+        self.recordLastError(fmt, args);
         if (self.mute_errors) return;
 
         log.err(fmt, args);
+    }
+
+    /// Only the first report is kept: later ones are its fallout, such as backtrace lines
+    /// or the generic "Native Execution Error" raised after a native reported the cause.
+    fn recordLastError(self: *VM, comptime fmt: []const u8, args: anytype) void {
+        if (self.last_error != null) return;
+        const full = self.fmtScratch(fmt, args) catch return;
+        // Formats and messages carry newlines that only lay out stderr. A failed copy just
+        // loses the message.
+        self.last_error = self.allocator.dupe(u8, std.mem.trim(u8, full, &std.ascii.whitespace)) catch null;
+    }
+
+    pub fn clearLastError(self: *VM) void {
+        if (self.last_error) |msg| self.allocator.free(msg);
+        self.last_error = null;
     }
 
     fn formatTraceLine(self: *VM, allocator: std.mem.Allocator, source_offset: u32, func_name: []const u8) ![]const u8 {
