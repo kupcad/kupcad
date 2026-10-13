@@ -252,6 +252,8 @@ pub const VM = struct {
         self.config_stack.deinit(self.allocator);
         self.unwind_stack.deinit(self.allocator);
         self.materials.deinit(self.allocator);
+        // display_list owns its handles (clones taken by ghost()), see materials.zig.
+        for (self.display_list.items) |h| kernel.destruct(h);
         self.display_list.deinit(self.allocator);
         self.scratch_arena.deinit();
         self.gc.deinit();

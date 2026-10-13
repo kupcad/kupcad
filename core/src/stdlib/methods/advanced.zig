@@ -218,15 +218,27 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
 
 pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
     const handle = try vm.ensureConcrete(receiver); // Eager!
+    // `handle` is borrowed from the DAG cache; `parts` are new handles we own.
     const parts = kernel.decompose(vm.allocator, handle) orelse return value.Value.initNil();
     defer vm.allocator.free(parts);
+
+    // Register every part as a `.concrete` DAG leaf first: the DAG builder then
+    // owns the handles, and the parts stay usable in later DAG ops. Parts not yet
+    // registered must be freed if we bail out early.
+    var registered: usize = 0;
+    errdefer for (parts[registered..]) |p| kernel.destruct(p);
+    const leaf_idxs = try vm.allocator.alloc(u32, parts.len);
+    defer vm.allocator.free(leaf_idxs);
+    for (parts, leaf_idxs) |p, *idx| {
+        idx.* = try vm.dag_builder.addConcrete(p);
+        registered += 1;
+    }
 
     const arr_obj = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&arr_obj.obj)); // Protect during alloc
 
-    for (parts) |p| {
-        // Wrap the concrete pointer directly so the DAG is bypassed
-        const geom_val = try vm.allocateGeometry(.{ .concrete = p });
+    for (leaf_idxs) |idx| {
+        const geom_val = try vm.allocateGeometry(.{ .symbolic = idx });
         try arr_obj.items.append(vm.gc.trackingAllocator(), geom_val);
     }
 
@@ -266,7 +278,14 @@ pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.V
 
     // Force concrete DAG evaluation up to this point and run simplification
     const handle = try vm.ensureConcrete(value.Value.initGeometry(receiver));
-    const simplified_handle = kernel.simplify(handle, tol);
+    // kernel.simplify always returns a NEW handle (never `handle`, which the DAG
+    // cache owns). Registering it as a `.concrete` leaf hands ownership to the
+    // DAG builder and keeps the result usable in later DAG ops.
+    const simplified_handle = kernel.simplify(handle, tol) orelse return error.RuntimeError;
+    const leaf_idx = vm.dag_builder.addConcrete(simplified_handle) catch |err| {
+        kernel.destruct(simplified_handle);
+        return err;
+    };
 
-    return try vm.allocateGeometry(.{ .concrete = simplified_handle });
+    return try vm.allocateGeometry(.{ .symbolic = leaf_idx });
 }

@@ -2,7 +2,6 @@ const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
 const manifold = @import("../../../bindings/manifold.zig");
-const ManifoldConfig = @import("../../../core/engine_config.zig").ManifoldConfig;
 
 pub fn vecDot(a: [3]f64, b: [3]f64) f64 {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -46,18 +45,6 @@ fn materialPropFunc(new_prop: [*]f64, pos: manifold.ManifoldVec3, old_prop: [*]c
     new_prop[0] = @floatFromInt(mat_id);
 }
 
-pub fn applySimplification(handle: geom.GeometryHandle, config: ManifoldConfig) ?geom.GeometryHandle {
-    if (!config.simplify_coplanar or @intFromPtr(handle.ptr) == 0) return handle;
-
-    const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
-    const simplified_ptr = manifold.simplify(obj, config.manifold.tolerance) orelse return handle;
-
-    return geom.GeometryHandle{
-        .engine = .manifold,
-        .ptr = @ptrCast(simplified_ptr),
-    };
-}
-
 // --- Primitives Generation ---
 
 fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
@@ -96,6 +83,8 @@ fn polygonImpl(allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHa
 fn polygonsEvenOddImpl(allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
     // Convert [2]f64 contours to ManifoldVec2 contours
     var m_contours = allocator.alloc([]manifold.ManifoldVec2, contours.len) catch return null;
+    // Start every slot empty so the deferred free is safe if a later allocation fails.
+    @memset(m_contours, &.{});
     defer {
         for (m_contours) |c| allocator.free(c);
         allocator.free(m_contours);
@@ -115,14 +104,16 @@ fn polygonsEvenOddImpl(allocator: std.mem.Allocator, contours: []const []const [
 // --- 3D CSG Booleans & Operations ---
 
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
-    std.debug.assert(a.engine == .manifold and b.engine == .manifold);
+    // Real check (not an assert): release builds must never reinterpret a B-Rep pointer as a Manifold.
+    if (a.engine != .manifold or b.engine != .manifold) return null;
     const a_valid = @intFromPtr(a.ptr) != 0;
     const b_valid = @intFromPtr(b.ptr) != 0;
 
-    // Defensive fallback: prevent CSG pipeline poisoning if one handle is invalid
+    // Defensive fallback: prevent CSG pipeline poisoning if one handle is invalid.
+    // Fallbacks return copies: callers own every returned handle (see kernel.zig).
     if (!a_valid and !b_valid) return null;
-    if (!a_valid) return b;
-    if (!b_valid) return a;
+    if (!a_valid) return cloneImpl(b);
+    if (!b_valid) return cloneImpl(a);
 
     const m1: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
     const m2: *manifold.ManifoldObj = @ptrCast(@alignCast(b.ptr));
@@ -131,7 +122,7 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
         .difference_op => manifold.OpType.subtract,
         .intersection_op => manifold.OpType.intersect,
     };
-    const ptr = manifold.boolean(m1, m2, m_op) orelse return a; // Fallback to base solid on C++ CSG failure
+    const ptr = manifold.boolean(m1, m2, m_op) orelse return cloneImpl(a); // Fallback to base solid on C++ CSG failure
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -141,6 +132,7 @@ fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHan
     defer allocator.free(m_objs);
 
     for (objs, 0..) |obj, i| {
+        if (obj.engine != .manifold) return null;
         m_objs[i] = @ptrCast(@alignCast(obj.ptr));
     }
 
@@ -150,25 +142,25 @@ fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHan
         .intersection_op => manifold.OpType.intersect,
     };
 
-    const ptr = manifold.batchBoolean(m_objs, m_op) orelse return objs[0];
+    const ptr = manifold.batchBoolean(m_objs, m_op) orelse return cloneImpl(objs[0]);
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
-    std.debug.assert(a.engine == .manifold and b.engine == .manifold);
+    if (a.engine != .manifold or b.engine != .manifold) return null;
     const a_valid = @intFromPtr(a.ptr) != 0;
     const b_valid = @intFromPtr(b.ptr) != 0;
 
     if (!a_valid and !b_valid) return null;
-    if (!a_valid) return b;
-    if (!b_valid) return a;
+    if (!a_valid) return cloneCrossSectionImpl(b);
+    if (!b_valid) return cloneCrossSectionImpl(a);
 
     const m_op = switch (op) {
         .union_op => manifold.OpType.add,
         .difference_op => manifold.OpType.subtract,
         .intersection_op => manifold.OpType.intersect,
     };
-    const ptr = manifold.crossSectionBoolean(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr)), m_op) orelse return a;
+    const ptr = manifold.crossSectionBoolean(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr)), m_op) orelse return cloneCrossSectionImpl(a);
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -193,11 +185,11 @@ fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
 }
 
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
-    std.debug.assert(a.engine == .manifold and b.engine == .manifold);
+    if (a.engine != .manifold or b.engine != .manifold) return null;
     if (@intFromPtr(a.ptr) == 0) return null;
-    if (@intFromPtr(b.ptr) == 0) return a;
-    // C++ Manifold fallback: If 3D mesh Minkowski fails, return `a` un-minkowskied instead of poisoning the DAG!
-    const ptr = manifold.minkowskiSum(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr))) orelse return a;
+    if (@intFromPtr(b.ptr) == 0) return cloneImpl(a);
+    // C++ Manifold fallback: If 3D mesh Minkowski fails, return a copy of `a` un-minkowskied instead of poisoning the DAG!
+    const ptr = manifold.minkowskiSum(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr))) orelse return cloneImpl(a);
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -246,14 +238,17 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
     var m_objs = allocator.alloc(?*manifold.ManifoldObj, objs.len) catch return null;
     defer allocator.free(m_objs);
 
-    for (objs, 0..) |obj, i| m_objs[i] = @ptrCast(@alignCast(obj.ptr));
+    for (objs, 0..) |obj, i| {
+        if (obj.engine != .manifold) return null;
+        m_objs[i] = @ptrCast(@alignCast(obj.ptr));
+    }
 
-    const ptr = manifold.batchHull(m_objs) orelse return objs[0];
+    const ptr = manifold.batchHull(m_objs) orelse return cloneImpl(objs[0]);
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn loftImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
-    std.debug.assert(a.engine == .manifold and b.engine == .manifold);
+    if (a.engine != .manifold or b.engine != .manifold) return null;
     if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
 
     // MVP Loft: Extrude profiles minimally to create 3D sheets, position them, and wrap in a Hull
@@ -283,7 +278,12 @@ fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]g
     var res = allocator.alloc(geom.GeometryHandle, len) catch return null;
 
     for (0..len) |i| {
-        const child_ptr = manifold.manifoldVecGet(vec, i);
+        // manifoldVecGet copies the component into a new caller-owned object.
+        const child_ptr = manifold.manifoldVecGet(vec, i) orelse {
+            for (res[0..i]) |h| destructImpl(h);
+            allocator.free(res);
+            return null;
+        };
         res[i] = geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(child_ptr) };
     }
     return res;
@@ -316,11 +316,12 @@ fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandl
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+/// Returns null on failure; kernel.simplify then falls back to a copy of the input.
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return a;
+    if (@intFromPtr(a.ptr) == 0) return null;
 
-    const ptr = manifold.simplify(@ptrCast(@alignCast(a.ptr)), tolerance) orelse return a;
+    const ptr = manifold.simplify(@ptrCast(@alignCast(a.ptr)), tolerance) orelse return null;
 
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
@@ -528,7 +529,7 @@ fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
 }
 
 fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, search_length: f64) f64 {
-    std.debug.assert(a.engine == .manifold and b.engine == .manifold);
+    if (a.engine != .manifold or b.engine != .manifold) return 0.0;
     if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return 0.0;
     return manifold.minGap(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr)), search_length);
 }
@@ -571,6 +572,22 @@ fn numTrisImpl(handle: geom.GeometryHandle) i32 {
     std.debug.assert(handle.engine == .manifold);
     if (@intFromPtr(handle.ptr) == 0) return 0;
     return manifold.numTri(@ptrCast(@alignCast(handle.ptr)));
+}
+
+// --- Copies ---
+
+fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
+    std.debug.assert(a.engine == .manifold);
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const ptr = manifold.copy(@ptrCast(@alignCast(a.ptr))) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn cloneCrossSectionImpl(cs: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    std.debug.assert(cs.engine == .manifold);
+    if (@intFromPtr(cs.ptr) == 0) return null;
+    const ptr = manifold.crossSectionCopy(@ptrCast(@alignCast(cs.ptr))) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 // --- Destructors ---
@@ -648,6 +665,8 @@ pub const driver = struct {
     pub const numTrisFn = numTrisImpl;
     pub const simplifyFn = simplifyImpl;
     pub const setMaterialFn = setMaterialImpl;
+    pub const cloneFn = cloneImpl;
+    pub const cloneCrossSectionFn = cloneCrossSectionImpl;
     pub const destructFn = destructImpl;
     pub const destructCrossSectionFn = destructCrossSectionImpl;
 };

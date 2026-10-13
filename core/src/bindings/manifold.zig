@@ -54,10 +54,15 @@ extern fn manifold_delete_cross_section(cs: ?*ManifoldCrossSection) void;
 extern fn manifold_alloc_polygons() ?*ManifoldPolygons;
 extern fn manifold_delete_polygons(p: ?*ManifoldPolygons) void;
 extern fn manifold_alloc_manifold_vec() ?*ManifoldVecObj;
-extern fn manifold_destruct_manifold_vec(ms: ?*ManifoldVecObj) void;
+// NOTE: manifold_destruct_manifold_vec only runs ~vector() on memory from
+// manifold_alloc_manifold_vec; manifold_delete_manifold_vec also frees it.
+extern fn manifold_delete_manifold_vec(ms: ?*ManifoldVecObj) void;
 extern fn manifold_manifold_vec_push_back(ms: ?*ManifoldVecObj, m: ?*ManifoldObj) void;
 extern fn manifold_manifold_vec_length(ms: ?*ManifoldVecObj) usize;
 extern fn manifold_manifold_vec_get(mem: ?*ManifoldObj, ms: ?*ManifoldVecObj, idx: usize) ?*ManifoldObj;
+
+extern fn manifold_copy(mem: ?*ManifoldObj, m: ?*ManifoldObj) ?*ManifoldObj;
+extern fn manifold_cross_section_copy(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection) ?*ManifoldCrossSection;
 
 extern fn manifold_alloc_rect() ?*ManifoldRect;
 extern fn manifold_delete_rect(r: ?*ManifoldRect) void;
@@ -166,7 +171,7 @@ pub fn batchBoolean(objs: []const ?*ManifoldObj, op: OpType) ?*ManifoldObj {
 
     // Initialize C++ std::vector placement new
     const vec = manifold_manifold_empty_vec(raw_mem);
-    defer manifold_destruct_manifold_vec(vec);
+    defer manifold_delete_manifold_vec(vec);
 
     for (objs) |obj| {
         if (obj) |valid_ptr| {
@@ -208,7 +213,7 @@ pub fn batchHull(objs: []const ?*ManifoldObj) ?*ManifoldObj {
 
     // Initialize C++ std::vector placement new
     const vec = manifold_manifold_empty_vec(raw_mem);
-    defer manifold_destruct_manifold_vec(vec);
+    defer manifold_delete_manifold_vec(vec);
 
     for (objs) |obj| {
         if (obj) |valid_ptr| {
@@ -446,5 +451,17 @@ pub fn destructCrossSection(cs: ?*ManifoldCrossSection) void {
     if (cs != null) manifold_delete_cross_section(cs);
 }
 pub fn destructManifoldVec(ms: ?*ManifoldVecObj) void {
-    if (ms != null) manifold_destruct_manifold_vec(ms);
+    if (ms != null) manifold_delete_manifold_vec(ms);
+}
+
+/// Deep-copies a manifold into a freshly allocated, caller-owned object.
+pub fn copy(m: ?*ManifoldObj) ?*ManifoldObj {
+    if (m == null) return null;
+    return manifold_copy(manifold_alloc_manifold(), m);
+}
+
+/// Copies a cross-section into a freshly allocated, caller-owned object.
+pub fn crossSectionCopy(cs: ?*ManifoldCrossSection) ?*ManifoldCrossSection {
+    if (cs == null) return null;
+    return manifold_cross_section_copy(manifold_alloc_cross_section(), cs);
 }

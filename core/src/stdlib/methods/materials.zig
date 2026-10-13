@@ -2,6 +2,7 @@ const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
+const kernel = @import("../../kernel/kernel.zig");
 
 pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
@@ -42,6 +43,18 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
+/// ensureConcrete only BORROWS the handle from vm.dag_cache, and nothing roots
+/// `ghost_geom`, so the next GC would evict (free) it before export. The display
+/// list therefore stores its own copy, destroyed in VM.deinit.
+fn appendToDisplayList(vm: *VM, ghost_geom: value.Value) !void {
+    const borrowed = try vm.ensureConcrete(ghost_geom);
+    const owned = kernel.clone(borrowed) orelse return error.RuntimeError;
+    vm.display_list.append(vm.allocator, owned) catch |err| {
+        kernel.destruct(owned);
+        return err;
+    };
+}
+
 // --- Chained Methods ---
 
 pub fn meshHighlight(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
@@ -68,8 +81,7 @@ pub fn meshGhost(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     const ghost_geom = try vm.allocateGeometry(.{ .symbolic = new_idx });
 
     // Force JIT evaluation and push directly to the standalone display list
-    const handle = try vm.ensureConcrete(ghost_geom);
-    try vm.display_list.append(vm.allocator, handle);
+    try appendToDisplayList(vm, ghost_geom);
 
     // Return NIL so it drops completely out of the CSG math tree!
     return value.Value.initNil();
@@ -104,8 +116,7 @@ pub fn globalGhost(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     const new_idx = try vm.dag_builder.addSetMaterial(result.asGeometry().dag_idx, material_id);
     const ghost_geom = try vm.allocateGeometry(.{ .symbolic = new_idx });
 
-    const handle = try vm.ensureConcrete(ghost_geom);
-    try vm.display_list.append(vm.allocator, handle);
+    try appendToDisplayList(vm, ghost_geom);
 
     return value.Value.initNil();
 }

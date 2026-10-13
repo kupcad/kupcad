@@ -376,10 +376,14 @@ fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryH
 fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
     _ = join_type;
     _ = delta;
-    return cs;
+    // Offset is not implemented for B-Rep yet; return a copy so the caller owns the result.
+    return cloneCrossSectionImpl(cs);
 }
 
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
+    // Real check: a Manifold pointer reinterpreted as a BrepSolid silently yields garbage.
+    if (a.engine != .brep_native or b.engine != .brep_native) return null;
+    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
     const src_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
     const src_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
 
@@ -404,6 +408,8 @@ fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHan
     _ = allocator;
     if (objs.len == 0) return null;
 
+    for (objs) |obj| if (obj.engine != .brep_native) return null;
+
     var acc = objs[0];
     for (objs[1..]) |obj| {
         if (booleanImpl(acc, obj, op)) |res| {
@@ -413,10 +419,14 @@ fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHan
             acc = res;
         }
     }
+    // Never hand back a borrowed input: the caller owns (and will destroy) the result.
+    if (acc.ptr == objs[0].ptr) return cloneImpl(objs[0]);
     return acc;
 }
 
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
+    if (a.engine != .brep_native or b.engine != .brep_native) return null;
+    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
     const src_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
     const src_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
 
@@ -432,6 +442,7 @@ fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryH
 }
 
 fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
+    if (a.engine != .brep_native or b.engine != .brep_native) return null;
     if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
 
     const src_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
@@ -472,10 +483,10 @@ fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f
     if (@intFromPtr(a.ptr) == 0) return .{ .first = null, .second = null };
     const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
 
-    const dest_a = BrepSolid.create(backend_allocator) catch return .{ .first = a, .second = null };
+    const dest_a = BrepSolid.create(backend_allocator) catch return .{ .first = cloneImpl(a), .second = null };
     const dest_b = BrepSolid.create(backend_allocator) catch {
         dest_a.destroy();
-        return .{ .first = a, .second = null };
+        return .{ .first = cloneImpl(a), .second = null };
     };
 
     const env = buildMathEnv(.{});
@@ -483,7 +494,7 @@ fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f
     const pair = locus_slicing.splitByPlane(backend_allocator, &dest_a.t_arena, &dest_a.g_arena, &dest_b.t_arena, &dest_b.g_arena, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, nx, ny, nz, offset, env) catch {
         dest_a.destroy();
         dest_b.destroy();
-        return .{ .first = a, .second = null };
+        return .{ .first = cloneImpl(a), .second = null };
     };
 
     dest_a.solid_id = pair.first;
@@ -500,10 +511,12 @@ fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
 fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
     _ = allocator;
     if (objs.len == 0) return null;
+    for (objs) |obj| if (obj.engine != .brep_native) return null;
     return buildHullFromHandles(objs);
 }
 
 fn loftImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
+    if (a.engine != .brep_native or b.engine != .brep_native) return null;
     if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
 
     const src_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
@@ -527,8 +540,14 @@ fn loftImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64)
 }
 
 fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
-    var res = allocator.alloc(geom.GeometryHandle, 1) catch return null;
-    res[0] = handle;
+    // B-Rep decomposition is not implemented: the single "component" is a copy of
+    // the input, because the caller takes ownership of every returned handle.
+    const part = cloneImpl(handle) orelse return null;
+    var res = allocator.alloc(geom.GeometryHandle, 1) catch {
+        destructImpl(part);
+        return null;
+    };
+    res[0] = part;
     return res;
 }
 
@@ -646,6 +665,7 @@ fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
 
 fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
     _ = sl;
+    if (a.engine != .brep_native or b.engine != .brep_native) return 0.0;
     if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return 0.0;
 
     const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
@@ -717,12 +737,24 @@ fn numTrisImpl(handle: geom.GeometryHandle) i32 {
 
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
     _ = tolerance;
-    return a;
+    // No-op for B-Rep, but must still return a NEW handle (single-owner rule, see kernel.zig).
+    return cloneImpl(a);
 }
 
 fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
     _ = material_id;
-    return a;
+    // Materials are not stored on B-Rep solids yet; return a copy, never the input.
+    return cloneImpl(a);
+}
+
+/// Deep copy via an identity translation (locus has no dedicated copy operation).
+fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
+    return translateImpl(a, 0.0, 0.0, 0.0);
+}
+
+fn cloneCrossSectionImpl(cs: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    const identity = [6]f64{ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0 };
+    return crossSectionTransformImpl(cs, identity);
 }
 
 pub const driver = struct {
@@ -769,6 +801,8 @@ pub const driver = struct {
     pub const numVertsFn = numVertsImpl;
     pub const numTrisFn = numTrisImpl;
     pub const simplifyFn = simplifyImpl;
+    pub const cloneFn = cloneImpl;
+    pub const cloneCrossSectionFn = cloneCrossSectionImpl;
     pub const destructFn = destructImpl;
     pub const destructCrossSectionFn = destructCrossSectionImpl;
     pub const setMaterialFn = setMaterialImpl;

@@ -1,3 +1,16 @@
+//! Engine-agnostic geometry kernel facade.
+//!
+//! OWNERSHIP RULE (single owner): every function here that returns a
+//! GeometryHandle / CrossSectionHandle (or a slice of them) returns NEW
+//! handles owned by the caller. Input handles are only borrowed: drivers must
+//! never return, consume or destroy an input, even on fallback/no-op paths
+//! (use clone instead). Violating this makes two owners (e.g. the DAG cache and
+//! a GC'd ObjGeometry) destroy the same pointer.
+//!
+//! ENGINE RULE: operands of multi-input operations must come from the same
+//! engine. Mismatches are rejected at runtime (null / 0 result), never via
+//! std.debug.assert, which is compiled out in ReleaseFast.
+
 const std = @import("std");
 const geom = @import("geometry_handle.zig");
 const manifold_driver = @import("engines/manifold/driver.zig");
@@ -14,6 +27,12 @@ fn ReturnType(comptime T: type) type {
         .@"fn" => |func| return func.return_type.?,
         else => @compileError("Expected function type"),
     }
+}
+
+/// True when every handle in `handles` was produced by `engine`.
+pub fn allSameEngine(engine: geom.EngineType, handles: []const geom.GeometryHandle) bool {
+    for (handles) |h| if (h.engine != engine) return false;
+    return true;
 }
 
 inline fn dispatch(comptime fn_name: []const u8, handle: anytype, args: anytype) ReturnType(@TypeOf(@field(manifold_driver.driver, fn_name))) {
@@ -100,6 +119,7 @@ pub inline fn transformMatrix(handle: geom.GeometryHandle, mat: [12]f64) ?geom.G
 }
 
 pub inline fn boolean(a: geom.GeometryHandle, b: geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle {
+    if (a.engine != b.engine) return null;
     return dispatch("booleanFn", a, .{ b, op });
 }
 
@@ -120,6 +140,7 @@ pub inline fn offset(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?ge
 }
 
 pub inline fn crossSectionBoolean(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle {
+    if (a.engine != b.engine) return null;
     return dispatch("crossSectionBooleanFn", a, .{ b, op });
 }
 
@@ -140,6 +161,7 @@ pub inline fn hull(handle: geom.GeometryHandle) ?geom.GeometryHandle {
 }
 
 pub inline fn minkowski(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
+    if (a.engine != b.engine) return null;
     return dispatch("minkowskiFn", a, .{b});
 }
 
@@ -180,6 +202,7 @@ pub inline fn containsPoint(handle: geom.GeometryHandle, pt: [3]f64) bool {
 }
 
 pub inline fn minGap(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
+    if (a.engine != b.engine) return 0.0;
     return dispatch("minGapFn", a, .{ b, sl });
 }
 
@@ -189,6 +212,16 @@ pub inline fn numVerts(handle: geom.GeometryHandle) i32 {
 
 pub inline fn numTris(handle: geom.GeometryHandle) i32 {
     return dispatch("numTrisFn", handle, .{});
+}
+
+/// Deep copy; the caller owns the returned handle.
+pub inline fn clone(handle: geom.GeometryHandle) ?geom.GeometryHandle {
+    return dispatch("cloneFn", handle, .{});
+}
+
+/// Deep copy; the caller owns the returned handle.
+pub inline fn cloneCrossSection(handle: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    return dispatch("cloneCrossSectionFn", handle, .{});
 }
 
 pub fn destruct(handle: geom.GeometryHandle) void {
@@ -201,7 +234,9 @@ pub inline fn destructCrossSection(handle: geom.CrossSectionHandle) void {
 
 pub inline fn batchBoolean(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle, op: BooleanOp) ?geom.GeometryHandle {
     if (objs.len == 0) return null;
-    if (objs.len == 1) return objs[0];
+    // A single operand still yields a fresh handle (single-owner rule).
+    if (objs.len == 1) return clone(objs[0]);
+    if (!allSameEngine(objs[0].engine, objs)) return null;
 
     switch (objs[0].engine) {
         .manifold => return manifold_driver.driver.batchBooleanFn(allocator, objs, op),
@@ -212,6 +247,7 @@ pub inline fn batchBoolean(allocator: std.mem.Allocator, objs: []const geom.Geom
 pub inline fn batchHull(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
     if (objs.len == 0) return null;
     if (objs.len == 1) return hull(objs[0]);
+    if (!allSameEngine(objs[0].engine, objs)) return null;
 
     switch (objs[0].engine) {
         .manifold => return manifold_driver.driver.batchHullFn(allocator, objs),
@@ -220,6 +256,7 @@ pub inline fn batchHull(allocator: std.mem.Allocator, objs: []const geom.Geometr
 }
 
 pub inline fn loft(engine: geom.EngineType, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
+    if (a.engine != engine or b.engine != engine) return null;
     switch (engine) {
         .manifold => return manifold_driver.driver.loftFn(a, b, height),
         .brep_native => return brep_driver.driver.loftFn(a, b, height),
@@ -233,11 +270,10 @@ pub inline fn decompose(allocator: std.mem.Allocator, handle: geom.GeometryHandl
     }
 }
 
-pub inline fn simplify(handle: geom.GeometryHandle, tolerance: f64) geom.GeometryHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.driver.simplifyFn(handle, tolerance) orelse handle,
-        .brep_native => return brep_driver.driver.simplifyFn(handle, tolerance) orelse handle,
-    }
+/// Returns a new simplified handle, falling back to a copy of the input if
+/// simplification fails; null only if even the copy fails.
+pub inline fn simplify(handle: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
+    return dispatch("simplifyFn", handle, .{tolerance}) orelse clone(handle);
 }
 
 pub inline fn queryFaces(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {

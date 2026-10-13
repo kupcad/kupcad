@@ -369,7 +369,7 @@ pub const GC = struct {
         const ptr = try self.allocateObject(vm, value.ObjGeometry, &self.geometries, .geometry);
         ptr.dag_idx = switch (state) {
             .symbolic => |idx| idx,
-            .concrete => std.math.maxInt(u32), // Sentinel value instead of 0
+            .concrete => @import("dag.zig").CONCRETE_NODE_SENTINEL, // no DAG node
         };
         ptr.cached_handle = switch (state) {
             .symbolic => null,
@@ -633,7 +633,7 @@ pub const GC = struct {
         keys_to_remove.ensureTotalCapacity(self.allocator, vm.dag_cache.count()) catch return;
 
         for (self.geometries.items) |geom_ptr| {
-            if (geom_ptr.dag_idx != std.math.maxInt(u32)) {
+            if (geom_ptr.dag_idx != @import("dag.zig").CONCRETE_NODE_SENTINEL) {
                 if (geom_ptr.dag_idx < vm.dag_builder.node_hashes.items.len) {
                     const hash = vm.dag_builder.node_hashes.items[geom_ptr.dag_idx];
                     live_hashes.putAssumeCapacity(hash, {});
@@ -643,7 +643,8 @@ pub const GC = struct {
 
         var cache_it = vm.dag_cache.iterator();
         while (cache_it.next()) |entry| {
-            if (!live_hashes.contains(entry.key_ptr.*)) {
+            // Cache keys mix in the engine; recover the node hash before the liveness check.
+            if (!live_hashes.contains(@import("dag_evaluator.zig").nodeHashOfCacheEntry(entry.key_ptr.*, entry.value_ptr.*))) {
                 // Destruct C++ handle immediately
                 kernel.destruct(entry.value_ptr.*);
                 keys_to_remove.appendAssumeCapacity(entry.key_ptr.*);

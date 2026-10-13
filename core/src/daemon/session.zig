@@ -19,9 +19,13 @@ pub const SessionNode = struct {
     output_hash: u64 = 0,
     source_hash: u64 = 0,
     is_stale: bool = true,
+    /// OWNED copy of the module's output. Handles from ensureConcrete / the
+    /// display list are borrowed (vm.dag_cache or VM own them), so the session
+    /// clones before storing and destroys only its own clones.
     cached_handle: ?geom.GeometryHandle = null,
 
     pub fn deinit(self: *SessionNode) void {
+        if (self.cached_handle) |h| kernel.destruct(h);
         self.cached_handle = null;
     }
 };
@@ -169,15 +173,22 @@ pub const ScriptSession = struct {
         const result = self.vm.interpret(&out_chunk);
         if (result != .ok) return error.RuntimeError;
 
-        var new_handle: ?geom.GeometryHandle = null;
+        // Borrowed: owned by vm.dag_cache (ensureConcrete) or by vm.display_list.
+        var borrowed_handle: ?geom.GeometryHandle = null;
         if (self.vm.stack_top > 0) {
             const final_val = self.vm.stack[0];
             if (final_val.isGeometry()) {
-                new_handle = try self.vm.ensureConcrete(final_val);
+                borrowed_handle = try self.vm.ensureConcrete(final_val);
             }
         } else if (self.vm.display_list.items.len > 0) {
-            new_handle = self.vm.display_list.items[self.vm.display_list.items.len - 1];
+            borrowed_handle = self.vm.display_list.items[self.vm.display_list.items.len - 1];
         }
+        // Take our own copy: the cache may evict the borrowed one on the next GC.
+        const new_handle: ?geom.GeometryHandle = if (borrowed_handle) |h|
+            (kernel.clone(h) orelse return error.RuntimeError)
+        else
+            null;
+        errdefer if (new_handle) |h| kernel.destruct(h);
 
         var hasher = std.hash.Wyhash.init(0);
         if (new_handle) |h| {
@@ -193,11 +204,8 @@ pub const ScriptSession = struct {
         const new_hash = hasher.final();
 
         if (new_hash == node.output_hash and node.output_hash != 0) {
-            if (new_handle) |h| {
-                if (node.cached_handle == null or h.ptr != node.cached_handle.?.ptr) {
-                    kernel.destruct(h);
-                }
-            }
+            // Output unchanged: keep the existing copy, drop the fresh one.
+            if (new_handle) |h| kernel.destruct(h);
             node.verified_at = self.global_revision;
             node.source_hash = current_source_hash;
             node.is_stale = false;
