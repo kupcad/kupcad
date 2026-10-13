@@ -257,7 +257,12 @@ pub const ViewportWsServer = struct {
     /// Binds 127.0.0.1:`port`. Pass 0 for an OS-assigned port; read `.port` for the result.
     pub fn init(allocator: std.mem.Allocator, io: std.Io, port: u16) !ViewportWsServer {
         const address = try std.Io.net.IpAddress.parse("127.0.0.1", port);
-        const server = try address.listen(io, .{ .reuse_address = true });
+        // No `reuse_address`: std sets SO_REUSEPORT with it on every POSIX target, which lets a
+        // second LSP bind a port another window still listens on (so its viewer could reach the
+        // wrong LSP) and makes initWithFallback dead code. std has no SO_REUSEADDR-only option;
+        // a port held in TIME_WAIT after a restart just falls back, and the real port is
+        // advertised to the client via kupcad/viewportReady.
+        const server = try address.listen(io, .{});
 
         return .{
             .allocator = allocator,

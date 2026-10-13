@@ -355,19 +355,18 @@ test "LSP audit: broadcast never blocks on a client that stopped reading" {
     try testing.expect(elapsed_ms < BROADCAST_BUDGET_MS);
 }
 
-test "LSP audit: viewport server falls back to an ephemeral port when the preferred one is taken" {
-    // A plain listener (no SO_REUSEPORT) really blocks the port. Note: another
-    // ViewportWsServer would not, since `reuse_address` also sets SO_REUSEPORT.
-    const any_port = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
-    var blocker = try any_port.listen(testing.io, .{});
-    defer blocker.deinit(testing.io);
-    const taken = blocker.socket.address.getPort();
+test "LSP audit: a second viewport server falls back instead of sharing the port" {
+    // Two LSPs (e.g. two VS Code windows) both prefer the same port. The second used to bind
+    // it too (SO_REUSEPORT via `reuse_address`), so a viewer could reach the wrong window.
+    var first = try ViewportWsServer.init(testing.allocator, testing.io, 0);
+    defer first.deinit();
+    const taken = first.port;
     try testing.expectError(error.AddressInUse, ViewportWsServer.init(testing.allocator, testing.io, taken));
 
-    var server = try ViewportWsServer.initWithFallback(testing.allocator, testing.io, taken);
-    defer server.deinit();
-    try testing.expect(server.port != 0);
-    try testing.expect(server.port != taken);
+    var second = try ViewportWsServer.initWithFallback(testing.allocator, testing.io, taken);
+    defer second.deinit();
+    try testing.expect(second.port != 0);
+    try testing.expect(second.port != taken);
 }
 
 // ---------------------------------------------------------------------------
