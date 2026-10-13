@@ -6,7 +6,7 @@ const util = @import("util.zig");
 const limits = @import("../../core/limits.zig");
 
 pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const vec = try util.parseVec3(args, 0.0);
+    const vec = try util.parseVec3(vm, args, 0.0, "translate");
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -19,7 +19,7 @@ pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) 
 }
 
 pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const vec = try util.parseVec3(args, 0.0);
+    const vec = try util.parseVec3(vm, args, 0.0, "rotate");
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -35,7 +35,17 @@ pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 }
 
 pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const vec = try util.parseVec3(args, 1.0);
+    const vec = try util.parseVec3(vm, args, 1.0, "scale");
+    // A zero factor flattens the shape onto a plane: never a valid solid or sketch.
+    // Subnormal factors are rejected too, since they collapse just the same. A
+    // CrossSection ignores z, so only x and y are checked for it.
+    const checked_axes: usize = if (receiver.isCrossSection()) 2 else 3;
+    for (vec[0..checked_axes]) |f| {
+        if (!(@abs(f) >= std.math.floatMin(f64))) {
+            _ = vm.throwDynamicError("ValueError: scale factors must be non-zero, got [{d}, {d}, {d}]", .{ vec[0], vec[1], vec[2] });
+            return error.RuntimeError;
+        }
+    }
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -89,7 +99,7 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     // Signature: align(target, axes, my_align, target_align = my_align, offset = 0.0)
     if (args.len < 3 or !args[1].isString() or !args[2].isString()) {
-        vm.reportError("ArgumentError: align(target, axes, my_align, [target_align], [offset]) requires at least 3 args.\n", .{});
+        _ = vm.throwDynamicError("ArgumentError: align(target, axes, my_align, [target_align], [offset]) requires at least 3 args", .{});
         return error.RuntimeError;
     }
 
@@ -100,12 +110,17 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     var offset: f64 = 0.0;
 
     if (args.len > 3) {
-        if (args[3].isString()) target_align_str = args[3].asString().chars;
-        if (args[3].isNumber()) offset = args[3].asNumber(); // Allow skipping target_align
+        if (args[3].isString()) {
+            target_align_str = args[3].asString().chars;
+        } else if (args[3].isNumber()) {
+            // Allow skipping target_align: align(target, axes, my_align, offset)
+            offset = try util.requireNumber(vm, args[3], "align", "offset");
+        } else if (!args[3].isNil()) { // nil keeps target_align = my_align
+            _ = vm.throwDynamicError("TypeError: align expects a String target_align or a number offset as argument 4, got {s}", .{util.typeName(vm, args[3])});
+            return error.RuntimeError;
+        }
     }
-    if (args.len > 4 and args[4].isNumber()) {
-        offset = args[4].asNumber();
-    }
+    if (args.len > 4) offset = try util.requireNumber(vm, args[4], "align", "offset");
 
     const my_handle = try vm.ensureConcrete(receiver);
     const target_handle = try vm.ensureConcrete(target);
@@ -136,13 +151,13 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 
         var my_pt: f64 = 0.0;
         if (std.mem.eql(u8, my_align_str, "min")) my_pt = my_min else if (std.mem.eql(u8, my_align_str, "max")) my_pt = my_max else if (std.mem.eql(u8, my_align_str, "center")) my_pt = my_center else {
-            vm.reportError("ArgumentError: invalid alignment '{s}' (use 'min', 'max', or 'center')\n", .{my_align_str});
+            _ = vm.throwDynamicError("ArgumentError: invalid alignment '{s}' (use 'min', 'max', or 'center')", .{my_align_str});
             return error.RuntimeError;
         }
 
         var target_pt: f64 = 0.0;
         if (std.mem.eql(u8, target_align_str, "min")) target_pt = target_min else if (std.mem.eql(u8, target_align_str, "max")) target_pt = target_max else if (std.mem.eql(u8, target_align_str, "center")) target_pt = target_center else {
-            vm.reportError("ArgumentError: invalid alignment '{s}'\n", .{target_align_str});
+            _ = vm.throwDynamicError("ArgumentError: invalid alignment '{s}' (use 'min', 'max', or 'center')", .{target_align_str});
             return error.RuntimeError;
         }
 
@@ -164,7 +179,9 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 }
 
 pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const vec = try util.parseVec3(args, 0.0);
+    const vec = try util.parseVec3(vm, args, 0.0, "mirror");
+    // The vector is the mirror plane's normal; the zero vector used to yield an empty solid.
+    try util.requireNonZeroVector(vm, vec, "mirror", "plane normal");
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addMirror(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -172,47 +189,80 @@ pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     return error.RuntimeError;
 }
 
+/// Flat matrix lengths `transform` accepts: a column-major 3x4 affine matrix
+/// (3x3 linear part, then the translation) for a Geometry, 2x3 for a CrossSection.
+const MATRIX_3D_LEN = 12;
+const MATRIX_2D_LEN = 6;
+
 pub fn meshTransform(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (args.len < 1 or !args[0].isArray()) return error.RuntimeError;
-    const arr = args[0].asArray().items.items;
+    if (args.len < 1) {
+        _ = vm.throwDynamicError("ArgumentError: transform expects a flat matrix Array", .{});
+        return error.RuntimeError;
+    }
     if (receiver.isGeometry()) {
-        if (arr.len < 12) return error.RuntimeError;
-        var mat: [12]f64 = undefined;
-        for (0..12) |i| mat[i] = if (arr[i].isNumber()) arr[i].asNumber() else 0.0;
+        const mat = try parseMatrix(MATRIX_3D_LEN, vm, args[0]);
+        // Column-major: columns are mat[0..3], mat[3..6], mat[6..9]; det = c0 . (c1 x c2).
+        const det = mat[0] * (mat[4] * mat[8] - mat[5] * mat[7]) -
+            mat[3] * (mat[1] * mat[8] - mat[2] * mat[7]) +
+            mat[6] * (mat[1] * mat[5] - mat[2] * mat[4]);
+        try requireInvertible(vm, det);
         const new_idx = try vm.dag_builder.addTransformMatrix(receiver.asGeometry().dag_idx, mat);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        if (arr.len < 6) return error.RuntimeError;
-        var mat: [6]f64 = undefined;
-        for (0..6) |i| mat[i] = if (arr[i].isNumber()) arr[i].asNumber() else 0.0;
+        const mat = try parseMatrix(MATRIX_2D_LEN, vm, args[0]);
+        try requireInvertible(vm, mat[0] * mat[3] - mat[1] * mat[2]);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
     return error.RuntimeError;
 }
 
-pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
-    var target_x: f64 = 0.0;
-    var target_y: f64 = 0.0;
-    var target_z: f64 = 0.0;
-    var auto: bool = false;
+fn parseMatrix(comptime N: usize, vm: *VM, val: value.Value) ![N]f64 {
+    // Exact length: extra entries (e.g. a flat 4x4) used to be silently dropped.
+    return util.parseNumberArray(N, vm, val, .{
+        .method = "transform",
+        .name = "the matrix",
+        .elem = "a matrix entry",
+        .index_label = "index",
+    }, N, 0.0);
+}
 
-    if (args.len > 0 and args[0].isArray()) {
-        const arr = args[0].asArray().items.items;
-        if (arr.len > 0 and arr[0].isNumber()) target_x = arr[0].asNumber();
-        if (arr.len > 1 and arr[1].isNumber()) target_y = arr[1].asNumber();
-        if (arr.len > 2 and arr[2].isNumber()) target_z = arr[2].asNumber();
-    } else {
-        vm.reportError("ArgumentError: resize() requires an array of target dimensions [x, y, z].\n", .{});
+/// A singular linear part collapses the shape onto a plane or line, like a zero scale.
+fn requireInvertible(vm: *VM, det: f64) !void {
+    // `!(>=)` also catches a NaN determinant (inf - inf from huge entries) and a
+    // subnormal one, which flattens the shape as surely as an exact 0.
+    if (!(@abs(det) >= std.math.floatMin(f64))) {
+        _ = vm.throwDynamicError("ValueError: transform matrix is singular (determinant {d}), which flattens the shape", .{det});
         return error.RuntimeError;
     }
+}
 
-    if (args.len > 1 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
-        if (vm.findMapKeyByString(map, "auto")) |idx| {
-            if (map.map.values()[idx].isBool()) auto = map.map.values()[idx].asBool();
+pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isGeometry()) return error.RuntimeError;
+    var auto: bool = false;
+
+    if (args.len < 1) {
+        _ = vm.throwDynamicError("ArgumentError: resize() requires an array of target dimensions [x, y, z]", .{});
+        return error.RuntimeError;
+    }
+    // Missing trailing dimensions are 0, which means "keep" (or "auto" with auto: true).
+    const target = try util.parseNumberArray(3, vm, args[0], .{
+        .method = "resize",
+        .name = "the target size",
+        .elem = "a dimension",
+    }, 1, 0.0);
+    for (target, 0..) |t, i| {
+        if (t < 0.0) {
+            _ = vm.throwDynamicError("ValueError: resize dimensions must be >= 0 (0 keeps that axis), got {d} at component {d}", .{ t, i });
+            return error.RuntimeError;
         }
+    }
+    const target_x = target[0];
+    const target_y = target[1];
+    const target_z = target[2];
+
+    if (util.trailingKwargs(args)) |map| {
+        if (util.getKey(map, "auto")) |v| auto = try util.requireBool(vm, v, "resize", "auto");
     }
 
     const handle = try vm.ensureConcrete(receiver);
@@ -249,7 +299,7 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 /// but NaN/inf/huge values would hit @intFromFloat UB or build millions of DAG nodes.
 fn checkedCount(vm: *VM, raw: f64, what: []const u8) !usize {
     if (!std.math.isFinite(raw) or raw > @as(f64, @floatFromInt(limits.MAX_PATTERN_COUNT))) {
-        vm.reportError("ValueError: {s} 'count' must be a finite number <= {d}, got {d}.\n", .{ what, limits.MAX_PATTERN_COUNT, raw });
+        _ = vm.throwDynamicError("ValueError: {s} 'count' must be a finite number <= {d}, got {d}", .{ what, limits.MAX_PATTERN_COUNT, raw });
         return error.RuntimeError;
     }
     if (raw < 1.0) return 0;
@@ -259,29 +309,23 @@ fn checkedCount(vm: *VM, raw: f64, what: []const u8) !usize {
 pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 1 or !args[0].isNumber()) {
-        vm.reportError("ArgumentError: repeat_linear requires a 'count' number.\n", .{});
+        _ = vm.throwDynamicError("ArgumentError: repeat_linear requires a 'count' number", .{});
         return error.RuntimeError;
     }
 
     const count = try checkedCount(vm, args[0].asNumber(), "repeat_linear");
+
+    // The step is an [x, y, z] Array or positional/kwarg x, y, z (missing axes are 0).
+    // It is validated even for a no-op count so a bad step never passes silently.
+    // A nil step (e.g. a forwarded optional parameter) means no offset, as it did before.
+    const step: [3]f64 = if (args.len > 1 and args[1].isNil())
+        @splat(0.0)
+    else if (args.len > 1 and args[1].isArray())
+        try util.parseNumberArray(3, vm, args[1], .{ .method = "repeat_linear", .name = "the step" }, 1, 0.0)
+    else
+        try util.parseVec3(vm, args[1..], 0.0, "repeat_linear");
     if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
-
-    var tx: f64 = 0.0;
-    var ty: f64 = 0.0;
-    var tz: f64 = 0.0;
-
-    if (args.len > 1) {
-        if (args[1].isArray()) {
-            const arr = args[1].asArray().items.items;
-            if (arr.len > 0 and arr[0].isNumber()) tx = arr[0].asNumber();
-            if (arr.len > 1 and arr[1].isNumber()) ty = arr[1].asNumber();
-            if (arr.len > 2 and arr[2].isNumber()) tz = arr[2].asNumber();
-        } else if (args[1].isNumber()) {
-            tx = args[1].asNumber();
-            if (args.len > 2 and args[2].isNumber()) ty = args[2].asNumber();
-            if (args.len > 3 and args[3].isNumber()) tz = args[3].asNumber();
-        }
-    }
+    const tx, const ty, const tz = step;
 
     const base_idx = receiver.asGeometry().dag_idx;
     var current_idx = base_idx;
@@ -298,22 +342,20 @@ pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Valu
 pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 1 or !args[0].isNumber()) {
-        vm.reportError("ArgumentError: repeat_polar requires a 'count' number.\n", .{});
+        _ = vm.throwDynamicError("ArgumentError: repeat_polar requires a 'count' number", .{});
         return error.RuntimeError;
     }
 
     const count = try checkedCount(vm, args[0].asNumber(), "repeat_polar");
-    if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
 
     var total_angle: f64 = 360.0;
-    if (args.len > 1 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map = args[args.len - 1].asMap();
-        if (util.getKey(map, "angle")) |v| if (v.isNumber()) {
-            total_angle = v.asNumber();
-        };
-    } else if (args.len > 1 and args[1].isNumber()) {
-        total_angle = args[1].asNumber();
+    const rest = args[1..];
+    if (util.trailingKwargs(rest)) |map| {
+        if (util.getKey(map, "angle")) |v| total_angle = try util.requireNumber(vm, v, "repeat_polar", "angle");
+    } else if (rest.len > 0) {
+        total_angle = try util.requireNumber(vm, rest[0], "repeat_polar", "angle");
     }
+    if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
 
     const step_angle = if (@abs(total_angle - 360.0) < 0.001)
         total_angle / @as(f64, @floatFromInt(count))

@@ -641,3 +641,413 @@ test "Stdlib: Range#map keeps its result array and block results alive across GC
         try testing.expectEqualStrings(try std.fmt.bufPrint(&buf, "s{d}", .{i}), item.asString().chars);
     }
 }
+
+// --- Coordinate and geometry-argument validation ---
+// Non-number coordinates used to read as 0 (polygon([[0,0],[10,"x"],[10,10]]) was a
+// 50 mm^3 prism) and NaN/inf went straight to the kernels.
+
+/// Wraps `src` so the global `r` holds the rescued error message (or "no error").
+fn rescued(comptime src: []const u8) []const u8 {
+    return "r = begin\n  " ++ src ++ "\n  \"no error\"\nrescue => e\n  e.message\nend";
+}
+
+const TETRA_PTS = "[[0,0,0],[1,0,0],[0,1,0],[0,0,1]]";
+const TETRA_FACES = "[[0,1,2],[0,3,1],[0,2,3],[1,3,2]]";
+
+test "Stdlib: geometry arguments reject non-number coordinates" {
+    try expectAll(.runtime_error, &.{
+        // The reported case, and every way a polygon point can be malformed.
+        "polygon([[0,0],[10,\"x\"],[10,10]]).extrude(1).volume",
+        "polygon([[0,0],[10,nil],[10,10]])",
+        "polygon([[0,0],[10,:y],[10,10]])",
+        "polygon([[0,0],[10,[1]],[10,10]])",
+        "polygon([[0,0],[10],[10,10]])",
+        "polygon([[0,0],[10,0,5],[10,10]])",
+        "polygon([[0,0],10,[10,10]])",
+        "polygon(\"pts\")",
+        "polygon([[0,0],[10,0]])",
+        "polygon([[0,0],[1,0],[0,1]], paths: 3)",
+        "polygon([[0,0],[1,0],[0,1]], [[0,1,\"2\"]])",
+        "polygon([[0,0],[1,0],[0,1]], paths: [[0,1]])",
+        "polygon([[0,0],[1,0],[0,1]], paths: [5])",
+        // An unreferenced point is still validated.
+        "polygon([[0,0],[1,0],[0,1],[\"x\",0]], paths: [[0,1,2]])",
+        // polyhedron points and faces.
+        "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,\"z\"]], " ++ TETRA_FACES ++ ")",
+        "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0]], " ++ TETRA_FACES ++ ")",
+        "polyhedron([[0,0,0],[1,0,0],[0,1,0]], [[0,1,2],[0,1,2],[0,1,2],[0,1,2]])",
+        "polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1],[0,2,3]])",
+        "polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1],[0,2,3],[1,3,\"2\"]])",
+        "polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1],[0,2,3],[1,3]])",
+        // A quad face used to be truncated to its first triangle.
+        "polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2,3],[0,3,1],[0,2,3],[1,3,2]])",
+        "polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1],[0,2,3],7])",
+        // Vector transforms, positional and kwarg forms.
+        "cube(1).translate(\"10\", 0, 0)",
+        "cube(1).translate(z: \"up\")",
+        "cube(1).translate(x: nil)",
+        "cube(1).translate([1, 2, 3])",
+        "cube(1).translate(1, 2, 3, 4)",
+        "square(1).translate(y: :a)",
+        "cube(1).rotate(z: \"45\")",
+        "square(1).rotate(\"45\")",
+        "cube(1).scale(x: \"2\")",
+        "cube(1).mirror(\"x\")",
+        "cube(1).mirror(z: [1])",
+        // Matrices: flat 12 (3D) or 6 (2D) numbers, exactly.
+        "cube(1).transform([1,0,0, 0,1,0, 0,0,\"1\", 0,0,0])",
+        "cube(1).transform([1,0,0, 0,1,0, 0,0,1, 0,0])",
+        "cube(1).transform([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1])",
+        "cube(1).transform([[1,0,0],[0,1,0],[0,0,1],[0,0,0]])",
+        "cube(1).transform(5)",
+        "square(1).transform([1,0, 0,1, 0,\"5\"])",
+        "square(1).transform([1,0, 0,1, 0])",
+        "square(1).transform([1,0, 0,1, 0,0, 0])",
+        // resize / align / patterns.
+        "cube(1).resize([\"2\", 0, 0])",
+        "cube(1).resize([2, 0, 0, 0])",
+        "cube(1).resize([])",
+        "cube(1).resize(2)",
+        "cube(1).resize([-2, 0, 0])",
+        "cube(1).resize([2, 0, 0], auto: \"yes\")",
+        "cube(1).align(cube(2), \"z\", \"min\", \"max\", \"1\")",
+        "cube(1).align(cube(2), \"z\", \"min\", [1])",
+        "cube(1).repeat_linear(3, [2, \"0\", 0])",
+        "cube(1).repeat_linear(3, [2, 0, 0, 0])",
+        "cube(1).repeat_linear(3, \"2\")",
+        "cube(1).repeat_linear(3, 2, :y)",
+        "cube(1).repeat_linear(3, x: \"2\")",
+        "cube(1).repeat_polar(3, \"90\")",
+        "cube(1).repeat_polar(3, angle: \"90\")",
+        // 2D offset, planes, faces and queries.
+        "square(1).offset(\"1\")",
+        "square(1).offset(delta: \"1\")",
+        "square(1).offset(1, join: 2)",
+        "square(1).offset(1, join: :spiky)",
+        "cube(1).trim_by_plane(0, \"0\", 1)",
+        "cube(1).trim_by_plane(0, 0, 1, \"5\")",
+        "cube(1).slice(\"0.5\")",
+        "cube(1).on_face([0, 0, \"1\"])",
+        "cube(1).on_face([0, 0])",
+        "cube(1).on_face([0, 0, 1, 0])",
+        "cube(1).on_face(5)",
+        "cube(1).split_by_plane(0, 0, \"1\", 0)",
+        "cube(1).split_by_plane(nz: \"1\")",
+        "cube(1).split_by_plane(0, 0)",
+        "cube(1).fillet_edges(\"1\")",
+        "cube(1).fillet_edges(r: \"1\")",
+        "cube(1).simplify(\"0.1\")",
+        "cube(1).contains?([0, \"0\", 0])",
+        "cube(1).contains?([0, 0])",
+        "cube(1).ray_cast([0, 0, 5], [0, :y, -5])",
+        "cube(1).ray_cast([0, 0, 5], [0, -5])",
+        "cube(1).min_gap(cube(1), \"100\")",
+        "cube(1).min_gap(5)",
+        // Sweeps.
+        "square(1).extrude(\"5\")",
+        "square(1).extrude(5, twist: \"30\")",
+        "square(1).extrude(5, center: \"yes\")",
+        "square(1).translate(x: 5).revolve(\"90\")",
+        "square(1).translate(x: 5).revolve(deg: \"90\")",
+        "square(1).helix(\"10\")",
+        "square(1).helix(10, \"360\")",
+        "square(1).loft(circle(r: 1), \"5\")",
+        "square(1).loft(cube(1), 5)",
+        // Primitives: positional and kwargs.
+        "cube(\"10\")",
+        "cube(10, \"20\", 30)",
+        "cube(10, 20, 30, \"yes\")",
+        "cube(x: \"10\")",
+        "cube(size: [1, 2, 3])",
+        "square(10, 10, 1)",
+        "cylinder(d: \"4\", h: 2)",
+        "cylinder(r: 1, h: 2, center: 1)",
+        "sphere(true)",
+        "circle(radius: \"2\")",
+        "regular_polygon(\"6\", 5)",
+        "regular_polygon(sides: \"6\")",
+        "torus(\"10\", 2)",
+        "torus(major_r: 10, minor_r: \"2\")",
+        "text(\"A\", \"12\")",
+        "text(\"A\", size: \"12\")",
+        "text(\"A\", font: 5)",
+        "text(\"A\", halign: 1)",
+        "text(\"A\", halign: \"middle\")",
+        "text(\"A\", valign: :centre)",
+    });
+}
+
+test "Stdlib: geometry coordinates reject NaN and inf" {
+    try expectAll(.runtime_error, &.{
+        "polygon([[0,0],[10,1e400 - 1e400],[10,10]])",
+        "polygon([[0,0],[1e400,0],[10,10]])",
+        "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,-1e400]], " ++ TETRA_FACES ++ ")",
+        "cube(1).translate(1e400, 0, 0)",
+        "cube(1).translate(z: 1e400 - 1e400)",
+        "cube(1).rotate(x: 1e400)",
+        "square(1).rotate(1e400 - 1e400)",
+        "cube(1).scale(1e400, 1, 1)",
+        "cube(1).mirror(1e400 - 1e400, 0, 0)",
+        "cube(1).transform([1,0,0, 0,1,0, 0,0,1, 0,0,1e400])",
+        "square(1).transform([1,0, 0,1, 1e400 - 1e400,0])",
+        "cube(1).resize([1e400, 0, 0])",
+        "cube(1).align(cube(2), \"z\", \"min\", \"max\", 1e400)",
+        "cube(1).align(cube(2), \"z\", \"min\", 1e400 - 1e400)",
+        "cube(1).repeat_linear(3, [1e400, 0, 0])",
+        "cube(1).repeat_linear(3, 0, 0, 1e400 - 1e400)",
+        "cube(1).repeat_polar(3, 1e400 - 1e400)",
+        "square(1).offset(1e400)",
+        "cube(1).trim_by_plane(0, 0, 1, 1e400)",
+        "cube(1).slice(1e400 - 1e400)",
+        "cube(1).on_face([0, 0, 1e400])",
+        "cube(1).split_by_plane(0, 0, 1, 1e400 - 1e400)",
+        "cube(1).fillet_edges(1e400)",
+        "cube(1).simplify(1e400 - 1e400)",
+        "cube(1).contains?([0, 1e400, 0])",
+        "cube(1).ray_cast([0, 0, 1e400 - 1e400], [0, 0, -5])",
+        "cube(1).min_gap(cube(1), 1e400)",
+        "cube(size: 1e400 - 1e400)",
+        "torus(major_r: 1e400)",
+        "text(\"A\", size: 1e400 - 1e400)",
+    });
+}
+
+test "Stdlib: degenerate vectors and matrices are rejected" {
+    try expectAll(.runtime_error, &.{
+        // A zero mirror normal or scale factor can never produce a valid solid.
+        "cube(1).mirror(0, 0, 0)",
+        "cube(1).mirror()",
+        "cube(1).mirror(x: 0)",
+        "cube(1).scale(0)",
+        "cube(1).scale(1, 0, 1)",
+        "cube(1).scale(z: 0)",
+        "square(1).scale(0, 1)",
+        // Singular matrices flatten the shape the same way.
+        "cube(1).transform([1,0,0, 0,1,0, 0,0,0, 0,0,0])",
+        "cube(1).transform([1,2,3, 2,4,6, 0,0,1, 0,0,0])",
+        "square(1).transform([1,2, 2,4, 0,0])",
+        "cube(1).trim_by_plane(0, 0, 0)",
+        "cube(1).split_by_plane(0, 0, 0, 1)",
+        "cube(1).split_by_plane(nx: 0)",
+        "cube(1).on_face([0, 0, 0])",
+        "cube(1).ray_cast([1, 2, 3], [1, 2, 3])",
+        "cube(1).min_gap(cube(1), 0)",
+        "cube(1).fillet_edges(0)",
+        "cube(1).fillet_edges(r: -1)",
+    });
+}
+
+test "Stdlib: near-zero normals and subnormal factors are rejected, not silently emptied" {
+    // Not exactly zero, but normalizing them underflows: these used to build an
+    // empty or zero-volume solid with no error.
+    try expectAll(.runtime_error, &.{
+        "cube(1).mirror(1e-320, 0, 0)",
+        "cube(1).mirror(1e-170, 1e-170, 0)",
+        "cube(10).translate(x: -5).trim_by_plane(1e-200, 0, 0)",
+        "cube(10).translate(x: -5).split_by_plane(1e-200, 0, 0, 0)",
+        "cube(1).on_face([0, 0, 1e-200])",
+        "cube(1).scale(1e-320)",
+        "square(1).scale(1, 1e-320)",
+        // det = inf - inf = NaN used to pass the `det == 0` check.
+        "cube(1).transform([1e200,0,0, 0,1e200,1e200, 0,1e200,1e200, 0,0,0])",
+        // A subnormal determinant flattens the shape as surely as 0.
+        "cube(1).transform([1e-110,0,0, 0,1e-110,0, 0,0,1e-110, 0,0,0])",
+    });
+    try expectGlobalR(&.{
+        .{ .src = rescued("cube(1).mirror(1e-320, 0, 0)"), .expected = .{ .str = "ValueError: mirror expects a non-zero plane normal, got [1e-320, 0, 0]" } },
+        .{ .src = rescued("cube(1).trim_by_plane(0, 1e-200, 0)"), .expected = .{ .str = "ValueError: trim_by_plane expects a non-zero plane normal, got [0, 1e-200, 0]" } },
+    });
+}
+
+test "Stdlib: tiny-but-normal and huge vectors, CrossSection z scale and nil step still build" {
+    try expectGlobalR(&.{
+        // The smallest normals that still normalize keep working, as do huge ones.
+        .{ .src = "r = cube(1).mirror(1e-150, 0, 0).volume.round(6)", .expected = .{ .num = 1 } },
+        .{ .src = "r = cube(1).mirror(1e200, 0, 0).volume.round(6)", .expected = .{ .num = 1 } },
+        .{ .src = "r = cube(10).translate(x: -5).trim_by_plane(1e-150, 0, 0).volume.round(6)", .expected = .{ .num = 500 } },
+        // A CrossSection ignores the z factor, so a 0 there is harmless.
+        .{ .src = "r = square(1).scale(2, 2, 0).extrude(1).volume.round(6)", .expected = .{ .num = 4 } },
+        // A nil step (a forwarded optional parameter) means no offset.
+        .{ .src = "r = cube(1).repeat_linear(3, nil).volume.round(6)", .expected = .{ .num = 1 } },
+    });
+}
+
+test "Stdlib: lazily formatted element errors keep their exact wording" {
+    try expectGlobalR(&.{
+        .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,\"a\"],[0,2,3],[1,3,2]])"), .expected = .{ .str = "TypeError: polyhedron expects a number for a point index (face 1, entry 2), got String" } },
+        .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],5,[0,2,3],[1,3,2]])"), .expected = .{ .str = "TypeError: polyhedron expects an Array for face 1, got Number" } },
+        .{ .src = rescued("polygon([[0,0],[1,0],5])"), .expected = .{ .str = "TypeError: polygon expects an Array for point 2, got Number" } },
+        .{ .src = rescued("polygon([[0,0],[1,0],[0,1e400]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 1), got inf" } },
+        .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,2], 7])"), .expected = .{ .str = "TypeError: polygon expects an Array for path 1, got Number" } },
+        .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1]])"), .expected = .{ .str = "ValueError: polygon needs at least 3 point indices in path 0, got 2" } },
+        .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,1e400]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a point index (path 0, entry 2), got inf" } },
+        .{ .src = rescued("cube(1).transform([1,0,0, 0,1,0, 0,0,1e400, 0,0,0])"), .expected = .{ .str = "ValueError: transform expects a finite number for a matrix entry (index 8), got inf" } },
+    });
+}
+
+test "Stdlib: rescued argument errors name the method, the position and the bad type" {
+    try expectGlobalR(&.{
+        .{ .src = rescued("polygon([[0,0],[10,\"x\"],[10,10]]).extrude(1).volume"), .expected = .{ .str = "TypeError: polygon expects a number for a coordinate (point 1, component 1), got String" } },
+        .{ .src = rescued("polygon([[0,0],[10,0],[1e400 - 1e400,10]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 0), got nan" } },
+        .{ .src = rescued("polygon([[0,0],[10],[10,10]])"), .expected = .{ .str = "ValueError: polygon expects point 1 to have 2 numbers, got 1" } },
+        .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,[2]]])"), .expected = .{ .str = "TypeError: polygon expects a number for a point index (path 0, entry 2), got Array" } },
+        .{ .src = rescued("polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,nil,1]], " ++ TETRA_FACES ++ ")"), .expected = .{ .str = "TypeError: polyhedron expects a number for a coordinate (point 3, component 1), got nil" } },
+        .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1,2],[0,2,3],[1,3,2]])"), .expected = .{ .str = "ValueError: polyhedron faces must be triangles (3 point indices), but face 1 has 4" } },
+        .{ .src = rescued("cube(1).translate(z: \"up\")"), .expected = .{ .str = "TypeError: translate expects a number for z, got String" } },
+        .{ .src = rescued("cube(1).rotate(0, :y)"), .expected = .{ .str = "TypeError: rotate expects a number for y, got Symbol" } },
+        .{ .src = rescued("cube(1).transform([1,0,0, 0,1,0, 0,0,:s, 0,0,0])"), .expected = .{ .str = "TypeError: transform expects a number for a matrix entry (index 8), got Symbol" } },
+        .{ .src = rescued("cube(1).transform([1,0,0, 0,1,0, 0,0,1, 0,0])"), .expected = .{ .str = "ValueError: transform expects the matrix to have 12 numbers, got 11" } },
+        .{ .src = rescued("cube(1).trim_by_plane(0, \"a\", 1)"), .expected = .{ .str = "TypeError: trim_by_plane expects a number for ny, got String" } },
+        .{ .src = rescued("cube(1).contains?([0, 0, [1]])"), .expected = .{ .str = "TypeError: contains? expects a number for a coordinate (component 2), got Array" } },
+        .{ .src = rescued("cube(x: true)"), .expected = .{ .str = "TypeError: cube expects a number for x, got Boolean" } },
+        .{ .src = rescued("text(\"A\", halign: 5)"), .expected = .{ .str = "TypeError: text expects a String or Symbol for halign, got Number" } },
+        .{ .src = rescued("cube(1).translate(1e400)"), .expected = .{ .str = "ValueError: translate expects a finite number for x, got inf" } },
+        .{ .src = rescued("cube(1).mirror(0, 0, 0)"), .expected = .{ .str = "ValueError: mirror expects a non-zero plane normal, got [0, 0, 0]" } },
+        .{ .src = rescued("cube(1).scale(1, 0, 1)"), .expected = .{ .str = "ValueError: scale factors must be non-zero, got [1, 0, 1]" } },
+        // Errors that used to surface as the generic "Native Execution Error" when rescued.
+        .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1],[0,2,3],[4,2,3]])"), .expected = .{ .str = "ValueError: polyhedron face index 4 is out of range (0..4)" } },
+        .{ .src = rescued("cube(1e400 - 1e400)"), .expected = .{ .str = "ValueError: cube expects a finite number for x, got nan" } },
+        .{ .src = rescued("cube(-1)"), .expected = .{ .str = "ValueError: cube expects x to be a finite number greater than zero, got -1" } },
+    });
+}
+
+test "Stdlib: valid coordinates and vector arguments still build" {
+    try expectAll(.ok, &.{
+        "polygon([[0,0],[10,0],[10,10]])",
+        "polygon([[0.5,-1.5],[10,0],[-3,10.25]]).extrude(2)",
+        "polygon([[0,0],[10,0],[10,10],[0,10],[2,2],[8,2],[8,8],[2,8]], paths: [[0,1,2,3],[4,5,6,7]])",
+        "polygon([[0,0],[10,0],[10,10],[0,10]], [[0,1,2,3]])",
+        "polygon([[0,0],[10,0],[10,10]], paths: nil)",
+        "polyhedron(" ++ TETRA_PTS ++ ", " ++ TETRA_FACES ++ ")",
+        "polyhedron([[0,0,0],[1.5,0,0],[0,-1.5,0],[0,0,2.25]], " ++ TETRA_FACES ++ ")",
+        "cube(1).translate(1, -2, 3.5)",
+        "cube(1).translate(x: -1)",
+        "cube(1).translate(1, z: 2)",
+        "cube(1).translate()",
+        "square(1).translate(2, -3)",
+        "cube(1).rotate(10, 20, 30)",
+        "cube(1).rotate(z: -45.5)",
+        "square(1).rotate(45)",
+        "cube(1).scale(2)",
+        "cube(1).scale(-1, 1, 1)",
+        "cube(1).scale(x: 0.5, z: 3)",
+        "square(1).scale(2, 0.5)",
+        "cube(1).mirror(1, 0, 0)",
+        "cube(1).mirror(z: -1)",
+        "cube(1).mirror(0.5, 0.5, 0)",
+        "cube(1).transform([1,0,0, 0,1,0, 0,0,1, 5,10,15])",
+        "cube(1).transform([2.5,0,0, 0,-1,0, 0,0,1, 0,0,0])",
+        "square(1).transform([1,0, 0,1, 2,4])",
+        "square(1).transform([1.1,0.5, 0,1, -2,0])",
+        "cube(10).resize([20])",
+        "cube(10).resize([20, 0, 0], auto: true)",
+        "cube(10).resize([0, 0, 5.5])",
+        "cube(1).align(cube(2), \"z\", \"min\", \"max\")",
+        "cube(1).align(cube(2), \"z\", \"min\", \"max\", 1.5)",
+        "cube(1).align(cube(2), \"z\", \"min\", -2)",
+        "cube(1).align(cube(2), \"z\", \"min\", nil, 1)",
+        "cube(1).repeat_linear(3, [2, 0, 0])",
+        "cube(1).repeat_linear(3, [2])",
+        "cube(1).repeat_linear(3, 2, -1, 0.5)",
+        "cube(1).repeat_linear(3, x: 2, z: 1)",
+        "cube(1).repeat_linear(3)",
+        "cube(1).repeat_polar(4)",
+        "cube(1).repeat_polar(3, 90)",
+        "cube(1).repeat_polar(3, angle: 180.5)",
+        "square(1).offset(-0.25)",
+        "square(1).offset(delta: 1, join: :miter)",
+        "square(1).offset(1, join: \"bevel\")",
+        "square(1).offset(1, join: :square)",
+        "square(1).offset(1, join: :round)",
+        "cube(1).trim_by_plane(0, 0, 1)",
+        "cube(1).trim_by_plane(0, 0, -1, -0.5)",
+        "cube(1).slice()",
+        "cube(1).slice(0.5)",
+        "cube(1).on_face(:top)",
+        "cube(1).on_face([0, 0, 1])",
+        "cube(1).on_face([-1, 0, 0])",
+        "cube(1).split_by_plane()",
+        "cube(1).split_by_plane(0, 0, 1, 0.5)",
+        "cube(1).split_by_plane(0, 0, 1)",
+        "cube(1).split_by_plane(nz: 1, offset: 0.5)",
+        "cube(1).split_by_plane(offset: 0.5)",
+        "cube(1).fillet_edges(0.5)",
+        "cube(1).fillet_edges(r: 1)",
+        "cube(1).simplify(0.01)",
+        "cube(1).simplify()",
+        "cube(1).contains?([0.5, 0.5, 0.5])",
+        "cube(1).contains?([-1, 2.5, 0])",
+        "cube(1).ray_cast([0.5, 0.5, 5], [0.5, 0.5, -5])",
+        "cube(1).min_gap(cube(1).translate(x: 5))",
+        "cube(1).min_gap(cube(1).translate(x: 5), 50.5)",
+        "square(1).extrude(5)",
+        "square(1).extrude(h: 2.5, twist: -30, scale: 0.5, slices: 4, center: true)",
+        "square(1).extrude(5, scale_x: 0.5, scale_y: 2)",
+        "square(1).translate(x: 5).revolve(90)",
+        "square(1).translate(x: 5).revolve(deg: 180)",
+        "square(1).helix(10, 180)",
+        "square(1).helix(h: 5, twist: -90, slices: 8)",
+        "square(1).loft(circle(r: 2), 5)",
+        "cube(1, 2, 3, true)",
+        "cube(size: 2)",
+        "cube(x: 1.5, y: 2, z: 3, round_r: 0.2)",
+        "square(2, 3, true)",
+        "square(4, chamfer: 0.5, center: false)",
+        "cylinder(d: 4, h: 2)",
+        "cylinder(2, 5, true)",
+        "cylinder(r1: 1, r2: 2, h: 3, round_r: nil)",
+        "sphere(r: 1.5)",
+        "circle(d: 3)",
+        "circle(radius: 2, segments: 12)",
+        "regular_polygon(5, 2)",
+        "regular_polygon(sides: 8, r: 1)",
+        "torus(5, 1)",
+        "torus(major_r: 5.5, minor_r: 1)",
+        "text(\"A\", 12, halign: :center, valign: \"top\", font: \"sans\")",
+        "text(\"A\", halign: \"left\", valign: :baseline)",
+        "text(\"A\", size: 5, halign: :right, valign: :bottom, tolerance: 0.05)",
+    });
+}
+
+test "Stdlib: validated geometry methods keep their results for valid input" {
+    try expectGlobalR(&.{
+        .{ .src = "r = polygon([[0,0],[10,0],[10,10]]).extrude(1).volume.round(6)", .expected = .{ .num = 50 } },
+        .{ .src = "r = polygon([[0,0],[10,0],[10,10],[0,10],[2,2],[8,2],[8,8],[2,8]], paths: [[0,1,2,3],[4,5,6,7]]).extrude(1).volume.round(6)", .expected = .{ .num = 64 } },
+        .{ .src = "r = polyhedron([[0,0,0],[6,0,0],[0,6,0],[0,0,6]], [[0,2,1],[0,1,3],[0,3,2],[1,2,3]]).volume.round(6)", .expected = .{ .num = 36 } },
+        .{ .src = "r = cube(2).scale(-1, 1, 1).volume.round(6)", .expected = .{ .num = 8 } },
+        .{ .src = "r = cube(2).scale(1.5, z: 2).volume.round(6)", .expected = .{ .num = 24 } },
+        .{ .src = "r = cube(2).mirror(1, 0, 0).bbox.x_min", .expected = .{ .num = -2 } },
+        .{ .src = "r = cube(1).transform([2,0,0, 0,1,0, 0,0,1, 0,0,10]).bbox.z_min", .expected = .{ .num = 10 } },
+        .{ .src = "r = cube(10).resize([20]).volume.round(6)", .expected = .{ .num = 2000 } },
+        .{ .src = "r = cube(10).resize([20, 0, 0], auto: true).volume.round(6)", .expected = .{ .num = 8000 } },
+        .{ .src = "r = cube(1).repeat_linear(3, 2, 0, 0).bbox.x_max", .expected = .{ .num = 5 } },
+        .{ .src = "r = cube(1).repeat_linear(3, [0, 2]).bbox.y_max", .expected = .{ .num = 5 } },
+        .{ .src = "r = cube(1).align(cube(2), \"z\", \"min\", \"max\", 1.5).bbox.z_min", .expected = .{ .num = 3.5 } },
+        .{ .src = "r = cube(10).trim_by_plane(0, 0, 1, 4).volume.round(6)", .expected = .{ .num = 600 } },
+        // The default plane is still x = 0 when no normal component is given.
+        .{ .src = "parts = cube(10, 20, 30).split_by_plane(offset: 4)\nr = [parts[0].volume.round(6), parts[1].volume.round(6)]", .expected = .{ .nums = &.{ 3600, 2400 } } },
+        .{ .src = "parts = cube(10, 20, 30).split_by_plane(0, 0, 1, 10)\nr = [parts[0].volume.round(6), parts[1].volume.round(6)]", .expected = .{ .nums = &.{ 4000, 2000 } } },
+    });
+}
+
+test "Stdlib: split_by_plane normal kwargs default the other components to 0" {
+    // nz: 1 alone used to keep the default nx = 1, splitting along a diagonal plane.
+    try expectGlobalR(&.{
+        .{ .src = "parts = cube(10, 20, 30).split_by_plane(nz: 1, offset: 10)\nr = [parts[0].volume.round(6), parts[1].volume.round(6)]", .expected = .{ .nums = &.{ 4000, 2000 } } },
+        .{ .src = "parts = cube(10, 20, 30).split_by_plane(ny: -1, offset: -5)\nr = [parts[0].volume.round(6), parts[1].volume.round(6)]", .expected = .{ .nums = &.{ 1500, 4500 } } },
+    });
+}
+
+test "Stdlib: split_by_plane keeps both halves alive across GC" {
+    var vm = try initVm();
+    defer vm.deinit();
+    // Collect on every allocation: an unrooted half would be swept before it reaches the array.
+    vm.gc.stress = true;
+    defer vm.gc.stress = false;
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "parts = cube(10).split_by_plane(0, 0, 1, 4)\nr = [parts[0].volume.round(6), parts[1].volume.round(6)]"));
+    const r = vm.globals.get("r") orelse return error.MissingGlobal;
+    const items = r.asArray().items.items;
+    try testing.expectEqual(@as(usize, 2), items.len);
+    try testing.expectEqual(@as(f64, 600), items[0].asNumber());
+    try testing.expectEqual(@as(f64, 400), items[1].asNumber());
+}

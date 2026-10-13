@@ -1,6 +1,10 @@
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
+const util = @import("util.zig");
+
+/// How far min_gap looks for the closest approach when no search length is given.
+const DEFAULT_MIN_GAP_SEARCH_LENGTH: f64 = 100.0;
 
 pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
     if (receiver.isGeometry()) {
@@ -57,9 +61,12 @@ pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
 
 pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
-    if (args.len < 1 or !args[0].isGeometry()) return error.RuntimeError;
-    if (args.len > 1 and !args[1].isNumber()) return error.RuntimeError;
-    const search_length = if (args.len > 1) args[1].asNumber() else 100.0;
+    if (args.len < 1 or !args[0].isGeometry()) {
+        _ = vm.throwDynamicError("TypeError: min_gap expects a Geometry to measure against, got {s}", .{if (args.len < 1) "nothing" else util.typeName(vm, args[0])});
+        return error.RuntimeError;
+    }
+    const search_length = if (args.len > 1) try util.requireNumber(vm, args[1], "min_gap", "search_length") else DEFAULT_MIN_GAP_SEARCH_LENGTH;
+    try util.requirePositive(vm, search_length, "min_gap", "search_length");
     const handle = try vm.ensureConcrete(receiver);
     const other_handle = try vm.ensureConcrete(args[0]);
     return value.Value.initNumber(kernel.minGap(handle, other_handle, search_length));
@@ -67,27 +74,30 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 
 pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
-    if (args.len < 1 or !args[0].isArray()) return error.RuntimeError;
-    const pt_arr = args[0].asArray().items.items;
-    if (pt_arr.len < 3) return error.RuntimeError;
-    if (!pt_arr[0].isNumber() or !pt_arr[1].isNumber() or !pt_arr[2].isNumber()) return error.RuntimeError;
+    if (args.len < 1) {
+        _ = vm.throwDynamicError("ArgumentError: contains? expects a point [x, y, z]", .{});
+        return error.RuntimeError;
+    }
+    const pt = try util.parseNumberArray(3, vm, args[0], .{ .method = "contains?", .name = "the point" }, 3, 0.0);
 
     const handle = try vm.ensureConcrete(receiver);
-    const inside = kernel.containsPoint(handle, .{ pt_arr[0].asNumber(), pt_arr[1].asNumber(), pt_arr[2].asNumber() });
+    const inside = kernel.containsPoint(handle, pt);
     return value.Value.initBool(inside);
 }
 
 pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
-    if (args.len < 2 or !args[0].isArray() or !args[1].isArray()) return error.RuntimeError;
-    const o_arr = args[0].asArray().items.items;
-    const e_arr = args[1].asArray().items.items;
-    if (o_arr.len < 3 or e_arr.len < 3) return error.RuntimeError;
-    if (!o_arr[0].isNumber() or !o_arr[1].isNumber() or !o_arr[2].isNumber()) return error.RuntimeError;
-    if (!e_arr[0].isNumber() or !e_arr[1].isNumber() or !e_arr[2].isNumber()) return error.RuntimeError;
+    if (args.len < 2) {
+        _ = vm.throwDynamicError("ArgumentError: ray_cast expects an origin [x, y, z] and an end point [x, y, z]", .{});
+        return error.RuntimeError;
+    }
+    const origin = try util.parseNumberArray(3, vm, args[0], .{ .method = "ray_cast", .name = "the origin" }, 3, 0.0);
+    const end = try util.parseNumberArray(3, vm, args[1], .{ .method = "ray_cast", .name = "the end point" }, 3, 0.0);
+    // A zero-length ray has no direction.
+    try util.requireNonZeroVector(vm, .{ end[0] - origin[0], end[1] - origin[1], end[2] - origin[2] }, "ray_cast", "ray (end - origin)");
 
     const handle = try vm.ensureConcrete(receiver);
-    const hits = kernel.rayCast(vm.scratch_arena.allocator(), handle, .{ o_arr[0].asNumber(), o_arr[1].asNumber(), o_arr[2].asNumber() }, .{ e_arr[0].asNumber(), e_arr[1].asNumber(), e_arr[2].asNumber() }) orelse return value.Value.initNil();
+    const hits = kernel.rayCast(vm.scratch_arena.allocator(), handle, origin, end) orelse return value.Value.initNil();
     // No need to free `hits`, scratch arena cleans it up!
 
     const hit_arr_obj = try vm.gc.allocateArray(vm);
