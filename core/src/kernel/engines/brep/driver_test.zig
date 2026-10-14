@@ -197,3 +197,25 @@ test "Driver: unsupported or failed B-Rep operations report null, never a stand-
     defer driver.driver.destructCrossSectionFn(sq);
     try std.testing.expect(driver.driver.offsetFn(sq, 1, 0) == null);
 }
+
+test "BRep Driver: a mesh copy leaves nothing allocated when an allocation fails" {
+    // getMesh leaked the vertices when allocating the triangles failed. (Locus tessellates
+    // its solids to empty meshes for now, so the copy is tested on a mesh built here.)
+    const locus_tess = @import("../../../locus/src/operations/tessellate.zig");
+    var mesh = locus_tess.Mesh{};
+    defer mesh.deinit(std.testing.allocator);
+    try mesh.vertices.appendSlice(std.testing.allocator, &.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 } });
+    try mesh.triangles.append(std.testing.allocator, .{ 0, 1, 2 });
+
+    const copy = try driver.copyMesh(std.testing.allocator, &mesh);
+    defer std.testing.allocator.free(copy.vert_props);
+    defer std.testing.allocator.free(copy.tri_verts);
+    try std.testing.expectEqualSlices(f32, &.{ 0, 0, 0, 1, 0, 0, 0, 1, 0 }, copy.vert_props);
+    try std.testing.expectEqualSlices(u32, &.{ 0, 1, 2 }, copy.tri_verts);
+
+    var fail_index: usize = 0;
+    while (fail_index < 2) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        try std.testing.expectError(error.OutOfMemory, driver.copyMesh(failing.allocator(), &mesh));
+    }
+}

@@ -614,23 +614,21 @@ fn rayCastImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, origin: [3]
 fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
     std.debug.assert(handle.engine == .manifold);
     if (@intFromPtr(handle.ptr) == 0) return null;
-    const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
+    return copyMesh(allocator, @ptrCast(@alignCast(handle.ptr))) catch null;
+}
+
+/// The mesh copied out of Manifold into `allocator`'s memory; on failure nothing stays
+/// allocated (the vertices used to leak when the triangles' allocation failed).
+fn copyMesh(allocator: std.mem.Allocator, obj: *manifold.ManifoldObj) !geom.Mesh {
     const mesh_mem = manifold.allocMeshGL();
     defer manifold.deleteMeshGL(mesh_mem);
-    const mesh = manifold.getMeshGL(mesh_mem, obj);
-    if (mesh == null) return null;
-    const num_prop = manifold.meshGLNumProp(mesh);
-    const props_len = manifold.meshGLVertPropertiesLength(mesh);
-    const tris_len = manifold.meshGLTriLength(mesh);
-    const vert_props = allocator.alloc(f32, props_len) catch return null;
+    const mesh = manifold.getMeshGL(mesh_mem, obj) orelse return error.MeshUnavailable;
+    const vert_props = try allocator.alloc(f32, manifold.meshGLVertPropertiesLength(mesh));
+    errdefer allocator.free(vert_props);
     _ = manifold.meshGLVertProperties(vert_props.ptr, mesh);
-    const tri_verts = allocator.alloc(u32, tris_len) catch return null;
+    const tri_verts = try allocator.alloc(u32, manifold.meshGLTriLength(mesh));
     _ = manifold.meshGLTriVerts(tri_verts.ptr, mesh);
-    return geom.Mesh{
-        .vert_props = vert_props,
-        .tri_verts = tri_verts,
-        .num_prop = num_prop,
-    };
+    return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = manifold.meshGLNumProp(mesh) };
 }
 
 fn numVertsImpl(handle: geom.GeometryHandle) usize {

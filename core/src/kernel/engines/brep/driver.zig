@@ -671,15 +671,11 @@ fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, dir
     if (@intFromPtr(handle.ptr) == 0) return null;
     const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
 
-    if (locus_insp.queryFaces(allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, direction, tolerance) catch null) |l_faces| {
-        var handles = allocator.alloc(geom.FaceHandle, l_faces.len) catch return null;
-        for (l_faces, 0..) |f, i| {
-            handles[i] = .{ .index = f.index, .normal = f.normal, .centroid = f.centroid };
-        }
-        allocator.free(l_faces);
-        return handles;
-    }
-    return null;
+    const l_faces = (locus_insp.queryFaces(allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, direction, tolerance) catch return null) orelse return null;
+    defer allocator.free(l_faces); // also when the copy below fails (it used to leak)
+    const handles = allocator.alloc(geom.FaceHandle, l_faces.len) catch return null;
+    for (l_faces, handles) |f, *h| h.* = .{ .index = f.index, .normal = f.normal, .centroid = f.centroid };
+    return handles;
 }
 
 fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
@@ -725,26 +721,22 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     defer mesh.deinit(backend_allocator);
 
     locus_tess.tessellateSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, &mesh, env) catch return null;
+    return copyMesh(allocator, &mesh) catch null;
+}
 
-    var vert_props = allocator.alloc(f32, mesh.vertices.items.len * 3) catch return null;
+/// The tessellation in `allocator`'s memory; on failure nothing stays allocated (the
+/// vertices used to leak when the triangles' allocation failed).
+pub fn copyMesh(allocator: std.mem.Allocator, mesh: *const locus_tess.Mesh) !geom.Mesh {
+    const vert_props = try allocator.alloc(f32, mesh.vertices.items.len * 3);
+    errdefer allocator.free(vert_props);
     for (mesh.vertices.items, 0..) |v, i| {
-        vert_props[i * 3 + 0] = @floatCast(v[0]);
-        vert_props[i * 3 + 1] = @floatCast(v[1]);
-        vert_props[i * 3 + 2] = @floatCast(v[2]);
+        for (0..3) |axis| vert_props[i * 3 + axis] = @floatCast(v[axis]);
     }
-
-    var tri_verts = allocator.alloc(u32, mesh.triangles.items.len * 3) catch return null;
+    const tri_verts = try allocator.alloc(u32, mesh.triangles.items.len * 3);
     for (mesh.triangles.items, 0..) |t, i| {
-        tri_verts[i * 3 + 0] = t[0];
-        tri_verts[i * 3 + 1] = t[1];
-        tri_verts[i * 3 + 2] = t[2];
+        for (0..3) |corner| tri_verts[i * 3 + corner] = t[corner];
     }
-
-    return geom.Mesh{
-        .vert_props = vert_props,
-        .tri_verts = tri_verts,
-        .num_prop = 3,
-    };
+    return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = 3 };
 }
 
 fn numVertsImpl(handle: geom.GeometryHandle) usize {

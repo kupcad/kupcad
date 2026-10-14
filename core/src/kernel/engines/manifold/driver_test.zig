@@ -539,3 +539,14 @@ test "Manifold Driver: the C++ keeps its asserts only in Debug builds" {
     const manifold = @import("../../../bindings/manifold.zig");
     try testing.expectEqual(@import("builtin").mode == .debug, manifold.cppAssertsEnabled());
 }
+
+test "Manifold Driver: getMesh leaves nothing allocated when an allocation fails" {
+    // The vertices used to leak when allocating the triangles failed.
+    const c = driver.driver.cubeFn(1, 1, 1, false) orelse return error.CubeFailed;
+    defer driver.driver.destructFn(c);
+    var fail_index: usize = 0;
+    while (fail_index < 2) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        try testing.expect(driver.driver.getMeshFn(failing.allocator(), c) == null);
+    }
+}
