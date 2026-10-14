@@ -147,6 +147,7 @@ test "VM: Closure invocation pads missing arguments with nil natively" {
     func.chunk = closure_chunk;
     func.owns_chunk = false;
     func.arity = 2; // EXPECTS 2 ARGS!
+    func.local_count = 3; // slot 0: the closure, slots 1-2: the parameters
 
     // 2. Call it with only ONE argument
     var main_chunk = chunk.Chunk.init();
