@@ -74,6 +74,10 @@ pub const Parser = struct {
     diagnostics: Diagnostics,
     comments: std.ArrayListUnmanaged(common_token.Comment) = .empty,
     in_block_params: bool = false,
+    /// Set while parsing a `for` or `while` header, where `do` never opens a block (as in
+    /// Ruby's condition parsing): `for x in xs do` used to read as calling `xs` with a
+    /// block, which swallowed the loop's body. Brackets inside the header clear it again.
+    in_loop_header: bool = false,
     scope_depth: u32 = 0,
     ast_depth: usize = 0,
 
@@ -237,6 +241,32 @@ pub const Parser = struct {
     /// they only group its first argument, as in Ruby and Crystal.
     fn atParenArgs(self: *const Parser) bool {
         return self.tag(0) == .l_paren and !self.spaceBefore(self.tok_idx);
+    }
+
+    /// A `do` or `{` block follows (never `do` in a loop header).
+    fn atBlock(self: *const Parser) bool {
+        return self.tag(0) == .l_brace or (self.tag(0) == .keyword_do and !self.in_loop_header);
+    }
+
+    /// Lets `do` open blocks again inside brackets in a loop header, such as
+    /// `for x in (xs.map do |v| v end)`. Pair with `defer self.in_loop_header = outer`.
+    fn allowDoBlocks(self: *Parser) bool {
+        defer self.in_loop_header = false;
+        return self.in_loop_header;
+    }
+
+    /// The expression of a `for` or `while` header, which ends at the line break or `;`.
+    /// Ruby also accepts `for x in xs do` and `while cond do`; KupCAD doesn't, and says so.
+    fn parseLoopHeader(self: *Parser) ParseError!ast.NodeIndex {
+        const outer = self.in_loop_header;
+        self.in_loop_header = true;
+        defer self.in_loop_header = outer;
+        const expr = try self.parseExpression(.none);
+        if (self.tag(0) == .keyword_do) {
+            self.reportError(self.getLoc(self.tok_idx), "A loop header ends at the line break; remove this 'do'", .{});
+            return ParseError.UnexpectedToken;
+        }
+        return expr;
     }
 
     pub fn synchronize(self: *Parser) void {
@@ -507,6 +537,8 @@ pub const Parser = struct {
     }
 
     fn parseLambda(self: *Parser) ParseError!ast.NodeIndex {
+        const outer = self.allowDoBlocks();
+        defer self.in_loop_header = outer;
         const start_tok = try self.expect(.minus_greater);
         const scope = self.enterScope();
         defer self.leaveScope(scope);
@@ -597,6 +629,8 @@ pub const Parser = struct {
     }
 
     fn parseBlockClosure(self: *Parser) ParseError!ast.NodeIndex {
+        const outer = self.allowDoBlocks();
+        defer self.in_loop_header = outer;
         const is_brace = (self.tag(0) == .l_brace);
         const start_tok = if (is_brace) try self.expect(.l_brace) else try self.expect(.keyword_do);
         const params_start = self.scratch_nodes.items.len;
@@ -854,7 +888,7 @@ pub const Parser = struct {
         const is_until = (self.tag(0) == .keyword_until);
         const start_tok = self.tok_idx;
         self.advance();
-        const condition = try self.parseExpression(.none);
+        const condition = try self.parseLoopHeader();
         self.skipIgnored();
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
@@ -893,7 +927,7 @@ pub const Parser = struct {
             return ParseError.UnexpectedToken;
         }
         self.advance();
-        const iterable = try self.parseExpression(.none);
+        const iterable = try self.parseLoopHeader();
         self.skipIgnored();
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
@@ -1066,9 +1100,9 @@ pub const Parser = struct {
 
         if (self.atParenArgs()) {
             args_span = try self.parseParenArgs();
-            if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) block_node = try self.parseBlockClosure();
+            if (self.atBlock()) block_node = try self.parseBlockClosure();
         } else if (self.isCommandCallStart(false)) {
-            if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) {
+            if (self.atBlock()) {
                 implicit_args = true;
                 block_node = try self.parseBlockClosure();
             } else {
@@ -1115,7 +1149,7 @@ pub const Parser = struct {
         if (self.atParenArgs()) {
             args = try self.parseParenArgs();
             end_tok = self.tok_idx;
-            if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) {
+            if (self.atBlock()) {
                 block_node = try self.parseBlockClosure();
                 end_tok = self.tok_idx;
             }
@@ -1319,6 +1353,8 @@ pub const Parser = struct {
     }
 
     fn parseParenArgs(self: *Parser) ParseError!ast.Span {
+        const outer = self.allowDoBlocks();
+        defer self.in_loop_header = outer;
         if (self.tag(0) == .l_paren) {
             self.advance();
             const s_len = self.scratch_named_args.items.len;
@@ -1721,7 +1757,8 @@ pub const Parser = struct {
         switch (t) {
             // Clause keywords end an expression, so `when Integer then x` is not a call `Integer(then x)`.
             .newline, .semicolon, .eof, .comment, .docstring, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_then, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
-            .keyword_do, .l_brace => return true,
+            .keyword_do => return !self.in_loop_header,
+            .l_brace => return true,
             else => {
                 if (isAssignmentOp(t)) return false;
                 // `puts (x).y`: a spaced parenthesis groups the first argument.
@@ -1746,13 +1783,15 @@ pub const Parser = struct {
         }
         const args_span = try self.b.addNamedArgs(self.scratch_named_args.items[s_len..]);
         var block_node: ?ast.NodeIndex = null;
-        if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) {
+        if (self.atBlock()) {
             block_node = try self.parseBlockClosure();
         }
         return .{ .args = args_span, .block = block_node };
     }
 
     fn parseGroupedExpression(self: *Parser) ParseError!ast.NodeIndex {
+        const outer = self.allowDoBlocks();
+        defer self.in_loop_header = outer;
         const start_tok = try self.expect(.l_paren);
         self.skipIgnored(); // Allow newlines immediately after '('
 
@@ -1814,6 +1853,8 @@ pub const Parser = struct {
     }
 
     fn parseArrayLiteral(self: *Parser) ParseError!ast.NodeIndex {
+        const outer = self.allowDoBlocks();
+        defer self.in_loop_header = outer;
         const start_tok = try self.expect(.l_bracket);
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
@@ -1825,6 +1866,8 @@ pub const Parser = struct {
     }
 
     fn parseHashLiteral(self: *Parser) ParseError!ast.NodeIndex {
+        const outer = self.allowDoBlocks();
+        defer self.in_loop_header = outer;
         const start_tok = try self.expect(.l_brace);
         const s_len = self.scratch_hash_entries.items.len;
         defer self.scratch_hash_entries.shrinkRetainingCapacity(s_len);

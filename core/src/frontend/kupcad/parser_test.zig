@@ -4378,3 +4378,40 @@ test "Parser: a malformed for loop says what's missing" {
         try testing.expectEqualStrings(case.message, pt.parser.diagnostics.list.items[0].message);
     }
 }
+
+test "Parser: a loop header ends at the line break, and a `do` there is reported" {
+    // Ruby allows `for x in xs do` and `while cond do`; KupCAD doesn't. `xs do ... end` used
+    // to read as calling xs with a block, which swallowed the body and failed at the file's end.
+    const bad = [_][]const u8{
+        "for x in xs do\n  puts x\nend",
+        "for x in [1, 2] do\n  puts x\nend",
+        "while n < 2 do\n  n += 1\nend",
+        "until done do\nend",
+    };
+    for (bad) |src| {
+        errdefer std.debug.print("source:\n{s}\n", .{src});
+        var pt = try KTest.init(src);
+        defer pt.deinit();
+        _ = pt.parser.parseProgram() catch {};
+        try testing.expect(pt.parser.diagnostics.list.items.len >= 1);
+        const d = pt.parser.diagnostics.list.items[0];
+        try testing.expectEqualStrings("A loop header ends at the line break; remove this 'do'", d.message);
+        try testing.expectEqualStrings("do", src[d.loc.offset..][0..d.loc.length]);
+    }
+
+    // A block in brackets, or in braces, still works in a header, and `do` blocks elsewhere.
+    const good = [_][]const u8{
+        "for x in (xs.map do |v| v end)\nend",
+        "for x in f(xs.map do |v| v end)\nend",
+        "for x in xs.map { |v| v }\nend",
+        "for f in [-> do 1 end]\nend",
+        "while (ok do true end)\nend",
+        "for x in xs\n  x.each do |v| v end\nend",
+    };
+    for (good) |src| {
+        errdefer std.debug.print("source:\n{s}\n", .{src});
+        var pt = try KTest.init(src);
+        defer pt.deinit();
+        _ = try lastStatement(&pt, src);
+    }
+}
