@@ -62,6 +62,7 @@ test {
     // CLI & Config Tests
     _ = @import("cli/build_cmd_test.zig");
     _ = @import("cli/config_test.zig");
+    _ = @import("cli/diagnostic_report_test.zig");
     _ = @import("cli/options_test.zig");
     _ = @import("cli/walker_test.zig");
 

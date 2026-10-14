@@ -100,7 +100,7 @@ fn inner_check(source: []const u8) ![]const u8 {
     defer api.freeDiagnostics(allocator, diags);
 
     var line_index = try api.LineIndex.init(allocator, source);
-    defer allocator.free(line_index.line_starts);
+    defer line_index.deinit(allocator);
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
 

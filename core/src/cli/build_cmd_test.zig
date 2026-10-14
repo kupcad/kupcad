@@ -244,3 +244,26 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         }
     }
 }
+
+test "build_cmd: syntax errors are reported with file, line, column and a caret" {
+    // `kupcad build` used to print only "Build failed: error.ParseError".
+    var fx = try Fixture.init("w = 10\ncube(w\nsphere(2)\nx = )\n");
+    defer fx.deinit();
+    var res = try fx.build();
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+    try testing.expect(!fx.outputExists());
+
+    const text = res.text();
+    const first = try std.fmt.allocPrint(testing.allocator, "{s}:3:1:", .{fx.input});
+    defer testing.allocator.free(first);
+    const second = try std.fmt.allocPrint(testing.allocator, "{s}:4:5:", .{fx.input});
+    defer testing.allocator.free(second);
+    for ([_][]const u8{ first, "Expected 'r_paren', but found 'sphere'\nsphere(2)\n", second, "Invalid expression starting with ')'\nx = )\n    ", "^" }) |needle| {
+        errdefer std.debug.print("missing {s} in:\n{s}\n", .{ needle, text });
+        try testing.expect(std.mem.indexOf(u8, text, needle) != null);
+    }
+    const summary = try std.fmt.allocPrint(testing.allocator, "Build failed: 2 syntax errors in {s}\n", .{fx.input});
+    defer testing.allocator.free(summary);
+    try testing.expect(std.mem.endsWith(u8, text, summary));
+}

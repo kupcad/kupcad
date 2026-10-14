@@ -4,14 +4,8 @@ const LintConfig = @import("../tools/lint/config.zig").Config;
 const walker = @import("walker.zig");
 const log_helpers = @import("../log.zig");
 const LimitAllocator = @import("../core/limit_allocator.zig").LimitAllocator;
-
-const Color = struct {
-    const cyan = "\x1b[36m";
-    const yellow = "\x1b[33m";
-    const red = "\x1b[31m";
-    const green = "\x1b[32m";
-    const reset = "\x1b[0m";
-};
+const report = @import("diagnostic_report.zig");
+const Color = report.Color;
 
 const Totals = struct {
     files: usize = 0,
@@ -21,22 +15,6 @@ const Totals = struct {
     config: LintConfig,
     compiler_memory_limit: ?usize = null,
 };
-
-fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
-    var line_num: u32 = 1;
-    var iter = std.mem.splitScalar(u8, source, '\n');
-    while (iter.next()) |line| {
-        if (line_num == target_line) {
-            var trimmed = line;
-            if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '\r') {
-                trimmed = trimmed[0 .. trimmed.len - 1];
-            }
-            return trimmed;
-        }
-        line_num += 1;
-    }
-    return "";
-}
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     var setup = try @import("options.zig").CommandSetup.init(allocator, init.io, args_iter, "check");
@@ -85,29 +63,27 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
     defer api.freeDiagnostics(compile_allocator, diags);
 
     if (diags.len > 0) {
-        var line_index = try api.LineIndex.init(compile_allocator, source);
+        const line_index = try api.LineIndex.init(compile_allocator, source);
+        defer line_index.deinit(compile_allocator);
 
+        var rendered: std.Io.Writer.Allocating = .init(allocator);
+        defer rendered.deinit();
         for (diags) |d| {
-            const sev_color = d.severity.toColor();
-            const sev_char = d.severity.toChar();
             switch (d.severity) {
                 .@"error" => totals.errors += 1,
                 .warning => totals.warnings += 1,
                 .info => totals.infos += 1,
             }
-
-            const line = line_index.getLine(d.loc.offset) + 1;
-            const col = line_index.getUtf8Column(d.loc.offset) + 1;
-
-            log_helpers.printStderr(io, "{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}\n", .{ Color.cyan, file_path, line, col, Color.reset, sev_color, sev_char, Color.reset, d.message });
-            const source_line = getSourceLine(source, line);
-            log_helpers.printStderr(io, "{s}\n", .{source_line});
-            const col_idx = if (col > 0) col - 1 else 0;
-            for (0..col_idx) |_| log_helpers.printStderr(io, " ", .{});
-            log_helpers.printStderr(io, "{s}", .{sev_color});
-            const squiggles = if (d.loc.length > 0) d.loc.length else 1;
-            for (0..squiggles) |_| log_helpers.printStderr(io, "^", .{});
-            log_helpers.printStderr(io, "{s}\n\n", .{Color.reset});
+            try report.write(&rendered.writer, .{
+                .file_path = file_path,
+                .source = source,
+                .line_index = &line_index,
+                .offset = d.loc.offset,
+                .length = d.loc.length,
+                .severity = d.severity,
+                .message = d.message,
+            });
         }
+        log_helpers.printStderr(io, "{s}", .{rendered.written()});
     }
 }

@@ -26,6 +26,11 @@ pub const LineIndex = struct {
         };
     }
 
+    /// Frees the line table (`source` is borrowed). Not needed for arena-backed indexes.
+    pub fn deinit(self: LineIndex, allocator: std.mem.Allocator) void {
+        allocator.free(self.line_starts);
+    }
+
     /// Finds the 0-indexed line number for a given byte offset using binary search.
     pub fn getLine(self: *const LineIndex, offset: u32) u32 {
         var left: usize = 0;

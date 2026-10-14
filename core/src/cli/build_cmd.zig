@@ -4,6 +4,9 @@ const fs = @import("fs.zig");
 const log_helpers = @import("../log.zig");
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
+const diagnostic_report = @import("diagnostic_report.zig");
+const ScriptSession = @import("../daemon/session.zig").ScriptSession;
+const ModuleId = @import("../core/workspace.zig").ModuleId;
 
 /// Process exit status for any failed build, so scripts and CI can detect errors.
 const EXIT_FAILURE: u8 = 1;
@@ -82,6 +85,27 @@ pub const Reporter = struct {
         if (self.capture) |w| w.print(fmt, args) catch {} else log_helpers.printStdout(self.io, fmt, args);
     }
 };
+
+/// Prints a module's syntax errors the way `kupcad check` does (file:line:col, the
+/// source line and a caret), then a one-line summary.
+fn reportSyntaxErrors(allocator: std.mem.Allocator, session: *const ScriptSession, mod_id: ModuleId, reporter: Reporter) !void {
+    const mod = &session.workspace.modules.items[@backingInt(mod_id)];
+    var rendered: std.Io.Writer.Allocating = .init(allocator);
+    defer rendered.deinit();
+    for (mod.doc.diagnostics) |d| {
+        try diagnostic_report.write(&rendered.writer, .{
+            .file_path = mod.path,
+            .source = mod.source,
+            .line_index = &mod.doc.line_index,
+            .offset = d.loc.offset,
+            .length = d.loc.length,
+            .severity = .@"error",
+            .message = d.message,
+        });
+    }
+    const count = mod.doc.diagnostics.len;
+    reporter.err("{s}Build failed: {d} syntax error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", mod.path });
+}
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
     if (try run(allocator, args_iter, .{ .io = init.io }) == .failure) std.process.exit(EXIT_FAILURE);
@@ -198,6 +222,10 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
 
     // Perform Kahn's Topological Sort to execute dependencies from bottom to top
     session.evaluateWorkspace() catch |err| {
+        if (err == error.ParseError) if (session.failed_module) |mod_id| {
+            try reportSyntaxErrors(allocator, session, mod_id, reporter);
+            return .failure;
+        };
         reporter.err("Build failed: {}\n", .{err});
         return .failure;
     };

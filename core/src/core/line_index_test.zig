@@ -7,7 +7,7 @@ test "LineIndex: accurately calculates line numbers from offsets" {
     // foo\nbar\n
     const source = "foo\nbar\n";
     var index = try LineIndex.init(testing.allocator, source);
-    defer testing.allocator.free(index.line_starts);
+    defer index.deinit(testing.allocator);
 
     // Verify line starts
     try testing.expectEqual(@as(usize, 3), index.line_starts.len);
@@ -33,7 +33,7 @@ test "LineIndex: correctly maps UTF-8 and UTF-16 columns for LSP" {
     // b (7)
     const source = "a 🚀 b\n";
     var index = try LineIndex.init(testing.allocator, source);
-    defer testing.allocator.free(index.line_starts);
+    defer index.deinit(testing.allocator);
 
     // Target the 'b' character
     const target_offset: u32 = 7;
@@ -51,7 +51,7 @@ test "LineIndex: correctly maps UTF-8 and UTF-16 columns for LSP" {
 test "LineIndex: safely handles empty strings" {
     const source = "";
     var index = try LineIndex.init(testing.allocator, source);
-    defer testing.allocator.free(index.line_starts);
+    defer index.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 1), index.line_starts.len);
     try testing.expectEqual(@as(u32, 0), index.getLine(0));
