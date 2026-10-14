@@ -15,17 +15,29 @@ const validate = @import("../pkg/validate.zig");
 const limits = @import("../pkg/limits.zig");
 
 const Outcome = @import("outcome.zig").Outcome;
+const Args = @import("args.zig").Args;
 
 const Subcommand = enum { init, add, install, prune, doctor };
 
-/// "Usage: kupcad pkg <init|add|install|prune|doctor>", generated from Subcommand.
-const USAGE = blk: {
+const ADD_USAGE = "Usage: kupcad pkg add <alias>=<url>\n";
+
+/// "Usage: kupcad pkg <init|add|install|prune|doctor>", generated from Subcommand, then
+/// what each one does.
+pub const USAGE = blk: {
     var list: []const u8 = "";
     for (std.meta.fieldNames(Subcommand), 0..) |name, i| list = list ++ (if (i == 0) "" else "|") ++ name;
-    break :blk "Usage: kupcad pkg <" ++ list ++ ">\n";
+    break :blk "Usage: kupcad pkg <" ++ list ++ ">\n" ++
+        \\
+        \\  init               Create kupcad.json in this directory
+        \\  add <alias>=<url>  Add a dependency to kupcad.json and install
+        \\  install            Install the dependencies, pinned by kupcad.lock
+        \\  prune [--force]    Remove packages no project uses from the global store
+        \\  doctor             Check the global store for missing or corrupt files
+        \\
+    ;
 };
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     // Validate the subcommand before touching the manifest or the global store, so a typo
     // gets a usage message rather than a manifest error.
     const name = args_iter.next() orelse {
@@ -77,7 +89,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 }
 
 /// `add` records a dependency in kupcad.json and then installs, exactly like `install`.
-fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator, command: Subcommand, fs: Vfs, cafs: *Cafs, store: *Store) !Outcome {
+fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args, command: Subcommand, fs: Vfs, cafs: *Cafs, store: *Store) !Outcome {
     var manifest = Manifest.load(allocator, fs) catch |err| {
         log_helpers.printStderr(init.io, "Error: could not read kupcad.json: {s} (run `kupcad pkg init` to create one)\n", .{@errorName(err)});
         return .failure;
@@ -93,9 +105,8 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     defer lockfile.deinit();
 
     if (command == .add) {
-        const usage = "Usage: kupcad pkg add <alias>=<url>\n";
         const pkg_arg = args_iter.next() orelse {
-            log_helpers.printStderr(init.io, usage, .{});
+            log_helpers.printStderr(init.io, ADD_USAGE, .{});
             return .failure;
         };
 
@@ -103,7 +114,7 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
         const alias = split_iter.next() orelse "";
         const url = split_iter.rest();
         if (alias.len == 0 or url.len == 0) {
-            log_helpers.printStderr(init.io, "Error: Expected <alias>=<url>, got '{s}'\n" ++ usage, .{pkg_arg});
+            log_helpers.printStderr(init.io, "Error: Expected <alias>=<url>, got '{s}'\n" ++ ADD_USAGE, .{pkg_arg});
             return .failure;
         }
 

@@ -392,4 +392,6 @@ KupCAD ships as a monolithic executable containing a complete developer toolchai
 * `kupcad watch`: Real-time incremental rebuilding utilizing the persistent `SessionManager`.
 * `kupcad dev`: VM development toolkit offering `ast-dump`, `disasm`, and `bench`.
 
+Every command explains itself with `--help` (or `-h`), wherever it appears: `kupcad build --help`, `kupcad check part.kup -h`. An option a command doesn't take is an error that prints its usage.
+
 Output is coloured only on a terminal: piped or redirected output is plain text. `NO_COLOR=1` turns colours off everywhere and `CLICOLOR_FORCE=1` keeps them when redirected ([no-color.org](https://no-color.org)).

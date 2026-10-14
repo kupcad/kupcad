@@ -5,7 +5,23 @@ const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const diagnostic_report = @import("diagnostic_report.zig");
 const session_mod = @import("../daemon/session.zig");
+const Args = @import("args.zig").Args;
 const ScriptSession = session_mod.ScriptSession;
+
+pub const USAGE =
+    \\Usage: kupcad build <file.kup> [options]
+    \\
+    \\Runs a script and exports its final geometry.
+    \\
+    \\Options:
+    \\  -o, --output <file>       Output path; its extension picks the format
+    \\                            (.stl, .glb, .gltf, .step, .stp)
+    \\  -f, --format <name>       stl, glb, gltf or step (glb when there is no -o)
+    \\  -p, --param <name=value>  Value for param(:name); repeatable
+    \\  -d, --draco               Compress glb and gltf meshes with Draco
+    \\  -h, --help                Show this help
+    \\
+;
 
 /// Formats `build` can write. Tag names are what `--format` accepts and what
 /// `api.exportModelFromVm` expects.
@@ -90,7 +106,7 @@ fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, fai
     reporter.err("{s}Build failed: {d} error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", mod.path });
 }
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     return run(allocator, args_iter, .forProcess(init));
 }
 
@@ -140,7 +156,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
                 return .failure;
             };
         } else if (std.mem.startsWith(u8, arg, "-")) {
-            reporter.err("Error: Unknown option '{s}'. Options: -o/--output, -f/--format, -p/--param, -d/--draco\n", .{arg});
+            reporter.err("Error: Unknown option '{s}'\n\n" ++ USAGE, .{arg});
             return .failure;
         } else if (input_path) |first| {
             reporter.err("Error: Expected one input file, got '{s}' and '{s}'\n", .{ first, arg });
@@ -151,7 +167,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     }
 
     const target_input = input_path orelse {
-        reporter.err("Error: Missing input file path.\n", .{});
+        reporter.err("Error: Missing input file path.\n\n" ++ USAGE, .{});
         return .failure;
     };
 

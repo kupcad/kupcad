@@ -11,6 +11,8 @@ const watch_cmd = @import("cli/watch.zig");
 const outcome_mod = @import("cli/outcome.zig");
 const Outcome = outcome_mod.Outcome;
 const log_helpers = @import("log.zig");
+const cli_args = @import("cli/args.zig");
+const Args = cli_args.Args;
 
 // Export std_options for the compiler
 pub const std_options = log_helpers.std_options;
@@ -18,25 +20,27 @@ pub const std_options = log_helpers.std_options;
 const Command = struct {
     name: []const u8,
     summary: []const u8,
-    run: *const fn (std.process.Init, std.mem.Allocator, *std.process.Args.Iterator) anyerror!Outcome,
+    /// What `kupcad <name> --help` prints; the command's own errors quote it too.
+    usage: []const u8,
+    run: *const fn (std.process.Init, std.mem.Allocator, *Args) anyerror!Outcome,
 };
 
 /// Every subcommand: dispatch and the usage text both come from this table.
-const COMMANDS = [_]Command{
-    .{ .name = "build", .summary = "Run a KupCAD script and export its final geometry", .run = build_cmd.execute },
-    .{ .name = "watch", .summary = "Rebuild a script whenever it changes", .run = watch_cmd.execute },
-    .{ .name = "check", .summary = "Lint and analyze KupCAD files", .run = check_cmd.execute },
-    .{ .name = "fmt", .summary = "Format KupCAD files", .run = fmt_cmd.execute },
-    .{ .name = "doc", .summary = "Extract parameter metadata and docstrings as JSON", .run = doc_cmd.execute },
-    .{ .name = "pkg", .summary = "Manage dependencies (init, add, install, prune, doctor)", .run = pkg_cmd.execute },
-    .{ .name = "lsp", .summary = "Start the Language Server over stdio", .run = runLsp },
-    .{ .name = "dev", .summary = "Developer tools and compiler debugging utilities", .run = dev_cmd.execute },
+pub const COMMANDS = [_]Command{
+    .{ .name = "build", .summary = "Run a KupCAD script and export its final geometry", .usage = build_cmd.USAGE, .run = build_cmd.execute },
+    .{ .name = "watch", .summary = "Rebuild a script whenever it changes", .usage = watch_cmd.USAGE, .run = watch_cmd.execute },
+    .{ .name = "check", .summary = "Lint and analyze KupCAD files", .usage = check_cmd.USAGE, .run = check_cmd.execute },
+    .{ .name = "fmt", .summary = "Format KupCAD files", .usage = fmt_cmd.USAGE, .run = fmt_cmd.execute },
+    .{ .name = "doc", .summary = "Extract parameter metadata and docstrings as JSON", .usage = doc_cmd.USAGE, .run = doc_cmd.execute },
+    .{ .name = "pkg", .summary = "Manage dependencies (init, add, install, prune, doctor)", .usage = pkg_cmd.USAGE, .run = pkg_cmd.execute },
+    .{ .name = "lsp", .summary = "Start the Language Server over stdio", .usage = lsp_cmd.USAGE, .run = runLsp },
+    .{ .name = "dev", .summary = "Developer tools and compiler debugging utilities", .usage = dev_cmd.USAGE, .run = dev_cmd.execute },
 };
 
 pub const USAGE = blk: {
     var text: []const u8 = "Usage: kupcad <command> [options]\n\nCommands:\n";
     for (COMMANDS) |c| text = text ++ std.fmt.comptimePrint("  {s: <6} {s}\n", .{ c.name, c.summary });
-    break :blk text ++ "\nOptions:\n  -h, --help     Show this help\n  -V, --version  Show the kupcad version\n";
+    break :blk text ++ "\nOptions:\n  -h, --help     Show this help\n  -V, --version  Show the kupcad version\n\nRun 'kupcad <command> --help' for a command's options.\n";
 };
 
 pub const VERSION_TEXT = "kupcad " ++ build_info.version ++ "\n";
@@ -52,15 +56,12 @@ fn globalFlag(arg: []const u8) ?GlobalFlag {
     return null;
 }
 
-fn runLsp(init: std.process.Init, allocator: std.mem.Allocator, _: *std.process.Args.Iterator) anyerror!Outcome {
+fn runLsp(init: std.process.Init, allocator: std.mem.Allocator, _: *Args) anyerror!Outcome {
     return lsp_cmd.execute(init, allocator);
 }
 
 pub fn main(init: std.process.Init) void {
-    var args_iter = std.process.Args.Iterator.init(init.minimal.args);
-    _ = args_iter.skip(); // Skip the executable name itself
-
-    const outcome = dispatch(init, &args_iter) catch |err| blk: {
+    const outcome = dispatch(init) catch |err| blk: {
         // Commands report the failures they expect; anything reaching here is unexpected,
         // so name it instead of dumping an error return trace on the user.
         log_helpers.printStderr(init.io, "Error: {s}\n", .{@errorName(err)});
@@ -69,11 +70,22 @@ pub fn main(init: std.process.Init) void {
     if (outcome == .failure) std.process.exit(outcome_mod.EXIT_FAILURE);
 }
 
-fn dispatch(init: std.process.Init, args_iter: *std.process.Args.Iterator) !Outcome {
-    const name = args_iter.next() orelse {
+/// The arguments after the executable name, for the life of the process.
+fn processArgs(init: std.process.Init) ![]const []const u8 {
+    const arena = init.arena.allocator();
+    const argv = try init.minimal.args.toSlice(arena);
+    const items = try arena.alloc([]const u8, argv.len -| 1);
+    for (items, argv[argv.len - items.len ..]) |*item, arg| item.* = arg;
+    return items;
+}
+
+fn dispatch(init: std.process.Init) !Outcome {
+    const argv = try processArgs(init);
+    if (argv.len == 0) {
         log_helpers.printStderr(init.io, USAGE, .{});
         return .failure;
-    };
+    }
+    const name = argv[0];
     if (globalFlag(name)) |flag| {
         log_helpers.printStdout(init.io, "{s}", .{switch (flag) {
             .help => USAGE,
@@ -82,7 +94,13 @@ fn dispatch(init: std.process.Init, args_iter: *std.process.Args.Iterator) !Outc
         return .success;
     }
     for (COMMANDS) |c| {
-        if (std.mem.eql(u8, name, c.name)) return c.run(init, init.gpa, args_iter);
+        if (!std.mem.eql(u8, name, c.name)) continue;
+        if (cli_args.wantsHelp(argv[1..])) {
+            log_helpers.printStdout(init.io, "{s}", .{c.usage});
+            return .success;
+        }
+        var args: Args = .{ .items = argv[1..] };
+        return c.run(init, init.gpa, &args);
     }
     log_helpers.printStderr(init.io, "Error: Unknown command '{s}'\n\n" ++ USAGE, .{name});
     return .failure;

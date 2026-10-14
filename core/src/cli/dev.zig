@@ -9,6 +9,7 @@ const registry = @import("../stdlib/registry.zig");
 const disassembler = @import("../tools/dev/disassembler.zig");
 const Lexer = @import("../frontend/kupcad/lexer.zig").Lexer;
 const Outcome = @import("outcome.zig").Outcome;
+const Args = @import("args.zig").Args;
 const log_helpers = @import("../log.zig");
 const ScriptSession = @import("../daemon/session.zig").ScriptSession;
 
@@ -18,7 +19,7 @@ const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
 const Subcommand = enum { @"ast-dump", disasm, @"lex-dump", bench };
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     const name = args_iter.next() orelse {
         printUsage(init.io);
         return .failure;
@@ -36,7 +37,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     };
 }
 
-fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     const file_path = args_iter.next() orelse {
         log_helpers.printStderr(init.io, "Missing file path for 'ast-dump'. Usage: kupcad dev ast-dump <file.kup>\n", .{});
         return .failure;
@@ -75,7 +76,7 @@ fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
     return .success;
 }
 
-fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     const file_path = args_iter.next() orelse {
         log_helpers.printStderr(init.io, "Missing file path for 'disasm'. Usage: kupcad dev disasm <file.kup>\n", .{});
         return .failure;
@@ -128,7 +129,7 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
     return .success;
 }
 
-fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     const file_path = args_iter.next() orelse {
         log_helpers.printStderr(init.io, "Missing file path for 'lex-dump'. Usage: kupcad dev lex-dump <file.kup>\n", .{});
         return .failure;
@@ -173,7 +174,7 @@ fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
     return .success;
 }
 
-fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     const file_path = args_iter.next() orelse {
         log_helpers.printStderr(init.io, "Missing file path for 'bench'. Usage: kupcad dev bench <file.kup>\n", .{});
         return .failure;
@@ -265,17 +266,19 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     return .success;
 }
 
+pub const USAGE =
+    \\Usage: kupcad dev <subcommand> [options]
+    \\
+    \\Subcommands:
+    \\  ast-dump <file>  Generate an AST tree dump (.dump) for compiler debugging
+    \\  disasm <file>    Disassemble KupCAD script into raw VM bytecode (.disasm)
+    \\  lex-dump <file>  Dump the raw Lexer token stream (.lex)
+    \\  bench <file>     Profile Parse, Compile, and VM Execution times
+    \\
+;
+
 fn printUsage(io: std.Io) void {
-    log_helpers.printStderr(io,
-        \\Usage: kupcad dev <subcommand> [options]
-        \\
-        \\Subcommands:
-        \\  ast-dump <file>  Generate an AST tree dump (.dump) for compiler debugging
-        \\  disasm <file>    Disassemble KupCAD script into raw VM bytecode (.disasm)
-        \\  lex-dump <file>  Dump the raw Lexer token stream (.lex)
-        \\  bench <file>     Profile Parse, Compile, and VM Execution times
-        \\
-    , .{});
+    log_helpers.printStderr(io, USAGE, .{});
 }
 
 /// "Compilation failed: line:col: message", or the error name when the compiler kept none.

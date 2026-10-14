@@ -2,16 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const build_cmd = @import("build_cmd.zig");
 
-const SliceArgs = struct {
-    args: []const []const u8,
-    index: usize = 0,
-
-    pub fn next(self: *SliceArgs) ?[]const u8 {
-        if (self.index >= self.args.len) return null;
-        defer self.index += 1;
-        return self.args[self.index];
-    }
-};
+const Args = @import("args.zig").Args;
 
 const Result = struct {
     outcome: build_cmd.Outcome,
@@ -29,7 +20,7 @@ const Result = struct {
 fn runBuild(args: []const []const u8) !Result {
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     errdefer output.deinit();
-    var it = SliceArgs{ .args = args };
+    var it: Args = .{ .items = args };
     const outcome = try build_cmd.run(testing.allocator, &it, .{ .io = testing.io, .capture = &output.writer });
     return .{ .outcome = outcome, .output = output };
 }
@@ -84,7 +75,7 @@ const Fixture = struct {
 
 test "build_cmd: invalid arguments fail before touching the filesystem" {
     const cases = [_]struct { args: []const []const u8, message: []const u8 }{
-        .{ .args = &.{}, .message = "Error: Missing input file path.\n" },
+        .{ .args = &.{}, .message = "Error: Missing input file path.\n\n" ++ build_cmd.USAGE },
         .{ .args = &.{"-o"}, .message = "Error: Missing output path after -o\n" },
         .{ .args = &.{ "model.kup", "--param" }, .message = "Error: Missing key=value after --param\n" },
         .{ .args = &.{ "model.kup", "-p", "width" }, .message = "Error: Invalid param format. Use --param key=value.\n" },
@@ -327,7 +318,7 @@ test "build_cmd: compile errors are reported like syntax errors" {
 test "build_cmd: unknown options, a missing -o value and extra inputs are rejected" {
     // Each used to be ignored silently: a typo like `--fromat stl` built with defaults.
     const cases = [_]struct { args: []const []const u8, message: []const u8 }{
-        .{ .args = &.{ "model.kup", "--fromat", "stl" }, .message = "Error: Unknown option '--fromat'. Options: -o/--output, -f/--format, -p/--param, -d/--draco\n" },
+        .{ .args = &.{ "model.kup", "--fromat", "stl" }, .message = "Error: Unknown option '--fromat'\n\n" ++ build_cmd.USAGE },
         .{ .args = &.{ "model.kup", "-o" }, .message = "Error: Missing output path after -o\n" },
         .{ .args = &.{ "a.kup", "b.kup" }, .message = "Error: Expected one input file, got 'a.kup' and 'b.kup'\n" },
     };

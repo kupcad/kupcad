@@ -845,6 +845,14 @@ pub const Handler = struct {
     }
 };
 
+pub const USAGE =
+    \\Usage: kupcad lsp
+    \\
+    \\Starts the language server on stdin and stdout. Editors start it themselves;
+    \\the VS Code extension runs it for .kup files.
+    \\
+;
+
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !@import("outcome.zig").Outcome {
     // 1. Setup global dependencies
     var mem_vfs = MemoryVfs.init(allocator);

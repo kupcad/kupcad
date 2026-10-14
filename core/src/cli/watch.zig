@@ -6,10 +6,18 @@ const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 const Outcome = @import("outcome.zig").Outcome;
 const log_helpers = @import("../log.zig");
 const diagnostic_report = @import("diagnostic_report.zig");
+const Args = @import("args.zig").Args;
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+pub const USAGE =
+    \\Usage: kupcad watch <file.kup>
+    \\
+    \\Builds a script, then rebuilds it whenever it or a module it imports changes.
+    \\
+;
+
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     const file_path = args_iter.next() orelse {
-        log_helpers.printStderr(init.io, "Error: Missing input file path. Usage: kupcad watch <file.kup>\n", .{});
+        log_helpers.printStderr(init.io, "Error: Missing input file path.\n\n" ++ USAGE, .{});
         return .failure;
     };
 

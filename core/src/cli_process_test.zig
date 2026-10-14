@@ -103,6 +103,18 @@ test "kupcad: help, version and unknown commands" {
         .{ .args = &.{"--version"}, .code = 0, .contains = "kupcad " ++ options.version ++ "\n" },
         .{ .args = &.{"-V"}, .code = 0, .contains = options.version },
         .{ .args = &.{"frobnicate"}, .code = 1, .contains = "Unknown command 'frobnicate'" },
+        // Per-command help: `check --help` used to try to read a file named "--help".
+        .{ .args = &.{ "check", "--help" }, .code = 0, .contains = "Usage: kupcad check", .absent = "Could not read" },
+        .{ .args = &.{ "check", "valid.kup", "-h" }, .code = 0, .contains = "Usage: kupcad check", .absent = "Success" },
+        .{ .args = &.{ "build", "--help" }, .code = 0, .contains = "-p, --param <name=value>" },
+        .{ .args = &.{ "fmt", "--help" }, .code = 0, .contains = "Usage: kupcad fmt" },
+        .{ .args = &.{ "doc", "-h" }, .code = 0, .contains = "Usage: kupcad doc" },
+        .{ .args = &.{ "watch", "--help" }, .code = 0, .contains = "Usage: kupcad watch" },
+        .{ .args = &.{ "pkg", "--help" }, .code = 0, .contains = "add <alias>=<url>" },
+        .{ .args = &.{ "pkg", "add", "--help" }, .code = 0, .contains = "Usage: kupcad pkg" },
+        .{ .args = &.{ "lsp", "--help" }, .code = 0, .contains = "Usage: kupcad lsp" },
+        .{ .args = &.{ "dev", "-h" }, .code = 0, .contains = "Usage: kupcad dev" },
+        .{ .args = &.{"--help"}, .code = 0, .contains = "Run 'kupcad <command> --help'" },
     });
 }
 
@@ -121,6 +133,10 @@ test "kupcad: every command exits non-zero when it fails" {
         .{ .args = &.{ "dev", "frobnicate" }, .code = 1, .contains = "Unknown dev subcommand" },
         .{ .args = &.{ "build", "valid.kup", "--bogus" }, .code = 1, .contains = "Unknown option '--bogus'" },
         .{ .args = &.{ "build", "valid.kup", "-o" }, .code = 1, .contains = "Missing output path after -o" },
+        // An option a command doesn't take is an error with its usage, not a file path.
+        .{ .args = &.{ "check", "valid.kup", "--bogus" }, .code = 1, .contains = "Unknown option '--bogus'\n\nUsage: kupcad check", .absent = "Could not read" },
+        .{ .args = &.{ "fmt", "--bogus", "valid.kup" }, .code = 1, .contains = "Unknown option '--bogus'" },
+        .{ .args = &.{"check"}, .code = 1, .contains = "Missing file path\n\nUsage: kupcad check" },
     });
 }
 

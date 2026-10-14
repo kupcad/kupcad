@@ -6,6 +6,19 @@ const LimitAllocator = @import("../core/limit_allocator.zig").LimitAllocator;
 const report = @import("diagnostic_report.zig");
 const Reporter = @import("reporter.zig").Reporter;
 const Outcome = @import("outcome.zig").Outcome;
+const Args = @import("args.zig").Args;
+const CommandSetup = @import("options.zig").CommandSetup(struct {});
+
+pub const USAGE =
+    \\Usage: kupcad check [--config <file>] <file|dir>...
+    \\
+    \\Reports syntax errors, mistakes the compiler finds and lint warnings in .kup files.
+    \\
+    \\Options:
+    \\  --config <file>  Read lint settings from <file> instead of .kupcad.json
+    \\  -h, --help       Show this help
+    \\
+;
 
 const Totals = struct {
     files: usize = 0,
@@ -17,9 +30,9 @@ const Totals = struct {
     reporter: Reporter,
 };
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     // CommandSetup has already reported what was wrong with the arguments or config.
-    var setup = @import("options.zig").CommandSetup.init(allocator, init.io, args_iter, "check") catch return .failure;
+    var setup = CommandSetup.init(allocator, init.io, args_iter, USAGE) catch return .failure;
     defer setup.deinit(allocator);
 
     const reporter: Reporter = .forProcess(init);

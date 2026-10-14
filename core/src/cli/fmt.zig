@@ -4,15 +4,28 @@ const FmtConfig = @import("../tools/fmt/config.zig").Config;
 const log_helpers = @import("../log.zig");
 const walker = @import("walker.zig");
 const Outcome = @import("outcome.zig").Outcome;
+const Args = @import("args.zig").Args;
+const CommandSetup = @import("options.zig").CommandSetup(struct {});
+
+pub const USAGE =
+    \\Usage: kupcad fmt [--config <file>] <file|dir>...
+    \\
+    \\Prints .kup files in their canonical format.
+    \\
+    \\Options:
+    \\  --config <file>  Read format settings from <file> instead of .kupcad.json
+    \\  -h, --help       Show this help
+    \\
+;
 
 const FmtRun = struct {
     config: FmtConfig,
     failed: usize = 0,
 };
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     // CommandSetup has already reported what was wrong with the arguments or config.
-    var setup = @import("options.zig").CommandSetup.init(allocator, init.io, args_iter, "fmt") catch return .failure;
+    var setup = CommandSetup.init(allocator, init.io, args_iter, USAGE) catch return .failure;
     defer setup.deinit(allocator);
 
     var run: FmtRun = .{ .config = setup.config.fmt };
