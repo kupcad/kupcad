@@ -142,6 +142,12 @@ extern fn manifold_manifold_empty_vec(mem: ?*ManifoldVecObj) ?*ManifoldVecObj;
 extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumProp: c_int, propFunc: *const fn ([*]f64, ManifoldVec3, [*]const f64, ?*anyopaque) callconv(.c) void, ctx: ?*anyopaque) ?*ManifoldObj;
 
 extern fn manifold_transform_array(mem: ?*ManifoldObj, m: ?*ManifoldObj, mat: [*]const f64) ?*ManifoldObj;
+extern fn kupcad_cpp_asserts_enabled() bool;
+
+/// Whether the C++ was compiled with its asserts (Debug builds only).
+pub fn cppAssertsEnabled() bool {
+    return kupcad_cpp_asserts_enabled();
+}
 
 extern fn manifold_num_vert(m: ?*ManifoldObj) usize;
 extern fn manifold_status(m: ?*ManifoldObj) Status;

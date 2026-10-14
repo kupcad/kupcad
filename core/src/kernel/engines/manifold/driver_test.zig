@@ -532,3 +532,10 @@ test "Manifold Driver: a sketch's area counts its holes, and its bounds follow i
     try testing.expectEqual([2]f64{ 15, -8 }, b.min);
     try testing.expectEqual([2]f64{ 25, 2 }, b.max);
 }
+
+test "Manifold Driver: the C++ keeps its asserts only in Debug builds" {
+    // Release builds compiled Manifold with all its asserts: slower, and an internal check
+    // that fails aborts the process.
+    const manifold = @import("../../../bindings/manifold.zig");
+    try testing.expectEqual(@import("builtin").mode == .debug, manifold.cppAssertsEnabled());
+}

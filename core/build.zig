@@ -188,6 +188,14 @@ const kupcad_bindings = &[_][]const u8{
     "src/locus/src/bindings/parallel_c.cpp",
 };
 
+/// `base` plus -DNDEBUG outside Debug builds, so the vendored C++ libraries' asserts
+/// (Manifold has many, some costly) are compiled out of release binaries, as their own
+/// release builds do. Debug builds keep them.
+fn cxxFlags(b: *std.Build, optimize: std.builtin.OptimizeMode, base: []const []const u8) []const []const u8 {
+    if (optimize == .debug) return base;
+    return std.mem.concat(b.allocator, []const u8, &.{ base, &.{"-DNDEBUG"} }) catch @panic("out of memory");
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -268,9 +276,9 @@ pub fn build(b: *std.Build) void {
                 "-fvisibility=hidden", "-include",               wasm_stub_header,
             }
     else if (enable_parallel)
-        &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=1" }
+        cxxFlags(b, optimize, &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=1" })
     else
-        &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=-1" };
+        cxxFlags(b, optimize, &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=-1" });
 
     // ====================================================================
     // KupCAD Core Module
@@ -294,10 +302,10 @@ pub fn build(b: *std.Build) void {
     mod.addIncludePath(b.path("src/bindings"));
     mod.addIncludePath(b.path("src"));
 
-    const clipper_flags: []const []const u8 = if (is_wasm)
+    const clipper_flags: []const []const u8 = cxxFlags(b, optimize, if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
     else
-        &.{ "-std=c++17", "-fno-exceptions" };
+        &.{ "-std=c++17", "-fno-exceptions" });
 
     mod.addCSourceFiles(.{
         .files = clipper_sources,
@@ -350,17 +358,17 @@ pub fn build(b: *std.Build) void {
 
     mod.addImport("sqlite", sqlite_mod);
 
-    const drako_flags: []const []const u8 = if (is_wasm)
+    const drako_flags: []const []const u8 = cxxFlags(b, optimize, if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
     else
-        &.{ "-std=c++17", "-fno-exceptions" };
+        &.{ "-std=c++17", "-fno-exceptions" });
 
     mod.addCSourceFiles(.{
         .files = draco_sources,
         .flags = drako_flags,
     });
 
-    const kupcad_flags: []const []const u8 = &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" };
+    const kupcad_flags: []const []const u8 = cxxFlags(b, optimize, &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" });
 
     mod.addCSourceFiles(.{
         .files = kupcad_bindings,
