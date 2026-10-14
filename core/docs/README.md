@@ -12,14 +12,15 @@ KupCAD (`.kup`) is a high-level, expression-based parametric CAD language execut
 
 ### 3D Primitives & Assemblies
 
-Primitives accept intelligent keyword arguments, including native support for rounded corners and chamfers directly during instantiation.
+Primitives accept intelligent keyword arguments, including native support for rounded corners and chamfers directly during instantiation. Every built-in shape and geometry method checks its keywords: a misspelt or unsupported one is an `ArgumentError` naming the keywords it accepts, never silently ignored.
 
 ```ruby
 # Native 3D primitives with built-in filleting
 base_box = cube(x: 50, y: 30, z: 20, round_r: 2.0, center: true)
 cyl = cylinder(r: 5, h: 40, chamfer: 1.0)
 ring = torus(major_r: 10.0, minor_r: 2.0)
-custom = polyhedron(points: [...], faces: [...])
+custom = polyhedron(points: [[0,0,0], [10,0,0], [0,10,0], [0,0,10]],
+                    faces: [[0,2,1], [0,1,3], [0,3,2], [1,2,3]])
 
 # Method-chained transformations & CSG booleans
 housing = base_box
@@ -52,17 +53,17 @@ The `Sketch2D` class provides powerful 2D cross-section primitives that can be s
 ```ruby
 # Advanced 2D Polygons with Hole support (Even-Odd winding rules)
 profile = polygon(
-  [[0,0], [10,0], [10,10], [0,10]],
-  paths: [[[2,2], [8,2], [8,8], [2,8]]] # Inner cutout hole
+  [[0,0], [10,0], [10,10], [0,10], [2,2], [8,2], [8,8], [2,8]],
+  paths: [[0, 1, 2, 3], [4, 5, 6, 7]] # Point indices: the outline, then an inner cutout hole
 )
 
 # Text Generation with alignment and typography controls
 label = text("KupCAD", size: 12.0, font: "sans", halign: "center", valign: "baseline")
 
 # Sweeping 2D into 3D
-3d_label = label.extrude(5.0)
-knob = regular_polygon(sides: 6, r: 15).revolve(angle: 360)
-thread = circle(r: 1).helix(pitch: 2.0, height: 20.0)
+label_3d = label.extrude(5.0)
+knob = regular_polygon(sides: 6, r: 15).translate(x: 20).revolve(deg: 360)
+thread = circle(r: 1).translate(x: 3).helix(h: 20.0, twist: 3600) # 10 turns, pitch 2
 
 ```
 
@@ -134,7 +135,7 @@ end
 
 | Class | Raised for |
 |---|---|
-| `ArgumentError` | Wrong number of arguments, a missing block |
+| `ArgumentError` | Wrong number of arguments, a missing block, a keyword the method doesn't take (`revolve(angle: 90)`; the message lists the accepted ones) |
 | `TypeError` | A value of the wrong type (`polygon([[0, 0], [1, "x"], [0, 1]])`, `5[0]`) |
 | `ValueError` | A value of the right type that is out of range or not finite (`cube(-1)`, `segments: 1e9`) |
 | `IndexError` | An array index out of bounds |

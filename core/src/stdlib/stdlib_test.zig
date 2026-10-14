@@ -1215,3 +1215,73 @@ test "Stdlib: sphere resolution follows segments and the active config" {
         .{ .src = with_8_segments ++ "cube(1).fillet_edges(r: 0.5).volume\nend\nr = v == cube(1).minkowski(sphere(r: 0.5, segments: 8)).volume && v < cube(1).minkowski(sphere(r: 0.5, segments: 64)).volume", .expected = .{ .boolean = true } },
     });
 }
+
+test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
+    // Each of these used to be ignored silently, building the default shape instead.
+    const cases = [_]struct { src: []const u8, method: []const u8, accepted: []const u8 }{
+        .{ .src = "cube(1, bogus: 1)", .method = "cube", .accepted = "x, y, z, size, center, round_r, chamfer, segments" },
+        .{ .src = "square(1, bogus: 1)", .method = "square", .accepted = "x, y, size, center, round_r, chamfer, segments" },
+        .{ .src = "cylinder(r: 1, bogus: 1)", .method = "cylinder", .accepted = "r, r1, r2, d, d1, d2, radius, h, center, round_r, chamfer, segments" },
+        .{ .src = "sphere(r: 1, bogus: 1)", .method = "sphere", .accepted = "r, d, radius, segments" },
+        .{ .src = "circle(r: 1, bogus: 1)", .method = "circle", .accepted = "r, d, radius, segments" },
+        .{ .src = "regular_polygon(bogus: 1)", .method = "regular_polygon", .accepted = "sides, r, d, radius" },
+        .{ .src = "torus(bogus: 1)", .method = "torus", .accepted = "major_r, minor_r, segments" },
+        .{ .src = "polygon([[0,0],[1,0],[0,1]], bogus: 1)", .method = "polygon", .accepted = "paths" },
+        .{ .src = "polyhedron(" ++ TETRA_PTS ++ ", " ++ TETRA_FACES ++ ", bogus: 1)", .method = "polyhedron", .accepted = "points, faces" },
+        .{ .src = "text(\"A\", bogus: 1)", .method = "text", .accepted = "size, tolerance, font, halign, valign" },
+        .{ .src = "cube(1).translate(bogus: 1)", .method = "translate", .accepted = "x, y, z" },
+        .{ .src = "cube(1).rotate(bogus: 1)", .method = "rotate", .accepted = "x, y, z" },
+        .{ .src = "cube(1).scale(bogus: 1)", .method = "scale", .accepted = "x, y, z" },
+        .{ .src = "cube(1).mirror(bogus: 1)", .method = "mirror", .accepted = "x, y, z" },
+        .{ .src = "cube(1).resize([2], bogus: 1)", .method = "resize", .accepted = "auto" },
+        .{ .src = "cube(1).repeat_linear(2, bogus: 1)", .method = "repeat_linear", .accepted = "x, y, z" },
+        .{ .src = "cube(1).repeat_polar(2, bogus: 1)", .method = "repeat_polar", .accepted = "angle" },
+        .{ .src = "square(1).extrude(bogus: 1)", .method = "extrude", .accepted = "h, slices, twist, scale_x, scale_y, scale, center" },
+        .{ .src = "square(1).revolve(bogus: 1)", .method = "revolve", .accepted = "deg" },
+        .{ .src = "square(1).helix(bogus: 1)", .method = "helix", .accepted = "h, twist, slices" },
+        .{ .src = "square(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join" },
+        .{ .src = "cube(1).split_by_plane(bogus: 1)", .method = "split_by_plane", .accepted = "nx, ny, nz, offset" },
+        .{ .src = "cube(1).fillet_edges(bogus: 1)", .method = "fillet_edges", .accepted = "r" },
+        .{ .src = "cube(1).project(bogus: 1)", .method = "project", .accepted = "cut" },
+        .{ .src = "cube(1).material(bogus: 1)", .method = "material", .accepted = "color, alpha, roughness, metallic, transmission" },
+    };
+    const iter_cases = comptime blk: {
+        var list: [cases.len]IterCase = undefined;
+        for (cases, &list) |case, *iter_case| iter_case.* = .{
+            .src = rescued(case.src),
+            .expected = .{ .str = "ArgumentError: " ++ case.method ++ " does not take a keyword 'bogus' (it accepts: " ++ case.accepted ++ ")" },
+        };
+        break :blk list;
+    };
+    try expectGlobalR(&iter_cases);
+
+    try expectGlobalR(&.{
+        // The typos that motivated the check.
+        .{ .src = comptime rescued("square(1).revolve(angle: 90)"), .expected = .{ .str = "ArgumentError: revolve does not take a keyword 'angle' (it accepts: deg)" } },
+        .{ .src = comptime rescued("cube(1).translate(X: 5)"), .expected = .{ .str = "ArgumentError: translate does not take a keyword 'X' (it accepts: x, y, z)" } },
+        // Keywords valid for one primitive are not quietly accepted by another.
+        .{ .src = comptime rescued("sphere(r: 5, h: 3)"), .expected = .{ .str = "ArgumentError: sphere does not take a keyword 'h' (it accepts: r, d, radius, segments)" } },
+        .{ .src = comptime rescued("cube(1, {1 => 2})"), .expected = .{ .str = "ArgumentError: cube keywords must be names, got a Number key" } },
+        // Values of the wrong type used to be dropped too.
+        .{ .src = comptime rescued("cube(1).material(alpha: \"half\")"), .expected = .{ .str = "TypeError: material expects a number for alpha, got String" } },
+        .{ .src = comptime rescued("cube(1).project(cut: 1)"), .expected = .{ .str = "TypeError: project expects true or false for cut, got Number" } },
+        .{ .src = comptime rescued("square(1).offset(1, join: :spiky)"), .expected = .{ .str = "ValueError: offset join must be square, round, miter or bevel, got 'spiky'" } },
+        .{ .src = comptime rescued("cube(1).material(color: \"#FF0000\")"), .expected = .{ .str = "no error" } },
+    });
+}
+
+test "Stdlib: accepted keywords and aliases still build" {
+    try expectGlobalR(&.{
+        .{ .src = "r = cube(size: 2).volume", .expected = .{ .num = 8 } },
+        .{ .src = "r = cylinder(d: 2, h: 1, segments: 4).volume", .expected = .{ .num = 2 } },
+        .{ .src = "r = cylinder(radius: 1, h: 1, segments: 4).volume", .expected = .{ .num = 2 } },
+        .{ .src = "r = sphere(d: 2, segments: 8).volume == sphere(r: 1, segments: 8).volume", .expected = .{ .boolean = true } },
+        .{ .src = "r = circle(d: 2, segments: 4).extrude(1).volume", .expected = .{ .num = 2 } },
+        .{ .src = "r = regular_polygon(sides: 4, radius: 1).extrude(h: 1).volume", .expected = .{ .num = 2 } },
+        .{ .src = "r = square(2).revolve(deg: 90).volume > 0", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(1).repeat_polar(4, angle: 90).volume > 1", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(2).project(cut: true).extrude(1).volume", .expected = .{ .num = 4 } },
+        .{ .src = "r = cube(1).fillet_edges(r: 0.1).volume > 1", .expected = .{ .boolean = true } },
+        .{ .src = "r = polyhedron(points: " ++ TETRA_PTS ++ ", faces: " ++ TETRA_FACES ++ ").volume", .expected = .{ .num = 1.0 / 6.0 } },
+    });
+}

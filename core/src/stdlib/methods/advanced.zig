@@ -52,26 +52,11 @@ pub fn meshTrimByPlane(vm: *VM, receiver: *value.ObjGeometry, nx: value.Value, n
 const JoinType = enum(u8) { square = 0, round = 1, miter = 2, bevel = 3 };
 
 pub fn meshOffset(vm: *VM, receiver: *value.ObjCrossSection, args: []const value.Value) !value.Value {
-    var delta: f64 = 1.0;
-    var join_type: JoinType = .round;
+    const parsed = try util.parseKwargs(struct { delta: f64 = 1.0, join: JoinType = .round }, vm, args, "offset");
+    var delta = parsed.opts.delta;
+    if (parsed.positional.len > 0) delta = try util.requireNumber(vm, args[0], "offset", "delta");
 
-    var pos_count = args.len;
-    if (util.trailingKwargs(args)) |map| {
-        pos_count -= 1;
-        if (util.getKey(map, "delta")) |v| delta = try util.requireNumber(vm, v, "offset", "delta");
-        if (util.getKey(map, "join")) |v| {
-            const name = try util.requireName(vm, v, "offset", "join");
-            // An unknown style (or a String) used to fall back to round silently.
-            join_type = std.meta.stringToEnum(JoinType, name) orelse {
-                _ = vm.raiseError(.ValueError, "offset join must be round, square, miter or bevel, got '{s}'", .{name});
-                return error.RuntimeError;
-            };
-        }
-    }
-
-    if (pos_count > 0) delta = try util.requireNumber(vm, args[0], "offset", "delta");
-
-    const new_idx = try vm.dag_builder.addOffset(receiver.dag_idx, delta, @backingInt(join_type));
+    const new_idx = try vm.dag_builder.addOffset(receiver.dag_idx, delta, @backingInt(parsed.opts.join));
     return try vm.allocateCrossSection(new_idx);
 }
 
@@ -82,19 +67,9 @@ pub fn meshSlice(vm: *VM, receiver: *value.ObjGeometry, height: ?value.Value) !v
 }
 
 pub fn meshProject(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
-    var cut = false;
+    const parsed = try util.parseKwargs(struct { cut: bool = false }, vm, args, "project");
 
-    // Parse `cut: true` from kwargs
-    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
-        if (map.map.get(try vm.allocateSymbol("cut"))) |val| {
-            if (val.isBool()) cut = val.asBool();
-        } else if (map.map.get(try vm.allocateString("cut"))) |val| {
-            if (val.isBool()) cut = val.asBool();
-        }
-    }
-
-    if (cut) {
+    if (parsed.opts.cut) {
         // project(cut: true) is a 2D slice exactly at Z=0
         const new_idx = try vm.dag_builder.addSlice(receiver.dag_idx, 0.0);
         return try vm.allocateCrossSection(new_idx);
@@ -168,8 +143,8 @@ const PLANE_ARGS = [_][]const u8{ "nx", "ny", "nz", "offset" };
 pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
 
-    const kwargs = util.trailingKwargs(args);
-    const positional = if (kwargs != null) args[0 .. args.len - 1] else args;
+    const parsed = try util.parseKwargs(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null }, vm, args, "split_by_plane");
+    const positional = parsed.positional;
     if (positional.len != 0 and positional.len != PLANE_ARGS.len - 1 and positional.len != PLANE_ARGS.len) {
         _ = vm.raiseError(.ArgumentError, "split_by_plane expects (nx, ny, nz[, offset]), got {d} positional arguments", .{positional.len});
         return error.RuntimeError;
@@ -180,12 +155,10 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
     var plane = [PLANE_ARGS.len]f64{ 0.0, 0.0, 0.0, 0.0 };
     var normal_given = positional.len > 0;
     for (positional, 0..) |arg, i| plane[i] = try util.requireNumber(vm, arg, "split_by_plane", PLANE_ARGS[i]);
-    if (kwargs) |map| {
-        for (PLANE_ARGS, 0..) |name, i| {
-            if (util.getKey(map, name)) |v| {
-                plane[i] = try util.requireNumber(vm, v, "split_by_plane", name);
-                if (i < 3) normal_given = true;
-            }
+    inline for (PLANE_ARGS, 0..) |name, i| {
+        if (@field(parsed.opts, name)) |n| {
+            plane[i] = n;
+            if (i < 3) normal_given = true;
         }
     }
     if (!normal_given) plane[0] = 1.0; // Default: split at the YZ plane.
@@ -252,13 +225,10 @@ pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
 }
 
 pub fn meshFilletEdges(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
+    const parsed = try util.parseKwargs(struct { r: ?f64 = null }, vm, args, "fillet_edges");
     var radius: f64 = 1.0;
-
-    if (util.trailingKwargs(args)) |map| {
-        if (util.getKey(map, "r")) |v| radius = try util.requireNumber(vm, v, "fillet_edges", "r");
-    } else if (args.len > 0) {
-        radius = try util.requireNumber(vm, args[0], "fillet_edges", "r");
-    }
+    if (parsed.positional.len > 0) radius = try util.requireNumber(vm, args[0], "fillet_edges", "r");
+    if (parsed.opts.r) |r| radius = r;
     try util.requirePositive(vm, radius, "fillet_edges", "r");
 
     // Generate tool and sum

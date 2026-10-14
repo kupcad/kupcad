@@ -1,39 +1,32 @@
-const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
 const kernel = @import("../../kernel/kernel.zig");
+const util = @import("util.zig");
 
 pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
 
-    var mat_def = MaterialDef{};
-
-    // Enforce that arguments are provided and the last argument is a kwargs Map
-    if (args.len == 0 or !args[args.len - 1].isObject() or args[args.len - 1].asObj().obj_type != .map) {
-        vm.reportError("ArgumentError: material() requires keyword arguments (e.g., color: \"#FF0000\").\n", .{});
+    const parsed = try util.parseKwargs(struct {
+        color: ?[]const u8 = null,
+        alpha: ?f64 = null,
+        roughness: ?f64 = null,
+        metallic: ?f64 = null,
+        transmission: ?f64 = null,
+    }, vm, args, "material");
+    if (parsed.positional.len == args.len) {
+        _ = vm.raiseError(.ArgumentError, "material requires keyword arguments (e.g. color: \"#FF0000\")", .{});
         return error.RuntimeError;
     }
-
-    const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
-    var it = map.map.iterator();
-    while (it.next()) |entry| {
-        const k = entry.key_ptr.*;
-        if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
-            const k_str = if (k.asObj().obj_type == .string)
-                @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
-            else
-                @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
-
-            const v = entry.value_ptr.*;
-            if (std.mem.eql(u8, k_str, "color") and v.isString()) mat_def.color_hex = v.asString().chars;
-            if (std.mem.eql(u8, k_str, "color") and v.isSymbol()) mat_def.color_hex = v.asSymbol().chars;
-            if (std.mem.eql(u8, k_str, "alpha") and v.isNumber()) mat_def.alpha = v.asNumber();
-            if (std.mem.eql(u8, k_str, "roughness") and v.isNumber()) mat_def.roughness = v.asNumber();
-            if (std.mem.eql(u8, k_str, "metallic") and v.isNumber()) mat_def.metallic = v.asNumber();
-            if (std.mem.eql(u8, k_str, "transmission") and v.isNumber()) mat_def.transmission = v.asNumber();
-        }
-    }
+    const opts = parsed.opts;
+    const defaults = MaterialDef{};
+    const mat_def = MaterialDef{
+        .color_hex = opts.color orelse defaults.color_hex,
+        .alpha = opts.alpha orelse defaults.alpha,
+        .roughness = opts.roughness orelse defaults.roughness,
+        .metallic = opts.metallic orelse defaults.metallic,
+        .transmission = opts.transmission orelse defaults.transmission,
+    };
 
     // Insert into VM registry to get an ID
     const material_id: u32 = @intCast(vm.materials.items.len);

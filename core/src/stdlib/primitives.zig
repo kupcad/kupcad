@@ -8,11 +8,6 @@ const limits = @import("../core/limits.zig");
 /// Smallest allowed text() flattening tolerance relative to the glyph size.
 const MIN_TEXT_TOLERANCE_RATIO: f64 = 1e-4;
 
-const ArgParseCtx = struct {
-    pos_count: usize,
-    kwargs: ?value.Value,
-};
-
 const GeomOptions = struct {
     x: f64 = 1.0,
     y: f64 = 1.0,
@@ -25,39 +20,29 @@ const GeomOptions = struct {
     chamfer: ?f64 = null,
     segments: i32 = 0,
     center: bool = false,
+    /// regular_polygon's side count.
+    sides: ?i32 = null,
+    // Aliases, folded into the fields above by parseGeomOptions.
+    size: ?f64 = null,
+    d: ?f64 = null,
+    d1: ?f64 = null,
+    d2: ?f64 = null,
+    radius: ?f64 = null,
 };
 
 // --- Helpers ---
 
-fn parseArgs(args: []const value.Value) ArgParseCtx {
-    const arg_count = args.len;
-    if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
-        return .{ .pos_count = arg_count - 1, .kwargs = args[arg_count - 1] };
-    }
-    return .{ .pos_count = arg_count, .kwargs = null };
-}
-
-fn extractGeomOptions(vm: *VM, parsed: ArgParseCtx, method: []const u8) !GeomOptions {
-    var opts = GeomOptions{};
-
-    if (parsed.kwargs) |kw| {
-        if (kw.isObject() and kw.asObj().obj_type == .map) {
-            const map = kw.asMap();
-            opts = try util.parseKwargs(GeomOptions, vm, map, method);
-
-            if (util.getKey(map, "size")) |v| {
-                opts.x = try util.requireNumber(vm, v, method, "size");
-                opts.y = opts.x;
-                opts.z = opts.x;
-            }
-            if (util.getKey(map, "d")) |v| opts.r = try util.requireNumber(vm, v, method, "d") / 2.0;
-            if (util.getKey(map, "d1")) |v| opts.r1 = try util.requireNumber(vm, v, method, "d1") / 2.0;
-            if (util.getKey(map, "d2")) |v| opts.r2 = try util.requireNumber(vm, v, method, "d2") / 2.0;
-            if (util.getKey(map, "radius")) |v| opts.r = try util.requireNumber(vm, v, method, "radius");
-        }
-    }
+/// The primitives share GeomOptions; each accepts only the keywords it lists.
+fn parseGeomOptions(comptime accepted: []const []const u8, vm: *VM, args: []const value.Value, method: []const u8) !util.Parsed(GeomOptions) {
+    var parsed = try util.parseKwargsSubset(GeomOptions, accepted, vm, args, method);
+    const opts = &parsed.opts;
+    if (opts.size) |size| opts.x, opts.y, opts.z = .{ size, size, size };
+    if (opts.d) |d| opts.r = d / 2.0;
+    if (opts.d1) |d1| opts.r1 = d1 / 2.0;
+    if (opts.d2) |d2| opts.r2 = d2 / 2.0;
+    if (opts.radius) |radius| opts.r = radius;
     try util.requireSegmentCount(vm, opts.segments, "segments");
-    return opts;
+    return parsed;
 }
 
 /// Validates a user-supplied index into an array of length `len`.
@@ -138,14 +123,14 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
 
 // --- Methods ---
 pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = try extractGeomOptions(vm, parsed, "square");
-    if (parsed.pos_count > 0) {
+    const parsed = try parseGeomOptions(&.{ "x", "y", "size", "center", "round_r", "chamfer", "segments" }, vm, args, "square");
+    var opts = parsed.opts;
+    if (parsed.positional.len > 0) {
         opts.x = try util.requireNumber(vm, args[0], "square", "x");
         opts.y = opts.x;
     }
-    if (parsed.pos_count > 1) opts.y = try util.requireNumber(vm, args[1], "square", "y");
-    if (parsed.pos_count > 2) opts.center = try util.requireBool(vm, args[2], "square", "center");
+    if (parsed.positional.len > 1) opts.y = try util.requireNumber(vm, args[1], "square", "y");
+    if (parsed.positional.len > 2) opts.center = try util.requireBool(vm, args[2], "square", "center");
 
     try util.requirePositive(vm, opts.x, "square", "x");
     try util.requirePositive(vm, opts.y, "square", "y");
@@ -160,16 +145,16 @@ pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = try extractGeomOptions(vm, parsed, "cube");
-    if (parsed.pos_count > 0) {
+    const parsed = try parseGeomOptions(&.{ "x", "y", "z", "size", "center", "round_r", "chamfer", "segments" }, vm, args, "cube");
+    var opts = parsed.opts;
+    if (parsed.positional.len > 0) {
         opts.x = try util.requireNumber(vm, args[0], "cube", "x");
         opts.y = opts.x;
         opts.z = opts.x;
     }
-    if (parsed.pos_count > 1) opts.y = try util.requireNumber(vm, args[1], "cube", "y");
-    if (parsed.pos_count > 2) opts.z = try util.requireNumber(vm, args[2], "cube", "z");
-    if (parsed.pos_count > 3) opts.center = try util.requireBool(vm, args[3], "cube", "center");
+    if (parsed.positional.len > 1) opts.y = try util.requireNumber(vm, args[1], "cube", "y");
+    if (parsed.positional.len > 2) opts.z = try util.requireNumber(vm, args[2], "cube", "z");
+    if (parsed.positional.len > 3) opts.center = try util.requireBool(vm, args[3], "cube", "center");
 
     try util.requirePositive(vm, opts.x, "cube", "x");
     try util.requirePositive(vm, opts.y, "cube", "y");
@@ -193,11 +178,11 @@ pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = try extractGeomOptions(vm, parsed, "cylinder");
-    if (parsed.pos_count > 0) opts.r = try util.requireNumber(vm, args[0], "cylinder", "r");
-    if (parsed.pos_count > 1) opts.h = try util.requireNumber(vm, args[1], "cylinder", "h");
-    if (parsed.pos_count > 2) opts.center = try util.requireBool(vm, args[2], "cylinder", "center");
+    const parsed = try parseGeomOptions(&.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h", "center", "round_r", "chamfer", "segments" }, vm, args, "cylinder");
+    var opts = parsed.opts;
+    if (parsed.positional.len > 0) opts.r = try util.requireNumber(vm, args[0], "cylinder", "r");
+    if (parsed.positional.len > 1) opts.h = try util.requireNumber(vm, args[1], "cylinder", "h");
+    if (parsed.positional.len > 2) opts.center = try util.requireBool(vm, args[2], "cylinder", "center");
 
     const r1 = opts.r1 orelse opts.r;
     const r2 = opts.r2 orelse opts.r;
@@ -254,9 +239,9 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = try extractGeomOptions(vm, parsed, "sphere");
-    if (parsed.pos_count > 0) opts.r = try util.requireNumber(vm, args[0], "sphere", "r");
+    const parsed = try parseGeomOptions(&.{ "r", "d", "radius", "segments" }, vm, args, "sphere");
+    var opts = parsed.opts;
+    if (parsed.positional.len > 0) opts.r = try util.requireNumber(vm, args[0], "sphere", "r");
     try util.requirePositive(vm, opts.r, "sphere", "radius");
     if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
     const dag_idx = try vm.dag_builder.addSphere(opts.r, opts.segments);
@@ -264,10 +249,10 @@ pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = try extractGeomOptions(vm, parsed, "circle");
+    const parsed = try parseGeomOptions(&.{ "r", "d", "radius", "segments" }, vm, args, "circle");
+    var opts = parsed.opts;
 
-    if (parsed.pos_count > 0) opts.r = try util.requireNumber(vm, args[0], "circle", "r");
+    if (parsed.positional.len > 0) opts.r = try util.requireNumber(vm, args[0], "circle", "r");
     try util.requirePositive(vm, opts.r, "circle", "radius");
 
     if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
@@ -277,8 +262,8 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    if (parsed.pos_count < 1) {
+    const parsed = try util.parseKwargs(struct { paths: ?value.Value = null }, vm, args, "polygon");
+    if (parsed.positional.len < 1) {
         _ = vm.raiseError(.ArgumentError, "polygon expects an Array of [x, y] points", .{});
         return error.RuntimeError;
     }
@@ -287,10 +272,8 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
 
     // `paths` is the second positional argument or the `paths:` kwarg (which wins).
     var paths_val: value.Value = value.Value.initNil();
-    if (parsed.pos_count > 1) paths_val = args[1];
-    if (parsed.kwargs) |kw| {
-        if (util.getKey(kw.asMap(), "paths")) |v| paths_val = v;
-    }
+    if (parsed.positional.len > 1) paths_val = args[1];
+    if (parsed.opts.paths) |v| paths_val = v;
 
     // Not the scratch arena: a validation error below raises through
     // raiseError, whose backtrace capture resets that arena under us.
@@ -347,22 +330,14 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = try extractGeomOptions(vm, parsed, "regular_polygon");
+    const parsed = try parseGeomOptions(&.{ "sides", "r", "d", "radius" }, vm, args, "regular_polygon");
+    var opts = parsed.opts;
 
     var sides: i32 = 6; // Default to a hexagon
-    if (parsed.pos_count > 0) sides = try util.checkedInt(i32, vm, try util.requireNumber(vm, args[0], "regular_polygon", "sides"), "sides");
-    if (parsed.pos_count > 1) opts.r = try util.requireNumber(vm, args[1], "regular_polygon", "r");
+    if (parsed.positional.len > 0) sides = try util.checkedInt(i32, vm, try util.requireNumber(vm, args[0], "regular_polygon", "sides"), "sides");
+    if (parsed.positional.len > 1) opts.r = try util.requireNumber(vm, args[1], "regular_polygon", "r");
 
-    // Check kwargs explicitly for sides/radius if passed
-    if (parsed.kwargs) |kw| {
-        if (kw.isObject() and kw.asObj().obj_type == .map) {
-            const map = kw.asMap();
-            if (util.getKey(map, "sides")) |v| {
-                sides = try util.checkedInt(i32, vm, try util.requireNumber(vm, v, "regular_polygon", "sides"), "sides");
-            }
-        }
-    }
+    if (opts.sides) |n| sides = n;
 
     if (sides < MIN_CONTOUR_POINTS or sides > limits.MAX_SEGMENTS) {
         _ = vm.raiseError(.ValueError, "'sides' must be between {d} and {d}, got {d}", .{ MIN_CONTOUR_POINTS, limits.MAX_SEGMENTS, sides });
@@ -386,22 +361,17 @@ pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    const opts = try extractGeomOptions(vm, parsed, "torus");
+    const parsed = try util.parseKwargs(struct { major_r: ?f64 = null, minor_r: ?f64 = null, segments: i32 = 0 }, vm, args, "torus");
+    const opts = parsed.opts;
+    try util.requireSegmentCount(vm, opts.segments, "segments");
 
     var major_r: f64 = 10.0;
     var minor_r: f64 = 2.0;
 
-    if (parsed.pos_count > 0) major_r = try util.requireNumber(vm, args[0], "torus", "major_r");
-    if (parsed.pos_count > 1) minor_r = try util.requireNumber(vm, args[1], "torus", "minor_r");
-
-    if (parsed.kwargs) |kw| {
-        if (kw.isObject() and kw.asObj().obj_type == .map) {
-            const map = kw.asMap();
-            if (util.getKey(map, "major_r")) |v| major_r = try util.requireNumber(vm, v, "torus", "major_r");
-            if (util.getKey(map, "minor_r")) |v| minor_r = try util.requireNumber(vm, v, "torus", "minor_r");
-        }
-    }
+    if (parsed.positional.len > 0) major_r = try util.requireNumber(vm, args[0], "torus", "major_r");
+    if (parsed.positional.len > 1) minor_r = try util.requireNumber(vm, args[1], "torus", "minor_r");
+    if (opts.major_r) |r| major_r = r;
+    if (opts.minor_r) |r| minor_r = r;
 
     try util.requirePositive(vm, major_r, "torus", "major_r");
     try util.requirePositive(vm, minor_r, "torus", "minor_r");
@@ -427,12 +397,17 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
-    if (args.len < 2) {
+    // `points` and `faces` are positional or kwargs (which win), like polygon's `paths`.
+    const parsed = try util.parseKwargs(struct { points: ?value.Value = null, faces: ?value.Value = null }, vm, args, "polyhedron");
+    const pos = parsed.positional;
+    const points_arg = parsed.opts.points orelse if (pos.len > 0) pos[0] else null;
+    const faces_arg = parsed.opts.faces orelse if (pos.len > 1) pos[1] else null;
+    if (points_arg == null or faces_arg == null) {
         _ = vm.raiseError(.ArgumentError, "polyhedron expects a points Array and a faces Array", .{});
         return error.RuntimeError;
     }
-    const pts_val = try util.requireArray(vm, args[0], "polyhedron", "points");
-    const faces_val = try util.requireArray(vm, args[1], "polyhedron", "faces");
+    const pts_val = try util.requireArray(vm, points_arg.?, "polyhedron", "points");
+    const faces_val = try util.requireArray(vm, faces_arg.?, "polyhedron", "faces");
     try requireMinCount(vm, pts_val.len, MIN_POLYHEDRON_POINTS, "polyhedron", "points");
     try requireMinCount(vm, faces_val.len, MIN_POLYHEDRON_FACES, "polyhedron", "faces");
 
@@ -468,43 +443,24 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    if (parsed.pos_count == 0 or !args[0].isString()) {
+    const parsed = try util.parseKwargs(struct {
+        size: ?f64 = null,
+        tolerance: f64 = 0.1,
+        font: []const u8 = "sans",
+        halign: text_mod.HAlign = .left,
+        valign: text_mod.VAlign = .baseline,
+    }, vm, args, "text");
+    if (parsed.positional.len == 0 or !args[0].isString()) {
         _ = vm.raiseError(.ArgumentError, "text() expects a String as its first argument", .{});
         return error.RuntimeError;
     }
     const text_str = args[0].asString().chars;
+    const opts = parsed.opts;
     var size: f64 = 10.0;
-    var font_name: []const u8 = "sans";
-    var tolerance: f64 = 0.1;
-    var halign: text_mod.HAlign = .left;
-    var valign: text_mod.VAlign = .baseline;
-
-    if (parsed.pos_count > 1) size = try util.requireNumber(vm, args[1], "text", "size");
-
-    if (parsed.kwargs) |kw| {
-        if (kw.isObject() and kw.asObj().obj_type == .map) {
-            const map = kw.asMap();
-            if (util.getKey(map, "size")) |v| size = try util.requireNumber(vm, v, "text", "size");
-            if (util.getKey(map, "tolerance")) |v| tolerance = try util.requireNumber(vm, v, "text", "tolerance");
-            if (util.getKey(map, "font")) |v| font_name = try util.requireName(vm, v, "text", "font");
-            if (util.getKey(map, "halign")) |v| {
-                const name = try util.requireName(vm, v, "text", "halign");
-                // An unknown alignment used to fall back to the default silently.
-                halign = std.meta.stringToEnum(text_mod.HAlign, name) orelse {
-                    _ = vm.raiseError(.ValueError, "text halign must be left, center or right, got '{s}'", .{name});
-                    return error.RuntimeError;
-                };
-            }
-            if (util.getKey(map, "valign")) |v| {
-                const name = try util.requireName(vm, v, "text", "valign");
-                valign = std.meta.stringToEnum(text_mod.VAlign, name) orelse {
-                    _ = vm.raiseError(.ValueError, "text valign must be baseline, bottom, center or top, got '{s}'", .{name});
-                    return error.RuntimeError;
-                };
-            }
-        }
-    }
+    if (parsed.positional.len > 1) size = try util.requireNumber(vm, args[1], "text", "size");
+    if (opts.size) |n| size = n;
+    const tolerance = opts.tolerance;
+    const font_name = opts.font;
 
     try util.requirePositive(vm, size, "text", "size");
     try util.requirePositive(vm, tolerance, "text", "tolerance");
@@ -522,7 +478,7 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
         _ = vm.raiseError(.RuntimeError, "Failed to load font '{s}'", .{font_name});
         return error.RuntimeError;
     };
-    var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, halign, valign) catch {
+    var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, opts.halign, opts.valign) catch {
         _ = vm.raiseError(.RuntimeError, "Failed to extract text contours", .{});
         return error.RuntimeError;
     };

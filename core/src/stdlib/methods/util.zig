@@ -236,72 +236,120 @@ fn keyName(k: value.Value) ?[]const u8 {
 const VEC3_LEN = 3;
 const VEC3_NAMES = [VEC3_LEN][]const u8{ "x", "y", "z" };
 
-/// Parses positional arguments and/or a kwargs map into [x, y, z].
+/// Parses positional arguments and/or `x:`, `y:`, `z:` kwargs into [x, y, z].
 /// Unset components are `default_val`; kwargs override positionals.
 pub fn parseVec3(vm: *VM, args: []const value.Value, default_val: f64, method: []const u8) ![VEC3_LEN]f64 {
-    const kwargs = trailingKwargs(args);
-    const pos_count = if (kwargs != null) args.len - 1 else args.len;
-    if (pos_count > VEC3_LEN) {
-        _ = vm.raiseError(.ArgumentError, "{s} expects at most {d} numbers (x, y, z), got {d}", .{ method, VEC3_LEN, pos_count });
+    // Raw values, so a nil coordinate is a TypeError rather than an unset axis.
+    const parsed = try parseKwargs(struct { x: ?value.Value = null, y: ?value.Value = null, z: ?value.Value = null }, vm, args, method);
+    if (parsed.positional.len > VEC3_LEN) {
+        _ = vm.raiseError(.ArgumentError, "{s} expects at most {d} numbers (x, y, z), got {d}", .{ method, VEC3_LEN, parsed.positional.len });
         return error.RuntimeError;
     }
 
     var vec: [VEC3_LEN]f64 = @splat(default_val);
-    for (args[0..pos_count], 0..) |arg, i| vec[i] = try requireNumber(vm, arg, method, VEC3_NAMES[i]);
-
-    if (kwargs) |map| {
-        var it = map.map.iterator();
-        while (it.next()) |entry| {
-            const k_str = keyName(entry.key_ptr.*) orelse continue;
-            for (VEC3_NAMES, 0..) |axis, i| {
-                if (std.mem.eql(u8, k_str, axis)) vec[i] = try requireNumber(vm, entry.value_ptr.*, method, axis);
-            }
-        }
+    for (parsed.positional, 0..) |arg, i| vec[i] = try requireNumber(vm, arg, method, VEC3_NAMES[i]);
+    inline for (VEC3_NAMES, 0..) |axis, i| {
+        if (@field(parsed.opts, axis)) |v| vec[i] = try requireNumber(vm, v, method, axis);
     }
     return vec;
 }
 
-/// Universal Comptime Kwarg Parser to Eliminate Boilerplate.
-/// A kwarg whose value has the wrong type is a TypeError naming `method` and the
-/// kwarg; floats must be finite and integers are range-checked via checkedInt.
-/// `nil` leaves an optional field unset and reads as false for a flag.
-pub fn parseKwargs(comptime T: type, vm: *VM, map: *value.ObjMap, method: []const u8) !T {
-    var result: T = .{};
-    var it = map.map.iterator();
-    while (it.next()) |entry| {
-        const k_str = keyName(entry.key_ptr.*) orelse continue;
-        const v = entry.value_ptr.*;
-
-        // Unroll loop at compile-time
-        inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
-            const field_type = @typeInfo(T).@"struct".field_types[i];
-            if (std.mem.eql(u8, k_str, field_name)) {
-                if (@typeInfo(field_type) == .optional and v.isNil()) {
-                    @field(result, field_name) = null;
-                } else if (field_type == f64 or field_type == ?f64) {
-                    @field(result, field_name) = try requireNumber(vm, v, method, field_name);
-                } else if (field_type == i32 or field_type == ?i32) {
-                    if (!v.isNumber()) return typeError(vm, method, "a number", field_name, v);
-                    @field(result, field_name) = try checkedInt(i32, vm, v.asNumber(), field_name);
-                } else if (field_type == bool or field_type == ?bool) {
-                    @field(result, field_name) = try requireBool(vm, v, method, field_name);
-                } else if (field_type == []const u8 or field_type == ?[]const u8) {
-                    @field(result, field_name) = try requireName(vm, v, method, field_name);
-                } else {
-                    @compileError("parseKwargs: unsupported field type " ++ @typeName(field_type));
-                }
-            }
-        }
-    }
-    return result;
+/// A native call's arguments split into positionals and keyword options.
+pub fn Parsed(comptime T: type) type {
+    return struct {
+        opts: T,
+        /// The arguments before the trailing kwargs map.
+        positional: []const value.Value,
+    };
 }
 
-/// Helper for retrieving isolated aliases
-pub fn getKey(map: *value.ObjMap, target: []const u8) ?value.Value {
-    var it = map.map.iterator();
-    while (it.next()) |entry| {
-        const k_str = keyName(entry.key_ptr.*) orelse continue;
-        if (std.mem.eql(u8, k_str, target)) return entry.value_ptr.*;
+/// Splits `args` into positionals and the keyword options `T`, whose fields are the
+/// keywords `method` accepts. See parseKwargsSubset.
+pub fn parseKwargs(comptime T: type, vm: *VM, args: []const value.Value, method: []const u8) !Parsed(T) {
+    return parseKwargsSubset(T, comptime nameList(T), vm, args, method);
+}
+
+/// parseKwargs for options shared by several methods: only the `accepted` fields of `T`
+/// are keywords of `method`, the rest keep their defaults.
+///
+/// Any other keyword is an ArgumentError listing the accepted ones, so a typo such as
+/// `revolve(angle: 90)` or `translate(X: 5)` fails loudly instead of being ignored. A
+/// value of the wrong type is a TypeError naming `method` and the keyword; floats must be
+/// finite, integers are range-checked via checkedInt, an enum field takes the String or
+/// Symbol of one of its tags, and a `value.Value` field takes anything (nil included). `nil`
+/// leaves any other optional field unset and reads as false for a flag.
+pub fn parseKwargsSubset(comptime T: type, comptime accepted: []const []const u8, vm: *VM, args: []const value.Value, method: []const u8) !Parsed(T) {
+    inline for (accepted) |name| {
+        if (!@hasField(T, name)) @compileError("parseKwargsSubset: " ++ @typeName(T) ++ " has no field '" ++ name ++ "'");
     }
-    return null;
+    const map = trailingKwargs(args) orelse return .{ .opts = .{}, .positional = args };
+
+    var opts: T = .{};
+    var it = map.map.iterator();
+    next_key: while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const name = keyName(key) orelse {
+            _ = vm.raiseError(.ArgumentError, "{s} keywords must be names, got a {s} key", .{ method, typeName(vm, key) });
+            return error.RuntimeError;
+        };
+        inline for (accepted) |field_name| {
+            if (std.mem.eql(u8, name, field_name)) {
+                @field(opts, field_name) = try readKwarg(@FieldType(T, field_name), vm, entry.value_ptr.*, method, field_name);
+                continue :next_key;
+            }
+        }
+        _ = vm.raiseError(.ArgumentError, "{s} does not take a keyword '{s}' (it accepts: {s})", .{ method, name, comptime joinNames(accepted) });
+        return error.RuntimeError;
+    }
+    return .{ .opts = opts, .positional = args[0 .. args.len - 1] };
+}
+
+fn readKwarg(comptime F: type, vm: *VM, v: value.Value, method: []const u8, name: []const u8) !F {
+    // Raw values come through as passed, nil included; null means "not passed".
+    if (F == value.Value or F == ?value.Value) return v;
+    if (@typeInfo(F) == .optional) {
+        if (v.isNil()) return null;
+        return try readKwarg(@typeInfo(F).optional.child, vm, v, method, name);
+    }
+    if (F == f64) return requireNumber(vm, v, method, name);
+    if (F == i32) {
+        if (!v.isNumber()) return typeError(vm, method, "a number", name, v);
+        return checkedInt(i32, vm, v.asNumber(), name);
+    }
+    if (F == bool) return requireBool(vm, v, method, name);
+    if (F == []const u8) return requireName(vm, v, method, name);
+    if (@typeInfo(F) == .@"enum") {
+        const tag = try requireName(vm, v, method, name);
+        return std.meta.stringToEnum(F, tag) orelse {
+            _ = vm.raiseError(.ValueError, "{s} {s} must be {s}, got '{s}'", .{ method, name, comptime joinChoices(nameList(F)), tag });
+            return error.RuntimeError;
+        };
+    }
+    @compileError("parseKwargs: unsupported field type " ++ @typeName(F));
+}
+
+/// The field (or tag) names of `T` as plain slices.
+fn nameList(comptime T: type) []const []const u8 {
+    const names = std.meta.fieldNames(T);
+    var list: [names.len][]const u8 = undefined;
+    for (names, &list) |name, *slot| slot.* = name;
+    const final = list;
+    return &final;
+}
+
+/// "a, b, c", for listing the keywords a method accepts.
+fn joinNames(comptime names: []const []const u8) []const u8 {
+    var list: []const u8 = "";
+    for (names, 0..) |name, i| list = list ++ (if (i == 0) "" else ", ") ++ name;
+    return list;
+}
+
+/// "a, b or c", for listing the values an option allows.
+fn joinChoices(comptime names: []const []const u8) []const u8 {
+    var list: []const u8 = "";
+    for (names, 0..) |name, i| {
+        const sep = if (i == 0) "" else if (i == names.len - 1) " or " else ", ";
+        list = list ++ sep ++ name;
+    }
+    return list;
 }

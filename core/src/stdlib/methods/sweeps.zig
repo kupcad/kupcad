@@ -15,22 +15,16 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
         center: bool = false,
     };
 
-    var opts = ExtrudeOpts{};
-    var pos_count = args.len;
-
-    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
-        pos_count -= 1;
-        opts = try util.parseKwargs(ExtrudeOpts, vm, map, "extrude");
-        if (opts.scale) |s| {
-            opts.scale_x = s;
-            opts.scale_y = s;
-        }
+    const parsed = try util.parseKwargs(ExtrudeOpts, vm, args, "extrude");
+    var opts = parsed.opts;
+    if (opts.scale) |s| {
+        opts.scale_x = s;
+        opts.scale_y = s;
     }
 
     // NaN/inf sweep parameters propagate into every generated vertex: requireNumber
     // and parseKwargs reject them along with non-numbers.
-    if (pos_count > 0) opts.h = try util.requireNumber(vm, args[0], "extrude", "h");
+    if (parsed.positional.len > 0) opts.h = try util.requireNumber(vm, args[0], "extrude", "h");
 
     try util.requireSegmentCount(vm, opts.slices, "slices");
 
@@ -48,15 +42,9 @@ const REVOLVE_BASELINE_RADIUS = 10.0;
 
 pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return error.RuntimeError;
-    var degrees: f64 = 360.0;
-    var pos_count = args.len;
-
-    if (util.trailingKwargs(args)) |map| {
-        pos_count -= 1;
-        if (util.getKey(map, "deg")) |v| degrees = try util.requireNumber(vm, v, "revolve", "deg");
-    }
-
-    if (pos_count > 0) degrees = try util.requireNumber(vm, args[0], "revolve", "deg");
+    const parsed = try util.parseKwargs(struct { deg: f64 = 360.0 }, vm, args, "revolve");
+    var degrees = parsed.opts.deg;
+    if (parsed.positional.len > 0) degrees = try util.requireNumber(vm, args[0], "revolve", "deg");
 
     const segments = util.autoSegments(vm, REVOLVE_BASELINE_RADIUS);
 
@@ -68,17 +56,11 @@ pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     if (!receiver.isCrossSection()) return error.RuntimeError;
 
     const HelixOpts = struct { h: f64 = 10.0, twist: f64 = 360.0, slices: i32 = 64 };
-    var opts = HelixOpts{};
-    var pos_count = args.len;
+    const parsed = try util.parseKwargs(HelixOpts, vm, args, "helix");
+    var opts = parsed.opts;
 
-    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map = args[args.len - 1].asMap();
-        pos_count -= 1;
-        opts = try util.parseKwargs(HelixOpts, vm, map, "helix");
-    }
-
-    if (pos_count > 0) opts.h = try util.requireNumber(vm, args[0], "helix", "h");
-    if (pos_count > 1) opts.twist = try util.requireNumber(vm, args[1], "helix", "twist");
+    if (parsed.positional.len > 0) opts.h = try util.requireNumber(vm, args[0], "helix", "h");
+    if (parsed.positional.len > 1) opts.twist = try util.requireNumber(vm, args[1], "helix", "twist");
 
     try util.requireSegmentCount(vm, opts.slices, "slices");
 

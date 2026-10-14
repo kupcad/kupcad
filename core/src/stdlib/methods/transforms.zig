@@ -239,9 +239,10 @@ fn requireInvertible(vm: *VM, det: f64) !void {
 
 pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
-    var auto: bool = false;
+    const parsed = try util.parseKwargs(struct { auto: bool = false }, vm, args, "resize");
+    const auto = parsed.opts.auto;
 
-    if (args.len < 1) {
+    if (parsed.positional.len < 1) {
         _ = vm.raiseError(.ArgumentError, "resize() requires an array of target dimensions [x, y, z]", .{});
         return error.RuntimeError;
     }
@@ -260,10 +261,6 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const target_x = target[0];
     const target_y = target[1];
     const target_z = target[2];
-
-    if (util.trailingKwargs(args)) |map| {
-        if (util.getKey(map, "auto")) |v| auto = try util.requireBool(vm, v, "resize", "auto");
-    }
 
     const handle = try vm.ensureConcrete(receiver);
     const bbox = kernel.boundingBox(handle) orelse return error.RuntimeError;
@@ -348,13 +345,10 @@ pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value
 
     const count = try checkedCount(vm, args[0].asNumber(), "repeat_polar");
 
+    const parsed = try util.parseKwargs(struct { angle: ?f64 = null }, vm, args[1..], "repeat_polar");
     var total_angle: f64 = 360.0;
-    const rest = args[1..];
-    if (util.trailingKwargs(rest)) |map| {
-        if (util.getKey(map, "angle")) |v| total_angle = try util.requireNumber(vm, v, "repeat_polar", "angle");
-    } else if (rest.len > 0) {
-        total_angle = try util.requireNumber(vm, rest[0], "repeat_polar", "angle");
-    }
+    if (parsed.positional.len > 0) total_angle = try util.requireNumber(vm, parsed.positional[0], "repeat_polar", "angle");
+    if (parsed.opts.angle) |angle| total_angle = angle;
     if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
 
     const step_angle = if (@abs(total_angle - 360.0) < 0.001)
