@@ -223,6 +223,7 @@ An uncaught error stops the script and is printed once with its class, e.g. `Val
 
 * All objects and geometry nodes support introspection methods like `.is_a?`, `.responds_to?`, and `.nil?`.
 * Every value answers `.class` (its class, such as `Number`, `NilClass`, `Proc` for a lambda, `Method` for a bound method, `Class`, or a class you defined) and `.inspect` (how it would be written in a script: `"a".inspect` is `"\"a\""`, `{ x: 1 }.inspect` is `{x: 1}`). Define `inspect` in a class to customise it. Built-in values come from literals and methods, not `.new`: `Array.new(3, 0)`, `String.new` and `Map.new` exist as in Ruby, while `Number.new` or `Proc.new` is a `NoMethodError`.
+* A constant assigned in a class or module body is read from outside with `::`: `Gear::TEETH`, `Parts::Bolt::LENGTH` (inside the class, plain `TEETH`).
 * You can duplicate instances using `.dup` or `.clone`, extract bound methods with `.method(:name)` (called with `.call`), or yield to blocks contextually via `.tap` and `.into`.
 
 ---

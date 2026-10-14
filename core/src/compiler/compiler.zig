@@ -2365,6 +2365,15 @@ pub const Compiler = struct {
                 // Macro handled successfully
             } else {
                 try self.compileNode(stmt_idx);
+                // A constant assigned in the body (`BAR = 7`) also becomes a member of the
+                // namespace below it on the stack, as a nested class does, so `Foo::BAR`
+                // reads it: only its global "Foo::BAR" existed, which `::` doesn't look up.
+                if (stmt_node.tag == .assignment) {
+                    const name = self.tree.getString(self.tree.assignment(stmt_node).name);
+                    if (name.len > 0 and std.ascii.isUpper(name[0])) {
+                        try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, try self.makeStringConstant(name));
+                    }
+                }
                 try self.emitOp(.op_pop);
             }
         }

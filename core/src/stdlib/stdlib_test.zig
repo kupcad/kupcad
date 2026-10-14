@@ -977,6 +977,15 @@ test "Stdlib: every value has a class, and value classes aren't built with .new"
     });
 }
 
+test "Stdlib: constants of a class or module are read with ::" {
+    // `Foo::BAR` was "NameError: Undefined class member 'BAR'" (only nested classes worked).
+    const src = "module M\n  K = 3\n  class Inner\n    Z = 4\n    def self.z\n      Z\n    end\n  end\nend\nclass Foo\n  BAR = 7\n  BAR2 = BAR + 1\nend\n";
+    try expectGlobalR(&.{
+        .{ .src = src ++ "r = [M::K, M::Inner::Z, M::Inner.z, Foo::BAR, Foo::BAR2]", .expected = .{ .nums = &.{ 3, 4, 4, 7, 8 } } },
+        .{ .src = "r = Math::PI > 3", .expected = .{ .boolean = true } },
+    });
+}
+
 test "Stdlib: block_given? works with or without parentheses" {
     // The bare form used to be looked up as a variable: NameError.
     const m = "def m(&b)\n  [block_given?, block_given?()]\nend\n";
