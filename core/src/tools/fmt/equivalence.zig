@@ -117,6 +117,14 @@ fn fingerprint(tree: *const ast.Tree, node: *const ast.Node) u64 {
             h.params(tree, ms.params);
         },
         .range => h.add(tree.range(node).is_exclusive),
+        .for_stmt => {
+            const fs = tree.forStmt(node);
+            h.add(fs.is_intersection);
+            for (tree.getLhsExprs(fs.targets)) |t| {
+                h.string(tree, t.name);
+                h.add(t.modifier);
+            }
+        },
         .if_stmt => h.add(tree.ifStmt(node).is_unless),
         .while_stmt => h.add(tree.whileStmt(node).is_until),
         .namespace_access => for (tree.getStringLists(tree.nodeSpan(node))) |s| h.string(tree, s),

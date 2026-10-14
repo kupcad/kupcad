@@ -245,7 +245,7 @@ pub const Parser = struct {
             if (self.tag(0) == .newline or self.tag(0) == .semicolon) return;
 
             switch (self.tag(0)) {
-                .keyword_class, .keyword_def, .keyword_module, .keyword_if, .keyword_unless, .keyword_case, .keyword_while, .keyword_until, .keyword_return, .keyword_begin, .keyword_import, .keyword_export => return,
+                .keyword_class, .keyword_def, .keyword_module, .keyword_if, .keyword_unless, .keyword_case, .keyword_while, .keyword_until, .keyword_for, .keyword_return, .keyword_begin, .keyword_import, .keyword_export => return,
                 else => self.advance(),
             }
         }
@@ -414,6 +414,7 @@ pub const Parser = struct {
             .keyword_unless => try self.parseIfOrUnless(true),
             .keyword_case => try self.parseCaseStatement(),
             .keyword_while, .keyword_until => try self.parseWhileStatement(),
+            .keyword_for => try self.parseForStatement(),
             .keyword_def => try self.parseDefStatement(false),
             .keyword_private => {
                 self.advance();
@@ -858,6 +859,46 @@ pub const Parser = struct {
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
         return self.b.whileStmt(condition, body, is_until, start_tok) catch ParseError.OutOfMemory;
+    }
+
+    /// `for a, *rest in iterable`, a body, then `end`. As in Ruby the loop opens no scope:
+    /// its variables are locals of the enclosing body and stay after it. `in` is
+    /// contextual, so `in:` still names a keyword argument.
+    fn parseForStatement(self: *Parser) ParseError!ast.NodeIndex {
+        try self.enterNesting();
+        defer self.ast_depth -= 1;
+        const start_tok = try self.expect(.keyword_for);
+        const s_len = self.scratch_lhs_exprs.items.len;
+        defer self.scratch_lhs_exprs.shrinkRetainingCapacity(s_len);
+        var has_splat = false;
+        while (true) {
+            var mod: ?ast.ArgModifier = null;
+            if (self.tag(0) == .star) {
+                if (has_splat) {
+                    self.reportError(self.getLoc(self.tok_idx), "A for loop takes at most one *splat variable", .{});
+                    return ParseError.UnexpectedToken;
+                }
+                has_splat = true;
+                mod = .splat;
+                self.advance();
+            }
+            const name_tok = try self.expect(.ident);
+            try self.scratch_lhs_exprs.append(self.allocator, .{ .name = try self.b.intern(self.tokens.lexeme(self.source, name_tok)), .modifier = mod });
+            try self.declareLocal(name_tok);
+            if (self.tag(0) != .comma) break;
+            self.advance();
+        }
+        if (self.tag(0) != .ident or !std.mem.eql(u8, self.lexeme(0), "in")) {
+            self.reportError(self.getLoc(self.tok_idx), "Expected 'in' after the loop variables, found '{s}'", .{self.lexeme(0)});
+            return ParseError.UnexpectedToken;
+        }
+        self.advance();
+        const iterable = try self.parseExpression(.none);
+        self.skipIgnored();
+        const body = try self.parseBlock(&.{.keyword_end});
+        _ = try self.expect(.keyword_end);
+        const targets = try self.b.addLhsExprs(self.scratch_lhs_exprs.items[s_len..]);
+        return self.b.forStmt(targets, iterable, body, false, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseDefStatement(self: *Parser, is_private: bool) ParseError!ast.NodeIndex {
@@ -1472,6 +1513,7 @@ pub const Parser = struct {
             .keyword_if => left = try self.parseIfOrUnless(false),
             .keyword_unless => left = try self.parseIfOrUnless(true),
             .keyword_while, .keyword_until => left = try self.parseWhileStatement(),
+            .keyword_for => left = try self.parseForStatement(),
             .keyword_begin => left = try self.parseBeginStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
             .percent_w, .percent_i => left = try self.parsePercentArray(start_tag),

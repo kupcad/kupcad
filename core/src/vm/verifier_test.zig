@@ -319,3 +319,24 @@ test "Verifier: a closure captures only its parent's locals and upvalues" {
         if (case.expected) |err| try testing.expectError(err, verifier.verifyChunk(testing.allocator, &parent)) else try verifier.verifyChunk(testing.allocator, &parent);
     }
 }
+
+test "Verifier: op_for_next needs both of its loop slots and an exit inside the chunk" {
+    // [op_for_next slot:u16 exit:u32] [op_nil] [op_return]; the exit lands on op_nil.
+    const cases = [_]struct { slot: u8, exit: u8, local_count: u16, expected: ?anyerror }{
+        .{ .slot = 0, .exit = 0, .local_count = 2, .expected = null },
+        .{ .slot = 1, .exit = 0, .local_count = 2, .expected = error.InvalidSlot }, // slot 2 holds the count
+        .{ .slot = 0, .exit = 9, .local_count = 2, .expected = error.InvalidJumpOffset },
+    };
+    for (cases) |case| {
+        var c = chunk.Chunk.init();
+        defer c.free(testing.allocator);
+        c.local_count = case.local_count;
+        try chunkFrom(&c, &.{ opByte(.op_for_next), 0, case.slot, 0, 0, 0, case.exit, opByte(.op_nil), opByte(.op_return) });
+        if (case.expected) |err| try testing.expectError(err, verifier.verifyChunk(testing.allocator, &c)) else try verifier.verifyChunk(testing.allocator, &c);
+    }
+    var short = chunk.Chunk.init();
+    defer short.free(testing.allocator);
+    short.local_count = 2;
+    try chunkFrom(&short, &.{ opByte(.op_for_next), 0, 0, 0, 0 });
+    try testing.expectError(error.OutOfBoundsRead, verifier.verifyChunk(testing.allocator, &short));
+}

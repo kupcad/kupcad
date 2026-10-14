@@ -123,11 +123,6 @@ pub const HashEntry = struct {
     value: NodeIndex,
 };
 
-pub const ForBinding = struct {
-    name: StringId,
-    range: NodeIndex,
-};
-
 pub const WhenBranch = struct {
     conditions: Span, // Span of NodeIndex
     body: NodeIndex,
@@ -245,9 +240,13 @@ pub const WhileStmt = struct {
     is_until: bool = false,
 };
 
+/// `for a, *rest in iterable ... end`: each element of `iterable` is assigned to `targets`
+/// as a multiple assignment would (one target takes the element whole).
 pub const ForStmt = struct {
-    bindings: Span, // Span of ForBinding
+    targets: Span, // Span of LhsExpr
+    iterable: NodeIndex,
     body: NodeIndex,
+    /// OpenSCAD's intersection_for, which KupCAD doesn't run.
     is_intersection: bool = false,
 };
 
@@ -340,7 +339,6 @@ pub const Tree = struct {
     named_args: std.ArrayListUnmanaged(NamedArg) = .empty,
     params: std.ArrayListUnmanaged(Param) = .empty,
     hash_entries: std.ArrayListUnmanaged(HashEntry) = .empty,
-    for_bindings: std.ArrayListUnmanaged(ForBinding) = .empty,
     when_branches: std.ArrayListUnmanaged(WhenBranch) = .empty,
     lhs_exprs: std.ArrayListUnmanaged(LhsExpr) = .empty,
     rescue_clauses: std.ArrayListUnmanaged(RescueClause) = .empty,
@@ -364,7 +362,6 @@ pub const Tree = struct {
         self.named_args.deinit(allocator);
         self.params.deinit(allocator);
         self.hash_entries.deinit(allocator);
-        self.for_bindings.deinit(allocator);
         self.when_branches.deinit(allocator);
         self.lhs_exprs.deinit(allocator);
         self.rescue_clauses.deinit(allocator);
@@ -411,10 +408,6 @@ pub const Tree = struct {
 
     pub fn getHashEntries(self: *const Tree, span: Span) []const HashEntry {
         return self.hash_entries.items[span.start..span.end];
-    }
-
-    pub fn getForBindings(self: *const Tree, span: Span) []const ForBinding {
-        return self.for_bindings.items[span.start..span.end];
     }
 
     pub fn getWhenBranches(self: *const Tree, span: Span) []const WhenBranch {
@@ -599,9 +592,10 @@ pub const Tree = struct {
     pub fn forStmt(self: *const Tree, node: *const Node) ForStmt {
         const base = node.data;
         return .{
-            .bindings = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
-            .body = @fromBackingInt(self.extra_data.items[base + 2]),
-            .is_intersection = self.extra_data.items[base + 3] != 0,
+            .targets = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
+            .iterable = @fromBackingInt(self.extra_data.items[base + 2]),
+            .body = @fromBackingInt(self.extra_data.items[base + 3]),
+            .is_intersection = self.extra_data.items[base + 4] != 0,
         };
     }
 
@@ -947,12 +941,6 @@ pub const Builder = struct {
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
-    pub fn addForBindings(self: *Builder, items: []const ForBinding) !Span {
-        const start: u32 = @intCast(self.tree.for_bindings.items.len);
-        try self.tree.for_bindings.appendSlice(self.allocator, items);
-        return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
-    }
-
     pub fn addHashEntries(self: *Builder, items: []const HashEntry) !Span {
         const start: u32 = @intCast(self.tree.hash_entries.items.len);
         try self.tree.hash_entries.appendSlice(self.allocator, items);
@@ -1100,8 +1088,8 @@ pub const Builder = struct {
         return self.createNode(.while_stmt, main_token, data_idx);
     }
 
-    pub fn forStmt(self: *Builder, bindings: Span, body: NodeIndex, is_intersection: bool, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ bindings, body, is_intersection });
+    pub fn forStmt(self: *Builder, targets: Span, iterable: NodeIndex, body: NodeIndex, is_intersection: bool, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ targets, iterable, body, is_intersection });
         return self.createNode(.for_stmt, main_token, data_idx);
     }
 

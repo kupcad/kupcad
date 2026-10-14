@@ -91,6 +91,12 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         .op_unpack_splat, .op_pack_splat => {
             return twoByteInstruction(@tagName(op), c, offset, writer);
         },
+        .op_for_next => {
+            const slot = (@as(u16, c.code.items[offset + 1]) << 8) | c.code.items[offset + 2];
+            const exit = offset + 7 + readJump(c, offset + 3);
+            try writer.print("{s: <16} slot:{d} {d: >4} -> {d}\n", .{ @tagName(op), slot, offset, exit });
+            return offset + 7;
+        },
         .op_jump, .op_jump_if_false, .op_jump_if_nil, .op_jump_if_not_nil, .op_setup_rescue, .op_loop => {
             return jumpInstruction(@tagName(op), if (op == .op_loop) -1 else 1, c, offset, writer);
         },

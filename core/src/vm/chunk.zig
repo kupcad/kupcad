@@ -120,6 +120,10 @@ pub const OpCode = enum(u8) {
     op_switch,
     op_switch_wide,
     op_loop,
+    /// One step of a `for` loop: u16 slot, then a 4-byte exit offset. The loop keeps its
+    /// iterable in local `slot` and how many elements it has taken in `slot + 1`; this
+    /// pushes the next element and counts it, or jumps forward by the offset when none is left.
+    op_for_next,
     op_break_block,
 
     // Exception Handling

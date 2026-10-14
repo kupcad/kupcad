@@ -30,8 +30,11 @@ fn getNamedArgs(parser: *Parser, span: ast.Span) []const ast.NamedArg {
     return parser.b.tree.getNamedArgs(span);
 }
 
-fn getForBindings(parser: *Parser, span: ast.Span) []const ast.ForBinding {
-    return parser.b.tree.getForBindings(span);
+/// The single variable of an OpenSCAD for loop (a header with several nests one loop each).
+fn forVar(parser: *Parser, for_stmt: ast.ForStmt) []const u8 {
+    const targets = parser.b.tree.getLhsExprs(for_stmt.targets);
+    std.debug.assert(targets.len == 1);
+    return getStr(parser, targets[0].name);
 }
 
 test "OpenSCAD Parser: Module definition and CSG Tree" {
@@ -93,9 +96,8 @@ test "OpenSCAD Parser: For Loop and Range [start:step:end]" {
     const node = getNode(&parser, node_idx);
 
     const for_stmt = parser.b.tree.forStmt(node);
-    const bindings = getForBindings(&parser, for_stmt.bindings);
-    try testing.expectEqualStrings("i", getStr(&parser, bindings[0].name));
-    const range = getNode(&parser, bindings[0].range);
+    try testing.expectEqualStrings("i", forVar(&parser, for_stmt));
+    const range = getNode(&parser, for_stmt.iterable);
 
     const range_payload = parser.b.tree.range(range);
 
@@ -154,7 +156,7 @@ test "OpenSCAD Parser: Vector Comprehension" {
 
     try testing.expectEqual(ast.Tag.for_stmt, for_node.tag);
     const for_stmt = parser.b.tree.forStmt(for_node);
-    try testing.expectEqualStrings("x", getStr(&parser, getForBindings(&parser, for_stmt.bindings)[0].name));
+    try testing.expectEqualStrings("x", forVar(&parser, for_stmt));
 
     // The body of the FOR is the mathematical expression
     const math_node = getNode(&parser, for_stmt.body);
@@ -264,7 +266,7 @@ test "OpenSCAD Parser: Special Variables and Children Calls" {
     const for_node = getNode(&parser, getNodes(&parser, parser.b.tree.block(mod_body).stmts)[0]);
 
     const for_stmt = parser.b.tree.forStmt(for_node);
-    const range = getNode(&parser, getForBindings(&parser, for_stmt.bindings)[0].range);
+    const range = getNode(&parser, for_stmt.iterable);
     const range_end = getNode(&parser, parser.b.tree.range(range).end);
 
     const range_end_left = getNode(&parser, parser.b.tree.binaryExpr(range_end).left);
@@ -444,7 +446,7 @@ test "OpenSCAD Parser: Comprehension with Else" {
     // The top node of the comprehension yield logic is the FOR statement
     const for_node = getNode(&parser, getNodes(&parser, parser.b.tree.nodeSpan(comp_node))[0]);
     const for_stmt = parser.b.tree.forStmt(for_node);
-    try testing.expectEqualStrings("i", getStr(&parser, getForBindings(&parser, for_stmt.bindings)[0].name));
+    try testing.expectEqualStrings("i", forVar(&parser, for_stmt));
 
     // The body of the FOR is the nested IF statement
     const if_node = getNode(&parser, for_stmt.body);
@@ -841,4 +843,21 @@ test "OpenSCAD Parser: Error Recovery (synchronize)" {
 
     // Two syntax errors were captured
     try testing.expectEqual(@as(usize, 2), parser.diagnostics.list.items.len);
+}
+
+test "OpenSCAD Parser: a for header with several variables nests a loop per variable" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "for (i = [0 : 2], j = [0 : 3]) cube(i + j);";
+    var lexer = Lexer.init(source, 0);
+    const tokens = try lexer.lexAll(arena.allocator());
+    var parser = try Parser.init(tokens, source, arena.allocator());
+
+    const outer = parser.b.tree.forStmt(getNode(&parser, try parser.parseStatement()));
+    try testing.expectEqualStrings("i", forVar(&parser, outer));
+    const inner_node = getNode(&parser, outer.body);
+    try testing.expectEqual(ast.Tag.for_stmt, inner_node.tag);
+    const inner = parser.b.tree.forStmt(inner_node);
+    try testing.expectEqualStrings("j", forVar(&parser, inner));
+    try testing.expectEqual(ast.Tag.method_call, getNode(&parser, inner.body).tag);
 }

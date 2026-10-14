@@ -187,6 +187,17 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: 
                 ip += 6;
             },
 
+            // u16 slot of the loop state (it spans two slots), then a 4-byte exit offset
+            .op_for_next => {
+                if (ip + 2 + JUMP_OPERAND_SIZE > len) return error.OutOfBoundsRead;
+                try scope.checkLocal(readU16(code, ip) + 1);
+                ip += 2;
+                const offset = readU32(code, ip);
+                ip += JUMP_OPERAND_SIZE;
+                if (ip + offset > len) return error.InvalidJumpOffset;
+                targets.append(allocator, ip + offset) catch return error.OutOfMemory;
+            },
+
             // 4-byte jump offsets
             .op_jump, .op_jump_if_false, .op_jump_if_nil, .op_jump_if_not_nil, .op_loop, .op_setup_rescue => {
                 if (ip + JUMP_OPERAND_SIZE > len) return error.OutOfBoundsRead;

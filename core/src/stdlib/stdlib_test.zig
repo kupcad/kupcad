@@ -824,6 +824,52 @@ test "Stdlib: each primitive's Signature lists exactly the keywords it accepts" 
     try std.testing.expectEqual(@as(usize, 8), checked);
 }
 
+test "Stdlib: for walks an Array, a Range or a Map, as Ruby's does" {
+    // `for` was a syntax error.
+    try expectGlobalR(&.{
+        .{ .src = "r = []\nfor x in [3, 1, 2]\n  r.push(x * 10)\nend", .expected = .{ .nums = &.{ 30, 10, 20 } } },
+        // Ranges yield what Range#each does: exclusive ends, steps, negative steps, floats.
+        .{ .src = "r = []\nfor i in 0...3\n  r.push(i)\nend", .expected = .{ .nums = &.{ 0, 1, 2 } } },
+        .{ .src = "r = []\nfor i in (0..1).step(0.25)\n  r.push(i)\nend", .expected = .{ .nums = &.{ 0, 0.25, 0.5, 0.75, 1 } } },
+        .{ .src = "r = []\nfor i in (3..1).step(-1)\n  r.push(i)\nend", .expected = .{ .nums = &.{ 3, 2, 1 } } },
+        // A Map yields [key, value] pairs; several variables spread each element.
+        .{ .src = "r = []\nfor k, v in { a: 1, b: 2 }\n  r.push(\"#{k.to_s}#{v}\")\nend\nr = r.join(\",\")", .expected = .{ .str = "a1,b2" } },
+        .{ .src = "r = 0\nfor x, y in [[1, 2], [3, 4]]\n  r += x * y\nend", .expected = .{ .num = 14 } },
+        .{ .src = "r = []\nfor head, *tail in [[1, 2, 3]]\n  r = tail\nend", .expected = .{ .nums = &.{ 2, 3 } } },
+        // One variable takes the element whole.
+        .{ .src = "r = nil\nfor pair in [[1, 2]]\n  r = pair\nend", .expected = .{ .nums = &.{ 1, 2 } } },
+        // Nested loops.
+        .{ .src = "r = []\nfor i in 1..2\n  for j in 1..2\n    r.push(i * 10 + j)\n  end\nend", .expected = .{ .nums = &.{ 11, 12, 21, 22 } } },
+        // An Array is read live, so elements pushed during the loop are visited too.
+        .{ .src = "a = [1]\nr = []\nfor x in a\n  a.push(x + 1) if x < 3\n  r.push(x)\nend", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+    });
+}
+
+test "Stdlib: for's value, break, next and return behave as in Ruby" {
+    try expectGlobalR(&.{
+        // The loop's value is what it iterated, or what break passes.
+        .{ .src = "r = for x in [1, 2]\nend", .expected = .{ .nums = &.{ 1, 2 } } },
+        .{ .src = "r = for x in [1, 2, 3]\n  break x * 10 if x == 2\nend", .expected = .{ .num = 20 } },
+        .{ .src = "r = []\nfor i in 0...6\n  next if i % 2 == 1\n  r.push(i)\nend", .expected = .{ .nums = &.{ 0, 2, 4 } } },
+        // return leaves the method, not just the loop (a block's return is block-local).
+        .{ .src = "def f\n  for i in 1..5\n    return i if i == 3\n  end\n  0\nend\nr = f", .expected = .{ .num = 3 } },
+        // No scope: the variables stay, at the top level and in a method.
+        .{ .src = "for i in [7, 8]\nend\nr = i", .expected = .{ .num = 8 } },
+        .{ .src = "def g\n  for a, b in [[1, 2]]\n    c = a + b\n  end\n  [a, b, c]\nend\nr = g", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = "f = ->(xs) {\n  t = 0\n  for x in xs\n    t += x\n  end\n  t\n}\nr = f.call([1, 2, 3])", .expected = .{ .num = 6 } },
+        // An empty iterable runs nothing.
+        .{ .src = "r = 5\nfor x in []\n  r = 0\nend", .expected = .{ .num = 5 } },
+    });
+}
+
+test "Stdlib: for rejects what it can't iterate" {
+    try expectGlobalR(&.{
+        .{ .src = comptime rescued("for x in 5\n  end"), .expected = .{ .str = "TypeError: for expects an Array, a Range or a Map, got Number" } },
+        .{ .src = comptime rescued("for x in \"abc\"\n  end"), .expected = .{ .str = "TypeError: for expects an Array, a Range or a Map, got String" } },
+        .{ .src = comptime rescued("for x in 1..Number::INFINITY\n  end"), .expected = .{ .str = "ValueError: for requires finite bounds and step, got 1..Infinity step 1" } },
+    });
+}
+
 test "Stdlib: respond_to? has Ruby's name" {
     // It was spelled `responds_to?`.
     try expectGlobalR(&.{

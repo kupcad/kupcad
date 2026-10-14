@@ -602,3 +602,21 @@ test "Formatter: comments inside an expression move after it, never into it" {
         \\
     );
 }
+
+test "Formatter: for loops print as KupCAD" {
+    // The formatter printed OpenSCAD's `for(i = ...)`, which KupCAD can't read.
+    try expectStableFormat(
+        \\for i in 1..3
+        \\puts i
+        \\end
+        \\for first, *rest in rows; do_it(first); end
+    ,
+        \\for i in 1..3
+        \\  puts(i)
+        \\end
+        \\for first, *rest in rows
+        \\  do_it(first)
+        \\end
+        \\
+    );
+}

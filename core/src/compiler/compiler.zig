@@ -168,6 +168,7 @@ pub const Compiler = struct {
     pub const emitJump = emitter_mod.emitJump;
     pub const patchJump = emitter_mod.patchJump;
     pub const emitLoop = emitter_mod.emitLoop;
+    pub const emitForNext = emitter_mod.emitForNext;
     pub const makeMethodNameConstant = emitter_mod.makeMethodNameConstant;
     pub const makeStringConstant = emitter_mod.makeStringConstant;
     pub const makeSymbolConstant = emitter_mod.makeSymbolConstant;
@@ -349,6 +350,7 @@ pub const Compiler = struct {
             .if_stmt => try self.compileIfStmt(node, expected_entry_depth),
             .self_expr => try self.emitPushSelf(),
             .while_stmt => try self.compileWhileStmt(node, expected_entry_depth),
+            .for_stmt => try self.compileForStmt(node, expected_entry_depth),
             .ternary_op => try self.compileTernaryOp(node, expected_entry_depth),
             .range => try self.compileRange(node),
             .interpolated_string => try self.compileInterpolatedString(node),
@@ -1490,32 +1492,8 @@ pub const Compiler = struct {
 
         const ma = self.tree.multipleAssignment(node);
         const lhs = self.tree.getLhsExprs(ma.lhs);
-        for (lhs) |l| {
-            if (l.name != .none) {
-                const name_id = l.name;
-                // Same rule as a plain `name = value`: only plain names inside a
-                // function become new locals. At the top level they are script
-                // globals (top-level slot 0 is the script closure, so a local
-                // there would clobber `self`).
-                if (self.enclosing != null and
-                    isPlainLocalName(self.tree.getString(name_id)) and
-                    self.resolveLocal(name_id) == null and
-                    (try self.resolveUpvalue(name_id)) == null and
-                    !self.writesScriptGlobal(name_id))
-                {
-                    const slot = self.getNextLocalSlot();
-                    try self.addLocal(name_id, slot);
-                }
-            }
-        }
-
-        var splat_idx: ?usize = null;
-        for (lhs, 0..) |l, i| {
-            if (l.modifier != null and l.modifier.? == .splat) {
-                splat_idx = i;
-                break;
-            }
-        }
+        try self.declareTargets(lhs);
+        const splat_idx = splatIndex(lhs);
 
         const val_node = self.tree.getNode(ma.value).?;
         var is_static_array = false;
@@ -1561,29 +1539,57 @@ pub const Compiler = struct {
 
         // --- Standard Dynamic Unpacking Fallback ---
         try self.compileNode(ma.value);
-        if (splat_idx) |s_idx| {
+        try self.compileUnpackInto(lhs);
+        try self.emitOp(.op_nil);
+    }
+
+    /// Makes new locals for the plain names among `targets`, by the same rule as a plain
+    /// `name = value`: only inside a function. At the top level they are script globals
+    /// (top-level slot 0 is the script closure, so a local there would clobber `self`).
+    fn declareTargets(self: *Compiler, targets: []const ast.LhsExpr) CompileError!void {
+        for (targets) |t| {
+            if (t.name == .none) continue;
+            if (self.enclosing != null and
+                isPlainLocalName(self.tree.getString(t.name)) and
+                self.resolveLocal(t.name) == null and
+                (try self.resolveUpvalue(t.name)) == null and
+                !self.writesScriptGlobal(t.name))
+            {
+                const slot = self.getNextLocalSlot();
+                try self.addLocal(t.name, slot);
+            }
+        }
+    }
+
+    fn splatIndex(targets: []const ast.LhsExpr) ?usize {
+        for (targets, 0..) |t, i| {
+            if (t.modifier == .splat) return i;
+        }
+        return null;
+    }
+
+    /// Spreads the value on top of the stack over `targets` (`a, *b = value`) and pops it.
+    fn compileUnpackInto(self: *Compiler, targets: []const ast.LhsExpr) CompileError!void {
+        if (splatIndex(targets)) |s_idx| {
             const pre_count = s_idx;
-            const post_count = lhs.len - 1 - s_idx;
+            const post_count = targets.len - 1 - s_idx;
             if (pre_count > limits.MAX_SHORT_CONSTANTS or post_count > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
             try self.emitOp(.op_unpack_splat);
             try self.emitByte(@intCast(pre_count));
             try self.emitByte(@intCast(post_count));
-            self.simulatePop(1);
-            self.simulatePush(lhs.len);
         } else {
-            if (lhs.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
+            if (targets.len > limits.MAX_SHORT_CONSTANTS) return error.TooManyConstants;
             try self.emitOp(.op_unpack);
-            try self.emitByte(@intCast(lhs.len));
-            self.simulatePop(1);
-            self.simulatePush(lhs.len);
+            try self.emitByte(@intCast(targets.len));
         }
+        self.simulatePop(1);
+        self.simulatePush(targets.len);
 
-        var i: usize = lhs.len;
+        var i: usize = targets.len;
         while (i > 0) {
             i -= 1;
-            try self.compileDestructure(lhs[i]);
+            try self.compileDestructure(targets[i]);
         }
-        try self.emitOp(.op_nil);
     }
 
     fn compileClassStmt(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
@@ -1866,6 +1872,56 @@ pub const Compiler = struct {
         self.current_stack_depth = expected_entry_depth + 1;
     }
 
+    /// `for targets in iterable ... end`. The iterable and the count of elements taken live
+    /// in two hidden locals (see op_for_next), so around `break` and `next` the stack is as
+    /// in a while loop, and `return` leaves the method as from any loop. Like Ruby's, the
+    /// loop's value is the iterable, or what `break` passes.
+    fn compileForStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
+        const fs = self.tree.forStmt(node);
+        if (fs.is_intersection) return self.fail(error.UnknownNode, "intersection_for isn't supported", .{});
+        const targets = self.tree.getLhsExprs(fs.targets);
+        try self.declareTargets(targets);
+
+        const state = try self.hiddenLocalSlots(2);
+        try self.compileNode(fs.iterable);
+        try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, state);
+        try self.emitOp(.op_pop);
+        try self.emitConstant(value.Value.initNumber(0));
+        try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, state + 1);
+        try self.emitOp(.op_pop);
+
+        const loop_start = self.current_chunk.code.items.len;
+        try self.loops.append(self.allocator, .{
+            .start = loop_start,
+            .depth = self.current_stack_depth,
+            .unwind_depth = self.unwind_stack.items.len,
+        });
+
+        const exit_jump = try self.emitForNext(state);
+        // One target takes the element whole, as in Ruby; several spread it.
+        if (targets.len == 1 and targets[0].modifier == null) {
+            try self.compileDestructure(targets[0]);
+        } else {
+            try self.compileUnpackInto(targets);
+        }
+
+        try self.compileNode(fs.body);
+        self.current_stack_depth = expected_entry_depth + 1;
+        try self.emitOp(.op_pop); // the body's value
+        try self.emitLoop(loop_start);
+
+        // Leaving when the iterable runs out: no element was pushed.
+        self.patchJump(exit_jump);
+        self.current_stack_depth = expected_entry_depth;
+        try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, state);
+
+        // `break value` jumps past that, with its value already on the stack.
+        var cur_loop = self.loops.pop().?;
+        defer cur_loop.exit_jumps.deinit(self.allocator);
+        for (cur_loop.exit_jumps.items) |jmp| self.patchJump(jmp);
+        self.current_stack_depth = expected_entry_depth + 1;
+    }
+
     fn compileTernaryOp(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
         const ternary = self.tree.ternaryExpr(node);
         try self.compileNode(ternary.condition);
@@ -2091,14 +2147,19 @@ pub const Compiler = struct {
     /// The hidden frame slot behind `scratch_slot`, allocated on first use.
     fn scratchLocalSlot(self: *Compiler) CompileError!u16 {
         if (self.scratch_slot) |slot| return slot;
-        // Slot 0 holds the running closure, and at the top level it is also what
-        // `self` reads, so it must never double as scratch. Function compilers
-        // reserve it up front; the top-level compiler does not.
-        if (self.getNextLocalSlot() == 0) try self.addLocal(.none, 0);
-        const slot = self.getNextLocalSlot();
-        try self.addLocal(.none, slot);
+        const slot = try self.hiddenLocalSlots(1);
         self.scratch_slot = slot;
         return slot;
+    }
+
+    /// `count` consecutive frame slots no name refers to; returns the first. Slot 0 holds
+    /// the running closure, and at the top level it is also what `self` reads, so it is
+    /// never handed out: function compilers reserve it up front, the top-level one here.
+    fn hiddenLocalSlots(self: *Compiler, count: u16) CompileError!u16 {
+        if (self.getNextLocalSlot() == 0) try self.addLocal(.none, 0);
+        const first = self.getNextLocalSlot();
+        for (0..count) |i| try self.addLocal(.none, first + @as(u16, @intCast(i)));
+        return first;
     }
 
     /// Stores the value on top of the stack into the named variable and leaves the

@@ -163,7 +163,7 @@
       }
     },
     "keywords": {
-      "match": "(?<![\\\\w.])(do|as|if|or|not|def|nil|end|and|true|else|with|then|from|next|case|when|self|begin|false|elsif|break|yield|while|class|super|until|module|import|rescue|ensure|export|unless|return|public|private)(?![\\\\w?!])",
+      "match": "(?<![\\\\w.])(or|as|if|do|nil|for|def|end|not|and|with|true|else|next|self|then|when|case|from|yield|break|while|super|until|elsif|begin|false|class|import|unless|return|module|rescue|ensure|export|public|private)(?![\\\\w?!])",
       "name": "keyword.control.kupcad"
     },
     "builtins": {
@@ -171,7 +171,7 @@
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {
-      "match": "(?<![\\\\w])(is_a?|respond_to?|nil?|empty?|method|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reduce|first|last|contains?|flatten|max|min|sum|sort|to_h|keys|values|key?|delete|get|merge|symbolize_keys|stringify_keys|to_a|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|round|ceil|floor|abs|inspect|invert|sin|cos|tan|asin|acos|atan2|sqrt|deg2rad|rad2deg|clamp|lerp|hypot|sign|collect|bytes_allocated)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(class|inspect|is_a?|respond_to?|nil?|empty?|method|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reduce|first|last|contains?|flatten|max|min|sum|sort|to_h|keys|values|key?|delete|get|merge|symbolize_keys|stringify_keys|to_a|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|times|upto|downto|round|ceil|floor|abs|invert|sin|cos|tan|asin|acos|atan2|sqrt|deg2rad|rad2deg|clamp|lerp|hypot|sign|collect|bytes_allocated)(?![\\\\w?!])",
       "name": "support.function.core.kupcad"
     },
     "primitives_3d": {

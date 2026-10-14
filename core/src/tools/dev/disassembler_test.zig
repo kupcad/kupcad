@@ -7,7 +7,7 @@ const Document = @import("../../core/document.zig").Document;
 const VM = @import("../../vm/vm.zig").VM;
 const disassembler = @import("disassembler.zig");
 
-test "Disassembler: decodes inline-cache operands, 32-bit jumps and switch tables" {
+test "Disassembler: decodes inline-cache operands, 32-bit jumps, switch tables and for loops" {
     // Regression: every operand width (inline-cache index, 32-bit jump offset,
     // switch table) must be decoded or the listing drifts out of sync.
     const source =
@@ -19,6 +19,9 @@ test "Disassembler: decodes inline-cache operands, 32-bit jumps and switch table
         \\when 1 then 10
         \\when 2, 3 then 20
         \\else 30
+        \\end
+        \\for i in [1, 2]
+        \\  x = i
         \\end
     ;
     var doc = try Document.parse(testing.allocator, source);
@@ -38,6 +41,7 @@ test "Disassembler: decodes inline-cache operands, 32-bit jumps and switch table
     const text = out.written();
     try testing.expect(std.mem.indexOf(u8, text, "| ic 0") != null);
     try testing.expect(std.mem.indexOf(u8, text, "op_switch        3 cases") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "op_for_next      slot:") != null);
     // Staying in sync means the final instruction is decoded as op_return
     try testing.expect(std.mem.endsWith(u8, std.mem.trimEnd(u8, text, "\n"), "op_return"));
 

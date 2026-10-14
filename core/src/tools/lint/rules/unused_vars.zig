@@ -90,8 +90,8 @@ pub const UnusedVarsRule = struct {
         switch (node.tag) {
             .for_stmt => {
                 const fs = tree.forStmt(node);
-                for (tree.getForBindings(fs.bindings)) |b| {
-                    try engine.declareVar(tree.getString(b.name), engine.getLoc(node.main_token));
+                for (tree.getLhsExprs(fs.targets)) |t| {
+                    try engine.declareVar(tree.getString(t.name), engine.getLoc(node.main_token));
                 }
             },
             .def_stmt => {

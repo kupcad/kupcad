@@ -466,15 +466,14 @@ pub const Formatter = struct {
     }
 
     fn formatForStmt(self: *Formatter, tree: *const ast.Tree, fs: ast.ForStmt, start_line: u32) Error!void {
-        const kw = if (fs.is_intersection) "intersection_for(" else "for(";
-        try self.out.appendSlice(self.allocator, kw);
-        for (tree.getForBindings(fs.bindings), 0..) |b, idx| {
+        try self.out.appendSlice(self.allocator, "for ");
+        for (tree.getLhsExprs(fs.targets), 0..) |t, idx| {
             if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-            try self.out.appendSlice(self.allocator, tree.getString(b.name));
-            try self.out.appendSlice(self.allocator, " = ");
-            try self.formatNode(tree, b.range);
+            if (t.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
+            try self.out.appendSlice(self.allocator, tree.getString(t.name));
         }
-        try self.out.appendSlice(self.allocator, ")");
+        try self.out.appendSlice(self.allocator, " in ");
+        try self.formatNode(tree, fs.iterable);
         try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(tree, fs.body);
     }

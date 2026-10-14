@@ -111,6 +111,16 @@ pub fn patchJump(self: *Compiler, offset: usize) void {
     self.writeJumpOffset(offset, jump);
 }
 
+/// `op_for_next` over the loop state at `slot` (the iterable; its count is `slot + 1`).
+/// Returns the exit jump's position for patchJump.
+pub fn emitForNext(self: *Compiler, slot: u16) CompileError!usize {
+    try self.emitOp(.op_for_next);
+    try self.emitByte(@intCast(slot >> 8));
+    try self.emitByte(@intCast(slot & 0xff));
+    for (0..4) |_| try self.emitByte(0xff);
+    return self.current_chunk.code.items.len - 4;
+}
+
 pub fn emitLoop(self: *Compiler, loop_start: usize) CompileError!void {
     try self.emitOp(.op_loop);
     const jump = self.current_chunk.code.items.len - loop_start + 4;
@@ -212,7 +222,33 @@ pub fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
     return switch (op) {
         // --- Pushes 1 (Net: +1) ---
         // These operations introduce a new value onto the top of the stack.
-        .op_nil, .op_true, .op_false, .op_get_local, .op_get_local_wide, .op_get_global, .op_get_global_wide, .op_constant, .op_constant_wide, .op_closure, .op_closure_wide, .op_get_upvalue, .op_dup, .op_import, .op_import_wide, .op_block_given, .op_defined, .op_defined_wide, .op_module, .op_module_wide, .op_extract_kwarg, .op_extract_kwarg_wide, .op_class, .op_class_wide => 1,
+        .op_nil,
+        .op_true,
+        .op_false,
+        .op_get_local,
+        .op_get_local_wide,
+        .op_get_global,
+        .op_get_global_wide,
+        .op_constant,
+        .op_constant_wide,
+        .op_closure,
+        .op_closure_wide,
+        .op_get_upvalue,
+        .op_dup,
+        .op_import,
+        .op_import_wide,
+        .op_block_given,
+        .op_defined,
+        .op_defined_wide,
+        .op_module,
+        .op_module_wide,
+        .op_extract_kwarg,
+        .op_extract_kwarg_wide,
+        .op_class,
+        .op_class_wide,
+        // op_for_next pushes the element on the path that stays in the loop.
+        .op_for_next,
+        => 1,
 
         // --- Pops 1 (Net: -1) ---
         // These operations consume exactly one value from the stack without pushing anything back.

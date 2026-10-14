@@ -6,6 +6,9 @@ const common_token = @import("../../core/token.zig");
 const common_errors = @import("../../core/errors.zig");
 const Diagnostics = common_errors.Diagnostics;
 
+/// One `name = values` of an OpenSCAD for header.
+const ForBinding = struct { name: ast.StringId, range: ast.NodeIndex };
+
 pub const ParseError = common_errors.ParseError;
 
 pub const Precedence = enum(u8) {
@@ -34,7 +37,7 @@ pub const Parser = struct {
     scratch_nodes: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
     scratch_named_args: std.ArrayListUnmanaged(ast.NamedArg) = .empty,
     scratch_params: std.ArrayListUnmanaged(ast.Param) = .empty,
-    scratch_for_bindings: std.ArrayListUnmanaged(ast.ForBinding) = .empty,
+    scratch_for_bindings: std.ArrayListUnmanaged(ForBinding) = .empty,
     scratch_strings: std.ArrayListUnmanaged(ast.StringId) = .empty,
 
     pub fn init(tokens: common_token.TokenList(Tag), source: []const u8, allocator: std.mem.Allocator) !Parser {
@@ -376,9 +379,21 @@ pub const Parser = struct {
                 _ = try self.expect(.r_brace);
                 break :blk b;
             } else try self.parseStatement();
-            const bindings_span = try self.b.addForBindings(self.scratch_for_bindings.items[s_bindings_len..]);
-            return self.b.forStmt(bindings_span, body, is_intersection, start_tok) catch ParseError.OutOfMemory;
+            return self.nestedFor(self.scratch_for_bindings.items[s_bindings_len..], body, is_intersection, start_tok);
         }
+    }
+
+    /// `for (i = a, j = b) body` as the loops it means: one per variable, the first
+    /// outermost. Each is a for_stmt with a single target.
+    fn nestedFor(self: *Parser, bindings: []const ForBinding, body: ast.NodeIndex, is_intersection: bool, start_tok: u24) ParseError!ast.NodeIndex {
+        var inner = body;
+        var i = bindings.len;
+        while (i > 0) {
+            i -= 1;
+            const targets = try self.b.addLhsExprs(&.{.{ .name = bindings[i].name }});
+            inner = self.b.forStmt(targets, bindings[i].range, inner, is_intersection, start_tok) catch return ParseError.OutOfMemory;
+        }
+        return inner;
     }
 
     fn parseComprehensionElement(self: *Parser) ParseError!ast.NodeIndex {
@@ -398,8 +413,7 @@ pub const Parser = struct {
             }
             _ = try self.expect(.r_paren);
             const body = try self.parseComprehensionElement();
-            const span = try self.b.addForBindings(self.scratch_for_bindings.items[s_len..]);
-            return self.b.forStmt(span, body, (start_tag == .keyword_intersection_for), start_tok) catch ParseError.OutOfMemory;
+            return self.nestedFor(self.scratch_for_bindings.items[s_len..], body, (start_tag == .keyword_intersection_for), start_tok);
         } else if (self.tag(0) == .keyword_let) {
             const start_tok = try self.expect(.keyword_let);
             _ = try self.expect(.l_paren);

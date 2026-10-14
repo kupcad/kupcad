@@ -4326,3 +4326,55 @@ test "Parser: a space before ( makes it group the first argument" {
         try testing.expectEqualStrings("Parentheses with a space before them hold one value; to pass several arguments, write '(' right after the method name: name(a, b)", et.parser.diagnostics.list.items[0].message);
     }
 }
+
+test "Parser: for loops take one or more variables, a splat among them, and an iterable" {
+    // `for` was a syntax error: the lexer had no such keyword.
+    const cases = [_]struct { src: []const u8, names: []const []const u8, splat_at: ?usize = null }{
+        .{ .src = "for i in 1..3\n  puts i\nend", .names = &.{"i"} },
+        .{ .src = "for a, b in pairs\nend", .names = &.{ "a", "b" } },
+        .{ .src = "for first, *rest in rows\nend", .names = &.{ "first", "rest" }, .splat_at = 1 },
+        .{ .src = "for @x in xs; end", .names = &.{"@x"} },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source:\n{s}\n", .{case.src});
+        var pt = try KTest.init(case.src);
+        defer pt.deinit();
+        const tree = &pt.parser.b.tree;
+        const node = try lastStatement(&pt, case.src);
+        try testing.expectEqual(ast.Tag.for_stmt, node.tag);
+        const fs = tree.forStmt(node);
+        const targets = tree.getLhsExprs(fs.targets);
+        try testing.expectEqual(case.names.len, targets.len);
+        for (targets, case.names, 0..) |t, name, i| {
+            try testing.expectEqualStrings(name, tree.getString(t.name));
+            try testing.expectEqual(if (case.splat_at == i) @as(?ast.ArgModifier, .splat) else null, t.modifier);
+        }
+        try testing.expect(fs.iterable != .none and fs.body != .none);
+    }
+}
+
+test "Parser: a for loop's variable is a local afterwards, and `in` stays usable as a label" {
+    // As in Ruby, the loop opens no scope: `i -1` after it subtracts.
+    var pt = try KTest.init("for i in xs\nend\ni -1");
+    defer pt.deinit();
+    try testing.expectEqual(ast.Tag.binary_op, (try lastStatement(&pt, "")).tag);
+    // `in` is contextual: `param(:x, validate: { in: [1, 2] })` still parses.
+    var lt = try KTest.init("p = param(:x, default: 1, validate: { in: [1, 2] })");
+    defer lt.deinit();
+    _ = try lastStatement(&lt, "");
+}
+
+test "Parser: a malformed for loop says what's missing" {
+    const cases = [_]struct { src: []const u8, message: []const u8 }{
+        .{ .src = "for i of xs\nend", .message = "Expected 'in' after the loop variables, found 'of'" },
+        .{ .src = "for *a, *b in xs\nend", .message = "A for loop takes at most one *splat variable" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.src});
+        var pt = try KTest.init(case.src);
+        defer pt.deinit();
+        _ = pt.parser.parseProgram() catch {};
+        try testing.expect(pt.parser.diagnostics.list.items.len >= 1);
+        try testing.expectEqualStrings(case.message, pt.parser.diagnostics.list.items[0].message);
+    }
+}

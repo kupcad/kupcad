@@ -136,6 +136,35 @@ double = ->(v) { v * 2 }
 
 `*array` spreads an Array into positional arguments, `**map` a Map into keywords, and `&f` passes a lambda (or `nil`, for no block) as the call's block. A lambda passed as an ordinary argument stays an argument, even in last position.
 
+### Loops
+
+```ruby
+for i in 0...4                         # an Array, a Range or a Map
+  cube(2).translate(i * 5, 0, 0)
+end
+
+for x, y in [[0, 0], [10, 5]]          # several variables spread each element
+  cylinder(r: 1, h: 3).translate(x, y, 0)
+end
+
+for size, *rest in [[3, :m3, :hex]]    # one of them may take the rest
+  puts size
+end
+
+for name, d in { m3: 3, m4: 4 }        # a Map yields [key, value] pairs
+  puts "#{name}: #{d}"
+end
+
+n = 0
+while n < 3                            # `until` loops while the condition is false
+  n += 1
+end
+```
+
+* `for` walks a Range exactly as `.each` does (steps, exclusive ends, negative and fractional steps), an Array as it is at each step (elements pushed during the loop are visited too), and a Map's pairs in insertion order. Anything else is a `TypeError`. One variable takes each element whole; several spread it like a multiple assignment.
+* As in Ruby, a loop opens no scope: the loop variables, and whatever the body assigns, are still there after it.
+* `next` skips to the next element and `break value` ends the loop with that value; otherwise a `for` loop's value is what it iterated, and a `while` loop's is `nil`. Unlike in a block, `return` inside a loop returns from the enclosing `def`.
+
 ### Differences from Ruby
 
 KupCAD borrows Ruby's syntax but deliberately keeps a simpler model; these are design choices, not missing features:

@@ -20,6 +20,7 @@ const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
+const sequence = @import("sequence.zig");
 
 const log = std.log.scoped(.vm);
 
@@ -846,6 +847,26 @@ pub const VM = struct {
                     const a = self.stack[self.stack_top - 2];
                     self.push(a); // Push copies in the exact same order
                     self.push(b);
+                },
+                .op_for_next => {
+                    const slot = self.readOperand(exec_chunk, frame, true);
+                    const exit_offset = self.readJumpOffset(exec_chunk, frame);
+                    const taken = self.getLocal(frame, slot + 1).asNumber();
+                    // As for a native: a raised error may be rescued, unwinding past this frame.
+                    const caller_depth = self.frames.items.len;
+                    const throw_seq = self.throw_seq;
+                    const more = self.pushForElement(self.getLocal(frame, slot), @intFromFloat(taken)) catch |err| {
+                        if (self.alreadyThrown(throw_seq, caller_depth)) |res| {
+                            if (res != .ok) return res;
+                            continue;
+                        }
+                        return self.nativeFailed("for", err);
+                    };
+                    if (more) {
+                        self.setLocal(frame, slot + 1, value.Value.initNumber(taken + 1));
+                    } else {
+                        frame.ip += exit_offset;
+                    }
                 },
                 .op_loop => {
                     // Properly read 3-byte offset
@@ -2420,6 +2441,38 @@ pub const VM = struct {
     /// String (negative indexes count from the end), a Range of them (like Array#slice:
     /// nil when it starts past the end, clamped at the end), or a Map's value (nil when
     /// absent). Strings are indexed by character, as `length` counts them.
+    /// Pushes the element of a `for` loop's `iterable` after the `taken` ones and returns
+    /// true, or returns false when there are no more. A Range yields the values Range#each
+    /// does and a Map its [key, value] pairs; an Array is read live, so it may grow while
+    /// the loop runs.
+    fn pushForElement(self: *VM, iterable: value.Value, taken: u64) error{ RuntimeError, OutOfMemory }!bool {
+        if (iterable.isArray()) {
+            const items = iterable.asArray().items.items;
+            if (taken >= items.len) return false;
+            self.push(items[@intCast(taken)]);
+            return true;
+        }
+        if (iterable.isRange()) {
+            const r = iterable.asRange();
+            const span: sequence.Span = .{ .start = r.start, .end = r.end, .step = r.step, .is_exclusive = r.is_exclusive };
+            if (taken >= try sequence.iterationCount(self, span, "for")) return false;
+            self.push(value.Value.initNumber(span.at(taken)));
+            return true;
+        }
+        if (iterable.isMap()) {
+            const map = &iterable.asMap().map;
+            if (taken >= map.count()) return false;
+            const pair = try self.gc.allocateArray(self);
+            // Rooted before the items are added: appending may run a collection.
+            self.push(value.Value.initObj(&pair.obj));
+            const i: usize = @intCast(taken);
+            try pair.items.appendSlice(self.gc.trackingAllocator(), &.{ map.keys()[i], map.values()[i] });
+            return true;
+        }
+        _ = self.raiseError(.TypeError, "for expects an Array, a Range or a Map, got {s}", .{self.typeName(iterable)});
+        return error.RuntimeError;
+    }
+
     fn executeGetIndex(self: *VM) InterpretResult {
         const index = self.stack[self.stack_top - 1];
         const target = self.stack[self.stack_top - 2];

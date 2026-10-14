@@ -81,7 +81,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
         },
         .for_stmt => {
             const fs = tree.forStmt(node);
-            for (tree.getForBindings(fs.bindings)) |binding| try walk(Context, ctx, tree, binding.range);
+            try walk(Context, ctx, tree, fs.iterable);
             try walk(Context, ctx, tree, fs.body);
         },
         .case_stmt => {
