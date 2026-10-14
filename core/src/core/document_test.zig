@@ -72,3 +72,32 @@ test "Document: parse rejects sources over MAX_SOURCE_BYTES" {
     @memset(src, ' ');
     try testing.expectError(error.SourceTooLarge, Document.parse(testing.allocator, src));
 }
+
+test "Document: running out of memory never hides a syntax error" {
+    // Diagnostics.add dropped a diagnostic it could not store, so broken source could
+    // parse with no errors reported.
+    const source = "w = 10\nx = )\n";
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        var doc = Document.parse(failing.allocator(), source) catch |err| {
+            try testing.expectEqual(error.OutOfMemory, err);
+            continue;
+        };
+        defer doc.deinit();
+        try testing.expect(doc.diagnostics.len > 0);
+        if (!failing.has_induced_failure) break;
+    }
+}
+
+test "Diagnostics: a diagnostic that can't be stored is flagged, not lost silently" {
+    const Diagnostics = @import("errors.zig").Diagnostics;
+    for (0..2) |fail_index| { // the message, then the list entry
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        var diags = Diagnostics.init(failing.allocator());
+        defer diags.deinit();
+        diags.add(.{ .offset = 0, .length = 1, .file_id = 0 }, "boom {d}", .{1});
+        try testing.expect(diags.dropped);
+        try testing.expectEqual(@as(usize, 0), diags.list.items.len);
+    }
+}

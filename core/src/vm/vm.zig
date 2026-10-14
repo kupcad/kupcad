@@ -35,6 +35,9 @@ pub const LookupTarget = enum {
     class,
 };
 
+/// Stack slots every native call may push (GC roots) without reserving them (see VM.push).
+const NATIVE_STACK_RESERVE = 16;
+
 /// Backtraces list at most this many frames (see VM.BacktraceLines).
 const MAX_BACKTRACE_FRAMES = 32;
 /// Room for one backtrace line such as "    from script:12:3:in 'name'".
@@ -300,10 +303,14 @@ pub const VM = struct {
     }
 
     // --- Dynamic Stack Operations ---
+    /// Pushes onto room reserved beforehand: every frame reserves its compiled stack depth
+    /// and every native call NATIVE_STACK_RESERVE (reserveFrame, executeNative), where
+    /// running out of memory is an error. A native needing more slots reserves them with
+    /// ensureStackCapacity first. Growing here is the fallback for a reservation that
+    /// fell short, a bug.
     pub fn push(self: *VM, val: value.Value) void {
-        // Dynamically grow the stack gracefully if we hit the limit
         if (self.stack_top >= self.stack.len) {
-            self.ensureStackCapacity(self.stack_top + 1) catch @panic("OOM during stack expansion");
+            self.ensureStackCapacity(self.stack_top + 1) catch @panic("VM stack reservation exceeded and the stack could not grow");
         }
         self.stack.ptr[self.stack_top] = val;
         self.stack_top += 1;
@@ -388,13 +395,10 @@ pub const VM = struct {
         // afterwards the constants are collectable like any other unreferenced value.
         if (execution_chunk.registry) |r| r.untrack(execution_chunk);
 
-        // Pad the top-level script frame for its local variables
-        const total_locals = func.local_count;
-        if (total_locals > 1) {
-            const locals_to_pad = total_locals - 1; // Slot 0 is occupied by the script closure
-            self.ensureStackCapacity(self.stack_top + locals_to_pad) catch return .runtime_error;
-            for (0..locals_to_pad) |_| self.push(value.Value.initNil());
-        }
+        // Pad the top-level script frame for its local variables (slot 0 holds the closure)
+        const locals_to_pad = if (func.local_count > 1) func.local_count - 1 else 0;
+        self.reserveFrame(func, locals_to_pad) catch return .runtime_error;
+        for (0..locals_to_pad) |_| self.push(value.Value.initNil());
 
         self.frames.appendAssumeCapacity(.{
             .closure = closure,
@@ -1855,11 +1859,21 @@ pub const VM = struct {
         // Pad Virtual Local Slots perfectly
         const total_locals = closure.function.local_count;
         const current_frame_size = self.stack_top - base_slot;
-        if (total_locals > current_frame_size) {
-            const locals_to_pad = total_locals - current_frame_size;
-            try self.ensureStackCapacity(self.stack_top + locals_to_pad);
-            for (0..locals_to_pad) |_| self.push(value.Value.initNil());
-        }
+        const locals_to_pad = if (total_locals > current_frame_size) total_locals - current_frame_size else 0;
+        try self.reserveFrame(closure.function, locals_to_pad);
+        for (0..locals_to_pad) |_| self.push(value.Value.initNil());
+    }
+
+    /// Makes room for a frame of `function` about to start, past its `locals_to_pad`: the
+    /// deepest the compiler saw its code push (max_stack_slots), plus NATIVE_STACK_RESERVE
+    /// for the natives it calls. With that reserved up front, running out of memory is an
+    /// error here instead of a panic in `push`.
+    fn reserveFrame(self: *VM, function: *value.ObjFunction, locals_to_pad: usize) !void {
+        const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(function.chunk.?));
+        self.ensureStackCapacity(self.stack_top + locals_to_pad + exec_chunk.max_stack_slots + NATIVE_STACK_RESERVE) catch |err| {
+            self.runtimeError("Fatal: out of memory growing the VM stack.\n", .{});
+            return err;
+        };
     }
 
     /// `has_block`: the last of the `arg_count` arguments is the call's block (see
@@ -2651,6 +2665,8 @@ pub const VM = struct {
     /// Calls `native_obj` with the `arg_count` arguments at `args_ptr` (the receiver just
     /// below them); `has_block`: the last of them is the call's block.
     inline fn executeNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, args_ptr: [*]value.Value, has_block: bool) InterpretResult {
+        // Natives push GC roots without growing the stack themselves (see NATIVE_STACK_RESERVE).
+        self.ensureStackCapacity(self.stack_top + NATIVE_STACK_RESERVE) catch return self.raiseError(.OutOfMemoryError, "{s} ran out of memory", .{native_obj.name});
         // Depth of the calling frame, captured before an unwind can pop it
         const caller_depth = self.frames.items.len;
         const throw_seq = self.throw_seq;

@@ -11440,3 +11440,23 @@ test "VM: a native's scratch memory survives a backtrace and a nested run of its
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result.asBool());
 }
+
+test "VM: running out of memory for the stack is an error, not a panic" {
+    // `push` grew the stack itself and panicked when it couldn't; frames now reserve their
+    // compiled stack depth up front, where a failure is reported.
+    var limit = @import("../core/limit_allocator.zig").LimitAllocator.init(testing.allocator, 4 * 1024 * 1024);
+    var vm = try VM.init(limit.allocator(), testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+    try registry.registerStandardLibrary(&vm);
+
+    var doc = try Document.parse(testing.allocator, "def f(n, a, b, c)\n  f(n + 1, a, b, c) + 1\nend\nf(0, 1, 2, 3)");
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(limit.allocator());
+    var comp = Compiler.init(limit.allocator(), &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    try testing.expectEqual(.runtime_error, vm.interpret(&out_chunk));
+}

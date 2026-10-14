@@ -59,6 +59,8 @@ pub const Document = struct {
             try pmap.build(&tree, root_index);
             parents = pmap.parents;
         }
+        // A diagnostic lost to out-of-memory would let broken source pass as valid.
+        if (parser.diagnostics.dropped) return error.OutOfMemory;
 
         return .{
             .arena = arena,

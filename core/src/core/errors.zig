@@ -24,6 +24,10 @@ pub const Diagnostic = struct {
 pub const Diagnostics = struct {
     allocator: std.mem.Allocator,
     list: std.ArrayListUnmanaged(Diagnostic) = .empty,
+    /// A diagnostic could not be stored (out of memory). `add` is called where errors
+    /// can't propagate, so the owner checks this instead: a dropped syntax error must
+    /// not let the source pass as valid.
+    dropped: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Diagnostics {
         return .{ .allocator = allocator };
@@ -37,7 +41,13 @@ pub const Diagnostics = struct {
     }
 
     pub fn add(self: *Diagnostics, loc: token.Location, comptime fmt: []const u8, args: anytype) void {
-        const msg = self.allocator.print(fmt, args) catch return;
-        self.list.append(self.allocator, .{ .loc = loc, .message = msg }) catch return;
+        const msg = self.allocator.print(fmt, args) catch {
+            self.dropped = true;
+            return;
+        };
+        self.list.append(self.allocator, .{ .loc = loc, .message = msg }) catch {
+            self.allocator.free(msg);
+            self.dropped = true;
+        };
     }
 };

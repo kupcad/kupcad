@@ -290,6 +290,8 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
     const target_depth = vm.frames.items.len;
     const repl_base_slot = vm.stack_top;
 
+    // The closure, the caller's locals and the padding, then the frame's own depth.
+    vm.ensureStackCapacity(vm.stack_top + 1 + @max(caller_locals.len, func.local_count) + eval_chunk.max_stack_slots) catch return;
     vm.push(value.Value.initObj(&closure.obj));
 
     for (0..caller_locals.len) |i| {
