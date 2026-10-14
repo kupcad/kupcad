@@ -11,10 +11,10 @@ fn objectIsA(vm: *VM, receiver: value.Value, class: *value.ObjClass) !value.Valu
     return value.Value.initBool(VM.isSubclassOf(own, class));
 }
 
-/// Object#responds_to?(Symbol|String) -> true if the receiver has that method (or, for an
+/// Object#respond_to?(Symbol|String) -> true if the receiver has that method (or, for an
 /// instance, that field)
-fn objectRespondsTo(vm: *VM, receiver: value.Value, name_val: value.Value) !value.Value {
-    const query_name = try util.requireName(vm, name_val, "responds_to?", "the method name");
+fn objectRespondTo(vm: *VM, receiver: value.Value, name_val: value.Value) !value.Value {
+    const query_name = try util.requireName(vm, name_val, "respond_to?", "the method name");
     const query_val = try vm.allocateString(query_name);
 
     if (receiver.isClass()) {
@@ -106,7 +106,7 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "class", .func = common.wrapMethod(objectClass) },
     .{ .name = "inspect", .func = common.wrapMethod(objectInspect) },
     .{ .name = "is_a?", .func = common.wrapMethod(objectIsA) },
-    .{ .name = "responds_to?", .func = common.wrapMethod(objectRespondsTo) },
+    .{ .name = "respond_to?", .func = common.wrapMethod(objectRespondTo) },
     .{ .name = "nil?", .func = common.wrapMethod(objectNilQ) },
     .{ .name = "empty?", .func = common.wrapMethod(objectEmptyQ) },
     .{ .name = "method", .func = common.wrapMethod(objectMethod) },

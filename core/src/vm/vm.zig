@@ -2171,7 +2171,7 @@ pub const VM = struct {
             method_val = resolved.method;
             is_private_call = resolved.is_private;
 
-            // Fallback to Object methods (so Class.responds_to? works)
+            // Fallback to Object methods (so Class.respond_to? works)
             if (method_val == null and self.object_class != null) method_val = self.findMethod(self.object_class.?, method_name_val);
         } else if (receiver.isModule()) {
             // Check the module's own methods first

@@ -2088,7 +2088,7 @@ test "VM: Native string and array addition (+ operator)" {
     try testing.expectEqual(@as(f64, 4.0), inner_arr[3].asNumber());
 }
 
-test "VM: Object Reflection (is_a? and responds_to?)" {
+test "VM: Object Reflection (is_a? and respond_to?)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -2107,10 +2107,10 @@ test "VM: Object Reflection (is_a? and responds_to?)" {
         \\  d.is_a?(Animal),
         \\  d.is_a?(String),
         \\  "test".is_a?(String),
-        \\  d.responds_to?(:bark),
-        \\  d.responds_to?("speak"),
-        \\  d.responds_to?(:meow),
-        \\  [1, 2, 3].responds_to?(:push)
+        \\  d.respond_to?(:bark),
+        \\  d.respond_to?("speak"),
+        \\  d.respond_to?(:meow),
+        \\  [1, 2, 3].respond_to?(:push)
         \\]
     ;
 
@@ -2140,13 +2140,13 @@ test "VM: Object Reflection (is_a? and responds_to?)" {
     // "test".is_a?(String) -> true (Testing primitive class tracking)
     try testing.expectEqual(true, arr_obj.items.items[3].asBool());
 
-    // d.responds_to?(:bark) -> true
+    // d.respond_to?(:bark) -> true
     try testing.expectEqual(true, arr_obj.items.items[4].asBool());
-    // d.responds_to?("speak") -> true (Testing superclass method tracking and String arg)
+    // d.respond_to?("speak") -> true (Testing superclass method tracking and String arg)
     try testing.expectEqual(true, arr_obj.items.items[5].asBool());
-    // d.responds_to?(:meow) -> false
+    // d.respond_to?(:meow) -> false
     try testing.expectEqual(false, arr_obj.items.items[6].asBool());
-    // [1, 2, 3].responds_to?(:push) -> true (Testing primitive methods)
+    // [1, 2, 3].respond_to?(:push) -> true (Testing primitive methods)
     try testing.expectEqual(true, arr_obj.items.items[7].asBool());
 }
 
@@ -2312,7 +2312,7 @@ test "VM: Reflection methods safely pop implicit blocks without corrupting stack
     const source =
         \\val = "hello"
         \\check1 = val.is_a?(String)
-        \\check2 = val.responds_to?("split")
+        \\check2 = val.respond_to?("split")
         \\[check1, check2]
     ;
 
@@ -4903,7 +4903,7 @@ test "VM: FFI getReceiver safely extracts receiver and enforces pointer bounds" 
     try testing.expectEqual(@as(f64, 10.0), receiver.asNumber());
 }
 
-test "VM: Geometries and CrossSections are First-Class Objects (is_a? and responds_to?)" {
+test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respond_to?)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -4913,8 +4913,8 @@ test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respon
         \\[
         \\  cube(10).is_a?(Geometry),
         \\  square(10).is_a?(CrossSection),
-        \\  cube(10).responds_to?(:translate),
-        \\  square(10).responds_to?(:extrude),
+        \\  cube(10).respond_to?(:translate),
+        \\  square(10).respond_to?(:extrude),
         \\  cube(10).is_a?(Object)
         \\]
     ;

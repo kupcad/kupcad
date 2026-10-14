@@ -757,6 +757,14 @@ test "Stdlib: every value answers class and inspect" {
     });
 }
 
+test "Stdlib: respond_to? has Ruby's name" {
+    // It was spelled `responds_to?`.
+    try expectGlobalR(&.{
+        .{ .src = "r = \"#{[1].respond_to?(:push)} #{1.respond_to?(\"push\")} #{Array.respond_to?(:new)}\"", .expected = .{ .str = "true false true" } },
+        .{ .src = comptime rescued("1.responds_to?(:abs)"), .expected = .{ .str = "NoMethodError: undefined method 'responds_to?' for Number" } },
+    });
+}
+
 test "Stdlib: an implicit super spreads the method's *rest back into arguments" {
     // `super` with no arguments used to pass `*xs` as one Array argument.
     const classes =
