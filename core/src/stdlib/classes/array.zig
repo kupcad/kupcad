@@ -11,8 +11,9 @@ pub fn arrayLength(vm: *VM, arr: *value.ObjArray) !value.Value {
 }
 
 /// Array#push(val)
-pub fn arrayPush(vm: *VM, arr: *value.ObjArray, val: value.Value) !value.Value {
-    try arr.items.append(vm.gc.trackingAllocator(), val);
+/// Array#push(*values): appends each value, like Ruby (so `arr.push(*more)` works).
+pub fn arrayPush(vm: *VM, arr: *value.ObjArray, vals: []const value.Value) !value.Value {
+    try arr.items.appendSlice(vm.gc.trackingAllocator(), vals);
     return value.Value.initObj(&arr.obj);
 }
 

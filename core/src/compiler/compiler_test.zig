@@ -1063,6 +1063,7 @@ test "Compiler: compiles STL asset import interception" {
     try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
     try testing.expectEqual(chunk.OpCode.op_call, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
     try testing.expectEqual(@as(u8, 1), out_chunk.code.items[5]); // 1 argument
+    try testing.expectEqual(@as(u8, 0), out_chunk.code.items[6]); // no block, no spread
 }
 
 test "Compiler: Local variable names are exported to chunk metadata for REPL introspection" {

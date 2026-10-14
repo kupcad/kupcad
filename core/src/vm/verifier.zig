@@ -85,7 +85,7 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, depth: 
             },
 
             // 1-byte non-constant operand (slot, count, arity)
-            .op_get_local, .op_set_local, .op_build_array, .op_build_map, .op_build_range, .op_interpolate, .op_unpack, .op_call, .op_yield, .op_get_upvalue, .op_set_upvalue, .op_super_invoke => {
+            .op_get_local, .op_set_local, .op_build_array, .op_build_map, .op_build_range, .op_interpolate, .op_unpack, .op_get_upvalue, .op_set_upvalue => {
                 if (ip + 1 > len) return error.OutOfBoundsRead;
                 ip += 1;
             },
@@ -94,6 +94,12 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, depth: 
             .op_constant_wide, .op_get_global_wide, .op_define_global_wide, .op_set_global_wide, .op_class_wide, .op_module_wide, .op_set_member_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide => {
                 if (ip + 2 > len) return error.OutOfBoundsRead;
                 try checkConstant(c, readU16(code, ip));
+                ip += 2;
+            },
+
+            // 1-byte argument count + 1-byte CallFlags
+            .op_call, .op_yield, .op_super_invoke => {
+                if (ip + 2 > len) return error.OutOfBoundsRead;
                 ip += 2;
             },
 
@@ -133,20 +139,20 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, depth: 
                 ip += 4;
             },
 
-            // 1-byte name constant + 1-byte arity + 2-byte Inline Cache
+            // 1-byte name constant + 1-byte arity + 1-byte CallFlags + 2-byte Inline Cache
             .op_invoke => {
-                if (ip + 4 > len) return error.OutOfBoundsRead;
-                try checkConstant(c, code[ip]);
-                try checkInlineCache(c, code, ip + 2);
-                ip += 4;
-            },
-
-            // 2-byte name constant + 1-byte arity + 2-byte Inline Cache
-            .op_invoke_wide => {
                 if (ip + 5 > len) return error.OutOfBoundsRead;
-                try checkConstant(c, readU16(code, ip));
+                try checkConstant(c, code[ip]);
                 try checkInlineCache(c, code, ip + 3);
                 ip += 5;
+            },
+
+            // 2-byte name constant + 1-byte arity + 1-byte CallFlags + 2-byte Inline Cache
+            .op_invoke_wide => {
+                if (ip + 6 > len) return error.OutOfBoundsRead;
+                try checkConstant(c, readU16(code, ip));
+                try checkInlineCache(c, code, ip + 4);
+                ip += 6;
             },
 
             // 4-byte jump offsets

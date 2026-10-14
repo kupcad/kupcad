@@ -164,6 +164,7 @@ test "VM: Closure invocation pads missing arguments with nil natively" {
     // Execute with arg_count = 1
     try main_chunk.writeOp(testing.allocator, .op_call, 0);
     try main_chunk.write(testing.allocator, 1, 0);
+    try main_chunk.write(testing.allocator, 0, 0); // CallFlags
     try main_chunk.writeOp(testing.allocator, .op_return, 0);
     main_chunk.max_stack_slots = 5;
 

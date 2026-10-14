@@ -117,6 +117,24 @@ The rule is the same everywhere:
 * **Named functions** (a `def`, or a built-in such as `cube`) are called by name, with or without parentheses: `plate_width`, `twice(4)`, `twice 4`, `cube` (the same as `cube()`).
 * **Callable values** (a lambda, a block captured with `&blk`, a bound method from `obj.method(:name)`) are called with `.call`, which, like any method, needs no parentheses: `f.call`, `f.call(3)`. A bare `f` is always the value itself, so it can be stored or passed along; `f(3)` is a `TypeError`. A block can also be called implicitly with `yield`.
 
+Any call (to a method, a lambda's `.call`, `super` or `yield`) can spread its arguments as in Ruby:
+
+```ruby
+def box(x, y, z, center: false)
+  cube(x: x, y: y, z: z, center: center)
+end
+
+size = [10, 20, 5]
+opts = { center: true }
+box(*size)                  # box(10, 20, 5)
+box(*size, **opts)          # box(10, 20, 5, center: true)
+
+double = ->(v) { v * 2 }
+[1, 2, 3].map(&double)      # [2, 4, 6]: a lambda passed as the block
+```
+
+`*array` spreads an Array into positional arguments, `**map` a Map into keywords, and `&f` passes a lambda (or `nil`, for no block) as the call's block. A lambda passed as an ordinary argument stays an argument, even in last position.
+
 ### Differences from Ruby
 
 KupCAD borrows Ruby's syntax but deliberately keeps a simpler model; these are design choices, not missing features:

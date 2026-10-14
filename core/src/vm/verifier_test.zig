@@ -30,8 +30,9 @@ test "Verifier: Rejects truncated operands (OutOfBoundsRead)" {
         .{ .op = .op_constant, .provided = 0 }, // 1-byte
         .{ .op = .op_constant_wide, .provided = 1 }, // 2-byte
         .{ .op = .op_get_property, .provided = 2 }, // 3-byte (name + IC)
-        .{ .op = .op_invoke, .provided = 3 }, // 4-byte (name + arity + IC)
-        .{ .op = .op_invoke_wide, .provided = 4 }, // 5-byte (wide name + arity + IC)
+        .{ .op = .op_call, .provided = 1 }, // 2-byte (arity + flags)
+        .{ .op = .op_invoke, .provided = 4 }, // 5-byte (name + arity + flags + IC)
+        .{ .op = .op_invoke_wide, .provided = 5 }, // 6-byte (wide name + arity + flags + IC)
     };
     for (cases) |case| {
         var c = chunk.Chunk.init();
@@ -114,7 +115,7 @@ test "Verifier: Rejects out-of-range constant indexes" {
         &.{ opByte(.op_extract_kwarg_wide), 0, 0x01, 0x00 },
         // property access: name constant, then a (valid) inline cache index
         &.{ opByte(.op_get_property), 7, 0, 0 },
-        &.{ opByte(.op_invoke), 7, 0, 0, 0 },
+        &.{ opByte(.op_invoke), 7, 0, 0, 0, 0 },
     };
     for (cases) |bytes| {
         var c = chunk.Chunk.init();
@@ -134,8 +135,8 @@ test "Verifier: Rejects out-of-range inline cache indexes" {
         &.{ opByte(.op_set_property), 0, 0, 0 },
         &.{ opByte(.op_get_property_wide), 0, 0, 0, 0 },
         &.{ opByte(.op_set_property_wide), 0, 0, 0, 0 },
-        &.{ opByte(.op_invoke), 0, 1, 0, 0 },
-        &.{ opByte(.op_invoke_wide), 0, 0, 1, 0, 0 },
+        &.{ opByte(.op_invoke), 0, 1, 0, 0, 0 },
+        &.{ opByte(.op_invoke_wide), 0, 0, 1, 0, 0, 0 },
     };
     for (cases) |bytes| {
         var c = chunk.Chunk.init();

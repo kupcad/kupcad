@@ -703,6 +703,42 @@ test "Stdlib: a *rest parameter that gets no arguments is empty" {
     });
 }
 
+test "Stdlib: *splat, **hash and &blk spread into any call" {
+    const sum2 = "def g(a, b)\n  a + b\nend\n";
+    try expectGlobalR(&.{
+        // `*arr` used to arrive as one Array argument.
+        .{ .src = sum2 ++ "r = g(*[1, 2])", .expected = .{ .num = 3 } },
+        .{ .src = "def g(a, b, c, d)\n  [a, b, c, d]\nend\nr = g(1, *[2, 3], 4)", .expected = .{ .nums = &.{ 1, 2, 3, 4 } } },
+        .{ .src = "def g(a, b, k: 0)\n  a + b + k\nend\nr = g(*[1, 2], k: 10)", .expected = .{ .num = 13 } },
+        .{ .src = sum2 ++ "def h(*xs)\n  g(*xs) { 0 }\nend\nr = h(1, 2)", .expected = .{ .num = 3 } },
+        .{ .src = "def g(first, *rest)\n  rest\nend\nr = g(*[1, 2, 3])", .expected = .{ .nums = &.{ 2, 3 } } },
+        .{ .src = "def g(*rest)\n  rest.length\nend\nr = g(*[])", .expected = .{ .num = 0 } },
+        .{ .src = "f = ->(a, b) { a * b }\nr = f.call(*[3, 4])", .expected = .{ .num = 12 } },
+        .{ .src = "r = cube(*[2, 3, 4]).volume", .expected = .{ .num = 24 } },
+        .{ .src = "r = [1].push(*[2, 3])", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = "r = [1].push(2, 3)", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = "class P\n  def initialize(a, b)\n    @s = a + b\n  end\n  def s\n    @s\n  end\nend\nr = P.new(*[1, 2]).s", .expected = .{ .num = 3 } },
+        .{ .src = "class A\n  def m(a, b)\n    a + b\n  end\nend\nclass B < A\n  def m(*args)\n    super(*args)\n  end\nend\nr = B.new.m(1, 2)", .expected = .{ .num = 3 } },
+        .{ .src = "def g\n  yield(*[1, 2])\nend\nr = g { |a, b| a + b }", .expected = .{ .num = 3 } },
+        .{ .src = "def g\n  yield *[1, 2]\nend\nr = g { |a, b| a * b }", .expected = .{ .num = 2 } },
+        .{ .src = comptime rescued(sum2 ++ "  g(*5)"), .expected = .{ .str = "TypeError: only an Array can be spread with *" } },
+        // `**hash` used to arrive as a positional argument.
+        .{ .src = "def g(a:, b: 2)\n  a * 10 + b\nend\nopts = { a: 1 }\nr = [g(**opts), g(**opts, b: 5)]", .expected = .{ .nums = &.{ 12, 15 } } },
+        .{ .src = comptime rescued("def g(a: 1)\n    a\n  end\n  g(**[1])"), .expected = .{ .str = "TypeError: only a Map can be spread with **" } },
+        // `&blk` used to be dropped, so the method saw no block.
+        .{ .src = "def g\n  yield 2\nend\nf = ->(x) { x * 3 }\nr = g(&f)", .expected = .{ .num = 6 } },
+        .{ .src = "f = ->(x) { x * 3 }\nr = [1, 2].map(&f)", .expected = .{ .nums = &.{ 3, 6 } } },
+        .{ .src = "def g(&b)\n  b.nil?\nend\nr = g(&nil)", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("def g\n    yield\n  end\n  g(&5)"), .expected = .{ .str = "TypeError: a block argument (&blk) must be a lambda or a block" } },
+        // A lambda as the last argument used to be taken for the block, leaving the parameter nil.
+        .{ .src = "def apply(v, f)\n  f.call(v)\nend\nr = apply(5, ->(x) { x * 2 })", .expected = .{ .num = 10 } },
+        .{ .src = "def keep(f)\n  f\nend\nr = keep(-> { 1 }).call", .expected = .{ .num = 1 } },
+        .{ .src = "def both(f, &b)\n  f.call + b.call\nend\nr = both(-> { 1 }) { 10 }", .expected = .{ .num = 11 } },
+    });
+    // A call can't take both `&blk` and a literal block.
+    try testing.expectError(error.UnexpectedBlock, runScript("def g\n  yield\nend\nf = -> { 1 }\ng(&f) { 2 }"));
+}
+
 test "Stdlib: lambdas behave like blocks" {
     try expectGlobalR(&.{
         // `return` and `next` leave just the lambda or block, never the enclosing def.

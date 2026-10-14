@@ -21,6 +21,8 @@ fn isPlainLocalName(name: []const u8) bool {
 }
 
 pub const CompileError = error{
+    /// A call passed two blocks (`f(&b) { ... }`), or `yield` was given one.
+    UnexpectedBlock,
     OutOfMemory,
     UnknownNode,
     TooManyConstants,
@@ -33,6 +35,12 @@ pub const CompileError = error{
     AstTooDeep,
     TooManyParameters,
     TooManyInlineCaches,
+};
+
+/// How many values a call pushed for its arguments, and how (see chunk.CallFlags).
+const CallArgs = struct {
+    count: usize,
+    flags: chunk.CallFlags = .{},
 };
 
 pub const Upvalue = scope_mod.Upvalue;
@@ -320,8 +328,7 @@ pub const Compiler = struct {
             // In Ruby/KupCAD, this is a 0-argument function/method invocation!
             const name_idx = try self.makeStringConstant(name_str);
             try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
-            try self.emitOp(.op_call);
-            try self.emitByte(0); // 0 arguments
+            try self.emitCall(.op_call, .{ .count = 0 });
             self.simulatePop(1); // Consumes function pointer
             self.simulatePush(1); // Pushes function return value
         } else {
@@ -353,14 +360,17 @@ pub const Compiler = struct {
 
     fn compileYieldStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const args = self.tree.getNodes(self.tree.nodeSpan(node));
-        for (args) |arg| {
-            try self.compileNode(arg);
+        var call: CallArgs = .{ .count = args.len };
+        if (self.anySplat(args)) {
+            try self.compileSpreadArray(args);
+            call = .{ .count = 1, .flags = .{ .spread = true } };
+        } else {
+            for (args) |arg| try self.compileNode(arg);
         }
-        if (args.len > limits.MAX_ARGS) return error.TooManyArguments;
+        if (call.count > limits.MAX_ARGS) return error.TooManyArguments;
 
-        try self.emitOp(.op_yield);
-        try self.emitByte(@intCast(args.len));
-        self.simulatePop(args.len); // Yield consumes args
+        try self.emitCall(.op_yield, call);
+        self.simulatePop(call.count); // Yield consumes args
         self.simulatePush(1); // Yield pushes block return value
     }
 
@@ -583,8 +593,7 @@ pub const Compiler = struct {
             _ = self.vm.pop();
 
             try self.emitOpWithOperand(.op_constant, .op_constant_wide, path_idx);
-            try self.emitOp(.op_call);
-            try self.emitByte(1);
+            try self.emitCall(.op_call, .{ .count = 1 });
 
             self.simulatePop(2);
             self.simulatePush(1);
@@ -885,10 +894,7 @@ pub const Compiler = struct {
             return;
         }
 
-        var has_splat = false;
-        for (elements) |elem| {
-            if (self.tree.getNode(elem).?.tag == .splat_expr) has_splat = true;
-        }
+        const has_splat = self.anySplat(elements);
 
         // Fallback to Dynamic Build Mode if array contains splats OR exceeds 65,535 elements
         const use_static_build = !has_splat and elements.len <= limits.MAX_CONSTANTS;
@@ -902,20 +908,7 @@ pub const Compiler = struct {
             self.simulatePush(1);
         } else {
             // Dynamic Build Mode (Handles splats and point clouds/arrays exceeding 65,535 items)
-            try self.emitOp(.op_build_array);
-            try self.emitByte(0); // Create empty array
-            self.simulatePush(1);
-
-            for (elements) |elem| {
-                const el_node = self.tree.getNode(elem).?;
-                if (el_node.tag == .splat_expr) {
-                    try self.compileNode(self.tree.nodeIndex(el_node));
-                    try self.emitOp(.op_array_spread);
-                } else {
-                    try self.compileNode(elem);
-                    try self.emitOp(.op_array_push);
-                }
-            }
+            try self.compileSpreadArray(elements);
         }
     }
 
@@ -1359,13 +1352,12 @@ pub const Compiler = struct {
                     return;
                 },
                 .yield_call => {
-                    const args = self.tree.getNamedArgs(mc.args);
-                    const actual_arg_count = try self.compileCallArguments(args);
-                    if (actual_arg_count > limits.MAX_ARGS) return error.TooManyArguments; // Changed
+                    const call = try self.compileCallArguments(self.tree.getNamedArgs(mc.args), .none);
+                    // yield calls the method's own block; it cannot hand that block one.
+                    if (call.flags.has_block) return error.UnexpectedBlock;
 
-                    try self.emitOp(.op_yield);
-                    try self.emitByte(@intCast(actual_arg_count));
-                    self.simulatePop(actual_arg_count); // Yield consumes the args
+                    try self.emitCall(.op_yield, call);
+                    self.simulatePop(call.count); // Yield consumes the args
                     self.simulatePush(1); // Yield returns the block's result
                     return;
                 },
@@ -1404,37 +1396,20 @@ pub const Compiler = struct {
             if (mc.is_safe) safe_jump = try self.emitJump(.op_jump_if_nil);
         }
 
-        // Delegate Argument Packing
-        var actual_arg_count = try self.compileCallArguments(self.tree.getNamedArgs(mc.args));
+        const call = try self.compileCallArguments(self.tree.getNamedArgs(mc.args), mc.block);
 
-        // Push the Block as a Closure Argument
-        if (mc.block != .none) {
-            const block_node = self.tree.getNode(mc.block).?;
-            const block_payload = self.tree.block(block_node);
-            const lowered_params = try self.lowerBlockParams(block_payload.params);
-            defer self.allocator.free(lowered_params);
-
-            try self.compileClosureBlock(lowered_params, mc.block, null, false);
-            actual_arg_count += 1;
-        }
-
-        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyArguments; // Changed
-
-        // 4. Execute Invocation
         if (mc.receiver == .none) {
-            try self.emitOp(.op_call);
-            try self.emitByte(@intCast(actual_arg_count));
+            try self.emitCall(.op_call, call);
         } else {
             const name_idx = try self.makeStringConstant(func_name);
             try self.emitOpWithOperand(.op_invoke, .op_invoke_wide, name_idx);
-            try self.emitByte(@intCast(actual_arg_count));
-
+            try self.emitCallOperands(call);
             try self.emitInlineCacheIndex();
 
             if (mc.is_safe) self.patchJump(safe_jump);
         }
 
-        self.simulatePop(actual_arg_count + 1); // Pops args + receiver
+        self.simulatePop(call.count + 1); // Pops args + receiver
         self.simulatePush(1); // Pushes the returned result
     }
 
@@ -1625,7 +1600,7 @@ pub const Compiler = struct {
         try self.emitOp(.op_get_local);
         try self.emitByte(0); // push `self`
 
-        var actual_arg_count: usize = 0;
+        var call: CallArgs = .{ .count = 0 };
 
         if (sc.implicit_args) {
             const func = self.function orelse return error.UnknownNode;
@@ -1635,56 +1610,22 @@ pub const Compiler = struct {
             for (0..arity) |i| {
                 try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
             }
-            actual_arg_count = arity;
-
             if (sc.block == .none) {
-                // Forward the parent's block!
+                // Forward the parent's block (nil when it got none)
                 try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(arity + 1));
-                actual_arg_count += 1;
             } else {
-                // Compile explicitly passed block overriding the implicit one
-                const block_node = self.tree.getNode(sc.block).?;
-                const block_payload = self.tree.block(block_node);
-                const lowered_params = try self.lowerBlockParams(block_payload.params);
-                defer self.allocator.free(lowered_params);
-                try self.compileClosureBlock(lowered_params, sc.block, null, false);
-                actual_arg_count += 1;
+                // An explicitly passed block overrides the implicit one
+                try self.compileBlockLiteral(sc.block);
             }
+            call = .{ .count = @as(usize, arity) + 1, .flags = .{ .has_block = true } };
         } else {
-            const args = self.tree.getNamedArgs(sc.args);
-
-            // Extract Block explicitly passed via reference (`&b`)
-            var block_arg: ?ast.NodeIndex = null;
-            for (args) |arg| {
-                if (arg.modifier != null and arg.modifier.? == .block) {
-                    block_arg = arg.value;
-                }
-            }
-
-            // Delegate Argument Packing
-            actual_arg_count = try self.compileCallArguments(args);
-
-            // Block Argument (Always Pushed LAST)
-            if (block_arg) |b_node| {
-                try self.compileNode(b_node);
-                actual_arg_count += 1;
-            } else if (sc.block != .none) {
-                const block_node = self.tree.getNode(sc.block).?;
-                const block_payload = self.tree.block(block_node);
-                const lowered_params = try self.lowerBlockParams(block_payload.params);
-                defer self.allocator.free(lowered_params);
-                try self.compileClosureBlock(lowered_params, sc.block, null, false);
-                actual_arg_count += 1;
-            }
+            call = try self.compileCallArguments(self.tree.getNamedArgs(sc.args), sc.block);
         }
 
-        if (actual_arg_count > limits.MAX_ARGS) return error.TooManyArguments; // Changed
-
-        try self.emitOp(.op_super_invoke);
-        try self.emitByte(@intCast(actual_arg_count));
+        try self.emitCall(.op_super_invoke, call);
 
         // Pop the arguments + the implicit `self` receiver
-        self.simulatePop(actual_arg_count + 1);
+        self.simulatePop(call.count + 1);
         self.simulatePush(1);
     }
 
@@ -2173,38 +2114,145 @@ pub const Compiler = struct {
     }
 
     /// Unifies Positional and Keyword Argument compilation for Method and Super calls
-    fn compileCallArguments(self: *Compiler, args: []const ast.NamedArg) CompileError!usize {
-        var pos_count: usize = 0;
-        var kw_count: usize = 0;
+    /// Compiles a call's arguments onto the stack, in the order every call dispatch expects:
+    /// the positionals (packed into one Array when any is a `*splat`, flagged `spread`), the
+    /// keywords and `**hash` arguments as one trailing Map, then the block (`&blk` or a
+    /// literal `do ... end` / `{ ... }`, flagged `has_block`).
+    fn compileCallArguments(self: *Compiler, args: []const ast.NamedArg, literal_block: ast.NodeIndex) CompileError!CallArgs {
+        var call: CallArgs = .{ .count = 0 };
 
-        // Compile Positional Arguments
+        var has_splat = false;
         for (args) |arg| {
-            if (arg.name == .none and (arg.modifier == null or arg.modifier.? != .block)) {
+            if (isPositionalArg(arg) and arg.modifier == .splat) has_splat = true;
+        }
+        if (has_splat) {
+            try self.emitOp(.op_build_array);
+            try self.emitByte(0);
+            self.simulatePush(1);
+            for (args) |arg| {
+                if (!isPositionalArg(arg)) continue;
                 try self.compileNode(arg.value);
-                pos_count += 1;
+                try self.emitOp(if (arg.modifier == .splat) .op_array_spread else .op_array_push);
+            }
+            call = .{ .count = 1, .flags = .{ .spread = true } };
+        } else {
+            for (args) |arg| {
+                if (!isPositionalArg(arg)) continue;
+                try self.compileNode(arg.value);
+                call.count += 1;
             }
         }
 
-        // Compile Keyword Arguments
+        if (try self.compileKeywordArguments(args)) call.count += 1;
+
+        var block_arg: ast.NodeIndex = .none;
         for (args) |arg| {
-            if (arg.name != .none and (arg.modifier == null or arg.modifier.? != .block)) {
+            if (arg.modifier != .block) continue;
+            if (block_arg != .none) return error.UnexpectedBlock;
+            block_arg = arg.value;
+        }
+        if (block_arg != .none) {
+            if (literal_block != .none) return error.UnexpectedBlock; // `f(&b) { ... }`
+            try self.compileNode(block_arg);
+        } else if (literal_block != .none) {
+            try self.compileBlockLiteral(literal_block);
+        }
+        if (block_arg != .none or literal_block != .none) {
+            call.count += 1;
+            call.flags.has_block = true;
+        }
+
+        if (call.count > limits.MAX_ARGS) return error.TooManyArguments;
+        return call;
+    }
+
+    fn isPositionalArg(arg: ast.NamedArg) bool {
+        return arg.name == .none and arg.modifier != .block and arg.modifier != .double_splat;
+    }
+
+    /// Packs `name: value` and `**hash` arguments into one Map on the stack; false if the
+    /// call has none.
+    fn compileKeywordArguments(self: *Compiler, args: []const ast.NamedArg) CompileError!bool {
+        var kw_count: usize = 0;
+        var has_double_splat = false;
+        for (args) |arg| {
+            if (arg.name != .none) kw_count += 1;
+            if (arg.modifier == .double_splat) has_double_splat = true;
+        }
+        if (kw_count == 0 and !has_double_splat) return false;
+
+        if (!has_double_splat) {
+            for (args) |arg| {
+                if (arg.name == .none) continue;
                 const name_idx = try self.makeSymbolConstant(self.tree.getString(arg.name));
                 try self.emitOpWithOperand(.op_constant, .op_constant_wide, name_idx);
                 try self.compileNode(arg.value);
-                kw_count += 1;
             }
-        }
-
-        // Pack Keyword Arguments into a trailing Map
-        if (kw_count > 0) {
             try self.emitOpWithOperand(.op_build_map, .op_build_map_wide, kw_count);
-
             self.simulatePop(kw_count * 2);
             self.simulatePush(1);
-            pos_count += 1; // The Hash Map becomes the final trailing positional argument!
+            return true;
         }
 
-        return pos_count;
+        // `**hash` merges at run time, in source order with the named keywords.
+        try self.emitOp(.op_build_map);
+        try self.emitByte(0);
+        self.simulatePush(1);
+        for (args) |arg| {
+            if (arg.modifier == .double_splat) {
+                try self.compileNode(arg.value);
+                try self.emitOp(.op_map_spread);
+            } else if (arg.name != .none) {
+                const name_idx = try self.makeSymbolConstant(self.tree.getString(arg.name));
+                try self.emitOpWithOperand(.op_constant, .op_constant_wide, name_idx);
+                try self.compileNode(arg.value);
+                try self.emitOp(.op_map_insert);
+            }
+        }
+        return true;
+    }
+
+    /// A `do ... end` / `{ ... }` block, compiled as a closure value.
+    fn compileBlockLiteral(self: *Compiler, block_idx: ast.NodeIndex) CompileError!void {
+        const block_payload = self.tree.block(self.tree.getNode(block_idx).?);
+        const lowered_params = try self.lowerBlockParams(block_payload.params);
+        defer self.allocator.free(lowered_params);
+        try self.compileClosureBlock(lowered_params, block_idx, null, false);
+    }
+
+    fn anySplat(self: *Compiler, nodes: []const ast.NodeIndex) bool {
+        for (nodes) |n| {
+            if (self.tree.getNode(n).?.tag == .splat_expr) return true;
+        }
+        return false;
+    }
+
+    /// Builds one Array from `nodes`, spreading each `*splat` element into it.
+    fn compileSpreadArray(self: *Compiler, nodes: []const ast.NodeIndex) CompileError!void {
+        try self.emitOp(.op_build_array);
+        try self.emitByte(0);
+        self.simulatePush(1);
+        for (nodes) |n| {
+            const node = self.tree.getNode(n).?;
+            if (node.tag == .splat_expr) {
+                try self.compileNode(self.tree.nodeIndex(node));
+                try self.emitOp(.op_array_spread);
+            } else {
+                try self.compileNode(n);
+                try self.emitOp(.op_array_push);
+            }
+        }
+    }
+
+    /// Emits a call opcode with its argument count and CallFlags.
+    fn emitCall(self: *Compiler, op: chunk.OpCode, call: CallArgs) CompileError!void {
+        try self.emitOp(op);
+        try self.emitCallOperands(call);
+    }
+
+    fn emitCallOperands(self: *Compiler, call: CallArgs) CompileError!void {
+        try self.emitByte(@intCast(call.count));
+        try self.emitByte(@bitCast(call.flags));
     }
 
     /// Unifies Method, Macro, and Statement parsing for Classes, Modules, and Singleton blocks

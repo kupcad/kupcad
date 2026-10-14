@@ -35,6 +35,9 @@ pub const LookupTarget = enum {
     class,
 };
 
+/// Values a call site pushes after its packed positional Array: the keyword Map and the block.
+const MAX_TRAILING_CALL_VALUES = 2;
+
 pub const InterpretResult = enum {
     ok,
     block_break,
@@ -759,7 +762,7 @@ pub const VM = struct {
                         target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch return self.raiseError(.OutOfMemoryError, "Array spread failed", .{});
                         target_arr.items.appendSliceAssumeCapacity(source_arr.items.items);
                     } else {
-                        if (self.raiseError(.TypeError, "Can only spread arrays into arrays.", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "only an Array can be spread with *", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                     // Safely pop only the spread source array; target array stays on top
@@ -794,7 +797,7 @@ pub const VM = struct {
                             self.mapSet(target_map, key, values[i]) catch return self.raiseError(.OutOfMemoryError, "Map spread failed", .{});
                         }
                     } else {
-                        if (self.raiseError(.TypeError, "Can only spread maps into maps.", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "only a Map can be spread with **", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                     // Safely pop only the spread source map; target map stays on top
@@ -1232,10 +1235,16 @@ pub const VM = struct {
                     if (res != .ok) return res;
                 },
                 .op_super_invoke => {
-                    const arg_count = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
+                    const raw_count = exec_chunk.code.items[frame.ip];
+                    const flags: chunk.CallFlags = @bitCast(exec_chunk.code.items[frame.ip + 1]);
+                    frame.ip += 2;
 
-                    const base_slot = self.stack_top - 1 - arg_count;
+                    const base_slot = self.stack_top - 1 - raw_count;
+                    const call = self.prepareCallArgs(base_slot, raw_count, flags) catch |err| {
+                        if (self.callArgsError(err) != .ok) return .runtime_error;
+                        continue;
+                    };
+                    const arg_count = call.count;
 
                     const method_name_str = if (frame.closure.function.name) |n| n.chars else "";
                     const method_name_val = if (frame.closure.function.name) |n| value.Value.initObj(&n.obj) else self.allocateString("") catch return .runtime_error;
@@ -1253,7 +1262,7 @@ pub const VM = struct {
 
                         if (resolved.method) |m_val| {
                             if (m_val.isClosure()) {
-                                self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
+                                self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false, call.has_block) catch return .runtime_error;
                                 continue;
                             } else if (m_val.isNative()) {
                                 const args_ptr = self.stack.ptr + base_slot + 1;
@@ -1274,8 +1283,14 @@ pub const VM = struct {
                     continue;
                 },
                 .op_yield => {
-                    const yield_arg_count = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
+                    const raw_count = exec_chunk.code.items[frame.ip];
+                    const flags: chunk.CallFlags = @bitCast(exec_chunk.code.items[frame.ip + 1]);
+                    frame.ip += 2;
+                    const yield_call = self.prepareCallArgs(self.stack_top - 1 - raw_count, raw_count, flags) catch |err| {
+                        if (self.callArgsError(err) != .ok) return .runtime_error;
+                        continue;
+                    };
+                    const yield_arg_count = yield_call.count;
 
                     const expected_args = frame.closure.function.arity;
                     const block_val = self.stack[frame.base_slot + expected_args + 1];
@@ -1831,7 +1846,9 @@ pub const VM = struct {
         }
     }
 
-    pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize, is_constructor: bool) !void {
+    /// `has_block`: the last of the `arg_count` arguments is the call's block (see
+    /// chunk.CallFlags); a trailing lambda without it is an ordinary argument.
+    pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize, is_constructor: bool, has_block: bool) !void {
         if (self.frames.items.len >= self.max_call_frames) {
             self.runtimeError("Runtime Error: Call stack overflow (exceeded max frame depth of {d}).\n", .{self.max_call_frames});
             return error.RuntimeError;
@@ -1841,8 +1858,7 @@ pub const VM = struct {
         var provided_args = arg_count;
         var block_val: ?value.Value = null;
 
-        // Extract the explicit block if one was passed in the invocation
-        if (provided_args > 0 and self.stack[self.stack_top - 1].isClosure()) {
+        if (has_block) {
             block_val = self.pop();
             provided_args -= 1;
         }
@@ -2098,15 +2114,18 @@ pub const VM = struct {
     inline fn executeInvoke(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
         const method_name_val = self.readValueOperand(exec_chunk, frame, is_wide);
         const method_name_str = method_name_val.asString().chars;
-        const arg_count = exec_chunk.code.items[frame.ip];
-        frame.ip += 1;
+        const raw_count = exec_chunk.code.items[frame.ip];
+        const flags: chunk.CallFlags = @bitCast(exec_chunk.code.items[frame.ip + 1]);
+        frame.ip += 2;
 
         // Prevent usize underflow if stack is corrupted
-        std.debug.assert(self.stack_top > arg_count);
+        std.debug.assert(self.stack_top > raw_count);
 
         // Read IC
         const ic = self.readInlineCache(exec_chunk, frame);
-        const base_slot = self.stack_top - 1 - arg_count;
+        const base_slot = self.stack_top - 1 - raw_count;
+        const call = self.prepareCallArgs(base_slot, raw_count, flags) catch |err| return self.callArgsError(err);
+        const arg_count = call.count;
         const receiver = self.stack[base_slot];
         const args_ptr = self.stack.ptr + base_slot + 1;
 
@@ -2119,7 +2138,7 @@ pub const VM = struct {
 
         if (receiver.isClass()) {
             if (std.mem.eql(u8, method_name_str, "new")) {
-                return self.constructInstance(receiver.asClass(), arg_count, base_slot);
+                return self.constructInstance(receiver.asClass(), arg_count, base_slot, call.has_block);
             }
 
             const resolved = self.findClassMethodWithPrivacy(receiver.asClass(), method_name_val);
@@ -2155,7 +2174,7 @@ pub const VM = struct {
             if (m_val.isNative()) {
                 return self.executeNative(m_val.asNative(), arg_count, args_ptr, method_name_str);
             } else if (m_val.isClosure()) {
-                self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
+                self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false, call.has_block) catch return .runtime_error;
                 return .ok;
             }
         }
@@ -2185,7 +2204,7 @@ pub const VM = struct {
 
         // --- `.call()` on a callable value (lambda, block, bound method) ---
         if (std.mem.eql(u8, method_name_str, "call") and (receiver.isClosure() or receiver.isBoundMethod())) {
-            return self.callValue(receiver, arg_count, base_slot);
+            return self.callValue(receiver, arg_count, base_slot, call.has_block);
         }
 
         // --- 3. FALLBACK: NATIVE C++ KERNEL METHODS (Geometry) ---
@@ -2471,10 +2490,12 @@ pub const VM = struct {
     }
 
     inline fn executeCall(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
-        const arg_count = exec_chunk.code.items[frame.ip];
-        frame.ip += 1;
+        const raw_count = exec_chunk.code.items[frame.ip];
+        const flags: chunk.CallFlags = @bitCast(exec_chunk.code.items[frame.ip + 1]);
+        frame.ip += 2;
 
-        const base_slot = self.stack_top - 1 - arg_count;
+        const base_slot = self.stack_top - 1 - raw_count;
+        const call = self.prepareCallArgs(base_slot, raw_count, flags) catch |err| return self.callArgsError(err);
         const callee = self.stack[base_slot];
 
         // `f(x)` calls a function by name. A lambda, block or bound method is a value
@@ -2486,18 +2507,68 @@ pub const VM = struct {
         else
             null;
         if (value_kind) |kind| return self.raiseError(.TypeError, "{s} is called with .call(...), not like a function", .{kind});
-        return self.callValue(callee, arg_count, base_slot);
+        return self.callValue(callee, call.count, base_slot, call.has_block);
+    }
+
+    const PreparedCall = struct { count: u8, has_block: bool };
+    const CallArgsError = error{ InvalidBlock, TooManyArguments, OutOfMemory };
+
+    /// Applies a call site's CallFlags to the `arg_count` values above `base_slot`: spreads
+    /// a packed positional Array onto the stack, and drops a nil block (`f(&nil)` passes
+    /// none). Returns the final argument count and whether its last value is the block.
+    fn prepareCallArgs(self: *VM, base_slot: usize, arg_count: u8, flags: chunk.CallFlags) CallArgsError!PreparedCall {
+        var count: usize = arg_count;
+        var has_block = flags.has_block;
+        if (has_block) {
+            const block = self.stack[self.stack_top - 1];
+            if (block.isNil()) {
+                _ = self.pop();
+                count -= 1;
+                has_block = false;
+            } else if (!block.isClosure()) {
+                return error.InvalidBlock;
+            }
+        }
+        if (flags.spread) count = try self.spreadPositionals(base_slot, count);
+        return .{ .count = @intCast(count), .has_block = has_block };
+    }
+
+    /// Replaces the positional Array at `base_slot + 1` with its elements, keeping the
+    /// values after it (the keyword Map and/or the block) in order.
+    fn spreadPositionals(self: *VM, base_slot: usize, count: usize) CallArgsError!usize {
+        const packed_args = self.stack[base_slot + 1].asArray().items.items;
+        const trailing_count = count - 1;
+        std.debug.assert(trailing_count <= MAX_TRAILING_CALL_VALUES);
+        var trailing: [MAX_TRAILING_CALL_VALUES]value.Value = undefined;
+        @memcpy(trailing[0..trailing_count], self.stack[base_slot + 2 ..][0..trailing_count]);
+
+        const total = packed_args.len + trailing_count;
+        if (total > limits.MAX_ARGS) return error.TooManyArguments;
+        try self.ensureStackCapacity(base_slot + 1 + total);
+        // Nothing below allocates, so the GC cannot run while the Array is off the stack.
+        self.stack_top = base_slot + 1;
+        for (packed_args) |arg| self.push(arg);
+        for (trailing[0..trailing_count]) |arg| self.push(arg);
+        return total;
+    }
+
+    fn callArgsError(self: *VM, err: CallArgsError) InterpretResult {
+        return switch (err) {
+            error.InvalidBlock => self.raiseError(.TypeError, "a block argument (&blk) must be a lambda or a block", .{}),
+            error.TooManyArguments => self.raiseError(.ArgumentError, "too many arguments after spreading: a call takes at most {d}", .{limits.MAX_ARGS}),
+            error.OutOfMemory => self.raiseError(.OutOfMemoryError, "out of memory spreading call arguments", .{}),
+        };
     }
 
     /// Calls `callee` (a function, lambda, bound method or class) with the `arg_count`
-    /// arguments above it on the stack.
-    fn callValue(self: *VM, callee: value.Value, arg_count: u8, base_slot: usize) InterpretResult {
+    /// arguments above it on the stack; `has_block`: the last of them is the call's block.
+    fn callValue(self: *VM, callee: value.Value, arg_count: u8, base_slot: usize, has_block: bool) InterpretResult {
         if (callee.isBoundMethod()) {
             const bound = callee.asBoundMethod();
             self.stack.ptr[base_slot] = bound.receiver; // Load the actual receiver into the base slot
 
             if (bound.method.isClosure()) {
-                self.dispatchClosure(bound.method.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
+                self.dispatchClosure(bound.method.asClosure(), arg_count, base_slot, false, has_block) catch return .runtime_error;
             } else if (bound.method.isNative()) {
                 // Same error protocol as any native call (a block raising inside it must unwind)
                 const args_ptr = self.stack.ptr + base_slot + 1;
@@ -2507,10 +2578,10 @@ pub const VM = struct {
             const args_ptr = self.stack.ptr + base_slot + 1;
             return self.executeNative(callee.asNative(), arg_count, args_ptr, "native_call");
         } else if (callee.isClosure()) {
-            self.dispatchClosure(callee.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
+            self.dispatchClosure(callee.asClosure(), arg_count, base_slot, false, has_block) catch return .runtime_error;
         } else if (callee.isClass()) {
             // `Klass(args)` is sugar for `Klass.new(args)`
-            return self.constructInstance(callee.asClass(), arg_count, base_slot);
+            return self.constructInstance(callee.asClass(), arg_count, base_slot, has_block);
         } else if (arg_count == 0) {
             // Bare identifier evaluation of a non-callable value: leave value on stack
             return .ok;
@@ -2523,7 +2594,7 @@ pub const VM = struct {
     /// Instantiates `class_obj` for a call whose receiver sits at `base_slot` with
     /// `arg_count` arguments above it, running `initialize` (a closure or a native,
     /// e.g. Exception's) if the class has one. Leaves the instance at `base_slot`.
-    fn constructInstance(self: *VM, class_obj: *value.ObjClass, arg_count: u8, base_slot: usize) InterpretResult {
+    fn constructInstance(self: *VM, class_obj: *value.ObjClass, arg_count: u8, base_slot: usize, has_block: bool) InterpretResult {
         const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
         self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
 
@@ -2535,7 +2606,7 @@ pub const VM = struct {
 
         if (init_method.isClosure()) {
             // is_constructor: op_return yields the instance, not initialize's last value
-            self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, true) catch return .runtime_error;
+            self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, true, has_block) catch return .runtime_error;
             return .ok;
         }
         if (!init_method.isNative()) return self.raiseError(.TypeError, "'{s}#initialize' is not callable.", .{class_obj.name.chars});

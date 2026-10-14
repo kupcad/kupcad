@@ -78,7 +78,8 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         .op_constant_wide, .op_get_global_wide, .op_define_global_wide, .op_set_global_wide, .op_class_wide, .op_method_wide, .op_import_wide, .op_class_method_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_module_wide, .op_set_member_wide, .op_defined_wide => {
             return constantInstruction(@tagName(op), c, offset, true, writer);
         },
-        .op_call, .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate, .op_super_invoke, .op_yield => {
+        .op_call, .op_super_invoke, .op_yield => return callInstruction(@tagName(op), c, offset, writer),
+        .op_unpack, .op_get_upvalue, .op_set_upvalue, .op_build_range, .op_interpolate => {
             return byteInstruction(@tagName(op), c, offset, writer);
         },
         .op_build_array, .op_build_map, .op_get_local, .op_set_local => {
@@ -182,6 +183,22 @@ fn simpleInstruction(name: []const u8, offset: usize, writer: anytype) !usize {
     return offset + 1;
 }
 
+/// op_call, op_super_invoke, op_yield: an argument count and its CallFlags.
+fn callInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
+    const arg_count = c.code.items[offset + 1];
+    const flags: chunk.CallFlags = @bitCast(c.code.items[offset + 2]);
+    try writer.print("{s: <16} ({d} args{s}{s})\n", .{ name, arg_count, blockNote(flags), spreadNote(flags) });
+    return offset + 3;
+}
+
+fn blockNote(flags: chunk.CallFlags) []const u8 {
+    return if (flags.has_block) ", block" else "";
+}
+
+fn spreadNote(flags: chunk.CallFlags) []const u8 {
+    return if (flags.spread) ", spread" else "";
+}
+
 fn byteInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
     const slot = c.code.items[offset + 1];
     try writer.print("{s: <16} {d: >4}\n", .{ name, slot });
@@ -241,8 +258,10 @@ fn invokeInstruction(name: []const u8, c: *const chunk.Chunk, offset: usize, is_
         arg_count = c.code.items[new_offset + 1];
         new_offset += 2;
     }
+    const flags: chunk.CallFlags = @bitCast(c.code.items[new_offset]);
+    new_offset += 1;
 
-    try writer.print("{s: <16} ({d} args) {d: >4} '", .{ name, arg_count, constant });
+    try writer.print("{s: <16} ({d} args{s}{s}) {d: >4} '", .{ name, arg_count, blockNote(flags), spreadNote(flags), constant });
     try printConstant(c, constant, writer);
     try writer.writeAll("'\n");
     return new_offset;

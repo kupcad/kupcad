@@ -1,6 +1,18 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
 
+/// The byte after the argument count of op_call, op_invoke(_wide), op_super_invoke and
+/// op_yield, saying how the call site passed its arguments.
+pub const CallFlags = packed struct(u8) {
+    /// The last argument is the call's block (`do ... end`, `{ ... }` or `&blk`). Without
+    /// it a trailing lambda is an ordinary argument, never mistaken for the block.
+    has_block: bool = false,
+    /// The positional arguments arrive packed in one Array (the call used `*splat`) and
+    /// are spread onto the stack before dispatch.
+    spread: bool = false,
+    _: u6 = 0,
+};
+
 /// The Virtual Machine Instruction Set
 pub const OpCode = enum(u8) {
     // Constants & Literals

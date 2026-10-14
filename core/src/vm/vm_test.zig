@@ -114,6 +114,7 @@ test "VM: Execute native CAD function (cube) generates symbolic DAG node" {
     try out_chunk.write(testing.allocator, @intCast(name_idx), 0);
     try out_chunk.writeOp(testing.allocator, .op_call, 0);
     try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0); // CallFlags
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 2;
@@ -222,6 +223,7 @@ test "VM: Closures correctly capture and return upvalues" {
 
     try main_chunk.writeOp(testing.allocator, .op_call, 0);
     try main_chunk.write(testing.allocator, 0, 0); // 0 arguments
+    try main_chunk.write(testing.allocator, 0, 0); // CallFlags
     try main_chunk.writeOp(testing.allocator, .op_return, 0);
     main_chunk.max_stack_slots = 4;
 
@@ -365,6 +367,7 @@ test "VM Edge Case: Gracefully handles method calls on raw primitives" {
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
     try out_chunk.write(testing.allocator, @intCast(m_idx), 0);
     try out_chunk.write(testing.allocator, 0, 0); // 0 args
+    try out_chunk.write(testing.allocator, 0, 0); // CallFlags
 
     // --- MANUAL INLINE CACHE ---
     const ic_idx = try out_chunk.addInlineCache(testing.allocator);
@@ -624,6 +627,7 @@ test "VM: Math module namespace and functions" {
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0); // Invoke method on receiver
     try out_chunk.write(testing.allocator, @intCast(sin_str), 0);
     try out_chunk.write(testing.allocator, 1, 0); // 1 arg
+    try out_chunk.write(testing.allocator, 0, 0); // CallFlags
 
     // --- MANUAL INLINE CACHE ---
     const ic_idx2 = try out_chunk.addInlineCache(testing.allocator);
@@ -657,6 +661,7 @@ test "VM: String Native Methods (split, replace)" {
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
     try out_chunk.write(testing.allocator, @intCast(split_str), 0);
     try out_chunk.write(testing.allocator, 1, 0); // 1 arg
+    try out_chunk.write(testing.allocator, 0, 0); // CallFlags
 
     // --- MANUAL INLINE CACHE ---
     const ic_idx = try out_chunk.addInlineCache(testing.allocator);
@@ -707,6 +712,7 @@ test "VM: Array and Map Native Methods (slice, keys)" {
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
     try out_chunk.write(testing.allocator, @intCast(slice_str), 0);
     try out_chunk.write(testing.allocator, 2, 0); // 2 args
+    try out_chunk.write(testing.allocator, 0, 0); // CallFlags
 
     // --- MANUAL INLINE CACHE ---
     const ic_idx = try out_chunk.addInlineCache(testing.allocator);
@@ -767,6 +773,7 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     try parent_chunk.write(testing.allocator, @intCast(const_21), 0);
     try parent_chunk.writeOp(testing.allocator, .op_yield, 0);
     try parent_chunk.write(testing.allocator, 1, 0); // 1 arg
+    try parent_chunk.write(testing.allocator, 0, 0); // CallFlags
     try parent_chunk.writeOp(testing.allocator, .op_return, 0);
     parent_chunk.max_stack_slots = 5;
 
@@ -788,9 +795,10 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     try main_chunk.writeOp(testing.allocator, .op_closure, 0);
     try main_chunk.write(testing.allocator, @intCast(b_const), 0);
 
-    // Call Parent with 1 argument (the block counts as +1 in the raw arg_count before padding!)
+    // Call Parent with 1 argument: the block, flagged as such
     try main_chunk.writeOp(testing.allocator, .op_call, 0);
     try main_chunk.write(testing.allocator, 1, 0);
+    try main_chunk.write(testing.allocator, @bitCast(chunk.CallFlags{ .has_block = true }), 0);
     try main_chunk.writeOp(testing.allocator, .op_return, 0);
     main_chunk.max_stack_slots = 5;
 
