@@ -68,7 +68,7 @@ pub fn nativeInspect(vm: *VM, args: []const value.Value) !value.Value {
                         defer _ = vm.pop();
                         const args_ptr = vm.stack.ptr + vm.stack_top;
 
-                        if (native_obj.function(vm, 0, args_ptr)) |res_str| {
+                        if (native_obj.function(vm, .{ .ptr = args_ptr, .count = 0, .name = native_obj.name })) |res_str| {
                             try res_str.stringify(false, &out.writer);
                             printed = true;
                         } else |_| {}

@@ -93,39 +93,34 @@ fn applyConfigMap(vm: *VM, map: *value.ObjMap, config: *EngineConfig) void {
     }
 }
 
-pub fn cadConfig(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    _ = vm.getReceiver(args); // Skip the `CAD` receiver
+// CAD's methods are called on the CAD object; the receiver carries nothing.
 
-    if (arg_count == 0 or !args[0].isMap()) {
-        vm.reportError("ArgumentError: CAD.config requires a Hash Map of settings.\n", .{});
-        return error.RuntimeError;
-    }
-
+/// CAD.config(settings) -> applies the settings to the active config
+fn cadConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap) !value.Value {
+    _ = receiver;
     const current = &vm.config_stack.items[vm.config_stack.items.len - 1];
-    applyConfigMap(vm, args[0].asMap(), current);
-
+    applyConfigMap(vm, settings, current);
     return value.Value.initNil();
 }
 
-pub fn cadWithConfig(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    _ = vm.getReceiver(args);
-
-    if (arg_count < 2 or !args[0].isMap() or !args[1].isClosure()) {
-        vm.reportError("ArgumentError: CAD.with_config requires a Hash Map and a Block.\n", .{});
+/// CAD.with_config(settings) { ... } -> runs the block with the settings applied on top
+/// of the active config, then restores it
+fn cadWithConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap, block: ?*value.ObjClosure) !value.Value {
+    _ = receiver;
+    const body = block orelse {
+        _ = vm.raiseError(.ArgumentError, "CAD.with_config requires a block", .{});
         return error.RuntimeError;
-    }
+    };
 
     // Inherit the current config, then apply overrides
     var new_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-    applyConfigMap(vm, args[0].asMap(), &new_config);
+    applyConfigMap(vm, settings, &new_config);
 
     // Push the new scope
     try vm.config_stack.append(vm.allocator, new_config);
 
     // Evaluate the block
-    const result = vm.callClosureSync(args[1].asClosure(), &.{});
+    const result = vm.callClosureSync(body, &.{});
 
     // Pop the scope (Guarantees no state leakage!)
     _ = vm.config_stack.pop();
@@ -136,10 +131,9 @@ pub fn cadWithConfig(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value)
     };
 }
 
-pub fn cadCurrentConfig(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    _ = vm.getReceiver(args);
-    _ = arg_count;
+/// CAD.current_config -> the active config as nested Maps
+fn cadCurrentConfig(vm: *VM, receiver: value.Value) !value.Value {
+    _ = receiver;
 
     const config = vm.config_stack.items[vm.config_stack.items.len - 1];
 
@@ -193,7 +187,7 @@ pub fn cadCurrentConfig(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Val
 }
 
 pub const methods = [_]common.MethodDef{
-    .{ .name = "config", .func = cadConfig },
-    .{ .name = "with_config", .func = cadWithConfig },
-    .{ .name = "current_config", .func = cadCurrentConfig },
+    .{ .name = "config", .func = common.wrapMethod(cadConfig) },
+    .{ .name = "with_config", .func = common.wrapMethod(cadWithConfig) },
+    .{ .name = "current_config", .func = common.wrapMethod(cadCurrentConfig) },
 };

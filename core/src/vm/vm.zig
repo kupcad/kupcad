@@ -1266,7 +1266,7 @@ pub const VM = struct {
                                 continue;
                             } else if (m_val.isNative()) {
                                 const args_ptr = self.stack.ptr + base_slot + 1;
-                                const res = self.executeNative(m_val.asNative(), arg_count, args_ptr, method_name_str);
+                                const res = self.executeNative(m_val.asNative(), arg_count, args_ptr, call.has_block);
                                 if (res != .ok) return res;
                                 continue;
                             } else {
@@ -1574,7 +1574,7 @@ pub const VM = struct {
     }
 
     pub fn defineNative(self: *VM, name: []const u8, function: value.NativeFn) !void {
-        const native_obj = try self.gc.allocateNative(self, function);
+        const native_obj = try self.gc.allocateNative(self, name, function);
         const native_val = value.Value.initObj(&native_obj.obj);
         try self.ensureStackCapacity(self.stack_top + 1);
         self.push(native_val);
@@ -2175,7 +2175,7 @@ pub const VM = struct {
         // Dispatch Method if Found
         if (method_val) |m_val| {
             if (m_val.isNative()) {
-                return self.executeNative(m_val.asNative(), arg_count, args_ptr, method_name_str);
+                return self.executeNative(m_val.asNative(), arg_count, args_ptr, call.has_block);
             } else if (m_val.isClosure()) {
                 self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false, call.has_block) catch return .runtime_error;
                 return .ok;
@@ -2575,11 +2575,11 @@ pub const VM = struct {
             } else if (bound.method.isNative()) {
                 // Same error protocol as any native call (a block raising inside it must unwind)
                 const args_ptr = self.stack.ptr + base_slot + 1;
-                return self.executeNative(bound.method.asNative(), arg_count, args_ptr, "bound_native");
+                return self.executeNative(bound.method.asNative(), arg_count, args_ptr, has_block);
             }
         } else if (callee.isNative()) {
             const args_ptr = self.stack.ptr + base_slot + 1;
-            return self.executeNative(callee.asNative(), arg_count, args_ptr, "native_call");
+            return self.executeNative(callee.asNative(), arg_count, args_ptr, has_block);
         } else if (callee.isClosure()) {
             self.dispatchClosure(callee.asClosure(), arg_count, base_slot, false, has_block) catch return .runtime_error;
         } else if (callee.isClass()) {
@@ -2619,7 +2619,7 @@ pub const VM = struct {
         const caller_depth = self.frames.items.len;
         const throw_seq = self.throw_seq;
         // The native's return value is discarded: a constructor always yields the instance
-        _ = native_obj.function(self, arg_count, args_ptr) catch |err| {
+        _ = native_obj.function(self, .{ .ptr = args_ptr, .count = arg_count, .has_block = has_block, .name = native_obj.name }) catch |err| {
             if (err == error.Unwind) {
                 self.restoreAfterUnwind(caller_depth);
                 return .ok;
@@ -2633,17 +2633,19 @@ pub const VM = struct {
         return .ok;
     }
 
-    inline fn executeNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, args_ptr: [*]value.Value, func_name: []const u8) InterpretResult {
+    /// Calls `native_obj` with the `arg_count` arguments at `args_ptr` (the receiver just
+    /// below them); `has_block`: the last of them is the call's block.
+    inline fn executeNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, args_ptr: [*]value.Value, has_block: bool) InterpretResult {
         // Depth of the calling frame, captured before an unwind can pop it
         const caller_depth = self.frames.items.len;
         const throw_seq = self.throw_seq;
 
         // --- PROFILER: Native Enter ---
-        if (self.profiler) |p| p.enterFrame(func_name) catch |err| {
+        if (self.profiler) |p| p.enterFrame(native_obj.name) catch |err| {
             std.log.err("Profiler error: {}", .{err});
         };
 
-        const result = native_obj.function(self, arg_count, args_ptr) catch |err| {
+        const result = native_obj.function(self, .{ .ptr = args_ptr, .count = arg_count, .has_block = has_block, .name = native_obj.name }) catch |err| {
             if (self.profiler) |p| p.exitFrame() catch |e| {
                 std.log.err("Profiler error: {}", .{e});
             };

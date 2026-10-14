@@ -603,9 +603,8 @@ test "VM: op_import routes STL asset imports to native handler" {
 
     // Register a mock `import_stl` kernel function with `*anyopaque`
     const mock_import_stl = struct {
-        fn call(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) !value.Value {
+        fn call(v_ptr: *anyopaque, args: value.NativeArgs) !value.Value {
             _ = v_ptr;
-            _ = arg_count;
             _ = args;
             return value.Value.initNumber(777.0); // Mock Mesh Object ID
         }

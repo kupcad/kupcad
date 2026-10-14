@@ -793,6 +793,36 @@ test "Stdlib: an implicit super spreads the method's *rest back into arguments" 
     });
 }
 
+test "Stdlib: built-in methods check their argument count, types and block" {
+    try expectGlobalR(&.{
+        // Extra arguments used to be dropped silently and missing ones were a generic error.
+        .{ .src = comptime rescued("Math.sqrt(4, 9)"), .expected = .{ .str = "ArgumentError: Math.sqrt expects 1 argument, got 2" } },
+        .{ .src = comptime rescued("Math.sqrt()"), .expected = .{ .str = "ArgumentError: Math.sqrt expects 1 argument, got 0" } },
+        .{ .src = comptime rescued("Math.clamp(1)"), .expected = .{ .str = "ArgumentError: Math.clamp expects 3 arguments, got 1" } },
+        .{ .src = comptime rescued("[1].each(5) { |x| x }"), .expected = .{ .str = "ArgumentError: Array#each expects 0 arguments, got 1" } },
+        .{ .src = comptime rescued("assert(true, \"a\", AssertionError, 4)"), .expected = .{ .str = "ArgumentError: assert expects 1 to 3 arguments, got 4" } },
+        // Wrong types name the method and the argument.
+        .{ .src = comptime rescued("Math.sqrt(\"x\")"), .expected = .{ .str = "TypeError: Math.sqrt expects a number for argument 1, got String" } },
+        .{ .src = comptime rescued("Math.min(1, \"a\")"), .expected = .{ .str = "TypeError: Math.min expects a number for argument 2, got String" } },
+        .{ .src = comptime rescued("5.is_a?(3)"), .expected = .{ .str = "TypeError: is_a? expects a Class for argument 1, got Number" } },
+        .{ .src = comptime rescued("CAD.config(5)"), .expected = .{ .str = "TypeError: CAD.config expects a Map for argument 1, got Number" } },
+        .{ .src = comptime rescued("assert(false, 5)"), .expected = .{ .str = "TypeError: assert expects a String for its message, got Number" } },
+        .{ .src = comptime rescued("union([cube(1), 2])"), .expected = .{ .str = "TypeError: union expects only Solids, got Number at index 1" } },
+        // A block a method needs is required; a lambda argument is never taken for it.
+        .{ .src = comptime rescued("[1].each"), .expected = .{ .str = "ArgumentError: Array#each requires a block" } },
+        .{ .src = comptime rescued("benchmark(\"x\")"), .expected = .{ .str = "ArgumentError: benchmark requires a block" } },
+        .{ .src = comptime rescued("f = ->(x) { x }\n  [1].map(f)"), .expected = .{ .str = "ArgumentError: Array#map expects 0 arguments, got 1" } },
+        .{ .src = comptime rescued("f = -> { 1 }\n  CAD.with_config({}, f)"), .expected = .{ .str = "ArgumentError: CAD.with_config expects 1 argument, got 2" } },
+        .{ .src = "f = ->(x) { x * 2 }\nr = [1, 2].map(&f)", .expected = .{ .nums = &.{ 2, 4 } } },
+        .{ .src = "r = [].push(-> { 1 }, -> { 2 }).length", .expected = .{ .num = 2 } },
+        // Valid calls are unchanged.
+        .{ .src = "r = \"#{[Math.sqrt(9), Math.clamp(5, 0, 3), Math.min(3, 1, 2), Math.max]}\"", .expected = .{ .str = "[3, 3, 1, nil]" } },
+        .{ .src = comptime rescued("assert(false, \"boom\")"), .expected = .{ .str = "AssertionError: boom" } },
+        .{ .src = comptime rescued("assert(false) { \"lazy\" }"), .expected = .{ .str = "AssertionError: lazy" } },
+        .{ .src = "r = benchmark(\"x\") { 5 }", .expected = .{ .num = 5 } },
+    });
+}
+
 test "Stdlib: block_given? works with or without parentheses" {
     // The bare form used to be looked up as a variable: NameError.
     const m = "def m(&b)\n  [block_given?, block_given?()]\nend\n";

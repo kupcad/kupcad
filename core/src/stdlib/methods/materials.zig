@@ -82,11 +82,9 @@ pub fn meshGhost(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 
 // --- Global Block Modifiers ---
 
-pub fn globalHighlight(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    if (arg_count == 0 or !args[0].isClosure()) return error.RuntimeError;
-
-    const result = try vm.callClosureSync(args[0].asClosure(), &.{});
+/// highlight { ... } -> the block's Solid, tagged for the viewer to show in high contrast
+pub fn globalHighlight(vm: *VM, block: ?*value.ObjClosure) !value.Value {
+    const result = try vm.callClosureSync(try requireBlock(vm, block, "highlight"), &.{});
     if (!result.isGeometry()) return result;
 
     const material_id: u32 = @intCast(vm.materials.items.len);
@@ -96,11 +94,9 @@ pub fn globalHighlight(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Valu
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-pub fn globalGhost(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    if (arg_count == 0 or !args[0].isClosure()) return error.RuntimeError;
-
-    const result = try vm.callClosureSync(args[0].asClosure(), &.{});
+/// ghost { ... } -> shows the block's Solid as a translucent reference, outside the model
+pub fn globalGhost(vm: *VM, block: ?*value.ObjClosure) !value.Value {
+    const result = try vm.callClosureSync(try requireBlock(vm, block, "ghost"), &.{});
     if (!result.isGeometry()) return value.Value.initNil();
 
     const material_id: u32 = @intCast(vm.materials.items.len);
@@ -112,4 +108,11 @@ pub fn globalGhost(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) a
     try appendToDisplayList(vm, ghost_geom);
 
     return value.Value.initNil();
+}
+
+fn requireBlock(vm: *VM, block: ?*value.ObjClosure, comptime name: []const u8) !*value.ObjClosure {
+    return block orelse {
+        _ = vm.raiseError(.ArgumentError, name ++ " requires a block", .{});
+        return error.RuntimeError;
+    };
 }

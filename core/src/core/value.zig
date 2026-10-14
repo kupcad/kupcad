@@ -263,13 +263,39 @@ pub const ObjAssembly = struct {
     parts: *ObjArray,
 };
 
-/// Signature for all Native CAD Built-ins
-/// Takes an opaque VM pointer to avoid circular imports, argument count, and a pointer to the first argument on the stack.
-pub const NativeFn = *const fn (vm: *anyopaque, arg_count: u8, args: [*]Value) anyerror!Value;
+/// Signature for all Native CAD Built-ins. Takes an opaque VM pointer to avoid circular
+/// imports. Most natives are typed Zig functions turned into this by stdlib/classes/common.zig.
+pub const NativeFn = *const fn (vm: *anyopaque, args: NativeArgs) anyerror!Value;
+
+/// A native call's arguments, on the VM stack: `count` values at `ptr`, the receiver (or
+/// callee) just below at `ptr[-1]`, and the call's block last when `has_block` (see
+/// chunk.CallFlags) — a lambda passed as an ordinary argument is never taken for it.
+pub const NativeArgs = struct {
+    ptr: [*]Value,
+    count: u8,
+    has_block: bool = false,
+    /// The native's script name, for error messages.
+    name: []const u8,
+
+    pub fn receiver(self: NativeArgs) Value {
+        return (self.ptr - 1)[0];
+    }
+
+    /// The arguments without the block.
+    pub fn positional(self: NativeArgs) []Value {
+        return self.ptr[0 .. self.count - @intFromBool(self.has_block)];
+    }
+
+    pub fn block(self: NativeArgs) ?*ObjClosure {
+        return if (self.has_block) self.ptr[self.count - 1].asClosure() else null;
+    }
+};
 
 pub const ObjNative = struct {
     obj: Obj,
     function: NativeFn,
+    /// The name scripts call it by (static: names come from the stdlib tables).
+    name: []const u8,
 };
 
 pub const ObjBrep = struct {

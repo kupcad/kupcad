@@ -3041,7 +3041,9 @@ test "VM: GC correctly marks executing closures and primitive classes" {
 
     // Bind a native function to aggressively force a GC cycle mid-execution
     const force_gc = struct {
-        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+        fn run(vm_opaque: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+            const arg_count = call.count;
+            const args = call.ptr;
             _ = arg_count;
             _ = args;
             const v: *VM = @ptrCast(@alignCast(vm_opaque));
@@ -3088,14 +3090,16 @@ test "VM: super correctly resolves and executes Native C++ methods" {
 
     // Bind a native method to it that returns 42
     const native_func = struct {
-        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+        fn run(vm_opaque: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+            const arg_count = call.count;
+            const args = call.ptr;
             _ = vm_opaque;
             _ = arg_count;
             _ = args;
             return value.Value.initNumber(42.0);
         }
     }.run;
-    const native_obj = try vm.gc.allocateNative(&vm, native_func);
+    const native_obj = try vm.gc.allocateNative(&vm, "native_func", native_func);
 
     // --- Allocate a Value key for the method name ---
     const get_val_key = try vm.allocateString("get_val");
@@ -6674,7 +6678,7 @@ test "VM: Profiler traces scripts, closures, and native calls seamlessly" {
     // Validate that all three function scopes were intercepted and recorded
     try testing.expect(profiler.stats.contains("script"));
     try testing.expect(profiler.stats.contains("math_heavy"));
-    try testing.expect(profiler.stats.contains("sin"));
+    try testing.expect(profiler.stats.contains("Math.sin")); // natives profile under their qualified name
 
     // Verify execution metrics were collected
     const math_stats = profiler.stats.get("math_heavy").?;
@@ -9742,7 +9746,9 @@ test "VM: Open upvalues do not dangle after stack reallocation" {
 
     // Bind a native function that artificially forces the VM stack to move in memory
     const force_realloc = struct {
-        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+        fn run(vm_opaque: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+            const arg_count = call.count;
+            const args = call.ptr;
             _ = arg_count;
             _ = args;
             const v: *VM = @ptrCast(@alignCast(vm_opaque));
@@ -10581,7 +10587,9 @@ test "VM: FFI Boundary - Exhaustive type checking prevents kernel segfaults" {
 
     // Mock C++ boundary function matching the exact NativeFn prototype
     const MockKernel = struct {
-        fn translate(ctx_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) !value.Value {
+        fn translate(ctx_opaque: *anyopaque, call: value.NativeArgs) !value.Value {
+            const arg_count = call.count;
+            const args = call.ptr;
             const ctx: *VM = @ptrCast(@alignCast(ctx_opaque));
 
             if (arg_count != 1) {
@@ -10638,7 +10646,7 @@ test "VM: DAG Benchmark - Safely orchestrates 10,000 deeply nested CSG booleans"
     vm.instruction_limit = 1_000_000;
 
     const MockKernel = struct {
-        fn shape(ctx_opaque: *anyopaque, _: u8, _: [*]value.Value) !value.Value {
+        fn shape(ctx_opaque: *anyopaque, _: value.NativeArgs) !value.Value {
             const ctx: *VM = @ptrCast(@alignCast(ctx_opaque));
             // Return a generic map so '-' bypasses standard math and triggers binary_handler
             const map_obj = try ctx.gc.allocateMap(ctx);
@@ -10806,7 +10814,9 @@ test "VM: Nested native boundaries unwind exceptions safely without stack corrup
 
     // Native trampoline that executes a closure passed as argument 0
     const native_runner = struct {
-        fn run(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+        fn run(v_ptr: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+            const arg_count = call.count;
+            const args = call.ptr;
             const vm_ptr = @as(*VM, @ptrCast(@alignCast(v_ptr)));
             if (arg_count < 1) return error.RuntimeError;
             const closure_val = args[0];
@@ -10815,7 +10825,7 @@ test "VM: Nested native boundaries unwind exceptions safely without stack corrup
         }
     }.run;
 
-    const native_obj = try vm.gc.allocateNative(&vm, native_runner);
+    const native_obj = try vm.gc.allocateNative(&vm, "run_closure", native_runner);
     try vm.globals.put(vm.allocator, "run_closure", value.Value.initObj(&native_obj.obj));
 
     // Script with nested native boundary re-entrancy:
@@ -10908,7 +10918,9 @@ test "VM: stale unwind entry is not restored by an outer native boundary" {
 }
 
 var probed_unwind_len: usize = 0;
-fn probeUnwindLen(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+fn probeUnwindLen(v_ptr: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+    const arg_count = call.count;
+    const args = call.ptr;
     _ = arg_count;
     _ = args;
     const vm_ptr: *VM = @ptrCast(@alignCast(v_ptr));
@@ -10922,7 +10934,7 @@ test "VM: handled exceptions do not accumulate unwind entries" {
     try registry.registerStandardLibrary(&vm);
     vm.mute_errors = true;
 
-    const native_obj = try vm.gc.allocateNative(&vm, probeUnwindLen);
+    const native_obj = try vm.gc.allocateNative(&vm, "probe_unwind_len", probeUnwindLen);
     try vm.globals.put(vm.allocator, "probe_unwind", value.Value.initObj(&native_obj.obj));
     probed_unwind_len = 0;
 
@@ -10975,7 +10987,9 @@ test "VM: exception raised in a block passed to a bound native method is rescuab
 const native_raise_message = "raised by native";
 
 /// Raises a rescuable exception, then fails with an ordinary error as stdlib natives do.
-fn raiseThenFail(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+fn raiseThenFail(v_ptr: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+    const arg_count = call.count;
+    const args = call.ptr;
     _ = arg_count;
     _ = args;
     const vm_ptr: *VM = @ptrCast(@alignCast(v_ptr));
@@ -10986,7 +11000,7 @@ fn raiseThenFail(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) anyerro
 fn raiseThenFailInvoke(vm_ptr: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = receiver;
     _ = method_name;
-    return raiseThenFail(vm_ptr, arg_count, args);
+    return raiseThenFail(vm_ptr, .{ .ptr = args, .count = arg_count, .name = "raise_then_fail" });
 }
 
 /// Defines `RaisingInit`, a class whose native `initialize` raises.
@@ -10997,7 +11011,7 @@ fn defineRaisingInitClass(vm: *VM) !void {
     const class_obj = try vm.gc.allocateClass(vm, name_val.asString(), vm.object_class);
     try vm.globals.put(vm.allocator, "RaisingInit", value.Value.initObj(&class_obj.obj));
 
-    const init_fn = try vm.gc.allocateNative(vm, raiseThenFail);
+    const init_fn = try vm.gc.allocateNative(vm, "raise_then_fail", raiseThenFail);
     const init_key = try vm.allocateString("initialize");
     try class_obj.methods.put(vm.gc.trackingAllocator(), init_key, value.Value.initObj(&init_fn.obj));
 }

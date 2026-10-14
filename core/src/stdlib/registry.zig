@@ -27,13 +27,13 @@ fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !
 }
 
 fn bindNativeClassMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
-    const native_fn = try vm.gc.allocateNative(vm, func);
+    const native_fn = try vm.gc.allocateNative(vm, name, func);
     const name_val = try vm.allocateString(name);
     try class.class_methods.put(vm.gc.trackingAllocator(), name_val, value.Value.initObj(&native_fn.obj));
 }
 
 fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
-    const native_obj = try vm.gc.allocateNative(vm, func);
+    const native_obj = try vm.gc.allocateNative(vm, name, func);
     const name_val = try vm.allocateString(name);
     try class.methods.put(vm.gc.trackingAllocator(), name_val, value.Value.initObj(&native_obj.obj));
 }

@@ -2,6 +2,8 @@ const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const geom = @import("../../kernel/geometry_handle.zig");
+const util = @import("../methods/util.zig");
+const ErrorKind = @import("../../vm/error_kind.zig").ErrorKind;
 
 /// Defines a native class method mapping
 pub const MethodDef = struct {
@@ -9,66 +11,34 @@ pub const MethodDef = struct {
     func: value.NativeFn,
 };
 
-/// Comptime helper to unbox a `Value` into a strongly typed Zig parameter.
-/// Throws `error.RuntimeError` if the type check fails at runtime.
+/// Comptime helper to unbox a `Value` into a strongly typed Zig parameter; error.WrongType
+/// when it is not of that type.
 pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
     if (T == value.Value) return val;
-    if (T == f64) return if (val.isNumber()) val.asNumber() else error.RuntimeError;
-    if (T == bool) return if (val.isBool()) val.asBool() else error.RuntimeError;
-    if (T == []const u8) return if (val.isString()) val.asString().chars else error.RuntimeError;
-
-    if (T == *value.ObjString) return if (val.isObject() and val.asObj().obj_type == .string)
-        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", val.asObj())))
-    else
-        error.RuntimeError;
-
-    if (T == *value.ObjSymbol) return if (val.isObject() and val.asObj().obj_type == .symbol)
-        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", val.asObj())))
-    else
-        error.RuntimeError;
-
-    if (T == *value.ObjArray) return if (val.isObject() and val.asObj().obj_type == .array)
-        @as(*value.ObjArray, @alignCast(@fieldParentPtr("obj", val.asObj())))
-    else
-        error.RuntimeError;
-
-    if (T == *value.ObjMap) return if (val.isObject() and val.asObj().obj_type == .map)
-        @as(*value.ObjMap, @alignCast(@fieldParentPtr("obj", val.asObj())))
-    else
-        error.RuntimeError;
-
-    if (T == *value.ObjRange) return if (val.isObject() and val.asObj().obj_type == .range)
-        val.asRange()
-    else
-        error.RuntimeError;
-
-    if (T == *value.ObjClosure) return if (val.isClosure())
-        val.asClosure()
-    else
-        error.RuntimeError;
-
-    if (T == *value.ObjInstance) return if (val.isInstance())
-        val.asInstance()
-    else
-        error.RuntimeError;
+    if (T == f64) return if (val.isNumber()) val.asNumber() else error.WrongType;
+    if (T == bool) return if (val.isBool()) val.asBool() else error.WrongType;
+    if (T == []const u8) return if (val.isString()) val.asString().chars else error.WrongType;
+    if (T == *value.ObjString) return if (val.isString()) val.asString() else error.WrongType;
+    if (T == *value.ObjSymbol) return if (val.isSymbol()) val.asSymbol() else error.WrongType;
+    if (T == *value.ObjArray) return if (val.isArray()) val.asArray() else error.WrongType;
+    if (T == *value.ObjMap) return if (val.isMap()) val.asMap() else error.WrongType;
+    if (T == *value.ObjRange) return if (val.isObject() and val.asObj().obj_type == .range) val.asRange() else error.WrongType;
+    if (T == *value.ObjClosure) return if (val.isClosure()) val.asClosure() else error.WrongType;
+    if (T == *value.ObjInstance) return if (val.isInstance()) val.asInstance() else error.WrongType;
+    if (T == *value.ObjClass) return if (val.isClass()) val.asClass() else error.WrongType;
+    if (T == *value.ObjBBox) return if (val.isObject() and val.asObj().obj_type == .bbox) @alignCast(@fieldParentPtr("obj", val.asObj())) else error.WrongType;
 
     // --- Strongly Typed Geometry Pointers for DAG Continuity ---
-    if (T == *value.ObjGeometry) {
-        if (!val.isGeometry()) return error.RuntimeError;
-        return val.asGeometry();
-    }
-    if (T == *value.ObjCrossSection) {
-        if (!val.isCrossSection()) return error.RuntimeError;
-        return val.asCrossSection();
-    }
+    if (T == *value.ObjGeometry) return if (val.isGeometry()) val.asGeometry() else error.WrongType;
+    if (T == *value.ObjCrossSection) return if (val.isCrossSection()) val.asCrossSection() else error.WrongType;
 
     // Auto-Evaluate DAG for raw CAD kernel functions
     if (T == geom.GeometryHandle) {
-        if (!val.isGeometry()) return error.RuntimeError;
+        if (!val.isGeometry()) return error.WrongType;
         return try vm.ensureConcrete(val);
     }
     if (T == geom.CrossSectionHandle) {
-        if (!val.isCrossSection()) return error.RuntimeError;
+        if (!val.isCrossSection()) return error.WrongType;
         return try vm.ensureConcreteCrossSection(val);
     }
 
@@ -77,126 +47,125 @@ pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
             if (val.isNil()) return null;
             return try unboxValue(opt_info.child, val, vm);
         },
-        else => @compileError("Unsupported parameter type in wrapNative: " ++ @typeName(T)),
+        else => @compileError("Unsupported parameter type in a wrapped native: " ++ @typeName(T)),
     }
 }
 
-/// Wraps a strongly typed Zig method signature `fn(vm: *VM, receiver: ReceiverType, arg1: Arg1Type, ...) !value.Value`
-/// into KupCAD's raw `NativeFn` function pointer signature (`fn(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) ...`).
+/// How a TypeError describes parameter type `T` ("expects a number for argument 1").
+fn expectedName(comptime T: type) []const u8 {
+    if (@typeInfo(T) == .optional) return expectedName(@typeInfo(T).optional.child);
+    return switch (T) {
+        f64 => "a number",
+        bool => "true or false",
+        []const u8, *value.ObjString => "a String",
+        *value.ObjSymbol => "a Symbol",
+        *value.ObjArray => "an Array",
+        *value.ObjMap => "a Map",
+        *value.ObjRange => "a Range",
+        *value.ObjClosure => "a block or lambda",
+        *value.ObjInstance => "an object",
+        *value.ObjClass => "a Class",
+        *value.ObjBBox => "a BoundingBox",
+        *value.ObjGeometry, geom.GeometryHandle => "a Solid",
+        *value.ObjCrossSection, geom.CrossSectionHandle => "a Sketch",
+        else => @compileError("No expectedName for " ++ @typeName(T)),
+    };
+}
+
+/// Turns a typed Zig function into a `value.NativeFn`. After `vm` (and, for a method, the
+/// receiver) its parameters take the call's arguments in order: an optional one may be
+/// omitted, and a `[]const value.Value` takes all the rest. A last parameter of type
+/// `?*value.ObjClosure` takes the call's block, or `*value.ObjClosure` a block it requires;
+/// a native without one ignores a block, like Ruby.
+/// A wrong number of arguments is an ArgumentError and a wrong type a TypeError, each
+/// naming the native and the argument: they used to be a generic "Native Execution Error",
+/// and extra arguments were dropped silently.
+fn wrap(comptime func: anytype, comptime has_receiver: bool) value.NativeFn {
+    const param_types = @typeInfo(@TypeOf(func)).@"fn".param_types;
+    const first_arg: usize = 1 + @as(usize, @intFromBool(has_receiver));
+    if (param_types.len < first_arg) @compileError("A wrapped native takes (vm: *VM" ++ (if (has_receiver) ", receiver" else "") ++ ", ...)");
+
+    const last_type = param_types[param_types.len - 1].?;
+    const has_block_param = param_types.len > first_arg and (last_type == ?*value.ObjClosure or last_type == *value.ObjClosure);
+    const arg_types = param_types[first_arg .. param_types.len - @intFromBool(has_block_param)];
+    const arity = comptime blk: {
+        var required: usize = 0;
+        var max: ?usize = arg_types.len;
+        for (arg_types) |T| {
+            if (T.? == []const value.Value) {
+                max = null;
+            } else if (@typeInfo(T.?) != .optional) {
+                required += 1;
+            }
+        }
+        break :blk .{ .required = required, .max = max };
+    };
+
+    return struct {
+        fn nativeWrapper(vm_opaque: *anyopaque, args: value.NativeArgs) anyerror!value.Value {
+            const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+            // SAFETY: call_args is populated element by element below.
+            var call_args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
+            call_args[0] = vm;
+            if (has_receiver) {
+                const receiver = args.receiver();
+                call_args[1] = unboxValue(param_types[1].?, receiver, vm) catch |err| {
+                    if (err == error.WrongType) return raise(vm, .TypeError, "{s} can't be called on {s}", .{ args.name, util.typeName(vm, receiver) });
+                    return err;
+                };
+            }
+
+            const given = args.positional();
+            if (given.len < arity.required or (arity.max != null and given.len > arity.max.?)) {
+                return arityError(vm, args.name, arity.required, arity.max, given.len);
+            }
+
+            var next: usize = 0;
+            inline for (arg_types, first_arg..) |T, slot| {
+                if (T.? == []const value.Value) {
+                    call_args[slot] = given[next..];
+                    next = given.len;
+                } else if (@typeInfo(T.?) == .optional and next >= given.len) {
+                    call_args[slot] = null;
+                } else {
+                    call_args[slot] = unboxValue(T.?, given[next], vm) catch |err| {
+                        if (err == error.WrongType) return raise(vm, .TypeError, "{s} expects {s} for argument {d}, got {s}", .{ args.name, expectedName(T.?), next + 1, util.typeName(vm, given[next]) });
+                        return err;
+                    };
+                    next += 1;
+                }
+            }
+            if (has_block_param) {
+                if (last_type == *value.ObjClosure) {
+                    call_args[param_types.len - 1] = args.block() orelse return raise(vm, .ArgumentError, "{s} requires a block", .{args.name});
+                } else {
+                    call_args[param_types.len - 1] = args.block();
+                }
+            }
+
+            return @call(.auto, func, call_args);
+        }
+    }.nativeWrapper;
+}
+
+/// Wraps `fn(vm: *VM, receiver: ReceiverType, args...) !value.Value` (see `wrap`).
 pub fn wrapMethod(comptime func: anytype) value.NativeFn {
-    const fn_info = @typeInfo(@TypeOf(func)).@"fn";
-    const param_types = fn_info.param_types;
-
-    if (param_types.len < 2) {
-        @compileError("Native method function must take at least (vm: *VM, receiver: ReceiverType)");
-    }
-
-    const has_block_param = param_types.len > 2 and param_types[param_types.len - 1].? == ?*value.ObjClosure;
-
-    return struct {
-        fn nativeWrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-            const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-            // SAFETY: call_args array is populated exactly element-by-element in the loop below.
-            var call_args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
-
-            call_args[0] = vm;
-            call_args[1] = try unboxValue(param_types[1].?, vm.getReceiver(args), vm);
-
-            var effective_arg_count: usize = arg_count;
-            var block_val: ?*value.ObjClosure = null;
-
-            // Intercept the implicit trailing block so optional positionals don't consume it
-            if (has_block_param and arg_count > 0) {
-                const last_arg = args[arg_count - 1];
-                if (last_arg.isClosure()) {
-                    block_val = last_arg.asClosure();
-                    effective_arg_count -= 1;
-                }
-            }
-
-            var arg_idx: usize = 0;
-            inline for (param_types[2..], 2..) |param_type, i| {
-                const ParamType = param_type.?;
-                if (has_block_param and i == param_types.len - 1) {
-                    call_args[i] = block_val;
-                } else if (ParamType == []const value.Value) {
-                    call_args[i] = args[arg_idx..effective_arg_count];
-                    arg_idx = effective_arg_count;
-                } else if (@typeInfo(ParamType) == .optional) {
-                    if (arg_idx < effective_arg_count) {
-                        call_args[i] = try unboxValue(ParamType, args[arg_idx], vm);
-                        arg_idx += 1;
-                    } else {
-                        call_args[i] = null;
-                    }
-                } else {
-                    if (arg_idx >= effective_arg_count) {
-                        vm.runtimeError("Runtime Error: Not enough arguments.\n", .{});
-                        return error.RuntimeError;
-                    }
-                    call_args[i] = try unboxValue(ParamType, args[arg_idx], vm);
-                    arg_idx += 1;
-                }
-            }
-
-            return @call(.auto, func, call_args);
-        }
-    }.nativeWrapper;
+    return wrap(func, true);
 }
 
+/// Wraps `fn(vm: *VM, args...) !value.Value` (see `wrap`).
 pub fn wrapGlobal(comptime func: anytype) value.NativeFn {
-    const fn_info = @typeInfo(@TypeOf(func)).@"fn";
-    const param_types = fn_info.param_types;
+    return wrap(func, false);
+}
 
-    if (param_types.len < 1) {
-        @compileError("Native global function must take at least (vm: *VM)");
-    }
+fn raise(vm: *VM, comptime kind: ErrorKind, comptime fmt: []const u8, args: anytype) error{RuntimeError} {
+    _ = vm.raiseError(kind, fmt, args);
+    return error.RuntimeError;
+}
 
-    const has_block_param = param_types.len > 1 and param_types[param_types.len - 1].? == ?*value.ObjClosure;
-
-    return struct {
-        fn nativeWrapper(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-            const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-            // SAFETY: call_args array is populated exactly element-by-element in the loop below.
-            var call_args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
-            call_args[0] = vm;
-
-            var effective_arg_count: usize = arg_count;
-            var block_val: ?*value.ObjClosure = null;
-
-            if (has_block_param and arg_count > 0) {
-                const last_arg = args[arg_count - 1];
-                if (last_arg.isClosure()) {
-                    block_val = last_arg.asClosure();
-                    effective_arg_count -= 1;
-                }
-            }
-
-            var arg_idx: usize = 0;
-            inline for (param_types[1..], 1..) |param_type, i| {
-                const ParamType = param_type.?;
-                if (has_block_param and i == param_types.len - 1) {
-                    call_args[i] = block_val;
-                } else if (ParamType == []const value.Value) {
-                    call_args[i] = args[arg_idx..effective_arg_count];
-                    arg_idx = effective_arg_count;
-                } else if (@typeInfo(ParamType) == .optional) {
-                    if (arg_idx < effective_arg_count) {
-                        call_args[i] = try unboxValue(ParamType, args[arg_idx], vm);
-                        arg_idx += 1;
-                    } else {
-                        call_args[i] = null;
-                    }
-                } else {
-                    if (arg_idx >= effective_arg_count) {
-                        vm.runtimeError("Runtime Error: Not enough arguments.\n", .{});
-                        return error.RuntimeError;
-                    }
-                    call_args[i] = try unboxValue(ParamType, args[arg_idx], vm);
-                    arg_idx += 1;
-                }
-            }
-            return @call(.auto, func, call_args);
-        }
-    }.nativeWrapper;
+fn arityError(vm: *VM, name: []const u8, required: usize, max: ?usize, given: usize) error{RuntimeError} {
+    const noun = if (required == 1) "argument" else "arguments";
+    if (max == null) return raise(vm, .ArgumentError, "{s} expects at least {d} {s}, got {d}", .{ name, required, noun, given });
+    if (max.? == required) return raise(vm, .ArgumentError, "{s} expects {d} {s}, got {d}", .{ name, required, noun, given });
+    return raise(vm, .ArgumentError, "{s} expects {d} to {d} arguments, got {d}", .{ name, required, max.?, given });
 }

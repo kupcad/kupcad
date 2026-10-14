@@ -41,9 +41,6 @@ pub const GlobalFunction = struct {
     category: Category,
 };
 
-// Strongly typed function pointer for Mesh methods
-pub const MeshMethodFn = *const fn (vm: *VM, receiver: value.Value, arg_count: u8, args: [*]value.Value) anyerror!value.Value;
-
 pub const MeshMethod = struct {
     name: []const u8,
     category: Category,
@@ -75,11 +72,11 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "assert", .func = common.wrapGlobal(diagnostics_mod.nativeAssert), .category = .io },
     .{ .name = "warn", .func = common.wrapGlobal(diagnostics_mod.nativeWarn), .category = .io },
     .{ .name = "benchmark", .func = common.wrapGlobal(diagnostics_mod.nativeBenchmark), .category = .io },
-    .{ .name = "assemble", .func = assembly_mod.nativeAssemble, .category = .brep_op },
-    .{ .name = "union", .func = assembly_mod.nativeUnion, .category = .csg_operator },
-    .{ .name = "batch_hull", .func = assembly_mod.nativeBatchHull, .category = .csg_operator },
-    .{ .name = "highlight", .func = methods.globalHighlight, .category = .transform },
-    .{ .name = "ghost", .func = methods.globalGhost, .category = .transform },
+    .{ .name = "assemble", .func = common.wrapGlobal(assembly_mod.nativeAssemble), .category = .brep_op },
+    .{ .name = "union", .func = common.wrapGlobal(assembly_mod.nativeUnion), .category = .csg_operator },
+    .{ .name = "batch_hull", .func = common.wrapGlobal(assembly_mod.nativeBatchHull), .category = .csg_operator },
+    .{ .name = "highlight", .func = common.wrapGlobal(methods.globalHighlight), .category = .transform },
+    .{ .name = "ghost", .func = common.wrapGlobal(methods.globalGhost), .category = .transform },
     .{ .name = "cube", .func = common.wrapGlobal(primitives.nativeCube), .category = .primitive_3d },
     .{ .name = "cylinder", .func = common.wrapGlobal(primitives.nativeCylinder), .category = .primitive_3d },
     .{ .name = "sphere", .func = common.wrapGlobal(primitives.nativeSphere), .category = .primitive_3d },
@@ -222,20 +219,4 @@ pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Valu
     } else {
         return try vm.allocateCrossSection(result_idx);
     }
-}
-
-// Build the Static Map at compile time
-fn buildMeshMethodMap() std.StaticStringMap(value.NativeFn) {
-    var kvs: [mesh_methods.len]struct { []const u8, value.NativeFn } = undefined;
-    for (mesh_methods, 0..) |m, i| {
-        kvs[i] = .{ m.name, m.func };
-    }
-    return std.StaticStringMap(value.NativeFn).initComptime(kvs);
-}
-
-pub const mesh_method_map = buildMeshMethodMap();
-
-/// Get mesh method
-pub fn getMeshMethod(name: []const u8) ?value.NativeFn {
-    return mesh_method_map.get(name);
 }

@@ -12,49 +12,28 @@ const bbox_class = @import("classes/bbox.zig");
 const gc_class = @import("classes/gc.zig");
 const math_class = @import("classes/math.zig");
 const cad_class = @import("classes/cad.zig");
+const common = @import("classes/common.zig");
 
-fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
-    const native_obj = try vm.gc.allocateNative(vm, func);
-    const native_val = value.Value.initObj(&native_obj.obj);
-    const name_val = try vm.allocateString(name);
-    try class.methods.put(vm.gc.trackingAllocator(), name_val, native_val);
+/// Binds `defs` as methods of `class`. Errors name each one `prefix ++ name`, such as
+/// "String#split" or "Math.sin".
+fn bindMethods(vm: *VM, class: *value.ObjClass, comptime prefix: []const u8, comptime defs: []const common.MethodDef) !void {
+    inline for (defs) |def| {
+        const native_obj = try vm.gc.allocateNative(vm, prefix ++ def.name, def.func);
+        const name_val = try vm.allocateString(def.name);
+        try class.methods.put(vm.gc.trackingAllocator(), name_val, value.Value.initObj(&native_obj.obj));
+    }
 }
 
 pub fn registerCoreClasses(vm: *VM) !void {
-    if (vm.array_class) |cls| {
-        for (array_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
-    }
-    if (vm.map_class) |cls| {
-        for (map_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
-    }
-    if (vm.string_class) |cls| {
-        for (string_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
-    }
-    if (vm.number_class) |cls| {
-        for (number_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
-    }
-    if (vm.range_class) |cls| {
-        for (range_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
-    }
-    if (vm.symbol_class) |cls| {
-        for (symbol_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
-    }
-    if (vm.boolean_class) |cls| {
-        for (boolean_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
-    }
-    if (vm.bbox_class) |cls| {
-        for (bbox_class.methods) |def| try bindNativeMethod(vm, cls, def.name, def.func);
-    }
-    if (vm.globals.get("GC")) |v| {
-        const gc_cls = v.asInstance().class;
-        for (gc_class.methods) |def| try bindNativeMethod(vm, gc_cls, def.name, def.func);
-    }
-    if (vm.globals.get("Math")) |v| {
-        const math_cls = v.asInstance().class;
-        for (math_class.methods) |def| try bindNativeMethod(vm, math_cls, def.name, def.func);
-    }
-    if (vm.globals.get("CAD")) |v| {
-        const cad_cls = v.asInstance().class;
-        for (cad_class.methods) |def| try bindNativeMethod(vm, cad_cls, def.name, def.func);
-    }
+    if (vm.array_class) |cls| try bindMethods(vm, cls, "Array#", &array_class.methods);
+    if (vm.map_class) |cls| try bindMethods(vm, cls, "Map#", &map_class.methods);
+    if (vm.string_class) |cls| try bindMethods(vm, cls, "String#", &string_class.methods);
+    if (vm.number_class) |cls| try bindMethods(vm, cls, "Number#", &number_class.methods);
+    if (vm.range_class) |cls| try bindMethods(vm, cls, "Range#", &range_class.methods);
+    if (vm.symbol_class) |cls| try bindMethods(vm, cls, "Symbol#", &symbol_class.methods);
+    if (vm.boolean_class) |cls| try bindMethods(vm, cls, "Boolean#", &boolean_class.methods);
+    if (vm.bbox_class) |cls| try bindMethods(vm, cls, "BoundingBox#", &bbox_class.methods);
+    if (vm.globals.get("GC")) |v| try bindMethods(vm, v.asInstance().class, "GC.", &gc_class.methods);
+    if (vm.globals.get("Math")) |v| try bindMethods(vm, v.asInstance().class, "Math.", &math_class.methods);
+    if (vm.globals.get("CAD")) |v| try bindMethods(vm, v.asInstance().class, "CAD.", &cad_class.methods);
 }

@@ -69,17 +69,17 @@ pub fn registerExceptions(vm: *VM) !void {
     try vm.globals.put(vm.allocator, "Exception", value.Value.initObj(&exc_class.obj));
     _ = vm.pop();
 
-    const init_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionInit));
+    const init_fn = try vm.gc.allocateNative(vm, "Exception#initialize", common.wrapMethod(exceptionInit));
     const init_key = try vm.allocateString("initialize");
     try exc_class.methods.put(vm.gc.trackingAllocator(), init_key, value.Value.initObj(&init_fn.obj));
 
-    const msg_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionMessage));
+    const msg_fn = try vm.gc.allocateNative(vm, "Exception#message", common.wrapMethod(exceptionMessage));
     const msg_key = try vm.allocateString("message");
     const tos_key = try vm.allocateString("to_s");
     try exc_class.methods.put(vm.gc.trackingAllocator(), msg_key, value.Value.initObj(&msg_fn.obj));
     try exc_class.methods.put(vm.gc.trackingAllocator(), tos_key, value.Value.initObj(&msg_fn.obj));
 
-    const bt_fn = try vm.gc.allocateNative(vm, common.wrapMethod(exceptionBacktrace));
+    const bt_fn = try vm.gc.allocateNative(vm, "Exception#backtrace", common.wrapMethod(exceptionBacktrace));
     const bt_key = try vm.allocateString("backtrace");
     try exc_class.methods.put(vm.gc.trackingAllocator(), bt_key, value.Value.initObj(&bt_fn.obj));
 

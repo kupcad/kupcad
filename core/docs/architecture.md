@@ -234,6 +234,12 @@ pub const Host = struct {
 * `mesh_destructor`: Called when `ObjGeometry` handles are freed by the GC to release C++ mesh memory.
 * `import_handler`: Handles file system import requests (`import "lib.kup"`).
 
+### Native Functions
+
+Built-ins are `ObjNative`s: a `NativeFn` and the name scripts know them by (`Array#map`, `Math.sin`, `extrude`), used in error messages and by the profiler. A `NativeFn` receives `NativeArgs` (`core/value.zig`): the arguments on the VM stack with the receiver just below them, their count, and `has_block` from the call site's `CallFlags`, so a lambda passed as an ordinary argument is never mistaken for the block.
+
+Natives are written as typed Zig functions and turned into `NativeFn`s by `wrapMethod` / `wrapGlobal` (`stdlib/classes/common.zig`). The wrapper unboxes each parameter (an optional one may be omitted, a `[]const Value` takes the rest), passes the block only to a `?*ObjClosure` (optional) or `*ObjClosure` (required) last parameter, and raises an `ArgumentError` for a wrong argument count or a `TypeError` for a wrong type, naming the native and the argument.
+
 ---
 
 ## 7. Geometry Kernel Bridge & Drivers

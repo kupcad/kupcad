@@ -292,9 +292,10 @@ pub const GC = struct {
         return ptr;
     }
 
-    pub fn allocateNative(self: *GC, vm: *VM, function: value.NativeFn) !*value.ObjNative {
+    pub fn allocateNative(self: *GC, vm: *VM, name: []const u8, function: value.NativeFn) !*value.ObjNative {
         const ptr = try self.allocateObject(vm, value.ObjNative, &self.natives, .native);
         ptr.function = function;
+        ptr.name = name;
         return ptr;
     }
 
