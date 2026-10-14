@@ -1091,3 +1091,37 @@ test "Stdlib: non-finite numbers print the same on every platform" {
         .{ .src = "r = 2.5.to_s", .expected = .{ .str = "2.5" } },
     });
 }
+
+test "Stdlib: Sketch#contains? tests the closed 2D region" {
+    // contains? on a sketch used to fail with "Native Execution Error": the method only
+    // accepted solids.
+    const square = "s = square(10)\n";
+    const ring = "s = square(10, center: true) - circle(r: 3)\n";
+    try expectGlobalR(&.{
+        .{ .src = square ++ "r = s.contains?([5, 5])", .expected = .{ .boolean = true } },
+        .{ .src = square ++ "r = s.contains?([15, 5])", .expected = .{ .boolean = false } },
+        .{ .src = square ++ "r = s.contains?([-0.5, 5])", .expected = .{ .boolean = false } },
+        // Closed region: the outline and corners count as inside.
+        .{ .src = square ++ "r = s.contains?([10, 5])", .expected = .{ .boolean = true } },
+        .{ .src = square ++ "r = s.contains?([0, 0])", .expected = .{ .boolean = true } },
+        // A sketch lies in the z = 0 plane.
+        .{ .src = square ++ "r = s.contains?([5, 5, 0])", .expected = .{ .boolean = true } },
+        .{ .src = square ++ "r = s.contains?([5, 5, 3])", .expected = .{ .boolean = false } },
+        // Holes are not material; their outline is.
+        .{ .src = ring ++ "r = s.contains?([0, 0])", .expected = .{ .boolean = false } },
+        .{ .src = ring ++ "r = s.contains?([4, 0])", .expected = .{ .boolean = true } },
+        .{ .src = ring ++ "r = s.contains?([4.9, 4.9])", .expected = .{ .boolean = true } },
+        // Transforms and arbitrary polygons.
+        .{ .src = "s = square(2).translate(x: 20)\nr = s.contains?([21, 1])", .expected = .{ .boolean = true } },
+        .{ .src = "s = square(2).translate(x: 20)\nr = s.contains?([1, 1])", .expected = .{ .boolean = false } },
+        .{ .src = "s = polygon([[0, 0], [10, 0], [0, 10]])\nr = s.contains?([2, 2])", .expected = .{ .boolean = true } },
+        .{ .src = "s = polygon([[0, 0], [10, 0], [0, 10]])\nr = s.contains?([8, 8])", .expected = .{ .boolean = false } },
+        // Solids are unchanged.
+        .{ .src = "r = cube(10).contains?([5, 5, 5])", .expected = .{ .boolean = true } },
+    });
+    try expectGlobalR(&.{
+        .{ .src = "r = begin\n  square(10).contains?([5])\nrescue => e\n  e.message\nend", .expected = .{ .str = "ValueError: contains? expects the point to have 2 to 3 numbers, got 1" } },
+        .{ .src = "r = begin\n  cube(10).contains?([5, 5])\nrescue => e\n  e.message\nend", .expected = .{ .str = "ValueError: contains? expects the point to have 3 numbers, got 2" } },
+        .{ .src = "CAD.config(engine: :brep)\nr = begin\n  square(10).contains?([5, 5])\nrescue => e\n  e.message\nend", .expected = .{ .str = "NotImplementedError: contains? is not supported for B-Rep sketches yet; build the sketch with the default Manifold engine" } },
+    });
+}

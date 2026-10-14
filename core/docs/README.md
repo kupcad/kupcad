@@ -201,7 +201,8 @@ bounds = box.bbox               # Returns a BoundingBox object
 vol = box.volume                # mm³
 area = box.surface_area         # mm²
 gap = box.min_gap(other_part)   # Shortest distance between two solids
-is_inside = box.contains?(pt)   # Point-in-polygon/solid check
+is_inside = box.contains?([x, y, z])        # Point-in-solid check
+on_plate = square(10).contains?([x, y])     # Sketches: [x, y] (or [x, y, 0]); holes excluded, outline included
 topology = box.genus            # Topological genus (holes)
 
 ```

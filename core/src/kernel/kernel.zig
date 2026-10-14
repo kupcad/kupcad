@@ -152,6 +152,12 @@ pub inline fn crossSectionBounds(handle: geom.CrossSectionHandle) geom.Rect2D {
     return dispatch("crossSectionBoundsFn", handle, .{});
 }
 
+/// Whether `pt` lies in the sketch's region, boundary included (within `tolerance`).
+/// Null when the engine cannot answer.
+pub inline fn crossSectionContainsPoint(handle: geom.CrossSectionHandle, pt: [2]f64, tolerance: f64) ?bool {
+    return dispatch("crossSectionContainsPointFn", handle, .{ pt, tolerance });
+}
+
 pub inline fn crossSectionTransform(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
     return dispatch("crossSectionTransformFn", cs, .{mat});
 }

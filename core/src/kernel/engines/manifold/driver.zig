@@ -1,6 +1,7 @@
 const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
+const planar = @import("../../planar.zig");
 const manifold = @import("../../../bindings/manifold.zig");
 
 pub fn vecDot(a: [3]f64, b: [3]f64) f64 {
@@ -170,6 +171,28 @@ fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
     const temp_3d = manifold.extrude(cs, 1.0, 1, 0.0, 1.0, 1.0) orelse return 0.0;
     defer manifold.destruct(temp_3d);
     return manifold.volume(temp_3d);
+}
+
+fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, tolerance: f64) ?bool {
+    if (@intFromPtr(handle.ptr) == 0) return false;
+    const cs: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(handle.ptr));
+    const polys = manifold.crossSectionToPolygons(cs) orelse return null;
+    defer manifold.deletePolygons(polys);
+
+    var region = planar.RegionTest.init(pt, tolerance);
+    for (0..manifold.polygonsLength(polys)) |ci| {
+        const n = manifold.polygonsSimpleLength(polys, ci);
+        if (n < 2) continue;
+        const last = manifold.polygonsGetPoint(polys, ci, n - 1);
+        var prev: [2]f64 = .{ last.x, last.y };
+        for (0..n) |i| {
+            const p = manifold.polygonsGetPoint(polys, ci, i);
+            const cur: [2]f64 = .{ p.x, p.y };
+            region.addEdge(prev, cur);
+            prev = cur;
+        }
+    }
+    return region.contains();
 }
 
 fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
@@ -653,6 +676,7 @@ pub const driver = struct {
     pub const boundingBoxFn = boundingBoxImpl;
     pub const crossSectionAreaFn = crossSectionAreaImpl;
     pub const crossSectionBoundsFn = crossSectionBoundsImpl;
+    pub const crossSectionContainsPointFn = crossSectionContainsPointImpl;
     pub const queryFacesFn = queryFacesImpl;
     pub const volumeFn = volumeImpl;
     pub const surfaceAreaFn = surfaceAreaImpl;

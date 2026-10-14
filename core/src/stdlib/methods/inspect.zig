@@ -73,6 +73,7 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 }
 
 pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (receiver.isCrossSection()) return sketchContains(vm, receiver, args);
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 1) {
         _ = vm.throwDynamicError("ArgumentError: contains? expects a point [x, y, z]", .{});
@@ -82,6 +83,27 @@ pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !
 
     const handle = try vm.ensureConcrete(receiver);
     const inside = kernel.containsPoint(handle, pt);
+    return value.Value.initBool(inside);
+}
+
+/// Sketch#contains?([x, y]) / ([x, y, z]): whether the point lies in the sketch's region.
+/// The region is closed (points on the outline count, within the engine tolerance) and
+/// holes are excluded. A sketch lives in the z = 0 plane, so a 3D point off that plane is
+/// never contained; accepting [x, y, z] lets generic code pass 3D points.
+fn sketchContains(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (args.len < 1) {
+        _ = vm.throwDynamicError("ArgumentError: contains? on a sketch expects a point [x, y]", .{});
+        return error.RuntimeError;
+    }
+    const pt = try util.parseNumberArray(3, vm, args[0], .{ .method = "contains?", .name = "the point" }, 2, 0.0);
+    const tolerance = vm.config_stack.items[vm.config_stack.items.len - 1].manifold.tolerance;
+    if (@abs(pt[2]) > tolerance) return value.Value.initBool(false);
+
+    const handle = try vm.ensureConcreteCrossSection(receiver);
+    const inside = kernel.crossSectionContainsPoint(handle, .{ pt[0], pt[1] }, tolerance) orelse {
+        _ = vm.throwDynamicError("NotImplementedError: contains? is not supported for B-Rep sketches yet; build the sketch with the default Manifold engine", .{});
+        return error.RuntimeError;
+    };
     return value.Value.initBool(inside);
 }
 

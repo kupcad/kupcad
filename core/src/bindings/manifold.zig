@@ -53,6 +53,9 @@ extern fn manifold_alloc_cross_section() ?*ManifoldCrossSection;
 extern fn manifold_delete_cross_section(cs: ?*ManifoldCrossSection) void;
 extern fn manifold_alloc_polygons() ?*ManifoldPolygons;
 extern fn manifold_delete_polygons(p: ?*ManifoldPolygons) void;
+extern fn manifold_polygons_length(ps: ?*ManifoldPolygons) usize;
+extern fn manifold_polygons_simple_length(ps: ?*ManifoldPolygons, idx: usize) usize;
+extern fn manifold_polygons_get_point(ps: ?*ManifoldPolygons, simple_idx: usize, pt_idx: usize) ManifoldVec2;
 extern fn manifold_alloc_manifold_vec() ?*ManifoldVecObj;
 // NOTE: manifold_destruct_manifold_vec only runs ~vector() on memory from
 // manifold_alloc_manifold_vec; manifold_delete_manifold_vec also frees it.
@@ -302,6 +305,28 @@ pub fn transform(obj: ?*ManifoldObj, mat: *const [12]f64) ?*ManifoldObj {
 }
 pub fn crossSectionTransform(cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) ?*ManifoldCrossSection {
     return manifold_cross_section_transform(manifold_alloc_cross_section(), cs, x1, y1, x2, y2, x3, y3);
+}
+
+/// The contours of a cross section (outer contours counter-clockwise, holes clockwise).
+/// Free with deletePolygons.
+pub fn crossSectionToPolygons(cs: ?*ManifoldCrossSection) ?*ManifoldPolygons {
+    return manifold_cross_section_to_polygons(manifold_alloc_polygons(), cs);
+}
+
+pub fn deletePolygons(ps: ?*ManifoldPolygons) void {
+    manifold_delete_polygons(ps);
+}
+
+pub fn polygonsLength(ps: ?*ManifoldPolygons) usize {
+    return manifold_polygons_length(ps);
+}
+
+pub fn polygonsSimpleLength(ps: ?*ManifoldPolygons, idx: usize) usize {
+    return manifold_polygons_simple_length(ps, idx);
+}
+
+pub fn polygonsGetPoint(ps: ?*ManifoldPolygons, simple_idx: usize, pt_idx: usize) ManifoldVec2 {
+    return manifold_polygons_get_point(ps, simple_idx, pt_idx);
 }
 
 pub fn crossSectionArea(cs: ?*const anyopaque) f64 {

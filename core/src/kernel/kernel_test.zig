@@ -100,3 +100,47 @@ test "Kernel: ghost display list survives garbage collection" {
 
     try testing.expectApproxEqAbs(@as(f64, 1000.0), kernel.volume(vm.display_list.items[0]), 1e-6);
 }
+
+const planar = @import("planar.zig");
+
+fn regionContains(contours: []const []const planar.Vec2, p: planar.Vec2, tolerance: f64) bool {
+    var region = planar.RegionTest.init(p, tolerance);
+    for (contours) |c| region.addContour(c);
+    return region.contains();
+}
+
+test "Kernel planar: point in region with holes, boundary and orientation" {
+    const tol = 1e-9;
+    const outer_ccw = [_]planar.Vec2{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
+    const outer_cw = [_]planar.Vec2{ .{ 0, 0 }, .{ 0, 10 }, .{ 10, 10 }, .{ 10, 0 } };
+    const hole_cw = [_]planar.Vec2{ .{ 4, 4 }, .{ 4, 6 }, .{ 6, 6 }, .{ 6, 4 } };
+    const square: []const []const planar.Vec2 = &.{&outer_ccw};
+    const ring: []const []const planar.Vec2 = &.{ &outer_ccw, &hole_cw };
+
+    const Case = struct { contours: []const []const planar.Vec2, p: planar.Vec2, inside: bool };
+    const cases = [_]Case{
+        .{ .contours = square, .p = .{ 5, 5 }, .inside = true },
+        .{ .contours = square, .p = .{ 11, 5 }, .inside = false },
+        .{ .contours = square, .p = .{ 5, -1e-6 }, .inside = false },
+        // Orientation of a lone contour doesn't matter under the nonzero rule.
+        .{ .contours = &.{&outer_cw}, .p = .{ 5, 5 }, .inside = true },
+        // Boundary: edges, vertices, and a ray passing exactly through a vertex.
+        .{ .contours = square, .p = .{ 10, 5 }, .inside = true },
+        .{ .contours = square, .p = .{ 0, 0 }, .inside = true },
+        .{ .contours = square, .p = .{ -1, 10 }, .inside = false },
+        // A hole wound opposite to its outer contour is excluded, its outline is not.
+        .{ .contours = ring, .p = .{ 5, 5 }, .inside = false },
+        .{ .contours = ring, .p = .{ 4, 5 }, .inside = true },
+        .{ .contours = ring, .p = .{ 2, 2 }, .inside = true },
+        // Degenerate input: no contours, or a contour too short to have edges.
+        .{ .contours = &.{}, .p = .{ 0, 0 }, .inside = false },
+        .{ .contours = &.{&[_]planar.Vec2{.{ 1, 1 }}}, .p = .{ 1, 1 }, .inside = false },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("point: {any}\n", .{case.p});
+        try std.testing.expectEqual(case.inside, regionContains(case.contours, case.p, tol));
+    }
+    // The tolerance widens only the outline, symmetrically.
+    try std.testing.expect(regionContains(square, .{ 10.0005, 5 }, 1e-3));
+    try std.testing.expect(!regionContains(square, .{ 10.002, 5 }, 1e-3));
+}

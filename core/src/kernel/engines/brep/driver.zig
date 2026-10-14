@@ -634,6 +634,15 @@ fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
     return locus_prop.crossSectionArea(&solid.t_arena, &solid.g_arena, solid.solid_id);
 }
 
+/// Locus does not expose sketch contours yet; null tells the caller this engine can't
+/// answer, so the user gets a clear error instead of a wrong `false`.
+fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, tolerance: f64) ?bool {
+    _ = handle;
+    _ = pt;
+    _ = tolerance;
+    return null;
+}
+
 fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
     if (@intFromPtr(handle.ptr) == 0) return .{ .min = .{ 0, 0 }, .max = .{ 0, 0 } };
     const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
@@ -790,6 +799,7 @@ pub const driver = struct {
     pub const boundingBoxFn = boundingBoxImpl;
     pub const crossSectionAreaFn = crossSectionAreaImpl;
     pub const crossSectionBoundsFn = crossSectionBoundsImpl;
+    pub const crossSectionContainsPointFn = crossSectionContainsPointImpl;
     pub const queryFacesFn = queryFacesImpl;
     pub const volumeFn = volumeImpl;
     pub const surfaceAreaFn = surfaceAreaImpl;
