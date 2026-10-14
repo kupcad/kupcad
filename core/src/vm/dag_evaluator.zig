@@ -122,7 +122,7 @@ fn kernelFailed(vm: *VM, tag: dag.DAGTag) error{RuntimeError} {
 
 fn checkSameEngine(vm: *VM, a: geom.EngineType, b: geom.EngineType) !void {
     if (a != b) {
-        vm.reportError("Runtime Error: cannot combine {s} and {s} geometry in one operation.\n", .{ @tagName(a), @tagName(b) });
+        _ = vm.raiseError(.GeometryError, "can't combine {s} and {s} geometry in one operation", .{ @tagName(a), @tagName(b) });
         return error.EngineMismatch;
     }
 }
@@ -233,7 +233,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
         var frame = &f_stack.frames.items[f_stack.frames.items.len - 1];
 
         if (frame.node_idx >= vm.dag_builder.nodes.items.len) {
-            vm.reportError("Runtime Error: DAG Node Index {d} out of bounds.\n", .{frame.node_idx});
+            _ = vm.raiseError(.RuntimeError, "internal error: geometry node {d} is out of range", .{frame.node_idx});
             return error.RuntimeError;
         }
 
@@ -563,7 +563,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 }
                 const verts = kernel.numVerts(top.value.geometry);
                 if (verts > config.max_vertices) {
-                    vm.reportError("RAM Budget Exceeded: Generated mesh is too complex ({d} vertices).\n", .{verts});
+                    _ = vm.raiseError(.GeometryError, "{s} produced {d} vertices, above the {d}-vertex limit; lower the resolution (segments:) or simplify the model", .{ dag.scriptName(node.tag), verts, config.max_vertices });
                     return error.RamBudgetExceeded; // still owned -> destroyed by errdefer
                 }
 

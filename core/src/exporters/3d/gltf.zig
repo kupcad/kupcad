@@ -1,6 +1,7 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const util = @import("../../stdlib/methods/util.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const draco = @import("../../bindings/draco.zig");
@@ -392,7 +393,7 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
             if (part.isGeometry()) try handles.append(vm.allocator, try vm.ensureConcrete(part));
         }
     } else {
-        vm.reportError("TypeError: export_gltf expects a Geometry, Assembly, or Array.\n", .{});
+        _ = vm.raiseError(.TypeError, "export_gltf expects a Geometry, an Assembly or an Array of them, got {s}", .{util.typeName(vm, receiver)});
         return error.RuntimeError;
     }
 

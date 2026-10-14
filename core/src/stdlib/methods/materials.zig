@@ -3,9 +3,10 @@ const VM = @import("../../vm/vm.zig").VM;
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
 const kernel = @import("../../kernel/kernel.zig");
 const util = @import("util.zig");
+const error_kind = @import("../../vm/error_kind.zig");
 
 pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "material", receiver);
 
     const parsed = try util.parseKwargs(struct {
         color: ?[]const u8 = null,
@@ -41,7 +42,10 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
 /// list therefore stores its own copy, destroyed in VM.deinit.
 fn appendToDisplayList(vm: *VM, ghost_geom: value.Value) !void {
     const borrowed = try vm.ensureConcrete(ghost_geom);
-    const owned = kernel.clone(borrowed) orelse return error.RuntimeError;
+    const owned = kernel.clone(borrowed) orelse {
+        _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"ghost"});
+        return error.RuntimeError;
+    };
     vm.display_list.append(vm.allocator, owned) catch |err| {
         kernel.destruct(owned);
         return err;
@@ -52,7 +56,7 @@ fn appendToDisplayList(vm: *VM, ghost_geom: value.Value) !void {
 
 pub fn meshHighlight(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     _ = args;
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "highlight", receiver);
 
     const material_id: u32 = @intCast(vm.materials.items.len);
     // Pure semantic tagging. Let the viewer handle the visuals.
@@ -64,7 +68,7 @@ pub fn meshHighlight(vm: *VM, receiver: value.Value, args: []const value.Value) 
 
 pub fn meshGhost(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     _ = args;
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "ghost", receiver);
 
     const material_id: u32 = @intCast(vm.materials.items.len);
     // Pure semantic tagging

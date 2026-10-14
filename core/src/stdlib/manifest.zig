@@ -2,6 +2,7 @@ const std = @import("std");
 const common = @import("classes/common.zig");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
+const util = @import("methods/util.zig");
 const primitives = @import("primitives.zig");
 const step = @import("../exporters/3d/step.zig");
 const stl = @import("../exporters/3d/stl.zig");
@@ -184,29 +185,26 @@ fn buildLspCompletions() [core_namespaces.len + global_functions.len + mesh_meth
 
 pub const lsp_completions = buildLspCompletions();
 
-// The O(1) Dynamic Dispatcher (Now acts only as a pure Host Fallback)
+/// The host fallback for a method no class defines: every built-in method is bound on a
+/// class, so this only reports it.
 pub fn cadInvokeHandler(vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
     _ = arg_count;
     _ = args;
-    _ = receiver;
-    vm.reportError("Runtime Error: Unknown method '{s}'.\n", .{method_name});
-    return error.RuntimeError;
+    return util.notDefinedFor(vm, method_name, receiver);
 }
 
 pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value {
     const is_3d = a.isGeometry() and b.isGeometry();
     const is_2d = a.isCrossSection() and b.isCrossSection();
 
-    if (!is_3d and !is_2d) {
-        vm.reportError("Runtime Error: Invalid operands for CSG operation. Both must be 3D Geometries or 2D Profiles.\n", .{});
-        return error.RuntimeError;
-    }
+    // The VM reports these as "'+' can't combine Array and nil".
+    if (!is_3d and !is_2d) return error.UnsupportedOperands;
 
     const dag_tag: dag.DAGTag = switch (op) {
         .op_add => if (is_3d) .union_op else .cs_union_op,
         .op_subtract => if (is_3d) .difference_op else .cs_difference_op,
         .op_bitwise_and => if (is_3d) .intersection_op else .cs_intersection_op,
-        else => return error.RuntimeError,
+        else => return error.UnsupportedOperands,
     };
 
     const idx_a = if (is_3d) a.asGeometry().dag_idx else a.asCrossSection().dag_idx;

@@ -10023,7 +10023,8 @@ test "VM: Kernel error raised in a nested call frame unwinds to the rescue targe
     // The kernel error raised two frames deep reaches the top-level handler
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result.isString());
-    try testing.expectEqualStrings("CAD Kernel / Method Error", result.asString().chars);
+    // The real cause, no longer the generic "CAD Kernel / Method Error"
+    try testing.expectEqualStrings("undefined method 'invalid_method' for Geometry", result.asString().chars);
 }
 
 test "VM: Repeated string addition (+ operator) recycles scratch arena" {

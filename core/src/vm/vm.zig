@@ -522,7 +522,7 @@ pub const VM = struct {
                 .op_negate => {
                     const a = self.pop();
                     if (!a.isNumber()) {
-                        if (self.raiseError(.TypeError, "Invalid operand for '-'", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "unary '-' expects a number, got {s}", .{self.typeName(a)}) != .ok) return .runtime_error;
                         continue;
                     }
                     self.push(value.Value.initNumber(-a.asNumber()));
@@ -1669,6 +1669,7 @@ pub const VM = struct {
 
     // --- JIT Materialization ---
     pub fn ensureConcrete(self: *VM, geometry: value.Value) !geom.GeometryHandle {
+        std.debug.assert(geometry.isGeometry()); // a CrossSection goes to ensureConcreteCrossSection
         const geom_obj = geometry.asGeometry();
         if (geom_obj.isConcrete()) return geom_obj.cached_handle.?;
 
@@ -2064,23 +2065,24 @@ pub const VM = struct {
             self.push(new_val);
             return .ok;
         } else if (self.host.binary_handler) |handler| {
-            const result = handler(self, op, a_val, b_val) catch {
-                return self.raiseError(.RuntimeError, "CSG Binary Operation Failed", .{});
+            const result = handler(self, op, a_val, b_val) catch |err| {
+                if (err == error.UnsupportedOperands) return self.operandError(op, a_val, b_val);
+                return self.nativeFailed(operatorSymbol(op), err);
             };
 
             self.stack.ptr[self.stack_top] = result;
             self.stack_top += 1;
             return .ok;
         } else {
-            const op_symbol = if (op == .op_add) "+" else "-";
-            return self.raiseError(.TypeError, "Invalid operands for '{s}'", .{op_symbol});
+            return self.operandError(op, a_val, b_val);
         }
     }
 
     inline fn executeNumericBinary(self: *VM, op: chunk.OpCode) InterpretResult {
-        const nums = self.popBinaryNumbers() catch {
-            return self.raiseError(.TypeError, "Invalid operands for math operation.", .{});
-        };
+        const b = self.pop();
+        const a = self.pop();
+        if (!a.isNumber() or !b.isNumber()) return self.operandError(op, a, b);
+        const nums = .{ a.asNumber(), b.asNumber() };
         switch (op) {
             .op_multiply => {
                 const res = nums[0] * nums[1];
@@ -2214,9 +2216,9 @@ pub const VM = struct {
         if (self.host.invoke_handler) |handler| {
             const caller_depth = self.frames.items.len;
             const throw_seq = self.throw_seq;
-            const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch {
+            const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch |err| {
                 if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
-                return self.raiseError(.RuntimeError, "CAD Kernel / Method Error", .{});
+                return self.nativeFailed(method_name_str, err);
             };
 
             self.popAndRelease(arg_count + 1);
@@ -2382,12 +2384,10 @@ pub const VM = struct {
                 _ = self.pop(); // Pop start_val
                 self.push(arr_val);
             } else {
-                self.runtimeError("Runtime Error: String ranges must be single characters.\n", .{});
-                return .runtime_error;
+                return self.raiseError(.TypeError, "a String range needs single characters, got \"{s}\"..\"{s}\"", .{ start_val.asString().chars, end_val.asString().chars });
             }
         } else {
-            self.runtimeError("Runtime Error: Range bounds must be numbers or characters.\n", .{});
-            return .runtime_error;
+            return self.raiseError(.TypeError, "a range needs numbers or single characters, got {s}..{s}", .{ self.typeName(start_val), self.typeName(end_val) });
         }
         return .ok;
     }
@@ -2627,7 +2627,7 @@ pub const VM = struct {
             if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
             if (err == error.FatalError) return .runtime_error;
             if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
-            return self.raiseError(.RuntimeError, "Native Constructor Error", .{});
+            return self.nativeFailed(native_obj.name, err);
         };
         self.popAndRelease(arg_count);
         return .ok;
@@ -2656,7 +2656,7 @@ pub const VM = struct {
             }
             if (err == error.FatalError) return .runtime_error;
             if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
-            return self.raiseError(.RuntimeError, "Native Execution Error", .{});
+            return self.nativeFailed(native_obj.name, err);
         };
 
         // --- PROFILER: Native Exit ---
@@ -2955,15 +2955,51 @@ pub const VM = struct {
         instance.fields.items[idx] = val;
     }
 
-    fn popBinaryNumbers(self: *VM) !struct { f64, f64 } {
-        const b = self.pop();
-        const a = self.pop();
+    /// The TypeError for an operator applied to values it doesn't support.
+    fn operandError(self: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) InterpretResult {
+        return self.raiseError(.TypeError, "'{s}' can't combine {s} and {s}", .{ operatorSymbol(op), self.typeName(a), self.typeName(b) });
+    }
 
-        if (a.isNumber() and b.isNumber()) {
-            return .{ a.asNumber(), b.asNumber() };
-        }
+    fn operatorSymbol(op: chunk.OpCode) []const u8 {
+        return switch (op) {
+            .op_add => "+",
+            .op_subtract => "-",
+            .op_multiply => "*",
+            .op_divide => "/",
+            .op_modulo => "%",
+            .op_exponent => "**",
+            .op_less => "<",
+            .op_greater => ">",
+            .op_bitwise_and => "&",
+            .op_bitwise_or => "|",
+            .op_bitwise_xor => "^",
+            .op_shift_left => "<<",
+            .op_shift_right => ">>",
+            else => @tagName(op),
+        };
+    }
 
-        return error.RuntimeError;
+    /// The script-facing name of a value's type, for error messages.
+    pub fn typeName(self: *VM, val: value.Value) []const u8 {
+        if (val.isNil()) return "nil";
+        if (self.getClass(val)) |class| return class.name.chars;
+        if (val.isObject()) return switch (val.asObj().obj_type) {
+            .closure, .function, .native, .bound_method => "Proc",
+            .class => "Class",
+            .module => "Module",
+            .workplane => "Workplane",
+            .assembly => "Assembly",
+            else => "Object",
+        };
+        return "Object";
+    }
+
+    /// A native failed without raising an error of its own (out of memory, or a bug in
+    /// it): the error names the native and the failure. These used to be the generic
+    /// "Native Execution Error" / "CAD Kernel / Method Error".
+    fn nativeFailed(self: *VM, name: []const u8, err: anyerror) InterpretResult {
+        if (err == error.OutOfMemory) return self.raiseError(.OutOfMemoryError, "{s} ran out of memory", .{name});
+        return self.raiseError(.RuntimeError, "{s} failed ({s})", .{ name, @errorName(err) });
     }
 
     fn findMethodInternal(

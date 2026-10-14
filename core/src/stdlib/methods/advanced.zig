@@ -132,7 +132,10 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
         return error.RuntimeError;
     };
 
-    if (faces.len == 0) return error.RuntimeError;
+    if (faces.len == 0) {
+        _ = vm.raiseError(.ValueError, "on_face found no planar face facing [{f}, {f}, {f}]", .{ value.fmtNumber(direction[0]), value.fmtNumber(direction[1]), value.fmtNumber(direction[2]) });
+        return error.RuntimeError;
+    }
 
     return try vm.allocateWorkplane(receiver, faces[0].centroid, faces[0].normal);
 }
@@ -141,7 +144,7 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
 const PLANE_ARGS = [_][]const u8{ "nx", "ny", "nz", "offset" };
 
 pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "split_by_plane", receiver);
 
     const parsed = try util.parseKwargs(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null }, vm, args, "split_by_plane");
     const positional = parsed.positional;
@@ -192,6 +195,7 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
 }
 
 pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "decompose", receiver);
     const handle = try vm.ensureConcrete(receiver); // Eager!
     // `handle` is borrowed from the DAG cache; `parts` are new handles we own.
     const parts = kernel.decompose(vm.allocator, handle) orelse {

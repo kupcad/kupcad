@@ -2,6 +2,8 @@ const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const limits = @import("../../core/limits.zig");
+const kernel = @import("../../kernel/kernel.zig");
+const geom = @import("../../kernel/geometry_handle.zig");
 
 // --- Argument validation ---
 //
@@ -16,22 +18,32 @@ const MAX_DESCRIPTION_LEN = 128;
 
 /// The script-facing name of a value's type, for TypeError messages.
 pub fn typeName(vm: *VM, val: value.Value) []const u8 {
-    if (val.isNil()) return "nil";
-    if (vm.getClass(val)) |class| return class.name.chars;
-    if (val.isObject()) return switch (val.asObj().obj_type) {
-        .closure, .function, .native, .bound_method => "Proc",
-        .class => "Class",
-        .module => "Module",
-        .workplane => "Workplane",
-        .assembly => "Assembly",
-        else => "Object",
-    };
-    return "Object";
+    return vm.typeName(val);
 }
 
 fn typeError(vm: *VM, method: []const u8, expected: []const u8, what: []const u8, got: value.Value) error{RuntimeError} {
     _ = vm.raiseError(.TypeError, "{s} expects {s} for {s}, got {s}", .{ method, expected, what, typeName(vm, got) });
     return error.RuntimeError;
+}
+
+/// A method for Solids only called on a Sketch, or the other way round: the same
+/// NoMethodError as for any method the receiver doesn't have.
+pub fn notDefinedFor(vm: *VM, method: []const u8, receiver: value.Value) error{RuntimeError} {
+    _ = vm.raiseError(.NoMethodError, "undefined method '{s}' for {s}", .{ method, typeName(vm, receiver) });
+    return error.RuntimeError;
+}
+
+/// The bounding box of a Solid, or of a Sketch (flat, at z = 0).
+pub fn boundsOf(vm: *VM, receiver: value.Value, method: []const u8) !geom.BoundingBox {
+    if (receiver.isCrossSection()) {
+        const rect = kernel.crossSectionBounds(try vm.ensureConcreteCrossSection(receiver));
+        return .{ .min = .{ rect.min[0], rect.min[1], 0.0 }, .max = .{ rect.max[0], rect.max[1], 0.0 } };
+    }
+    if (!receiver.isGeometry()) return notDefinedFor(vm, method, receiver);
+    return kernel.boundingBox(try vm.ensureConcrete(receiver)) orelse {
+        _ = vm.raiseError(.GeometryError, "{s} could not compute the bounding box of this shape", .{method});
+        return error.RuntimeError;
+    };
 }
 
 /// Rejects NaN and infinities, which no kernel can place or tessellate.

@@ -3,7 +3,7 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 
 pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return error.RuntimeError;
+    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "extrude", receiver);
 
     const ExtrudeOpts = struct {
         h: f64 = 1.0,
@@ -41,7 +41,7 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 const REVOLVE_BASELINE_RADIUS = 10.0;
 
 pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return error.RuntimeError;
+    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "revolve", receiver);
     const parsed = try util.parseKwargs(struct { deg: f64 = 360.0 }, vm, args, "revolve");
     var degrees = parsed.opts.deg;
     if (parsed.positional.len > 0) degrees = try util.requireNumber(vm, args[0], "revolve", "deg");
@@ -53,7 +53,7 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 }
 
 pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return error.RuntimeError;
+    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "helix", receiver);
 
     const HelixOpts = struct { h: f64 = 10.0, twist: f64 = 360.0, slices: i32 = 64 };
     const parsed = try util.parseKwargs(HelixOpts, vm, args, "helix");
@@ -70,7 +70,7 @@ pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 }
 
 pub fn meshLoft(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return error.RuntimeError;
+    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "loft", receiver);
     if (args.len < 2) {
         _ = vm.raiseError(.ArgumentError, "loft requires a target CrossSection and a z-height", .{});
         return error.RuntimeError;

@@ -1,6 +1,7 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const util = @import("../../stdlib/methods/util.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const kernel = @import("../../kernel/kernel.zig");
 
@@ -19,13 +20,14 @@ pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !val
                 try export_handles.append(vm.allocator, h);
             }
         }
+    } else if (receiver.isGeometry()) {
+        try export_handles.append(vm.allocator, try vm.ensureConcrete(receiver));
     } else {
-        const h = try vm.ensureConcrete(receiver);
-        try export_handles.append(vm.allocator, h);
+        return util.notDefinedFor(vm, "export_step", receiver);
     }
 
     const step_bytes = buildStepBuffer(vm.allocator, export_handles.items) catch |err| {
-        vm.reportError("Export Error: Failed to generate STEP ({})\n", .{err});
+        _ = vm.raiseError(.GeometryError, "export_step could not write the STEP file ({s})", .{@errorName(err)});
         return error.RuntimeError;
     };
     defer vm.allocator.free(step_bytes);
@@ -35,12 +37,8 @@ pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !val
     return receiver;
 }
 
-pub fn nativeExportStep(vm: *VM, path_str: []const u8, target: value.Value) !value.Value {
-    return meshExportStep(vm, target, path_str);
-}
-
 pub fn nativeImportStep(vm: *VM, path_str: []const u8) !value.Value {
     _ = path_str;
-    vm.reportError("Runtime Error: import_step not yet supported for native B-Rep engine.\n", .{});
+    _ = vm.raiseError(.NotImplementedError, "import_step is not supported yet", .{});
     return error.RuntimeError;
 }

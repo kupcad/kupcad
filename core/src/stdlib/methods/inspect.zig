@@ -43,24 +43,23 @@ pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
         return value.Value.initObj(&bbox_inst.obj);
     }
 
-    vm.reportError("RuntimeError: bbox() requires a 3D Geometry or 2D CrossSection.\n", .{});
-    return error.RuntimeError;
+    return util.notDefinedFor(vm, "bbox", receiver);
 }
 
 pub fn meshVolume(vm: *VM, receiver: value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "volume", receiver);
     const handle = try vm.ensureConcrete(receiver);
     return value.Value.initNumber(kernel.volume(handle));
 }
 
 pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "surface_area", receiver);
     const handle = try vm.ensureConcrete(receiver);
     return value.Value.initNumber(kernel.surfaceArea(handle));
 }
 
 pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "min_gap", receiver);
     if (args.len < 1 or !args[0].isGeometry()) {
         _ = vm.raiseError(.TypeError, "min_gap expects a Geometry to measure against, got {s}", .{if (args.len < 1) "nothing" else util.typeName(vm, args[0])});
         return error.RuntimeError;
@@ -74,7 +73,7 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 
 pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (receiver.isCrossSection()) return sketchContains(vm, receiver, args);
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "contains?", receiver);
     if (args.len < 1) {
         _ = vm.raiseError(.ArgumentError, "contains? expects a point [x, y, z]", .{});
         return error.RuntimeError;
@@ -108,7 +107,7 @@ fn sketchContains(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 }
 
 pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "ray_cast", receiver);
     if (args.len < 2) {
         _ = vm.raiseError(.ArgumentError, "ray_cast expects an origin [x, y, z] and an end point [x, y, z]", .{});
         return error.RuntimeError;
@@ -153,6 +152,7 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 }
 
 pub fn meshGenus(vm: *VM, receiver: value.Value) !value.Value {
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "genus", receiver);
     const handle = try vm.ensureConcrete(receiver);
     return value.Value.initNumber(@floatFromInt(kernel.genus(handle)));
 }

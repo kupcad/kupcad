@@ -218,7 +218,7 @@ test "API: buildModelWithDiagnostic reports an error raised while exporting" {
         api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
     );
     try testing.expectEqualStrings(
-        "Runtime Error: cannot combine manifold and brep_native geometry in one operation.",
+        "GeometryError: can't combine manifold and brep_native geometry in one operation",
         diag.message.?,
     );
 }

@@ -23,7 +23,7 @@ pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) 
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return error.RuntimeError;
+    return util.notDefinedFor(vm, "translate", receiver);
 }
 
 pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
@@ -39,7 +39,7 @@ pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return error.RuntimeError;
+    return util.notDefinedFor(vm, "rotate", receiver);
 }
 
 /// A Sketch turns about z only: `rotate(a)` (OpenSCAD's 2D rotate), `rotate(z: a)` or
@@ -74,7 +74,7 @@ pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !val
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return error.RuntimeError;
+    return util.notDefinedFor(vm, "scale", receiver);
 }
 
 pub fn meshCenter(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
@@ -84,8 +84,7 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         axes_str = args[0].asString().chars;
     }
 
-    const handle = try vm.ensureConcrete(receiver);
-    const bbox = kernel.boundingBox(handle) orelse return error.RuntimeError;
+    const bbox = try util.boundsOf(vm, receiver, "center");
 
     const cx = bbox.min[0] + (bbox.max[0] - bbox.min[0]) / 2.0;
     const cy = bbox.min[1] + (bbox.max[1] - bbox.min[1]) / 2.0;
@@ -112,8 +111,7 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-
-    return error.RuntimeError;
+    return util.notDefinedFor(vm, "center", receiver);
 }
 
 pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
@@ -142,11 +140,13 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     }
     if (args.len > 4) offset = try util.requireNumber(vm, args[4], "align", "offset");
 
-    const my_handle = try vm.ensureConcrete(receiver);
-    const target_handle = try vm.ensureConcrete(target);
-
-    const my_bbox = kernel.boundingBox(my_handle) orelse return error.RuntimeError;
-    const target_bbox = kernel.boundingBox(target_handle) orelse return error.RuntimeError;
+    // The target used to be evaluated as a Geometry whatever it was.
+    if (!target.isGeometry() and !target.isCrossSection()) {
+        _ = vm.raiseError(.TypeError, "align expects a Geometry or CrossSection to align to, got {s}", .{util.typeName(vm, target)});
+        return error.RuntimeError;
+    }
+    const my_bbox = try util.boundsOf(vm, receiver, "align");
+    const target_bbox = try util.boundsOf(vm, target, "align");
 
     var tx: f64 = 0;
     var ty: f64 = 0;
@@ -195,7 +195,7 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return error.RuntimeError;
+    return util.notDefinedFor(vm, "align", receiver);
 }
 
 pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
@@ -219,7 +219,7 @@ pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return error.RuntimeError;
+    return util.notDefinedFor(vm, "mirror", receiver);
 }
 
 /// Flat matrix lengths `transform` accepts: a column-major 3x4 affine matrix
@@ -247,7 +247,7 @@ pub fn meshTransform(vm: *VM, receiver: value.Value, args: []const value.Value) 
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return error.RuntimeError;
+    return util.notDefinedFor(vm, "transform", receiver);
 }
 
 fn parseMatrix(comptime N: usize, vm: *VM, val: value.Value) ![N]f64 {
@@ -271,7 +271,7 @@ fn requireInvertible(vm: *VM, det: f64) !void {
 }
 
 pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "resize", receiver);
     const parsed = try util.parseKwargs(struct { auto: bool = false }, vm, args, "resize");
     const auto = parsed.opts.auto;
 
@@ -295,8 +295,7 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const target_y = target[1];
     const target_z = target[2];
 
-    const handle = try vm.ensureConcrete(receiver);
-    const bbox = kernel.boundingBox(handle) orelse return error.RuntimeError;
+    const bbox = try util.boundsOf(vm, receiver, "resize");
     const cur_x = bbox.max[0] - bbox.min[0];
     const cur_y = bbox.max[1] - bbox.min[1];
     const cur_z = bbox.max[2] - bbox.min[2];
@@ -337,7 +336,7 @@ fn checkedCount(vm: *VM, raw: f64, what: []const u8) !usize {
 }
 
 pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "repeat_linear", receiver);
     if (args.len < 1 or !args[0].isNumber()) {
         _ = vm.raiseError(.ArgumentError, "repeat_linear requires a 'count' number", .{});
         return error.RuntimeError;
@@ -370,7 +369,7 @@ pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Valu
 }
 
 pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return error.RuntimeError;
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "repeat_polar", receiver);
     if (args.len < 1 or !args[0].isNumber()) {
         _ = vm.raiseError(.ArgumentError, "repeat_polar requires a 'count' number", .{});
         return error.RuntimeError;

@@ -1,6 +1,7 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const util = @import("../../stdlib/methods/util.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 
@@ -163,6 +164,7 @@ pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
 }
 
 pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "export_stl", receiver);
     const handle = try vm.ensureConcrete(receiver);
 
     const stl_bytes = try buildStlBuffer(vm.allocator, handle);
@@ -171,17 +173,6 @@ pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
     try vm.vfs.writeFile(filepath, stl_bytes);
 
     return receiver;
-}
-
-pub fn nativeExportStl(vm: *VM, path_str: []const u8, target: value.Value) !value.Value {
-    const handle = try vm.ensureConcrete(target);
-
-    const stl_bytes = try buildStlBuffer(vm.allocator, handle);
-    defer vm.allocator.free(stl_bytes);
-
-    try vm.vfs.writeFile(path_str, stl_bytes);
-
-    return target;
 }
 
 pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {

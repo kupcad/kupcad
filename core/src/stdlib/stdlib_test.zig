@@ -823,6 +823,36 @@ test "Stdlib: built-in methods check their argument count, types and block" {
     });
 }
 
+test "Stdlib: errors carry their real cause, never a generic message" {
+    // Each used to be "CAD Kernel / Method Error" or "Native Execution Error" (or, for a
+    // Sketch passed where a Solid was assumed, undefined behaviour).
+    try expectGlobalR(&.{
+        .{ .src = comptime rescued("nil.foo"), .expected = .{ .str = "NoMethodError: undefined method 'foo' for nil" } },
+        .{ .src = comptime rescued("cube(1).extrude(1)"), .expected = .{ .str = "NoMethodError: undefined method 'extrude' for Geometry" } },
+        .{ .src = comptime rescued("square(1).volume"), .expected = .{ .str = "NoMethodError: undefined method 'volume' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).genus"), .expected = .{ .str = "NoMethodError: undefined method 'genus' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).decompose"), .expected = .{ .str = "NoMethodError: undefined method 'decompose' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).export_stl(\"a.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
+        .{ .src = comptime rescued("cube(1).align(5, \"x\", \"min\")"), .expected = .{ .str = "TypeError: align expects a Geometry or CrossSection to align to, got Number" } },
+        .{ .src = comptime rescued("import_step(\"a.step\")"), .expected = .{ .str = "NotImplementedError: import_step is not supported yet" } },
+        // Operators name themselves and both operands.
+        .{ .src = comptime rescued("[1] + nil"), .expected = .{ .str = "TypeError: '+' can't combine Array and nil" } },
+        .{ .src = comptime rescued("\"a\" * 2"), .expected = .{ .str = "TypeError: '*' can't combine String and Number" } },
+        .{ .src = comptime rescued("cube(1) | cube(1)"), .expected = .{ .str = "TypeError: '|' can't combine Geometry and Geometry" } },
+        .{ .src = comptime rescued("-\"a\""), .expected = .{ .str = "TypeError: unary '-' expects a number, got String" } },
+        .{ .src = comptime rescued("(1..nil)"), .expected = .{ .str = "TypeError: a range needs numbers or single characters, got Number..nil" } },
+        // param checks its keywords, and its failures are typed.
+        .{ .src = comptime rescued("param(:w, defualt: 5)"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'defualt' (it accepts: default, validate)" } },
+        .{ .src = comptime rescued("param(:w, default: 5, validate: { minimum: 1 })"), .expected = .{ .str = "ArgumentError: param validate does not take a keyword 'minimum' (it accepts: min, max, in)" } },
+        .{ .src = comptime rescued("param(:w, default: 5, validate: { max: 3 })"), .expected = .{ .str = "ValueError: parameter :w value 5 is above its maximum 3" } },
+        .{ .src = comptime rescued("param(:missing)"), .expected = .{ .str = "NameError: parameter :missing is used before it is defined" } },
+        .{ .src = comptime rescued("assemble(name: 5, parts: [])"), .expected = .{ .str = "TypeError: assemble expects a String for name, got Number" } },
+        // center works on a Sketch: it used to evaluate the Sketch as a Solid.
+        .{ .src = "r = square(2).center.extrude(1).bbox.min", .expected = .{ .nums = &.{ -1, -1, 0 } } },
+        .{ .src = "r = square(2).align(square(4), \"xy\", \"max\").extrude(1).bbox.min", .expected = .{ .nums = &.{ 2, 2, 0 } } },
+    });
+}
+
 test "Stdlib: block_given? works with or without parentheses" {
     // The bare form used to be looked up as a variable: NameError.
     const m = "def m(&b)\n  [block_given?, block_given?()]\nend\n";
