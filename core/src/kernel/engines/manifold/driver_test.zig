@@ -499,3 +499,19 @@ test "Manifold Driver: polygonsEvenOdd survives partial allocation failure" {
         if (driver.driver.polygonsEvenOddFn(failing.allocator(), &contours)) |cs| driver.driver.destructCrossSectionFn(cs);
     }
 }
+
+test "Manifold Driver: problem reports why a mesh is invalid, and nothing for a valid solid" {
+    // Manifold flags bad input through a status, not a null pointer; nothing read it before,
+    // so a non-manifold polyhedron became an empty mesh and later a bare "NoGeometry".
+    const cube = driver.driver.cubeFn(10, 10, 10, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cube);
+    try std.testing.expect(driver.driver.problemFn(cube) == null);
+
+    const pts = [_][3]f64{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } };
+    // The last face is wound the same way as its neighbour, so two edges are shared inconsistently.
+    const faces = [_][3]u32{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 2, 3 } };
+    const bad = driver.driver.polyhedronFn(std.testing.allocator, &pts, &faces) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(bad);
+    const reason = driver.driver.problemFn(bad) orelse return error.ExpectedProblem;
+    try std.testing.expect(std.mem.indexOf(u8, reason, "not a closed manifold") != null);
+}

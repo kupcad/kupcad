@@ -1,5 +1,6 @@
 const std = @import("std");
 const dag = @import("dag.zig");
+const error_kind = @import("error_kind.zig");
 const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const log_helpers = @import("../log.zig");
@@ -110,6 +111,13 @@ fn crossSectionOf(entry: StackEntry) !geom.CrossSectionHandle {
         .cross_section => |h| h,
         else => error.RuntimeError,
     };
+}
+
+/// A kernel operation returned no result: raise a rescuable GeometryError naming the
+/// operation. Drivers never substitute an operand for a failed result (kernel.zig).
+fn kernelFailed(vm: *VM, tag: dag.DAGTag) error{RuntimeError} {
+    _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{dag.scriptName(tag)});
+    return error.RuntimeError;
 }
 
 fn checkSameEngine(vm: *VM, a: geom.EngineType, b: geom.EngineType) !void {
@@ -287,22 +295,22 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 // --- Leaf Geometry 3D ---
                 .cube => {
                     const p = vm.dag_builder.getCubeDimensions(node);
-                    const handle = kernel.cube(engine, p.x, p.y, p.z, p.center) orelse return error.RuntimeError;
+                    const handle = kernel.cube(engine, p.x, p.y, p.z, p.center) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
                 .cylinder => {
                     const p = vm.dag_builder.getCylinderPayload(node);
-                    const handle = kernel.cylinder(engine, p.r1, p.r2, p.height, p.center, p.segments) orelse return error.RuntimeError;
+                    const handle = kernel.cylinder(engine, p.r1, p.r2, p.height, p.center, p.segments) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
                 .sphere => {
                     const p = vm.dag_builder.getSpherePayload(node);
-                    const handle = kernel.sphere(engine, p.radius) orelse return error.RuntimeError;
+                    const handle = kernel.sphere(engine, p.radius) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
                 .polyhedron_op => {
                     const p = vm.dag_builder.getPolyhedronPayload(node);
-                    const handle = kernel.polyhedron(engine, vm.allocator, p.pts, p.faces) orelse return error.RuntimeError;
+                    const handle = kernel.polyhedron(engine, vm.allocator, p.pts, p.faces) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
 
@@ -328,7 +336,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         .intersection_op => kernel.boolean(left_handle, right_handle, .intersection_op),
                         .minkowski => kernel.minkowski(left_handle, right_handle),
                         else => unreachable,
-                    } orelse return error.RuntimeError;
+                    } orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = maybeSimplify(vm, result) });
                 },
 
@@ -355,9 +363,9 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     }
 
                     const result = if (node.tag == .batch_union_op)
-                        kernel.batchBoolean(vm.allocator, handles, .union_op) orelse return error.RuntimeError
+                        kernel.batchBoolean(vm.allocator, handles, .union_op) orelse return kernelFailed(vm, node.tag)
                     else
-                        kernel.batchHull(vm.allocator, handles) orelse return error.RuntimeError;
+                        kernel.batchHull(vm.allocator, handles) orelse return kernelFailed(vm, node.tag);
 
                     try v_stack.pushOwned(.{ .geometry = maybeSimplify(vm, result) });
                 },
@@ -375,7 +383,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         .mirror => kernel.mirror(target_handle, p.x, p.y, p.z),
                         else => unreachable,
                     };
-                    try v_stack.pushOwned(.{ .geometry = result orelse return error.RuntimeError });
+                    try v_stack.pushOwned(.{ .geometry = result orelse return kernelFailed(vm, node.tag) });
                 },
                 .transform_matrix => {
                     const target = v_stack.pop();
@@ -383,27 +391,27 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const p = vm.dag_builder.getTransformPayload(node);
                     var mat: [12]f64 = undefined;
                     std.mem.copyForwards(f64, &mat, vm.dag_builder.numbers.items[p.num_idx .. p.num_idx + 12]);
-                    const result = kernel.transformMatrix(try geometryOf(target), mat) orelse return error.RuntimeError;
+                    const result = kernel.transformMatrix(try geometryOf(target), mat) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
                 .trim_by_plane => {
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getTrimByPlanePayload(node);
-                    const result = kernel.trimByPlane(try geometryOf(target), p.nx, p.ny, p.nz, p.offset) orelse return error.RuntimeError;
+                    const result = kernel.trimByPlane(try geometryOf(target), p.nx, p.ny, p.nz, p.offset) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
                 .hull => {
                     const target = v_stack.pop();
                     defer v_stack.release(target);
-                    const result = kernel.hull(try geometryOf(target)) orelse return error.RuntimeError;
+                    const result = kernel.hull(try geometryOf(target)) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = maybeSimplify(vm, result) });
                 },
                 .set_material => {
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getMaterialPayload(node);
-                    const result = kernel.setMaterial(try geometryOf(target), p.material_id) orelse return error.RuntimeError;
+                    const result = kernel.setMaterial(try geometryOf(target), p.material_id) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
 
@@ -412,14 +420,14 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getExtrudePayload(node);
-                    const result = kernel.extrude(try crossSectionOf(target), p.height, p.slices, p.twist_degrees, p.scale_x, p.scale_y) orelse return error.RuntimeError;
+                    const result = kernel.extrude(try crossSectionOf(target), p.height, p.slices, p.twist_degrees, p.scale_x, p.scale_y) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
                 .revolve => {
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getRevolvePayload(node);
-                    const result = kernel.revolve(try crossSectionOf(target), p.segments, p.degrees) orelse return error.RuntimeError;
+                    const result = kernel.revolve(try crossSectionOf(target), p.segments, p.degrees) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
                 .loft => {
@@ -431,19 +439,19 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const base_cs = try crossSectionOf(base);
                     try checkSameEngine(vm, base_cs.engine, top_cs.engine);
                     const p = vm.dag_builder.getLoftPayload(node);
-                    const result = kernel.loft(engine, base_cs, top_cs, p.height) orelse return error.RuntimeError;
+                    const result = kernel.loft(engine, base_cs, top_cs, p.height) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
 
                 // --- Leaf Cross Sections 2D ---
                 .square => {
                     const p = vm.dag_builder.getSquarePayload(node);
-                    const handle = kernel.square(engine, p.x, p.y, p.center) orelse return error.RuntimeError;
+                    const handle = kernel.square(engine, p.x, p.y, p.center) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .circle => {
                     const p = vm.dag_builder.getCirclePayload(node);
-                    const handle = kernel.circle(engine, p.radius, p.segments) orelse return error.RuntimeError;
+                    const handle = kernel.circle(engine, p.radius, p.segments) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .polygon => {
@@ -455,7 +463,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         pts[i][0] = vm.dag_builder.numbers.items[num_idx + (i * 2)];
                         pts[i][1] = vm.dag_builder.numbers.items[num_idx + (i * 2) + 1];
                     }
-                    const handle = kernel.polygon(engine, vm.allocator, pts) orelse return error.RuntimeError;
+                    const handle = kernel.polygon(engine, vm.allocator, pts) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .polygons_even_odd => {
@@ -479,7 +487,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         }
                         contours[i] = pts;
                     }
-                    const handle = kernel.polygonsEvenOdd(engine, vm.allocator, contours) orelse return error.RuntimeError;
+                    const handle = kernel.polygonsEvenOdd(engine, vm.allocator, contours) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
 
@@ -488,13 +496,13 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getSlicePayload(node);
-                    const handle = kernel.slice(try geometryOf(target), p.height) orelse return error.RuntimeError;
+                    const handle = kernel.slice(try geometryOf(target), p.height) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .project_op => {
                     const target = v_stack.pop();
                     defer v_stack.release(target);
-                    const handle = kernel.project(try geometryOf(target)) orelse return error.RuntimeError;
+                    const handle = kernel.project(try geometryOf(target)) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
 
@@ -503,7 +511,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getOffsetPayload(node);
-                    const handle = kernel.offset(try crossSectionOf(target), p.delta, p.join_type) orelse return error.RuntimeError;
+                    const handle = kernel.offset(try crossSectionOf(target), p.delta, p.join_type) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .cs_transform => {
@@ -512,7 +520,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const p = vm.dag_builder.getTransformPayload(node);
                     var mat: [6]f64 = undefined;
                     std.mem.copyForwards(f64, &mat, vm.dag_builder.numbers.items[p.num_idx .. p.num_idx + 6]);
-                    const handle = kernel.crossSectionTransform(try crossSectionOf(target), mat) orelse return error.RuntimeError;
+                    const handle = kernel.crossSectionTransform(try crossSectionOf(target), mat) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .cs_union_op, .cs_difference_op, .cs_intersection_op => {
@@ -529,7 +537,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         .cs_intersection_op => .intersection_op,
                         else => unreachable,
                     };
-                    const handle = kernel.crossSectionBoolean(left_handle, right_handle, op) orelse return error.RuntimeError;
+                    const handle = kernel.crossSectionBoolean(left_handle, right_handle, op) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
             }
@@ -539,6 +547,12 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
             // Only freshly computed results move into the cache; borrowed ones
             // (concrete leaves) already have an owner.
             if (top.value == .geometry and top.owned) {
+                // Every freshly computed solid is checked here, once: an invalid mesh (e.g. a
+                // non-manifold polyhedron) is an error, not an empty export later.
+                if (kernel.problem(top.value.geometry)) |reason| {
+                    _ = vm.raiseError(.GeometryError, error_kind.INVALID_RESULT_FMT, .{ dag.scriptName(node.tag), reason });
+                    return error.RuntimeError; // still owned -> destroyed by errdefer
+                }
                 const verts = kernel.numVerts(top.value.geometry);
                 if (verts > config.max_vertices) {
                     vm.reportError("RAM Budget Exceeded: Generated mesh is too complex ({d} vertices).\n", .{verts});

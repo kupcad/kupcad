@@ -3,6 +3,7 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const util = @import("util.zig");
 const kernel = @import("../../kernel/kernel.zig");
+const error_kind = @import("../../vm/error_kind.zig");
 
 // --- Utilizing Strongly Typed Receivers ---
 
@@ -220,7 +221,10 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
 pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
     const handle = try vm.ensureConcrete(receiver); // Eager!
     // `handle` is borrowed from the DAG cache; `parts` are new handles we own.
-    const parts = kernel.decompose(vm.allocator, handle) orelse return value.Value.initNil();
+    const parts = kernel.decompose(vm.allocator, handle) orelse {
+        _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"decompose"});
+        return error.RuntimeError;
+    };
     defer vm.allocator.free(parts);
 
     // Register every part as a `.concrete` DAG leaf first: the DAG builder then
@@ -278,7 +282,10 @@ pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.V
     // kernel.simplify always returns a NEW handle (never `handle`, which the DAG
     // cache owns). Registering it as a `.concrete` leaf hands ownership to the
     // DAG builder and keeps the result usable in later DAG ops.
-    const simplified_handle = kernel.simplify(handle, tol) orelse return error.RuntimeError;
+    const simplified_handle = kernel.simplify(handle, tol) orelse {
+        _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"simplify"});
+        return error.RuntimeError;
+    };
     const leaf_idx = vm.dag_builder.addConcrete(simplified_handle) catch |err| {
         kernel.destruct(simplified_handle);
         return err;

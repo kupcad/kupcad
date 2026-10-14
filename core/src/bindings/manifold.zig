@@ -143,6 +143,31 @@ extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumPr
 extern fn manifold_transform_array(mem: ?*ManifoldObj, m: ?*ManifoldObj, mat: [*]const f64) ?*ManifoldObj;
 
 extern fn manifold_num_vert(m: ?*ManifoldObj) c_int;
+extern fn manifold_status(m: ?*ManifoldObj) Status;
+
+/// manifoldc's ManifoldError: why Manifold rejected or could not build a mesh.
+pub const Status = enum(c_int) {
+    no_error,
+    non_finite_vertex,
+    not_manifold,
+    vertex_index_out_of_bounds,
+    properties_wrong_length,
+    missing_position_properties,
+    merge_vectors_different_lengths,
+    merge_index_out_of_bounds,
+    transform_wrong_length,
+    run_index_wrong_length,
+    face_id_wrong_length,
+    invalid_construction,
+    result_too_large,
+    invalid_tangents,
+    cancelled,
+    _,
+};
+
+pub fn status(m: ?*ManifoldObj) Status {
+    return manifold_status(m);
+}
 extern fn manifold_num_tri(m: ?*ManifoldObj) c_int;
 
 // ==========================================

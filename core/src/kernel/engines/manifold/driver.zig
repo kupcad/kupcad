@@ -110,11 +110,9 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
     const a_valid = @intFromPtr(a.ptr) != 0;
     const b_valid = @intFromPtr(b.ptr) != 0;
 
-    // Defensive fallback: prevent CSG pipeline poisoning if one handle is invalid.
-    // Fallbacks return copies: callers own every returned handle (see kernel.zig).
-    if (!a_valid and !b_valid) return null;
-    if (!a_valid) return cloneImpl(b);
-    if (!b_valid) return cloneImpl(a);
+    // A failed operation is reported as null, never replaced by a copy of an operand:
+    // `empty - b` is not `b`, and a silently skipped boolean is wrong geometry.
+    if (!a_valid or !b_valid) return null;
 
     const m1: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
     const m2: *manifold.ManifoldObj = @ptrCast(@alignCast(b.ptr));
@@ -123,7 +121,7 @@ fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.Boolea
         .difference_op => manifold.OpType.subtract,
         .intersection_op => manifold.OpType.intersect,
     };
-    const ptr = manifold.boolean(m1, m2, m_op) orelse return cloneImpl(a); // Fallback to base solid on C++ CSG failure
+    const ptr = manifold.boolean(m1, m2, m_op) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -143,7 +141,7 @@ fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHan
         .intersection_op => manifold.OpType.intersect,
     };
 
-    const ptr = manifold.batchBoolean(m_objs, m_op) orelse return cloneImpl(objs[0]);
+    const ptr = manifold.batchBoolean(m_objs, m_op) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -152,16 +150,14 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
     const a_valid = @intFromPtr(a.ptr) != 0;
     const b_valid = @intFromPtr(b.ptr) != 0;
 
-    if (!a_valid and !b_valid) return null;
-    if (!a_valid) return cloneCrossSectionImpl(b);
-    if (!b_valid) return cloneCrossSectionImpl(a);
+    if (!a_valid or !b_valid) return null;
 
     const m_op = switch (op) {
         .union_op => manifold.OpType.add,
         .difference_op => manifold.OpType.subtract,
         .intersection_op => manifold.OpType.intersect,
     };
-    const ptr = manifold.crossSectionBoolean(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr)), m_op) orelse return cloneCrossSectionImpl(a);
+    const ptr = manifold.crossSectionBoolean(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr)), m_op) orelse return null;
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -209,10 +205,8 @@ fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
 
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
     if (a.engine != .manifold or b.engine != .manifold) return null;
-    if (@intFromPtr(a.ptr) == 0) return null;
-    if (@intFromPtr(b.ptr) == 0) return cloneImpl(a);
-    // C++ Manifold fallback: If 3D mesh Minkowski fails, return a copy of `a` un-minkowskied instead of poisoning the DAG!
-    const ptr = manifold.minkowskiSum(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr))) orelse return cloneImpl(a);
+    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
+    const ptr = manifold.minkowskiSum(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr))) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -266,7 +260,7 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
         m_objs[i] = @ptrCast(@alignCast(obj.ptr));
     }
 
-    const ptr = manifold.batchHull(m_objs) orelse return cloneImpl(objs[0]);
+    const ptr = manifold.batchHull(m_objs) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
@@ -643,7 +637,24 @@ fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandl
 
 // --- Static Dispatch Table ---
 
+/// Why Manifold flagged `a` as invalid (non-manifold input, non-finite vertices, ...),
+/// or null if it is a valid solid.
+fn problemImpl(a: geom.GeometryHandle) ?[]const u8 {
+    if (@intFromPtr(a.ptr) == 0) return "the kernel returned no solid";
+    return switch (manifold.status(@ptrCast(@alignCast(a.ptr)))) {
+        .no_error => null,
+        .non_finite_vertex => "a vertex has a NaN or infinite coordinate",
+        .not_manifold => "the mesh is not a closed manifold (every edge must join exactly two faces, with consistent winding)",
+        .vertex_index_out_of_bounds => "a face refers to a vertex that does not exist",
+        .result_too_large => "the result is too large for the kernel",
+        .invalid_construction => "the shape could not be constructed from these parameters",
+        .cancelled => "the operation was cancelled",
+        else => "the kernel rejected the mesh data",
+    };
+}
+
 pub const driver = struct {
+    pub const problemFn = problemImpl;
     pub const cubeFn = cubeImpl;
     pub const cylinderFn = cylinderImpl;
     pub const sphereFn = sphereImpl;

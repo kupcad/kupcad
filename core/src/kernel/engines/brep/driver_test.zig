@@ -189,11 +189,11 @@ test "Driver: No-op Ops Return New Handles, Never Their Input" {
     const single = driver.driver.batchBooleanFn(std.testing.allocator, &.{cube}, .union_op) orelse return error.KernelFailed;
     defer driver.driver.destructFn(single);
     try std.testing.expect(single.ptr != cube.ptr);
+}
 
-    // B-Rep offset is unimplemented and used to return its input cross-section.
+test "Driver: unsupported or failed B-Rep operations report null, never a stand-in result" {
+    // offset is unimplemented; it used to return the unchanged sketch (silently wrong).
     const sq = driver.driver.squareFn(10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructCrossSectionFn(sq);
-    const off = driver.driver.offsetFn(sq, 1, 0) orelse return error.KernelFailed;
-    defer driver.driver.destructCrossSectionFn(off);
-    try std.testing.expect(off.ptr != sq.ptr);
+    try std.testing.expect(driver.driver.offsetFn(sq, 1, 0) == null);
 }

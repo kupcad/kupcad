@@ -14,7 +14,14 @@ pub const ErrorKind = enum {
     NameError,
     NoMethodError,
     NotImplementedError,
+    /// The geometry kernel failed an operation or produced an invalid solid.
+    GeometryError,
     ImportError,
     OutOfMemoryError,
     AssertionError,
 };
+
+/// GeometryError messages for a kernel operation that returned no result / an invalid solid.
+/// `{s}` is the operation's script name (dag.scriptName or the method name).
+pub const KERNEL_FAILED_FMT = "{s} failed: the geometry kernel could not compute a result";
+pub const INVALID_RESULT_FMT = "{s} produced invalid geometry: {s}";

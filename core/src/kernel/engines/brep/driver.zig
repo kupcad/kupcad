@@ -376,8 +376,10 @@ fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryH
 fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
     _ = join_type;
     _ = delta;
-    // Offset is not implemented for B-Rep yet; return a copy so the caller owns the result.
-    return cloneCrossSectionImpl(cs);
+    // Not implemented for B-Rep yet. Report failure instead of returning the unchanged
+    // sketch, which would be silently wrong geometry.
+    _ = cs;
+    return null;
 }
 
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
@@ -412,12 +414,13 @@ fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHan
 
     var acc = objs[0];
     for (objs[1..]) |obj| {
-        if (booleanImpl(acc, obj, op)) |res| {
-            if (acc.ptr != objs[0].ptr) {
-                destructImpl(acc);
-            }
-            acc = res;
-        }
+        // One failed step fails the whole batch; skipping it would drop an operand silently.
+        const res = booleanImpl(acc, obj, op) orelse {
+            if (acc.ptr != objs[0].ptr) destructImpl(acc);
+            return null;
+        };
+        if (acc.ptr != objs[0].ptr) destructImpl(acc);
+        acc = res;
     }
     // Never hand back a borrowed input: the caller owns (and will destroy) the result.
     if (acc.ptr == objs[0].ptr) return cloneImpl(objs[0]);
@@ -483,10 +486,11 @@ fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f
     if (@intFromPtr(a.ptr) == 0) return .{ .first = null, .second = null };
     const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
 
-    const dest_a = BrepSolid.create(backend_allocator) catch return .{ .first = cloneImpl(a), .second = null };
+    // On failure both halves are null: returning the whole input as one "half" was wrong geometry.
+    const dest_a = BrepSolid.create(backend_allocator) catch return .{ .first = null, .second = null };
     const dest_b = BrepSolid.create(backend_allocator) catch {
         dest_a.destroy();
-        return .{ .first = cloneImpl(a), .second = null };
+        return .{ .first = null, .second = null };
     };
 
     const env = buildMathEnv(.{});
@@ -494,7 +498,7 @@ fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f
     const pair = locus_slicing.splitByPlane(backend_allocator, &dest_a.t_arena, &dest_a.g_arena, &dest_b.t_arena, &dest_b.g_arena, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, nx, ny, nz, offset, env) catch {
         dest_a.destroy();
         dest_b.destroy();
-        return .{ .first = cloneImpl(a), .second = null };
+        return .{ .first = null, .second = null };
     };
 
     dest_a.solid_id = pair.first;
@@ -766,7 +770,14 @@ fn cloneCrossSectionImpl(cs: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
     return crossSectionTransformImpl(cs, identity);
 }
 
+/// B-Rep solids are validated by Locus as they are built; there is no deferred status.
+fn problemImpl(a: geom.GeometryHandle) ?[]const u8 {
+    if (@intFromPtr(a.ptr) == 0) return "the kernel returned no solid";
+    return null;
+}
+
 pub const driver = struct {
+    pub const problemFn = problemImpl;
     pub const cubeFn = cubeImpl;
     pub const cylinderFn = cylinderImpl;
     pub const sphereFn = sphereImpl;

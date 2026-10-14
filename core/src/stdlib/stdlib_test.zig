@@ -1134,3 +1134,47 @@ test "Stdlib: Sketch#contains? tests the closed 2D region" {
         .{ .src = "CAD.config(engine: :brep)\n" ++ comptime rescued("square(10).contains?([5, 5])"), .expected = .{ .str = "NotImplementedError: contains? is not supported for B-Rep sketches yet; build the sketch with the default Manifold engine" } },
     });
 }
+
+test "Stdlib: kernel failures and invalid meshes raise GeometryError instead of wrong geometry" {
+    const tetra = "pts = [[0,0,0],[1,0,0],[0,1,0],[0,0,1]]\n";
+    try expectGlobalR(&.{
+        // Non-manifold input (inconsistent winding, a duplicated face) used to export nothing.
+        .{ .src = tetra ++ comptime rescued("polyhedron(pts, [[0,1,2],[0,3,1],[0,2,3],[1,2,3]]).volume"), .expected = .{ .str = "GeometryError: polyhedron produced invalid geometry: the mesh is not a closed manifold (every edge must join exactly two faces, with consistent winding)" } },
+        .{ .src = tetra ++ comptime rescued("polyhedron(pts, [[0,1,2],[0,3,1],[0,2,3],[0,1,2]]).volume"), .expected = .{ .str = "GeometryError: polyhedron produced invalid geometry: the mesh is not a closed manifold (every edge must join exactly two faces, with consistent winding)" } },
+        // B-Rep offset is unimplemented; it used to return the unchanged sketch.
+        .{ .src = "CAD.config(engine: :brep)\n" ++ comptime rescued("square(10).offset(1).extrude(1).volume"), .expected = .{ .str = "GeometryError: offset failed: the geometry kernel could not compute a result" } },
+        // An empty result is valid geometry, not a failure.
+        .{ .src = "r = (cube(1) - cube(5, center: true)).volume", .expected = .{ .num = 0 } },
+        .{ .src = "r = (cube(1) & cube(1).translate(x: 5)).volume", .expected = .{ .num = 0 } },
+    });
+}
+
+test "Stdlib: import_stl errors are rescuable ImportErrors, invalid meshes GeometryErrors" {
+    const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    // A single triangle: valid STL, but not a closed solid.
+    try mem_vfs.vfs().writeFile("tri.stl", "solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid t\n");
+    try mem_vfs.vfs().writeFile("junk.stl", "not an stl at all");
+    const cases = [_]IterCase{
+        .{ .src = rescued("import_stl(\"missing.stl\")"), .expected = .{ .str = "ImportError: could not read STL file 'missing.stl': FileNotFound" } },
+        .{ .src = rescued("import_stl(\"tri.stl\").volume"), .expected = .{ .str = "GeometryError: polyhedron produced invalid geometry: the mesh is not a closed manifold (every edge must join exactly two faces, with consistent winding)" } },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        vm.vfs = mem_vfs.vfs();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        const r = vm.globals.get("r") orelse return error.MissingGlobal;
+        try testing.expectEqualStrings(case.expected.str, r.asString().chars);
+    }
+    {
+        var vm = try initVm();
+        defer vm.deinit();
+        vm.vfs = mem_vfs.vfs();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, comptime rescued("import_stl(\"junk.stl\")")));
+        const r = vm.globals.get("r") orelse return error.MissingGlobal;
+        try testing.expect(std.mem.startsWith(u8, r.asString().chars, "ImportError: could not parse STL file 'junk.stl': "));
+    }
+}

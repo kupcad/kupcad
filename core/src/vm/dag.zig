@@ -46,6 +46,24 @@ pub const DAGTag = enum(u8) {
     concrete,
 };
 
+/// The name a script uses for the operation, for error messages ("difference failed: ...").
+pub fn scriptName(tag: DAGTag) []const u8 {
+    return switch (tag) {
+        .cube, .cylinder, .sphere, .translate, .rotate, .scale, .square, .circle, .extrude, .revolve, .mirror, .hull, .loft, .minkowski, .trim_by_plane, .offset, .polygon => @tagName(tag),
+        .union_op, .batch_union_op, .cs_union_op => "union",
+        .difference_op, .cs_difference_op => "difference",
+        .intersection_op, .cs_intersection_op => "intersection",
+        .polyhedron_op => "polyhedron",
+        .batch_hull_op => "hull",
+        .slice_op => "slice",
+        .project_op => "project",
+        .transform_matrix, .cs_transform => "transform",
+        .polygons_even_odd => "polygon",
+        .set_material => "material",
+        .concrete => "geometry",
+    };
+}
+
 /// Exactly 8 bytes for optimal L1 cache line density (8 nodes per 64B line)
 pub const DAGNode = struct {
     tag: DAGTag,

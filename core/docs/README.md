@@ -143,6 +143,7 @@ end
 | `NameError`, `NoMethodError` | An undefined variable or member, an unknown method |
 | `ImportError` | A module that can't be read, parsed or compiled |
 | `NotImplementedError` | A feature the active engine doesn't support yet |
+| `GeometryError` | The geometry kernel failed an operation or produced an invalid solid (e.g. a `polyhedron` that isn't a closed manifold) |
 | `AssertionError` | A failed `assert` |
 | `RuntimeError` | `raise "message"`, and other runtime failures |
 

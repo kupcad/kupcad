@@ -154,6 +154,12 @@ pub inline fn crossSectionBounds(handle: geom.CrossSectionHandle) geom.Rect2D {
 
 /// Whether `pt` lies in the sketch's region, boundary included (within `tolerance`).
 /// Null when the engine cannot answer.
+/// Why `handle` is not a valid solid, or null if it is. Every freshly computed result is
+/// checked (dag_evaluator), so invalid meshes surface as errors instead of empty exports.
+pub inline fn problem(handle: geom.GeometryHandle) ?[]const u8 {
+    return dispatch("problemFn", handle, .{});
+}
+
 pub inline fn crossSectionContainsPoint(handle: geom.CrossSectionHandle, pt: [2]f64, tolerance: f64) ?bool {
     return dispatch("crossSectionContainsPointFn", handle, .{ pt, tolerance });
 }

@@ -186,13 +186,13 @@ pub fn nativeExportStl(vm: *VM, path_str: []const u8, target: value.Value) !valu
 
 pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {
     const file_buf = vm.vfs.readFile(vm.allocator, path_str) catch |err| {
-        vm.reportError("IOError: Failed to read STL file '{s}': {}\n", .{ path_str, err });
+        _ = vm.raiseError(.ImportError, "could not read STL file '{s}': {s}", .{ path_str, @errorName(err) });
         return error.RuntimeError;
     };
     defer vm.allocator.free(file_buf);
 
     var stl_mesh = parseStlBuffer(vm.allocator, file_buf) catch |err| {
-        vm.reportError("ParseError: Failed to parse STL file '{s}': {}\n", .{ path_str, err });
+        _ = vm.raiseError(.ImportError, "could not parse STL file '{s}': {s}", .{ path_str, @errorName(err) });
         return error.RuntimeError;
     };
     defer stl_mesh.deinit(vm.allocator);
