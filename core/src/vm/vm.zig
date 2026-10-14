@@ -1748,10 +1748,13 @@ pub const VM = struct {
     inline fn padClosureFrame(self: *VM, closure: *value.ObjClosure, provided_args_in: usize, base_slot: usize, block_val_opt: ?value.Value) !void {
         var provided_args = provided_args_in;
         const expected_args = closure.function.arity;
+        // A splat parameter takes whatever is left, possibly nothing, so its slot is never
+        // padded: `def g(*rest)` called with no arguments gets `[]`, not `[nil]`.
+        const padded_args = if (closure.function.splat_pos != null) expected_args - 1 else expected_args;
 
         // Pad missing arguments or trim excess
-        if (provided_args < expected_args) {
-            const missing = expected_args - provided_args;
+        if (provided_args < padded_args) {
+            const missing = padded_args - provided_args;
             try self.ensureStackCapacity(self.stack_top + missing);
 
             // Trailing Map Heuristic for skipped Positional Defaults
@@ -1768,7 +1771,7 @@ pub const VM = struct {
                 for (0..missing) |_| self.push(value.Value.initNil());
             }
 
-            provided_args = expected_args;
+            provided_args = padded_args;
         } else if (provided_args > expected_args and closure.function.splat_pos == null) {
             const excess = provided_args - expected_args;
             self.popAndRelease(excess);
@@ -1780,6 +1783,8 @@ pub const VM = struct {
             const fixed_arity = splat_pos;
             const trailing_arity = expected_args - fixed_arity - 1;
             const splat_size = provided_args - fixed_arity - trailing_arity;
+            // An empty splat still takes a slot, shifting the trailing arguments up by one.
+            try self.ensureStackCapacity(base_slot + 1 + fixed_arity + 1 + trailing_arity);
 
             const arr_obj = try self.gc.allocateArray(self);
             const arr_val = value.Value.initObj(&arr_obj.obj);

@@ -690,6 +690,19 @@ test "Stdlib: named functions are called by name, callable values with .call" {
     });
 }
 
+test "Stdlib: a *rest parameter that gets no arguments is empty" {
+    // Padding used to fill the splat's slot with nil, so `rest` was [nil].
+    try expectGlobalR(&.{
+        .{ .src = "def g(*rest)\n  rest\nend\nr = g().length", .expected = .{ .num = 0 } },
+        .{ .src = "def g(a, *rest)\n  rest\nend\nr = g(1).length", .expected = .{ .num = 0 } },
+        .{ .src = "def g(a, *rest)\n  [a.nil?, rest.length]\nend\nr = \"#{g()}\"", .expected = .{ .str = "[true, 0]" } },
+        .{ .src = "def g(*rest, last)\n  [rest.length, last]\nend\nr = g(1)", .expected = .{ .nums = &.{ 0, 1 } } },
+        .{ .src = "def g(*rest, o: 1)\n  [rest.length, o]\nend\nr = g(o: 5)", .expected = .{ .nums = &.{ 0, 5 } } },
+        .{ .src = "f = ->(*xs) { xs.length }\nr = f.call", .expected = .{ .num = 0 } },
+        .{ .src = "def g(*rest)\n  rest\nend\nr = g(1, 2)", .expected = .{ .nums = &.{ 1, 2 } } },
+    });
+}
+
 test "Stdlib: lambdas behave like blocks" {
     try expectGlobalR(&.{
         // `return` and `next` leave just the lambda or block, never the enclosing def.
