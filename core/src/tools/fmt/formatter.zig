@@ -3,6 +3,8 @@ const ast = @import("../../core/ast.zig");
 const token = @import("../../core/token.zig");
 const LineIndex = @import("../../core/line_index.zig").LineIndex;
 const Config = @import("config.zig").Config;
+const parser = @import("../../frontend/kupcad/parser.zig");
+const Precedence = parser.Precedence;
 const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
 
@@ -566,9 +568,32 @@ pub const Formatter = struct {
     }
 
     fn formatRange(self: *Formatter, tree: *const ast.Tree, r: ast.Range) Error!void {
-        try self.formatNode(tree, r.start);
+        try self.formatOperand(tree, r.start, .range);
         try self.out.appendSlice(self.allocator, if (r.is_exclusive) "..." else "..");
-        try self.formatNode(tree, r.end);
+        try self.formatOperand(tree, r.end, Precedence.range.tighter());
+    }
+
+    /// How tightly a node binds once printed, on the parser's scale. The AST keeps no
+    /// grouping, so `(1 + 2) * 3` used to print as `1 + 2 * 3`.
+    fn bindingPower(tree: *const ast.Tree, node_idx: ast.NodeIndex) Precedence {
+        const node = tree.getNode(node_idx) orelse return .call;
+        return switch (node.tag) {
+            .binary_op => parser.binaryPrecedence(tree.binaryExpr(node).op),
+            .unary_op => .unary,
+            .range => .range,
+            .ternary_op => .ternary,
+            .rescue_modifier => .rescue_mod,
+            .assignment, .multiple_assignment, .property_assignment, .index_assignment => .assignment,
+            else => .call,
+        };
+    }
+
+    /// Prints an operand, in parentheses when it binds looser than `min`, its position needs.
+    fn formatOperand(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex, min: Precedence) Error!void {
+        const wrap = @backingInt(bindingPower(tree, node_idx)) < @backingInt(min);
+        if (wrap) try self.out.append(self.allocator, '(');
+        try self.formatNode(tree, node_idx);
+        if (wrap) try self.out.append(self.allocator, ')');
     }
 
     fn formatAssignment(self: *Formatter, tree: *const ast.Tree, a: ast.Assignment) Error!void {
@@ -590,7 +615,7 @@ pub const Formatter = struct {
     }
 
     fn formatPropertyAssignment(self: *Formatter, tree: *const ast.Tree, pa: ast.PropertyAssignment) Error!void {
-        try self.formatNode(tree, pa.target);
+        try self.formatOperand(tree, pa.target, .call);
         try self.out.append(self.allocator, '.');
         try self.out.appendSlice(self.allocator, tree.getString(pa.property));
         try self.out.append(self.allocator, ' ');
@@ -600,7 +625,7 @@ pub const Formatter = struct {
     }
 
     fn formatIndexAssignment(self: *Formatter, tree: *const ast.Tree, ia: ast.IndexAssignment) Error!void {
-        try self.formatNode(tree, ia.target);
+        try self.formatOperand(tree, ia.target, .call);
         try self.out.append(self.allocator, '[');
         try self.formatNode(tree, ia.index);
         try self.out.appendSlice(self.allocator, "] ");
@@ -610,18 +635,21 @@ pub const Formatter = struct {
     }
 
     fn formatIndexAccess(self: *Formatter, tree: *const ast.Tree, ia: ast.IndexAccess) Error!void {
-        try self.formatNode(tree, ia.target);
+        try self.formatOperand(tree, ia.target, .call);
         try self.out.append(self.allocator, '[');
         try self.formatNode(tree, ia.index);
         try self.out.append(self.allocator, ']');
     }
 
     fn formatBinaryOp(self: *Formatter, tree: *const ast.Tree, b: ast.BinaryExpr) Error!void {
-        try self.formatNode(tree, b.left);
+        // Left-associative, so `a - (b - c)` keeps its parentheses; `**` is right-associative.
+        const prec = parser.binaryPrecedence(b.op);
+        const right_assoc = b.op == .exponent;
+        try self.formatOperand(tree, b.left, if (right_assoc) prec.tighter() else prec);
         try self.out.append(self.allocator, ' ');
         try self.out.appendSlice(self.allocator, getBinaryOpStr(b.op));
         try self.out.append(self.allocator, ' ');
-        try self.formatNode(tree, b.right);
+        try self.formatOperand(tree, b.right, if (right_assoc) prec else prec.tighter());
     }
 
     fn formatUnaryOp(self: *Formatter, tree: *const ast.Tree, u: ast.UnaryExpr) Error!void {
@@ -632,11 +660,11 @@ pub const Formatter = struct {
             .bitwise_not => "~",
         };
         try self.out.appendSlice(self.allocator, op_str);
-        try self.formatNode(tree, u.operand);
+        try self.formatOperand(tree, u.operand, .unary);
     }
 
     fn formatTernaryOp(self: *Formatter, tree: *const ast.Tree, t: ast.TernaryExpr) Error!void {
-        try self.formatNode(tree, t.condition);
+        try self.formatOperand(tree, t.condition, Precedence.ternary.tighter());
         try self.out.appendSlice(self.allocator, " ? ");
         try self.formatNode(tree, t.then_branch);
         try self.out.appendSlice(self.allocator, " : ");
@@ -649,14 +677,14 @@ pub const Formatter = struct {
     }
 
     fn formatRescueModifier(self: *Formatter, tree: *const ast.Tree, rm: ast.RescueModifier) Error!void {
-        try self.formatNode(tree, rm.expr);
+        try self.formatOperand(tree, rm.expr, .rescue_mod);
         try self.out.appendSlice(self.allocator, " rescue ");
-        try self.formatNode(tree, rm.rescue_expr);
+        try self.formatOperand(tree, rm.rescue_expr, Precedence.rescue_mod.tighter());
     }
 
     fn formatMethodCall(self: *Formatter, tree: *const ast.Tree, mc: ast.MethodCall, start_line: u32) Error!void {
         if (mc.receiver != .none) {
-            try self.formatNode(tree, mc.receiver);
+            try self.formatOperand(tree, mc.receiver, .call);
             // Multi-line indentation alignment for fluent method chains
             const r_node = tree.getNode(mc.receiver).?;
             if (r_node.tag == .method_call) {

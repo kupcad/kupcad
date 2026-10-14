@@ -34,7 +34,30 @@ pub const Precedence = enum(u8) {
     unary = 14, // ! -
     exponent = 15, // **
     call = 16, // . &. () [] ::
+
+    /// The next tighter level: what the right operand of a left-associative operator
+    /// must bind at least as tightly as, so `a - (b - c)` keeps its parentheses.
+    pub fn tighter(self: Precedence) Precedence {
+        return @fromBackingInt(@backingInt(self) + 1);
+    }
 };
+
+/// The precedence of a binary operator, shared by the parser (how far its operands
+/// reach) and the formatter (which operands need parentheses).
+pub fn binaryPrecedence(op: ast.BinaryOp) Precedence {
+    return switch (op) {
+        .logical_or => .logical_or,
+        .logical_and => .logical_and,
+        .equal, .not_equal => .equality,
+        .less, .less_equal, .greater, .greater_equal, .spaceship => .comparison,
+        .bitwise_or, .bitwise_xor => .bitwise_or,
+        .bitwise_and => .bitwise_and,
+        .shift_left, .shift_right => .shift,
+        .add, .subtract => .term,
+        .multiply, .divide, .modulo => .factor,
+        .exponent => .exponent,
+    };
+}
 
 const CallSuffix = struct {
     args: ast.Span,
@@ -542,10 +565,9 @@ pub const Parser = struct {
             return self.b.range(left, try self.parseExpression(.range), .none, (tok_tag == .dot_dot_dot), tok_idx) catch ParseError.OutOfMemory;
         }
         const op = tagToBinaryOp(tok_tag) orelse return ParseError.InvalidExpression;
-        const next_prec = if (tok_tag == .star_star)
-            @as(Precedence, @fromBackingInt(@backingInt(self.getInfixPrecedence(tok_tag)) - 1))
-        else
-            self.getInfixPrecedence(tok_tag);
+        // `**` is right-associative: its right operand takes another `**`.
+        const prec = binaryPrecedence(op);
+        const next_prec: Precedence = if (op == .exponent) @fromBackingInt(@backingInt(prec) - 1) else prec;
         const left_main_token = self.b.tree.getNode(left).?.main_token;
         return self.b.binary(op, left, try self.parseExpression(next_prec), left_main_token) catch ParseError.OutOfMemory;
     }
@@ -1868,22 +1890,13 @@ pub const Parser = struct {
 
     fn getInfixPrecedence(self: *const Parser, t: Tag) Precedence {
         if (self.in_block_params and t == .pipe) return .none;
+        if (tagToBinaryOp(t)) |op| return binaryPrecedence(op);
 
         return switch (t) {
             .equal, .plus_equal, .minus_equal, .star_equal, .slash_equal, .percent_equal, .star_star_equal, .or_or_equal, .and_and_equal, .ampersand_equal, .pipe_equal, .caret_equal, .less_less_equal, .greater_greater_equal => .assignment,
             .keyword_rescue => .rescue_mod,
             .question => .ternary,
-            .or_or, .keyword_or => .logical_or,
-            .and_and, .keyword_and => .logical_and,
-            .equal_equal, .bang_equal => .equality,
-            .less, .less_equal, .greater, .greater_equal, .less_equal_greater => .comparison,
-            .pipe, .caret => .bitwise_or,
-            .ampersand => .bitwise_and,
-            .less_less, .greater_greater => .shift,
             .dot_dot, .dot_dot_dot => .range,
-            .plus, .minus => .term,
-            .star, .slash, .percent => .factor,
-            .star_star => .exponent,
             .dot, .ampersand_dot, .l_paren, .keyword_do, .l_bracket, .colon_colon => .call,
             else => .none,
         };

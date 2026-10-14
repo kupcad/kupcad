@@ -439,3 +439,56 @@ test "Formatter: a call without parentheses gets them, keeping what -1, *xs and 
     ;
     try expectFormat(source, expected);
 }
+
+test "Formatter: keeps the parentheses an expression needs, and only those" {
+    // The AST keeps no grouping, and these used to print without it: `(1 + 2) * 3` as
+    // `1 + 2 * 3`, `-(a + b)` as `-a + b`, `2 ** (1 + 1)` as `2 ** 1 + 1`.
+    const source =
+        \\x = (1 + 2) * 3
+        \\y = -(a + b)
+        \\z = (a - b) - (c - d)
+        \\w = 2 ** (1 + 1)
+        \\w2 = (2 ** 3) ** 2
+        \\w3 = 2 ** (3 ** 2)
+        \\w4 = (-2) ** 2
+        \\w5 = -(2 ** 2)
+        \\v = (1..3).to_a
+        \\v2 = (1 + 1)..(2 * 3)
+        \\u = !(a && b)
+        \\t = (a ? b : c) + 1
+        \\s = (a || b) ? 1 : 2
+        \\q = (x = 1) + 2
+        \\r = (a rescue b) + 1
+        \\m = (a + b).abs
+        \\n = (a - b)[0]
+        \\(a + b).c = 1
+        \\puts (1 + 2) * 3
+        \\k = (a * b) + (c << 1)
+    ;
+    const expected =
+        \\x = (1 + 2) * 3
+        \\y = -(a + b)
+        \\z = a - b - (c - d)
+        \\w = 2 ** (1 + 1)
+        \\w2 = (2 ** 3) ** 2
+        \\w3 = 2 ** 3 ** 2
+        \\w4 = (-2) ** 2
+        \\w5 = -2 ** 2
+        \\v = (1..3).to_a
+        \\v2 = 1 + 1..2 * 3
+        \\u = !(a && b)
+        \\t = (a ? b : c) + 1
+        \\s = a || b ? 1 : 2
+        \\q = (x = 1) + 2
+        \\r = (a rescue b) + 1
+        \\m = (a + b).abs
+        \\n = (a - b)[0]
+        \\(a + b).c = 1
+        \\puts((1 + 2) * 3)
+        \\k = a * b + (c << 1)
+        \\
+    ;
+    try expectFormat(source, expected);
+    // Formatting what it printed changes nothing: the output parses back to the same tree.
+    try expectFormat(expected, expected);
+}

@@ -385,7 +385,7 @@ flowchart TD
 KupCAD ships as a monolithic executable containing a complete developer toolchain:
 
 * `kupcad lsp`: Language Server Protocol daemon for VS Code, enabling real-time preview gateways. Documents are evaluated on a read-only virtual filesystem, so a script cannot write to disk just by being opened. The viewport WebSocket listens on `127.0.0.1` at `KUPCAD_VIEWPORT_PORT` (default 9001), falls back to a free port when that one is taken, and reports the real port to the editor via the `kupcad/viewportReady` notification.
-* `kupcad fmt`: AST-based Code Formatter.
+* `kupcad fmt`: AST-based Code Formatter. It prints calls with their parentheses (`puts -1` becomes `puts(-1)`) and keeps exactly the grouping parentheses the meaning needs, taking operator precedence from the parser: `(1 + 2) * 3` stays, `(a * b) + c` becomes `a * b + c`.
 * `kupcad check`: Linter catching unused variables, zero-volume operations, and logic errors.
 * `kupcad pkg`: Lockfile-driven dependency resolver (`add`, `install`, `doctor`) fetching GitHub packages into CAFS under `~/.kupcad` (override with `KUPCAD_HOME`), with lockfile integrity enforcement.
 * `kupcad build`: Multi-Target Exporter (`STEP`, `STL`, `GLB`/`GLTF`, `--draco`) with CLI parameter injection (`--param key=value`). Exits non-zero on any failure, so it is safe to use as a CI step.
