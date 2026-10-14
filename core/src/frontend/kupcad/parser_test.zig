@@ -4101,3 +4101,33 @@ test "KupCAD Parser: `when <constant or name> then` is a clause, not a call" {
         try compileOnly(source);
     }
 }
+
+test "Parser: capitalised labels are keywords and symbol keys, not constants" {
+    var pt = try KTest.init("f(X: 5)");
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+    // This used to be a syntax error ("Expected 'r_paren', but found ':'").
+    const call = tree.methodCall(pt.getNode(try pt.parser.parseExpression(.none)));
+    const args = tree.getNamedArgs(call.args);
+    try testing.expectEqual(@as(usize, 1), args.len);
+    try testing.expectEqualStrings("X", tree.getString(args[0].name));
+    try testing.expectEqual(@as(f64, 5.0), tree.number(pt.getNode(args[0].value)));
+
+    var ht = try KTest.init("{ X: 5, W: }");
+    defer ht.deinit();
+    const htree = &ht.parser.b.tree;
+    const hash = ht.getNode(try ht.parser.parseExpression(.none));
+    try testing.expectEqual(ast.Tag.hash_literal, hash.tag);
+    const entries = htree.getHashEntries(htree.nodeSpan(hash));
+    try testing.expectEqual(@as(usize, 2), entries.len);
+    // `{X: 5}` keys the symbol :X; it used to evaluate the constant X as the key.
+    for (entries, [_][]const u8{ "X", "W" }) |entry, name| {
+        const key = htree.getNode(entry.key).?;
+        try testing.expectEqual(ast.Tag.symbol, key.tag);
+        try testing.expectEqualStrings(name, htree.getString(@as(ast.StringId, @fromBackingInt(key.data))));
+    }
+    // `{W:}` is shorthand for `{W: W}`, as in Ruby.
+    const shorthand = htree.getNode(entries[1].value).?;
+    try testing.expectEqual(ast.Tag.identifier, shorthand.tag);
+    try testing.expectEqualStrings("W", htree.getString(@as(ast.StringId, @fromBackingInt(shorthand.data))));
+}

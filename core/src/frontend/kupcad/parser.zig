@@ -1165,6 +1165,12 @@ pub const Parser = struct {
         }
     }
 
+    /// `name:` or `Name:` (a keyword argument or symbol key, like Ruby's `f(X: 1)` and
+    /// `{X: 1}`, which name the symbol :X, never the constant X).
+    fn atLabel(self: *const Parser) bool {
+        return (self.tag(0) == .ident or self.tag(0) == .constant) and self.tag(1) == .colon;
+    }
+
     fn parseNamedArg(self: *Parser) ParseError!ast.NamedArg {
         if (self.tag(0) == .comma or self.tag(0) == .r_paren) {
             const val = try self.b.undefNode(self.tok_idx);
@@ -1172,7 +1178,7 @@ pub const Parser = struct {
         }
         const mod = self.parseArgModifier();
         var arg_name: ast.StringId = .none;
-        if (self.tag(0) == .ident and self.tag(1) == .colon) {
+        if (self.atLabel()) {
             arg_name = try self.b.intern(self.lexeme(0));
             self.advance();
             self.advance();
@@ -1286,11 +1292,12 @@ pub const Parser = struct {
         } else {
             // SAFETY: key is unconditionally initialized by the if/else branches below
             var key: ast.NodeIndex = undefined;
-            if (self.tag(0) == .ident and self.tag(1) == .colon) {
+            if (self.atLabel()) {
                 const key_tok = self.tok_idx;
                 self.advance();
                 self.advance();
                 key = try self.b.symbolNode(self.tokens.lexeme(self.source, key_tok), key_tok);
+                // `{width:}` is shorthand for `{width: width}` (and `{W:}` for `{W: W}`).
                 if (self.tag(0) == .comma or self.tag(0) == .r_brace) {
                     const val = try self.b.identifierNode(self.tokens.lexeme(self.source, key_tok), key_tok);
                     return .{ .key = key, .value = val };
