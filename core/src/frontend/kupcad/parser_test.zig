@@ -4059,3 +4059,31 @@ test "KupCAD Parser: Endless Method with Inline Rescue Modifier" {
     try testing.expectEqualStrings("fetch", tree.getString(tree.methodCall(pt.getNode(rm.expr)).method_name));
     try testing.expectEqual(ast.Tag.nil, pt.getNode(rm.rescue_expr).tag);
 }
+
+// --- Edge cases that used to be dropped or mis-parsed silently ---
+
+/// Parses `source` and expects exactly one diagnostic containing `needle`.
+fn expectSingleDiagnostic(source: []const u8, needle: []const u8) !void {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    errdefer for (doc.diagnostics) |d| std.debug.print("diagnostic: {s}\n", .{d.message});
+    try testing.expectEqual(@as(usize, 1), doc.diagnostics.len);
+    try testing.expect(hasDiagnostic(&doc, needle));
+}
+
+test "KupCAD Parser: a rescue binding must be a variable, reported once" {
+    // `rescue => E` used to drop the binding and parse `E` as the first statement of the
+    // body; the follow-on failure only surfaced at runtime as "Undefined variable 'E'".
+    try expectSingleDiagnostic("begin\n  raise \"x\"\nrescue => E\n  1\nend\n", "'E' is a constant; bind the error to a variable");
+    try expectSingleDiagnostic("begin\n  raise \"x\"\nrescue ArgumentError => Err\n  1\nend\n", "'Err' is a constant");
+    try expectSingleDiagnostic("begin\n  raise \"x\"\nrescue => 5\n  1\nend\n", "Expected a variable name after '=>' in rescue, found '5'");
+    try compileOnly("begin\n  raise \"x\"\nrescue => e\n  e.message\nend\n");
+    try compileOnly("class C\n  def go\n    begin\n      raise \"x\"\n    rescue => @e\n      1\n    end\n  end\nend\n");
+}
+
+test "KupCAD Parser: a block parameter cannot take a block" {
+    // `|&b|` used to be mis-parsed without a diagnostic and the block body never ran.
+    try expectSingleDiagnostic("[1, 2].each { |&b| b }\n", "A block parameter cannot take a block ('&')");
+    try expectSingleDiagnostic("[1, 2].each { |a, &b| a }\n", "A block parameter cannot take a block ('&')");
+    try expectSingleDiagnostic("[1, 2].each { |a, 5| a }\n", "Expected a block parameter name, found '5'");
+}

@@ -1517,6 +1517,16 @@ pub const Parser = struct {
                 if (self.tag(0) == .ident) {
                     variable = try self.b.intern(self.lexeme(0));
                     self.advance();
+                } else {
+                    // Anything else used to be dropped silently, and the parser then read it as
+                    // the first statement of the rescue body. Report it and skip just that token,
+                    // so the rest of the clause still parses (one error, no cascade).
+                    if (self.tag(0) == .constant) {
+                        self.reportError(self.getLoc(self.tok_idx), "'{s}' is a constant; bind the error to a variable, e.g. `rescue => e`", .{self.lexeme(0)});
+                    } else {
+                        self.reportError(self.getLoc(self.tok_idx), "Expected a variable name after '=>' in rescue, found '{s}'", .{self.lexeme(0)});
+                    }
+                    if (self.tag(0) != .newline and self.tag(0) != .eof) self.advance();
                 }
             }
             self.skipIgnored();
@@ -1723,7 +1733,12 @@ pub const Parser = struct {
             _ = try self.expect(.r_paren);
             const span = try self.b.addNodes(tuple_params);
             return self.b.arrayLiteral(span, end_tok, start_tok) catch ParseError.OutOfMemory;
+        } else if (self.tag(0) == .ampersand) {
+            // Blocks don't receive blocks; this used to be mis-parsed without a diagnostic.
+            self.reportError(self.getLoc(self.tok_idx), "A block parameter cannot take a block ('&'); pass it as a normal argument instead", .{});
+            return ParseError.UnexpectedToken;
         }
+        self.reportError(self.getLoc(self.tok_idx), "Expected a block parameter name, found '{s}'", .{self.lexeme(0)});
         return ParseError.UnexpectedToken;
     }
 
