@@ -4196,3 +4196,133 @@ test "Parser: a number literal that doesn't fit is an error, not 0 or Infinity" 
         try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
     }
 }
+
+/// The last statement of a parsed program.
+fn lastStatement(pt: anytype, source: []const u8) !*const ast.Node {
+    const tree = &pt.parser.b.tree;
+    const root = try pt.parser.parseProgram();
+    errdefer std.debug.print("source:\n{s}\n", .{source});
+    try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
+    const stmts = tree.getNodes(tree.block(pt.getNode(root)).stmts);
+    return pt.getNode(stmts[stmts.len - 1]);
+}
+
+test "Parser: a variable before -1 or [0] is arithmetic or indexing; a method name takes it as an argument" {
+    // `puts -1` used to be `puts - 1`, `f *args` multiplied, `x [0]` called x even when x was a local.
+    const Shape = union(enum) { call_args: usize, binary, index };
+    const cases = [_]struct { src: []const u8, shape: Shape }{
+        .{ .src = "puts -1", .shape = .{ .call_args = 1 } },
+        .{ .src = "puts +1", .shape = .{ .call_args = 1 } },
+        .{ .src = "f *args", .shape = .{ .call_args = 1 } },
+        .{ .src = "f **opts", .shape = .{ .call_args = 1 } },
+        .{ .src = "list.map &blk", .shape = .{ .call_args = 1 } },
+        .{ .src = "extrude [0, 0, 10]", .shape = .{ .call_args = 1 } },
+        .{ .src = "puts - 1", .shape = .binary },
+        .{ .src = "puts-1", .shape = .binary },
+        .{ .src = "puts -  1", .shape = .binary },
+        // Locals: assigned, multiple-assigned, parameters, block parameters, rescue variables.
+        .{ .src = "x = 1\nx -1", .shape = .binary },
+        .{ .src = "x = 1\nx *y", .shape = .binary },
+        .{ .src = "x = 1\nx &y", .shape = .binary },
+        .{ .src = "pts = [1]\npts [0]", .shape = .index },
+        .{ .src = "a, *b = 1, 2\nb -1", .shape = .binary },
+        .{ .src = "begin\nrescue => e\nend\ne -1", .shape = .binary },
+        .{ .src = "if ok\n  y = 1\nend\ny -1", .shape = .binary },
+        // Constants, fields and globals are values too.
+        .{ .src = "W -1", .shape = .binary },
+        .{ .src = "POINTS [0]", .shape = .index },
+        .{ .src = "@w -1", .shape = .binary },
+        .{ .src = "@@count -1", .shape = .binary },
+        .{ .src = "$g -1", .shape = .binary },
+        // Names bound in a body end with it.
+        .{ .src = "def f(v)\nend\nv -1", .shape = .{ .call_args = 1 } },
+        .{ .src = "[1].each { |v| v }\nv -1", .shape = .{ .call_args = 1 } },
+        .{ .src = "g = ->(v) { v }\nv -1", .shape = .{ .call_args = 1 } },
+        .{ .src = "class C\n  v = 1\nend\nv -1", .shape = .{ .call_args = 1 } },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source:\n{s}\n", .{case.src});
+        var pt = try KTest.init(case.src);
+        defer pt.deinit();
+        const tree = &pt.parser.b.tree;
+        const node = try lastStatement(&pt, case.src);
+        switch (case.shape) {
+            .call_args => |n| {
+                try testing.expectEqual(ast.Tag.method_call, node.tag);
+                try testing.expectEqual(n, tree.getNamedArgs(tree.methodCall(node).args).len);
+            },
+            .binary => try testing.expectEqual(ast.Tag.binary_op, node.tag),
+            .index => try testing.expectEqual(ast.Tag.index_access, node.tag),
+        }
+    }
+}
+
+test "Parser: names are in scope in the bodies inside them and after their binding" {
+    // The last statement of each body is `v -1`: subtraction where `v` is a local there.
+    const cases = [_]struct { src: []const u8, local: bool }{
+        .{ .src = "def f(v)\n  v -1\nend", .local = true },
+        .{ .src = "def f(v) = v -1", .local = true },
+        .{ .src = "def f(a, v = a)\n  v -1\nend", .local = true },
+        .{ .src = "def f(*v)\n  v -1\nend", .local = true },
+        .{ .src = "def f(v:)\n  v -1\nend", .local = true },
+        .{ .src = "g = ->(v) { v -1 }", .local = true },
+        .{ .src = "[1].map { |v| v -1 }", .local = true },
+        .{ .src = "[1].map { |(u, v)| v -1 }", .local = true },
+        .{ .src = "[1].map { |*v| v -1 }", .local = true },
+        .{ .src = "[1].map { |v = 2| v -1 }", .local = true },
+        // A def, block or class body sees the names around it (KupCAD closures capture them).
+        .{ .src = "v = 1\ndef f\n  v -1\nend", .local = true },
+        .{ .src = "v = 1\nclass C\n  def f = v -1\nend", .local = true },
+        .{ .src = "v = 1\n[1].each do\n  v -1\nend", .local = true },
+        // Not yet bound, or bound in another body.
+        .{ .src = "def f\n  v -1\nend\nv = 1", .local = false },
+        .{ .src = "def g(v)\nend\ndef f\n  v -1\nend", .local = false },
+        .{ .src = "[1].map { |v| v }\n[2].map { v -1 }", .local = false },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source:\n{s}\n", .{case.src});
+        var pt = try KTest.init(case.src);
+        defer pt.deinit();
+        const tree = &pt.parser.b.tree;
+        _ = try pt.parser.parseProgram();
+        try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
+        // Find the `v -1` statement: the only binary op or call named `v` in the tree.
+        var found = false;
+        for (tree.nodes.items) |n| {
+            const is_sub = n.tag == .binary_op and std.mem.eql(u8, pt.parser.tokens.lexeme(pt.parser.source, n.main_token), "v");
+            const is_call = n.tag == .method_call and std.mem.eql(u8, tree.getString(tree.methodCall(&n).method_name), "v");
+            if (is_sub or is_call) {
+                try testing.expectEqual(case.local, is_sub);
+                found = true;
+            }
+        }
+        try testing.expect(found);
+    }
+}
+
+test "Parser: a space before ( makes it group the first argument" {
+    var pt = try KTest.init("puts (x).y");
+    defer pt.deinit();
+    const tree = &pt.parser.b.tree;
+    // It used to parse as `puts(x).y`, calling `y` on what puts returned.
+    const call = tree.methodCall(try lastStatement(&pt, "puts (x).y"));
+    try testing.expectEqualStrings("puts", tree.getString(call.method_name));
+    const args = tree.getNamedArgs(call.args);
+    try testing.expectEqual(@as(usize, 1), args.len);
+    try testing.expectEqualStrings("y", tree.getString(tree.methodCall(pt.getNode(args[0].value)).method_name));
+
+    var nt = try KTest.init("puts(x).y");
+    defer nt.deinit();
+    const ntree = &nt.parser.b.tree;
+    const outer = ntree.methodCall(try lastStatement(&nt, "puts(x).y"));
+    try testing.expectEqualStrings("y", ntree.getString(outer.method_name));
+
+    for ([_][]const u8{ "f (1, 2)", "obj.m (a, b)", "super (a, b)" }) |src| {
+        errdefer std.debug.print("source: {s}\n", .{src});
+        var et = try KTest.init(src);
+        defer et.deinit();
+        _ = try et.parser.parseProgram();
+        try testing.expectEqual(@as(usize, 1), et.parser.diagnostics.list.items.len);
+        try testing.expectEqualStrings("Parentheses with a space before them hold one value; to pass several arguments, write '(' right after the method name: name(a, b)", et.parser.diagnostics.list.items[0].message);
+    }
+}

@@ -54,6 +54,17 @@ pub const Parser = struct {
     scope_depth: u32 = 0,
     ast_depth: usize = 0,
 
+    /// The local variables in scope: names bound by an assignment, a parameter or
+    /// `rescue => e` earlier in this or an enclosing body. A variable followed by `-1`
+    /// or ` [0]` is arithmetic or indexing, while a method name followed by them takes
+    /// them as its first argument (`puts -1`), as in Ruby and Crystal. The scopes mirror
+    /// the resolver's: a def, lambda, block, class or module body sees the names around
+    /// it and drops its own at its end, while `if`/`while`/`begin` bodies don't scope.
+    /// Keys are slices of `source`.
+    locals: std.StringHashMapUnmanaged(void) = .empty,
+    /// The names of `locals` in the order they were bound, so a scope drops exactly its own.
+    local_order: std.ArrayListUnmanaged([]const u8) = .empty,
+
     // --- Zero-Waste Scratch Buffers ---
     scratch_nodes: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
     scratch_named_args: std.ArrayListUnmanaged(ast.NamedArg) = .empty,
@@ -102,6 +113,8 @@ pub const Parser = struct {
         self.b.deinit();
         self.diagnostics.deinit();
         self.comments.deinit(self.allocator);
+        self.locals.deinit(self.allocator);
+        self.local_order.deinit(self.allocator);
         self.scratch_nodes.deinit(self.allocator);
         self.scratch_named_args.deinit(self.allocator);
         self.scratch_params.deinit(self.allocator);
@@ -160,6 +173,47 @@ pub const Parser = struct {
             return ParseError.AstTooDeep;
         }
         self.ast_depth += 1;
+    }
+
+    /// Opens a def, lambda, block, class or module body (imports are top-level only, and
+    /// the names bound inside end with it). Pair with `defer self.leaveScope(scope)`.
+    fn enterScope(self: *Parser) usize {
+        self.scope_depth += 1;
+        return self.local_order.items.len;
+    }
+
+    fn leaveScope(self: *Parser, scope: usize) void {
+        for (self.local_order.items[scope..]) |name| _ = self.locals.remove(name);
+        self.local_order.shrinkRetainingCapacity(scope);
+        self.scope_depth -= 1;
+    }
+
+    fn declareLocal(self: *Parser, name_tok: u24) ParseError!void {
+        const name = self.tokens.lexeme(self.source, name_tok);
+        if (self.locals.contains(name)) return;
+        try self.local_order.ensureUnusedCapacity(self.allocator, 1);
+        try self.locals.put(self.allocator, name, {});
+        self.local_order.appendAssumeCapacity(name);
+    }
+
+    /// A constant, `@field`, `@@class_var`, `$global` or a local in scope: a value, never
+    /// a call, where the two would read differently (`x -1`, `X [0]`).
+    fn isVariable(self: *const Parser, name_tok: u24) bool {
+        if (self.tokens.tags[name_tok] == .constant) return true;
+        const name = self.tokens.lexeme(self.source, name_tok);
+        if (name.len > 0 and (name[0] == '@' or name[0] == '$')) return true;
+        return self.locals.contains(name);
+    }
+
+    fn spaceBefore(self: *const Parser, tok: u24) bool {
+        if (tok == 0 or tok >= self.tokens.starts.len) return false;
+        return self.tokens.starts[tok] > self.tokens.starts[tok - 1] + self.tokens.lengths[tok - 1];
+    }
+
+    /// `name(`: the parentheses hold the call's arguments. With a space, `puts (x).y`,
+    /// they only group its first argument, as in Ruby and Crystal.
+    fn atParenArgs(self: *const Parser) bool {
+        return self.tag(0) == .l_paren and !self.spaceBefore(self.tok_idx);
     }
 
     pub fn synchronize(self: *Parser) void {
@@ -408,6 +462,7 @@ pub const Parser = struct {
 
                 if (self.tag(0) == .ident or self.tag(0) == .constant) {
                     try self.scratch_lhs_exprs.append(self.allocator, .{ .name = try self.b.intern(self.lexeme(0)), .modifier = mod });
+                    try self.declareLocal(self.tok_idx);
                     self.advance();
                 } else return ParseError.UnexpectedToken;
 
@@ -429,11 +484,10 @@ pub const Parser = struct {
 
     fn parseLambda(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.minus_greater);
+        const scope = self.enterScope();
+        defer self.leaveScope(scope);
         const params = try self.parseParenParams();
         self.skipIgnored();
-
-        self.scope_depth += 1;
-        defer self.scope_depth -= 1;
 
         var body: ast.NodeIndex = .none;
         if (self.tag(0) == .l_brace) {
@@ -453,6 +507,10 @@ pub const Parser = struct {
     fn parseAssignmentExpr(self: *Parser, left: ast.NodeIndex) ParseError!ast.NodeIndex {
         const op_tag = self.tag(0);
         const op_tok = self.tok_idx;
+        // Bound before its value is parsed, as the resolver declares it.
+        if (self.b.tree.getNode(left)) |target| {
+            if (target.tag == .identifier) try self.declareLocal(target.main_token);
+        }
         self.advance();
         const value = try self.parseExpressionList();
         const left_node = self.b.tree.getNode(left) orelse return ParseError.InvalidExpression;
@@ -521,6 +579,8 @@ pub const Parser = struct {
         const params_start = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(params_start);
         var params_len: usize = 0;
+        const scope = self.enterScope();
+        defer self.leaveScope(scope);
 
         if (self.tag(0) == .pipe) {
             self.advance();
@@ -535,8 +595,6 @@ pub const Parser = struct {
             _ = try self.expect(.pipe);
         }
 
-        self.scope_depth += 1;
-        defer self.scope_depth -= 1;
         const end_tags: []const Tag = if (is_brace) &.{.r_brace} else &.{.keyword_end};
         const block_node_idx = try self.parseBlock(end_tags);
 
@@ -802,6 +860,8 @@ pub const Parser = struct {
             self.advance();
         }
 
+        const scope = self.enterScope();
+        defer self.leaveScope(scope);
         var params_span: ast.Span = .{ .start = 0, .end = 0 };
         if (self.tag(0) == .l_paren) {
             params_span = try self.parseParenParams();
@@ -827,9 +887,6 @@ pub const Parser = struct {
             self.advance(); // consume '='
             self.skipIgnored(); // skip spaces/newlines before the expression
 
-            // Increment scope_depth so endless method expressions can't trigger top-level imports/exports
-            self.scope_depth += 1;
-            defer self.scope_depth -= 1;
             const expr = try self.parseExprOrMultiAssign();
 
             const end_tok = self.tok_idx;
@@ -846,9 +903,6 @@ pub const Parser = struct {
         }
 
         // --- TRADITIONAL MULTI-LINE METHOD ---
-        // Increment scope_depth to prevent top-level imports/exports inside the method body
-        self.scope_depth += 1;
-        defer self.scope_depth -= 1;
         const body_node = try self.parseBlock(&.{ .keyword_rescue, .keyword_ensure, .keyword_end });
         const payload = try self.parseRescueAndEnsure();
 
@@ -872,8 +926,8 @@ pub const Parser = struct {
         self.advance();
         self.skipIgnored();
 
-        self.scope_depth += 1;
-        defer self.scope_depth -= 1;
+        const scope = self.enterScope();
+        defer self.leaveScope(scope);
         const body = try self.parseBlock(&.{.keyword_end});
 
         const end_tok = self.tok_idx;
@@ -915,9 +969,8 @@ pub const Parser = struct {
             const target = try self.parseExpression(.none);
             self.skipIgnored();
 
-            // Increment scope_depth to prevent top-level imports/exports inside the singleton block
-            self.scope_depth += 1;
-            defer self.scope_depth -= 1;
+            const scope = self.enterScope();
+            defer self.leaveScope(scope);
             const body = try self.parseBlock(&.{.keyword_end});
 
             _ = try self.expect(.keyword_end);
@@ -933,9 +986,8 @@ pub const Parser = struct {
 
         self.skipIgnored();
 
-        // Increment scope_depth to prevent top-level imports/exports inside the class body
-        self.scope_depth += 1;
-        defer self.scope_depth -= 1;
+        const scope = self.enterScope();
+        defer self.leaveScope(scope);
         const body = try self.parseBlock(&.{.keyword_end});
 
         const end_tok = self.tok_idx;
@@ -949,10 +1001,10 @@ pub const Parser = struct {
         var args_span: ast.Span = try self.b.addNamedArgs(&.{});
         var block_node: ast.NodeIndex = .none;
 
-        if (self.tag(0) == .l_paren) {
+        if (self.atParenArgs()) {
             args_span = try self.parseParenArgs();
             if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) block_node = try self.parseBlockClosure();
-        } else if (self.isCommandCallStart()) {
+        } else if (self.isCommandCallStart(false)) {
             if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) {
                 implicit_args = true;
                 block_node = try self.parseBlockClosure();
@@ -997,14 +1049,14 @@ pub const Parser = struct {
         var block_node: ast.NodeIndex = .none;
         var end_tok = self.tok_idx;
 
-        if (self.tag(0) == .l_paren) {
+        if (self.atParenArgs()) {
             args = try self.parseParenArgs();
             end_tok = self.tok_idx;
             if (self.tag(0) == .keyword_do or self.tag(0) == .l_brace) {
                 block_node = try self.parseBlockClosure();
                 end_tok = self.tok_idx;
             }
-        } else if (self.isCommandCallStart()) {
+        } else if (self.isCommandCallStart(false)) {
             const cmd = try self.parseCommandArgsAndBlock();
             args = cmd.args;
             block_node = cmd.block orelse .none;
@@ -1042,7 +1094,7 @@ pub const Parser = struct {
 
         // 2. Check if this identifier is actually the start of a method call.
         // It's a method call if it's followed by parenthesis args `()` or command-style args `foo x: 1`.
-        if (self.tag(0) == .l_paren or self.isCommandCallStart()) {
+        if (self.atParenArgs() or self.isCommandCallStart(self.isVariable(tok_idx))) {
             // Delegate argument and block extraction to the shared suffix parser
             const suffix = try self.parseCallSuffix();
             const method_name = try self.b.intern(self.tokens.lexeme(self.source, tok_idx));
@@ -1148,20 +1200,13 @@ pub const Parser = struct {
     }
 
     /// `-1`, `*args`, `**opts` or `&blk` with a space before and none after: an argument,
-    /// as in Ruby (`yield -1` passes -1, `yield - 1` subtracts). Only used after `yield`,
-    /// which unlike a name can never be a variable to apply the operator to.
+    /// as in Ruby (`yield -1` passes -1, `yield - 1` subtracts), unless it follows a variable.
     fn isPrefixedArgStart(self: *const Parser) bool {
         switch (self.tag(0)) {
             .minus, .plus, .star, .star_star, .ampersand => {},
             else => return false,
         }
-        const starts = self.tokens.starts;
-        const lengths = self.tokens.lengths;
-        const i = self.tok_idx;
-        if (i == 0 or i + 1 >= starts.len) return false;
-        const space_before = starts[i] > starts[i - 1] + lengths[i - 1];
-        const space_after = starts[i + 1] > starts[i] + lengths[i];
-        return space_before and !space_after;
+        return self.spaceBefore(self.tok_idx) and !self.spaceBefore(self.tok_idx + 1);
     }
 
     fn parseDocString(self: *Parser) ParseError!ast.NodeIndex {
@@ -1263,6 +1308,8 @@ pub const Parser = struct {
             self.advance();
             default_val = try self.parseExpression(.none);
         }
+        // After its own default and before the next parameter's, as in Ruby.
+        try self.declareLocal(name_tok);
 
         return .{
             .name = name_id,
@@ -1551,6 +1598,7 @@ pub const Parser = struct {
                 self.advance();
                 if (self.tag(0) == .ident) {
                     variable = try self.b.intern(self.lexeme(0));
+                    try self.declareLocal(self.tok_idx);
                     self.advance();
                 } else {
                     // Anything else used to be dropped silently, and the parser then read it as
@@ -1602,7 +1650,9 @@ pub const Parser = struct {
         return self.b.namespaceAccess(span, tok_idx) catch ParseError.OutOfMemory;
     }
 
-    fn isCommandCallStart(self: *Parser) bool {
+    /// Whether the token after a name starts the call's first argument. `callee_is_variable`
+    /// makes `x -1` and `x [0]` arithmetic and indexing; a method name takes them as arguments.
+    fn isCommandCallStart(self: *Parser, callee_is_variable: bool) bool {
         const t = self.tag(0);
         switch (t) {
             // Clause keywords end an expression, so `when Integer then x` is not a call `Integer(then x)`.
@@ -1610,13 +1660,12 @@ pub const Parser = struct {
             .keyword_do, .l_brace => return true,
             else => {
                 if (isAssignmentOp(t)) return false;
-                const prev_idx = if (self.tok_idx > 0) self.tok_idx - 1 else 0;
-                const prev_end = self.tokens.starts[prev_idx] + self.tokens.lengths[prev_idx];
-                const curr_start = self.tokens.starts[self.tok_idx];
-                const has_space = curr_start > prev_end;
-                if (has_space and t == .l_bracket) return true;
-                if (@backingInt(self.getInfixPrecedence(t)) == 0) return true;
-                return false;
+                // `puts (x).y`: a spaced parenthesis groups the first argument.
+                if (t == .l_paren) return self.spaceBefore(self.tok_idx);
+                // `extrude [0, 0, 10]` passes an array; `points [0]` indexes a variable.
+                if (t == .l_bracket) return !callee_is_variable and self.spaceBefore(self.tok_idx);
+                if (self.isPrefixedArgStart()) return !callee_is_variable;
+                return @backingInt(self.getInfixPrecedence(t)) == 0;
             },
         }
     }
@@ -1650,6 +1699,11 @@ pub const Parser = struct {
 
         const expr = try self.parseExpression(.none);
         self.skipIgnored(); // Allow newlines immediately before ')'
+        if (self.tag(0) == .comma) {
+            // Usually `name (a, b)`: the space makes the parentheses a group, not the argument list.
+            self.reportError(self.getLoc(self.tok_idx), "Parentheses with a space before them hold one value; to pass several arguments, write '(' right after the method name: name(a, b)", .{});
+            return ParseError.UnexpectedToken;
+        }
         _ = try self.expect(.r_paren);
         return expr;
     }
@@ -1721,15 +1775,18 @@ pub const Parser = struct {
         if (self.tag(0) == .star) {
             self.advance();
             const ident_tok = try self.expectParamName();
+            try self.declareLocal(ident_tok);
             const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
             return self.b.splatExpr(ident_node, start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .star_star) {
             self.advance();
             const ident_tok = try self.expectParamName();
+            try self.declareLocal(ident_tok);
             const ident_node = try self.b.identifierNode(self.tokens.lexeme(self.source, ident_tok), ident_tok);
             return self.b.doubleSplatExpr(ident_node, start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .ident) {
             const ident_tok = try self.expectParamName();
+            try self.declareLocal(ident_tok);
             const ident_str = self.tokens.lexeme(self.source, ident_tok);
 
             // Check for default value assignment (x = 10)

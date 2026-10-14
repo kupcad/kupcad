@@ -757,6 +757,32 @@ test "Stdlib: every value answers class and inspect" {
     });
 }
 
+test "Stdlib: a method name takes -1, *xs, &blk and [..] as its argument; a variable doesn't" {
+    // `f -1` used to subtract 1 from f's result, and `f *xs` multiplied.
+    const defs = "def f(a = 10) = a\ndef inc(a) = a + 1\ndef count(*a) = a.length\n";
+    try expectGlobalR(&.{
+        .{ .src = defs ++ "r = [(f -1), f - 1, f-1]", .expected = .{ .nums = &.{ -1, 9, 9 } } },
+        .{ .src = defs ++ "xs = [1, 2, 3]\nr = count *xs", .expected = .{ .num = 3 } },
+        .{ .src = defs ++ "sq = ->(v) { v * v }\nr = [2, 3].map &sq", .expected = .{ .nums = &.{ 4, 9 } } },
+        .{ .src = defs ++ "r = count [4, 5]", .expected = .{ .num = 1 } },
+        // `inc (1) * 3` is inc(3); it used to be inc(1) * 3. Like Ruby, a call without
+        // parentheses takes every argument after it, so `[f -1, 2]` is `[f(-1, 2)]`.
+        .{ .src = defs ++ "r = [(inc (1) * 3), inc(1) * 3]", .expected = .{ .nums = &.{ 4, 6 } } },
+        // A variable before the same tokens is arithmetic or indexing, wherever it was bound.
+        .{ .src = "x = 10\nn = 2\npts = [7, 8]\nr = [x -1, n *3, pts [1], n &3]", .expected = .{ .nums = &.{ 9, 6, 8, 2 } } },
+        .{ .src = "def g(v) = v -1\nr = g(5)", .expected = .{ .num = 4 } },
+        .{ .src = "def k(a, b = a -1) = b\nr = k(5)", .expected = .{ .num = 4 } },
+        .{ .src = "h = ->(v) { v -1 }\nr = [5].map { |v| v -1 } + [h.call(5)]", .expected = .{ .nums = &.{ 4, 4 } } },
+        .{ .src = "a, b = 5, 6\nr = b -1", .expected = .{ .num = 5 } },
+        .{ .src = "if true\n  y = 10\nend\nr = y -1", .expected = .{ .num = 9 } },
+        .{ .src = "w = 3\ndef width = w -1\nr = width", .expected = .{ .num = 2 } },
+        .{ .src = "W = 5\nr = W -1", .expected = .{ .num = 4 } },
+        .{ .src = "class C\n  def initialize\n    @v = 5\n  end\n  def get = @v -1\nend\nr = C.new.get", .expected = .{ .num = 4 } },
+        // A block's parameter ends with the block: after it, `f` is the method again.
+        .{ .src = defs ++ "[1].each { |f| f }\nr = f -1", .expected = .{ .num = -1 } },
+    });
+}
+
 test "Stdlib: respond_to? has Ruby's name" {
     // It was spelled `responds_to?`.
     try expectGlobalR(&.{

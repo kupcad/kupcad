@@ -415,3 +415,27 @@ test "Formatter: Prevents semicolons from combining across lines" {
     ;
     try expectFormat(source, expected);
 }
+
+test "Formatter: a call without parentheses gets them, keeping what -1, *xs and &blk meant" {
+    // Its output must parse back to the same calls: `puts -1` formatted as `puts - 1` would subtract.
+    const source =
+        \\puts -1
+        \\count *xs
+        \\list.map &blk
+        \\x = 1
+        \\x -1
+        \\pts = [1]
+        \\pts [0]
+    ;
+    const expected =
+        \\puts(-1)
+        \\count(*xs)
+        \\list.map(&blk)
+        \\x = 1
+        \\x - 1
+        \\pts = [1]
+        \\pts[0]
+        \\
+    ;
+    try expectFormat(source, expected);
+}
