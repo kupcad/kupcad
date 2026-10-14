@@ -4087,3 +4087,17 @@ test "KupCAD Parser: a block parameter cannot take a block" {
     try expectSingleDiagnostic("[1, 2].each { |a, &b| a }\n", "A block parameter cannot take a block ('&')");
     try expectSingleDiagnostic("[1, 2].each { |a, 5| a }\n", "Expected a block parameter name, found '5'");
 }
+
+test "KupCAD Parser: `when <constant or name> then` is a clause, not a call" {
+    // `when Integer then x` was read as the call `Integer(then x)`.
+    for ([_][]const u8{
+        "case 3\nwhen Integer then 1\nend\n",
+        "K = 3\ncase 3\nwhen K then 1\nend\n",
+        "k = 3\ncase 3\nwhen k then 1\nend\n",
+        "case 3\nwhen 1, Integer then 2\nelse 3\nend\n",
+        "case (1..2)\n  when Range then \"range\"\n  else \"other\"\nend\n",
+    }) |source| {
+        errdefer std.debug.print("source:\n{s}\n", .{source});
+        try compileOnly(source);
+    }
+}

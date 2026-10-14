@@ -1570,7 +1570,8 @@ pub const Parser = struct {
     fn isCommandCallStart(self: *Parser) bool {
         const t = self.tag(0);
         switch (t) {
-            .newline, .semicolon, .eof, .comment, .docstring, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
+            // Clause keywords end an expression, so `when Integer then x` is not a call `Integer(then x)`.
+            .newline, .semicolon, .eof, .comment, .docstring, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_then, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
             .keyword_do, .l_brace => return true,
             else => {
                 if (isAssignmentOp(t)) return false;

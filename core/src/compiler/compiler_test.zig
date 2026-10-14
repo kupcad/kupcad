@@ -2104,3 +2104,16 @@ test "Compiler: assignment inside a def makes a method local, never a top-level 
         try expectRunsTo(case.src, case.expected);
     }
 }
+
+test "Compiler: `case` picks the `when ... then` branch for constants and names" {
+    const cases = [_]struct { src: []const u8, expected: f64 }{
+        .{ .src = "case (1..2)\nwhen Range then 1\nelse 2\nend", .expected = 1 },
+        .{ .src = "K = 3\ncase 3\nwhen 1 then 10\nwhen K then 30\nend", .expected = 30 },
+        .{ .src = "k = 4\ncase 4\nwhen k then 40\nelse 0\nend", .expected = 40 },
+        .{ .src = "case \"s\"\nwhen Array then 1\nwhen String then 2\nend", .expected = 2 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script:\n{s}\n", .{case.src});
+        try expectRunsTo(case.src, case.expected);
+    }
+}
