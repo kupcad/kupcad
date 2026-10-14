@@ -8,6 +8,7 @@ const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("registry.zig");
 const kernel = @import("../kernel/kernel.zig");
 const limits = @import("../core/limits.zig");
+const ErrorKind = @import("../vm/error_kind.zig").ErrorKind;
 const engine_config = @import("../core/engine_config.zig");
 
 const print = std.fmt.comptimePrint;
@@ -574,14 +575,14 @@ test "Stdlib: break, next, return and exceptions inside range and times blocks" 
     });
 }
 
-test "Stdlib: range and times errors are rescuable ValueErrors with the real message" {
+test "Stdlib: range and times errors are rescuable with their class and real message" {
     const max_mat = std.fmt.comptimePrint("{d}", .{MAX_MATERIALIZE});
     const cases = [_]struct { src: []const u8, prefix: []const u8 }{
         .{ .src = "2.5.times { }", .prefix = "ValueError: times requires an integer" },
         .{ .src = "(1e400 - 1e400).times { }", .prefix = "ValueError: times requires an integer" },
-        .{ .src = "3.times", .prefix = "ValueError: times requires a block" },
-        .{ .src = "(0..3).each", .prefix = "ValueError: Range#each requires a block" },
-        .{ .src = "(0..3).map", .prefix = "ValueError: Range#map requires a block" },
+        .{ .src = "3.times", .prefix = "ArgumentError: times requires a block" },
+        .{ .src = "(0..3).each", .prefix = "ArgumentError: Range#each requires a block" },
+        .{ .src = "(0..3).map", .prefix = "ArgumentError: Range#map requires a block" },
         .{ .src = "(0..3).step(0)", .prefix = "ValueError: Range#step requires a finite, non-zero step" },
         .{ .src = "(0..3).step(1e400)", .prefix = "ValueError: Range#step requires a finite, non-zero step" },
         .{ .src = "(0..1e400).to_a", .prefix = "ValueError: Range#to_a requires finite bounds" },
@@ -597,8 +598,8 @@ test "Stdlib: range and times errors are rescuable ValueErrors with the real mes
         .{ .src = "1e17.times { }", .prefix = "ValueError: times would iterate" },
     };
     for (cases) |case| {
-        var src_buf: [256]u8 = undefined;
-        const src = try std.fmt.bufPrint(&src_buf, "r = begin\n  {s}\n  \"no error\"\nrescue => e\n  e.message\nend", .{case.src});
+        var src_buf: [4096]u8 = undefined;
+        const src = try std.fmt.bufPrint(&src_buf, "r = begin\n  {s}\n  \"no error\"\n" ++ RESCUE_BY_KIND ++ "end", .{case.src});
         errdefer std.debug.print("script: {s}\n", .{src});
         var vm = try initVm();
         defer vm.deinit();
@@ -674,8 +675,16 @@ test "Stdlib: Range#map keeps its result array and block results alive across GC
 // 50 mm^3 prism) and NaN/inf went straight to the kernels.
 
 /// Wraps `src` so the global `r` holds the rescued error message (or "no error").
+/// `rescue <Kind> => e` for every runtime error kind, each yielding "<Kind>: <message>",
+/// so an expected string checks the error's class as well as its message.
+const RESCUE_BY_KIND = blk: {
+    var text: []const u8 = "";
+    for (std.meta.fieldNames(ErrorKind)) |kind| text = text ++ "rescue " ++ kind ++ " => e\n  \"" ++ kind ++ ": \" + e.message\n";
+    break :blk text;
+};
+
 fn rescued(comptime src: []const u8) []const u8 {
-    return "r = begin\n  " ++ src ++ "\n  \"no error\"\nrescue => e\n  e.message\nend";
+    return "r = begin\n  " ++ src ++ "\n  \"no error\"\n" ++ RESCUE_BY_KIND ++ "end";
 }
 
 const TETRA_PTS = "[[0,0,0],[1,0,0],[0,1,0],[0,0,1]]";
@@ -1120,8 +1129,8 @@ test "Stdlib: Sketch#contains? tests the closed 2D region" {
         .{ .src = "r = cube(10).contains?([5, 5, 5])", .expected = .{ .boolean = true } },
     });
     try expectGlobalR(&.{
-        .{ .src = "r = begin\n  square(10).contains?([5])\nrescue => e\n  e.message\nend", .expected = .{ .str = "ValueError: contains? expects the point to have 2 to 3 numbers, got 1" } },
-        .{ .src = "r = begin\n  cube(10).contains?([5, 5])\nrescue => e\n  e.message\nend", .expected = .{ .str = "ValueError: contains? expects the point to have 3 numbers, got 2" } },
-        .{ .src = "CAD.config(engine: :brep)\nr = begin\n  square(10).contains?([5, 5])\nrescue => e\n  e.message\nend", .expected = .{ .str = "NotImplementedError: contains? is not supported for B-Rep sketches yet; build the sketch with the default Manifold engine" } },
+        .{ .src = rescued("square(10).contains?([5])"), .expected = .{ .str = "ValueError: contains? expects the point to have 2 to 3 numbers, got 1" } },
+        .{ .src = rescued("cube(10).contains?([5, 5])"), .expected = .{ .str = "ValueError: contains? expects the point to have 3 numbers, got 2" } },
+        .{ .src = "CAD.config(engine: :brep)\n" ++ comptime rescued("square(10).contains?([5, 5])"), .expected = .{ .str = "NotImplementedError: contains? is not supported for B-Rep sketches yet; build the sketch with the default Manifold engine" } },
     });
 }

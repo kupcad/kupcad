@@ -1,6 +1,7 @@
 const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
 const value = @import("../core/value.zig");
+const ErrorKind = @import("../vm/error_kind.zig").ErrorKind;
 const common = @import("classes/common.zig");
 
 // --- Native Methods ---
@@ -89,22 +90,13 @@ pub fn registerExceptions(vm: *VM) !void {
     try vm.globals.put(vm.allocator, "StandardError", value.Value.initObj(&std_class.obj));
     _ = vm.pop();
 
-    // Common Ruby-like Subclasses
-    const error_types = [_][]const u8{
-        "ArgumentError",
-        "TypeError",
-        "RuntimeError",
-        "IndexError",
-        "ZeroDivisionError",
-        "AssertionError",
-    };
-
-    for (error_types) |err_name| {
-        // Use allocateString directly to ensure trackingAllocator is used
+    // One class per runtime error kind; the VM keeps them for raiseError.
+    inline for (comptime std.meta.fieldNames(ErrorKind)) |err_name| {
         const name_val = try vm.allocateString(err_name);
         vm.push(name_val);
         const err_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))), std_class);
         try vm.globals.put(vm.allocator, err_name, value.Value.initObj(&err_class.obj));
+        vm.error_classes.set(@field(ErrorKind, err_name), err_class);
         _ = vm.pop();
     }
 }

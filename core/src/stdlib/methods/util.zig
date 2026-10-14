@@ -8,7 +8,7 @@ const limits = @import("../../core/limits.zig");
 // Every number a script hands to a geometry method goes through these helpers.
 // They used to be read as `if (v.isNumber()) v.asNumber() else 0.0`, so a typo
 // like `[10, "x"]` silently became a 0 coordinate, and NaN/inf went straight to
-// the kernels. Errors are raised with throwDynamicError so `rescue => e` sees the
+// the kernels. Errors are raised with raiseError so `rescue => e` sees the
 // real message instead of the generic "Native Execution Error".
 
 /// Room for an element description such as "a coordinate (point 12, component 1)".
@@ -30,14 +30,14 @@ pub fn typeName(vm: *VM, val: value.Value) []const u8 {
 }
 
 fn typeError(vm: *VM, method: []const u8, expected: []const u8, what: []const u8, got: value.Value) error{RuntimeError} {
-    _ = vm.throwDynamicError("TypeError: {s} expects {s} for {s}, got {s}", .{ method, expected, what, typeName(vm, got) });
+    _ = vm.raiseError(.TypeError, "{s} expects {s} for {s}, got {s}", .{ method, expected, what, typeName(vm, got) });
     return error.RuntimeError;
 }
 
 /// Rejects NaN and infinities, which no kernel can place or tessellate.
 pub fn requireFinite(vm: *VM, n: f64, method: []const u8, what: []const u8) !void {
     if (!std.math.isFinite(n)) {
-        _ = vm.throwDynamicError("ValueError: {s} expects a finite number for {s}, got {f}", .{ method, what, value.fmtNumber(n) });
+        _ = vm.raiseError(.ValueError, "{s} expects a finite number for {s}, got {f}", .{ method, what, value.fmtNumber(n) });
         return error.RuntimeError;
     }
 }
@@ -54,7 +54,7 @@ pub fn requireNumber(vm: *VM, val: value.Value, method: []const u8, what: []cons
 /// infinities are rejected too since no kernel can tessellate them.
 pub fn requirePositive(vm: *VM, n: f64, method: []const u8, what: []const u8) !void {
     if (!std.math.isFinite(n) or n <= 0.0) {
-        _ = vm.throwDynamicError("ValueError: {s} expects {s} to be a finite number greater than zero, got {f}", .{ method, what, value.fmtNumber(n) });
+        _ = vm.raiseError(.ValueError, "{s} expects {s} to be a finite number greater than zero, got {f}", .{ method, what, value.fmtNumber(n) });
         return error.RuntimeError;
     }
 }
@@ -112,7 +112,7 @@ fn elementError(vm: *VM, arg: NumberArray, i: usize, item: value.Value) error{Ru
     else
         std.fmt.bufPrint(&buf, "{s} ({s} {d})", .{ arg.elem, arg.index_label, i }) catch arg.elem;
     if (!item.isNumber()) return typeError(vm, arg.method, "a number", what, item);
-    _ = vm.throwDynamicError("ValueError: {s} expects a finite number for {s}, got {f}", .{ arg.method, what, value.fmtNumber(item.asNumber()) });
+    _ = vm.raiseError(.ValueError, "{s} expects a finite number for {s}, got {f}", .{ arg.method, what, value.fmtNumber(item.asNumber()) });
     return error.RuntimeError;
 }
 
@@ -126,9 +126,9 @@ pub fn parseNumberArray(comptime N: usize, vm: *VM, val: value.Value, arg: Numbe
     if (items.len < min_len or items.len > N) {
         const name = arrayName(&name_buf, arg);
         if (min_len == N) {
-            _ = vm.throwDynamicError("ValueError: {s} expects {s} to have {d} numbers, got {d}", .{ arg.method, name, N, items.len });
+            _ = vm.raiseError(.ValueError, "{s} expects {s} to have {d} numbers, got {d}", .{ arg.method, name, N, items.len });
         } else {
-            _ = vm.throwDynamicError("ValueError: {s} expects {s} to have {d} to {d} numbers, got {d}", .{ arg.method, name, min_len, N, items.len });
+            _ = vm.raiseError(.ValueError, "{s} expects {s} to have {d} to {d} numbers, got {d}", .{ arg.method, name, min_len, N, items.len });
         }
         return error.RuntimeError;
     }
@@ -177,7 +177,7 @@ pub fn requireNonZeroVector(vm: *VM, v: [3]f64, method: []const u8, what: []cons
         const x = readableNumber(&bufs[0], v[0]);
         const y = readableNumber(&bufs[1], v[1]);
         const z = readableNumber(&bufs[2], v[2]);
-        _ = vm.throwDynamicError("ValueError: {s} expects a non-zero {s}, got [{s}, {s}, {s}]", .{ method, what, x, y, z });
+        _ = vm.raiseError(.ValueError, "{s} expects a non-zero {s}, got [{s}, {s}, {s}]", .{ method, what, x, y, z });
         return error.RuntimeError;
     }
 }
@@ -191,7 +191,7 @@ pub fn checkedInt(comptime I: type, vm: *VM, val: f64, name: []const u8) !I {
     const lo: f64 = @floatFromInt(std.math.minInt(I));
     const hi: f64 = @floatFromInt(std.math.maxInt(I));
     if (!std.math.isFinite(val) or t < lo or t > hi) {
-        _ = vm.throwDynamicError("ValueError: '{s}' must be a finite integer in [{d}, {d}], got {f}", .{ name, std.math.minInt(I), std.math.maxInt(I), value.fmtNumber(val) });
+        _ = vm.raiseError(.ValueError, "'{s}' must be a finite integer in [{d}, {d}], got {f}", .{ name, std.math.minInt(I), std.math.maxInt(I), value.fmtNumber(val) });
         return error.RuntimeError;
     }
     return @intFromFloat(t);
@@ -201,7 +201,7 @@ pub fn checkedInt(comptime I: type, vm: *VM, val: f64, name: []const u8) !I {
 /// callers that resolve it from the engine config afterwards.
 pub fn requireSegmentCount(vm: *VM, segs: i32, name: []const u8) !void {
     if (segs < 0 or segs > limits.MAX_SEGMENTS) {
-        _ = vm.throwDynamicError("ValueError: '{s}' must be between 0 and {d}, got {d}", .{ name, limits.MAX_SEGMENTS, segs });
+        _ = vm.raiseError(.ValueError, "'{s}' must be between 0 and {d}, got {d}", .{ name, limits.MAX_SEGMENTS, segs });
         return error.RuntimeError;
     }
 }
@@ -240,7 +240,7 @@ pub fn parseVec3(vm: *VM, args: []const value.Value, default_val: f64, method: [
     const kwargs = trailingKwargs(args);
     const pos_count = if (kwargs != null) args.len - 1 else args.len;
     if (pos_count > VEC3_LEN) {
-        _ = vm.throwDynamicError("ArgumentError: {s} expects at most {d} numbers (x, y, z), got {d}", .{ method, VEC3_LEN, pos_count });
+        _ = vm.raiseError(.ArgumentError, "{s} expects at most {d} numbers (x, y, z), got {d}", .{ method, VEC3_LEN, pos_count });
         return error.RuntimeError;
     }
 

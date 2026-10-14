@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
 const dag = @import("dag.zig");
+pub const ErrorKind = @import("error_kind.zig").ErrorKind;
 const verifier = @import("verifier.zig");
 const limits = @import("../core/limits.zig");
 const value = @import("../core/value.zig");
@@ -132,6 +133,8 @@ pub const VM = struct {
     map_class: ?*value.ObjClass = null,
     number_class: ?*value.ObjClass = null,
     range_class: ?*value.ObjClass = null,
+    /// The class for each runtime error kind, registered by stdlib/exceptions.zig.
+    error_classes: std.EnumArray(ErrorKind, ?*value.ObjClass) = .initFill(null),
     symbol_class: ?*value.ObjClass = null,
     boolean_class: ?*value.ObjClass = null,
     bbox_class: ?*value.ObjClass = null,
@@ -148,7 +151,7 @@ pub const VM = struct {
     // --- Track stack state to prevent native FFI corruption ---
     unwind_stack: std.ArrayListUnmanaged(UnwindFrame) = .empty,
     // Bumped by every executeThrow so a native boundary can tell that the native
-    // already raised (e.g. throwDynamicError + `return error.RuntimeError`) and must
+    // already raised (e.g. raiseError + `return error.RuntimeError`) and must
     // not raise a second "Native Execution Error" on top of it.
     throw_seq: u64 = 0,
     // frame_count of the rescuing frame for the latest throw, null if it was uncaught.
@@ -516,7 +519,7 @@ pub const VM = struct {
                 .op_negate => {
                     const a = self.pop();
                     if (!a.isNumber()) {
-                        if (self.throwDynamicError("Runtime Error: Invalid operand for '-'\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "Invalid operand for '-'", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                     self.push(value.Value.initNumber(-a.asNumber()));
@@ -546,7 +549,7 @@ pub const VM = struct {
                         const cls = receiver.asClass();
                         cls.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Cannot attach member to non-namespace.\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "Cannot attach member to non-namespace.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                     self.push(val); // Push the namespace back to maintain stack equilibrium
@@ -556,7 +559,7 @@ pub const VM = struct {
                     if (self.lookupGlobal(frame, name_str)) |val| {
                         self.push(val);
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Undefined variable '{s}'\n", .{name_str}) != .ok) return .runtime_error;
+                        if (self.raiseError(.NameError, "Undefined variable '{s}'", .{name_str}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
@@ -569,7 +572,7 @@ pub const VM = struct {
                         if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
                             self.push(arr.items.items[idx]);
                         } else |_| {
-                            if (self.throwDynamicError("Runtime Error: Array index out of bounds.", .{}) != .ok) return .runtime_error;
+                            if (self.raiseError(.IndexError, "Array index out of bounds.", .{}) != .ok) return .runtime_error;
                             continue;
                         }
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
@@ -580,7 +583,7 @@ pub const VM = struct {
                             self.push(value.Value.initNil());
                         }
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Cannot index target.", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "Cannot index target.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
@@ -597,16 +600,16 @@ pub const VM = struct {
                             self.stack_top -= 3; // Safely pop all three
                             self.push(val);
                         } else |_| {
-                            if (self.throwDynamicError("Runtime Error: Array index out of bounds.", .{}) != .ok) return .runtime_error;
+                            if (self.raiseError(.IndexError, "Array index out of bounds.", .{}) != .ok) return .runtime_error;
                             continue;
                         }
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
                         const map = target.asMap();
-                        self.mapSet(map, index, val) catch return self.throwDynamicError("OutOfMemoryError: Map set failed", .{});
+                        self.mapSet(map, index, val) catch return self.raiseError(.OutOfMemoryError, "Map set failed", .{});
                         self.stack_top -= 3; // Safely pop all three
                         self.push(val);
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Cannot assign to index on target.\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "Cannot assign to index on target.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
@@ -649,7 +652,7 @@ pub const VM = struct {
                     // Root the array BEFORE allocating internal capacity to prevent GC sweeps
                     self.push(arr_val);
                     arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), item_count) catch {
-                        return self.throwDynamicError("OutOfMemoryError: Failed to build array", .{});
+                        return self.raiseError(.OutOfMemoryError, "Failed to build array", .{});
                     };
 
                     // The elements were pushed before arr_val, so they sit below it
@@ -672,7 +675,7 @@ pub const VM = struct {
                     // Root the map BEFORE allocating internal capacity to prevent GC sweeps
                     self.push(map_val);
                     map_obj.map.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch {
-                        return self.throwDynamicError("OutOfMemoryError: Failed to build map", .{});
+                        return self.raiseError(.OutOfMemoryError, "Failed to build map", .{});
                     };
 
                     const start_idx = self.stack_top - 1 - (pair_count * 2);
@@ -682,7 +685,7 @@ pub const VM = struct {
                         const val = self.stack[start_idx + i + 1];
 
                         self.mapSet(map_obj, key, val) catch {
-                            return self.throwDynamicError("OutOfMemoryError: Failed to insert map key", .{});
+                            return self.raiseError(.OutOfMemoryError, "Failed to insert map key", .{});
                         };
                     }
 
@@ -741,7 +744,7 @@ pub const VM = struct {
                     const val = self.stack[self.stack_top - 1];
                     const arr_val = self.stack[self.stack_top - 2];
                     const arr = arr_val.asArray();
-                    arr.items.append(self.gc.trackingAllocator(), val) catch return self.throwDynamicError("OutOfMemoryError: Array push failed", .{});
+                    arr.items.append(self.gc.trackingAllocator(), val) catch return self.raiseError(.OutOfMemoryError, "Array push failed", .{});
                     // Safely pop only the pushed value; target array stays on top
                     _ = self.pop();
                 },
@@ -753,10 +756,10 @@ pub const VM = struct {
 
                     if (source_val.isObject() and source_val.asObj().obj_type == .array) {
                         const source_arr = source_val.asArray();
-                        target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch return self.throwDynamicError("OutOfMemoryError: Array spread failed", .{});
+                        target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch return self.raiseError(.OutOfMemoryError, "Array spread failed", .{});
                         target_arr.items.appendSliceAssumeCapacity(source_arr.items.items);
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Can only spread arrays into arrays.\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "Can only spread arrays into arrays.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                     // Safely pop only the spread source array; target array stays on top
@@ -769,7 +772,7 @@ pub const VM = struct {
                     const map_val = self.stack[self.stack_top - 3];
                     const map = map_val.asMap();
 
-                    self.mapSet(map, key, val) catch return self.throwDynamicError("OutOfMemoryError: Map insert failed", .{});
+                    self.mapSet(map, key, val) catch return self.raiseError(.OutOfMemoryError, "Map insert failed", .{});
                     // Safely pop both key and val; target map stays on top
                     _ = self.pop();
                     _ = self.pop();
@@ -785,13 +788,13 @@ pub const VM = struct {
                         const keys = source_map.map.keys();
                         const values = source_map.map.values();
 
-                        target_map.map.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.map.count() + keys.len) catch return self.throwDynamicError("OutOfMemoryError: Map spread failed", .{});
+                        target_map.map.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.map.count() + keys.len) catch return self.raiseError(.OutOfMemoryError, "Map spread failed", .{});
 
                         for (keys, 0..) |key, i| {
-                            self.mapSet(target_map, key, values[i]) catch return self.throwDynamicError("OutOfMemoryError: Map spread failed", .{});
+                            self.mapSet(target_map, key, values[i]) catch return self.raiseError(.OutOfMemoryError, "Map spread failed", .{});
                         }
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Can only spread maps into maps.\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "Can only spread maps into maps.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                     // Safely pop only the spread source map; target map stays on top
@@ -848,7 +851,7 @@ pub const VM = struct {
                     // 1. Check Module Cache
                     if (self.modules.get(path_str)) |cached_mod| {
                         if (cached_mod.isNil()) {
-                            if (self.throwDynamicError("ImportError: Circular dependency detected for '{s}'", .{path_str}) != .ok) return .runtime_error;
+                            if (self.raiseError(.ImportError, "Circular dependency detected for '{s}'", .{path_str}) != .ok) return .runtime_error;
                             continue;
                         }
                         self.push(cached_mod);
@@ -863,14 +866,14 @@ pub const VM = struct {
                             self.push(module_obj);
                             continue;
                         }
-                        if (self.throwDynamicError("ImportError: Could not read module '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        if (self.raiseError(.ImportError, "Could not read module '{s}'", .{path_str}) != .ok) return .runtime_error;
                         continue;
                     };
                     defer self.allocator.free(source);
 
                     // --- IMPORT DEPTH LIMIT ---
                     if (self.import_depth >= MAX_IMPORT_DEPTH) {
-                        if (self.throwDynamicError("ImportError: Maximum import depth of 64 exceeded", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.ImportError, "Maximum import depth of 64 exceeded", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                     self.import_depth += 1;
@@ -878,13 +881,13 @@ pub const VM = struct {
 
                     // 3. Parse Document
                     var doc = Document.parse(self.allocator, source) catch {
-                        if (self.throwDynamicError("ImportError: Parse error in '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        if (self.raiseError(.ImportError, "Parse error in '{s}'", .{path_str}) != .ok) return .runtime_error;
                         continue;
                     };
                     defer doc.deinit();
 
                     if (doc.diagnostics.len > 0) {
-                        if (self.throwDynamicError("ImportError: Syntax errors in '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        if (self.raiseError(.ImportError, "Syntax errors in '{s}'", .{path_str}) != .ok) return .runtime_error;
                         continue;
                     }
 
@@ -908,12 +911,12 @@ pub const VM = struct {
                     comp.module_namespace = namespace;
 
                     comp.compile(doc.tree.root) catch {
-                        if (self.throwDynamicError("ImportError: Compilation failed for '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        if (self.raiseError(.ImportError, "Compilation failed for '{s}'", .{path_str}) != .ok) return .runtime_error;
                         continue;
                     };
 
                     if (!self.verifyBytecode(heap_chunk)) {
-                        if (self.throwDynamicError("ImportError: Invalid bytecode for '{s}'", .{path_str}) != .ok) return .runtime_error;
+                        if (self.raiseError(.ImportError, "Invalid bytecode for '{s}'", .{path_str}) != .ok) return .runtime_error;
                         continue;
                     }
 
@@ -1073,7 +1076,7 @@ pub const VM = struct {
                 .op_mixin => {
                     const module_val = self.pop();
                     if (!module_val.isModule()) {
-                        if (self.throwDynamicError("Runtime Error: Can only include Modules.\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "Can only include Modules.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
 
@@ -1150,7 +1153,7 @@ pub const VM = struct {
                             self.stack[self.stack_top - 1] = val;
                             continue;
                         }
-                        if (self.throwDynamicError("Runtime Error: Undefined module member '{s}'.\n", .{name_str}) != .ok) return .runtime_error;
+                        if (self.raiseError(.NameError, "Undefined module member '{s}'.", .{name_str}) != .ok) return .runtime_error;
                         continue;
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
@@ -1158,18 +1161,18 @@ pub const VM = struct {
                             self.stack[self.stack_top - 1] = val;
                             continue;
                         }
-                        if (self.throwDynamicError("Runtime Error: Undefined class member '{s}'.\n", .{name_str}) != .ok) return .runtime_error;
+                        if (self.raiseError(.NameError, "Undefined class member '{s}'.", .{name_str}) != .ok) return .runtime_error;
                         continue;
                     } else if (self.getClass(receiver)) |class| {
                         if (self.findMethodWithPrivacy(class, name_val, null).method) |method_val| {
                             self.stack[self.stack_top - 1] = method_val;
                             continue;
                         }
-                        if (self.throwDynamicError("Runtime Error: Method '{s}' not found on receiver.\n", .{name_str}) != .ok) return .runtime_error;
+                        if (self.raiseError(.NoMethodError, "Method '{s}' not found on receiver.", .{name_str}) != .ok) return .runtime_error;
                         continue;
                     }
 
-                    if (self.throwDynamicError("Runtime Error: Only instances have properties.\n", .{}) != .ok) return .runtime_error;
+                    if (self.raiseError(.TypeError, "Only instances have properties.", .{}) != .ok) return .runtime_error;
                     continue;
                 },
                 .op_set_property, .op_set_property_wide => {
@@ -1203,7 +1206,7 @@ pub const VM = struct {
                         continue;
                     }
 
-                    if (self.throwDynamicError("Runtime Error: Only instances have properties.\n", .{}) != .ok) return .runtime_error;
+                    if (self.raiseError(.TypeError, "Only instances have properties.", .{}) != .ok) return .runtime_error;
                     continue;
                 },
                 .op_inherit => {
@@ -1242,7 +1245,7 @@ pub const VM = struct {
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
                         const superclass = instance.class.superclass orelse {
-                            return self.throwDynamicError("Runtime Error: No superclass exists for receiver.\n", .{});
+                            return self.raiseError(.RuntimeError, "No superclass exists for receiver.", .{});
                         };
 
                         // Use new Privacy Resolution Helper
@@ -1258,16 +1261,16 @@ pub const VM = struct {
                                 if (res != .ok) return res;
                                 continue;
                             } else {
-                                if (self.throwDynamicError("Runtime Error: Superclass method '{s}' is not callable.\n", .{method_name_str}) != .ok) return .runtime_error;
+                                if (self.raiseError(.RuntimeError, "Superclass method '{s}' is not callable.", .{method_name_str}) != .ok) return .runtime_error;
                                 continue;
                             }
                         }
 
-                        if (self.throwDynamicError("Runtime Error: Superclass method '{s}' not found.\n", .{method_name_str}) != .ok) return .runtime_error;
+                        if (self.raiseError(.NoMethodError, "Superclass method '{s}' not found.", .{method_name_str}) != .ok) return .runtime_error;
                         continue;
                     }
 
-                    if (self.throwDynamicError("Runtime Error: super can only be called on instances.\n", .{}) != .ok) return .runtime_error;
+                    if (self.raiseError(.TypeError, "super can only be called on instances.", .{}) != .ok) return .runtime_error;
                     continue;
                 },
                 .op_yield => {
@@ -1278,7 +1281,7 @@ pub const VM = struct {
                     const block_val = self.stack[frame.base_slot + expected_args + 1];
 
                     if (!block_val.isClosure()) {
-                        if (self.throwDynamicError("Runtime Error: No block given to yield.\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.ArgumentError, "No block given to yield.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
 
@@ -1330,7 +1333,7 @@ pub const VM = struct {
                     } else if (receiver_val.isModule()) {
                         receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Can only define singleton methods on classes or modules.\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "Can only define singleton methods on classes or modules.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
@@ -1357,11 +1360,11 @@ pub const VM = struct {
                         if (found_val) |v| {
                             self.push(v);
                         } else {
-                            if (self.throwDynamicError("Runtime Error: Undefined class variable '{s}'.\n", .{name_str}) != .ok) return .runtime_error;
+                            if (self.raiseError(.NameError, "Undefined class variable '{s}'.", .{name_str}) != .ok) return .runtime_error;
                             continue;
                         }
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Receiver has no class context.\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.RuntimeError, "Receiver has no class context.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
@@ -1400,7 +1403,7 @@ pub const VM = struct {
 
                         self.push(val); // Yield the assigned value
                     } else {
-                        if (self.throwDynamicError("Runtime Error: Receiver has no class context.\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.RuntimeError, "Receiver has no class context.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
@@ -1409,7 +1412,7 @@ pub const VM = struct {
                     const thrown_val = self.pop();
 
                     if (!class_val.isClass()) {
-                        if (self.throwDynamicError("Runtime Error: Rescue type must be a Class.\n", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "Rescue type must be a Class.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
 
@@ -1976,9 +1979,9 @@ pub const VM = struct {
             // @intFromFloat is illegal for NaN/inf/out-of-range operands, so bitwise
             // operands must be checked first; fractions still truncate toward zero.
             const a_int = bitwiseOperand(a_num) orelse
-                return self.throwDynamicError("RangeError: Bitwise operand {f} is not a finite 64-bit integer.", .{value.fmtNumber(a_num)});
+                return self.raiseError(.RangeError, "Bitwise operand {f} is not a finite 64-bit integer.", .{value.fmtNumber(a_num)});
             const b_int = bitwiseOperand(b_num) orelse
-                return self.throwDynamicError("RangeError: Bitwise operand {f} is not a finite 64-bit integer.", .{value.fmtNumber(b_num)});
+                return self.raiseError(.RangeError, "Bitwise operand {f} is not a finite 64-bit integer.", .{value.fmtNumber(b_num)});
 
             const res: i64 = switch (op) {
                 .op_bitwise_and => a_int & b_int,
@@ -1986,7 +1989,7 @@ pub const VM = struct {
                 .op_bitwise_xor => a_int ^ b_int,
                 .op_shift_left, .op_shift_right => blk: {
                     if (b_int < 0 or b_int >= BITWISE_INT_BITS) {
-                        return self.throwDynamicError("RangeError: Shift count {d} is outside 0..{d}.", .{ b_int, BITWISE_INT_BITS - 1 });
+                        return self.raiseError(.RangeError, "Shift count {d} is outside 0..{d}.", .{ b_int, BITWISE_INT_BITS - 1 });
                     }
                     const count: std.math.Log2Int(i64) = @intCast(b_int);
                     // `<<` wraps bits shifted out of the top; `>>` is arithmetic (sign-filling)
@@ -2041,7 +2044,7 @@ pub const VM = struct {
             return .ok;
         } else if (self.host.binary_handler) |handler| {
             const result = handler(self, op, a_val, b_val) catch {
-                return self.throwDynamicError("Runtime Error: CSG Binary Operation Failed", .{});
+                return self.raiseError(.RuntimeError, "CSG Binary Operation Failed", .{});
             };
 
             self.stack.ptr[self.stack_top] = result;
@@ -2049,35 +2052,35 @@ pub const VM = struct {
             return .ok;
         } else {
             const op_symbol = if (op == .op_add) "+" else "-";
-            return self.throwDynamicError("Runtime Error: Invalid operands for '{s}'", .{op_symbol});
+            return self.raiseError(.TypeError, "Invalid operands for '{s}'", .{op_symbol});
         }
     }
 
     inline fn executeNumericBinary(self: *VM, op: chunk.OpCode) InterpretResult {
         const nums = self.popBinaryNumbers() catch {
-            return self.throwDynamicError("Runtime Error: Invalid operands for math operation.", .{});
+            return self.raiseError(.TypeError, "Invalid operands for math operation.", .{});
         };
         switch (op) {
             .op_multiply => {
                 const res = nums[0] * nums[1];
-                if (std.math.isNan(res)) return self.throwDynamicError("MathError: Operation resulted in NaN.\n", .{});
+                if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
                 self.push(value.Value.initNumber(res));
             },
             .op_divide => {
-                if (nums[1] == 0.0) return self.throwDynamicError("ZeroDivisionError: Division by zero.\n", .{});
+                if (nums[1] == 0.0) return self.raiseError(.ZeroDivisionError, "Division by zero.", .{});
                 const res = nums[0] / nums[1];
-                if (std.math.isNan(res)) return self.throwDynamicError("MathError: Operation resulted in NaN.\n", .{});
+                if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
                 self.push(value.Value.initNumber(res));
             },
             .op_modulo => {
-                if (nums[1] == 0.0) return self.throwDynamicError("ZeroDivisionError: Modulo by zero.\n", .{});
+                if (nums[1] == 0.0) return self.raiseError(.ZeroDivisionError, "Modulo by zero.", .{});
                 const res = @mod(nums[0], nums[1]);
-                if (std.math.isNan(res)) return self.throwDynamicError("MathError: Operation resulted in NaN.\n", .{});
+                if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
                 self.push(value.Value.initNumber(res));
             },
             .op_exponent => {
                 const res = std.math.pow(f64, nums[0], nums[1]);
-                if (std.math.isNan(res)) return self.throwDynamicError("MathError: Operation resulted in NaN.\n", .{});
+                if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
                 self.push(value.Value.initNumber(res));
             },
             .op_less => self.push(value.Value.initBool(nums[0] < nums[1])),
@@ -2138,7 +2141,7 @@ pub const VM = struct {
         if (is_private_call) {
             const current_self = self.stack[frame.base_slot];
             if (!self.valuesEqual(receiver, current_self)) {
-                return self.throwDynamicError("NoMethodError: private method '{s}' called.\n", .{method_name_str});
+                return self.raiseError(.NoMethodError, "private method '{s}' called.", .{method_name_str});
             }
         }
 
@@ -2195,7 +2198,7 @@ pub const VM = struct {
             const throw_seq = self.throw_seq;
             const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch {
                 if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
-                return self.throwDynamicError("Runtime Error: CAD Kernel / Method Error", .{});
+                return self.raiseError(.RuntimeError, "CAD Kernel / Method Error", .{});
             };
 
             self.popAndRelease(arg_count + 1);
@@ -2205,7 +2208,7 @@ pub const VM = struct {
             self.stack_top += 1;
             return .ok;
         } else {
-            return self.throwDynamicError("Runtime Error: No invoke handler registered for method '{s}'.\n", .{method_name_str});
+            return self.raiseError(.NoMethodError, "No invoke handler registered for method '{s}'.", .{method_name_str});
         }
     }
 
@@ -2230,7 +2233,7 @@ pub const VM = struct {
 
             if (total > pre_count + post_count) {
                 const splat_size = total - pre_count - post_count;
-                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.throwDynamicError("OutOfMemoryError: Splat unpack failed", .{});
+                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseError(.OutOfMemoryError, "Splat unpack failed", .{});
                 splat_arr.items.appendSliceAssumeCapacity(arr.items.items[pre_count .. pre_count + splat_size]);
             }
 
@@ -2296,7 +2299,7 @@ pub const VM = struct {
         const arr_val = value.Value.initObj(&arr_obj.obj);
 
         self.push(arr_val);
-        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.throwDynamicError("OutOfMemoryError: Splat pack failed", .{});
+        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseError(.OutOfMemoryError, "Splat pack failed", .{});
         _ = self.pop();
 
         const start_idx = frame.base_slot + 1 + fixed_arity;
@@ -2501,7 +2504,7 @@ pub const VM = struct {
             // Bare identifier evaluation of a non-callable value: leave value on stack
             return .ok;
         } else {
-            return self.throwDynamicError("Runtime Error: Can only call functions and classes.", .{});
+            return self.raiseError(.TypeError, "Can only call functions and classes.", .{});
         }
         return .ok;
     }
@@ -2515,7 +2518,7 @@ pub const VM = struct {
 
         const init_name_val = self.allocateString("initialize") catch return .runtime_error;
         const init_method = self.findMethod(class_obj, init_name_val) orelse {
-            if (arg_count > 0) return self.throwDynamicError("Runtime Error: Expected 0 args for default constructor.\n", .{});
+            if (arg_count > 0) return self.raiseError(.ArgumentError, "Expected 0 args for default constructor.", .{});
             return .ok;
         };
 
@@ -2524,7 +2527,7 @@ pub const VM = struct {
             self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, true) catch return .runtime_error;
             return .ok;
         }
-        if (!init_method.isNative()) return self.throwDynamicError("TypeError: '{s}#initialize' is not callable.", .{class_obj.name.chars});
+        if (!init_method.isNative()) return self.raiseError(.TypeError, "'{s}#initialize' is not callable.", .{class_obj.name.chars});
 
         const native_obj = init_method.asNative();
         const args_ptr = self.stack.ptr + base_slot + 1;
@@ -2539,7 +2542,7 @@ pub const VM = struct {
             if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
             if (err == error.FatalError) return .runtime_error;
             if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
-            return self.throwDynamicError("Runtime Error: Native Constructor Error", .{});
+            return self.raiseError(.RuntimeError, "Native Constructor Error", .{});
         };
         self.popAndRelease(arg_count);
         return .ok;
@@ -2566,7 +2569,7 @@ pub const VM = struct {
             }
             if (err == error.FatalError) return .runtime_error;
             if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
-            return self.throwDynamicError("Runtime Error: Native Execution Error", .{});
+            return self.raiseError(.RuntimeError, "Native Execution Error", .{});
         };
 
         // --- PROFILER: Native Exit ---
@@ -2619,53 +2622,51 @@ pub const VM = struct {
         // Each allocation below can collect, and Zig locals are not GC roots: every
         // new object goes onto the stack as soon as it exists.
         if (!err_val.isInstance() and !err_val.isClass()) {
-            if (self.globals.get("RuntimeError")) |rt_class_val| {
-                if (rt_class_val.isClass()) {
-                    if (self.gc.allocateInstance(self, rt_class_val.asClass()) catch null) |inst| {
-                        const inst_val = value.Value.initObj(&inst.obj);
-                        self.push(inst_val);
+            if (self.error_classes.get(.RuntimeError)) |rt_class| {
+                if (self.gc.allocateInstance(self, rt_class) catch null) |inst| {
+                    const inst_val = value.Value.initObj(&inst.obj);
+                    self.push(inst_val);
 
-                        var str_val: ?value.Value = null;
+                    var str_val: ?value.Value = null;
 
-                        // If it's already a string, use it directly!
-                        if (err_val.isObject() and err_val.asObj().obj_type == .string) {
-                            str_val = err_val;
-                        } else {
-                            // Otherwise, stringify the primitive (number, boolean, etc.)
-                            var fba_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
-                            var fba = std.heap.FixedBufferAllocator.init(&fba_buf);
-                            var out: std.Io.Writer.Allocating = .init(fba.allocator());
-                            err_val.stringify(false, &out.writer) catch |err| {
-                                std.log.err("Error stringifying primitive exception: {}", .{err});
-                            };
-                            str_val = self.allocateString(out.written()) catch null;
-                        }
+                    // If it's already a string, use it directly!
+                    if (err_val.isObject() and err_val.asObj().obj_type == .string) {
+                        str_val = err_val;
+                    } else {
+                        // Otherwise, stringify the primitive (number, boolean, etc.)
+                        var fba_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
+                        var fba = std.heap.FixedBufferAllocator.init(&fba_buf);
+                        var out: std.Io.Writer.Allocating = .init(fba.allocator());
+                        err_val.stringify(false, &out.writer) catch |err| {
+                            std.log.err("Error stringifying primitive exception: {}", .{err});
+                        };
+                        str_val = self.allocateString(out.written()) catch null;
+                    }
 
-                        if (str_val) |s_val| {
-                            self.push(s_val); // Protect until the instance holds it
-                            const msg_key = self.allocateString("message") catch return .runtime_error;
-                            self.setInstanceField(inst, msg_key, s_val, null) catch |err| {
-                                std.log.err("Error setting exception message: {}", .{err});
+                    if (str_val) |s_val| {
+                        self.push(s_val); // Protect until the instance holds it
+                        const msg_key = self.allocateString("message") catch return .runtime_error;
+                        self.setInstanceField(inst, msg_key, s_val, null) catch |err| {
+                            std.log.err("Error setting exception message: {}", .{err});
+                        };
+                        _ = self.pop();
+
+                        // --- EAGER BACKTRACE CAPTURE ---
+                        if (self.buildBacktrace() catch null) |bt_arr| {
+                            self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
+                            const bt_key = self.allocateString("backtrace") catch return .runtime_error;
+                            self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
+                                std.log.err("Error setting exception backtrace: {}", .{err});
                             };
                             _ = self.pop();
-
-                            // --- EAGER BACKTRACE CAPTURE ---
-                            if (self.buildBacktrace() catch null) |bt_arr| {
-                                self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
-                                const bt_key = self.allocateString("backtrace") catch return .runtime_error;
-                                self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
-                                    std.log.err("Error setting exception backtrace: {}", .{err});
-                                };
-                                _ = self.pop();
-                            }
-
-                            // The instance takes over the thrown slot, which keeps it rooted until it is popped
-                            _ = self.pop();
-                            self.stack[self.stack_top - 1] = inst_val;
-                            err_val = inst_val; // Overwrite the thrown value!
-                        } else {
-                            _ = self.pop(); // No message: drop the instance and throw the payload as-is
                         }
+
+                        // The instance takes over the thrown slot, which keeps it rooted until it is popped
+                        _ = self.pop();
+                        self.stack[self.stack_top - 1] = inst_val;
+                        err_val = inst_val; // Overwrite the thrown value!
+                    } else {
+                        _ = self.pop(); // No message: drop the instance and throw the payload as-is
                     }
                 }
             }
@@ -2699,7 +2700,7 @@ pub const VM = struct {
                         const msg_val = inst.fields.items[idx];
                         if (msg_val.isObject() and msg_val.asObj().obj_type == .string) {
                             const str = msg_val.asString().chars;
-                            self.reportError("\n{s}: {s}\n", .{ inst.class.name.chars, str });
+                            self.reportError("{s}: {s}", .{ inst.class.name.chars, str });
                             printed = true;
                         }
                     }
@@ -2991,45 +2992,51 @@ pub const VM = struct {
         return .{ .matched = false, .jump_offset = 0 };
     }
 
-    pub fn throwDynamicError(self: *VM, comptime fmt: []const u8, args: anytype) InterpretResult {
-        const msg = self.fmtScratch(fmt, args) catch "Runtime Error: Out of Memory during formatting";
-
-        // Try to instantiate a real `RuntimeError` object so it can be rescued natively
-        if (self.globals.get("RuntimeError")) |rt_class_val| {
-            if (rt_class_val.isClass()) {
-                if (self.gc.allocateInstance(self, rt_class_val.asClass()) catch null) |inst| {
-
-                    // Root the newly allocated instance IMMEDIATELY
-                    self.push(value.Value.initObj(&inst.obj));
-
-                    if (self.allocateString(msg) catch null) |str_val| {
-                        self.push(str_val); // Protect until the instance holds it
-                        const msg_key = self.allocateString("message") catch return .runtime_error;
-                        self.setInstanceField(inst, msg_key, str_val, null) catch |err| {
-                            std.log.err("Error setting dynamic exception message: {}", .{err});
-                        };
-                        _ = self.pop();
-
-                        // --- EAGER BACKTRACE CAPTURE ---
-                        if (self.buildBacktrace() catch null) |bt_arr| {
-                            self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
-                            const bt_key = self.allocateString("backtrace") catch return .runtime_error;
-                            self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
-                                std.log.err("Error setting dynamic exception backtrace: {}", .{err});
-                            };
-                            _ = self.pop();
-                        }
-
-                        // inst is already safely on the top of the stack, call executeThrow to bubble it
-                        return self.executeThrow();
-                    }
-
-                    // Cleanup if string alloc failed
-                    _ = self.pop();
-                }
+    /// Raises a rescuable exception of `kind` whose message is `fmt` formatted with `args`.
+    /// The class name is not part of the message (it's printed from the class for uncaught
+    /// errors), so `fmt` must not start with a kind prefix or end in a newline; both are
+    /// rejected at compile time.
+    pub fn raiseError(self: *VM, comptime kind: ErrorKind, comptime fmt: []const u8, args: anytype) InterpretResult {
+        comptime {
+            if (fmt.len > 0 and fmt[fmt.len - 1] == '\n') @compileError("error messages must not end in a newline: \"" ++ fmt ++ "\"");
+            if (std.mem.startsWith(u8, fmt, "Runtime Error:")) @compileError("drop the 'Runtime Error:' prefix from \"" ++ fmt ++ "\"");
+            for (std.meta.fieldNames(ErrorKind)) |name| {
+                if (std.mem.startsWith(u8, fmt, name ++ ":")) @compileError("drop the '" ++ name ++ ":' prefix and pass ." ++ name ++ ": \"" ++ fmt ++ "\"");
             }
         }
+        const msg = self.fmtScratch(fmt, args) catch "Out of memory while formatting an error message";
 
+        if (self.error_classes.get(kind)) |class| {
+            if (self.gc.allocateInstance(self, class) catch null) |inst| {
+                // Root the newly allocated instance IMMEDIATELY
+                self.push(value.Value.initObj(&inst.obj));
+
+                if (self.allocateString(msg) catch null) |str_val| {
+                    self.push(str_val); // Protect until the instance holds it
+                    const msg_key = self.allocateString("message") catch return .runtime_error;
+                    self.setInstanceField(inst, msg_key, str_val, null) catch |err| {
+                        std.log.err("Error setting dynamic exception message: {}", .{err});
+                    };
+                    _ = self.pop();
+
+                    // --- EAGER BACKTRACE CAPTURE ---
+                    if (self.buildBacktrace() catch null) |bt_arr| {
+                        self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
+                        const bt_key = self.allocateString("backtrace") catch return .runtime_error;
+                        self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
+                            std.log.err("Error setting dynamic exception backtrace: {}", .{err});
+                        };
+                        _ = self.pop();
+                    }
+
+                    // inst is already safely on the top of the stack, call executeThrow to bubble it
+                    return self.executeThrow();
+                }
+
+                // Cleanup if string alloc failed
+                _ = self.pop();
+            }
+        }
         // Fallback to string if the standard library isn't loaded yet
         if (self.allocateString(msg) catch null) |err_val| {
             self.push(err_val);

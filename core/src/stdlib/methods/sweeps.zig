@@ -91,11 +91,11 @@ pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 pub fn meshLoft(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return error.RuntimeError;
     if (args.len < 2) {
-        _ = vm.throwDynamicError("ArgumentError: loft requires a target CrossSection and a z-height", .{});
+        _ = vm.raiseError(.ArgumentError, "loft requires a target CrossSection and a z-height", .{});
         return error.RuntimeError;
     }
     if (!args[0].isCrossSection()) {
-        _ = vm.throwDynamicError("TypeError: loft expects a CrossSection for the target, got {s}", .{util.typeName(vm, args[0])});
+        _ = vm.raiseError(.TypeError, "loft expects a CrossSection for the target, got {s}", .{util.typeName(vm, args[0])});
         return error.RuntimeError;
     }
 

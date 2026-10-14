@@ -128,6 +128,35 @@ class Bracket
 end
 ```
 
+### Errors
+
+`raise` and `begin … rescue … ensure … end` work as in Ruby. Errors raised by the language and the standard library are instances of specific classes, all subclasses of `StandardError`, so they can be rescued by kind; `e.message` holds just the message:
+
+| Class | Raised for |
+|---|---|
+| `ArgumentError` | Wrong number of arguments, a missing block |
+| `TypeError` | A value of the wrong type (`polygon([[0, 0], [1, "x"], [0, 1]])`, `5[0]`) |
+| `ValueError` | A value of the right type that is out of range or not finite (`cube(-1)`, `segments: 1e9`) |
+| `IndexError` | An array index out of bounds |
+| `RangeError` | A number outside a representable range (bitwise operands, shift counts) |
+| `ZeroDivisionError`, `MathError` | Division by zero, an operation producing `NaN` |
+| `NameError`, `NoMethodError` | An undefined variable or member, an unknown method |
+| `ImportError` | A module that can't be read, parsed or compiled |
+| `NotImplementedError` | A feature the active engine doesn't support yet |
+| `AssertionError` | A failed `assert` |
+| `RuntimeError` | `raise "message"`, and other runtime failures |
+
+```ruby
+begin
+  plate = cube(x: width, y: depth, z: thickness)
+rescue ValueError => e
+  puts("bad dimensions: " + e.message)   # "cube expects ... got -1"
+  plate = cube(10)
+end
+```
+
+An uncaught error stops the script and is printed once with its class, e.g. `ValueError: cube expects x to be a finite number greater than zero, got -1`.
+
 ### Native Collections
 
 * **Arrays**: Exposes functional mutators (`.push`, `.pop`, `.shift`, `.unshift`, `.slice`, `.join`), iterators (`.each`, `.map`, `.filter`, `.reduce`), and native numeric reducers (`.max`, `.min`, `.sum`, `.sort`).

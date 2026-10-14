@@ -62,7 +62,7 @@ pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
 pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 1 or !args[0].isGeometry()) {
-        _ = vm.throwDynamicError("TypeError: min_gap expects a Geometry to measure against, got {s}", .{if (args.len < 1) "nothing" else util.typeName(vm, args[0])});
+        _ = vm.raiseError(.TypeError, "min_gap expects a Geometry to measure against, got {s}", .{if (args.len < 1) "nothing" else util.typeName(vm, args[0])});
         return error.RuntimeError;
     }
     const search_length = if (args.len > 1) try util.requireNumber(vm, args[1], "min_gap", "search_length") else DEFAULT_MIN_GAP_SEARCH_LENGTH;
@@ -76,7 +76,7 @@ pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !
     if (receiver.isCrossSection()) return sketchContains(vm, receiver, args);
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 1) {
-        _ = vm.throwDynamicError("ArgumentError: contains? expects a point [x, y, z]", .{});
+        _ = vm.raiseError(.ArgumentError, "contains? expects a point [x, y, z]", .{});
         return error.RuntimeError;
     }
     const pt = try util.parseNumberArray(3, vm, args[0], .{ .method = "contains?", .name = "the point" }, 3, 0.0);
@@ -92,7 +92,7 @@ pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !
 /// never contained; accepting [x, y, z] lets generic code pass 3D points.
 fn sketchContains(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (args.len < 1) {
-        _ = vm.throwDynamicError("ArgumentError: contains? on a sketch expects a point [x, y]", .{});
+        _ = vm.raiseError(.ArgumentError, "contains? on a sketch expects a point [x, y]", .{});
         return error.RuntimeError;
     }
     const pt = try util.parseNumberArray(3, vm, args[0], .{ .method = "contains?", .name = "the point" }, 2, 0.0);
@@ -101,7 +101,7 @@ fn sketchContains(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 
     const handle = try vm.ensureConcreteCrossSection(receiver);
     const inside = kernel.crossSectionContainsPoint(handle, .{ pt[0], pt[1] }, tolerance) orelse {
-        _ = vm.throwDynamicError("NotImplementedError: contains? is not supported for B-Rep sketches yet; build the sketch with the default Manifold engine", .{});
+        _ = vm.raiseError(.NotImplementedError, "contains? is not supported for B-Rep sketches yet; build the sketch with the default Manifold engine", .{});
         return error.RuntimeError;
     };
     return value.Value.initBool(inside);
@@ -110,7 +110,7 @@ fn sketchContains(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return error.RuntimeError;
     if (args.len < 2) {
-        _ = vm.throwDynamicError("ArgumentError: ray_cast expects an origin [x, y, z] and an end point [x, y, z]", .{});
+        _ = vm.raiseError(.ArgumentError, "ray_cast expects an origin [x, y, z] and an end point [x, y, z]", .{});
         return error.RuntimeError;
     }
     const origin = try util.parseNumberArray(3, vm, args[0], .{ .method = "ray_cast", .name = "the origin" }, 3, 0.0);

@@ -63,7 +63,7 @@ fn extractGeomOptions(vm: *VM, parsed: ArgParseCtx, method: []const u8) !GeomOpt
 /// Validates a user-supplied index into an array of length `len`.
 fn checkedIndex(vm: *VM, raw: f64, len: usize, what: []const u8) !usize {
     if (!std.math.isFinite(raw) or raw < 0.0 or @trunc(raw) != raw or raw >= @as(f64, @floatFromInt(len)) or raw > std.math.maxInt(u32)) {
-        _ = vm.throwDynamicError("ValueError: {s} index {f} is out of range (0..{d})", .{ what, value.fmtNumber(raw), len });
+        _ = vm.raiseError(.ValueError, "{s} index {f} is out of range (0..{d})", .{ what, value.fmtNumber(raw), len });
         return error.RuntimeError;
     }
     return @intFromFloat(raw);
@@ -81,7 +81,7 @@ const MAX_LABEL_LEN = 64;
 
 fn requireMinCount(vm: *VM, count: usize, min: usize, method: []const u8, what: []const u8) !void {
     if (count < min) {
-        _ = vm.throwDynamicError("ValueError: {s} needs at least {d} {s}, got {d}", .{ method, min, what, count });
+        _ = vm.raiseError(.ValueError, "{s} needs at least {d} {s}, got {d}", .{ method, min, what, count });
         return error.RuntimeError;
     }
 }
@@ -287,7 +287,7 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
 pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
     if (parsed.pos_count < 1) {
-        _ = vm.throwDynamicError("ArgumentError: polygon expects an Array of [x, y] points", .{});
+        _ = vm.raiseError(.ArgumentError, "polygon expects an Array of [x, y] points", .{});
         return error.RuntimeError;
     }
     const pt_arr = try util.requireArray(vm, args[0], "polygon", "points");
@@ -301,7 +301,7 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     }
 
     // Not the scratch arena: a validation error below raises through
-    // throwDynamicError, whose backtrace capture resets that arena under us.
+    // raiseError, whose backtrace capture resets that arena under us.
     const alloc = vm.allocator;
 
     // Every point is validated, including ones no path references.
@@ -373,7 +373,7 @@ pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
     }
 
     if (sides < MIN_CONTOUR_POINTS or sides > limits.MAX_SEGMENTS) {
-        _ = vm.throwDynamicError("ValueError: 'sides' must be between {d} and {d}, got {d}", .{ MIN_CONTOUR_POINTS, limits.MAX_SEGMENTS, sides });
+        _ = vm.raiseError(.ValueError, "'sides' must be between {d} and {d}, got {d}", .{ MIN_CONTOUR_POINTS, limits.MAX_SEGMENTS, sides });
         return error.RuntimeError;
     }
     try util.requirePositive(vm, opts.r, "regular_polygon", "radius");
@@ -433,7 +433,7 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     if (args.len < 2) {
-        _ = vm.throwDynamicError("ArgumentError: polyhedron expects a points Array and a faces Array", .{});
+        _ = vm.raiseError(.ArgumentError, "polyhedron expects a points Array and a faces Array", .{});
         return error.RuntimeError;
     }
     const pts_val = try util.requireArray(vm, args[0], "polyhedron", "points");
@@ -442,7 +442,7 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     try requireMinCount(vm, faces_val.len, MIN_POLYHEDRON_FACES, "polyhedron", "faces");
 
     // Not the scratch arena: a validation error below raises through
-    // throwDynamicError, whose backtrace capture resets that arena under us.
+    // raiseError, whose backtrace capture resets that arena under us.
     const alloc = vm.allocator;
 
     const pts = try alloc.alloc([3]f64, pts_val.len);
@@ -455,7 +455,7 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     for (faces_val, faces, 0..) |f, *face, i| {
         // A quad used to be silently truncated to its first triangle.
         if (f.isArray() and f.asArray().items.items.len != POLYHEDRON_FACE_LEN) {
-            _ = vm.throwDynamicError("ValueError: polyhedron faces must be triangles ({d} point indices), but face {d} has {d}", .{ POLYHEDRON_FACE_LEN, i, f.asArray().items.items.len });
+            _ = vm.raiseError(.ValueError, "polyhedron faces must be triangles ({d} point indices), but face {d} has {d}", .{ POLYHEDRON_FACE_LEN, i, f.asArray().items.items.len });
             return error.RuntimeError;
         }
         const raw = try util.parseNumberArray(POLYHEDRON_FACE_LEN, vm, f, .{
@@ -475,7 +475,7 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
 pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = parseArgs(args);
     if (parsed.pos_count == 0 or !args[0].isString()) {
-        _ = vm.throwDynamicError("ArgumentError: text() expects a String as its first argument", .{});
+        _ = vm.raiseError(.ArgumentError, "text() expects a String as its first argument", .{});
         return error.RuntimeError;
     }
     const text_str = args[0].asString().chars;
@@ -497,14 +497,14 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
                 const name = try util.requireName(vm, v, "text", "halign");
                 // An unknown alignment used to fall back to the default silently.
                 halign = std.meta.stringToEnum(text_mod.HAlign, name) orelse {
-                    _ = vm.throwDynamicError("ValueError: text halign must be left, center or right, got '{s}'", .{name});
+                    _ = vm.raiseError(.ValueError, "text halign must be left, center or right, got '{s}'", .{name});
                     return error.RuntimeError;
                 };
             }
             if (util.getKey(map, "valign")) |v| {
                 const name = try util.requireName(vm, v, "text", "valign");
                 valign = std.meta.stringToEnum(text_mod.VAlign, name) orelse {
-                    _ = vm.throwDynamicError("ValueError: text valign must be baseline, bottom, center or top, got '{s}'", .{name});
+                    _ = vm.raiseError(.ValueError, "text valign must be baseline, bottom, center or top, got '{s}'", .{name});
                     return error.RuntimeError;
                 };
             }
@@ -517,18 +517,18 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     // point count grows ~sqrt(size / tolerance) per curve; a vanishing tolerance
     // (e.g. 1e-300, whose square underflows to 0) never terminates in practice.
     if (tolerance < size * MIN_TEXT_TOLERANCE_RATIO) {
-        _ = vm.throwDynamicError("ValueError: 'tolerance' must be at least size * {d} ({d}), got {f}", .{ MIN_TEXT_TOLERANCE_RATIO, size * MIN_TEXT_TOLERANCE_RATIO, value.fmtNumber(tolerance) });
+        _ = vm.raiseError(.ValueError, "'tolerance' must be at least size * {d} ({d}), got {f}", .{ MIN_TEXT_TOLERANCE_RATIO, size * MIN_TEXT_TOLERANCE_RATIO, value.fmtNumber(tolerance) });
         return error.RuntimeError;
     }
 
     const alloc = vm.scratch_arena.allocator();
 
     const face = text_mod.getFaceByName(font_name) catch {
-        _ = vm.throwDynamicError("RuntimeError: Failed to load font '{s}'", .{font_name});
+        _ = vm.raiseError(.RuntimeError, "Failed to load font '{s}'", .{font_name});
         return error.RuntimeError;
     };
     var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, halign, valign) catch {
-        _ = vm.throwDynamicError("RuntimeError: Failed to extract text contours", .{});
+        _ = vm.raiseError(.RuntimeError, "Failed to extract text contours", .{});
         return error.RuntimeError;
     };
     defer polygons.deinit(alloc);

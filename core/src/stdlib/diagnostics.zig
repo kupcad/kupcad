@@ -37,11 +37,10 @@ pub fn nativeAssert(vm: *VM, args: []const value.Value) anyerror!value.Value {
             }
             err_class = err_val.asClass();
         } else {
-            const default_err = vm.globals.get("AssertionError") orelse {
+            err_class = vm.error_classes.get(.AssertionError) orelse {
                 vm.reportError("RuntimeError: AssertionError class not found.\n", .{});
                 return error.RuntimeError;
             };
-            err_class = default_err.asClass();
         }
 
         // Determine Message

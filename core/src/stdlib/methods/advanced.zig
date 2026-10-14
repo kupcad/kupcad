@@ -62,7 +62,7 @@ pub fn meshOffset(vm: *VM, receiver: *value.ObjCrossSection, args: []const value
             const name = try util.requireName(vm, v, "offset", "join");
             // An unknown style (or a String) used to fall back to round silently.
             join_type = std.meta.stringToEnum(JoinType, name) orelse {
-                _ = vm.throwDynamicError("ValueError: offset join must be round, square, miter or bevel, got '{s}'", .{name});
+                _ = vm.raiseError(.ValueError, "offset join must be round, square, miter or bevel, got '{s}'", .{name});
                 return error.RuntimeError;
             };
         }
@@ -131,11 +131,11 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
         } else if (std.mem.eql(u8, dir_str, "right")) {
             direction = .{ 1, 0, 0 };
         } else {
-            _ = vm.throwDynamicError("ValueError: Unknown face direction '{s}' (use top, bottom, front, back, left or right)", .{dir_str});
+            _ = vm.raiseError(.ValueError, "Unknown face direction '{s}' (use top, bottom, front, back, left or right)", .{dir_str});
             return error.RuntimeError;
         }
     } else {
-        _ = vm.throwDynamicError("TypeError: on_face expects a direction Array or Symbol, got {s}", .{util.typeName(vm, dir_arg)});
+        _ = vm.raiseError(.TypeError, "on_face expects a direction Array or Symbol, got {s}", .{util.typeName(vm, dir_arg)});
         return error.RuntimeError;
     }
 
@@ -152,7 +152,7 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
     };
 
     const faces = kernel.queryFaces(vm.scratch_arena.allocator(), handle, direction, tolerance) orelse {
-        _ = vm.throwDynamicError("RuntimeError: Could not find a coplanar face matching the requested direction", .{});
+        _ = vm.raiseError(.RuntimeError, "Could not find a coplanar face matching the requested direction", .{});
         return error.RuntimeError;
     };
 
@@ -170,7 +170,7 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
     const kwargs = util.trailingKwargs(args);
     const positional = if (kwargs != null) args[0 .. args.len - 1] else args;
     if (positional.len != 0 and positional.len != PLANE_ARGS.len - 1 and positional.len != PLANE_ARGS.len) {
-        _ = vm.throwDynamicError("ArgumentError: split_by_plane expects (nx, ny, nz[, offset]), got {d} positional arguments", .{positional.len});
+        _ = vm.raiseError(.ArgumentError, "split_by_plane expects (nx, ny, nz[, offset]), got {d} positional arguments", .{positional.len});
         return error.RuntimeError;
     }
 

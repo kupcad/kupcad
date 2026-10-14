@@ -1105,14 +1105,14 @@ test "VM: op_import of a module that fails to compile does not leak its chunk" {
         \\result = begin
         \\  import "./bad.kup"
         \\  "imported"
-        \\rescue => e
+        \\rescue ImportError => e
         \\  e.message
         \\end
     ;
     // testing.allocator reports the heap chunk as leaked if it is not freed
     try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
     const msg = vm.globals.get("result") orelse return error.MissingGlobal;
-    try testing.expect(std.mem.startsWith(u8, msg.asString().chars, "ImportError: Compilation failed"));
+    try testing.expect(std.mem.startsWith(u8, msg.asString().chars, "Compilation failed"));
 }
 
 // --- Module isolation: each imported module has its own top-level scope ---

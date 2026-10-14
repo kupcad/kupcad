@@ -51,11 +51,11 @@ const MAX_EXACT_COUNT: u64 = 1 << std.math.floatMantissaBits(f64) + 1;
 /// value count as an f64, or raises a rescuable ValueError.
 pub fn validatedCount(vm: *VM, span: Span, method: []const u8) !f64 {
     if (!std.math.isFinite(span.start) or !std.math.isFinite(span.end) or !std.math.isFinite(span.step)) {
-        _ = vm.throwDynamicError("ValueError: {s} requires finite bounds and step, got {f}..{f} step {f}", .{ method, value.fmtNumber(span.start), value.fmtNumber(span.end), value.fmtNumber(span.step) });
+        _ = vm.raiseError(.ValueError, "{s} requires finite bounds and step, got {f}..{f} step {f}", .{ method, value.fmtNumber(span.start), value.fmtNumber(span.end), value.fmtNumber(span.step) });
         return error.RuntimeError;
     }
     if (span.step == 0) {
-        _ = vm.throwDynamicError("ValueError: {s} step can't be 0", .{method});
+        _ = vm.raiseError(.ValueError, "{s} step can't be 0", .{method});
         return error.RuntimeError;
     }
     return span.count();
@@ -65,7 +65,7 @@ pub fn validatedCount(vm: *VM, span: Span, method: []const u8) !f64 {
 fn iterationCount(vm: *VM, span: Span, method: []const u8) !u64 {
     const n = try validatedCount(vm, span, method);
     if (n > @as(f64, @floatFromInt(MAX_EXACT_COUNT))) {
-        _ = vm.throwDynamicError("ValueError: {s} would iterate {d} times, more than the {d} distinct values a float can count", .{ method, n, MAX_EXACT_COUNT });
+        _ = vm.raiseError(.ValueError, "{s} would iterate {d} times, more than the {d} distinct values a float can count", .{ method, n, MAX_EXACT_COUNT });
         return error.RuntimeError;
     }
     // Finite, non-negative and at most 2^53, so the cast is defined.
@@ -76,7 +76,7 @@ fn iterationCount(vm: *VM, span: Span, method: []const u8) !u64 {
 fn materializeCount(vm: *VM, span: Span, method: []const u8) !usize {
     const n = try validatedCount(vm, span, method);
     if (n > @as(f64, @floatFromInt(limits.MAX_RANGE_MATERIALIZE))) {
-        _ = vm.throwDynamicError("ValueError: {s} would build an array of {d} values (limit {d}); iterate with each instead", .{ method, n, limits.MAX_RANGE_MATERIALIZE });
+        _ = vm.raiseError(.ValueError, "{s} would build an array of {d} values (limit {d}); iterate with each instead", .{ method, n, limits.MAX_RANGE_MATERIALIZE });
         return error.RuntimeError;
     }
     // Finite, non-negative and bounded by the check above (which fits usize on wasm32).
@@ -86,14 +86,14 @@ fn materializeCount(vm: *VM, span: Span, method: []const u8) !usize {
 /// Integral receiver/argument check for Number#times/upto/downto.
 pub fn requireInteger(vm: *VM, n: f64, method: []const u8) !void {
     if (!std.math.isFinite(n) or @trunc(n) != n) {
-        _ = vm.throwDynamicError("ValueError: {s} requires an integer, got {f}", .{ method, value.fmtNumber(n) });
+        _ = vm.raiseError(.ValueError, "{s} requires an integer, got {f}", .{ method, value.fmtNumber(n) });
         return error.RuntimeError;
     }
 }
 
 pub fn requireBlock(vm: *VM, block: ?*value.ObjClosure, method: []const u8) !*value.ObjClosure {
     return block orelse {
-        _ = vm.throwDynamicError("ValueError: {s} requires a block", .{method});
+        _ = vm.raiseError(.ArgumentError, "{s} requires a block", .{method});
         return error.RuntimeError;
     };
 }

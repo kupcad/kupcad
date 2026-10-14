@@ -3229,7 +3229,7 @@ test "VM: Unified Exception hierarchy with native methods" {
         \\begin
         \\  [1, 2][5]
         \\rescue StandardError => e
-        \\  [e.is_a?(RuntimeError), e.is_a?(Exception), e.message()]
+        \\  [e.is_a?(IndexError), e.is_a?(Exception), e.message()]
         \\end
     ;
 
@@ -3249,16 +3249,16 @@ test "VM: Unified Exception hierarchy with native methods" {
     const arr_obj = arr_val.asArray();
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
 
-    // Prove `e` is an instance of RuntimeError natively wrapped by throwDynamicError
+    // Prove `e` is the IndexError raiseError created for the bad index
     try testing.expectEqual(true, arr_obj.items.items[0].asBool());
 
-    // Prove `RuntimeError` successfully inherits from `Exception`
+    // Prove `IndexError` successfully inherits from `Exception`
     try testing.expectEqual(true, arr_obj.items.items[1].asBool());
 
     // Prove `e.message()` evaluates successfully to the VM's formatted array bounds error
     const msg_val = arr_obj.items.items[2];
     const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", msg_val.asObj()));
-    try testing.expectEqualStrings("Runtime Error: Array index out of bounds.", str_obj.chars);
+    try testing.expectEqualStrings("Array index out of bounds.", str_obj.chars);
 }
 
 test "VM: Custom exceptions inherit properly and rescue block ordering is respected" {
@@ -7978,7 +7978,7 @@ test "VM: fmtScratch dynamically allocates strings exceeding 256 bytes without t
     try testing.expect(std.mem.endsWith(u8, result, "AAAAA"));
 }
 
-test "VM: throwDynamicError does not truncate massive error messages" {
+test "VM: raiseError does not truncate massive error messages" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -7989,7 +7989,7 @@ test "VM: throwDynamicError does not truncate massive error messages" {
     @memset(&massive_buf, 'E');
 
     // Throw an error using the massive string
-    const res = vm.throwDynamicError("Failure: {s}", .{&massive_buf});
+    const res = vm.raiseError(.RuntimeError, "Failure: {s}", .{&massive_buf});
 
     // Since there are no rescue frames, it should halt with runtime_error.
     // The fact that this succeeds without an OutOfBounds panic or buffer overflow
@@ -10009,7 +10009,7 @@ test "VM: Kernel error raised in a nested call frame unwinds to the rescue targe
     // The kernel error raised two frames deep reaches the top-level handler
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result.isString());
-    try testing.expectEqualStrings("Runtime Error: CAD Kernel / Method Error", result.asString().chars);
+    try testing.expectEqualStrings("CAD Kernel / Method Error", result.asString().chars);
 }
 
 test "VM: Repeated string addition (+ operator) recycles scratch arena" {
@@ -10577,7 +10577,7 @@ test "VM: FFI Boundary - Exhaustive type checking prevents kernel segfaults" {
             const ctx: *VM = @ptrCast(@alignCast(ctx_opaque));
 
             if (arg_count != 1) {
-                _ = ctx.throwDynamicError("ArgumentError: expected 1 arg", .{});
+                _ = ctx.raiseError(.ArgumentError, "expected 1 arg", .{});
                 return error.RuntimeError;
             }
 
@@ -10585,7 +10585,7 @@ test "VM: FFI Boundary - Exhaustive type checking prevents kernel segfaults" {
 
             // DOD FFI DEFENSE: Explicit type guard before operating on native memory
             if (!vec_arg.isNumber()) {
-                _ = ctx.throwDynamicError("TypeError: kernel_translate expects a Number, got invalid type", .{});
+                _ = ctx.raiseError(.TypeError, "kernel_translate expects a Number, got invalid type", .{});
                 return error.RuntimeError;
             }
 
@@ -10971,7 +10971,7 @@ fn raiseThenFail(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) anyerro
     _ = arg_count;
     _ = args;
     const vm_ptr: *VM = @ptrCast(@alignCast(v_ptr));
-    _ = vm_ptr.throwDynamicError(native_raise_message, .{});
+    _ = vm_ptr.raiseError(.RuntimeError, native_raise_message, .{});
     return error.RuntimeError;
 }
 
@@ -11154,8 +11154,10 @@ test "VM: bitwise operands and array indexes reject non-integral numbers" {
             \\inf_v = huge * huge
             \\result = begin
             \\  {s}
-            \\rescue => e
-            \\  e.message
+            \\rescue RangeError => e
+            \\  "RangeError: " + e.message
+            \\rescue IndexError => e
+            \\  "IndexError: " + e.message
             \\end
         , .{case.expr});
         defer testing.allocator.free(source);
@@ -11294,4 +11296,93 @@ test "VM: assert keeps its message rooted while it allocates the exception" {
     try testing.expectEqual(.ok, try compileAndRunStressed(&vm, &out_chunk, source));
     try expectGlobalString(&vm, "default_msg", "Assertion failed.");
     try expectGlobalString(&vm, "block_msg", "lazy msg");
+}
+
+// --- Typed runtime errors ---
+
+const ErrorKind = @import("error_kind.zig").ErrorKind;
+
+test "VM: every runtime error kind is a registered StandardError subclass" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const standard_error = (vm.globals.get("StandardError") orelse return error.MissingGlobal).asClass();
+    inline for (comptime std.meta.fieldNames(ErrorKind)) |name| {
+        const class = vm.error_classes.get(@field(ErrorKind, name)) orelse return error.MissingClass;
+        try testing.expectEqualStrings(name, class.name.chars);
+        try testing.expectEqual(class, (vm.globals.get(name) orelse return error.MissingGlobal).asClass());
+        try testing.expect(VM.isSubclassOf(class, standard_error));
+    }
+}
+
+test "VM: runtime errors have their own class and a message without a class prefix" {
+    // Every native error used to be a RuntimeError whose message began with its "kind"
+    // ("ValueError: ...", "Runtime Error: ..."), often with a trailing newline, so
+    // `rescue ValueError` caught nothing and uncaught errors printed two prefixes.
+    const cases = [_]struct { expr: []const u8, kind: []const u8, message: []const u8 }{
+        .{ .expr = "[1, 2][5]", .kind = "IndexError", .message = "Array index out of bounds." },
+        .{ .expr = "nope_undefined", .kind = "NameError", .message = "Undefined variable 'nope_undefined'" },
+        .{ .expr = "5[0]", .kind = "TypeError", .message = "Cannot index target." },
+        .{ .expr = "1 / 0", .kind = "ZeroDivisionError", .message = "Division by zero." },
+        .{ .expr = "1 | 1e400", .kind = "RangeError", .message = "Bitwise operand Infinity is not a finite 64-bit integer." },
+        .{ .expr = "polygon([[0, 0], [1, \"x\"], [0, 1]])", .kind = "TypeError", .message = "polygon expects a number for a coordinate (point 1, component 1), got String" },
+        .{ .expr = "cube(1e400 - 1e400)", .kind = "ValueError", .message = "cube expects a finite number for x, got NaN" },
+        .{ .expr = "3.times", .kind = "ArgumentError", .message = "times requires a block" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("expr: {s}\n", .{case.expr});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.mute_errors = true;
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
+        // Rescued by its own class: StandardError comes second, so a wrong class shows up as "other".
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\r = begin
+            \\  {s}
+            \\  "no error"
+            \\rescue {s} => e
+            \\  e.message
+            \\rescue StandardError => e
+            \\  "other: " + e.message
+            \\end
+        , .{ case.expr, case.kind });
+        defer testing.allocator.free(source);
+        try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+        try expectGlobalString(&vm, "r", case.message);
+    }
+}
+
+test "VM: an uncaught runtime error is reported with one class prefix" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    try testing.expectEqual(.runtime_error, try compileAndRun(&vm, &out_chunk, "x = [1, 2][5]"));
+    try testing.expectEqualStrings("IndexError: Array index out of bounds.", vm.last_error orelse return error.MissingError);
+}
+
+test "VM: rescuing one error class does not catch another" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    const source =
+        \\r = begin
+        \\  begin
+        \\    cube(-1)
+        \\  rescue TypeError => e
+        \\    "wrong handler"
+        \\  end
+        \\rescue ValueError => e
+        \\  "outer ValueError handler"
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "r", "outer ValueError handler");
 }

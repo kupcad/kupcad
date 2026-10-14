@@ -48,7 +48,7 @@ pub fn arrayUnshift(vm: *VM, arr: *value.ObjArray, val: value.Value) !value.Valu
 /// elements available (so start == size yields []).
 pub fn arraySlice(vm: *VM, arr: *value.ObjArray, start_num: f64, len_num: f64) !value.Value {
     if (std.math.isNan(start_num) or std.math.isNan(len_num)) {
-        _ = vm.throwDynamicError("ValueError: Array#slice arguments must be numbers, got NaN.\n", .{});
+        _ = vm.raiseError(.ValueError, "Array#slice arguments must be numbers, got NaN.", .{});
         return error.RuntimeError;
     }
     // Resolve everything in f64 first: @intFromFloat on a negative or huge value
@@ -124,7 +124,7 @@ pub fn arrayMap(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !valu
 /// Array#reduce(initial_val, block) / Array#reduce(block)
 pub fn arrayReduce(vm: *VM, arr: *value.ObjArray, initial_val: ?value.Value, block: ?*value.ObjClosure) !value.Value {
     if (block == null) {
-        _ = vm.throwDynamicError("Runtime Error: reduce requires a block.\n", .{});
+        _ = vm.raiseError(.ArgumentError, "reduce requires a block.", .{});
         return error.RuntimeError;
     }
 
@@ -296,7 +296,7 @@ pub fn arraySort(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !valu
             if (block) |b| {
                 const res = try vm.callClosureSync(b, &.{ new_items[j], pivot });
                 if (!res.isNumber()) {
-                    _ = vm.throwDynamicError("TypeError: sort block must return a Number (-1, 0, 1).\n", .{});
+                    _ = vm.raiseError(.TypeError, "sort block must return a Number (-1, 0, 1).", .{});
                     return error.RuntimeError;
                 }
                 cmp_val = res.asNumber();
@@ -314,7 +314,7 @@ pub fn arraySort(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !valu
                         .eq => 0.0,
                     };
                 } else {
-                    _ = vm.throwDynamicError("ArgumentError: Cannot natively sort disparate types. Provide a block.\n", .{});
+                    _ = vm.raiseError(.ArgumentError, "Cannot natively sort disparate types. Provide a block.", .{});
                     return error.RuntimeError;
                 }
             }
@@ -376,11 +376,11 @@ pub fn arrayToH(vm: *VM, arr: *value.ObjArray) !value.Value {
             } else if (inner_items.len == 1) {
                 try new_map.map.put(vm.gc.trackingAllocator(), inner_items[0], value.Value.initNil());
             } else {
-                _ = vm.throwDynamicError("ArgumentError: empty array cannot be converted to key-value pair.\n", .{});
+                _ = vm.raiseError(.ArgumentError, "empty array cannot be converted to key-value pair.", .{});
                 return error.RuntimeError;
             }
         } else {
-            _ = vm.throwDynamicError("ArgumentError: wrong element type (expected array).\n", .{});
+            _ = vm.raiseError(.ArgumentError, "wrong element type (expected array).", .{});
             return error.RuntimeError;
         }
     }

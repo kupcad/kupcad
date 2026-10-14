@@ -165,10 +165,8 @@ test "API: buildModelWithDiagnostic reports VM runtime errors as the CLI prints 
         error.RuntimeError,
         api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
     );
-    // Only the class prefix and the VM's text are pinned, not how they are joined.
-    const msg = diag.message.?;
-    try testing.expect(std.mem.startsWith(u8, msg, "RuntimeError: "));
-    try testing.expect(std.mem.endsWith(u8, msg, "Undefined variable 'undefined_var'"));
+    // One class prefix (it used to read "RuntimeError: Runtime Error: ...") and the real cause.
+    try testing.expectEqualStrings("NameError: Undefined variable 'undefined_var'", diag.message.?);
 }
 
 test "API: buildModelWithDiagnostic keeps a native's own message over the generic boundary error" {
