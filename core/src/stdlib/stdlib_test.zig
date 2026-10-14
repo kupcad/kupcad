@@ -735,8 +735,6 @@ test "Stdlib: *splat, **hash and &blk spread into any call" {
         .{ .src = "def keep(f)\n  f\nend\nr = keep(-> { 1 }).call", .expected = .{ .num = 1 } },
         .{ .src = "def both(f, &b)\n  f.call + b.call\nend\nr = both(-> { 1 }) { 10 }", .expected = .{ .num = 11 } },
     });
-    // A call can't take both `&blk` and a literal block.
-    try testing.expectError(error.UnexpectedBlock, runScript("def g\n  yield\nend\nf = -> { 1 }\ng(&f) { 2 }"));
 }
 
 test "Stdlib: every value answers class and inspect" {
@@ -767,6 +765,19 @@ test "Stdlib: block_given? works with or without parentheses" {
         .{ .src = m ++ "r = \"#{m { 1 }}\"", .expected = .{ .str = "[true, true]" } },
         .{ .src = m ++ "f = -> { 1 }\nr = \"#{m(&f)}\"", .expected = .{ .str = "[true, true]" } },
         .{ .src = m ++ "r = \"#{m(&nil)}\"", .expected = .{ .str = "[false, false]" } },
+    });
+}
+
+test "Stdlib: yield works anywhere an expression does" {
+    try expectGlobalR(&.{
+        .{ .src = "def a\n  x = yield\n  x + 1\nend\nr = a { 1 }", .expected = .{ .num = 2 } },
+        .{ .src = "def b\n  yield(2).round\nend\nr = b { |v| v * 1.4 }", .expected = .{ .num = 3 } },
+        .{ .src = "def c\n  block_given? ? yield : 0\nend\nr = [c, c { 5 }]", .expected = .{ .nums = &.{ 0, 5 } } },
+        .{ .src = "def d\n  [yield(1), yield 2]\nend\nr = d { |v| v * 10 }", .expected = .{ .nums = &.{ 10, 20 } } },
+        .{ .src = "def e\n  return yield(3) if block_given?\n  0\nend\nr = [e { |v| v + 1 }, e]", .expected = .{ .nums = &.{ 4, 0 } } },
+        // Ruby's spacing rule: `yield -1` passes -1, `yield - 1` subtracts 1 from the result.
+        .{ .src = "def f\n  [(yield -1), (yield - 1)]\nend\nr = f { |v = 10| v }", .expected = .{ .nums = &.{ -1, 9 } } },
+        .{ .src = "def g\n  yield *[1, 2]\nend\nr = g { |p, q| p + q }", .expected = .{ .num = 3 } },
     });
 }
 

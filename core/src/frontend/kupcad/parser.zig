@@ -353,7 +353,6 @@ pub const Parser = struct {
             .keyword_class => try self.parseClassStatement(),
             .keyword_module => try self.parseModuleStatement(),
             .keyword_return => try self.parseReturnStatement(),
-            .keyword_yield => try self.parseYieldStatement(),
             .keyword_break => try self.parseBreakStatement(),
             .keyword_next => try self.parseNextStatement(),
             .keyword_begin => try self.parseBeginStatement(),
@@ -993,6 +992,7 @@ pub const Parser = struct {
     }
 
     fn parseCallSuffix(self: *Parser) ParseError!CallSuffix {
+        const start_tok = self.tok_idx;
         var args: ast.Span = try self.b.addNamedArgs(&.{});
         var block_node: ast.NodeIndex = .none;
         var end_tok = self.tok_idx;
@@ -1011,6 +1011,11 @@ pub const Parser = struct {
             end_tok = self.tok_idx;
         }
 
+        // A call has one block: a `&blk` argument or a literal one, not both or two of either.
+        const block_args = self.blockArgCount(args);
+        if (block_args > 1 or (block_args == 1 and block_node != .none)) {
+            self.reportError(self.getLoc(start_tok), "a call takes one block: a &block argument or a do/{{ }} block, not both", .{});
+        }
         return .{ .args = args, .block = block_node, .end_token = end_tok };
     }
 
@@ -1116,29 +1121,47 @@ pub const Parser = struct {
         return self.b.breakStmt(val, start_tok) catch ParseError.OutOfMemory;
     }
 
-    fn parseYieldStatement(self: *Parser) ParseError!ast.NodeIndex {
+    /// `yield`, `yield(args)` or `yield args`, anywhere an expression may be (`x = yield`,
+    /// `yield(2).round`, `ok ? yield : 0`). It becomes a call to the `yield` intrinsic,
+    /// which gives it keyword, splat and block-pass arguments.
+    fn parseYield(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = try self.expect(.keyword_yield);
-        var args_span: ast.Span = try self.b.addNamedArgs(&.{});
-
-        self.skipIgnored();
-        if (self.tag(0) == .l_paren) {
-            args_span = try self.parseParenArgs();
-        } else if (!self.isExprListEnd()) {
-            const s_len = self.scratch_named_args.items.len;
-            defer self.scratch_named_args.shrinkRetainingCapacity(s_len);
-            while (!self.isExprListEnd()) {
-                try self.scratch_named_args.append(self.allocator, try self.parseNamedArg());
-                if (self.tag(0) == .comma) {
-                    self.advance();
-                    self.skipIgnored();
-                } else break;
-            }
-            args_span = try self.b.addNamedArgs(self.scratch_named_args.items[s_len..]);
+        var suffix: CallSuffix = undefined;
+        if (self.isPrefixedArgStart()) {
+            const cmd = try self.parseCommandArgsAndBlock();
+            suffix = .{ .args = cmd.args, .block = cmd.block orelse .none, .end_token = self.tok_idx };
+        } else {
+            suffix = try self.parseCallSuffix();
         }
+        if (suffix.block != .none or self.blockArgCount(suffix.args) > 0) {
+            self.reportError(self.getLoc(start_tok), "yield calls the method's own block; it can't be given one", .{});
+        }
+        return self.b.methodCall(.none, try self.b.intern("yield"), suffix.args, suffix.block, false, suffix.end_token, start_tok) catch ParseError.OutOfMemory;
+    }
 
-        const end_tok = self.tok_idx;
-        // Compiling yield as an intrinsic method call magically grants it full kwarg and splat support
-        return self.b.methodCall(.none, try self.b.intern("yield"), args_span, .none, false, end_tok, start_tok) catch ParseError.OutOfMemory;
+    fn blockArgCount(self: *const Parser, args: ast.Span) usize {
+        var count: usize = 0;
+        for (self.b.tree.getNamedArgs(args)) |arg| {
+            if (arg.modifier == .block) count += 1;
+        }
+        return count;
+    }
+
+    /// `-1`, `*args`, `**opts` or `&blk` with a space before and none after: an argument,
+    /// as in Ruby (`yield -1` passes -1, `yield - 1` subtracts). Only used after `yield`,
+    /// which unlike a name can never be a variable to apply the operator to.
+    fn isPrefixedArgStart(self: *const Parser) bool {
+        switch (self.tag(0)) {
+            .minus, .plus, .star, .star_star, .ampersand => {},
+            else => return false,
+        }
+        const starts = self.tokens.starts;
+        const lengths = self.tokens.lengths;
+        const i = self.tok_idx;
+        if (i == 0 or i + 1 >= starts.len) return false;
+        const space_before = starts[i] > starts[i - 1] + lengths[i - 1];
+        const space_after = starts[i + 1] > starts[i] + lengths[i];
+        return space_before and !space_after;
     }
 
     fn parseDocString(self: *Parser) ParseError!ast.NodeIndex {
@@ -1366,6 +1389,7 @@ pub const Parser = struct {
             },
             .keyword_super => left = try self.parseSuper(),
             .minus_greater => left = try self.parseLambda(),
+            .keyword_yield => left = try self.parseYield(),
             .colon_colon => left = try self.parseTopLevelScopeResolution(),
             .ident, .constant => left = try self.parseIdentifierOrCall(),
             .l_paren => left = try self.parseGroupedExpression(),

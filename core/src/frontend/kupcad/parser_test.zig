@@ -4131,3 +4131,49 @@ test "Parser: capitalised labels are keywords and symbol keys, not constants" {
     try testing.expectEqual(ast.Tag.identifier, shorthand.tag);
     try testing.expectEqualStrings("W", htree.getString(@as(ast.StringId, @fromBackingInt(shorthand.data))));
 }
+
+test "Parser: yield is an expression" {
+    // `x = yield`, `yield.foo` and `ok ? yield : 0` used to be syntax errors.
+    const cases = [_]struct { src: []const u8, top: ast.Tag }{
+        .{ .src = "x = yield", .top = .assignment },
+        .{ .src = "yield(2).round", .top = .method_call },
+        .{ .src = "ok ? yield : 0", .top = .ternary_op },
+        .{ .src = "[yield(1), yield 2]", .top = .array_literal },
+        .{ .src = "yield - 1", .top = .binary_op },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.src});
+        var pt = try KTest.init(case.src);
+        defer pt.deinit();
+        const node = pt.getNode(try pt.parser.parseStatement());
+        try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
+        try testing.expectEqual(case.top, node.tag);
+    }
+
+    // As in Ruby, `yield -1` and `yield *args` pass an argument; `yield - 1` subtracts (above).
+    for ([_][]const u8{ "yield -1", "yield *args" }) |src| {
+        var pt = try KTest.init(src);
+        defer pt.deinit();
+        const tree = &pt.parser.b.tree;
+        const call = tree.methodCall(pt.getNode(try pt.parser.parseStatement()));
+        try testing.expectEqualStrings("yield", tree.getString(call.method_name));
+        try testing.expectEqual(@as(usize, 1), tree.getNamedArgs(call.args).len);
+    }
+}
+
+test "Parser: a call takes one block, and yield none" {
+    const cases = [_]struct { src: []const u8, message: []const u8 }{
+        .{ .src = "g(&f) { 1 }", .message = "a call takes one block: a &block argument or a do/{ } block, not both" },
+        .{ .src = "g(&f, &h)", .message = "a call takes one block: a &block argument or a do/{ } block, not both" },
+        .{ .src = "yield(&f)", .message = "yield calls the method's own block; it can't be given one" },
+        .{ .src = "yield(1) { 2 }", .message = "yield calls the method's own block; it can't be given one" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.src});
+        var pt = try KTest.init(case.src);
+        defer pt.deinit();
+        _ = try pt.parser.parseStatement();
+        try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
+        try testing.expectEqualStrings(case.message, pt.parser.diagnostics.list.items[0].message);
+    }
+}

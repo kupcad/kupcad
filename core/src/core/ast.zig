@@ -80,7 +80,6 @@ pub const Tag = enum(u8) {
     singleton_class,
     begin_stmt,
     return_stmt,
-    yield_stmt,
     break_stmt,
     next_stmt,
     docstring,
@@ -1163,11 +1162,6 @@ pub const Builder = struct {
     pub fn interpolatedString(self: *Builder, parts: Span, main_token: u24) !NodeIndex {
         const data_idx = try self.addExtra(.{parts});
         return self.createNode(.interpolated_string, main_token, data_idx);
-    }
-
-    pub fn yieldStmt(self: *Builder, args: Span, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{args});
-        return self.createNode(.yield_stmt, main_token, data_idx);
     }
 
     pub fn returnStmt(self: *Builder, val: NodeIndex, main_token: u24) !NodeIndex {

@@ -249,7 +249,6 @@ pub const Compiler = struct {
             // Extracted Node Handlers
             .identifier => try self.compileIdentifier(node, node_idx),
             .singleton_class => try self.compileSingletonClass(node),
-            .yield_stmt => try self.compileYieldStmt(node),
             .return_stmt => try self.compileReturnStmt(node),
             .next_stmt => try self.compileNextStmt(node),
             .break_stmt => try self.compileBreakStmt(node),
@@ -364,22 +363,6 @@ pub const Compiler = struct {
         try self.compileNamespaceBody(stmts, true);
 
         // Stack equilibrium: The target remains on the stack as the expression's return value
-    }
-
-    fn compileYieldStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const args = self.tree.getNodes(self.tree.nodeSpan(node));
-        var call: CallArgs = .{ .count = args.len };
-        if (self.anySplat(args)) {
-            try self.compileSpreadArray(args);
-            call = .{ .count = 1, .flags = .{ .spread = true } };
-        } else {
-            for (args) |arg| try self.compileNode(arg);
-        }
-        if (call.count > limits.MAX_ARGS) return error.TooManyArguments;
-
-        try self.emitCall(.op_yield, call);
-        self.simulatePop(call.count); // Yield consumes args
-        self.simulatePush(1); // Yield pushes block return value
     }
 
     fn compileReturnStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
@@ -1360,7 +1343,7 @@ pub const Compiler = struct {
                     return;
                 },
                 .yield_call => {
-                    const call = try self.compileCallArguments(self.tree.getNamedArgs(mc.args), .none);
+                    const call = try self.compileCallArguments(self.tree.getNamedArgs(mc.args), mc.block);
                     // yield calls the method's own block; it cannot hand that block one.
                     if (call.flags.has_block) return error.UnexpectedBlock;
 

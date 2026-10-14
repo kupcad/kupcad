@@ -247,7 +247,6 @@ pub const Formatter = struct {
                 try self.out.append(self.allocator, ')');
             },
             .docstring => try self.formatDocString(tree, tree.docString(node)),
-            .yield_stmt => unreachable,
         }
     }
 
