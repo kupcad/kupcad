@@ -1603,7 +1603,7 @@ pub const VM = struct {
     }
 
     fn verifyBytecode(self: *VM, c: *const chunk.Chunk) bool {
-        verifier.verifyChunkWithAllocator(self.allocator, c) catch |err| {
+        verifier.verifyChunk(self.allocator, c) catch |err| {
             self.reportError("Fatal: Bytecode verification failed: {s}\n", .{@errorName(err)});
             return false;
         };

@@ -21,7 +21,7 @@ test "Verifier: Accepts mathematically sound bytecode" {
     try c.writeOp(testing.allocator, .op_nil, 0);
     try c.writeOp(testing.allocator, .op_return, 0);
 
-    try verifier.verifyChunk(&c);
+    try verifier.verifyChunk(testing.allocator, &c);
 }
 
 test "Verifier: Rejects truncated operands (OutOfBoundsRead)" {
@@ -39,7 +39,7 @@ test "Verifier: Rejects truncated operands (OutOfBoundsRead)" {
         defer c.free(testing.allocator);
         try c.writeOp(testing.allocator, case.op, 0);
         for (0..case.provided) |_| try c.write(testing.allocator, 0, 0);
-        try testing.expectError(error.OutOfBoundsRead, verifier.verifyChunk(&c));
+        try testing.expectError(error.OutOfBoundsRead, verifier.verifyChunk(testing.allocator, &c));
     }
 }
 
@@ -55,7 +55,7 @@ test "Verifier: Validates op_switch dynamic payload size" {
         try c.write(testing.allocator, 0, 0);
     }
 
-    try testing.expectError(error.OutOfBoundsRead, verifier.verifyChunk(&c));
+    try testing.expectError(error.OutOfBoundsRead, verifier.verifyChunk(testing.allocator, &c));
 }
 
 test "Verifier: Rejects jump offsets outside the chunk" {
@@ -69,7 +69,7 @@ test "Verifier: Rejects jump offsets outside the chunk" {
         var c = chunk.Chunk.init();
         defer c.free(testing.allocator);
         try chunkFrom(&c, bytes);
-        try testing.expectError(error.InvalidJumpOffset, verifier.verifyChunk(&c));
+        try testing.expectError(error.InvalidJumpOffset, verifier.verifyChunk(testing.allocator, &c));
     }
 }
 
@@ -81,11 +81,11 @@ test "Verifier: Rejects jumps into the middle of an instruction" {
     // op_jump +1 lands on the operand byte of the following op_constant
     const jump_low_byte = 4;
     try chunkFrom(&c, &.{ opByte(.op_jump), 0, 0, 0, 1, opByte(.op_constant), 0, opByte(.op_return) });
-    try testing.expectError(error.InvalidJumpOffset, verifier.verifyChunk(&c));
+    try testing.expectError(error.InvalidJumpOffset, verifier.verifyChunk(testing.allocator, &c));
 
     // The same jump to an instruction boundary (+2) is accepted
     c.code.items[jump_low_byte] = 2;
-    try verifier.verifyChunk(&c);
+    try verifier.verifyChunk(testing.allocator, &c);
 }
 
 test "Verifier: Rejects invalid opcodes to prevent bad dispatch" {
@@ -94,7 +94,7 @@ test "Verifier: Rejects invalid opcodes to prevent bad dispatch" {
 
     try c.write(testing.allocator, 255, 0); // 255 is not a valid mapped opcode
 
-    try testing.expectError(error.InvalidOpCode, verifier.verifyChunk(&c));
+    try testing.expectError(error.InvalidOpCode, verifier.verifyChunk(testing.allocator, &c));
 }
 
 test "Verifier: Rejects out-of-range constant indexes" {
@@ -124,7 +124,7 @@ test "Verifier: Rejects out-of-range constant indexes" {
         _ = try c.addInlineCache(testing.allocator);
         try chunkFrom(&c, bytes);
         try c.writeOp(testing.allocator, .op_return, 0);
-        try testing.expectError(error.InvalidConstantIndex, verifier.verifyChunk(&c));
+        try testing.expectError(error.InvalidConstantIndex, verifier.verifyChunk(testing.allocator, &c));
     }
 }
 
@@ -144,10 +144,10 @@ test "Verifier: Rejects out-of-range inline cache indexes" {
         _ = try c.addConstant(testing.allocator, value.Value.initNumber(1));
         try chunkFrom(&c, bytes);
         try c.writeOp(testing.allocator, .op_return, 0);
-        try testing.expectError(error.InvalidInlineCacheIndex, verifier.verifyChunk(&c));
+        try testing.expectError(error.InvalidInlineCacheIndex, verifier.verifyChunk(testing.allocator, &c));
 
         _ = try c.addInlineCache(testing.allocator);
-        try verifier.verifyChunk(&c);
+        try verifier.verifyChunk(testing.allocator, &c);
     }
 }
 
@@ -174,9 +174,9 @@ test "Verifier: Validates op_switch case constants and jump targets" {
         try chunkFrom(&c, &.{ 0, 0, 0, case.default_off });
         try chunkFrom(&c, &.{ opByte(.op_constant), 0, opByte(.op_return) });
         if (case.expected) |err| {
-            try testing.expectError(err, verifier.verifyChunk(&c));
+            try testing.expectError(err, verifier.verifyChunk(testing.allocator, &c));
         } else {
-            try verifier.verifyChunk(&c);
+            try verifier.verifyChunk(testing.allocator, &c);
         }
     }
 }
@@ -188,7 +188,7 @@ test "Verifier: op_closure validates constant array boundaries" {
     try c.writeOp(testing.allocator, .op_closure, 0);
     try c.write(testing.allocator, 99, 0); // Constant 99 doesn't exist
 
-    try testing.expectError(error.InvalidConstantIndex, verifier.verifyChunk(&c));
+    try testing.expectError(error.InvalidConstantIndex, verifier.verifyChunk(testing.allocator, &c));
 }
 
 test "Verifier: op_closure rejects targeting non-function constants" {
@@ -201,7 +201,7 @@ test "Verifier: op_closure rejects targeting non-function constants" {
     try c.writeOp(testing.allocator, .op_closure, 0);
     try c.write(testing.allocator, @intCast(dummy_idx), 0);
 
-    try testing.expectError(error.CorruptedBytecode, verifier.verifyChunk(&c));
+    try testing.expectError(error.CorruptedBytecode, verifier.verifyChunk(testing.allocator, &c));
 }
 
 test "Verifier: op_closure detects truncated upvalue payloads" {
@@ -223,7 +223,7 @@ test "Verifier: op_closure detects truncated upvalue payloads" {
     try c.write(testing.allocator, 1, 0);
     try c.write(testing.allocator, 0, 0);
 
-    try testing.expectError(error.OutOfBoundsRead, verifier.verifyChunk(&c));
+    try testing.expectError(error.OutOfBoundsRead, verifier.verifyChunk(testing.allocator, &c));
 }
 
 test "Verifier: op_closure verifies the nested function's chunk" {
@@ -244,11 +244,11 @@ test "Verifier: op_closure verifies the nested function's chunk" {
     _ = try parent.addConstant(testing.allocator, value.Value.initObj(&func.obj));
     try chunkFrom(&parent, &.{ opByte(.op_closure), 0, opByte(.op_return) });
 
-    try testing.expectError(error.InvalidOpCode, verifier.verifyChunk(&parent));
+    try testing.expectError(error.InvalidOpCode, verifier.verifyChunk(testing.allocator, &parent));
 
     // A function whose chunk is the chunk being verified would recurse forever
     func.chunk = &parent;
-    try testing.expectError(error.CorruptedBytecode, verifier.verifyChunk(&parent));
+    try testing.expectError(error.CorruptedBytecode, verifier.verifyChunk(testing.allocator, &parent));
 }
 
 // --- interpret runs the verifier before execution ---
@@ -285,7 +285,7 @@ test "Verifier: local and upvalue slots must lie in the frame and the closure" {
         c.local_count = 2;
         try chunkFrom(&c, case.bytes);
         try c.writeOp(testing.allocator, .op_return, 0);
-        if (case.ok) try verifier.verifyChunk(&c) else try testing.expectError(error.InvalidSlot, verifier.verifyChunk(&c));
+        if (case.ok) try verifier.verifyChunk(testing.allocator, &c) else try testing.expectError(error.InvalidSlot, verifier.verifyChunk(testing.allocator, &c));
     }
 }
 
@@ -316,6 +316,6 @@ test "Verifier: a closure captures only its parent's locals and upvalues" {
         const func_idx = try parent.addConstant(testing.allocator, value.Value.initObj(&func.obj));
         try chunkFrom(&parent, &.{ opByte(.op_closure), @intCast(func_idx), case.is_local, 0, case.index, opByte(.op_return) });
 
-        if (case.expected) |err| try testing.expectError(err, verifier.verifyChunk(&parent)) else try verifier.verifyChunk(&parent);
+        if (case.expected) |err| try testing.expectError(err, verifier.verifyChunk(testing.allocator, &parent)) else try verifier.verifyChunk(testing.allocator, &parent);
     }
 }

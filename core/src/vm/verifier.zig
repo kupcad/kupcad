@@ -38,13 +38,8 @@ const JUMP_OPERAND_SIZE: usize = 4;
 /// Bound on verifying nested function chunks (each `def`/block nests one level).
 const MAX_NESTED_CHUNK_DEPTH: usize = 256;
 
-/// Verifies `c` and, recursively, the chunks of every function in its constant pool.
-pub fn verifyChunk(c: *const chunk.Chunk) VerifierError!void {
-    return verifyChunkWithAllocator(std.heap.page_allocator, c);
-}
-
 /// A top-level chunk (a script or module) has no enclosing closure, so no upvalues.
-pub fn verifyChunkWithAllocator(allocator: std.mem.Allocator, c: *const chunk.Chunk) VerifierError!void {
+pub fn verifyChunk(allocator: std.mem.Allocator, c: *const chunk.Chunk) VerifierError!void {
     return verifyChunkDepth(allocator, c, .{ .local_count = c.local_count, .upvalue_count = 0 }, 0);
 }
 

@@ -266,7 +266,7 @@ pub const Compiler = struct {
         // checks every nested function's chunk too, knowing its locals and upvalues, which a
         // child compiler can't (its function's counts are set after its body compiles).
         if (self.enclosing == null) {
-            verifier.verifyChunk(self.current_chunk) catch return error.CorruptedBytecode;
+            verifier.verifyChunk(self.allocator, self.current_chunk) catch return error.CorruptedBytecode;
         }
     }
 

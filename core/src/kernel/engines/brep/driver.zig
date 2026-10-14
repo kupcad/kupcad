@@ -26,7 +26,10 @@ const locus_proj = @import("../../../locus/src/operations/projections.zig");
 const locus_query = @import("../../../locus/src/operations/queries.zig");
 const locus_step = @import("../../../locus/src/operations/step_export.zig");
 
-var backend_allocator = std.heap.page_allocator;
+/// What Locus allocates its working data and solids with. The driver interface carries no
+/// allocator (Locus is unfinished), so this is libc's general-purpose allocator: it was
+/// std.heap.page_allocator, which gives every allocation, however small, its own pages.
+const backend_allocator = std.heap.c_allocator;
 
 pub const BrepSolid = struct {
     allocator: std.mem.Allocator,
