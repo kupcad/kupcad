@@ -5,12 +5,20 @@ const kernel = @import("../../kernel/kernel.zig");
 const util = @import("util.zig");
 const limits = @import("../../core/limits.zig");
 
+// A Sketch lies in the XY plane, so its transforms stay in that plane. A component that
+// would move it out of the plane is a ValueError: it used to be dropped silently, so
+// `translate(z: 5)` did nothing and `rotate(z: 45)` left the sketch unrotated.
+
 pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     const vec = try util.parseVec3(vm, args, 0.0, "translate");
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
+        if (vec[2] != 0.0) {
+            _ = vm.raiseError(.ValueError, "a Sketch can only translate in x and y (it lies in the XY plane), got z {f}; extrude it to lift it", .{value.fmtNumber(vec[2])});
+            return error.RuntimeError;
+        }
         const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, vec[0], vec[1] };
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
@@ -24,7 +32,7 @@ pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const rad = vec[0] * std.math.pi / 180.0;
+        const rad = try sketchRotation(vm, args, vec) * std.math.pi / 180.0;
         const cos_a = std.math.cos(rad);
         const sin_a = std.math.sin(rad);
         const mat = [6]f64{ cos_a, sin_a, -sin_a, cos_a, 0.0, 0.0 };
@@ -32,6 +40,18 @@ pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         return try vm.allocateCrossSection(new_idx);
     }
     return error.RuntimeError;
+}
+
+/// A Sketch turns about z only: `rotate(a)` (OpenSCAD's 2D rotate), `rotate(z: a)` or
+/// `rotate(0, 0, a)`, in degrees.
+fn sketchRotation(vm: *VM, args: []const value.Value, vec: [3]f64) !f64 {
+    const single_angle = args.len == 1 and util.trailingKwargs(args) == null;
+    if (single_angle) return vec[0];
+    if (vec[0] != 0.0 or vec[1] != 0.0) {
+        _ = vm.raiseError(.ValueError, "a Sketch can only rotate about z (it lies in the XY plane), got x {f} and y {f}; extrude it to tilt it", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]) });
+        return error.RuntimeError;
+    }
+    return vec[2];
 }
 
 pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
@@ -185,6 +205,19 @@ pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addMirror(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    } else if (receiver.isCrossSection()) {
+        // A Sketch mirrors across the line through the origin with normal (x, y).
+        if (vec[2] != 0.0) {
+            _ = vm.raiseError(.ValueError, "a Sketch can only mirror across a line in the XY plane, got a normal with z {f}", .{value.fmtNumber(vec[2])});
+            return error.RuntimeError;
+        }
+        const len = std.math.hypot(vec[0], vec[1]);
+        const nx = vec[0] / len;
+        const ny = vec[1] / len;
+        // The reflection I - 2nn^T (symmetric, so its column-major layout is the same).
+        const mat = [6]f64{ 1.0 - 2.0 * nx * nx, -2.0 * nx * ny, -2.0 * nx * ny, 1.0 - 2.0 * ny * ny, 0.0, 0.0 };
+        const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
+        return try vm.allocateCrossSection(new_idx);
     }
     return error.RuntimeError;
 }

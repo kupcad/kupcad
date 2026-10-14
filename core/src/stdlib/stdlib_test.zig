@@ -1285,3 +1285,24 @@ test "Stdlib: accepted keywords and aliases still build" {
         .{ .src = "r = polyhedron(points: " ++ TETRA_PTS ++ ", faces: " ++ TETRA_FACES ++ ").volume", .expected = .{ .num = 1.0 / 6.0 } },
     });
 }
+
+test "Stdlib: Sketch transforms stay in the XY plane" {
+    const diagonal = 2.0 * std.math.sqrt2; // A 2x2 square turned 45 degrees spans its diagonal.
+    try expectGlobalR(&.{
+        // rotate(z:) and rotate(0, 0, a) used to read x, so they did not rotate at all.
+        .{ .src = "r = square(2).rotate(z: 45).extrude(1).bbox.max[1]", .expected = .{ .num = diagonal } },
+        .{ .src = "r = square(2).rotate(0, 0, 45).extrude(1).bbox.max[1]", .expected = .{ .num = diagonal } },
+        .{ .src = "r = square(2).rotate(45).extrude(1).bbox.max[1]", .expected = .{ .num = diagonal } },
+        // ... and rotate(x:) turned the sketch in its plane instead of tilting it.
+        .{ .src = comptime rescued("square(2).rotate(x: 45)"), .expected = .{ .str = "ValueError: a Sketch can only rotate about z (it lies in the XY plane), got x 45 and y 0; extrude it to tilt it" } },
+        .{ .src = comptime rescued("square(2).rotate(45, 0, 0)"), .expected = .{ .str = "ValueError: a Sketch can only rotate about z (it lies in the XY plane), got x 45 and y 0; extrude it to tilt it" } },
+        // translate(z:) was dropped.
+        .{ .src = comptime rescued("square(2).translate(z: 5)"), .expected = .{ .str = "ValueError: a Sketch can only translate in x and y (it lies in the XY plane), got z 5; extrude it to lift it" } },
+        .{ .src = "r = square(2).translate(1, 2, 0).extrude(1).bbox.min[1]", .expected = .{ .num = 2 } },
+        // mirror used to fail with a generic error on a Sketch.
+        .{ .src = "r = square(2).mirror(1, 0).extrude(1).bbox.min[0]", .expected = .{ .num = -2 } },
+        .{ .src = "r = square(2).mirror(x: 1, y: 1).extrude(1).bbox.min", .expected = .{ .nums = &.{ -2, -2, 0 } } },
+        .{ .src = "r = square(2).mirror(1, 0).extrude(1).volume", .expected = .{ .num = 4 } },
+        .{ .src = comptime rescued("square(2).mirror(0, 0, 1)"), .expected = .{ .str = "ValueError: a Sketch can only mirror across a line in the XY plane, got a normal with z 1" } },
+    });
+}

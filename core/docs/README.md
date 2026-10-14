@@ -213,7 +213,7 @@ end
 
 KupCAD exposes an exhaustive list of native mesh manipulation methods attached to all evaluated solid and 2D nodes:
 
-* **Transforms**: `.translate`, `.rotate`, `.scale`, `.mirror`, `.align`, `.center`, `.transform` (Matrix), `.resize`.
+* **Transforms**: `.translate`, `.rotate`, `.scale`, `.mirror`, `.align`, `.center`, `.transform` (Matrix), `.resize`. A Sketch stays in its XY plane: `rotate(a)`, `rotate(z: a)` and `rotate(0, 0, a)` turn it about z, and `mirror(x, y)` reflects it across the line with that normal; a component that would leave the plane (`translate(z: 5)`, `rotate(x: 45)`) is a `ValueError`, so extrude first to lift or tilt it.
 * **Arrays**: `.repeat_linear`, `.repeat_polar`.
 * **Sweeps**: `.extrude`, `.revolve`, `.helix`, `.loft`. `loft` currently joins two *convex* profiles (it is the convex hull between them); a concave profile or one with holes raises `NotImplementedError` rather than being filled in.
 * **Advanced**: `.hull`, `.minkowski`, `.trim_by_plane`, `.split_by_plane`, `.offset`, `.slice`, `.project`, `.fillet_edges`, `.simplify`, `.decompose`, `.on_face`.
