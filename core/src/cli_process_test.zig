@@ -136,6 +136,8 @@ test "kupcad: every command exits non-zero when it fails" {
         // An option a command doesn't take is an error with its usage, not a file path.
         .{ .args = &.{ "check", "valid.kup", "--bogus" }, .code = 1, .contains = "Unknown option '--bogus'\n\nUsage: kupcad check", .absent = "Could not read" },
         .{ .args = &.{ "fmt", "--bogus", "valid.kup" }, .code = 1, .contains = "Unknown option '--bogus'" },
+        .{ .args = &.{ "fmt", "--check", "--write", "valid.kup" }, .code = 1, .contains = "--check and --write can't be used together" },
+        .{ .args = &.{ "fmt", "--check", "syntax_error.kup" }, .code = 1, .contains = "has syntax errors" },
         .{ .args = &.{"check"}, .code = 1, .contains = "Missing file path\n\nUsage: kupcad check" },
     });
 }
@@ -161,6 +163,7 @@ test "kupcad: commands succeed with exit 0 on valid input" {
         .{ .args = &.{ "dev", "disasm", "class.kup" }, .code = 0, .absent = "leaked" },
         .{ .args = &.{ "dev", "bench", "class.kup" }, .code = 0, .absent = "leaked" },
         .{ .args = &.{ "fmt", "valid.kup" }, .code = 0, .contains = "cube(10)" },
+        .{ .args = &.{ "fmt", "--check", "valid.kup" }, .code = 0 },
         .{ .args = &.{ "doc", "valid.kup" }, .code = 0 },
         .{ .args = &.{ "check", "valid.kup" }, .code = 0, .contains = "Success" },
         .{ .args = &.{ "build", "valid.kup", "-o", "out.stl" }, .code = 0, .contains = "Successfully built out.stl" },

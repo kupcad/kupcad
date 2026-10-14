@@ -1,49 +1,100 @@
 const std = @import("std");
 const api = @import("../api.zig");
 const FmtConfig = @import("../tools/fmt/config.zig").Config;
-const log_helpers = @import("../log.zig");
 const walker = @import("walker.zig");
-const Outcome = @import("outcome.zig").Outcome;
+const fs = @import("fs.zig");
+const Reporter = @import("reporter.zig").Reporter;
+pub const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
-const CommandSetup = @import("options.zig").CommandSetup(struct {});
+const CommandSetup = @import("options.zig").CommandSetup(struct { check: bool = false, write: bool = false });
 
 pub const USAGE =
-    \\Usage: kupcad fmt [--config <file>] <file|dir>...
+    \\Usage: kupcad fmt [--check | --write] [--config <file>] <file|dir>...
     \\
-    \\Prints .kup files in their canonical format.
+    \\Formats .kup files. Without --check or --write it prints them formatted.
     \\
     \\Options:
+    \\  --check          List the files that aren't formatted, and fail if there are any
+    \\  --write          Rewrite the files that aren't formatted, in place
     \\  --config <file>  Read format settings from <file> instead of .kupcad.json
     \\  -h, --help       Show this help
     \\
 ;
 
-const FmtRun = struct {
-    config: FmtConfig,
-    failed: usize = 0,
+pub const Mode = enum {
+    /// Print each file formatted.
+    print,
+    /// Name each file that isn't formatted; fail if any.
+    check,
+    /// Rewrite each file that isn't formatted.
+    write,
 };
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     // CommandSetup has already reported what was wrong with the arguments or config.
     var setup = CommandSetup.init(allocator, init.io, args_iter, USAGE) catch return .failure;
     defer setup.deinit(allocator);
+    const flags = setup.options.flags;
+    const reporter: Reporter = .forProcess(init);
+    if (flags.check and flags.write) {
+        reporter.err("Error: --check and --write can't be used together\n\n" ++ USAGE, .{});
+        return .failure;
+    }
+    const mode: Mode = if (flags.check) .check else if (flags.write) .write else .print;
+    return run(allocator, setup.options.paths.items, setup.config.fmt, mode, reporter);
+}
 
-    var run: FmtRun = .{ .config = setup.config.fmt };
-    // Added after the walk: processFile updates `run.failed` itself (see check.zig).
-    const unreadable = try walker.walkPaths(init.io, allocator, setup.options.paths.items, &run, processFile);
-    run.failed += unreadable;
-    return if (run.failed > 0) .failure else .success;
+const Run = struct {
+    config: FmtConfig,
+    mode: Mode,
+    reporter: Reporter,
+    /// Files that couldn't be formatted (a syntax error, a write that failed, ...).
+    failed: usize = 0,
+    /// Files whose formatting differs from their contents.
+    unformatted: usize = 0,
+};
+
+/// Formats every .kup file under `paths` as `mode` says. Returns failure if a file can't
+/// be formatted, or with `.check` if one isn't formatted.
+pub fn run(allocator: std.mem.Allocator, paths: []const []const u8, config: FmtConfig, mode: Mode, reporter: Reporter) !Outcome {
+    var state: Run = .{ .config = config, .mode = mode, .reporter = reporter };
+    // Added after the walk: processFile updates `state.failed` itself (see check.zig).
+    const unreadable = try walker.walkPaths(reporter.io, allocator, paths, &state, processFile);
+    state.failed += unreadable;
+    if (mode == .check and state.unformatted > 0) {
+        reporter.err("{d} file(s) need formatting; run kupcad fmt --write to fix them.\n", .{state.unformatted});
+    }
+    return if (state.failed > 0 or (mode == .check and state.unformatted > 0)) .failure else .success;
 }
 
 fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
-    const run: *FmtRun = @ptrCast(@alignCast(context.?));
+    const state: *Run = @ptrCast(@alignCast(context.?));
 
-    const formatted = api.formatCode(allocator, source, run.config) catch |err| {
-        log_helpers.printStderr(io, "Format failed for '{s}': {}\n", .{ file_path, err });
-        run.failed += 1;
+    const formatted = api.formatCode(allocator, source, state.config) catch |err| {
+        switch (err) {
+            error.SyntaxError => state.reporter.err("Error: '{s}' has syntax errors; kupcad check shows them\n", .{file_path}),
+            error.FormatChangedProgram => state.reporter.err("Error: formatting '{s}' would change what it does, so it was left as it is. This is a formatter bug; please report it.\n", .{file_path}),
+            else => state.reporter.err("Error: Could not format '{s}': {s}\n", .{ file_path, @errorName(err) }),
+        }
+        state.failed += 1;
         return;
     };
     defer allocator.free(formatted);
 
-    log_helpers.printStdout(io, "{s}", .{formatted});
+    const changed = !std.mem.eql(u8, source, formatted);
+    switch (state.mode) {
+        .print => state.reporter.out("{s}", .{formatted}),
+        .check => if (changed) {
+            state.reporter.out("{s}\n", .{file_path});
+            state.unformatted += 1;
+        },
+        .write => if (changed) {
+            fs.replaceFileAtomic(io, file_path, formatted) catch |err| {
+                state.reporter.err("Error: Could not write '{s}': {s}\n", .{ file_path, @errorName(err) });
+                state.failed += 1;
+                return;
+            };
+            state.reporter.out("{s}\n", .{file_path});
+        },
+    }
 }

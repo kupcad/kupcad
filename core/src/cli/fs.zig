@@ -11,3 +11,15 @@ pub fn readFileLimit(
     const cwd = std.Io.Dir.cwd();
     return try cwd.readFileAlloc(io, file_path, allocator, .limited(max_size));
 }
+
+/// Replaces `file_path`'s contents with `data` atomically: the new contents go to a
+/// temporary file beside it, which is renamed over it with its permissions, so a crash
+/// or a full disk never leaves a half-written file.
+pub fn replaceFileAtomic(io: std.Io, file_path: []const u8, data: []const u8) !void {
+    const cwd = std.Io.Dir.cwd();
+    const stat = try cwd.statFile(io, file_path, .{});
+    var atomic = try cwd.createFileAtomic(io, file_path, .{ .permissions = stat.permissions, .replace = true });
+    defer atomic.deinit(io);
+    try atomic.file.writeStreamingAll(io, data);
+    try atomic.replace(io);
+}
