@@ -223,3 +223,23 @@ test "GLTF: export_gltf picks the container from the file extension" {
     try std.testing.expectEqual(gltf.Container.glb, gltf.Container.forPath("part.glb"));
     try std.testing.expectEqual(gltf.Container.glb, gltf.Container.forPath("part"));
 }
+
+test "GLTF: the scene is in metres and Y-up, as glTF defines" {
+    // KupCAD works in millimetres, Z-up; a 10 mm cube used to open elsewhere as 10 m.
+    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, "cube(10)", "glb", false, null, null);
+    defer std.testing.allocator.free(bytes);
+    var glb = try parseGlb(bytes);
+    defer glb.deinit();
+    const node = glb.array("nodes")[0].object;
+    for (node.get("scale").?.array.items) |s| try std.testing.expectEqual(@as(f64, 0.001), s.float);
+    const rotation = node.get("rotation").?.array.items;
+    try std.testing.expectApproxEqAbs(@as(f64, -std.math.sqrt1_2), rotation[0].float, 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, std.math.sqrt1_2), rotation[3].float, 1e-12);
+    // The mesh itself stays in millimetres: the position accessor spans 0..10.
+    const pos = glb.array("accessors")[0].object;
+    try std.testing.expectEqual(@as(f64, 10), switch (pos.get("max").?.array.items[0]) {
+        .float => |f| f,
+        .integer => |n| @as(f64, @floatFromInt(n)),
+        else => unreachable,
+    });
+}

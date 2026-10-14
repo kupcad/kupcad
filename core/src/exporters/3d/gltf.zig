@@ -90,6 +90,12 @@ pub const Container = enum {
 
 const DATA_URI_PREFIX = "data:application/octet-stream;base64,";
 
+/// glTF is Y-up and KupCAD Z-up: the scene's one node turns the model -90 degrees about X.
+const Z_UP_TO_Y_UP = [4]f64{ -0.7071067811865475, 0.0, 0.0, 0.7071067811865476 };
+/// glTF lengths are metres and KupCAD's millimetres: without this a 10 mm cube opened in
+/// another tool as a 10 m one. The mesh data stays in millimetres; the node scales it.
+const MM_TO_METRES = 0.001;
+
 pub fn buildGltfBuffer(
     allocator: std.mem.Allocator,
     vm: *VM,
@@ -341,7 +347,7 @@ pub fn buildGltfBuffer(
         .extensionsRequired = if (extensionsRequired.items.len > 0) extensionsRequired.items else null,
         .scene = 0,
         .scenes = [_]struct { nodes: [1]u32 }{.{ .nodes = .{0} }},
-        .nodes = [_]struct { mesh: u32, rotation: [4]f64 }{.{ .mesh = 0, .rotation = .{ -0.7071067811865475, 0.0, 0.0, 0.7071067811865476 } }},
+        .nodes = [_]struct { mesh: u32, rotation: [4]f64, scale: [3]f64 }{.{ .mesh = 0, .rotation = Z_UP_TO_Y_UP, .scale = @splat(MM_TO_METRES) }},
         .meshes = [_]struct { primitives: []Primitive }{.{ .primitives = primitives.items }},
         .materials = gltf_materials.items,
         .accessors = accessors.items,
