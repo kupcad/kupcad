@@ -8,6 +8,7 @@ const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
 const disassembler = @import("../tools/dev/disassembler.zig");
 const Lexer = @import("../frontend/kupcad/lexer.zig").Lexer;
+const Outcome = @import("outcome.zig").Outcome;
 const log_helpers = @import("../log.zig");
 const ScriptSession = @import("../daemon/session.zig").ScriptSession;
 
@@ -15,44 +16,43 @@ const log = std.log.scoped(.dev);
 
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
-    const subcmd = args_iter.next() orelse {
-        printUsage(init.io);
-        std.process.exit(1);
-    };
+const Subcommand = enum { @"ast-dump", disasm, @"lex-dump", bench };
 
-    if (std.mem.eql(u8, subcmd, "ast-dump")) {
-        try executeAstDump(init, allocator, args_iter);
-    } else if (std.mem.eql(u8, subcmd, "disasm")) {
-        try executeDisasm(init, allocator, args_iter);
-    } else if (std.mem.eql(u8, subcmd, "lex-dump")) {
-        try executeLexDump(init, allocator, args_iter);
-    } else if (std.mem.eql(u8, subcmd, "bench")) {
-        try executeBench(init, allocator, args_iter);
-    } else {
-        log_helpers.printStderr(init.io, "Error: Unknown dev subcommand '{s}'\n\n", .{subcmd});
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+    const name = args_iter.next() orelse {
         printUsage(init.io);
-        std.process.exit(1);
-    }
+        return .failure;
+    };
+    const subcmd = std.meta.stringToEnum(Subcommand, name) orelse {
+        log_helpers.printStderr(init.io, "Error: Unknown dev subcommand '{s}'\n\n", .{name});
+        printUsage(init.io);
+        return .failure;
+    };
+    return switch (subcmd) {
+        .@"ast-dump" => executeAstDump(init, allocator, args_iter),
+        .disasm => executeDisasm(init, allocator, args_iter),
+        .@"lex-dump" => executeLexDump(init, allocator, args_iter),
+        .bench => executeBench(init, allocator, args_iter),
+    };
 }
 
-fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
+fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
     const file_path = args_iter.next() orelse {
         log_helpers.printStderr(init.io, "Missing file path for 'ast-dump'. Usage: kupcad dev ast-dump <file.kup>\n", .{});
-        std.process.exit(1);
+        return .failure;
     };
 
     // Use our new centralized file reader
     const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
         log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ file_path, err });
-        std.process.exit(1);
+        return .failure;
     };
     defer allocator.free(source);
 
     // Fully parse the AST and resolve symbols/slots
     var doc = api.Document.parse(allocator, source) catch |err| {
         log_helpers.printStderr(init.io, "Error parsing file '{s}': {}\n", .{ file_path, err });
-        std.process.exit(1);
+        return .failure;
     };
     defer doc.deinit();
 
@@ -72,23 +72,24 @@ fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
     });
 
     log.info("Successfully dumped AST to {s}", .{out_path});
+    return .success;
 }
 
-fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
+fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
     const file_path = args_iter.next() orelse {
         log_helpers.printStderr(init.io, "Missing file path for 'disasm'. Usage: kupcad dev disasm <file.kup>\n", .{});
-        std.process.exit(1);
+        return .failure;
     };
 
     const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
         log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ file_path, err });
-        std.process.exit(1);
+        return .failure;
     };
     defer allocator.free(source);
 
     var doc = api.Document.parse(allocator, source) catch |err| {
         log_helpers.printStderr(init.io, "Error parsing file '{s}': {}\n", .{ file_path, err });
-        std.process.exit(1);
+        return .failure;
     };
     defer doc.deinit();
 
@@ -105,7 +106,7 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
     var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &session.vm);
     compiler.compile(doc.tree.root) catch |err| {
         log_helpers.printStderr(init.io, "Compilation failed: {}\n", .{err});
-        std.process.exit(1);
+        return .failure;
     };
 
     // Disassemble
@@ -123,17 +124,18 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
     });
 
     log.info("Successfully dumped Bytecode to {s}", .{out_path});
+    return .success;
 }
 
-fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
+fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
     const file_path = args_iter.next() orelse {
         log_helpers.printStderr(init.io, "Missing file path for 'lex-dump'. Usage: kupcad dev lex-dump <file.kup>\n", .{});
-        std.process.exit(1);
+        return .failure;
     };
 
     const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
         log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ file_path, err });
-        std.process.exit(1);
+        return .failure;
     };
     defer allocator.free(source);
 
@@ -167,18 +169,19 @@ fn executeLexDump(init: std.process.Init, allocator: std.mem.Allocator, args_ite
     });
 
     log.info("Successfully dumped Tokens to {s}", .{out_path});
+    return .success;
 }
 
-fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
+fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
     const file_path = args_iter.next() orelse {
         log_helpers.printStderr(init.io, "Missing file path for 'bench'. Usage: kupcad dev bench <file.kup>\n", .{});
-        std.process.exit(1);
+        return .failure;
     };
 
     // Load source code using central file utility
     const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
         log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ file_path, err });
-        std.process.exit(1);
+        return .failure;
     };
     defer allocator.free(source);
 
@@ -189,7 +192,7 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
 
     var doc = api.Document.parse(allocator, source) catch |err| {
         log_helpers.printStderr(init.io, "Parse failed: {}\n", .{err});
-        std.process.exit(1);
+        return .failure;
     };
     defer doc.deinit();
 
@@ -213,7 +216,7 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &session.vm);
     compiler.compile(doc.tree.root) catch |err| {
         log_helpers.printStderr(init.io, "Compilation failed: {}\n", .{err});
-        std.process.exit(1);
+        return .failure;
     };
 
     const end_compile = std.Io.Clock.now(.awake, init.io);
@@ -257,6 +260,7 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
 
     try api.benchmarkScript(allocator, source, init.io, stdout);
     try stdout.flush();
+    return .success;
 }
 
 fn printUsage(io: std.Io) void {

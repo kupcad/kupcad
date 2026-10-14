@@ -48,8 +48,9 @@ kupcad lsp                                         # language server over stdio 
 kupcad dev ast-dump|disasm|lex-dump|bench part.kup # compiler/VM tooling
 ```
 
-`kupcad build` exits non-zero on any failure and `kupcad check` exits 1 when it reports errors, so both
-are safe as CI steps. Environment variables:
+Every command exits 0 on success and 1 on any failure (bad arguments, unreadable files, syntax or
+runtime errors, lint errors), so all of them are safe as CI steps. `kupcad --help` lists the commands
+and `kupcad --version` prints the version. Environment variables:
 
 | Variable | Purpose |
 |---|---|

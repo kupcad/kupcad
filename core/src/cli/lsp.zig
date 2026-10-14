@@ -845,7 +845,7 @@ pub const Handler = struct {
     }
 };
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !void {
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !@import("outcome.zig").Outcome {
     // 1. Setup global dependencies
     var mem_vfs = MemoryVfs.init(allocator);
     defer mem_vfs.deinit();
@@ -890,4 +890,5 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !void {
         &handler,
         logger.err,
     );
+    return .success;
 }

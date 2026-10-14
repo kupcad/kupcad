@@ -3,9 +3,15 @@ const Watcher = @import("../daemon/watcher.zig").Watcher;
 const fs = @import("fs.zig");
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
+const Outcome = @import("outcome.zig").Outcome;
+const log_helpers = @import("../log.zig");
+const diagnostic_report = @import("diagnostic_report.zig");
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
-    const file_path = args_iter.next() orelse return error.MissingFilePath;
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+    const file_path = args_iter.next() orelse {
+        log_helpers.printStderr(init.io, "Error: Missing input file path. Usage: kupcad watch <file.kup>\n", .{});
+        return .failure;
+    };
 
     // Spin up the cache controller
     var manager = SessionManager.init(allocator, init.io, 1);
@@ -16,7 +22,10 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer manager.release(lease);
     const session = lease.session;
 
-    const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
+    const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+        log_helpers.printStderr(init.io, "Error: Could not read '{s}': {s}\n", .{ file_path, @errorName(err) });
+        return .failure;
+    };
     defer allocator.free(source);
 
     _ = try session.workspace.addModule(file_path, source);
@@ -24,11 +33,23 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     try session.buildReverseGraph();
 
     // Perform initial cold-boot evaluation
-    try session.evaluateWorkspace();
+    session.evaluateWorkspace() catch |err| {
+        if (err == error.ParseError) if (session.failed_module) |mod_id| {
+            const mod = &session.workspace.modules.items[@backingInt(mod_id)];
+            var rendered: std.Io.Writer.Allocating = .init(allocator);
+            defer rendered.deinit();
+            _ = try diagnostic_report.writeSyntaxErrors(&rendered.writer, mod.path, mod.source, &mod.doc);
+            log_helpers.printStderr(init.io, "{s}", .{rendered.written()});
+            return .failure;
+        };
+        log_helpers.printStderr(init.io, "Error: Initial build failed: {s}\n", .{@errorName(err)});
+        return .failure;
+    };
 
     // Initialize and block on the libxev event loop using the persistent session
     var watcher = try Watcher.init(session, file_path, init.io);
     defer watcher.deinit();
 
     try watcher.start();
+    return .success;
 }

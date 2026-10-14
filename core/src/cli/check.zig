@@ -6,6 +6,7 @@ const log_helpers = @import("../log.zig");
 const LimitAllocator = @import("../core/limit_allocator.zig").LimitAllocator;
 const report = @import("diagnostic_report.zig");
 const Color = report.Color;
+const Outcome = @import("outcome.zig").Outcome;
 
 const Totals = struct {
     files: usize = 0,
@@ -16,8 +17,9 @@ const Totals = struct {
     compiler_memory_limit: ?usize = null,
 };
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
-    var setup = try @import("options.zig").CommandSetup.init(allocator, init.io, args_iter, "check");
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+    // CommandSetup has already reported what was wrong with the arguments or config.
+    var setup = @import("options.zig").CommandSetup.init(allocator, init.io, args_iter, "check") catch return .failure;
     defer setup.deinit(allocator);
 
     var totals = Totals{
@@ -25,7 +27,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         .compiler_memory_limit = setup.config.compiler_memory_limit, // Hook it up
     };
 
-    try walker.walkPaths(init.io, allocator, setup.options.paths.items, &totals, processFile);
+    // A path that can't be read is an error, not "0 files, no issues".
+    totals.errors += try walker.walkPaths(init.io, allocator, setup.options.paths.items, &totals, processFile);
 
     if (totals.errors == 0 and totals.warnings == 0 and totals.infos == 0) {
         log_helpers.printStdout(init.io, "\n{s}Success: No CAD geometry, syntax, or semantic issues found across {d} file(s).{s}\n", .{ Color.green, totals.files, Color.reset });
@@ -36,7 +39,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             totals.infos, Color.reset,
         });
     }
-    if (totals.errors > 0) std.process.exit(1);
+    return if (totals.errors > 0) .failure else .success;
 }
 
 fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {

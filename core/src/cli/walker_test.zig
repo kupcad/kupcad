@@ -30,9 +30,27 @@ test "Walker: recursively finds only .kup files and accepts direct file paths" {
     defer testing.allocator.free(direct);
 
     var ctx = WalkerContext{};
-    try walker.walkPaths(testing.io, testing.allocator, &.{ root, direct }, &ctx, testProcessFn);
+    try testing.expectEqual(@as(usize, 0), try walker.walkPaths(testing.io, testing.allocator, &.{ root, direct }, &ctx, testProcessFn));
 
     // 3 from the directory walk + the directly named file
     try testing.expectEqual(@as(usize, 4), ctx.kup_files_found);
     try testing.expectEqual(@as(usize, 4), ctx.bytes_seen);
+}
+
+test "Walker: paths that can't be read are counted, and the rest are still walked" {
+    // Callers turn the count into a failure; before, a missing path was only logged, so
+    // `kupcad check missing.kup` reported success.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ok.kup", .data = "x" });
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const ok = try std.fs.path.join(testing.allocator, &.{ root, "ok.kup" });
+    defer testing.allocator.free(ok);
+    const missing = try std.fs.path.join(testing.allocator, &.{ root, "missing.kup" });
+    defer testing.allocator.free(missing);
+
+    var ctx = WalkerContext{};
+    try testing.expectEqual(@as(usize, 2), try walker.walkPaths(testing.io, testing.allocator, &.{ missing, ok, "/nonexistent/kupcad/dir" }, &ctx, testProcessFn));
+    try testing.expectEqual(@as(usize, 1), ctx.kup_files_found);
 }

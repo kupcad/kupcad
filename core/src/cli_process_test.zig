@@ -1,0 +1,125 @@
+//! Runs the built `kupcad` binary and checks what a shell or CI job sees: the exit
+//! status and the text on stdout/stderr. Unit tests can't catch a command that prints an
+//! error and then exits 0, which is exactly the bug class these guard.
+
+const std = @import("std");
+const testing = std.testing;
+const options = @import("cli_test_options");
+
+const VALID_SCRIPT = "cube(10)\n";
+
+const Run = struct {
+    code: u8,
+    stdout: []u8,
+    stderr: []u8,
+
+    fn deinit(self: Run) void {
+        testing.allocator.free(self.stdout);
+        testing.allocator.free(self.stderr);
+    }
+};
+
+/// Runs `kupcad args...` with `cwd` as its working directory.
+fn kupcad(cwd: []const u8, args: []const []const u8) !Run {
+    // The build hands us a path relative to the build root; the child runs elsewhere.
+    const exe = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, options.kupcad_exe, testing.allocator);
+    defer testing.allocator.free(exe);
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer argv.deinit(testing.allocator);
+    try argv.append(testing.allocator, exe);
+    try argv.appendSlice(testing.allocator, args);
+    const res = try std.process.run(testing.allocator, testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd } });
+    const code: u8 = switch (res.term) {
+        .exited => |c| c,
+        else => 255,
+    };
+    return .{ .code = code, .stdout = res.stdout, .stderr = res.stderr };
+}
+
+/// A temp dir holding `valid.kup`; tests run kupcad inside it.
+const Sandbox = struct {
+    tmp: testing.TmpDir,
+    path: [:0]u8,
+
+    fn init() !Sandbox {
+        var tmp = testing.tmpDir(.{});
+        errdefer tmp.cleanup();
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "valid.kup", .data = VALID_SCRIPT });
+        const path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+        return .{ .tmp = tmp, .path = path };
+    }
+
+    fn deinit(self: *Sandbox) void {
+        testing.allocator.free(self.path);
+        self.tmp.cleanup();
+    }
+};
+
+const Expect = struct {
+    args: []const []const u8,
+    code: u8,
+    /// Must appear in stdout or stderr.
+    contains: ?[]const u8 = null,
+    /// Must appear in neither (e.g. an error trace or a false "Success").
+    absent: ?[]const u8 = null,
+};
+
+fn expectRuns(cases: []const Expect) !void {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    for (cases) |case| {
+        const run = try kupcad(sb.path, case.args);
+        defer run.deinit();
+        errdefer {
+            std.debug.print("$ kupcad", .{});
+            for (case.args) |arg| std.debug.print(" {s}", .{arg});
+            std.debug.print("\nexit {d}\nstdout:\n{s}\nstderr:\n{s}\n", .{ run.code, run.stdout, run.stderr });
+        }
+        try testing.expectEqual(case.code, run.code);
+        if (case.contains) |needle| {
+            try testing.expect(std.mem.indexOf(u8, run.stdout, needle) != null or std.mem.indexOf(u8, run.stderr, needle) != null);
+        }
+        if (case.absent) |needle| {
+            try testing.expect(std.mem.indexOf(u8, run.stdout, needle) == null and std.mem.indexOf(u8, run.stderr, needle) == null);
+        }
+    }
+}
+
+test "kupcad: help, version and unknown commands" {
+    try expectRuns(&.{
+        .{ .args = &.{}, .code = 1, .contains = "Usage: kupcad <command>" },
+        .{ .args = &.{"--help"}, .code = 0, .contains = "Commands:" },
+        .{ .args = &.{"-h"}, .code = 0, .contains = "  pkg" },
+        .{ .args = &.{"help"}, .code = 0, .contains = "  watch" },
+        .{ .args = &.{"--version"}, .code = 0, .contains = "kupcad " ++ options.version ++ "\n" },
+        .{ .args = &.{"-V"}, .code = 0, .contains = options.version },
+        .{ .args = &.{"frobnicate"}, .code = 1, .contains = "Unknown command 'frobnicate'" },
+    });
+}
+
+test "kupcad: every command exits non-zero when it fails" {
+    // fmt, doc, a bare/unknown pkg command and check on a missing file all used to exit 0.
+    try expectRuns(&.{
+        .{ .args = &.{"fmt"}, .code = 1 },
+        .{ .args = &.{ "fmt", "missing.kup" }, .code = 1 },
+        .{ .args = &.{"doc"}, .code = 1, .contains = "Missing input file path" },
+        .{ .args = &.{ "doc", "missing.kup" }, .code = 1, .contains = "Could not read 'missing.kup'" },
+        .{ .args = &.{ "check", "missing.kup" }, .code = 1, .absent = "Success" },
+        .{ .args = &.{"pkg"}, .code = 1, .contains = "Usage: kupcad pkg <init|add|install|prune|doctor>" },
+        .{ .args = &.{ "pkg", "frobnicate" }, .code = 1, .contains = "Unknown pkg command 'frobnicate'", .absent = "ManifestNotFound" },
+        .{ .args = &.{"watch"}, .code = 1, .contains = "Missing input file path" },
+        .{ .args = &.{"dev"}, .code = 1 },
+        .{ .args = &.{ "dev", "frobnicate" }, .code = 1, .contains = "Unknown dev subcommand" },
+        .{ .args = &.{ "build", "valid.kup", "--bogus" }, .code = 1, .contains = "Unknown option '--bogus'" },
+        .{ .args = &.{ "build", "valid.kup", "-o" }, .code = 1, .contains = "Missing output path after -o" },
+    });
+}
+
+test "kupcad: commands succeed with exit 0 on valid input" {
+    try expectRuns(&.{
+        .{ .args = &.{ "fmt", "valid.kup" }, .code = 0, .contains = "cube(10)" },
+        .{ .args = &.{ "doc", "valid.kup" }, .code = 0 },
+        .{ .args = &.{ "check", "valid.kup" }, .code = 0, .contains = "Success" },
+        .{ .args = &.{ "build", "valid.kup", "-o", "out.stl" }, .code = 0, .contains = "Successfully built out.stl" },
+    });
+}

@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const LineIndex = @import("../core/line_index.zig").LineIndex;
+const Document = @import("../core/document.zig").Document;
 pub const Severity = @import("../tools/lint/linter.zig").LinterSeverity;
 
 pub const Color = struct {
@@ -35,6 +36,22 @@ pub fn write(w: *std.Io.Writer, r: Report) std.Io.Writer.Error!void {
     try w.writeAll(sev_color);
     try w.splatByteAll('^', if (r.length > 0) r.length else 1);
     try w.print("{s}\n\n", .{Color.reset});
+}
+
+/// Writes every parse diagnostic of `doc` as an error and returns how many there were.
+pub fn writeSyntaxErrors(w: *std.Io.Writer, file_path: []const u8, source: []const u8, doc: *const Document) std.Io.Writer.Error!usize {
+    for (doc.diagnostics) |d| {
+        try write(w, .{
+            .file_path = file_path,
+            .source = source,
+            .line_index = &doc.line_index,
+            .offset = d.loc.offset,
+            .length = d.loc.length,
+            .severity = .@"error",
+            .message = d.message,
+        });
+    }
+    return doc.diagnostics.len;
 }
 
 /// The 1-based `target_line` of `source`, without its line ending ("" past the end).

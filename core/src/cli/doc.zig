@@ -3,14 +3,18 @@ const api = @import("../api.zig");
 const fs = @import("fs.zig");
 const log_helpers = @import("../log.zig");
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
+const Outcome = @import("outcome.zig").Outcome;
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
     const file_path = args_iter.next() orelse {
-        log_helpers.printStderr(init.io, "Error: Missing input file path.\n", .{});
-        return;
+        log_helpers.printStderr(init.io, "Error: Missing input file path. Usage: kupcad doc <file.kup>\n", .{});
+        return .failure;
     };
 
-    const source = try fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE);
+    const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+        log_helpers.printStderr(init.io, "Error: Could not read '{s}': {s}\n", .{ file_path, @errorName(err) });
+        return .failure;
+    };
     defer allocator.free(source);
 
     var doc = try api.Document.parse(allocator, source);
@@ -27,4 +31,5 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     const stdout = std.Io.File.stdout();
     try stdout.writeStreamingAll(init.io, out.written());
+    return .success;
 }

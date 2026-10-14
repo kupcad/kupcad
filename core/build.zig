@@ -460,6 +460,10 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        // Version string for `kupcad --version`, read from build.zig.zon so it has one source.
+        const build_info = b.addOptions();
+        build_info.addOption([]const u8, "version", @import("build.zig.zon").version);
+        exe.root_module.addOptions("build_info", build_info);
         b.installArtifact(exe);
 
         const lib = b.addLibrary(.{
@@ -497,9 +501,25 @@ pub fn build(b: *std.Build) void {
         });
         const run_exe_tests = b.addRunArtifact(exe_tests);
 
+        // Black-box CLI tests: run the built `kupcad` binary and check exit codes and output.
+        const cli_test_options = b.addOptions();
+        cli_test_options.addOptionPath("kupcad_exe", exe.getEmittedBin());
+        cli_test_options.addOption([]const u8, "version", @import("build.zig.zon").version);
+        const cli_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/cli_process_test.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{.{ .name = "cli_test_options", .module = cli_test_options.createModule() }},
+            }),
+            .filters = test_filters,
+        });
+        const run_cli_tests = b.addRunArtifact(cli_tests);
+
         const test_step = b.step("test", "Run tests");
         test_step.dependOn(&run_mod_tests.step);
         test_step.dependOn(&run_exe_tests.step);
+        test_step.dependOn(&run_cli_tests.step);
 
         if (use_vendored_tatfi) {
             const tatfi_tests = b.addTest(.{

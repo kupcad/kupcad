@@ -8,9 +8,6 @@ const diagnostic_report = @import("diagnostic_report.zig");
 const ScriptSession = @import("../daemon/session.zig").ScriptSession;
 const ModuleId = @import("../core/workspace.zig").ModuleId;
 
-/// Process exit status for any failed build, so scripts and CI can detect errors.
-const EXIT_FAILURE: u8 = 1;
-
 /// Formats `build` can write. Tag names are what `--format` accepts and what
 /// `api.exportModelFromVm` expects.
 const Format = enum { stl, glb, gltf, step };
@@ -70,7 +67,7 @@ fn resolveFormat(explicit: ?Format, output_path: ?[]const u8, reporter: Reporter
     return null;
 }
 
-pub const Outcome = enum { success, failure };
+pub const Outcome = @import("outcome.zig").Outcome;
 
 /// Where `run` reports. By default it prints to the process streams; tests set `capture`.
 pub const Reporter = struct {
@@ -92,23 +89,12 @@ fn reportSyntaxErrors(allocator: std.mem.Allocator, session: *const ScriptSessio
     const mod = &session.workspace.modules.items[@backingInt(mod_id)];
     var rendered: std.Io.Writer.Allocating = .init(allocator);
     defer rendered.deinit();
-    for (mod.doc.diagnostics) |d| {
-        try diagnostic_report.write(&rendered.writer, .{
-            .file_path = mod.path,
-            .source = mod.source,
-            .line_index = &mod.doc.line_index,
-            .offset = d.loc.offset,
-            .length = d.loc.length,
-            .severity = .@"error",
-            .message = d.message,
-        });
-    }
-    const count = mod.doc.diagnostics.len;
+    const count = try diagnostic_report.writeSyntaxErrors(&rendered.writer, mod.path, mod.source, &mod.doc);
     reporter.err("{s}Build failed: {d} syntax error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", mod.path });
 }
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !void {
-    if (try run(allocator, args_iter, .{ .io = init.io }) == .failure) std.process.exit(EXIT_FAILURE);
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
+    return run(allocator, args_iter, .{ .io = init.io });
 }
 
 /// Runs `kupcad build` with the remaining CLI arguments (`args_iter` needs `next() ?[]const u8`).
@@ -144,7 +130,10 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
             };
             try cli_params.put(key, val);
         } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
-            output_path = args_iter.next();
+            output_path = args_iter.next() orelse {
+                reporter.err("Error: Missing output path after {s}\n", .{arg});
+                return .failure;
+            };
         } else if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--draco")) {
             use_draco = true;
         } else if (std.mem.eql(u8, arg, "-f") or std.mem.eql(u8, arg, "--format")) {
@@ -156,7 +145,13 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
                 reporter.err("Error: Unsupported format '{s}'. Allowed: {s}\n", .{ name, FORMAT_LIST });
                 return .failure;
             };
-        } else if (!std.mem.startsWith(u8, arg, "-")) {
+        } else if (std.mem.startsWith(u8, arg, "-")) {
+            reporter.err("Error: Unknown option '{s}'. Options: -o/--output, -f/--format, -p/--param, -d/--draco\n", .{arg});
+            return .failure;
+        } else if (input_path) |first| {
+            reporter.err("Error: Expected one input file, got '{s}' and '{s}'\n", .{ first, arg });
+            return .failure;
+        } else {
             input_path = arg;
         }
     }

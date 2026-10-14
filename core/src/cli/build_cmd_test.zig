@@ -85,7 +85,7 @@ const Fixture = struct {
 test "build_cmd: invalid arguments fail before touching the filesystem" {
     const cases = [_]struct { args: []const []const u8, message: []const u8 }{
         .{ .args = &.{}, .message = "Error: Missing input file path.\n" },
-        .{ .args = &.{"-o"}, .message = "Error: Missing input file path.\n" },
+        .{ .args = &.{"-o"}, .message = "Error: Missing output path after -o\n" },
         .{ .args = &.{ "model.kup", "--param" }, .message = "Error: Missing key=value after --param\n" },
         .{ .args = &.{ "model.kup", "-p", "width" }, .message = "Error: Invalid param format. Use --param key=value.\n" },
         .{ .args = &.{ "model.kup", "-p", "width=wide" }, .message = "Error: Param value must be numeric. Got 'wide'\n" },
@@ -266,4 +266,19 @@ test "build_cmd: syntax errors are reported with file, line, column and a caret"
     const summary = try std.fmt.allocPrint(testing.allocator, "Build failed: 2 syntax errors in {s}\n", .{fx.input});
     defer testing.allocator.free(summary);
     try testing.expect(std.mem.endsWith(u8, text, summary));
+}
+
+test "build_cmd: unknown options, a missing -o value and extra inputs are rejected" {
+    // Each used to be ignored silently: a typo like `--fromat stl` built with defaults.
+    const cases = [_]struct { args: []const []const u8, message: []const u8 }{
+        .{ .args = &.{ "model.kup", "--fromat", "stl" }, .message = "Error: Unknown option '--fromat'. Options: -o/--output, -f/--format, -p/--param, -d/--draco\n" },
+        .{ .args = &.{ "model.kup", "-o" }, .message = "Error: Missing output path after -o\n" },
+        .{ .args = &.{ "a.kup", "b.kup" }, .message = "Error: Expected one input file, got 'a.kup' and 'b.kup'\n" },
+    };
+    for (cases) |case| {
+        var res = try runBuild(case.args);
+        defer res.deinit();
+        try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+        try testing.expectEqualStrings(case.message, res.text());
+    }
 }
