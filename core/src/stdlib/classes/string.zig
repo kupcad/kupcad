@@ -4,6 +4,13 @@ const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
 
+/// String.new(text = "") -> the text (Strings are immutable values)
+pub fn stringNew(vm: *VM, class: value.Value, text: ?*value.ObjString) !value.Value {
+    _ = class;
+    if (text) |t| return value.Value.initObj(&t.obj);
+    return vm.allocateString("");
+}
+
 /// String#length / String#size
 pub fn stringLength(vm: *VM, str: *value.ObjString) !value.Value {
     _ = vm;

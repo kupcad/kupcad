@@ -685,7 +685,7 @@ test "Stdlib: named functions are called by name, callable values with .call" {
         .{ .src = "def f(cube)\n  cube\nend\nr = f(5)", .expected = .{ .num = 5 } },
         // Lambdas are the only callables.
         .{ .src = comptime rescued("proc { |x| x }"), .expected = .{ .str = "NameError: Undefined variable 'proc'" } },
-        .{ .src = comptime rescued("Proc.new { |x| x }"), .expected = .{ .str = "NameError: Undefined variable 'Proc'" } },
+        .{ .src = comptime rescued("Proc.new { |x| x }"), .expected = .{ .str = "NoMethodError: undefined method 'new' for Proc; KupCAD makes them with lambdas: ->(x) { ... }" } },
         .{ .src = comptime rescued("lambda { |x| x }"), .expected = .{ .str = "NameError: Undefined variable 'lambda'" } },
     });
 }
@@ -750,7 +750,7 @@ test "Stdlib: every value answers class and inspect" {
         .{ .src = "class Foo\n  def inspect\n    \"custom\"\n  end\nend\nr = Foo.new.inspect", .expected = .{ .str = "custom" } },
         // Values without a class of their own still get Object's methods.
         .{ .src = "r = nil.inspect", .expected = .{ .str = "nil" } },
-        .{ .src = "r = nil.class.nil?", .expected = .{ .boolean = true } },
+        .{ .src = "r = nil.class == NilClass", .expected = .{ .boolean = true } },
         .{ .src = "f = -> { 1 }\nr = f.inspect", .expected = .{ .str = "<Function>" } },
         // Any keyword names a method after a dot.
         .{ .src = "class R\n  def end\n    7\n  end\nend\nr = R.new.end", .expected = .{ .num = 7 } },
@@ -953,6 +953,27 @@ test "Stdlib: material checks its color and factors" {
         .{ .src = comptime rescued("cube(1).material(roughness: 5)"), .expected = .{ .str = "ValueError: material roughness must be between 0 and 1, got 5" } },
         .{ .src = comptime rescued("cube(1).material(alpha: -0.1)"), .expected = .{ .str = "ValueError: material alpha must be between 0 and 1, got -0.1" } },
         .{ .src = comptime rescued("cube(1).material(color: \"#f80\", alpha: 0.5, metallic: 1, transmission: 0)"), .expected = .{ .str = "no error" } },
+    });
+}
+
+test "Stdlib: every value has a class, and value classes aren't built with .new" {
+    // nil, lambdas, bound methods, classes and modules had no class (`.class` was nil).
+    try expectGlobalR(&.{
+        .{ .src = "r = \"#{nil.class} #{true.class} #{1.class} #{:s.class}\"", .expected = .{ .str = "NilClass Boolean Number Symbol" } },
+        .{ .src = "f = -> { 1 }\nr = \"#{f.class} #{f.is_a?(Proc)}\"", .expected = .{ .str = "Proc true" } },
+        .{ .src = "class C\n  def g\n  end\nend\nr = \"#{C.new.method(:g).class} #{C.class} #{Math.class}\"", .expected = .{ .str = "Method Class Math" } },
+        .{ .src = "module M\nend\nr = M.class == Module", .expected = .{ .boolean = true } },
+        .{ .src = "r = nil.is_a?(NilClass) && nil.is_a?(Object)", .expected = .{ .boolean = true } },
+        // `Array.new` used to make an empty object that was no Array at all.
+        .{ .src = "r = Array.new(3, 0)", .expected = .{ .nums = &.{ 0, 0, 0 } } },
+        .{ .src = "r = \"#{Array.new.inspect} #{String.new.inspect} #{Map.new.inspect} #{String.new(\"s\")}\"", .expected = .{ .str = "[] \"\" {} s" } },
+        .{ .src = comptime rescued("Array.new(-1)"), .expected = .{ .str = "ValueError: Array.new size must be a whole number from 0 to 10000000, got -1" } },
+        .{ .src = comptime rescued("Number.new"), .expected = .{ .str = "NoMethodError: undefined method 'new' for Number" } },
+        .{ .src = comptime rescued("NilClass.new"), .expected = .{ .str = "NoMethodError: undefined method 'new' for NilClass" } },
+        .{ .src = comptime rescued("Solid.new"), .expected = .{ .str = "NoMethodError: undefined method 'new' for Solid" } },
+        // Exception classes and user classes still are.
+        .{ .src = "r = ValueError.new(\"x\").message", .expected = .{ .str = "x" } },
+        .{ .src = "class P\nend\nr = P.new.class == P", .expected = .{ .boolean = true } },
     });
 }
 

@@ -268,6 +268,7 @@ pub const GC = struct {
         ptr.class_fields = .empty;
         ptr.included_modules = .empty;
         ptr.instance_layout = .empty;
+        ptr.is_value_class = false;
         return ptr;
     }
 

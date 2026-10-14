@@ -4,6 +4,13 @@ const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
 
 /// Map#keys
+/// Map.new -> an empty Map
+pub fn mapNew(vm: *VM, class: value.Value) !value.Value {
+    _ = class;
+    const map = try vm.gc.allocateMap(vm);
+    return value.Value.initObj(&map.obj);
+}
+
 pub fn mapKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();

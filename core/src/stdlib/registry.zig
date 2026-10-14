@@ -26,6 +26,19 @@ fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !
     return class_obj;
 }
 
+/// A built-in kind of value (see ObjClass.is_value_class), under Object.
+fn defineValueClass(vm: *VM, name: []const u8) !*value.ObjClass {
+    const class = try defineBuiltinClass(vm, name, vm.object_class);
+    class.is_value_class = true;
+    return class;
+}
+
+/// A class's own `new`, named `display_name` in errors.
+fn bindNew(vm: *VM, class: *value.ObjClass, display_name: []const u8, func: value.NativeFn) !void {
+    const native_fn = try vm.gc.allocateNative(vm, display_name, func);
+    try class.class_methods.put(vm.gc.trackingAllocator(), try vm.allocateString("new"), value.Value.initObj(&native_fn.obj));
+}
+
 fn bindNativeClassMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
     const native_fn = try vm.gc.allocateNative(vm, name, func);
     const name_val = try vm.allocateString(name);
@@ -58,25 +71,40 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     try std_exceptions.registerExceptions(vm);
 
     // Bootstrap Primitive Classes for Monkey-Patching
-    vm.array_class = try defineBuiltinClass(vm, "Array", vm.object_class);
-    vm.string_class = try defineBuiltinClass(vm, "String", vm.object_class);
-    vm.map_class = try defineBuiltinClass(vm, "Map", vm.object_class);
-    vm.number_class = try defineBuiltinClass(vm, "Number", vm.object_class);
+    vm.array_class = try defineValueClass(vm, "Array");
+    vm.string_class = try defineValueClass(vm, "String");
+    vm.map_class = try defineValueClass(vm, "Map");
+    vm.number_class = try defineValueClass(vm, "Number");
     // Ruby's Float::INFINITY and Float::NAN. Arithmetic never produces them (it raises
     // RangeError or MathError), so a script reaching for one has to say so.
     try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.allocateString("INFINITY"), value.Value.initNumber(std.math.inf(f64)));
     try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.allocateString("NAN"), value.Value.initNumber(std.math.nan(f64)));
-    vm.range_class = try defineBuiltinClass(vm, "Range", vm.object_class);
-    vm.symbol_class = try defineBuiltinClass(vm, "Symbol", vm.object_class);
-    vm.boolean_class = try defineBuiltinClass(vm, "Boolean", vm.object_class);
-    vm.bbox_class = try defineBuiltinClass(vm, "BoundingBox", vm.object_class);
-    vm.geometry_class = try defineBuiltinClass(vm, "Geometry", vm.object_class);
-    vm.cross_section_class = try defineBuiltinClass(vm, "CrossSection", vm.object_class);
+    vm.range_class = try defineValueClass(vm, "Range");
+    vm.symbol_class = try defineValueClass(vm, "Symbol");
+    vm.boolean_class = try defineValueClass(vm, "Boolean");
+    vm.bbox_class = try defineValueClass(vm, "BoundingBox");
+    vm.geometry_class = try defineValueClass(vm, "Geometry");
+    vm.cross_section_class = try defineValueClass(vm, "CrossSection");
+    vm.nil_class = try defineValueClass(vm, "NilClass");
+    vm.proc_class = try defineValueClass(vm, "Proc");
+    vm.method_class = try defineValueClass(vm, "Method");
+    vm.class_class = try defineValueClass(vm, "Class");
+    vm.module_class = try defineValueClass(vm, "Module");
+    vm.assembly_class = try defineValueClass(vm, "Assembly");
+    vm.workplane_class = try defineValueClass(vm, "Workplane");
+
+    // Array.new / String.new / Map.new build real empty values, as in Ruby.
+    try bindNew(vm, vm.array_class.?, "Array.new", common.wrapMethod(@import("classes/array.zig").arrayNew));
+    try bindNew(vm, vm.string_class.?, "String.new", common.wrapMethod(@import("classes/string.zig").stringNew));
+    try bindNew(vm, vm.map_class.?, "Map.new", common.wrapMethod(@import("classes/map.zig").mapNew));
 
     // --- Formalize Kernel, Solid and Sketch2D Classes ---
     const kernel_class = try defineBuiltinClass(vm, "Kernel", vm.object_class);
     const solid_class = try defineBuiltinClass(vm, "Solid", vm.geometry_class);
     const sketch2d_class = try defineBuiltinClass(vm, "Sketch2D", vm.cross_section_class);
+    // Shapes come from their constructors (Solid.cube, Sketch2D.square), not `.new`.
+    solid_class.is_value_class = true;
+    sketch2d_class.is_value_class = true;
 
     // I/O & Debugging
     try bindNativeClassMethod(vm, kernel_class, "puts", common.wrapGlobal(io_mod.nativePuts));
@@ -109,20 +137,20 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     }
 
     // Set up GC module (as an instance of a pseudo-class)
-    const gc_class = try defineBuiltinClass(vm, "GC", null);
+    const gc_class = try defineBuiltinClass(vm, "GC", vm.object_class);
     const gc_inst = try vm.gc.allocateInstance(vm, gc_class);
     try vm.globals.put(vm.allocator, "GC", value.Value.initObj(&gc_inst.obj));
 
     // Bootstrap Standard Modules
     // Set up Math module (as an instance of a pseudo-class to support property access)
-    const math_class = try defineBuiltinClass(vm, "Math", null);
+    const math_class = try defineBuiltinClass(vm, "Math", vm.object_class);
     const math_inst = try vm.gc.allocateInstance(vm, math_class);
     const pi_name = try vm.allocateString("PI");
     try vm.setInstanceField(math_inst, pi_name, value.Value.initNumber(std.math.pi), null);
     try vm.globals.put(vm.allocator, "Math", value.Value.initObj(&math_inst.obj));
 
     // Set up CAD settings module (as a pseudo-class)
-    const cad_module = try defineBuiltinClass(vm, "CAD", null);
+    const cad_module = try defineBuiltinClass(vm, "CAD", vm.object_class);
     const cad_inst = try vm.gc.allocateInstance(vm, cad_module);
     try vm.globals.put(vm.allocator, "CAD", value.Value.initObj(&cad_inst.obj));
 

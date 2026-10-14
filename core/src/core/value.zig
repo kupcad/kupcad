@@ -155,6 +155,11 @@ pub const ObjClass = struct {
     class_fields: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
     included_modules: std.ArrayListUnmanaged(*ObjModule),
     instance_layout: std.ArrayHashMapUnmanaged(Value, usize, ValueContext, false),
+    /// The class of a built-in kind of value (Array, Number, NilClass, Proc, ...), made by
+    /// literals and methods, not by `.new`: a generic instance of it is no such value (it
+    /// used to be: `Array.new` was an empty object, not an Array). Such a class may still
+    /// define a `new` class method of its own.
+    is_value_class: bool = false,
 };
 
 pub const ObjModule = struct {

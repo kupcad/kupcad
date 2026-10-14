@@ -152,6 +152,15 @@ pub const VM = struct {
     object_class: ?*value.ObjClass = null,
     geometry_class: ?*value.ObjClass = null,
     cross_section_class: ?*value.ObjClass = null,
+    /// The classes of values that are not instances (Ruby's NilClass, Proc, Method,
+    /// Class, Module), so every value has a class.
+    nil_class: ?*value.ObjClass = null,
+    proc_class: ?*value.ObjClass = null,
+    method_class: ?*value.ObjClass = null,
+    class_class: ?*value.ObjClass = null,
+    module_class: ?*value.ObjClass = null,
+    assembly_class: ?*value.ObjClass = null,
+    workplane_class: ?*value.ObjClass = null,
 
     // DOD Memory Fields
     scratch_arena: std.heap.ArenaAllocator,
@@ -2153,7 +2162,8 @@ pub const VM = struct {
         var is_private_call = false;
 
         if (receiver.isClass()) {
-            if (std.mem.eql(u8, method_name_str, "new")) {
+            // A class's own `new` (such as Array.new) comes first; otherwise instantiate it.
+            if (std.mem.eql(u8, method_name_str, "new") and receiver.asClass().class_methods.get(method_name_val) == null) {
                 return self.constructInstance(receiver.asClass(), arg_count, base_slot, call.has_block);
             }
 
@@ -2531,12 +2541,20 @@ pub const VM = struct {
                 .map => return self.map_class,
                 .bbox => return self.bbox_class,
                 .range => return self.range_class,
+                .closure, .function => return self.proc_class,
+                .bound_method, .native => return self.method_class,
+                .class => return self.class_class,
+                .module => return self.module_class,
+                .assembly => return self.assembly_class,
+                .workplane => return self.workplane_class,
                 else => return null,
             }
         } else if (receiver.isNumber()) {
             return self.number_class;
         } else if (receiver.isBool()) {
             return self.boolean_class;
+        } else if (receiver.isNil()) {
+            return self.nil_class;
         }
         return null;
     }
@@ -2697,6 +2715,10 @@ pub const VM = struct {
     /// `arg_count` arguments above it, running `initialize` (a closure or a native,
     /// e.g. Exception's) if the class has one. Leaves the instance at `base_slot`.
     fn constructInstance(self: *VM, class_obj: *value.ObjClass, arg_count: u8, base_slot: usize, has_block: bool) InterpretResult {
+        if (class_obj.is_value_class) {
+            const hint = if (class_obj == self.proc_class) "; KupCAD makes them with lambdas: ->(x) { ... }" else "";
+            return self.raiseError(.NoMethodError, "undefined method 'new' for {s}{s}", .{ class_obj.name.chars, hint });
+        }
         const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
         self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
 

@@ -49,9 +49,9 @@ pub const MeshMethod = struct {
 };
 
 pub const core_namespaces = [_][]const u8{
-    "Object",   "Array",        "String", "Map",      "Number",      "Range", "Symbol", "Boolean",
-    "Geometry", "CrossSection", "Solid",  "Sketch2D", "BoundingBox", "Math",  "GC",     "Kernel",
-    "CAD",
+    "Object",   "Array",        "String", "Map",      "Number",      "Range",  "Symbol",   "Boolean",
+    "Geometry", "CrossSection", "Solid",  "Sketch2D", "BoundingBox", "Math",   "GC",       "Kernel",
+    "CAD",      "NilClass",     "Proc",   "Method",   "Class",       "Module", "Assembly", "Workplane",
 };
 
 // Core language keywords and intrinsic system states

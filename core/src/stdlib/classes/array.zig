@@ -1,5 +1,6 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
+const limits = @import("../../core/limits.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
@@ -11,6 +12,21 @@ pub fn arrayLength(vm: *VM, arr: *value.ObjArray) !value.Value {
 }
 
 /// Array#push(val)
+/// Array.new(size = 0, fill = nil) -> an Array of `size` copies of `fill`
+pub fn arrayNew(vm: *VM, class: value.Value, size_num: ?f64, fill: ?value.Value) !value.Value {
+    _ = class;
+    const size = size_num orelse 0;
+    if (!(size >= 0) or @trunc(size) != size or size > @as(f64, @floatFromInt(limits.MAX_RANGE_MATERIALIZE))) {
+        _ = vm.raiseError(.ValueError, "Array.new size must be a whole number from 0 to {d}, got {f}", .{ limits.MAX_RANGE_MATERIALIZE, value.fmtNumber(size) });
+        return error.RuntimeError;
+    }
+    const arr = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&arr.obj));
+    defer _ = vm.pop();
+    try arr.items.appendNTimes(vm.gc.trackingAllocator(), fill orelse value.Value.initNil(), @intFromFloat(size));
+    return value.Value.initObj(&arr.obj);
+}
+
 /// Array#push(*values): appends each value, like Ruby (so `arr.push(*more)` works).
 pub fn arrayPush(vm: *VM, arr: *value.ObjArray, vals: []const value.Value) !value.Value {
     try arr.items.appendSlice(vm.gc.trackingAllocator(), vals);
