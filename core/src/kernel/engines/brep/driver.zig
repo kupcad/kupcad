@@ -639,6 +639,12 @@ fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
     return locus_prop.crossSectionArea(&solid.t_arena, &solid.g_arena, solid.solid_id);
 }
 
+fn crossSectionNumVertsImpl(handle: geom.CrossSectionHandle) usize {
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    return solid.t_arena.vertices.items.len;
+}
+
 /// Locus does not expose sketch contours yet; null tells the caller this engine can't
 /// answer, so the user gets a clear error instead of a wrong `false`.
 fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, tolerance: f64) ?bool {
@@ -817,6 +823,7 @@ pub const driver = struct {
     pub const boundingBoxFn = boundingBoxImpl;
     pub const crossSectionAreaFn = crossSectionAreaImpl;
     pub const crossSectionBoundsFn = crossSectionBoundsImpl;
+    pub const crossSectionNumVertsFn = crossSectionNumVertsImpl;
     pub const crossSectionContainsPointFn = crossSectionContainsPointImpl;
     pub const crossSectionIsConvexFn = crossSectionIsConvexImpl;
     pub const queryFacesFn = queryFacesImpl;

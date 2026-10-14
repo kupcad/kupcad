@@ -120,6 +120,26 @@ fn kernelFailed(vm: *VM, tag: dag.DAGTag) error{RuntimeError} {
     return error.RuntimeError;
 }
 
+/// Raises the vertex-limit error when `verts` passes `limit`. `estimated` is set for a
+/// check made before the kernel runs, from what the operation's inputs imply.
+fn checkVertexLimit(vm: *VM, tag: dag.DAGTag, verts: usize, limit: usize, comptime estimated: bool) error{RamBudgetExceeded}!void {
+    if (verts <= limit) return;
+    const verb = if (estimated) "would produce about" else "produced";
+    _ = vm.raiseError(.GeometryError, "{s} " ++ verb ++ " {d} vertices, above the {d}-vertex limit; lower the resolution (segments:) or simplify the model", .{ dag.scriptName(tag), verts, limit });
+    return error.RamBudgetExceeded;
+}
+
+/// An operation whose result multiplies its inputs (a Minkowski sum, an extrusion's
+/// slices, a revolution's segments) is checked against the vertex limit before the kernel
+/// allocates it. The limit used to apply only to the finished mesh, by which time the
+/// kernel could already have run out of memory, which aborts the process (it is built
+/// without exceptions, so a failed allocation can't be caught).
+fn checkEstimatedVertices(vm: *VM, tag: dag.DAGTag, factors: []const usize, limit: usize) error{RamBudgetExceeded}!void {
+    var verts: usize = 1;
+    for (factors) |f| verts = std.math.mul(usize, verts, f) catch std.math.maxInt(usize);
+    return checkVertexLimit(vm, tag, verts, limit, true);
+}
+
 fn checkSameEngine(vm: *VM, a: geom.EngineType, b: geom.EngineType) !void {
     if (a != b) {
         _ = vm.raiseError(.GeometryError, "can't combine {s} and {s} geometry in one operation", .{ @tagName(a), @tagName(b) });
@@ -329,6 +349,9 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const left_handle = try geometryOf(left);
                     const right_handle = try geometryOf(right);
                     try checkSameEngine(vm, left_handle.engine, right_handle.engine);
+                    if (node.tag == .minkowski) {
+                        try checkEstimatedVertices(vm, node.tag, &.{ kernel.numVerts(left_handle), kernel.numVerts(right_handle) }, config.max_vertices);
+                    }
 
                     const result = switch (node.tag) {
                         .union_op => kernel.boolean(left_handle, right_handle, .union_op),
@@ -420,14 +443,20 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getExtrudePayload(node);
-                    const result = kernel.extrude(try crossSectionOf(target), p.height, p.slices, p.twist_degrees, p.scale_x, p.scale_y) orelse return kernelFailed(vm, node.tag);
+                    const profile = try crossSectionOf(target);
+                    // A copy of the profile at the bottom, the top and each slice between.
+                    try checkEstimatedVertices(vm, node.tag, &.{ kernel.crossSectionNumVerts(profile), @as(usize, @intCast(@max(p.slices, 0))) + 2 }, config.max_vertices);
+                    const result = kernel.extrude(profile, p.height, p.slices, p.twist_degrees, p.scale_x, p.scale_y) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
                 .revolve => {
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getRevolvePayload(node);
-                    const result = kernel.revolve(try crossSectionOf(target), p.segments, p.degrees) orelse return kernelFailed(vm, node.tag);
+                    const profile = try crossSectionOf(target);
+                    // A copy of the profile per segment, and one more to close a partial turn.
+                    try checkEstimatedVertices(vm, node.tag, &.{ kernel.crossSectionNumVerts(profile), @as(usize, @intCast(@max(p.segments, 0))) + 1 }, config.max_vertices);
+                    const result = kernel.revolve(profile, p.segments, p.degrees) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
                 .loft => {
@@ -561,11 +590,8 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     _ = vm.raiseError(.GeometryError, error_kind.INVALID_RESULT_FMT, .{ dag.scriptName(node.tag), reason });
                     return error.RuntimeError; // still owned -> destroyed by errdefer
                 }
-                const verts = kernel.numVerts(top.value.geometry);
-                if (verts > config.max_vertices) {
-                    _ = vm.raiseError(.GeometryError, "{s} produced {d} vertices, above the {d}-vertex limit; lower the resolution (segments:) or simplify the model", .{ dag.scriptName(node.tag), verts, config.max_vertices });
-                    return error.RamBudgetExceeded; // still owned -> destroyed by errdefer
-                }
+                // On error the result is still owned, so the errdefer destroys it.
+                try checkVertexLimit(vm, node.tag, kernel.numVerts(top.value.geometry), config.max_vertices, false);
 
                 // Ownership moves to the cache only once the put succeeds.
                 try vm.dag_cache.put(vm.allocator, cache_key, top.value.geometry);

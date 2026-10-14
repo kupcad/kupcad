@@ -93,6 +93,7 @@ extern fn manifold_cross_section_of_polygons(mem: ?*ManifoldCrossSection, p: ?*M
 extern fn manifold_cross_section_area(cs: ?*ManifoldCrossSection) f64;
 extern fn manifold_cross_section_bounds(mem: ?*ManifoldRect, cs: ?*ManifoldCrossSection) ?*ManifoldRect;
 extern fn manifold_rect_min(r: ?*ManifoldRect) ManifoldVec2;
+extern fn manifold_cross_section_num_vert(cs: ?*ManifoldCrossSection) usize;
 extern fn manifold_rect_max(r: ?*ManifoldRect) ManifoldVec2;
 
 extern fn manifold_transform(mem: ?*ManifoldObj, m: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj;
@@ -356,6 +357,10 @@ pub fn polygonsGetPoint(ps: ?*ManifoldPolygons, simple_idx: usize, pt_idx: usize
 
 pub fn crossSectionArea(cs: ?*ManifoldCrossSection) f64 {
     return manifold_cross_section_area(cs);
+}
+
+pub fn crossSectionNumVert(cs: ?*ManifoldCrossSection) usize {
+    return manifold_cross_section_num_vert(cs);
 }
 
 pub const Bounds2D = struct { min: ManifoldVec2, max: ManifoldVec2 };

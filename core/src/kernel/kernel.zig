@@ -161,6 +161,11 @@ pub inline fn crossSectionBounds(handle: geom.CrossSectionHandle) geom.Rect2D {
     return dispatch("crossSectionBoundsFn", handle, .{});
 }
 
+/// How many vertices a sketch's contours have.
+pub inline fn crossSectionNumVerts(handle: geom.CrossSectionHandle) usize {
+    return dispatch("crossSectionNumVertsFn", handle, .{});
+}
+
 /// Whether `pt` lies in the sketch's region, boundary included (within `tolerance`).
 /// Null when the engine cannot answer.
 /// Why `handle` is not a valid solid, or null if it is. Every freshly computed result is

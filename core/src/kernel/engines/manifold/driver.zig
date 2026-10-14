@@ -234,6 +234,11 @@ const ContourRing = struct {
     }
 };
 
+fn crossSectionNumVertsImpl(handle: geom.CrossSectionHandle) usize {
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    return manifold.crossSectionNumVert(@ptrCast(@alignCast(handle.ptr)));
+}
+
 fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
     if (@intFromPtr(handle.ptr) == 0) return .{ .min = .{ 0.0, 0.0 }, .max = .{ 0.0, 0.0 } };
     const b = manifold.crossSectionBounds(@ptrCast(@alignCast(handle.ptr)));
@@ -736,6 +741,7 @@ pub const driver = struct {
     pub const boundingBoxFn = boundingBoxImpl;
     pub const crossSectionAreaFn = crossSectionAreaImpl;
     pub const crossSectionBoundsFn = crossSectionBoundsImpl;
+    pub const crossSectionNumVertsFn = crossSectionNumVertsImpl;
     pub const crossSectionContainsPointFn = crossSectionContainsPointImpl;
     pub const crossSectionIsConvexFn = crossSectionIsConvexImpl;
     pub const queryFacesFn = queryFacesImpl;

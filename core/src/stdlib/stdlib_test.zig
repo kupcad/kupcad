@@ -296,6 +296,27 @@ test "Stdlib: tessellation counts are capped at MAX_SEGMENTS" {
     });
 }
 
+test "Stdlib: an operation that multiplies its inputs is refused before the kernel runs it" {
+    // The vertex limit used to apply only to the finished mesh, after the kernel had
+    // allocated it (an allocation failure in the kernel aborts the process).
+    const cases = [_]struct { src: []const u8, expected: []const u8 }{
+        .{ .src = comptime rescued("cube(1).minkowski(cube(1)).volume"), .expected = "GeometryError: minkowski would produce about 64 vertices, above the 50-vertex limit; lower the resolution (segments:) or simplify the model" },
+        .{ .src = comptime rescued("square(10).extrude(5, slices: 20).volume"), .expected = "GeometryError: extrude would produce about 88 vertices, above the 50-vertex limit; lower the resolution (segments:) or simplify the model" },
+        .{ .src = comptime rescued("square(10).translate(20, 0).revolve(segments: 30).volume"), .expected = "GeometryError: revolve would produce about 124 vertices, above the 50-vertex limit; lower the resolution (segments:) or simplify the model" },
+        // Under the limit, the same operations run.
+        .{ .src = comptime rescued("cube(1).minkowski(cube(1)).volume"), .expected = "no error" },
+        .{ .src = comptime rescued("square(10).extrude(5, slices: 5).volume"), .expected = "no error" },
+    };
+    for (cases, 0..) |case, i| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        vm.config_stack.items[vm.config_stack.items.len - 1].max_vertices = if (i < 3) 50 else 100;
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        try testing.expectEqualStrings(case.expected, vm.globals.get("r").?.asString().chars);
+    }
+}
+
 test "Stdlib: auto-computed segment counts are clamped to MAX_SEGMENTS" {
     var vm = try initVm();
     defer vm.deinit();
