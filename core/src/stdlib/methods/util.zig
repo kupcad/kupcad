@@ -259,13 +259,31 @@ pub fn Parsed(comptime T: type) type {
 }
 
 /// Splits `args` into positionals and the keyword options `T`, whose fields are the
-/// keywords `method` accepts. See parseKwargsSubset.
+/// keywords `method` accepts. See parseKwargsOver.
 pub fn parseKwargs(comptime T: type, vm: *VM, args: []const value.Value, method: []const u8) !Parsed(T) {
-    return parseKwargsSubset(T, comptime nameList(T), vm, args, method);
+    return parseKwargsOver(T, .{}, comptime nameList(T), vm, args, method);
 }
 
 /// parseKwargs for options shared by several methods: only the `accepted` fields of `T`
 /// are keywords of `method`, the rest keep their defaults.
+pub fn parseKwargsSubset(comptime T: type, comptime accepted: []const []const u8, vm: *VM, args: []const value.Value, method: []const u8) !Parsed(T) {
+    return parseKwargsOver(T, .{}, accepted, vm, args, method);
+}
+
+/// parseKwargs over `initial`, which holds what the positional arguments set (see
+/// parseKwargsOver): a keyword wins over the same option given positionally.
+pub fn parseKwargsOnto(comptime T: type, initial: T, vm: *VM, args: []const value.Value, method: []const u8) !Parsed(T) {
+    return parseKwargsOver(T, initial, comptime nameList(T), vm, args, method);
+}
+
+/// The arguments before a trailing kwargs map.
+pub fn positionalArgs(args: []const value.Value) []const value.Value {
+    return if (trailingKwargs(args) != null) args[0 .. args.len - 1] else args;
+}
+
+/// Applies the `accepted` keywords of a call over `initial`, which holds what the
+/// positional arguments set: a keyword wins over the same option given positionally
+/// (`cube(5, z: 3)` is 5 x 5 x 3), as it does for every method.
 ///
 /// Any other keyword is an ArgumentError listing the accepted ones, so a typo such as
 /// `revolve(angle: 90)` or `translate(X: 5)` fails loudly instead of being ignored. A
@@ -273,13 +291,13 @@ pub fn parseKwargs(comptime T: type, vm: *VM, args: []const value.Value, method:
 /// finite, integers are range-checked via checkedInt, an enum field takes the String or
 /// Symbol of one of its tags, and a `value.Value` field takes anything (nil included). `nil`
 /// leaves any other optional field unset and reads as false for a flag.
-pub fn parseKwargsSubset(comptime T: type, comptime accepted: []const []const u8, vm: *VM, args: []const value.Value, method: []const u8) !Parsed(T) {
+pub fn parseKwargsOver(comptime T: type, initial: T, comptime accepted: []const []const u8, vm: *VM, args: []const value.Value, method: []const u8) !Parsed(T) {
     inline for (accepted) |name| {
-        if (!@hasField(T, name)) @compileError("parseKwargsSubset: " ++ @typeName(T) ++ " has no field '" ++ name ++ "'");
+        if (!@hasField(T, name)) @compileError("parseKwargsOver: " ++ @typeName(T) ++ " has no field '" ++ name ++ "'");
     }
-    const map = trailingKwargs(args) orelse return .{ .opts = .{}, .positional = args };
+    const map = trailingKwargs(args) orelse return .{ .opts = initial, .positional = args };
 
-    var opts: T = .{};
+    var opts = initial;
     var it = map.map.iterator();
     next_key: while (it.next()) |entry| {
         const key = entry.key_ptr.*;

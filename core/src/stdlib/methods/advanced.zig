@@ -52,11 +52,13 @@ pub fn meshTrimByPlane(vm: *VM, receiver: *value.ObjGeometry, nx: value.Value, n
 const JoinType = enum(u8) { square = 0, round = 1, miter = 2, bevel = 3 };
 
 pub fn meshOffset(vm: *VM, receiver: *value.ObjCrossSection, args: []const value.Value) !value.Value {
-    const parsed = try util.parseKwargs(struct { delta: f64 = 1.0, join: JoinType = .round }, vm, args, "offset");
-    var delta = parsed.opts.delta;
-    if (parsed.positional.len > 0) delta = try util.requireNumber(vm, args[0], "offset", "delta");
+    const OffsetOpts = struct { delta: f64 = 1.0, join: JoinType = .round };
+    const pos = util.positionalArgs(args);
+    var base = OffsetOpts{};
+    if (pos.len > 0) base.delta = try util.requireNumber(vm, pos[0], "offset", "delta");
+    const opts = (try util.parseKwargsOnto(OffsetOpts, base, vm, args, "offset")).opts;
 
-    const new_idx = try vm.dag_builder.addOffset(receiver.dag_idx, delta, @backingInt(parsed.opts.join));
+    const new_idx = try vm.dag_builder.addOffset(receiver.dag_idx, opts.delta, @backingInt(opts.join));
     return try vm.allocateCrossSection(new_idx);
 }
 

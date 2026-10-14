@@ -919,6 +919,43 @@ test "Stdlib: arithmetic that overflows is a RangeError, not Infinity" {
     });
 }
 
+test "Stdlib: a keyword wins over the same option given positionally" {
+    // Primitives and sweeps used to let the positional value win, while translate, polygon,
+    // fillet_edges and repeat_polar let the keyword win.
+    try expectGlobalR(&.{
+        .{ .src = "r = cube(5, z: 3).bbox.max", .expected = .{ .nums = &.{ 5, 5, 3 } } },
+        .{ .src = "r = square(2, x: 4).extrude(1).bbox.max", .expected = .{ .nums = &.{ 4, 2, 1 } } },
+        .{ .src = "r = cylinder(1, 5, h: 2).bbox.max[2]", .expected = .{ .num = 2 } },
+        .{ .src = "r = sphere(1, r: 3).bbox.max[0] > 2", .expected = .{ .boolean = true } },
+        .{ .src = "r = square(2).extrude(5, h: 2).bbox.max[2]", .expected = .{ .num = 2 } },
+        .{ .src = "r = square(2).translate(x: 3).revolve(90, deg: 180).bbox.min[0] < 0", .expected = .{ .boolean = true } }, // half a turn reaches -x
+        .{ .src = "r = square(2).offset(5, delta: 1).extrude(1).bbox.max[0]", .expected = .{ .num = 3 } },
+        .{ .src = "r = regular_polygon(3, 1, sides: 4).extrude(1).volume", .expected = .{ .num = 2 } },
+    });
+}
+
+test "Stdlib: revolve takes segments and sizes them to the profile" {
+    // revolve assumed a 10 mm profile radius for its segment count, and took no segments:.
+    const seg8 = "v = nil\nCAD.with_config(manifold: { min_angle_deg: 1, min_segment_len: 1 }) do\n  v = ";
+    try expectGlobalR(&.{
+        .{ .src = "r = square(1).translate(x: 1).revolve(segments: 4).volume < square(1).translate(x: 1).revolve(segments: 64).volume", .expected = .{ .boolean = true } },
+        // A larger profile gets more segments for the same minimum segment length.
+        .{ .src = seg8 ++ "[square(1).translate(x: 1).revolve.volume, square(1).translate(x: 100).revolve.volume]\nend\nr = v[0] / (Math::PI * 2 * 1.5) < v[1] / (Math::PI * 2 * 100.5)", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("square(1).revolve(segments: 1e9)"), .expected = .{ .str = "ValueError: 'segments' must be between 0 and 2048, got 1000000000" } },
+    });
+}
+
+test "Stdlib: material checks its color and factors" {
+    try expectGlobalR(&.{
+        // An invalid color used to export as white, and factors out of 0..1 were kept.
+        .{ .src = comptime rescued("cube(1).material(color: \"red\")"), .expected = .{ .str = "ValueError: material color must be \"#RRGGBB\" or \"#RGB\", got \"red\"" } },
+        .{ .src = comptime rescued("cube(1).material(color: \"#12345\")"), .expected = .{ .str = "ValueError: material color must be \"#RRGGBB\" or \"#RGB\", got \"#12345\"" } },
+        .{ .src = comptime rescued("cube(1).material(roughness: 5)"), .expected = .{ .str = "ValueError: material roughness must be between 0 and 1, got 5" } },
+        .{ .src = comptime rescued("cube(1).material(alpha: -0.1)"), .expected = .{ .str = "ValueError: material alpha must be between 0 and 1, got -0.1" } },
+        .{ .src = comptime rescued("cube(1).material(color: \"#f80\", alpha: 0.5, metallic: 1, transmission: 0)"), .expected = .{ .str = "no error" } },
+    });
+}
+
 test "Stdlib: block_given? works with or without parentheses" {
     // The bare form used to be looked up as a variable: NameError.
     const m = "def m(&b)\n  [block_given?, block_given?()]\nend\n";
@@ -1543,7 +1580,7 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "cube(1).repeat_linear(2, bogus: 1)", .method = "repeat_linear", .accepted = "x, y, z" },
         .{ .src = "cube(1).repeat_polar(2, bogus: 1)", .method = "repeat_polar", .accepted = "angle" },
         .{ .src = "square(1).extrude(bogus: 1)", .method = "extrude", .accepted = "h, slices, twist, scale_x, scale_y, scale, center" },
-        .{ .src = "square(1).revolve(bogus: 1)", .method = "revolve", .accepted = "deg" },
+        .{ .src = "square(1).revolve(bogus: 1)", .method = "revolve", .accepted = "deg, segments" },
         .{ .src = "square(1).helix(bogus: 1)", .method = "helix", .accepted = "h, twist, slices" },
         .{ .src = "square(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join" },
         .{ .src = "cube(1).split_by_plane(bogus: 1)", .method = "split_by_plane", .accepted = "nx, ny, nz, offset" },
@@ -1563,7 +1600,7 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
 
     try expectGlobalR(&.{
         // The typos that motivated the check.
-        .{ .src = comptime rescued("square(1).revolve(angle: 90)"), .expected = .{ .str = "ArgumentError: revolve does not take a keyword 'angle' (it accepts: deg)" } },
+        .{ .src = comptime rescued("square(1).revolve(angle: 90)"), .expected = .{ .str = "ArgumentError: revolve does not take a keyword 'angle' (it accepts: deg, segments)" } },
         .{ .src = comptime rescued("cube(1).translate(X: 5)"), .expected = .{ .str = "ArgumentError: translate does not take a keyword 'X' (it accepts: x, y, z)" } },
         // Keywords valid for one primitive are not quietly accepted by another.
         .{ .src = comptime rescued("sphere(r: 5, h: 3)"), .expected = .{ .str = "ArgumentError: sphere does not take a keyword 'h' (it accepts: r, d, radius, segments)" } },

@@ -1,4 +1,5 @@
 const util = @import("util.zig");
+const kernel = @import("../../kernel/kernel.zig");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 
@@ -15,16 +16,16 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
         center: bool = false,
     };
 
-    const parsed = try util.parseKwargs(ExtrudeOpts, vm, args, "extrude");
-    var opts = parsed.opts;
+    // NaN/inf sweep parameters propagate into every generated vertex: requireNumber
+    // and parseKwargs reject them along with non-numbers.
+    const pos = util.positionalArgs(args);
+    var base = ExtrudeOpts{};
+    if (pos.len > 0) base.h = try util.requireNumber(vm, pos[0], "extrude", "h");
+    var opts = (try util.parseKwargsOnto(ExtrudeOpts, base, vm, args, "extrude")).opts;
     if (opts.scale) |s| {
         opts.scale_x = s;
         opts.scale_y = s;
     }
-
-    // NaN/inf sweep parameters propagate into every generated vertex: requireNumber
-    // and parseKwargs reject them along with non-numbers.
-    if (parsed.positional.len > 0) opts.h = try util.requireNumber(vm, args[0], "extrude", "h");
 
     try util.requireSegmentCount(vm, opts.slices, "slices");
 
@@ -36,19 +37,23 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-/// The profile's distance from the axis is not known before evaluation, so revolve
-/// resolves its segment count (when the config has no fixed count) for a typical radius.
-const REVOLVE_BASELINE_RADIUS = 10.0;
-
 pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "revolve", receiver);
-    const parsed = try util.parseKwargs(struct { deg: f64 = 360.0 }, vm, args, "revolve");
-    var degrees = parsed.opts.deg;
-    if (parsed.positional.len > 0) degrees = try util.requireNumber(vm, args[0], "revolve", "deg");
+    const RevolveOpts = struct { deg: f64 = 360.0, segments: i32 = 0 };
+    const pos = util.positionalArgs(args);
+    var base = RevolveOpts{};
+    if (pos.len > 0) base.deg = try util.requireNumber(vm, pos[0], "revolve", "deg");
+    const opts = (try util.parseKwargsOnto(RevolveOpts, base, vm, args, "revolve")).opts;
+    try util.requireSegmentCount(vm, opts.segments, "segments");
 
-    const segments = util.autoSegments(vm, REVOLVE_BASELINE_RADIUS);
+    // The profile spins about the Y axis, so its radius is its farthest x. It used to be
+    // assumed 10 mm, whatever the profile's size. Resolved now, under the active config.
+    const segments = if (opts.segments > 0) opts.segments else blk: {
+        const bounds = kernel.crossSectionBounds(try vm.ensureConcreteCrossSection(receiver));
+        break :blk util.autoSegments(vm, @max(@abs(bounds.min[0]), @abs(bounds.max[0])));
+    };
 
-    const new_idx = try vm.dag_builder.addRevolve(receiver.asCrossSection().dag_idx, segments, degrees);
+    const new_idx = try vm.dag_builder.addRevolve(receiver.asCrossSection().dag_idx, segments, opts.deg);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
@@ -56,11 +61,11 @@ pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "helix", receiver);
 
     const HelixOpts = struct { h: f64 = 10.0, twist: f64 = 360.0, slices: i32 = 64 };
-    const parsed = try util.parseKwargs(HelixOpts, vm, args, "helix");
-    var opts = parsed.opts;
-
-    if (parsed.positional.len > 0) opts.h = try util.requireNumber(vm, args[0], "helix", "h");
-    if (parsed.positional.len > 1) opts.twist = try util.requireNumber(vm, args[1], "helix", "twist");
+    const pos = util.positionalArgs(args);
+    var base = HelixOpts{};
+    if (pos.len > 0) base.h = try util.requireNumber(vm, pos[0], "helix", "h");
+    if (pos.len > 1) base.twist = try util.requireNumber(vm, pos[1], "helix", "twist");
+    const opts = (try util.parseKwargsOnto(HelixOpts, base, vm, args, "helix")).opts;
 
     try util.requireSegmentCount(vm, opts.slices, "slices");
 

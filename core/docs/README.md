@@ -12,7 +12,7 @@ KupCAD (`.kup`) is a high-level, expression-based parametric CAD language execut
 
 ### 3D Primitives & Assemblies
 
-Primitives accept intelligent keyword arguments, including native support for rounded corners and chamfers directly during instantiation. Every built-in shape and geometry method checks its keywords: a misspelt or unsupported one is an `ArgumentError` naming the keywords it accepts, never silently ignored.
+Primitives accept intelligent keyword arguments, including native support for rounded corners and chamfers directly during instantiation. Every built-in shape and geometry method checks its keywords: a misspelt or unsupported one is an `ArgumentError` naming the keywords it accepts, never silently ignored. A keyword overrides the same option given positionally: `cube(5, z: 3)` is 5 × 5 × 3.
 
 ```ruby
 # Native 3D primitives with built-in filleting
@@ -264,7 +264,7 @@ KupCAD exposes an exhaustive list of native mesh manipulation methods attached t
 
 * **Transforms**: `.translate`, `.rotate`, `.scale`, `.mirror`, `.align`, `.center`, `.transform` (Matrix), `.resize`. A Sketch stays in its XY plane: `rotate(a)`, `rotate(z: a)` and `rotate(0, 0, a)` turn it about z, and `mirror(x, y)` reflects it across the line with that normal; a component that would leave the plane (`translate(z: 5)`, `rotate(x: 45)`) is a `ValueError`, so extrude first to lift or tilt it.
 * **Arrays**: `.repeat_linear`, `.repeat_polar`.
-* **Sweeps**: `.extrude`, `.revolve`, `.helix`, `.loft`. `loft` currently joins two *convex* profiles (it is the convex hull between them); a concave profile or one with holes raises `NotImplementedError` rather than being filled in.
+* **Sweeps**: `.extrude`, `.revolve` (`deg:`, `segments:`; without `segments:` the count follows the profile's distance from the axis and the active config), `.helix`, `.loft`. `loft` currently joins two *convex* profiles (it is the convex hull between them); a concave profile or one with holes raises `NotImplementedError` rather than being filled in.
 * **Advanced**: `.hull`, `.minkowski`, `.trim_by_plane`, `.split_by_plane`, `.offset`, `.slice`, `.project`, `.fillet_edges`, `.simplify`, `.decompose`, `.on_face`.
 
 ---
@@ -316,6 +316,8 @@ bolt = cylinder(r: 3).highlight # Forces high-contrast visibility
 part = cube(10).material(color: "#FF0000", roughness: 0.2, metallic: 0.8)
 
 ```
+
+`color` is `"#RRGGBB"` or `"#RGB"`; `alpha`, `roughness`, `metallic` and `transmission` are between 0 and 1. Anything else is a `ValueError`.
 
 ---
 

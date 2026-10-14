@@ -7077,7 +7077,7 @@ test "VM: Material DSL registers properties and injects ID into mesh property ch
     // 1. Verify material definition was saved in VM registry
     try testing.expectEqual(@as(usize, 1), vm.materials.items.len);
     const mat = vm.materials.items[0];
-    try testing.expectEqualStrings("#FF0000", mat.color_hex);
+    try testing.expectEqual([3]u8{ 0xFF, 0x00, 0x00 }, mat.rgb);
     try testing.expectApproxEqAbs(0.2, mat.roughness, 0.001);
     try testing.expectApproxEqAbs(0.8, mat.metallic, 0.001);
     try testing.expectApproxEqAbs(0.5, mat.transmission, 0.001);

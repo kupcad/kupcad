@@ -1,6 +1,7 @@
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const MaterialDef = @import("../../core/material.zig").MaterialDef;
+const material = @import("../../core/material.zig");
+const MaterialDef = material.MaterialDef;
 const kernel = @import("../../kernel/kernel.zig");
 const util = @import("util.zig");
 const error_kind = @import("../../vm/error_kind.zig");
@@ -21,12 +22,16 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
     }
     const opts = parsed.opts;
     const defaults = MaterialDef{};
+    const rgb = if (opts.color) |text| material.parseHexColor(text) orelse {
+        _ = vm.raiseError(.ValueError, "material color must be \"#RRGGBB\" or \"#RGB\", got \"{s}\"", .{text});
+        return error.RuntimeError;
+    } else defaults.rgb;
     const mat_def = MaterialDef{
-        .color_hex = opts.color orelse defaults.color_hex,
-        .alpha = opts.alpha orelse defaults.alpha,
-        .roughness = opts.roughness orelse defaults.roughness,
-        .metallic = opts.metallic orelse defaults.metallic,
-        .transmission = opts.transmission orelse defaults.transmission,
+        .rgb = rgb,
+        .alpha = try unitInterval(vm, "alpha", opts.alpha orelse defaults.alpha),
+        .roughness = try unitInterval(vm, "roughness", opts.roughness orelse defaults.roughness),
+        .metallic = try unitInterval(vm, "metallic", opts.metallic orelse defaults.metallic),
+        .transmission = try unitInterval(vm, "transmission", opts.transmission orelse defaults.transmission),
     };
 
     // Insert into VM registry to get an ID
@@ -35,6 +40,13 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
 
     const new_idx = try vm.dag_builder.addSetMaterial(receiver.asGeometry().dag_idx, material_id);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+/// Material factors are fractions: `roughness: 5` used to be accepted as is.
+fn unitInterval(vm: *VM, comptime name: []const u8, n: f64) !f64 {
+    if (n >= 0.0 and n <= 1.0) return n;
+    _ = vm.raiseError(.ValueError, "material " ++ name ++ " must be between 0 and 1, got {f}", .{value.fmtNumber(n)});
+    return error.RuntimeError;
 }
 
 /// ensureConcrete only BORROWS the handle from vm.dag_cache, and nothing roots

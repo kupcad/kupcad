@@ -68,22 +68,11 @@ const BufferView = struct {
     target: ?u32 = null,
 };
 
-fn parseHexColor(hex: []const u8, alpha: f64) [4]f64 {
-    var r: f64 = 1.0;
-    var g: f64 = 1.0;
-    var b: f64 = 1.0;
-    const clean_hex = if (std.mem.startsWith(u8, hex, "#")) hex[1..] else hex;
-    if (clean_hex.len >= 6) {
-        if (std.fmt.parseInt(u32, clean_hex[0..6], 16)) |val| {
-            const sR = @as(f64, @floatFromInt((val >> 16) & 0xFF)) / 255.0;
-            const sG = @as(f64, @floatFromInt((val >> 8) & 0xFF)) / 255.0;
-            const sB = @as(f64, @floatFromInt(val & 0xFF)) / 255.0;
-            r = std.math.pow(f64, sR, 2.2);
-            g = std.math.pow(f64, sG, 2.2);
-            b = std.math.pow(f64, sB, 2.2);
-        } else |_| {}
-    }
-    return .{ r, g, b, alpha };
+/// glTF's baseColorFactor is linear: decode the sRGB bytes (gamma 2.2).
+fn linearColor(rgb: [3]u8, alpha: f64) [4]f64 {
+    var color: [4]f64 = .{ 0, 0, 0, alpha };
+    for (color[0..3], rgb) |*c, byte| c.* = std.math.pow(f64, @as(f64, @floatFromInt(byte)) / 255.0, 2.2);
+    return color;
 }
 
 pub fn buildGltfBuffer(
@@ -289,7 +278,7 @@ pub fn buildGltfBuffer(
     });
     {
         for (vm.materials.items) |mat| {
-            const color = parseHexColor(mat.color_hex, mat.alpha);
+            const color = linearColor(mat.rgb, mat.alpha);
             var ext: ?MaterialExt = null;
             var alphaMode: []const u8 = if (mat.alpha < 1.0) "BLEND" else "OPAQUE";
 

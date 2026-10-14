@@ -33,8 +33,9 @@ const GeomOptions = struct {
 // --- Helpers ---
 
 /// The primitives share GeomOptions; each accepts only the keywords it lists.
-fn parseGeomOptions(comptime accepted: []const []const u8, vm: *VM, args: []const value.Value, method: []const u8) !util.Parsed(GeomOptions) {
-    var parsed = try util.parseKwargsSubset(GeomOptions, accepted, vm, args, method);
+/// `base` holds what the positional arguments set; keywords override it.
+fn parseGeomOptions(comptime accepted: []const []const u8, base: GeomOptions, vm: *VM, args: []const value.Value, method: []const u8) !util.Parsed(GeomOptions) {
+    var parsed = try util.parseKwargsOver(GeomOptions, base, accepted, vm, args, method);
     const opts = &parsed.opts;
     if (opts.size) |size| opts.x, opts.y, opts.z = .{ size, size, size };
     if (opts.d) |d| opts.r = d / 2.0;
@@ -123,14 +124,15 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
 
 // --- Methods ---
 pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = try parseGeomOptions(&.{ "x", "y", "size", "center", "round_r", "chamfer", "segments" }, vm, args, "square");
-    var opts = parsed.opts;
-    if (parsed.positional.len > 0) {
-        opts.x = try util.requireNumber(vm, args[0], "square", "x");
-        opts.y = opts.x;
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{};
+    if (pos.len > 0) {
+        base.x = try util.requireNumber(vm, pos[0], "square", "x");
+        base.y = base.x;
     }
-    if (parsed.positional.len > 1) opts.y = try util.requireNumber(vm, args[1], "square", "y");
-    if (parsed.positional.len > 2) opts.center = try util.requireBool(vm, args[2], "square", "center");
+    if (pos.len > 1) base.y = try util.requireNumber(vm, pos[1], "square", "y");
+    if (pos.len > 2) base.center = try util.requireBool(vm, pos[2], "square", "center");
+    const opts = (try parseGeomOptions(&.{ "x", "y", "size", "center", "round_r", "chamfer", "segments" }, base, vm, args, "square")).opts;
 
     try util.requirePositive(vm, opts.x, "square", "x");
     try util.requirePositive(vm, opts.y, "square", "y");
@@ -145,16 +147,17 @@ pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = try parseGeomOptions(&.{ "x", "y", "z", "size", "center", "round_r", "chamfer", "segments" }, vm, args, "cube");
-    var opts = parsed.opts;
-    if (parsed.positional.len > 0) {
-        opts.x = try util.requireNumber(vm, args[0], "cube", "x");
-        opts.y = opts.x;
-        opts.z = opts.x;
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{};
+    if (pos.len > 0) {
+        base.x = try util.requireNumber(vm, pos[0], "cube", "x");
+        base.y = base.x;
+        base.z = base.x;
     }
-    if (parsed.positional.len > 1) opts.y = try util.requireNumber(vm, args[1], "cube", "y");
-    if (parsed.positional.len > 2) opts.z = try util.requireNumber(vm, args[2], "cube", "z");
-    if (parsed.positional.len > 3) opts.center = try util.requireBool(vm, args[3], "cube", "center");
+    if (pos.len > 1) base.y = try util.requireNumber(vm, pos[1], "cube", "y");
+    if (pos.len > 2) base.z = try util.requireNumber(vm, pos[2], "cube", "z");
+    if (pos.len > 3) base.center = try util.requireBool(vm, pos[3], "cube", "center");
+    const opts = (try parseGeomOptions(&.{ "x", "y", "z", "size", "center", "round_r", "chamfer", "segments" }, base, vm, args, "cube")).opts;
 
     try util.requirePositive(vm, opts.x, "cube", "x");
     try util.requirePositive(vm, opts.y, "cube", "y");
@@ -178,11 +181,12 @@ pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = try parseGeomOptions(&.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h", "center", "round_r", "chamfer", "segments" }, vm, args, "cylinder");
-    var opts = parsed.opts;
-    if (parsed.positional.len > 0) opts.r = try util.requireNumber(vm, args[0], "cylinder", "r");
-    if (parsed.positional.len > 1) opts.h = try util.requireNumber(vm, args[1], "cylinder", "h");
-    if (parsed.positional.len > 2) opts.center = try util.requireBool(vm, args[2], "cylinder", "center");
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{};
+    if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "cylinder", "r");
+    if (pos.len > 1) base.h = try util.requireNumber(vm, pos[1], "cylinder", "h");
+    if (pos.len > 2) base.center = try util.requireBool(vm, pos[2], "cylinder", "center");
+    var opts = (try parseGeomOptions(&.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h", "center", "round_r", "chamfer", "segments" }, base, vm, args, "cylinder")).opts;
 
     const r1 = opts.r1 orelse opts.r;
     const r2 = opts.r2 orelse opts.r;
@@ -239,9 +243,10 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = try parseGeomOptions(&.{ "r", "d", "radius", "segments" }, vm, args, "sphere");
-    var opts = parsed.opts;
-    if (parsed.positional.len > 0) opts.r = try util.requireNumber(vm, args[0], "sphere", "r");
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{};
+    if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "sphere", "r");
+    var opts = (try parseGeomOptions(&.{ "r", "d", "radius", "segments" }, base, vm, args, "sphere")).opts;
     try util.requirePositive(vm, opts.r, "sphere", "radius");
     if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
     const dag_idx = try vm.dag_builder.addSphere(opts.r, opts.segments);
@@ -249,10 +254,10 @@ pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = try parseGeomOptions(&.{ "r", "d", "radius", "segments" }, vm, args, "circle");
-    var opts = parsed.opts;
-
-    if (parsed.positional.len > 0) opts.r = try util.requireNumber(vm, args[0], "circle", "r");
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{};
+    if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "circle", "r");
+    var opts = (try parseGeomOptions(&.{ "r", "d", "radius", "segments" }, base, vm, args, "circle")).opts;
     try util.requirePositive(vm, opts.r, "circle", "radius");
 
     if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
@@ -328,14 +333,12 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = try parseGeomOptions(&.{ "sides", "r", "d", "radius" }, vm, args, "regular_polygon");
-    var opts = parsed.opts;
-
-    var sides: i32 = 6; // Default to a hexagon
-    if (parsed.positional.len > 0) sides = try util.checkedInt(i32, vm, try util.requireNumber(vm, args[0], "regular_polygon", "sides"), "sides");
-    if (parsed.positional.len > 1) opts.r = try util.requireNumber(vm, args[1], "regular_polygon", "r");
-
-    if (opts.sides) |n| sides = n;
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{ .sides = 6 }; // Default to a hexagon
+    if (pos.len > 0) base.sides = try util.checkedInt(i32, vm, try util.requireNumber(vm, pos[0], "regular_polygon", "sides"), "sides");
+    if (pos.len > 1) base.r = try util.requireNumber(vm, pos[1], "regular_polygon", "r");
+    const opts = (try parseGeomOptions(&.{ "sides", "r", "d", "radius" }, base, vm, args, "regular_polygon")).opts;
+    const sides = opts.sides.?;
 
     if (sides < MIN_CONTOUR_POINTS or sides > limits.MAX_SEGMENTS) {
         _ = vm.raiseError(.ValueError, "'sides' must be between {d} and {d}, got {d}", .{ MIN_CONTOUR_POINTS, limits.MAX_SEGMENTS, sides });
