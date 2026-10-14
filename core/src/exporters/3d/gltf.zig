@@ -75,11 +75,27 @@ fn linearColor(rgb: [3]u8, alpha: f64) [4]f64 {
     return color;
 }
 
+/// How the glTF document is packaged. Both hold the same scene.
+pub const Container = enum {
+    /// Binary glTF (`.glb`): a JSON chunk followed by the buffer as a binary chunk.
+    glb,
+    /// glTF JSON (`.gltf`), with the buffer embedded as a base64 data URI so the file stands alone.
+    gltf,
+
+    /// `.gltf` for a path ending in it (any case), `.glb` otherwise.
+    pub fn forPath(path: []const u8) Container {
+        return if (std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".gltf")) .gltf else .glb;
+    }
+};
+
+const DATA_URI_PREFIX = "data:application/octet-stream;base64,";
+
 pub fn buildGltfBuffer(
     allocator: std.mem.Allocator,
     vm: *VM,
     handles: []const geom.GeometryHandle,
     use_draco: bool,
+    container: Container,
 ) ![]const u8 {
     var vertex_buf: std.ArrayListUnmanaged(u8) = .empty;
     defer vertex_buf.deinit(allocator);
@@ -313,6 +329,12 @@ pub fn buildGltfBuffer(
         try extensionsUsed.append(allocator, "KHR_materials_ior");
     }
 
+    const data_uri: ?[]const u8 = switch (container) {
+        .glb => null,
+        .gltf => try dataUri(allocator, bin_buf.items),
+    };
+    defer if (data_uri) |uri| allocator.free(uri);
+
     const root_obj = .{
         .asset = .{ .version = "2.0", .generator = "KupCAD" },
         .extensionsUsed = if (extensionsUsed.items.len > 0) extensionsUsed.items else null,
@@ -324,16 +346,32 @@ pub fn buildGltfBuffer(
         .materials = gltf_materials.items,
         .accessors = accessors.items,
         .bufferViews = bufferViews.items,
-        .buffers = [_]struct { byteLength: usize }{.{ .byteLength = bin_buf.items.len }},
+        .buffers = [_]struct { byteLength: usize, uri: ?[]const u8 }{.{ .byteLength = bin_buf.items.len, .uri = data_uri }},
     };
 
     var json_writer = std.Io.Writer.Allocating.init(allocator);
     defer json_writer.deinit();
     try json_writer.writer.print("{f}", .{std.json.fmt(root_obj, .{ .emit_null_optional_fields = false })});
 
+    return switch (container) {
+        .gltf => json_writer.toOwnedSlice(),
+        .glb => packGlb(allocator, json_writer.written(), &bin_buf),
+    };
+}
+
+fn dataUri(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    const encoder = std.base64.standard.Encoder;
+    const uri = try allocator.alloc(u8, DATA_URI_PREFIX.len + encoder.calcSize(bytes.len));
+    @memcpy(uri[0..DATA_URI_PREFIX.len], DATA_URI_PREFIX);
+    _ = encoder.encode(uri[DATA_URI_PREFIX.len..], bytes);
+    return uri;
+}
+
+/// The GLB container: a 12-byte header, then the JSON and binary chunks, each padded to 4 bytes.
+fn packGlb(allocator: std.mem.Allocator, json: []const u8, bin_buf: *std.ArrayListUnmanaged(u8)) ![]const u8 {
     var json_out: std.ArrayListUnmanaged(u8) = .empty;
     defer json_out.deinit(allocator);
-    try json_out.appendSlice(allocator, json_writer.written());
+    try json_out.appendSlice(allocator, json);
 
     while (json_out.items.len % 4 != 0) try json_out.append(allocator, ' ');
     while (bin_buf.items.len % 4 != 0) try bin_buf.append(allocator, 0);
@@ -386,10 +424,10 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
         return error.RuntimeError;
     }
 
-    const glb_bytes = try buildGltfBuffer(vm.allocator, vm, handles.items, use_draco);
-    defer vm.allocator.free(glb_bytes);
+    const bytes = try buildGltfBuffer(vm.allocator, vm, handles.items, use_draco, Container.forPath(filepath));
+    defer vm.allocator.free(bytes);
 
-    try vm.vfs.writeFile(filepath, glb_bytes);
+    try vm.vfs.writeFile(filepath, bytes);
 
     return receiver;
 }

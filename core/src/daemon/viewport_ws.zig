@@ -475,7 +475,7 @@ pub const ViewportWsServer = struct {
         const handle = node.cached_handle orelse return;
 
         const handles = [_]geom.GeometryHandle{handle};
-        const glb_bytes = gltf.buildGltfBuffer(self.allocator, &session.vm, &handles, false) catch |err| {
+        const glb_bytes = gltf.buildGltfBuffer(self.allocator, &session.vm, &handles, false, .glb) catch |err| {
             log.err("Failed to build GLB: {}", .{err});
             return;
         };

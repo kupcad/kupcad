@@ -14,7 +14,7 @@ test "GLTF: Zero-Copy GLB export generates valid binary container" {
     const handle = try dag_evaluator.evaluateDAG(&vm, cube_idx);
 
     const handles = [_]geom.GeometryHandle{handle};
-    const glb_bytes = try gltf.buildGltfBuffer(std.testing.allocator, &vm, &handles, false);
+    const glb_bytes = try gltf.buildGltfBuffer(std.testing.allocator, &vm, &handles, false, .glb);
     defer std.testing.allocator.free(glb_bytes);
 
     // 1. Check GLB Magic Bytes "glTF"
@@ -171,4 +171,55 @@ test "GLTF: a model without materials uses only the default material" {
     defer glb.deinit();
     try expectValidLayout(&glb);
     try std.testing.expectEqual(@as(usize, 1), glb.array("materials").len);
+}
+
+/// A `.gltf` file: JSON whose one buffer is a base64 data URI, decoded into `bin`
+/// (owned) so the GLB layout checks apply unchanged.
+fn parseGltfJson(bytes: []const u8, bin_storage: *[]u8) !Glb {
+    const json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, bytes, .{});
+    errdefer json.deinit();
+    const buffers = json.value.object.get("buffers").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), buffers.len);
+    const uri = buffers[0].object.get("uri").?.string;
+    const prefix = "data:application/octet-stream;base64,";
+    try std.testing.expect(std.mem.startsWith(u8, uri, prefix));
+    const decoder = std.base64.standard.Decoder;
+    bin_storage.* = try std.testing.allocator.alloc(u8, try decoder.calcSizeForSlice(uri[prefix.len..]));
+    try decoder.decode(bin_storage.*, uri[prefix.len..]);
+    try std.testing.expectEqual(bin_storage.len, int(buffers[0].object.get("byteLength").?));
+    return .{ .json = json, .bin = bin_storage.* };
+}
+
+test "GLTF: a .gltf export is JSON with the buffer embedded, the same scene as .glb" {
+    // `-o part.gltf` used to write binary GLB under a .gltf name.
+    const source = "[cube(2), cube(2).translate(x: 5).material(color: \"#FF0000\")]";
+    for ([_]bool{ false, true }) |use_draco| {
+        errdefer std.debug.print("draco: {}\n", .{use_draco});
+        const json_bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, "gltf", use_draco, null, null);
+        defer std.testing.allocator.free(json_bytes);
+        try std.testing.expectEqual(@as(u8, '{'), json_bytes[0]);
+        var bin: []u8 = &.{};
+        defer std.testing.allocator.free(bin);
+        var doc = try parseGltfJson(json_bytes, &bin);
+        defer doc.deinit();
+        try expectValidLayout(&doc);
+
+        const glb_bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, "glb", use_draco, null, null);
+        defer std.testing.allocator.free(glb_bytes);
+        var glb = try parseGlb(glb_bytes);
+        defer glb.deinit();
+        try std.testing.expectEqualSlices(u8, glb.bin[0..bin.len], bin);
+        for ([_][]const u8{ "accessors", "bufferViews", "materials" }) |name| {
+            try std.testing.expectEqual(glb.array(name).len, doc.array(name).len);
+        }
+        // A GLB's buffer lives in its binary chunk, so it has no uri.
+        try std.testing.expect(glb.array("buffers")[0].object.get("uri") == null);
+    }
+}
+
+test "GLTF: export_gltf picks the container from the file extension" {
+    try std.testing.expectEqual(gltf.Container.gltf, gltf.Container.forPath("out/part.gltf"));
+    try std.testing.expectEqual(gltf.Container.gltf, gltf.Container.forPath("PART.GLTF"));
+    try std.testing.expectEqual(gltf.Container.glb, gltf.Container.forPath("part.glb"));
+    try std.testing.expectEqual(gltf.Container.glb, gltf.Container.forPath("part"));
 }

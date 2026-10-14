@@ -230,7 +230,8 @@ pub fn exportModelFromVm(
         }
     } else if (std.mem.eql(u8, format, "glb") or std.mem.eql(u8, format, "gltf")) {
         // GLTF handles multiple distinct meshes naturally
-        return gltf_exporter.buildGltfBuffer(allocator, vm, export_handles.items, use_draco);
+        const container: gltf_exporter.Container = if (std.mem.eql(u8, format, "gltf")) .gltf else .glb;
+        return gltf_exporter.buildGltfBuffer(allocator, vm, export_handles.items, use_draco, container);
     } else if (std.mem.eql(u8, format, "step")) {
         return step_exporter.buildStepBuffer(allocator, export_handles.items);
     } else {

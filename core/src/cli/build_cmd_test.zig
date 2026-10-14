@@ -159,11 +159,11 @@ const GLB_MAGIC = "glTF";
 const STEP_MAGIC = "ISO-10303-21";
 
 /// What an exporter actually wrote, judged by content rather than by file name.
-/// `-f gltf` also yields binary glTF, so there is no separate JSON kind.
-const FileKind = enum { stl, glb, step };
+const FileKind = enum { stl, glb, gltf, step };
 
 fn detectFileKind(bytes: []const u8) ?FileKind {
     if (std.mem.startsWith(u8, bytes, GLB_MAGIC)) return .glb;
+    if (std.mem.startsWith(u8, bytes, "{\"asset\":")) return .gltf;
     if (std.mem.startsWith(u8, bytes, STEP_MAGIC)) return .step;
     // Binary STL: 80-byte header, u32 triangle count, then fixed-size triangle records.
     if (bytes.len >= STL_HEADER_LEN + STL_COUNT_LEN) {
@@ -179,6 +179,7 @@ test "build_cmd: detectFileKind recognises each export by content" {
     try testing.expectEqual(@as(?FileKind, .stl), detectFileKind(&stl_bytes));
     try testing.expectEqual(@as(?FileKind, .glb), detectFileKind(GLB_MAGIC ++ "\x02\x00\x00\x00"));
     try testing.expectEqual(@as(?FileKind, .step), detectFileKind(STEP_MAGIC ++ ";\nHEADER;"));
+    try testing.expectEqual(@as(?FileKind, .gltf), detectFileKind("{\"asset\":{\"version\":\"2.0\"}}"));
     try testing.expectEqual(@as(?FileKind, null), detectFileKind(stl_bytes[0 .. stl_bytes.len - 1]));
 }
 
@@ -204,7 +205,7 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         .{ .output = "part.stl", .expect = .{ .written = .{ .name = "part.stl", .kind = .stl } } },
         .{ .output = "PART.STL", .expect = .{ .written = .{ .name = "PART.STL", .kind = .stl } } },
         .{ .output = "part.glb", .expect = .{ .written = .{ .name = "part.glb", .kind = .glb } } },
-        .{ .output = "part.gltf", .expect = .{ .written = .{ .name = "part.gltf", .kind = .glb } } },
+        .{ .output = "part.gltf", .expect = .{ .written = .{ .name = "part.gltf", .kind = .gltf } } },
         .{ .output = "part.step", .expect = .{ .written = .{ .name = "part.step", .kind = .step } } },
         .{ .output = "part.stp", .expect = .{ .written = .{ .name = "part.stp", .kind = .step } } },
         // An agreeing --format is accepted.
