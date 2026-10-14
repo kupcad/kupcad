@@ -581,8 +581,11 @@ pub const Value = packed struct {
                     }
                 },
                 .symbol => {
+                    // As in Ruby: `:name` when inspected, the bare name otherwise (puts,
+                    // interpolation, join), which used to keep the colon too.
                     const sym: *ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
-                    try writer.print(":{s}", .{sym.chars});
+                    if (is_inspect) try writer.writeAll(":");
+                    try writer.writeAll(sym.chars);
                 },
                 .array => {
                     const arr: *ObjArray = @alignCast(@fieldParentPtr("obj", obj));

@@ -247,7 +247,7 @@ An uncaught error stops the script and is printed once with its class, e.g. `Val
 
 * **Numbers**: All numbers are 64-bit floats; whole numbers print without a decimal point (`3`, `2.5`). They print in plain digits while every digit is exact, and in scientific notation from 1e16 (past 2^53, where floats skip integers) and below 1e-6: `2 ** 53` prints `9007199254740992`, `2 ** 60` prints `1.152921504606847e18`, `0.0000001` prints `1e-7`.
 * **Strings**: Index by character like Arrays (`"abc"[0]` is `"a"`, `s[-1]` the last, `s[1..2]` a substring). Support `.length`, `.size`, `.upcase`, `.downcase`, `.trim`, `.split`, and `.replace`. Strings can check prefixes/suffixes with `.starts_with?` and `.ends_with?`, and typecast using `.to_sym`, `.to_f`, and `.to_i`.
-* **Symbols**: Lightweight, interned identifiers (`:name`) used heavily for parameter keys and map properties.
+* **Symbols**: Lightweight, interned identifiers (`:name`) used heavily for parameter keys and map properties. As in Ruby, a Symbol reads as its name (`"#{:m3}"`, `puts :m3` and `[:a, :b].join` give `m3`, `m3`, `ab`) and inspects with its colon (`:m3.inspect` is `:m3`).
 * **Math Module**: Exposes variadic `.min` and `.max`, trigonometric functions (`.sin`, `.cos`, `.tan`, `.asin`, `.acos`, `.atan2`), and CAD-specific interpolation helpers (`.clamp`, `.lerp`, `.hypot`, `.sign`).
 
 ### Base Object Introspection

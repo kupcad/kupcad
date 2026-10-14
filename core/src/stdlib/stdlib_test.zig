@@ -870,6 +870,14 @@ test "Stdlib: for rejects what it can't iterate" {
     });
 }
 
+test "Stdlib: a Symbol reads as its name, and inspects with its colon" {
+    // Interpolation, join and puts kept the colon: "#{:m3}" was ":m3".
+    try expectGlobalR(&.{
+        .{ .src = "r = \"#{:m3} #{[:a, :b].join(\"-\")} #{:c.to_s}\"", .expected = .{ .str = "m3 a-b c" } },
+        .{ .src = "r = \"#{:m3.inspect} #{[:a].inspect} #{{ k: :v }.inspect}\"", .expected = .{ .str = ":m3 [:a] {k: :v}" } },
+    });
+}
+
 test "Stdlib: respond_to? has Ruby's name" {
     // It was spelled `responds_to?`.
     try expectGlobalR(&.{

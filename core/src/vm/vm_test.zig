@@ -11226,7 +11226,7 @@ test "VM: raise of a non-exception payload wraps it in a RuntimeError that survi
         .{ .payload = "true", .message = "true" },
         .{ .payload = "false", .message = "false" },
         .{ .payload = "nil", .message = "nil" },
-        .{ .payload = ":sym", .message = ":sym" },
+        .{ .payload = ":sym", .message = "sym" }, // a Symbol's text, as its to_s
         .{ .payload = "1..3", .message = "1..3" },
         // A String payload is the message as-is
         .{ .payload = "\"bo\" + \"om\"", .message = "boom" },
