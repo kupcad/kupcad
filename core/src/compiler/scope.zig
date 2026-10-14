@@ -181,6 +181,24 @@ pub fn isScriptGlobal(self: *Compiler, name_id: ast.StringId) bool {
     return root.script_globals.contains(name_str);
 }
 
+/// True when compiling a `def` body, or a block/lambda nested inside one.
+pub fn insideDef(self: *Compiler) bool {
+    var c: ?*Compiler = self;
+    while (c) |cur| : (c = cur.enclosing) {
+        if (cur.is_method) return true;
+    }
+    return false;
+}
+
+/// Whether assigning `name_id` here writes the script-level variable of that name.
+/// Methods may READ top-level variables, but an assignment inside a `def` always makes
+/// a method local (as in Ruby), so a helper's scratch `x` can't clobber a top-level `x`.
+/// Top-level code and top-level blocks/lambdas still write script variables, so
+/// `total = total + i` inside a top-level `each` keeps working.
+pub fn writesScriptGlobal(self: *Compiler, name_id: ast.StringId) bool {
+    return self.isScriptGlobal(name_id) and !self.insideDef();
+}
+
 pub fn seedLocals(self: *Compiler, names: []const []const u8, offset: u16) void {
     self.seeded_locals = names;
     self.seeded_slot_offset = offset;

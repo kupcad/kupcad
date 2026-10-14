@@ -94,6 +94,8 @@ pub const Compiler = struct {
     pub const resolveSelfUpvalue = scope_mod.resolveSelfUpvalue;
     pub const addUpvalue = scope_mod.addUpvalue;
     pub const isScriptGlobal = scope_mod.isScriptGlobal;
+    pub const insideDef = scope_mod.insideDef;
+    pub const writesScriptGlobal = scope_mod.writesScriptGlobal;
     pub const seedLocals = scope_mod.seedLocals;
     pub const getNextLocalSlot = scope_mod.getNextLocalSlot;
 
@@ -490,7 +492,7 @@ pub const Compiler = struct {
             !std.mem.startsWith(u8, name_str, "@") and
             local_slot == null and
             upval_slot == null and
-            !self.isScriptGlobal(name_id);
+            !self.writesScriptGlobal(name_id);
 
         if (is_new_local) {
             const slot = self.getNextLocalSlot();
@@ -576,7 +578,7 @@ pub const Compiler = struct {
 
             if (symbols.len > 0) {
                 const sym_id = symbols[0].alias; // Target the alias ID
-                if (self.enclosing != null and self.resolveLocal(sym_id) == null and (try self.resolveUpvalue(sym_id)) == null and !self.isScriptGlobal(sym_id)) {
+                if (self.enclosing != null and self.resolveLocal(sym_id) == null and (try self.resolveUpvalue(sym_id)) == null and !self.writesScriptGlobal(sym_id)) {
                     const slot = self.getNextLocalSlot();
                     try self.addLocal(sym_id, slot);
                 }
@@ -634,7 +636,7 @@ pub const Compiler = struct {
             const alias_idx = try self.makeStringConstant(alias_str);
 
             if (self.enclosing != null) {
-                if (self.resolveLocal(pair.alias) != null or (try self.resolveUpvalue(pair.alias)) != null or self.isScriptGlobal(pair.alias)) {
+                if (self.resolveLocal(pair.alias) != null or (try self.resolveUpvalue(pair.alias)) != null or self.writesScriptGlobal(pair.alias)) {
                     // Reject collision natively to satisfy tests and prevent bad state
                     return error.VariableAlreadyDeclared;
                 }
@@ -1441,7 +1443,7 @@ pub const Compiler = struct {
                     isPlainLocalName(self.tree.getString(name_id)) and
                     self.resolveLocal(name_id) == null and
                     (try self.resolveUpvalue(name_id)) == null and
-                    !self.isScriptGlobal(name_id))
+                    !self.writesScriptGlobal(name_id))
                 {
                     const slot = self.getNextLocalSlot();
                     try self.addLocal(name_id, slot);
@@ -2036,8 +2038,15 @@ pub const Compiler = struct {
     /// `$name` read as a global; stores must agree, or `$x = 1` inside a function
     /// would make a function-local that no other function could read.
     fn classifyStorage(self: *Compiler, name_id: ast.StringId, sym: ?resolver.ResolvedSymbol) CompileError!scope_mod.ResolvedVar {
-        if (std.mem.startsWith(u8, self.tree.getString(name_id), "$")) return .{ .kind = .global };
-        return self.classifyVariable(name_id, sym);
+        const name_str = self.tree.getString(name_id);
+        if (std.mem.startsWith(u8, name_str, "$")) return .{ .kind = .global };
+        const classified = try self.classifyVariable(name_id, sym);
+        // Every store path (rescue binding, destructuring, block params) gets the same
+        // rule as plain assignment: inside a def, a plain name never writes a script global.
+        if (classified.kind == .global and isPlainLocalName(name_str) and self.insideDef()) {
+            return .{ .kind = .new_local };
+        }
+        return classified;
     }
 
     /// The hidden frame slot behind `scratch_slot`, allocated on first use.

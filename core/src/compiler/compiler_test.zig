@@ -2077,3 +2077,30 @@ test "Compiler: functions stay rooted while def/attr macros allocate under stres
     try testing.expectEqualStrings("person!", arr.items.items[2].asString().chars);
     try testing.expectEqualStrings("hi x", arr.items.items[3].asString().chars);
 }
+
+test "Compiler: assignment inside a def makes a method local, never a top-level write" {
+    // Methods may read top-level variables, but a plain assignment inside a def (or a block
+    // nested in one) always creates a local. Before, it overwrote a top-level variable of the
+    // same name, but only when the def came after that variable in the source.
+    const cases = [_]struct { src: []const u8, expected: f64 }{
+        .{ .src = "x = 1\ndef f\n  x = 2\nend\nf()\nx", .expected = 1 },
+        .{ .src = "def f\n  x = 2\nend\nx = 1\nf()\nx", .expected = 1 },
+        .{ .src = "x = 1\ndef f\n  x = 2\n  x * 10\nend\nf()", .expected = 20 },
+        .{ .src = "a = 1\ndef g\n  a, b = [5, 6]\n  a + b\nend\ng() * 100 + a", .expected = 1101 },
+        .{ .src = "e = 7\ndef h\n  begin\n    raise \"boom\"\n  rescue => e\n    1\n  end\nend\nh()\ne", .expected = 7 },
+        .{ .src = "n = 5\ndef bump\n  n = 0\n  n += 3\n  n\nend\nbump() * 10 + n", .expected = 35 },
+        .{ .src = "x = 1\ndef f\n  [1].each { |i| x = 99 }\n  0\nend\nf()\nx", .expected = 1 },
+        .{ .src = "count = 3\nclass C\n  def run\n    count = 100\n    count\n  end\nend\nc = C.new\nc.run + count", .expected = 103 },
+        // Unchanged: reads of top-level variables, top-level blocks/lambdas writing them,
+        // blocks updating their def's own locals, and $globals.
+        .{ .src = "w = 5\ndef area\n  w * 2\nend\narea()", .expected = 10 },
+        .{ .src = "total = 0\n[1, 2, 3].each { |i| total = total + i }\ntotal", .expected = 6 },
+        .{ .src = "total = 1\nadd = ->(n) { total = total + n }\nadd(10)\ntotal", .expected = 11 },
+        .{ .src = "def acc\n  sum = 0\n  [1, 2, 3].each { |i| sum = sum + i }\n  sum\nend\nacc()", .expected = 6 },
+        .{ .src = "$g = 1\ndef setg\n  $g = 2\nend\nsetg()\n$g", .expected = 2 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script:\n{s}\n", .{case.src});
+        try expectRunsTo(case.src, case.expected);
+    }
+}
