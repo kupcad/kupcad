@@ -30,6 +30,54 @@ const GeomOptions = struct {
     radius: ?f64 = null,
 };
 
+/// What a primitive takes. The runtime parses its keywords from it, and `kupcad check`
+/// reads its sizes to flag `cube(-5)` before the script runs.
+pub const Signature = struct {
+    /// Positional parameters, in order.
+    positional: []const []const u8,
+    /// Every keyword it accepts, in the order its errors list them.
+    keywords: []const []const u8,
+    /// Parameters, by position or keyword, that must be greater than zero.
+    sizes: []const []const u8,
+};
+
+pub const CUBE = Signature{
+    .positional = &.{ "x", "y", "z", "center" },
+    .keywords = &.{ "x", "y", "z", "size", "center", "round_r", "chamfer", "segments" },
+    .sizes = &.{ "x", "y", "z", "size" },
+};
+pub const SQUARE = Signature{
+    .positional = &.{ "x", "y", "center" },
+    .keywords = &.{ "x", "y", "size", "center", "round_r", "chamfer", "segments" },
+    .sizes = &.{ "x", "y", "size" },
+};
+pub const CYLINDER = Signature{
+    .positional = &.{ "r", "h", "center" },
+    .keywords = &.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h", "center", "round_r", "chamfer", "segments" },
+    .sizes = &.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h" },
+};
+pub const SPHERE = Signature{
+    .positional = &.{"r"},
+    .keywords = &.{ "r", "d", "radius", "segments" },
+    .sizes = &.{ "r", "d", "radius" },
+};
+pub const CIRCLE = SPHERE;
+pub const REGULAR_POLYGON = Signature{
+    .positional = &.{ "sides", "r" },
+    .keywords = &.{ "sides", "r", "d", "radius" },
+    .sizes = &.{ "r", "d", "radius" },
+};
+pub const TORUS = Signature{
+    .positional = &.{ "major_r", "minor_r" },
+    .keywords = &.{ "major_r", "minor_r", "segments" },
+    .sizes = &.{ "major_r", "minor_r" },
+};
+pub const TEXT = Signature{
+    .positional = &.{ "content", "size" },
+    .keywords = &.{ "size", "tolerance", "font", "halign", "valign" },
+    .sizes = &.{ "size", "tolerance" },
+};
+
 // --- Helpers ---
 
 /// The primitives share GeomOptions; each accepts only the keywords it lists.
@@ -132,7 +180,7 @@ pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
     }
     if (pos.len > 1) base.y = try util.requireNumber(vm, pos[1], "square", "y");
     if (pos.len > 2) base.center = try util.requireBool(vm, pos[2], "square", "center");
-    const opts = (try parseGeomOptions(&.{ "x", "y", "size", "center", "round_r", "chamfer", "segments" }, base, vm, args, "square")).opts;
+    const opts = (try parseGeomOptions(SQUARE.keywords, base, vm, args, "square")).opts;
 
     try util.requirePositive(vm, opts.x, "square", "x");
     try util.requirePositive(vm, opts.y, "square", "y");
@@ -157,7 +205,7 @@ pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
     if (pos.len > 1) base.y = try util.requireNumber(vm, pos[1], "cube", "y");
     if (pos.len > 2) base.z = try util.requireNumber(vm, pos[2], "cube", "z");
     if (pos.len > 3) base.center = try util.requireBool(vm, pos[3], "cube", "center");
-    const opts = (try parseGeomOptions(&.{ "x", "y", "z", "size", "center", "round_r", "chamfer", "segments" }, base, vm, args, "cube")).opts;
+    const opts = (try parseGeomOptions(CUBE.keywords, base, vm, args, "cube")).opts;
 
     try util.requirePositive(vm, opts.x, "cube", "x");
     try util.requirePositive(vm, opts.y, "cube", "y");
@@ -186,7 +234,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "cylinder", "r");
     if (pos.len > 1) base.h = try util.requireNumber(vm, pos[1], "cylinder", "h");
     if (pos.len > 2) base.center = try util.requireBool(vm, pos[2], "cylinder", "center");
-    var opts = (try parseGeomOptions(&.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h", "center", "round_r", "chamfer", "segments" }, base, vm, args, "cylinder")).opts;
+    var opts = (try parseGeomOptions(CYLINDER.keywords, base, vm, args, "cylinder")).opts;
 
     const r1 = opts.r1 orelse opts.r;
     const r2 = opts.r2 orelse opts.r;
@@ -246,7 +294,7 @@ pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
     const pos = util.positionalArgs(args);
     var base = GeomOptions{};
     if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "sphere", "r");
-    var opts = (try parseGeomOptions(&.{ "r", "d", "radius", "segments" }, base, vm, args, "sphere")).opts;
+    var opts = (try parseGeomOptions(SPHERE.keywords, base, vm, args, "sphere")).opts;
     try util.requirePositive(vm, opts.r, "sphere", "radius");
     if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
     const dag_idx = try vm.dag_builder.addSphere(opts.r, opts.segments);
@@ -257,7 +305,7 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
     const pos = util.positionalArgs(args);
     var base = GeomOptions{};
     if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "circle", "r");
-    var opts = (try parseGeomOptions(&.{ "r", "d", "radius", "segments" }, base, vm, args, "circle")).opts;
+    var opts = (try parseGeomOptions(CIRCLE.keywords, base, vm, args, "circle")).opts;
     try util.requirePositive(vm, opts.r, "circle", "radius");
 
     if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
@@ -337,7 +385,7 @@ pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
     var base = GeomOptions{ .sides = 6 }; // Default to a hexagon
     if (pos.len > 0) base.sides = try util.checkedInt(i32, vm, try util.requireNumber(vm, pos[0], "regular_polygon", "sides"), "sides");
     if (pos.len > 1) base.r = try util.requireNumber(vm, pos[1], "regular_polygon", "r");
-    const opts = (try parseGeomOptions(&.{ "sides", "r", "d", "radius" }, base, vm, args, "regular_polygon")).opts;
+    const opts = (try parseGeomOptions(REGULAR_POLYGON.keywords, base, vm, args, "regular_polygon")).opts;
     const sides = opts.sides.?;
 
     if (sides < MIN_CONTOUR_POINTS or sides > limits.MAX_SEGMENTS) {

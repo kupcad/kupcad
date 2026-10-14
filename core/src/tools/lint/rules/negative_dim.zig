@@ -1,8 +1,15 @@
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
+const value = @import("../../../core/value.zig");
+const manifest = @import("../../../stdlib/manifest.zig");
+const Signature = @import("../../../stdlib/primitives.zig").Signature;
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 
+/// Flags a primitive's size given as a literal zero or negative number, such as
+/// `cube(-5)` or `cylinder(h: 0)`, which the primitive rejects when the script runs.
+/// The sizes come from each primitive's Signature, so a coordinate (`translate(-5)`) or
+/// a parameter that may be negative is never flagged.
 pub const NegativeDimRule = struct {
     pub fn rule(self: *@This()) LintRule {
         return .{
@@ -18,43 +25,48 @@ pub const NegativeDimRule = struct {
         return "Negative Dimension Check";
     }
 
-    fn isCoordinate(name_str: []const u8) bool {
-        return std.mem.eql(u8, name_str, "x") or std.mem.eql(u8, name_str, "y") or std.mem.eql(u8, name_str, "z");
-    }
-
-    fn checkValue(engine: *linter.Linter, tree: *const ast.Tree, val_idx: ast.NodeIndex, prop_name: []const u8) !void {
-        if (val_idx == .none) return;
-        const val = tree.getNode(val_idx) orelse return;
-
-        if (val.tag == .unary_op and tree.unaryExpr(val).op == .negate) {
-            const operand = tree.getNode(tree.unaryExpr(val).operand).?;
-            if (operand.tag == .number) {
-                try engine.addDiagnostic(engine.getLoc(val.main_token), .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{prop_name});
-            }
-        } else if (val.tag == .number and tree.number(val) < 0) {
-            try engine.addDiagnostic(engine.getLoc(val.main_token), .warning, "CAD Warning: Property '{s}' in primitive construction has non-positive dimension.", .{prop_name});
-        } else if (val.tag == .array_literal) {
-            for (tree.getNodes(tree.nodeSpan(val))) |elem_idx| {
-                try checkValue(engine, tree, elem_idx, prop_name);
-            }
-        }
-    }
-
     fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         _ = ptr;
         const node = tree.getNode(node_idx) orelse return;
+        if (node.tag != .method_call) return;
+        const call = tree.methodCall(node);
+        if (call.receiver != .none) return;
+        const method = tree.getString(call.method_name);
+        const signature = manifest.signatureOf(method) orelse return;
 
-        if (node.tag == .method_call) {
-            for (tree.getNamedArgs(tree.methodCall(node).args)) |arg| {
-                const arg_name = tree.getString(arg.name);
-                if (isCoordinate(arg_name)) continue;
-                try checkValue(engine, tree, arg.value, arg_name);
-            }
-        } else if (node.tag == .property_assignment) {
-            const pa = tree.propertyAssignment(node);
-            const prop_name = tree.getString(pa.property);
-            if (isCoordinate(prop_name)) return;
-            try checkValue(engine, tree, pa.value, prop_name);
+        var position: usize = 0;
+        for (tree.getNamedArgs(call.args)) |arg| {
+            // A splat hides which positions the arguments after it fill.
+            if (arg.modifier != null) return;
+            const param = if (arg.name != .none) tree.getString(arg.name) else nextPositional(signature, &position) orelse continue;
+            if (!isSize(signature, param)) continue;
+            const n = literalNumber(tree, arg.value) orelse continue;
+            if (n > 0) continue;
+            const at = tree.getNode(arg.value).?.main_token;
+            try engine.addDiagnostic(engine.getLoc(at), .warning, "{s} expects {s} to be greater than zero, got {f}", .{ method, param, value.fmtNumber(n) });
         }
+    }
+
+    /// The name of the next positional argument, if the primitive has that many.
+    fn nextPositional(signature: *const Signature, position: *usize) ?[]const u8 {
+        defer position.* += 1;
+        return if (position.* < signature.positional.len) signature.positional[position.*] else null;
+    }
+
+    fn isSize(signature: *const Signature, param: []const u8) bool {
+        for (signature.sizes) |size| {
+            if (std.mem.eql(u8, size, param)) return true;
+        }
+        return false;
+    }
+
+    /// The value of a number literal, negated or not (`5`, `-5`).
+    fn literalNumber(tree: *const ast.Tree, idx: ast.NodeIndex) ?f64 {
+        const node = tree.getNode(idx) orelse return null;
+        if (node.tag == .number) return tree.number(node);
+        if (node.tag == .unary_op and tree.unaryExpr(node).op == .negate) {
+            if (literalNumber(tree, tree.unaryExpr(node).operand)) |n| return -n;
+        }
+        return null;
     }
 };

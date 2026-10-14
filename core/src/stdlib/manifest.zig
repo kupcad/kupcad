@@ -40,6 +40,8 @@ pub const GlobalFunction = struct {
     name: []const u8,
     func: value.NativeFn,
     category: Category,
+    /// A primitive's parameters, for tools that read calls before they run.
+    signature: ?*const primitives.Signature = null,
 };
 
 pub const MeshMethod = struct {
@@ -78,16 +80,16 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "batch_hull", .func = common.wrapGlobal(assembly_mod.nativeBatchHull), .category = .csg_operator },
     .{ .name = "highlight", .func = common.wrapGlobal(methods.globalHighlight), .category = .transform },
     .{ .name = "ghost", .func = common.wrapGlobal(methods.globalGhost), .category = .transform },
-    .{ .name = "cube", .func = common.wrapGlobal(primitives.nativeCube), .category = .primitive_3d },
-    .{ .name = "cylinder", .func = common.wrapGlobal(primitives.nativeCylinder), .category = .primitive_3d },
-    .{ .name = "sphere", .func = common.wrapGlobal(primitives.nativeSphere), .category = .primitive_3d },
-    .{ .name = "square", .func = common.wrapGlobal(primitives.nativeSquare), .category = .primitive_2d },
-    .{ .name = "circle", .func = common.wrapGlobal(primitives.nativeCircle), .category = .primitive_2d },
+    .{ .name = "cube", .func = common.wrapGlobal(primitives.nativeCube), .category = .primitive_3d, .signature = &primitives.CUBE },
+    .{ .name = "cylinder", .func = common.wrapGlobal(primitives.nativeCylinder), .category = .primitive_3d, .signature = &primitives.CYLINDER },
+    .{ .name = "sphere", .func = common.wrapGlobal(primitives.nativeSphere), .category = .primitive_3d, .signature = &primitives.SPHERE },
+    .{ .name = "square", .func = common.wrapGlobal(primitives.nativeSquare), .category = .primitive_2d, .signature = &primitives.SQUARE },
+    .{ .name = "circle", .func = common.wrapGlobal(primitives.nativeCircle), .category = .primitive_2d, .signature = &primitives.CIRCLE },
     .{ .name = "polygon", .func = common.wrapGlobal(primitives.nativePolygon), .category = .primitive_2d },
-    .{ .name = "regular_polygon", .func = common.wrapGlobal(primitives.nativeRegularPolygon), .category = .primitive_2d },
-    .{ .name = "torus", .func = common.wrapGlobal(primitives.nativeTorus), .category = .primitive_3d },
+    .{ .name = "regular_polygon", .func = common.wrapGlobal(primitives.nativeRegularPolygon), .category = .primitive_2d, .signature = &primitives.REGULAR_POLYGON },
+    .{ .name = "torus", .func = common.wrapGlobal(primitives.nativeTorus), .category = .primitive_3d, .signature = &primitives.TORUS },
     .{ .name = "polyhedron", .func = common.wrapGlobal(primitives.nativePolyhedron), .category = .primitive_3d },
-    .{ .name = "text", .func = common.wrapGlobal(primitives.nativeText), .category = .primitive_2d },
+    .{ .name = "text", .func = common.wrapGlobal(primitives.nativeText), .category = .primitive_2d, .signature = &primitives.TEXT },
     .{ .name = "import_stl", .func = common.wrapGlobal(stl.nativeImportStl), .category = .file_io },
     .{ .name = "import_step", .func = common.wrapGlobal(step.nativeImportStep), .category = .file_io },
 };
@@ -135,6 +137,14 @@ pub const mesh_methods = [_]MeshMethod{
     .{ .name = "export_step", .category = .file_io, .func = common.wrapMethod(step.meshExportStep) },
     .{ .name = "export_gltf", .category = .file_io, .func = common.wrapMethod(gltf.meshExportGltf) },
 };
+
+/// The signature of the global function `name`, if it is a primitive that declares one.
+pub fn signatureOf(name: []const u8) ?*const primitives.Signature {
+    for (global_functions) |f| {
+        if (std.mem.eql(u8, f.name, name)) return f.signature;
+    }
+    return null;
+}
 
 // --- 2. Comptime Map for Compiler Protection ---
 fn buildCompilerIntrinsics() std.StaticStringMap(Intrinsic) {

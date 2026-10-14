@@ -783,6 +783,26 @@ test "Stdlib: a method name takes -1, *xs, &blk and [..] as its argument; a vari
     });
 }
 
+test "Stdlib: each primitive's Signature lists exactly the keywords it accepts" {
+    // `kupcad check` reads the Signature; a keyword added to a primitive but not to it would
+    // drift silently. The unknown-keyword error lists what the primitive really accepts.
+    const manifest = @import("manifest.zig");
+    var checked: usize = 0;
+    inline for (manifest.global_functions) |f| {
+        if (f.signature) |sig| {
+            const call = if (comptime std.mem.eql(u8, f.name, "text")) "text(\"A\", zz_unknown: 1)" else f.name ++ "(zz_unknown: 1)";
+            comptime var accepted: []const u8 = "";
+            inline for (sig.keywords, 0..) |k, i| accepted = accepted ++ (if (i == 0) "" else ", ") ++ k;
+            try expectGlobalR(&.{.{
+                .src = comptime rescued(call),
+                .expected = .{ .str = "ArgumentError: " ++ f.name ++ " does not take a keyword 'zz_unknown' (it accepts: " ++ accepted ++ ")" },
+            }});
+            checked += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 8), checked);
+}
+
 test "Stdlib: respond_to? has Ruby's name" {
     // It was spelled `responds_to?`.
     try expectGlobalR(&.{
