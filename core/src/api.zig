@@ -120,7 +120,7 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
 }
 
 /// Safely injects a map of f64 CLI parameters into the active VM's global `params` map.
-pub fn injectParamsIntoVm(vm: *VM, cli_params: std.StringHashMap(f64)) !void {
+pub fn injectParamsIntoVm(vm: *VM, cli_params: std.StringHashMapUnmanaged(f64)) !void {
     if (cli_params.count() == 0) return;
 
     // Retrieve the global `params` map initialized by the standard library
@@ -308,7 +308,7 @@ pub fn buildModelWithDiagnostic(
 
     // Inject parameters securely
     if (cli_params) |cli_p| {
-        try injectParamsIntoVm(&vm, cli_p);
+        try injectParamsIntoVm(&vm, cli_p.unmanaged);
     }
 
     var out_chunk = chunk.Chunk.init();

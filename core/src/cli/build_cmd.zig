@@ -67,6 +67,16 @@ fn resolveFormat(explicit: ?Format, output_path: ?[]const u8, reporter: Reporter
     return null;
 }
 
+/// `name=value` from `--param`: the name is everything before the first `=`, so
+/// `w=1=2` is a bad number rather than `w=1`, and the value is finite, as script numbers are.
+fn parseParam(pair: []const u8) error{ MissingEquals, EmptyName, NotANumber }!struct { name: []const u8, value: f64 } {
+    const eq = std.mem.indexOfScalar(u8, pair, '=') orelse return error.MissingEquals;
+    if (eq == 0) return error.EmptyName;
+    const val = std.fmt.parseFloat(f64, pair[eq + 1 ..]) catch return error.NotANumber;
+    if (!std.math.isFinite(val)) return error.NotANumber;
+    return .{ .name = pair[0..eq], .value = val };
+}
+
 pub const Outcome = @import("outcome.zig").Outcome;
 
 /// Where `run` reports. By default it prints to the process streams; tests set `capture`.
@@ -117,18 +127,15 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
                 reporter.err("Error: Missing key=value after {s}\n", .{arg});
                 return .failure;
             };
-            var it = std.mem.splitScalar(u8, pair, '=');
-            const key = it.next() orelse continue;
-            const val_str = it.next() orelse {
-                reporter.err("Error: Invalid param format. Use --param key=value.\n", .{});
+            const param = parseParam(pair) catch |err| {
+                switch (err) {
+                    error.MissingEquals => reporter.err("Error: Invalid param format. Use --param key=value.\n", .{}),
+                    error.EmptyName => reporter.err("Error: Param '{s}' has no name. Use --param key=value.\n", .{pair}),
+                    error.NotANumber => reporter.err("Error: Param value must be a finite number. Got '{s}'\n", .{pair[std.mem.indexOfScalar(u8, pair, '=').? + 1 ..]}),
+                }
                 return .failure;
             };
-
-            const val = std.fmt.parseFloat(f64, val_str) catch {
-                reporter.err("Error: Param value must be numeric. Got '{s}'\n", .{val_str});
-                return .failure;
-            };
-            try cli_params.put(key, val);
+            try cli_params.put(param.name, param.value);
         } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
             output_path = args_iter.next() orelse {
                 reporter.err("Error: Missing output path after {s}\n", .{arg});
@@ -195,11 +202,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
         return .failure;
     };
 
-    // Use the shared DRY helper to load the CLI arguments into the active VM state
-    api.injectParamsIntoVm(&session.vm, cli_params) catch |err| {
-        reporter.err("Failed to inject params: {}\n", .{err});
-        return .failure;
-    };
+    try session.setParams(cli_params.unmanaged);
 
     // Force exact analytical representations if STEP export is requested
     if (format == .step) {

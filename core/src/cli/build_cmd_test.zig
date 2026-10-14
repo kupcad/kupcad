@@ -88,7 +88,13 @@ test "build_cmd: invalid arguments fail before touching the filesystem" {
         .{ .args = &.{"-o"}, .message = "Error: Missing output path after -o\n" },
         .{ .args = &.{ "model.kup", "--param" }, .message = "Error: Missing key=value after --param\n" },
         .{ .args = &.{ "model.kup", "-p", "width" }, .message = "Error: Invalid param format. Use --param key=value.\n" },
-        .{ .args = &.{ "model.kup", "-p", "width=wide" }, .message = "Error: Param value must be numeric. Got 'wide'\n" },
+        .{ .args = &.{ "model.kup", "-p", "width=wide" }, .message = "Error: Param value must be a finite number. Got 'wide'\n" },
+        // `=5` used to be skipped silently, and `w=1=2` read as w=1.
+        .{ .args = &.{ "model.kup", "-p", "=5" }, .message = "Error: Param '=5' has no name. Use --param key=value.\n" },
+        .{ .args = &.{ "model.kup", "-p", "w=1=2" }, .message = "Error: Param value must be a finite number. Got '1=2'\n" },
+        .{ .args = &.{ "model.kup", "-p", "w=" }, .message = "Error: Param value must be a finite number. Got ''\n" },
+        .{ .args = &.{ "model.kup", "-p", "w=inf" }, .message = "Error: Param value must be a finite number. Got 'inf'\n" },
+        .{ .args = &.{ "model.kup", "-p", "w=nan" }, .message = "Error: Param value must be a finite number. Got 'nan'\n" },
         .{ .args = &.{ "model.kup", "-f" }, .message = "Error: Missing format after -f\n" },
         .{ .args = &.{ "model.kup", "--format", "obj" }, .message = "Error: Unsupported format 'obj'. Allowed: stl, glb, gltf, step\n" },
     };
@@ -131,6 +137,19 @@ test "build_cmd: valid script succeeds and writes the export" {
     try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
     try testing.expect(std.mem.startsWith(u8, res.text(), "Successfully built "));
     try testing.expect(fx.outputExists());
+}
+
+test "build_cmd: --param sets the script's param" {
+    // The script fails unless `w` arrives as 20, so success shows the value reached it.
+    var fx = try Fixture.init("w = param(:w, default: 1)\nraise \"w is #{w}\" unless w == 20\ncube(w)\n");
+    defer fx.deinit();
+    var res = try runBuild(&.{ fx.input, "-p", "w=20", "-o", fx.output });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+
+    var default = try fx.build();
+    defer default.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, default.outcome);
 }
 
 const STL_HEADER_LEN = 80;

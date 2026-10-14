@@ -337,3 +337,29 @@ test "ScriptSession: a compile error is kept as the failure, with its location" 
     try testing.expectEqualStrings("'cube' is a built-in and can't be assigned", failure.diagnostics[0].message);
     try testing.expectEqual(@as(u32, 6), failure.diagnostics[0].loc.offset); // start of line 2
 }
+
+test "ScriptSession: params reach param() on every evaluation" {
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+
+    // Registering the standard library makes a new `params` map; values injected once,
+    // before the first evaluation, used to be wiped by it.
+    var params: std.StringHashMapUnmanaged(f64) = .empty;
+    defer params.deinit(testing.allocator);
+    try params.put(testing.allocator, "w", 20);
+    try session.setParams(params);
+
+    const mod_id = try session.workspace.addModule("model.kup", "w = param(:w, default: 1)\ncube(w)");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateModule(mod_id);
+    const node = &session.nodes.items[@backingInt(mod_id)];
+    try testing.expectApproxEqAbs(@as(f64, 8000.0), kernel.volume(node.cached_handle.?), 1e-4);
+
+    // An edit re-evaluates with the same parameters, and setParams replaces them.
+    try session.setParams(.empty);
+    try session.workspace.updateModuleSource(mod_id, "w = param(:w, default: 5)\ncube(w)");
+    try session.markFileEdited("model.kup");
+    try session.evaluateModule(mod_id);
+    try testing.expectApproxEqAbs(@as(f64, 125.0), kernel.volume(node.cached_handle.?), 1e-4);
+}
