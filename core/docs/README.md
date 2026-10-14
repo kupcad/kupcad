@@ -214,7 +214,7 @@ KupCAD exposes an exhaustive list of native mesh manipulation methods attached t
 
 * **Transforms**: `.translate`, `.rotate`, `.scale`, `.mirror`, `.align`, `.center`, `.transform` (Matrix), `.resize`.
 * **Arrays**: `.repeat_linear`, `.repeat_polar`.
-* **Sweeps**: `.extrude`, `.revolve`, `.helix`, `.loft`.
+* **Sweeps**: `.extrude`, `.revolve`, `.helix`, `.loft`. `loft` currently joins two *convex* profiles (it is the convex hull between them); a concave profile or one with holes raises `NotImplementedError` rather than being filled in.
 * **Advanced**: `.hull`, `.minkowski`, `.trim_by_plane`, `.split_by_plane`, `.offset`, `.slice`, `.project`, `.fillet_edges`, `.simplify`, `.decompose`, `.on_face`.
 
 ---

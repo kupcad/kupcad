@@ -438,6 +438,14 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const top_cs = try crossSectionOf(top);
                     const base_cs = try crossSectionOf(base);
                     try checkSameEngine(vm, base_cs.engine, top_cs.engine);
+                    // loft is a hull of the two profiles, which is only the true loft for convex
+                    // ones; a concave profile would be filled in silently.
+                    inline for (.{ .{ "base", base_cs }, .{ "top", top_cs } }) |profile| {
+                        if (kernel.crossSectionIsConvex(profile[1]) == false) {
+                            _ = vm.raiseError(.NotImplementedError, "loft supports convex profiles only for now; the " ++ profile[0] ++ " profile is concave or has holes", .{});
+                            return error.RuntimeError;
+                        }
+                    }
                     const p = vm.dag_builder.getLoftPayload(node);
                     const result = kernel.loft(engine, base_cs, top_cs, p.height) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });

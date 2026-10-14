@@ -144,3 +144,20 @@ test "Kernel planar: point in region with holes, boundary and orientation" {
     try std.testing.expect(regionContains(square, .{ 10.0005, 5 }, 1e-3));
     try std.testing.expect(!regionContains(square, .{ 10.002, 5 }, 1e-3));
 }
+
+test "Kernel planar: isConvexPolygon" {
+    const Case = struct { pts: []const planar.Vec2, convex: bool };
+    const cases = [_]Case{
+        .{ .pts = &.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } }, .convex = true },
+        .{ .pts = &.{ .{ 0, 0 }, .{ 0, 10 }, .{ 10, 10 }, .{ 10, 0 } }, .convex = true }, // clockwise
+        .{ .pts = &.{ .{ 0, 0 }, .{ 5, 0 }, .{ 10, 0 }, .{ 10, 10 } }, .convex = true }, // collinear point
+        .{ .pts = &.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 5, 3 }, .{ 0, 10 } }, .convex = false }, // notch
+        .{ .pts = &.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 5 }, .{ 5, 5 }, .{ 5, 10 }, .{ 0, 10 } }, .convex = false }, // L
+        .{ .pts = &.{ .{ 0, 0 }, .{ 1, 1 } }, .convex = false },
+        .{ .pts = &.{ .{ 0, 0 }, .{ 1, 0 }, .{ 2, 0 } }, .convex = false }, // all collinear
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("points: {any}\n", .{case.pts});
+        try std.testing.expectEqual(case.convex, planar.isConvexPolygon(case.pts));
+    }
+}

@@ -67,3 +67,40 @@ pub const RegionTest = struct {
         return self.on_boundary or self.winding != 0;
     }
 };
+
+/// Whether the closed polygon `points` is convex (collinear points allowed). A region with
+/// holes or several outlines is never convex, so callers pass exactly one contour.
+pub fn isConvexPolygon(points: []const Vec2) bool {
+    return isConvexRing(SliceRing{ .points = points });
+}
+
+const SliceRing = struct {
+    points: []const Vec2,
+    pub fn len(self: SliceRing) usize {
+        return self.points.len;
+    }
+    pub fn at(self: SliceRing, i: usize) Vec2 {
+        return self.points[i];
+    }
+};
+
+/// `isConvexPolygon` over any closed ring with `len()` and `at(i)`, so engines can test
+/// their contours in place without copying them.
+pub fn isConvexRing(ring: anytype) bool {
+    const n = ring.len();
+    if (n < 3) return false;
+    var sign: f64 = 0;
+    for (0..n) |i| {
+        const p = ring.at(i);
+        const q = ring.at((i + 1) % n);
+        const r = ring.at((i + 2) % n);
+        const cross = (q[0] - p[0]) * (r[1] - q[1]) - (q[1] - p[1]) * (r[0] - q[0]);
+        if (cross == 0) continue;
+        if (sign == 0) {
+            sign = std.math.sign(cross);
+        } else if (std.math.sign(cross) != sign) {
+            return false;
+        }
+    }
+    return sign != 0;
+}

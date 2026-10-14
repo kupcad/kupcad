@@ -169,27 +169,71 @@ fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
     return manifold.volume(temp_3d);
 }
 
+/// The contours of a cross section, read in place through manifoldc (no copies).
+const Contours = struct {
+    polys: *manifold.ManifoldPolygons,
+
+    fn of(handle: geom.CrossSectionHandle) ?Contours {
+        const cs: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(handle.ptr));
+        return .{ .polys = manifold.crossSectionToPolygons(cs) orelse return null };
+    }
+
+    fn deinit(self: Contours) void {
+        manifold.deletePolygons(self.polys);
+    }
+
+    fn count(self: Contours) usize {
+        return manifold.polygonsLength(self.polys);
+    }
+
+    fn len(self: Contours, contour: usize) usize {
+        return manifold.polygonsSimpleLength(self.polys, contour);
+    }
+
+    fn point(self: Contours, contour: usize, i: usize) [2]f64 {
+        const p = manifold.polygonsGetPoint(self.polys, contour, i);
+        return .{ p.x, p.y };
+    }
+};
+
 fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, tolerance: f64) ?bool {
     if (@intFromPtr(handle.ptr) == 0) return false;
-    const cs: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(handle.ptr));
-    const polys = manifold.crossSectionToPolygons(cs) orelse return null;
-    defer manifold.deletePolygons(polys);
+    const contours = Contours.of(handle) orelse return null;
+    defer contours.deinit();
 
     var region = planar.RegionTest.init(pt, tolerance);
-    for (0..manifold.polygonsLength(polys)) |ci| {
-        const n = manifold.polygonsSimpleLength(polys, ci);
+    for (0..contours.count()) |ci| {
+        const n = contours.len(ci);
         if (n < 2) continue;
-        const last = manifold.polygonsGetPoint(polys, ci, n - 1);
-        var prev: [2]f64 = .{ last.x, last.y };
+        var prev = contours.point(ci, n - 1);
         for (0..n) |i| {
-            const p = manifold.polygonsGetPoint(polys, ci, i);
-            const cur: [2]f64 = .{ p.x, p.y };
+            const cur = contours.point(ci, i);
             region.addEdge(prev, cur);
             prev = cur;
         }
     }
     return region.contains();
 }
+
+fn crossSectionIsConvexImpl(handle: geom.CrossSectionHandle) ?bool {
+    if (@intFromPtr(handle.ptr) == 0) return null;
+    const contours = Contours.of(handle) orelse return null;
+    defer contours.deinit();
+    if (contours.count() != 1) return false; // holes or several outlines
+    return planar.isConvexRing(ContourRing{ .contours = contours, .index = 0 });
+}
+
+/// One contour of a `Contours`, as a ring for planar.isConvexRing.
+const ContourRing = struct {
+    contours: Contours,
+    index: usize,
+    pub fn len(self: ContourRing) usize {
+        return self.contours.len(self.index);
+    }
+    pub fn at(self: ContourRing, i: usize) [2]f64 {
+        return self.contours.point(self.index, i);
+    }
+};
 
 fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
     if (@intFromPtr(handle.ptr) == 0) return .{ .min = .{ 0.0, 0.0 }, .max = .{ 0.0, 0.0 } };
@@ -264,18 +308,23 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+/// Thickness of the profile sheets loft hulls together (must be well below any real height).
+const LOFT_SHEET_THICKNESS = 1e-3;
+
 fn loftImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
     if (a.engine != .manifold or b.engine != .manifold) return null;
     if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
 
-    // MVP Loft: Extrude profiles minimally to create 3D sheets, position them, and wrap in a Hull
-    const m_a = manifold.extrude(@ptrCast(@alignCast(a.ptr)), 0.001, 0, 0.0, 1.0, 1.0) orelse return null;
+    // The loft is the hull of two thin sheets, which is exact for convex profiles (the
+    // evaluator rejects others). The top sheet sits just below `height` so the solid spans
+    // exactly [0, height].
+    const m_a = manifold.extrude(@ptrCast(@alignCast(a.ptr)), LOFT_SHEET_THICKNESS, 0, 0.0, 1.0, 1.0) orelse return null;
     defer manifold.destruct(m_a);
 
-    const m_b_flat = manifold.extrude(@ptrCast(@alignCast(b.ptr)), 0.001, 0, 0.0, 1.0, 1.0) orelse return null;
+    const m_b_flat = manifold.extrude(@ptrCast(@alignCast(b.ptr)), LOFT_SHEET_THICKNESS, 0, 0.0, 1.0, 1.0) orelse return null;
     defer manifold.destruct(m_b_flat);
 
-    const m_b = manifold.translate(m_b_flat, 0.0, 0.0, height) orelse return null;
+    const m_b = manifold.translate(m_b_flat, 0.0, 0.0, height - LOFT_SHEET_THICKNESS) orelse return null;
     defer manifold.destruct(m_b);
 
     // Pass the objects as a standard Zig slice to the public batchHull wrapper
@@ -378,7 +427,14 @@ fn polyhedronImpl(allocator: std.mem.Allocator, points: []const [3]f64, faces: [
     }
 
     const ptr = manifold.polyhedron(vert_props, tri_verts) orelse return null;
-    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+    // A closed mesh has one outward orientation. Faces wound inward give a valid but
+    // inside-out solid (negative volume) that breaks every later boolean, so flip them.
+    if (manifold.volume(ptr) >= 0) return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+    manifold.destruct(ptr);
+    var t: usize = 0;
+    while (t < tri_verts.len) : (t += 3) std.mem.swap(u32, &tri_verts[t + 1], &tri_verts[t + 2]);
+    const flipped = manifold.polyhedron(vert_props, tri_verts) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(flipped) };
 }
 
 fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
@@ -688,6 +744,7 @@ pub const driver = struct {
     pub const crossSectionAreaFn = crossSectionAreaImpl;
     pub const crossSectionBoundsFn = crossSectionBoundsImpl;
     pub const crossSectionContainsPointFn = crossSectionContainsPointImpl;
+    pub const crossSectionIsConvexFn = crossSectionIsConvexImpl;
     pub const queryFacesFn = queryFacesImpl;
     pub const volumeFn = volumeImpl;
     pub const surfaceAreaFn = surfaceAreaImpl;

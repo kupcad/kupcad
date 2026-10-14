@@ -413,6 +413,11 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
 
     try util.requirePositive(vm, major_r, "torus", "major_r");
     try util.requirePositive(vm, minor_r, "torus", "minor_r");
+    if (minor_r >= major_r) {
+        // The tube would reach (or cross) the axis and the revolved solid would intersect itself.
+        _ = vm.raiseError(.ValueError, "torus needs minor_r smaller than major_r, got minor_r {f} and major_r {f}", .{ value.fmtNumber(minor_r), value.fmtNumber(major_r) });
+        return error.RuntimeError;
+    }
 
     const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
 

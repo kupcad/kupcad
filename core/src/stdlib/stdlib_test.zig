@@ -463,6 +463,9 @@ test "Stdlib: repeat counts reject NaN and values above MAX_PATTERN_COUNT" {
 const MAX_MATERIALIZE = limits.MAX_RANGE_MATERIALIZE;
 
 /// What a script leaves in the global `r`.
+/// Kernel-computed quantities (volumes, bounds) are compared with this absolute tolerance.
+const NUMBER_TOLERANCE = 1e-9;
+
 const Expected = union(enum) {
     nums: []const f64,
     num: f64,
@@ -486,7 +489,7 @@ fn expectGlobalR(cases: []const IterCase) !void {
                 try testing.expectEqual(want.len, items.len);
                 for (want, items) |w, item| try testing.expectApproxEqAbs(w, item.asNumber(), 1e-12);
             },
-            .num => |want| try testing.expectEqual(want, r.asNumber()),
+            .num => |want| try testing.expectApproxEqAbs(want, r.asNumber(), NUMBER_TOLERANCE),
             .boolean => |want| try testing.expectEqual(want, r.asBool()),
             .str => |want| {
                 try testing.expect(r.isString());
@@ -1177,4 +1180,27 @@ test "Stdlib: import_stl errors are rescuable ImportErrors, invalid meshes Geome
         const r = vm.globals.get("r") orelse return error.MissingGlobal;
         try testing.expect(std.mem.startsWith(u8, r.asString().chars, "ImportError: could not parse STL file 'junk.stl': "));
     }
+}
+
+test "Stdlib: degenerate solids are rejected or repaired instead of exported wrong" {
+    const tetra = "pts = [[0,0,0],[1,0,0],[0,1,0],[0,0,1]]\n";
+    const outward = "[[0,2,1],[0,1,3],[0,3,2],[1,2,3]]";
+    const inward = "[[0,1,2],[0,3,1],[0,2,3],[1,3,2]]";
+    try expectGlobalR(&.{
+        // A tube reaching the axis makes the torus intersect itself.
+        .{ .src = comptime rescued("torus(major_r: 5, minor_r: 5)"), .expected = .{ .str = "ValueError: torus needs minor_r smaller than major_r, got minor_r 5 and major_r 5" } },
+        .{ .src = comptime rescued("torus(major_r: 2, minor_r: 3)"), .expected = .{ .str = "ValueError: torus needs minor_r smaller than major_r, got minor_r 3 and major_r 2" } },
+        .{ .src = "r = torus(major_r: 10, minor_r: 2).volume > 0", .expected = .{ .boolean = true } },
+        // An inward-wound polyhedron used to be an inside-out solid with negative volume.
+        .{ .src = tetra ++ "r = polyhedron(pts, " ++ inward ++ ").volume", .expected = .{ .num = 1.0 / 6.0 } },
+        .{ .src = tetra ++ "r = polyhedron(pts, " ++ outward ++ ").volume", .expected = .{ .num = 1.0 / 6.0 } },
+        // ... and booleans with it were wrong.
+        .{ .src = tetra ++ "r = (cube(1) - polyhedron(pts, " ++ inward ++ ")).volume", .expected = .{ .num = 1.0 - 1.0 / 6.0 } },
+        // loft hulls its profiles, which only matches a true loft for convex ones.
+        .{ .src = comptime rescued("polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]).loft(square(2), 5).volume"), .expected = .{ .str = "NotImplementedError: loft supports convex profiles only for now; the base profile is concave or has holes" } },
+        .{ .src = comptime rescued("square(4).loft(square(10, center: true) - circle(r: 2), 5).volume"), .expected = .{ .str = "NotImplementedError: loft supports convex profiles only for now; the top profile is concave or has holes" } },
+        // A convex loft spans exactly [0, height]: square to equal square is a prism.
+        .{ .src = "r = square(4).loft(square(4), 10).volume", .expected = .{ .num = 160 } },
+        .{ .src = "r = square(4).loft(square(4), 10).bbox.max[2]", .expected = .{ .num = 10 } },
+    });
 }

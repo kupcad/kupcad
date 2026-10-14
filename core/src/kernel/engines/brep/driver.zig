@@ -647,6 +647,12 @@ fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, to
     return null;
 }
 
+/// Unknown for B-Rep sketches (no contour access yet); callers treat null as "can't tell".
+fn crossSectionIsConvexImpl(handle: geom.CrossSectionHandle) ?bool {
+    _ = handle;
+    return null;
+}
+
 fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
     if (@intFromPtr(handle.ptr) == 0) return .{ .min = .{ 0, 0 }, .max = .{ 0, 0 } };
     const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
@@ -811,6 +817,7 @@ pub const driver = struct {
     pub const crossSectionAreaFn = crossSectionAreaImpl;
     pub const crossSectionBoundsFn = crossSectionBoundsImpl;
     pub const crossSectionContainsPointFn = crossSectionContainsPointImpl;
+    pub const crossSectionIsConvexFn = crossSectionIsConvexImpl;
     pub const queryFacesFn = queryFacesImpl;
     pub const volumeFn = volumeImpl;
     pub const surfaceAreaFn = surfaceAreaImpl;

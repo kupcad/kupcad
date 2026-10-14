@@ -173,6 +173,11 @@ pub inline fn crossSectionContainsPoint(handle: geom.CrossSectionHandle, pt: [2]
     return dispatch("crossSectionContainsPointFn", handle, .{ pt, tolerance });
 }
 
+/// Whether the sketch is a single convex outline; null when the engine can't tell.
+pub inline fn crossSectionIsConvex(handle: geom.CrossSectionHandle) ?bool {
+    return dispatch("crossSectionIsConvexFn", handle, .{});
+}
+
 pub inline fn crossSectionTransform(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
     return dispatch("crossSectionTransformFn", cs, .{mat});
 }
