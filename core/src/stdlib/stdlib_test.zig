@@ -759,6 +759,17 @@ test "Stdlib: every value answers class and inspect" {
     });
 }
 
+test "Stdlib: block_given? works with or without parentheses" {
+    // The bare form used to be looked up as a variable: NameError.
+    const m = "def m(&b)\n  [block_given?, block_given?()]\nend\n";
+    try expectGlobalR(&.{
+        .{ .src = m ++ "r = \"#{m}\"", .expected = .{ .str = "[false, false]" } },
+        .{ .src = m ++ "r = \"#{m { 1 }}\"", .expected = .{ .str = "[true, true]" } },
+        .{ .src = m ++ "f = -> { 1 }\nr = \"#{m(&f)}\"", .expected = .{ .str = "[true, true]" } },
+        .{ .src = m ++ "r = \"#{m(&nil)}\"", .expected = .{ .str = "[false, false]" } },
+    });
+}
+
 test "Stdlib: lambdas behave like blocks" {
     try expectGlobalR(&.{
         // `return` and `next` leave just the lambda or block, never the enclosing def.

@@ -304,6 +304,14 @@ pub const Compiler = struct {
         const name_id = self.tree.stringId(node);
         const name_str = self.tree.getString(name_id);
 
+        // `block_given?` without parentheses is the intrinsic too (it used to be looked up
+        // as a variable: NameError). The other intrinsics need arguments, or (`yield`)
+        // parse as a statement.
+        if (manifest.compiler_intrinsics.get(name_str) == .block_given_chk) {
+            try self.emitOp(.op_block_given);
+            return;
+        }
+
         const is_local = (self.resolveLocal(name_id) != null) or
             (sym.kind == .local);
         const is_upvalue = (try self.resolveUpvalue(name_id)) != null;
