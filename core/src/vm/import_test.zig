@@ -1114,3 +1114,114 @@ test "VM: op_import of a module that fails to compile does not leak its chunk" {
     const msg = vm.globals.get("result") orelse return error.MissingGlobal;
     try testing.expect(std.mem.startsWith(u8, msg.asString().chars, "ImportError: Compilation failed"));
 }
+
+// --- Module isolation: each imported module has its own top-level scope ---
+
+const ModuleFile = struct { path: []const u8, source: []const u8 };
+
+const LIB_C =
+    \\c = 3
+    \\def lib_fn
+    \\  c
+    \\end
+    \\export lib_fn
+;
+
+/// Writes `files` into a fresh MemoryVfs, runs `main` and returns the number left in `r`.
+fn runWithModules(files: []const ModuleFile, main: []const u8) !f64 {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    for (files) |f| try mem_vfs.vfs().writeFile(f.path, f.source);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+    vm.vfs = mem_vfs.vfs();
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, main));
+    const r = vm.globals.get("r") orelse return error.MissingGlobal;
+    return r.asNumber();
+}
+
+test "VM: imported modules keep their top-level names to themselves" {
+    // Before, every module wrote into the importer's globals: the importer could read a
+    // library's private variables and silently change what the library computed.
+    const cases = [_]struct { files: []const ModuleFile, main: []const u8, expected: f64 }{
+        // The importer can't change a module's variable...
+        .{ .files = &.{.{ .path = "./lib.kup", .source = LIB_C }}, .main = "import { lib_fn } from \"./lib.kup\"\nc = 1000\nr = lib_fn()", .expected = 3 },
+        // ...or see it, or the hidden __exports__ object.
+        .{ .files = &.{.{ .path = "./lib.kup", .source = LIB_C }}, .main = "import { lib_fn } from \"./lib.kup\"\nr = defined?(c) ? 1 : 0", .expected = 0 },
+        .{ .files = &.{.{ .path = "./lib.kup", .source = LIB_C }}, .main = "import { lib_fn } from \"./lib.kup\"\nr = defined?(__exports__) ? 1 : 0", .expected = 0 },
+        // A module can't read the importer's variables either.
+        .{ .files = &.{.{ .path = "./w.kup", .source = "def get_width\n  width\nend\nexport get_width" }}, .main = "width = 7\nimport { get_width } from \"./w.kup\"\nr = begin\n  get_width()\nrescue => e\n  -1\nend", .expected = -1 },
+        // Module functions see module variables defined later in the file.
+        .{ .files = &.{.{ .path = "./area.kup", .source = "def area\n  side * side\nend\nside = 4\nexport area" }}, .main = "side = 100\nimport { area } from \"./area.kup\"\nr = area()", .expected = 16 },
+        // Methods of an exported class keep the module's scope when called from outside.
+        .{ .files = &.{.{ .path = "./plate.kup", .source = "k = 3\nclass Plate\n  def scaled(x)\n    x * k\n  end\nend\nexport Plate" }}, .main = "k = 50\nimport { Plate } from \"./plate.kup\"\nr = Plate.new.scaled(2)", .expected = 6 },
+        // Two modules may use the same top-level name without clobbering each other.
+        .{
+            .files = &.{
+                .{ .path = "./a.kup", .source = "v = 1\ndef get_a\n  v\nend\nexport get_a" },
+                .{ .path = "./b.kup", .source = "v = 2\ndef get_b\n  v\nend\nexport get_b" },
+            },
+            .main = "import { get_a } from \"./a.kup\"\nimport { get_b } from \"./b.kup\"\nr = get_a() * 10 + get_b()",
+            .expected = 12,
+        },
+        // Builtins stay reachable from module code.
+        .{ .files = &.{.{ .path = "./mk.kup", .source = "def make\n  cube(2).volume\nend\nexport make" }}, .main = "import { make } from \"./mk.kup\"\nr = make()", .expected = 8 },
+        // A module importing another sees only what it imported, not the inner module's privates.
+        .{
+            .files = &.{
+                .{ .path = "./inner.kup", .source = "secret = 9\ndef twice(x)\n  x * 2\nend\nexport twice" },
+                .{ .path = "./outer.kup", .source = "import { twice } from \"./inner.kup\"\ndef go\n  r = twice(5)\n  r + (defined?(secret) ? 100 : 0)\nend\nexport go" },
+            },
+            .main = "import { go } from \"./outer.kup\"\nr = go()",
+            .expected = 10,
+        },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("main:\n{s}\n", .{case.main});
+        try testing.expectEqual(case.expected, try runWithModules(case.files, case.main));
+    }
+}
+
+test "VM: a module still sees a builtin the main script shadowed" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try mem_vfs.vfs().writeFile("./lib.kup", "def read\n  helper_val\nend\nexport read");
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.vfs = mem_vfs.vfs();
+    // A host-registered global, like the stdlib's builtins.
+    try vm.globals.put(vm.allocator, "helper_val", value.Value.initNumber(42));
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, "helper_val = 5\nimport { read } from \"./lib.kup\"\nr = read() * 100 + helper_val"));
+    const r = vm.globals.get("r") orelse return error.MissingGlobal;
+    try testing.expectEqual(@as(f64, 4205), r.asNumber());
+}
+
+test "VM: module namespace values survive GC" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try mem_vfs.vfs().writeFile("./lib.kup", "s = \"str\" + \"ing\"\nparts = [s, s + \"!\"]\ndef get\n  parts[1]\nend\nexport get");
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.vfs = mem_vfs.vfs();
+    // Collect on every allocation: values held only by a module namespace must be roots.
+    vm.gc.stress = true;
+    defer vm.gc.stress = false;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, "import { get } from \"./lib.kup\"\nx = [1, 2, 3].map { |i| i.to_s }\nr = get()"));
+    try expectGlobalString(&vm, "r", "string!");
+}

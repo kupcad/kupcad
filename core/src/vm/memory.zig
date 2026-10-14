@@ -254,6 +254,7 @@ pub const GC = struct {
         ptr.splat_pos = null;
         ptr.chunk = null;
         ptr.owns_chunk = true;
+        ptr.namespace = null;
         return ptr;
     }
 
@@ -452,6 +453,12 @@ pub const GC = struct {
         var globals_it = vm.globals.valueIterator();
         while (globals_it.next()) |val| {
             self.markValue(val.*);
+        }
+        var shadowed_it = vm.shadowed_builtins.valueIterator();
+        while (shadowed_it.next()) |val| self.markValue(val.*);
+        for (vm.module_namespaces.items) |ns| {
+            var ns_it = ns.globals.valueIterator();
+            while (ns_it.next()) |val| self.markValue(val.*);
         }
 
         for (vm.param_registry.items(.name)) |name| self.markValue(name);

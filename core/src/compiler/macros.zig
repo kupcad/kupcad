@@ -7,6 +7,7 @@ pub fn emitAttrReader(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     const clean_name = std.mem.trimStart(u8, prop_name, ":@");
 
     const func = try comp.vm.gc.allocateFunction(comp.vm);
+    func.namespace = comp.rootModuleNamespace();
     // Root the function until it is stored in the constant pool: the name and
     // child-chunk constants allocated below can trigger a collection.
     comp.vm.ensureStackCapacity(comp.vm.stack_top + 1) catch return error.OutOfMemory;
@@ -58,6 +59,7 @@ pub fn emitAttrWriter(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     const clean_name = std.mem.trimStart(u8, prop_name, ":@");
 
     const func = try comp.vm.gc.allocateFunction(comp.vm);
+    func.namespace = comp.rootModuleNamespace();
     // Root the function until it is stored in the constant pool: the name and
     // child-chunk constants allocated below can trigger a collection.
     comp.vm.ensureStackCapacity(comp.vm.stack_top + 1) catch return error.OutOfMemory;

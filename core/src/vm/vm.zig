@@ -95,6 +95,15 @@ pub const VM = struct {
     // Owned copies of the global names defined by bytecode (see defineGlobal); keys
     // registered by the host are static literals and are not in here.
     owned_global_keys: std.ArrayListUnmanaged([]const u8) = .empty,
+    // Names the main script itself defined in `globals` (keys borrowed from `globals`).
+    // Everything else in `globals` was registered by the host (builtins, natives), and
+    // only those are visible to imported modules.
+    script_defined_globals: std.StringHashMapUnmanaged(void) = .empty,
+    // Builtin values the main script shadowed (e.g. `cube = 5`), so modules still see
+    // the original builtin rather than the main script's variable.
+    shadowed_builtins: std.StringHashMapUnmanaged(value.Value) = .empty,
+    // One top-level namespace per imported module (see value.Namespace).
+    module_namespaces: std.ArrayListUnmanaged(*value.Namespace) = .empty,
     modules: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
     symbols: std.StringHashMapUnmanaged(*value.ObjSymbol),
@@ -249,6 +258,13 @@ pub const VM = struct {
 
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
+        self.script_defined_globals.deinit(self.allocator);
+        self.shadowed_builtins.deinit(self.allocator);
+        for (self.module_namespaces.items) |ns| {
+            ns.deinit(self.allocator);
+            self.allocator.destroy(ns);
+        }
+        self.module_namespaces.deinit(self.allocator);
         for (self.owned_global_keys.items) |key| self.allocator.free(key);
         self.owned_global_keys.deinit(self.allocator);
         var module_keys = self.modules.keyIterator();
@@ -537,7 +553,7 @@ pub const VM = struct {
                 },
                 .op_get_global, .op_get_global_wide => {
                     const name_str = self.readStringOperand(exec_chunk, frame, op == .op_get_global_wide);
-                    if (self.globals.get(name_str)) |val| {
+                    if (self.lookupGlobal(frame, name_str)) |val| {
                         self.push(val);
                     } else {
                         if (self.throwDynamicError("Runtime Error: Undefined variable '{s}'\n", .{name_str}) != .ok) return .runtime_error;
@@ -883,8 +899,13 @@ pub const VM = struct {
                         self.allocator.destroy(heap_chunk);
                     };
 
+                    // The module's own top-level scope: its variables, defs and classes live
+                    // here, and only exported names reach the importer.
+                    const namespace = self.newModuleNamespace() catch return .runtime_error;
+
                     var comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, heap_chunk, self);
                     defer comp.deinit();
+                    comp.module_namespace = namespace;
 
                     comp.compile(doc.tree.root) catch {
                         if (self.throwDynamicError("ImportError: Compilation failed for '{s}'", .{path_str}) != .ok) return .runtime_error;
@@ -901,6 +922,7 @@ pub const VM = struct {
                     func.chunk = heap_chunk;
                     func.owns_chunk = true;
                     func.local_count = heap_chunk.local_count;
+                    func.namespace = namespace;
                     chunk_owned_by_func = true; // freed with func by the GC from here on
 
                     // Root func while allocateClosure may collect
@@ -928,9 +950,9 @@ pub const VM = struct {
 
                     // Extract the __exports__ module if built by export statements
                     var final_res = res;
-                    if (self.globals.get("__exports__")) |exp_mod| {
+                    if (namespace.globals.get("__exports__")) |exp_mod| {
                         final_res = exp_mod;
-                        self.removeGlobal("__exports__");
+                        namespace.remove(self.allocator, "__exports__");
                     }
 
                     // 7. Cache the actual finalized module and yield result
@@ -1064,8 +1086,9 @@ pub const VM = struct {
                 .op_class, .op_class_wide => {
                     const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, op == .op_class_wide);
 
-                    // RE-OPEN the class if it exists in globals!
-                    if (self.globals.get(name_str_obj.chars)) |existing| {
+                    // RE-OPEN the class if it is visible from this scope (a module can reopen
+                    // its own classes and builtins, not the importer's classes)
+                    if (self.lookupGlobal(frame, name_str_obj.chars)) |existing| {
                         if (existing.isClass()) {
                             self.push(existing);
                             continue;
@@ -1090,7 +1113,11 @@ pub const VM = struct {
                 .op_define_global, .op_define_global_wide => {
                     const name_str = self.readStringOperand(exec_chunk, frame, op == .op_define_global_wide);
                     const val = self.pop();
-                    self.defineGlobal(name_str, val) catch return .runtime_error;
+                    if (frame.closure.function.namespace) |ns| {
+                        ns.define(self.allocator, name_str, val) catch return .runtime_error;
+                    } else {
+                        self.defineGlobal(name_str, val) catch return .runtime_error;
+                    }
                 },
                 .op_get_property, .op_get_property_wide => {
                     const is_wide = op == .op_get_property_wide;
@@ -1427,7 +1454,7 @@ pub const VM = struct {
                         }
                     } else {
                         // Global / Native Check (Globals still use string keys)
-                        is_def = self.globals.contains(name_str);
+                        is_def = self.lookupGlobal(frame, name_str) != null;
                     }
 
                     self.push(if (is_def) value.Value.initBool(true) else value.Value.initNil());
@@ -1579,6 +1606,7 @@ pub const VM = struct {
     /// is freed, while the global lives on into the next run of a reused VM.
     fn defineGlobal(self: *VM, name: []const u8, val: value.Value) !void {
         try self.owned_global_keys.ensureUnusedCapacity(self.allocator, 1);
+        try self.script_defined_globals.ensureUnusedCapacity(self.allocator, 1);
         const gop = try self.globals.getOrPut(self.allocator, name);
         if (!gop.found_existing) {
             gop.key_ptr.* = self.allocator.dupe(u8, name) catch |err| {
@@ -1586,18 +1614,30 @@ pub const VM = struct {
                 return err;
             };
             self.owned_global_keys.appendAssumeCapacity(gop.key_ptr.*);
+        } else if (!self.script_defined_globals.contains(name)) {
+            // The main script is shadowing a builtin: keep the original for modules.
+            try self.shadowed_builtins.put(self.allocator, gop.key_ptr.*, gop.value_ptr.*);
         }
+        self.script_defined_globals.putAssumeCapacity(gop.key_ptr.*, {});
         gop.value_ptr.* = val;
     }
 
-    fn removeGlobal(self: *VM, name: []const u8) void {
-        const kv = self.globals.fetchRemove(name) orelse return;
-        for (self.owned_global_keys.items, 0..) |key, i| {
-            if (key.ptr != kv.key.ptr) continue;
-            self.allocator.free(key);
-            _ = self.owned_global_keys.swapRemove(i);
-            return;
-        }
+    /// Resolves a top-level name for code running in `frame`. Main-script code sees
+    /// `globals`. Module code sees its own namespace, then builtins, but never the main
+    /// script's variables or another module's.
+    fn lookupGlobal(self: *VM, frame: *const CallFrame, name: []const u8) ?value.Value {
+        const ns = frame.closure.function.namespace orelse return self.globals.get(name);
+        if (ns.globals.get(name)) |val| return val;
+        if (self.script_defined_globals.contains(name)) return self.shadowed_builtins.get(name);
+        return self.globals.get(name);
+    }
+
+    fn newModuleNamespace(self: *VM) !*value.Namespace {
+        try self.module_namespaces.ensureUnusedCapacity(self.allocator, 1);
+        const ns = try self.allocator.create(value.Namespace);
+        ns.* = .{};
+        self.module_namespaces.appendAssumeCapacity(ns);
+        return ns;
     }
 
     pub inline fn clearUnwindState(self: *VM) void {

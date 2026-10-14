@@ -97,6 +97,38 @@ pub const ObjFunction = struct {
     chunk: ?*anyopaque, // Pointer to chunk.Chunk (avoids circular dependency)
     name: ?*ObjString,
     owns_chunk: bool,
+    /// Top-level scope this function's global reads/writes go to: null for the main
+    /// script (VM.globals), otherwise the namespace of the imported module it came from.
+    namespace: ?*Namespace,
+};
+
+/// The top-level variables of one imported module. Each module gets its own, so its
+/// top-level names never leak into (or get overwritten by) the importer: only exported
+/// names cross files. Owned by the VM (VM.module_namespaces); values are GC roots.
+pub const Namespace = struct {
+    globals: std.StringHashMapUnmanaged(Value) = .empty,
+
+    pub fn define(self: *Namespace, allocator: std.mem.Allocator, name: []const u8, val: Value) !void {
+        const gop = try self.globals.getOrPut(allocator, name);
+        if (!gop.found_existing) {
+            gop.key_ptr.* = allocator.dupe(u8, name) catch |err| {
+                self.globals.removeByPtr(gop.key_ptr);
+                return err;
+            };
+        }
+        gop.value_ptr.* = val;
+    }
+
+    pub fn remove(self: *Namespace, allocator: std.mem.Allocator, name: []const u8) void {
+        const kv = self.globals.fetchRemove(name) orelse return;
+        allocator.free(kv.key);
+    }
+
+    pub fn deinit(self: *Namespace, allocator: std.mem.Allocator) void {
+        var it = self.globals.keyIterator();
+        while (it.next()) |key| allocator.free(key.*);
+        self.globals.deinit(allocator);
+    }
 };
 
 pub const ObjUpvalue = struct {

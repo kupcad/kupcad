@@ -99,6 +99,18 @@ KupCAD borrows Ruby's syntax but deliberately keeps a simpler model; these are d
 * **`return` inside a block leaves only the block**, not the enclosing `def`. Use `break value` to stop an iteration and hand back a result.
 * **Visibility is declared per method.** Write `private def helper ... end` (or `public def`); there are no section-style `private` / `protected` lines that change the visibility of the methods after them, and there is no `protected`. A private method can be called from inside its class (including on another instance of the same class) but not from outside.
 * **Methods on the current object are called through `self.`** — a bare `plate` inside a method is resolved as a variable, not as a method call.
+* **Methods can read top-level variables** (convenient for parametric scripts: `width = param(:width, ...)` is visible inside every `def`). Assigning inside a `def`, or inside a block within it, always creates a local, so a helper's scratch `x` never overwrites a top-level `x`. Top-level code, and blocks or lambdas written at the top level, do update top-level variables. `$name` is always global.
+
+```ruby
+width = 20
+def plate
+  margin = 2              # local to plate
+  width - margin          # reads the top-level width
+end
+def scratch
+  width = 0               # a new local: the top-level width is still 20
+end
+```
 
 ```ruby
 class Bracket
@@ -238,6 +250,21 @@ import { Screw } from "github.com/kupcad-libs/hardware"
 bearing = import_step("assets/608_bearing.step")
 logo = import_stl("assets/logo.stl")
 
+```
+
+Every imported file runs in its own top-level scope. Its variables, `def`s and classes are private to it; only the names it lists in `export` reach the importer, and only under the names the importer lists in `import { ... }`. Exported functions and classes keep using their own file's variables wherever they are called from. Module code can use builtins, but not the importer's variables, and two libraries can use the same top-level name without clashing:
+
+```ruby
+# hardware.kup
+thread_pitch = 1.5                 # private to hardware.kup
+def bolt(len)
+  cylinder(r: 3, h: len)           # thread_pitch is visible here
+end
+export bolt
+
+# main.kup
+import { bolt } from "./hardware.kup"
+thread_pitch = 99                  # a different variable; bolt() is unaffected
 ```
 
 ---

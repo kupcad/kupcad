@@ -58,6 +58,9 @@ pub const Compiler = struct {
     enclosing: ?*Compiler = null,
     function: ?*value.ObjFunction = null,
     is_method: bool = false,
+    /// Set (on the root compiler) when compiling an imported module: every function
+    /// compiled for it resolves globals in the module's own namespace.
+    module_namespace: ?*value.Namespace = null,
     active_namespaces: usize = 0,
     has_export_module: bool = false,
     // Lexical Scope tracking
@@ -96,6 +99,13 @@ pub const Compiler = struct {
     pub const isScriptGlobal = scope_mod.isScriptGlobal;
     pub const insideDef = scope_mod.insideDef;
     pub const writesScriptGlobal = scope_mod.writesScriptGlobal;
+
+    /// The namespace of the module being compiled (null for the main script).
+    pub fn rootModuleNamespace(self: *const Compiler) ?*value.Namespace {
+        var root = self;
+        while (root.enclosing) |parent| root = parent;
+        return root.module_namespace;
+    }
     pub const seedLocals = scope_mod.seedLocals;
     pub const getNextLocalSlot = scope_mod.getNextLocalSlot;
 
@@ -2308,6 +2318,7 @@ pub const Compiler = struct {
 
     fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex, func_name: ?[]const u8, is_method: bool) CompileError!void {
         const func = try self.vm.gc.allocateFunction(self.vm);
+        func.namespace = self.rootModuleNamespace();
 
         // Root the function immediately: it is reachable from nothing else until
         // it lands in our constant pool, and every allocation below (its name,
