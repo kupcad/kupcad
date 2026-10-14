@@ -262,10 +262,12 @@ pub const Compiler = struct {
         self.current_chunk.max_stack_slots = self.max_stack_depth;
         self.current_chunk.local_count = @max(self.locals.items.len, self.max_local_slot + 1);
 
-        // Verify bytecode integrity before allowing execution
-        verifier.verifyChunk(self.current_chunk) catch {
-            return error.CorruptedBytecode;
-        };
+        // Verify bytecode integrity before allowing execution. Only the root verifies: it
+        // checks every nested function's chunk too, knowing its locals and upvalues, which a
+        // child compiler can't (its function's counts are set after its body compiles).
+        if (self.enclosing == null) {
+            verifier.verifyChunk(self.current_chunk) catch return error.CorruptedBytecode;
+        }
     }
 
     /// Compiles one node; an error is recorded at the innermost node it came from (at that

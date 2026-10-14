@@ -212,6 +212,10 @@ test "VM: Closures correctly capture and return upvalues" {
     const const_42 = try main_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
     try main_chunk.writeOp(testing.allocator, .op_constant, 0);
     try main_chunk.write(testing.allocator, @intCast(const_42), 0);
+    // Store it in local slot 1, the variable the closure captures
+    try main_chunk.writeOp(testing.allocator, .op_set_local, 0);
+    try main_chunk.write(testing.allocator, 1, 0);
+    try main_chunk.writeOp(testing.allocator, .op_pop, 0);
 
     const const_func = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&func.obj));
     try main_chunk.writeOp(testing.allocator, .op_closure, 0);
@@ -226,6 +230,7 @@ test "VM: Closures correctly capture and return upvalues" {
     try main_chunk.write(testing.allocator, 0, 0); // CallFlags
     try main_chunk.writeOp(testing.allocator, .op_return, 0);
     main_chunk.max_stack_slots = 4;
+    main_chunk.local_count = 2; // slot 0: the script closure, slot 1: the captured 42
 
     const final_val = try executeAndAssertStack(&vm, &main_chunk, 1);
     try testing.expect(final_val.isNumber());
@@ -758,6 +763,7 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     block_func.chunk = block_chunk;
     block_func.owns_chunk = false;
     block_func.arity = 1;
+    block_func.local_count = 2; // slot 0: the closure, slot 1: x
 
     // 2. Build the Parent Function: def do_yield() yield(21) end
     var parent_chunk = try testing.allocator.create(chunk.Chunk);

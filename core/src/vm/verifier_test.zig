@@ -266,3 +266,56 @@ test "Verifier: interpret refuses malformed bytecode instead of indexing out of 
 
     try testing.expectEqual(.compile_error, vm.interpret(&c));
 }
+
+test "Verifier: local and upvalue slots must lie in the frame and the closure" {
+    // Out-of-range slots used to reach the VM, where only debug builds assert.
+    const cases = [_]struct { bytes: []const u8, ok: bool }{
+        .{ .bytes = &.{ opByte(.op_get_local), 1 }, .ok = true },
+        .{ .bytes = &.{ opByte(.op_get_local), 2 }, .ok = false },
+        .{ .bytes = &.{ opByte(.op_nil), opByte(.op_set_local), 2 }, .ok = false },
+        .{ .bytes = &.{ opByte(.op_get_local_wide), 0x01, 0x00 }, .ok = false },
+        // A top-level chunk has no enclosing closure, so no upvalues.
+        .{ .bytes = &.{ opByte(.op_get_upvalue), 0 }, .ok = false },
+        .{ .bytes = &.{ opByte(.op_nil), opByte(.op_set_upvalue), 0 }, .ok = false },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("bytes: {any}\n", .{case.bytes});
+        var c = chunk.Chunk.init();
+        defer c.free(testing.allocator);
+        c.local_count = 2;
+        try chunkFrom(&c, case.bytes);
+        try c.writeOp(testing.allocator, .op_return, 0);
+        if (case.ok) try verifier.verifyChunk(&c) else try testing.expectError(error.InvalidSlot, verifier.verifyChunk(&c));
+    }
+}
+
+test "Verifier: a closure captures only its parent's locals and upvalues" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+
+    const cases = [_]struct { is_local: u8, index: u8, child_reads: u8, expected: ?anyerror }{
+        .{ .is_local = 1, .index = 1, .child_reads = 0, .expected = null },
+        .{ .is_local = 1, .index = 5, .child_reads = 0, .expected = error.InvalidSlot }, // no such local
+        .{ .is_local = 0, .index = 0, .child_reads = 0, .expected = error.InvalidSlot }, // the parent has no upvalues
+        .{ .is_local = 7, .index = 1, .child_reads = 0, .expected = error.CorruptedBytecode },
+        .{ .is_local = 1, .index = 1, .child_reads = 1, .expected = error.InvalidSlot }, // the child has one upvalue
+    };
+    for (cases) |case| {
+        var child = chunk.Chunk.init();
+        defer child.free(testing.allocator);
+        try chunkFrom(&child, &.{ opByte(.op_get_upvalue), case.child_reads, opByte(.op_return) });
+
+        const func = try vm.gc.allocateFunction(&vm);
+        func.chunk = &child;
+        func.owns_chunk = false;
+        func.upvalue_count = 1;
+
+        var parent = chunk.Chunk.init();
+        defer parent.free(testing.allocator);
+        parent.local_count = 2;
+        const func_idx = try parent.addConstant(testing.allocator, value.Value.initObj(&func.obj));
+        try chunkFrom(&parent, &.{ opByte(.op_closure), @intCast(func_idx), case.is_local, 0, case.index, opByte(.op_return) });
+
+        if (case.expected) |err| try testing.expectError(err, verifier.verifyChunk(&parent)) else try verifier.verifyChunk(&parent);
+    }
+}

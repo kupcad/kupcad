@@ -9,7 +9,24 @@ pub const VerifierError = error{
     InvalidJumpOffset,
     InvalidConstantIndex,
     InvalidInlineCacheIndex,
+    /// A local or upvalue slot outside the function's frame or closure.
+    InvalidSlot,
     OutOfMemory,
+};
+
+/// What a chunk's code may address: the slots of its frame and its closure's upvalues.
+/// Out-of-range slot operands used to reach the VM, where only debug builds assert.
+const Scope = struct {
+    local_count: usize,
+    upvalue_count: usize,
+
+    fn checkLocal(self: Scope, slot: usize) VerifierError!void {
+        if (slot >= self.local_count) return error.InvalidSlot;
+    }
+
+    fn checkUpvalue(self: Scope, slot: usize) VerifierError!void {
+        if (slot >= self.upvalue_count) return error.InvalidSlot;
+    }
 };
 
 /// Bytes per op_switch jump-table entry: 2-byte constant index + 4-byte jump offset.
@@ -26,8 +43,9 @@ pub fn verifyChunk(c: *const chunk.Chunk) VerifierError!void {
     return verifyChunkWithAllocator(std.heap.page_allocator, c);
 }
 
+/// A top-level chunk (a script or module) has no enclosing closure, so no upvalues.
 pub fn verifyChunkWithAllocator(allocator: std.mem.Allocator, c: *const chunk.Chunk) VerifierError!void {
-    return verifyChunkDepth(allocator, c, 0);
+    return verifyChunkDepth(allocator, c, .{ .local_count = c.local_count, .upvalue_count = 0 }, 0);
 }
 
 fn readU16(code: []const u8, at: usize) usize {
@@ -47,7 +65,7 @@ fn checkInlineCache(c: *const chunk.Chunk, code: []const u8, at: usize) Verifier
     if (readU16(code, at) >= c.inline_caches.items.len) return error.InvalidInlineCacheIndex;
 }
 
-fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, depth: usize) VerifierError!void {
+fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: Scope, depth: usize) VerifierError!void {
     if (depth > MAX_NESTED_CHUNK_DEPTH) return error.CorruptedBytecode;
 
     const code = c.code.items;
@@ -84,8 +102,20 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, depth: 
                 ip += 1;
             },
 
-            // 1-byte non-constant operand (slot, count, arity)
-            .op_get_local, .op_set_local, .op_build_array, .op_build_map, .op_build_range, .op_interpolate, .op_unpack, .op_get_upvalue, .op_set_upvalue => {
+            // 1-byte slot
+            .op_get_local, .op_set_local => {
+                if (ip + 1 > len) return error.OutOfBoundsRead;
+                try scope.checkLocal(code[ip]);
+                ip += 1;
+            },
+            .op_get_upvalue, .op_set_upvalue => {
+                if (ip + 1 > len) return error.OutOfBoundsRead;
+                try scope.checkUpvalue(code[ip]);
+                ip += 1;
+            },
+
+            // 1-byte non-constant operand (count, arity)
+            .op_build_array, .op_build_map, .op_build_range, .op_interpolate, .op_unpack => {
                 if (ip + 1 > len) return error.OutOfBoundsRead;
                 ip += 1;
             },
@@ -103,8 +133,15 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, depth: 
                 ip += 2;
             },
 
+            // 2-byte slot
+            .op_get_local_wide, .op_set_local_wide => {
+                if (ip + 2 > len) return error.OutOfBoundsRead;
+                try scope.checkLocal(readU16(code, ip));
+                ip += 2;
+            },
+
             // 2-byte non-constant operand
-            .op_get_local_wide, .op_set_local_wide, .op_build_array_wide, .op_build_map_wide, .op_pack_splat, .op_unpack_splat => {
+            .op_build_array_wide, .op_build_map_wide, .op_pack_splat, .op_unpack_splat => {
                 if (ip + 2 > len) return error.OutOfBoundsRead;
                 ip += 2;
             },
@@ -214,12 +251,22 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, depth: 
                 if (func_val.isObject() and func_val.asObj().obj_type == .function) {
                     const func_obj: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", func_val.asObj()));
                     if (ip + (func_obj.upvalue_count * UPVALUE_DESCRIPTOR_SIZE) > len) return error.OutOfBoundsRead;
-                    ip += func_obj.upvalue_count * UPVALUE_DESCRIPTOR_SIZE;
+                    // Each upvalue captures one of this frame's locals or one of its upvalues.
+                    for (0..func_obj.upvalue_count) |_| {
+                        const captured = readU16(code, ip + 1);
+                        switch (code[ip]) { // the VM's is_local flag
+                            1 => try scope.checkLocal(captured),
+                            0 => try scope.checkUpvalue(captured),
+                            else => return error.CorruptedBytecode,
+                        }
+                        ip += UPVALUE_DESCRIPTOR_SIZE;
+                    }
 
                     if (func_obj.chunk) |child_ptr| {
                         const child: *const chunk.Chunk = @ptrCast(@alignCast(child_ptr));
                         if (child == c) return error.CorruptedBytecode;
-                        try verifyChunkDepth(allocator, child, depth + 1);
+                        // The function sizes its frames (see VM.padClosureFrame), not its chunk.
+                        try verifyChunkDepth(allocator, child, .{ .local_count = func_obj.local_count, .upvalue_count = func_obj.upvalue_count }, depth + 1);
                     }
                 } else {
                     return error.CorruptedBytecode;
