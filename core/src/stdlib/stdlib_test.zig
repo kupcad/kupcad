@@ -656,6 +656,32 @@ test "Stdlib: the docs (0...3).each example builds three pegs" {
     }});
 }
 
+test "Stdlib: lambdas are called like methods and behave like blocks" {
+    try expectGlobalR(&.{
+        // The README's Lambdas example.
+        .{ .src = "double = ->(x) { x * 2 }\ndef apply(f, v)\n  f(v)\nend\nr = [double(4), apply(double, 5)]", .expected = .{ .nums = &.{ 8, 10 } } },
+        .{ .src = "plate = ->(w, h = 10, thickness: 2) do\n  cube(x: w, y: h, z: thickness)\nend\nr = plate(30, thickness: 3).volume", .expected = .{ .num = 900 } },
+        .{ .src = "def m(&blk)\n  blk(2)\nend\nr = m { |x| x * 3 }", .expected = .{ .num = 6 } },
+        // Lambdas are the only callables, and `.call` is not how they are called.
+        .{ .src = comptime rescued("proc { |x| x }"), .expected = .{ .str = "NameError: Undefined variable 'proc'" } },
+        .{ .src = comptime rescued("Proc.new { |x| x }"), .expected = .{ .str = "NameError: Undefined variable 'Proc'" } },
+        .{ .src = comptime rescued("lambda { |x| x }"), .expected = .{ .str = "NameError: Undefined variable 'lambda'" } },
+        .{ .src = "f = ->(x) { x }\nr = begin\n  f.call(1)\n  false\nrescue => e\n  true\nend", .expected = .{ .boolean = true } },
+        // `return` and `next` leave just the lambda or block, never the enclosing def.
+        .{ .src = "f = ->(x) do\n  return 10 if x > 0\n  20\nend\nr = [f(1), f(-1)]", .expected = .{ .nums = &.{ 10, 20 } } },
+        .{ .src = "f = ->() do\n  next 7\n  8\nend\nr = f()", .expected = .{ .num = 7 } },
+        .{ .src = "def m\n  f = ->() { return 5 }\n  f()\n  1\nend\nr = m", .expected = .{ .num = 1 } },
+        .{ .src = "def m\n  [1, 2, 3].each { |v| return v if v == 2 }\n  1\nend\nr = m", .expected = .{ .num = 1 } },
+        // Both are lenient about arguments, unlike a Ruby lambda.
+        .{ .src = "f = ->(x, y) { [x, y] }\nr = \"#{f(1)}\"", .expected = .{ .str = "[1, nil]" } },
+        .{ .src = "f = ->(x) { x }\nr = f(1, 2)", .expected = .{ .num = 1 } },
+        // Block parameters don't unpack arrays; `|(a, b)|` does, and a Map passes key and value.
+        .{ .src = "r = \"#{[[1, 2]].map { |a, b| [a, b] }}\"", .expected = .{ .str = "[[[1, 2], nil]]" } },
+        .{ .src = "r = [[1, 2]].map { |(a, b)| a + b }", .expected = .{ .nums = &.{3} } },
+        .{ .src = "r = \"#{{ x: 1 }.map { |k, v| [k, v] }}\"", .expected = .{ .str = "[[:x, 1]]" } },
+    });
+}
+
 test "Stdlib: Range#map keeps its result array and block results alive across GC" {
     var vm = try initVm();
     defer vm.deinit();

@@ -93,11 +93,36 @@ end
 
 `break value` inside a block ends the iteration and becomes the method's return value; `next` skips to the next element.
 
+### Lambdas
+
+A lambda is a block stored in a variable. Call it like a method:
+
+```ruby
+double = ->(x) { x * 2 }
+plate = ->(w, h = 10, thickness: 2) do
+  cube(x: w, y: h, z: thickness)
+end
+
+double(4)                   # 8
+plate(30, thickness: 3)     # defaults and keyword parameters work as in a def
+
+def apply(f, v)
+  f(v)                      # a lambda passed as an argument is called the same way
+end
+apply(double, 5)            # 10
+```
+
+Written without parentheses, `double` is the lambda itself (to store or pass along); `double()` calls it. A method's `&blk` parameter is called the same way (`blk(2)`), or with `yield`.
+
 ### Differences from Ruby
 
 KupCAD borrows Ruby's syntax but deliberately keeps a simpler model; these are design choices, not missing features:
 
-* **`return` inside a block leaves only the block**, not the enclosing `def`. Use `break value` to stop an iteration and hand back a result.
+* **Lambdas are the only callable objects.** Write `->(x) { ... }` or `-> do ... end`; there is no `proc`, `Proc.new` or `lambda { }`. A lambda is called like a method, `f(3)` or `f()`, not with `.call`, `.()` or `f[3]`.
+* **A lambda behaves exactly like a block.**
+  * `return value` and `next value` leave just the block or lambda with that value; neither returns from the enclosing `def`. Use `break value` to stop an iteration and hand back a result (`break` is only valid in a block given to an iterating method, not in a lambda).
+  * Both are lenient about arguments: missing ones are `nil` and extra ones are dropped, where a Ruby lambda would raise an `ArgumentError`.
+* **Block parameters don't unpack arrays automatically.** `[[1, 2]].map { |a, b| ... }` binds `a = [1, 2]` and `b = nil`; destructure explicitly with `|(a, b)|`. Iterating a Map passes the key and the value separately, so `{ x: 1 }.each { |k, v| ... }` works as in Ruby.
 * **Visibility is declared per method.** Write `private def helper ... end` (or `public def`); there are no section-style `private` / `protected` lines that change the visibility of the methods after them, and there is no `protected`. A private method can be called from inside its class (including on another instance of the same class) but not from outside.
 * **Methods on the current object are called through `self.`** — a bare `plate` inside a method is resolved as a variable, not as a method call.
 * **Methods can read top-level variables** (convenient for parametric scripts: `width = param(:width, ...)` is visible inside every `def`). Assigning inside a `def`, or inside a block within it, always creates a local, so a helper's scratch `x` never overwrites a top-level `x`. Top-level code, and blocks or lambdas written at the top level, do update top-level variables. `$name` is always global.

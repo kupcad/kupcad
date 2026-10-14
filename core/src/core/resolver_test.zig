@@ -208,6 +208,29 @@ test "Resolver: prevents break from escaping closure boundaries" {
     try testing.expectEqualStrings("Cannot use 'break' outside of a loop", diags.list.items[0].message);
 }
 
+test "Resolver: a lambda allows next but not break" {
+    // A lambda behaves like a block: `next` leaves it, but there is no iteration to break.
+    const source =
+        \\f = ->(x) { next x }
+        \\g = ->(x) { break x }
+    ;
+    var pt = try KTest.init(source);
+    defer pt.deinit();
+
+    const root_idx = try pt.parser.parseProgram();
+
+    var diags = errors.Diagnostics.init(testing.allocator);
+    defer diags.deinit();
+
+    var res = try resolver.Resolver.init(testing.allocator, &pt.parser.b.tree, pt.parser.tokens.starts, pt.parser.tokens.lengths, &diags);
+    defer res.deinit();
+
+    try res.resolve(root_idx);
+
+    try testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try testing.expectEqualStrings("Cannot use 'break' outside of a loop", diags.list.items[0].message);
+}
+
 test "Resolver: single-level upvalue capture" {
     const source =
         \\def outer(x)
