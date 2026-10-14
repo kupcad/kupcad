@@ -35,6 +35,11 @@ pub const LookupTarget = enum {
     class,
 };
 
+/// Backtraces list at most this many frames (see VM.BacktraceLines).
+const MAX_BACKTRACE_FRAMES = 32;
+/// Room for one backtrace line such as "    from script:12:3:in 'name'".
+const MAX_TRACE_LINE_LEN = 256;
+
 /// Values a call site pushes after its packed positional Array: the keyword Map and the block.
 const MAX_TRAILING_CALL_VALUES = 2;
 
@@ -3207,34 +3212,47 @@ pub const VM = struct {
         self.last_error = null;
     }
 
-    fn formatTraceLine(self: *VM, allocator: std.mem.Allocator, source_offset: u32, func_name: []const u8) ![]const u8 {
-        if (self.line_index) |li| {
-            const line = li.getLine(source_offset) + 1;
-            const col = li.getUtf8Column(source_offset) + 1;
-            return allocator.print("    from script:{d}:{d}:in '{s}'", .{ line, col, func_name });
-        } else {
-            return allocator.print("    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
+    /// The backtrace lines of the current frames, innermost first, formatted into a reused
+    /// buffer (valid until the next call to `next`). A deep recursion has up to
+    /// max_call_frames frames, so past MAX_BACKTRACE_FRAMES only the innermost and outermost
+    /// halves are listed, around one line counting the frames left out.
+    const BacktraceLines = struct {
+        vm: *VM,
+        /// Frames not listed yet, counted from the innermost (the top of `vm.frames`).
+        remaining: usize,
+        listed: usize = 0,
+        buf: [MAX_TRACE_LINE_LEN]u8 = undefined,
+
+        fn init(vm: *VM) BacktraceLines {
+            return .{ .vm = vm, .remaining = vm.frames.items.len };
         }
-    }
+
+        fn next(self: *BacktraceLines) ?[]const u8 {
+            if (self.remaining == 0) return null;
+            const total = self.vm.frames.items.len;
+            if (total > MAX_BACKTRACE_FRAMES and self.listed == MAX_BACKTRACE_FRAMES / 2) {
+                const omitted = total - MAX_BACKTRACE_FRAMES;
+                self.remaining -= omitted;
+                self.listed += 1;
+                return std.fmt.bufPrint(&self.buf, "    ... {d} frames omitted ...", .{omitted}) catch "    ...";
+            }
+            self.remaining -= 1;
+            self.listed += 1;
+            const frame = &self.vm.frames.items[self.remaining];
+            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(frame.closure.function.chunk.?));
+            const source_offset = exec_chunk.getOffset(if (frame.ip > 0) frame.ip - 1 else 0);
+            const func_name = if (frame.closure.function.name) |n| n.chars else "script";
+            const line = if (self.vm.line_index) |li|
+                std.fmt.bufPrint(&self.buf, "    from script:{d}:{d}:in '{s}'", .{ li.getLine(source_offset) + 1, li.getUtf8Column(source_offset) + 1, func_name })
+            else
+                std.fmt.bufPrint(&self.buf, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
+            return line catch "    from unknown";
+        }
+    };
 
     fn printStacktrace(self: *VM) void {
-        var i: usize = self.frames.items.len;
-        while (i > 0) {
-            i -= 1;
-            const frame = &self.frames.items[i];
-            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(frame.closure.function.chunk.?));
-
-            const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
-            const source_offset = exec_chunk.getOffset(instruction_ip);
-            const func_name = if (frame.closure.function.name) |n| n.chars else "script";
-
-            if (self.formatTraceLine(self.allocator, source_offset, func_name)) |trace_str| {
-                defer self.allocator.free(trace_str);
-                self.reportError("{s}\n", .{trace_str});
-            } else |_| {
-                self.reportError("    from unknown\n", .{});
-            }
-        }
+        var lines = BacktraceLines.init(self);
+        while (lines.next()) |line| self.reportError("{s}\n", .{line});
     }
 
     // --- First-Class Error Backtraces ---
@@ -3243,24 +3261,11 @@ pub const VM = struct {
         self.push(value.Value.initObj(&arr_obj.obj)); // Protect array from GC
         defer _ = self.pop();
 
-        var i: usize = self.frames.items.len;
-        while (i > 0) {
-            i -= 1;
-            const frame = &self.frames.items[i];
-            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(frame.closure.function.chunk.?));
-
-            const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
-            const source_offset = exec_chunk.getOffset(instruction_ip);
-            const func_name = if (frame.closure.function.name) |n| n.chars else "script";
-
-            // Not the scratch arena: a native raising an error may still be using it.
-            const formatted = self.formatTraceLine(self.allocator, source_offset, func_name) catch null;
-            defer if (formatted) |f| self.allocator.free(f);
-
-            const str_val = try self.allocateString(formatted orelse "    from unknown");
+        var lines = BacktraceLines.init(self);
+        while (lines.next()) |line| {
+            const str_val = try self.allocateString(line);
             try arr_obj.items.append(self.gc.trackingAllocator(), str_val);
         }
-
         return arr_obj;
     }
 

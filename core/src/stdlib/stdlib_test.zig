@@ -853,6 +853,20 @@ test "Stdlib: errors carry their real cause, never a generic message" {
     });
 }
 
+test "Stdlib: a deep backtrace lists its innermost and outermost frames only" {
+    // A stack overflow used to print and allocate all ~100,000 frames.
+    const deep = "def f(n)\n  raise \"deep\" if n == 0\n  f(n - 1)\nend\nr = begin\n  f(100)\nrescue => e\n  ";
+    try expectGlobalR(&.{
+        // 102 frames (the script and 101 calls of f): 16 + the omission line + 16.
+        .{ .src = deep ++ "e.backtrace.length\nend", .expected = .{ .num = 33 } },
+        .{ .src = deep ++ "e.backtrace[16]\nend", .expected = .{ .str = "    ... 70 frames omitted ..." } },
+        .{ .src = deep ++ "e.backtrace[32].split(\":\").last\nend", .expected = .{ .str = "in 'script'" } },
+        .{ .src = deep ++ "e.backtrace[0].split(\":\").last\nend", .expected = .{ .str = "in 'f'" } },
+        // A shallow one is complete.
+        .{ .src = "def g\n  raise \"x\"\nend\nr = begin\n  g\nrescue => e\n  e.backtrace.length\nend", .expected = .{ .num = 2 } },
+    });
+}
+
 test "Stdlib: block_given? works with or without parentheses" {
     // The bare form used to be looked up as a variable: NameError.
     const m = "def m(&b)\n  [block_given?, block_given?()]\nend\n";
