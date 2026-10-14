@@ -19,7 +19,7 @@ test "Driver: End-to-End API Calls" {
     defer driver.driver.destructFn(trans_handle);
 
     // Verify vertex count on working cube primitive
-    try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(cube_handle));
+    try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(cube_handle));
 }
 
 test "Driver: Custom Matrix Transformations" {
@@ -35,7 +35,7 @@ test "Driver: Custom Matrix Transformations" {
     const transformed = driver.driver.transformMatrixFn(cube_handle, translation_matrix) orelse return error.TransformFailed;
     defer driver.driver.destructFn(transformed);
 
-    try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(transformed));
+    try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(transformed));
 }
 
 test "Driver: Mirror Solid" {
@@ -45,7 +45,7 @@ test "Driver: Mirror Solid" {
     const mirrored_handle = driver.driver.mirrorFn(cube_handle, 1, 0, 0) orelse return error.MirrorFailed;
     defer driver.driver.destructFn(mirrored_handle);
 
-    try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(mirrored_handle));
+    try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(mirrored_handle));
 }
 
 // --- Mesh & Sweeps Import/Generation ---
@@ -60,7 +60,7 @@ test "Driver: Polyhedron Import (Mesh to B-Rep)" {
     const poly_handle = driver.driver.polyhedronFn(std.testing.allocator, &pts, &faces) orelse return error.PolyhedronFailed;
     defer driver.driver.destructFn(poly_handle);
 
-    try std.testing.expectEqual(@as(i32, 5), driver.driver.numVertsFn(poly_handle));
+    try std.testing.expectEqual(@as(usize, 5), driver.driver.numVertsFn(poly_handle));
 }
 
 test "Driver: Revolve 2D Profile" {
@@ -70,7 +70,7 @@ test "Driver: Revolve 2D Profile" {
     const rev_handle = driver.driver.revolveFn(cs_handle, 36, 360.0) orelse return error.RevolveFailed;
     defer driver.driver.destructFn(rev_handle);
 
-    try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(rev_handle));
+    try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(rev_handle));
 }
 
 // --- 2D Cross Sections & Booleans ---
@@ -92,7 +92,7 @@ test "Driver: 2D Operations (Boolean, Transform)" {
     const final_solid = driver.driver.extrudeFn(union_2d, 10, 0, 0, 1, 1) orelse return error.ExtrudeFailed;
     defer driver.driver.destructFn(final_solid);
 
-    try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(final_solid));
+    try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(final_solid));
 }
 
 test "Driver: Polygons Even-Odd" {
@@ -122,7 +122,7 @@ test "Driver: Slice Solid to 2D" {
     const res = driver.driver.extrudeFn(cs, 10.0, 0, 0, 1.0, 1.0) orelse return error.Extrude;
     defer driver.driver.destructFn(res);
 
-    try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(res));
+    try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(res));
 }
 
 // --- Convex Hulls & Queries ---
@@ -134,7 +134,7 @@ test "Driver: Convex Hull (Single and Batch)" {
     const hull1 = driver.driver.hullFn(cube1) orelse return error.Hull;
     defer driver.driver.destructFn(hull1);
 
-    try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(hull1));
+    try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(hull1));
 
     // Hull of two disjoint boxes along X is a single box: 8 corners.
     const cube2 = driver.driver.translateFn(cube1, 20, 0, 0) orelse return error.Translate;
@@ -142,7 +142,7 @@ test "Driver: Convex Hull (Single and Batch)" {
     const hull2 = driver.driver.batchHullFn(std.testing.allocator, &.{ cube1, cube2 }) orelse return error.Hull;
     defer driver.driver.destructFn(hull2);
 
-    try std.testing.expectEqual(@as(i32, 8), driver.driver.numVertsFn(hull2));
+    try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(hull2));
 }
 
 test "Driver: STEP Export of CSG Boolean Result" {

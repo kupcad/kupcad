@@ -741,18 +741,18 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     };
 }
 
-fn numVertsImpl(handle: geom.GeometryHandle) i32 {
+fn numVertsImpl(handle: geom.GeometryHandle) usize {
     std.debug.assert(handle.engine == .brep_native);
     if (@intFromPtr(handle.ptr) == 0) return 0;
     const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
-    return @intCast(solid.t_arena.vertices.items.len);
+    return solid.t_arena.vertices.items.len;
 }
 
-fn numTrisImpl(handle: geom.GeometryHandle) i32 {
+fn numTrisImpl(handle: geom.GeometryHandle) usize {
     std.debug.assert(handle.engine == .brep_native);
     if (@intFromPtr(handle.ptr) == 0) return 0;
     const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
-    return @intCast(solid.t_arena.faces.items.len);
+    return solid.t_arena.faces.items.len;
 }
 
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {

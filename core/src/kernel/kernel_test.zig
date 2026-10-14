@@ -45,7 +45,7 @@ test "Kernel Dispatcher: routes primitives to the requested engine" {
 
         // The returned handle is tagged with, and usable by, the requested engine.
         try testing.expectEqual(engine, handle.engine);
-        try testing.expectEqual(@as(i32, 8), kernel.numVerts(handle));
+        try testing.expectEqual(@as(usize, 8), kernel.numVerts(handle));
     }
 }
 

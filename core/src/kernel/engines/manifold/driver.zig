@@ -635,13 +635,13 @@ fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.
     };
 }
 
-fn numVertsImpl(handle: geom.GeometryHandle) i32 {
+fn numVertsImpl(handle: geom.GeometryHandle) usize {
     std.debug.assert(handle.engine == .manifold);
     if (@intFromPtr(handle.ptr) == 0) return 0;
     return manifold.numVert(@ptrCast(@alignCast(handle.ptr)));
 }
 
-fn numTrisImpl(handle: geom.GeometryHandle) i32 {
+fn numTrisImpl(handle: geom.GeometryHandle) usize {
     std.debug.assert(handle.engine == .manifold);
     if (@intFromPtr(handle.ptr) == 0) return 0;
     return manifold.numTri(@ptrCast(@alignCast(handle.ptr)));

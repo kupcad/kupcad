@@ -142,7 +142,7 @@ extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumPr
 
 extern fn manifold_transform_array(mem: ?*ManifoldObj, m: ?*ManifoldObj, mat: [*]const f64) ?*ManifoldObj;
 
-extern fn manifold_num_vert(m: ?*ManifoldObj) c_int;
+extern fn manifold_num_vert(m: ?*ManifoldObj) usize;
 extern fn manifold_status(m: ?*ManifoldObj) Status;
 
 /// manifoldc's ManifoldError: why Manifold rejected or could not build a mesh.
@@ -168,7 +168,7 @@ pub const Status = enum(c_int) {
 pub fn status(m: ?*ManifoldObj) Status {
     return manifold_status(m);
 }
-extern fn manifold_num_tri(m: ?*ManifoldObj) c_int;
+extern fn manifold_num_tri(m: ?*ManifoldObj) usize;
 
 // ==========================================
 // Zig Idiomatic Wrappers
@@ -487,10 +487,12 @@ pub fn polygon(points: []const ManifoldVec2) ?*ManifoldCrossSection {
     return manifold_cross_section_of_simple_polygon(manifold_alloc_cross_section(), p);
 }
 
-pub fn numVert(m: ?*ManifoldObj) i32 {
+// manifoldc returns size_t; these were declared c_int, which read past 2^31 as negative
+// and so slipped under the vertex limit.
+pub fn numVert(m: ?*ManifoldObj) usize {
     return manifold_num_vert(m);
 }
-pub fn numTri(m: ?*ManifoldObj) i32 {
+pub fn numTri(m: ?*ManifoldObj) usize {
     return manifold_num_tri(m);
 }
 

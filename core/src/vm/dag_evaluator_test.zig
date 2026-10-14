@@ -421,7 +421,7 @@ test "DAG Evaluator: B-Rep engine config yields a B-Rep cube" {
     const handle = try dag_evaluator.evaluateDAG(&vm, cube_idx);
 
     try testing.expectEqual(geom.EngineType.brep_native, handle.engine);
-    try testing.expectEqual(@as(i32, 8), kernel.numVerts(handle));
+    try testing.expectEqual(@as(usize, 8), kernel.numVerts(handle));
 }
 
 test "DAG Evaluator: cache is keyed by engine" {
