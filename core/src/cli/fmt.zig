@@ -16,7 +16,9 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer setup.deinit(allocator);
 
     var run: FmtRun = .{ .config = setup.config.fmt };
-    run.failed += try walker.walkPaths(init.io, allocator, setup.options.paths.items, &run, processFile);
+    // Added after the walk: processFile updates `run.failed` itself (see check.zig).
+    const unreadable = try walker.walkPaths(init.io, allocator, setup.options.paths.items, &run, processFile);
+    run.failed += unreadable;
     return if (run.failed > 0) .failure else .success;
 }
 

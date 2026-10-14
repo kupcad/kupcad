@@ -38,8 +38,9 @@ pub fn write(w: *std.Io.Writer, r: Report) std.Io.Writer.Error!void {
     try w.print("{s}\n\n", .{Color.reset});
 }
 
-/// Writes every parse diagnostic of `doc` as an error and returns how many there were.
-pub fn writeSyntaxErrors(w: *std.Io.Writer, file_path: []const u8, source: []const u8, doc: *const Document) std.Io.Writer.Error!usize {
+/// Writes every diagnostic of `doc` (syntax and resolver errors) as an error and returns
+/// how many there were.
+pub fn writeErrors(w: *std.Io.Writer, file_path: []const u8, source: []const u8, doc: *const Document) std.Io.Writer.Error!usize {
     for (doc.diagnostics) |d| {
         try write(w, .{
             .file_path = file_path,

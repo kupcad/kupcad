@@ -263,9 +263,28 @@ test "build_cmd: syntax errors are reported with file, line, column and a caret"
         errdefer std.debug.print("missing {s} in:\n{s}\n", .{ needle, text });
         try testing.expect(std.mem.indexOf(u8, text, needle) != null);
     }
-    const summary = try std.fmt.allocPrint(testing.allocator, "Build failed: 2 syntax errors in {s}\n", .{fx.input});
+    const summary = try std.fmt.allocPrint(testing.allocator, "Build failed: 2 errors in {s}\n", .{fx.input});
     defer testing.allocator.free(summary);
     try testing.expect(std.mem.endsWith(u8, text, summary));
+}
+
+test "build_cmd: resolver errors are reported like syntax errors" {
+    // A `break` in a lambda used to fail with "Build failed: 0 syntax errors" and no message.
+    var fx = try Fixture.init("f = ->(x) { break x }\ncube(1)\n");
+    defer fx.deinit();
+    var res = try fx.build();
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+
+    const text = res.text();
+    const location = try std.fmt.allocPrint(testing.allocator, "{s}:1:13:", .{fx.input});
+    defer testing.allocator.free(location);
+    const summary = try std.fmt.allocPrint(testing.allocator, "Build failed: 1 error in {s}\n", .{fx.input});
+    defer testing.allocator.free(summary);
+    for ([_][]const u8{ location, "Cannot use 'break' outside of a loop\nf = ->(x) { break x }\n", summary }) |needle| {
+        errdefer std.debug.print("missing {s} in:\n{s}\n", .{ needle, text });
+        try testing.expect(std.mem.indexOf(u8, text, needle) != null);
+    }
 }
 
 test "build_cmd: unknown options, a missing -o value and extra inputs are rejected" {

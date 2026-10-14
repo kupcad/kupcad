@@ -285,3 +285,33 @@ test "ScriptSession: gracefully halts evaluation on syntax error and leaves down
     try testing.expect(a_node.is_stale);
     try testing.expect(b_node.is_stale);
 }
+
+test "ScriptSession: keeps the failing parse, with resolver errors, until the next evaluation" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    session.vm.vfs = mem_vfs.vfs();
+
+    // Valid syntax, but the resolver rejects it; the workspace's own parse skips the
+    // resolver, so the build used to report "0 syntax errors" and no message.
+    const bad = "f = ->(x) { break x }\ncube(1)";
+    try mem_vfs.vfs().writeFile("./a.kup", bad);
+    const a_id = try session.workspace.addModule("./a.kup", bad);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+
+    try testing.expectError(error.ParseError, session.evaluateWorkspace());
+    const failure = session.failure orelse return error.MissingFailure;
+    try testing.expectEqual(a_id, failure.module);
+    try testing.expectEqual(@as(usize, 1), failure.doc.diagnostics.len);
+    try testing.expectEqualStrings("Cannot use 'break' outside of a loop", failure.doc.diagnostics[0].message);
+
+    const good = "cube(1)";
+    try mem_vfs.vfs().writeFile("./a.kup", good);
+    try session.workspace.updateModuleSource(a_id, good);
+    try session.markFileEdited("./a.kup");
+    try session.evaluateWorkspace();
+    try testing.expect(session.failure == null);
+}

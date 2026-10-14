@@ -30,6 +30,14 @@ pub const SessionNode = struct {
     }
 };
 
+/// A module whose source has errors: syntax errors, or ones the resolver finds (such as
+/// `break` outside a loop). `doc` is the parse that reported them (the workspace's own
+/// copy of a module is parsed without the resolver, so it lacks the latter).
+pub const Failure = struct {
+    module: ModuleId,
+    doc: api.Document,
+};
+
 pub const ScriptSession = struct {
     allocator: std.mem.Allocator,
     workspace: Workspace,
@@ -42,9 +50,8 @@ pub const ScriptSession = struct {
     // Reverse Adjacency List: ModuleId -> Parent ModuleIds
     reverse_deps: std.AutoHashMapUnmanaged(ModuleId, std.ArrayListUnmanaged(ModuleId)) = .empty,
 
-    /// The module whose syntax errors stopped the last evaluation (error.ParseError);
-    /// its diagnostics are in that module's `doc`, so callers can show them.
-    failed_module: ?ModuleId = null,
+    /// What stopped the last evaluation with error.ParseError, so callers can show it.
+    failure: ?Failure = null,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !ScriptSession {
         return .{
@@ -62,8 +69,14 @@ pub const ScriptSession = struct {
         while (it.next()) |entry| entry.value_ptr.deinit(self.allocator);
         self.reverse_deps.deinit(self.allocator);
         self.nodes.deinit(self.allocator);
+        self.clearFailure();
         self.workspace.deinit();
         self.vm.deinit();
+    }
+
+    fn clearFailure(self: *ScriptSession) void {
+        if (self.failure) |*f| f.doc.deinit();
+        self.failure = null;
     }
 
     /// Step 1: Import Graph Construction
@@ -111,7 +124,7 @@ pub const ScriptSession = struct {
     pub fn evaluateWorkspace(self: *ScriptSession) !void {
         // Reset cancellation token at the start of a fresh evaluation
         self.vm.cancel_token.store(false, .release);
-        self.failed_module = null;
+        self.clearFailure();
 
         const sorted = try self.workspace.sortModules();
         defer self.allocator.free(sorted);
@@ -160,12 +173,12 @@ pub const ScriptSession = struct {
             log.err("Parse failed for module '{s}': {}", .{ mod.path, err });
             return err;
         };
-        defer doc.deinit();
-
         if (doc.diagnostics.len > 0) {
-            self.failed_module = mod_id;
+            self.clearFailure();
+            self.failure = .{ .module = mod_id, .doc = doc }; // the session owns it now
             return error.ParseError;
         }
+        defer doc.deinit();
 
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(self.allocator);

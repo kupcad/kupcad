@@ -27,8 +27,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         .compiler_memory_limit = setup.config.compiler_memory_limit, // Hook it up
     };
 
-    // A path that can't be read is an error, not "0 files, no issues".
-    totals.errors += try walker.walkPaths(init.io, allocator, setup.options.paths.items, &totals, processFile);
+    // A path that can't be read is an error, not "0 files, no issues". The count is added
+    // after the walk: processFile updates `totals` itself, and `totals.errors += walk()`
+    // would read the old count first and overwrite those updates.
+    const unreadable = try walker.walkPaths(init.io, allocator, setup.options.paths.items, &totals, processFile);
+    totals.errors += unreadable;
 
     if (totals.errors == 0 and totals.warnings == 0 and totals.infos == 0) {
         log_helpers.printStdout(init.io, "\n{s}Success: No CAD geometry, syntax, or semantic issues found across {d} file(s).{s}\n", .{ Color.green, totals.files, Color.reset });

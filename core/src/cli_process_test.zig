@@ -36,7 +36,8 @@ fn kupcad(cwd: []const u8, args: []const []const u8) !Run {
     return .{ .code = code, .stdout = res.stdout, .stderr = res.stderr };
 }
 
-/// A temp dir holding `valid.kup`; tests run kupcad inside it.
+/// A temp dir holding `valid.kup`, `semantic_error.kup` and `syntax_error.kup`; tests
+/// run kupcad inside it.
 const Sandbox = struct {
     tmp: testing.TmpDir,
     path: [:0]u8,
@@ -45,6 +46,8 @@ const Sandbox = struct {
         var tmp = testing.tmpDir(.{});
         errdefer tmp.cleanup();
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "valid.kup", .data = VALID_SCRIPT });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "semantic_error.kup", .data = "f = ->(x) { break x }\ncube(1)\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "syntax_error.kup", .data = "x = )\n" });
         const path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
         return .{ .tmp = tmp, .path = path };
     }
@@ -112,6 +115,18 @@ test "kupcad: every command exits non-zero when it fails" {
         .{ .args = &.{ "dev", "frobnicate" }, .code = 1, .contains = "Unknown dev subcommand" },
         .{ .args = &.{ "build", "valid.kup", "--bogus" }, .code = 1, .contains = "Unknown option '--bogus'" },
         .{ .args = &.{ "build", "valid.kup", "-o" }, .code = 1, .contains = "Missing output path after -o" },
+    });
+}
+
+test "kupcad: errors found in a file fail the command and are counted" {
+    // check printed a resolver error but summarised "0 errors" and exited 0, and fmt
+    // exited 0 on a file it could not format: each command's walk overwrote the count
+    // its per-file callback had kept. build printed "Build failed: 0 syntax errors".
+    try expectRuns(&.{
+        .{ .args = &.{ "check", "semantic_error.kup" }, .code = 1, .contains = "1 file(s) inspected, \x1b[31m1 errors" },
+        .{ .args = &.{ "check", "syntax_error.kup" }, .code = 1, .contains = "Invalid expression starting with ')'" },
+        .{ .args = &.{ "fmt", "syntax_error.kup" }, .code = 1 },
+        .{ .args = &.{ "build", "semantic_error.kup", "-o", "out.stl" }, .code = 1, .contains = "Cannot use 'break' outside of a loop" },
     });
 }
 

@@ -5,8 +5,8 @@ const log_helpers = @import("../log.zig");
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const diagnostic_report = @import("diagnostic_report.zig");
-const ScriptSession = @import("../daemon/session.zig").ScriptSession;
-const ModuleId = @import("../core/workspace.zig").ModuleId;
+const session_mod = @import("../daemon/session.zig");
+const ScriptSession = session_mod.ScriptSession;
 
 /// Formats `build` can write. Tag names are what `--format` accepts and what
 /// `api.exportModelFromVm` expects.
@@ -83,14 +83,14 @@ pub const Reporter = struct {
     }
 };
 
-/// Prints a module's syntax errors the way `kupcad check` does (file:line:col, the
-/// source line and a caret), then a one-line summary.
-fn reportSyntaxErrors(allocator: std.mem.Allocator, session: *const ScriptSession, mod_id: ModuleId, reporter: Reporter) !void {
-    const mod = &session.workspace.modules.items[@backingInt(mod_id)];
+/// Prints a module's errors the way `kupcad check` does (file:line:col, the source line
+/// and a caret), then a one-line summary.
+fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, failure: *const session_mod.Failure, reporter: Reporter) !void {
+    const mod = &session.workspace.modules.items[@backingInt(failure.module)];
     var rendered: std.Io.Writer.Allocating = .init(allocator);
     defer rendered.deinit();
-    const count = try diagnostic_report.writeSyntaxErrors(&rendered.writer, mod.path, mod.source, &mod.doc);
-    reporter.err("{s}Build failed: {d} syntax error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", mod.path });
+    const count = try diagnostic_report.writeErrors(&rendered.writer, mod.path, mod.source, &failure.doc);
+    reporter.err("{s}Build failed: {d} error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", mod.path });
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
@@ -217,8 +217,8 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
 
     // Perform Kahn's Topological Sort to execute dependencies from bottom to top
     session.evaluateWorkspace() catch |err| {
-        if (err == error.ParseError) if (session.failed_module) |mod_id| {
-            try reportSyntaxErrors(allocator, session, mod_id, reporter);
+        if (err == error.ParseError) if (session.failure) |*failure| {
+            try reportErrors(allocator, session, failure, reporter);
             return .failure;
         };
         reporter.err("Build failed: {}\n", .{err});
