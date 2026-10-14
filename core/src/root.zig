@@ -93,6 +93,7 @@ test {
 
     // Formatter Tests
     _ = @import("tools/fmt/formatter_test.zig");
+    _ = @import("tools/fmt/equivalence_test.zig");
     _ = @import("tools/fmt/rules/sort_imports_test.zig");
 
     // Linter Tests

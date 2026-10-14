@@ -10,6 +10,7 @@ const profiler_mod = @import("vm/profiler.zig");
 const geom = @import("kernel/geometry_handle.zig");
 const Vfs = @import("vfs/vfs.zig").Vfs;
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
+const equivalence = @import("tools/fmt/equivalence.zig");
 const Linter = @import("tools/lint/linter.zig").Linter;
 const stl_exporter = @import("exporters/3d/stl.zig");
 const gltf_exporter = @import("exporters/3d/gltf.zig");
@@ -24,13 +25,31 @@ pub const LinterDiagnostic = @import("tools/lint/linter.zig").LinterDiagnostic;
 pub const Diagnostic = @import("core/errors.zig").Diagnostic;
 
 /// Formats an already parsed Document. Caller owns the returned slice.
+/// Formats a parsed Document. The result is checked before it is returned: it must parse,
+/// mean the same program (tools/fmt/equivalence.zig) and keep every comment in order.
+/// Otherwise the formatter has a bug, reported as error.FormatChangedProgram, and the
+/// caller keeps the source as it was rather than overwrite it.
 pub fn formatDocument(allocator: std.mem.Allocator, doc: *const Document, config: FormatterConfig) ![]const u8 {
     if (doc.diagnostics.len > 0) return error.SyntaxError;
     if (doc.tree.root == .none) return error.SyntaxError;
     var formatter = Formatter.init(allocator, doc.tokens.starts, &doc.line_index, doc.comments, config);
     defer formatter.deinit();
     try formatter.registerDefaultRules();
-    return formatter.format(&doc.tree, doc.tree.root);
+    const formatted = try formatter.format(&doc.tree, doc.tree.root);
+    errdefer allocator.free(formatted);
+    if (!try formatKeepsProgram(allocator, doc, formatted)) return error.FormatChangedProgram;
+    return formatted;
+}
+
+/// Whether `formatted` parses, keeps `doc`'s comments in order and is the same program.
+pub fn formatKeepsProgram(allocator: std.mem.Allocator, doc: *const Document, formatted: []const u8) !bool {
+    var reparsed = try Document.parse(allocator, formatted);
+    defer reparsed.deinit();
+    if (reparsed.diagnostics.len > 0 or reparsed.comments.len != doc.comments.len) return false;
+    for (doc.comments, reparsed.comments) |before, after| {
+        if (!std.mem.eql(u8, before.lexeme, after.lexeme)) return false;
+    }
+    return equivalence.samePrograms(allocator, &doc.tree, &reparsed.tree);
 }
 
 /// Formats raw KupCAD source code (Convenience wrapper).
