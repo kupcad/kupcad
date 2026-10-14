@@ -515,3 +515,20 @@ test "Manifold Driver: problem reports why a mesh is invalid, and nothing for a 
     const reason = driver.driver.problemFn(bad) orelse return error.ExpectedProblem;
     try std.testing.expect(std.mem.indexOf(u8, reason, "not a closed manifold") != null);
 }
+
+test "Manifold Driver: a sketch's area counts its holes, and its bounds follow it off the origin" {
+    // Both are read from the sketch itself; they used to come from a throwaway extrusion.
+    const outer = driver.driver.squareFn(10.0, 10.0, true) orelse return error.SqFailed;
+    defer driver.driver.destructCrossSectionFn(outer);
+    const hole = driver.driver.squareFn(4.0, 4.0, true) orelse return error.SqFailed;
+    defer driver.driver.destructCrossSectionFn(hole);
+    const ring = driver.driver.crossSectionBooleanFn(outer, hole, .difference_op) orelse return error.Failed;
+    defer driver.driver.destructCrossSectionFn(ring);
+    try testing.expectApproxEqAbs(@as(f64, 84.0), driver.driver.crossSectionAreaFn(ring), 1e-9);
+
+    const moved = driver.driver.crossSectionTransformFn(ring, .{ 1, 0, 0, 1, 20, -3 }) orelse return error.Failed;
+    defer driver.driver.destructCrossSectionFn(moved);
+    const b = driver.driver.crossSectionBoundsFn(moved);
+    try testing.expectEqual([2]f64{ 15, -8 }, b.min);
+    try testing.expectEqual([2]f64{ 25, 2 }, b.max);
+}

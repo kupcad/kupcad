@@ -30,10 +30,8 @@ pub const ManifoldManifoldPair = extern struct {
     second: ?*ManifoldObj,
 };
 
-pub const ManifoldRect = extern struct {
-    min: ManifoldVec2,
-    max: ManifoldVec2,
-};
+/// Opaque in manifoldc: read through manifold_rect_min / manifold_rect_max.
+pub const ManifoldRect = opaque {};
 
 pub const ManifoldRayHitVec = opaque {};
 pub const ManifoldRayHit = extern struct {
@@ -92,8 +90,10 @@ extern fn manifold_cross_section_square(mem: ?*ManifoldCrossSection, x: f64, y: 
 extern fn manifold_cross_section_circle(mem: ?*ManifoldCrossSection, radius: f64, circular_segments: c_int) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_to_polygons(mem: ?*ManifoldPolygons, cs: ?*ManifoldCrossSection) ?*ManifoldPolygons;
 extern fn manifold_cross_section_of_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
-extern fn manifold_cross_section_area(cs: ?*const anyopaque) f64;
-extern fn manifold_cross_section_bounds(mem: ?*ManifoldRect, cs: ?*const anyopaque) ?*ManifoldRect;
+extern fn manifold_cross_section_area(cs: ?*ManifoldCrossSection) f64;
+extern fn manifold_cross_section_bounds(mem: ?*ManifoldRect, cs: ?*ManifoldCrossSection) ?*ManifoldRect;
+extern fn manifold_rect_min(r: ?*ManifoldRect) ManifoldVec2;
+extern fn manifold_rect_max(r: ?*ManifoldRect) ManifoldVec2;
 
 extern fn manifold_transform(mem: ?*ManifoldObj, m: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj;
 extern fn manifold_cross_section_transform(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) ?*ManifoldCrossSection;
@@ -354,19 +354,16 @@ pub fn polygonsGetPoint(ps: ?*ManifoldPolygons, simple_idx: usize, pt_idx: usize
     return manifold_polygons_get_point(ps, simple_idx, pt_idx);
 }
 
-pub fn crossSectionArea(cs: ?*const anyopaque) f64 {
+pub fn crossSectionArea(cs: ?*ManifoldCrossSection) f64 {
     return manifold_cross_section_area(cs);
 }
 
-pub fn crossSectionBounds(cs: ?*const anyopaque) ManifoldRect {
-    const rect_mem = manifold_alloc_rect();
-    defer manifold_delete_rect(rect_mem);
+pub const Bounds2D = struct { min: ManifoldVec2, max: ManifoldVec2 };
 
-    const ptr = manifold_cross_section_bounds(rect_mem, cs);
-    if (ptr == null) {
-        return .{ .min = .{ .x = 0.0, .y = 0.0 }, .max = .{ .x = 0.0, .y = 0.0 } };
-    }
-    return ptr.*;
+pub fn crossSectionBounds(cs: ?*ManifoldCrossSection) Bounds2D {
+    const rect = manifold_cross_section_bounds(manifold_alloc_rect(), cs);
+    defer manifold_delete_rect(rect);
+    return .{ .min = manifold_rect_min(rect), .max = manifold_rect_max(rect) };
 }
 
 pub fn extrude(cs: ?*ManifoldCrossSection, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?*ManifoldObj {

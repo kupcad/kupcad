@@ -161,12 +161,11 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+/// Read from the sketch itself. Both this and the bounds used to extrude a throwaway
+/// solid on every call and measure that.
 fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
     if (@intFromPtr(handle.ptr) == 0) return 0.0;
-    const cs: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(handle.ptr));
-    const temp_3d = manifold.extrude(cs, 1.0, 1, 0.0, 1.0, 1.0) orelse return 0.0;
-    defer manifold.destruct(temp_3d);
-    return manifold.volume(temp_3d);
+    return manifold.crossSectionArea(@ptrCast(@alignCast(handle.ptr)));
 }
 
 /// The contours of a cross section, read in place through manifoldc (no copies).
@@ -237,14 +236,8 @@ const ContourRing = struct {
 
 fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
     if (@intFromPtr(handle.ptr) == 0) return .{ .min = .{ 0.0, 0.0 }, .max = .{ 0.0, 0.0 } };
-    const cs: *manifold.ManifoldCrossSection = @ptrCast(@alignCast(handle.ptr));
-    const temp_3d = manifold.extrude(cs, 1.0, 1, 0.0, 1.0, 1.0) orelse return .{ .min = .{ 0.0, 0.0 }, .max = .{ 0.0, 0.0 } };
-    defer manifold.destruct(temp_3d);
-    const box = manifold.boundingBox(temp_3d);
-    return .{
-        .min = .{ box.min[0], box.min[1] },
-        .max = .{ box.max[0], box.max[1] },
-    };
+    const b = manifold.crossSectionBounds(@ptrCast(@alignCast(handle.ptr)));
+    return .{ .min = .{ b.min.x, b.min.y }, .max = .{ b.max.x, b.max.y } };
 }
 
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
