@@ -89,7 +89,7 @@ fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, fai
     const mod = &session.workspace.modules.items[@backingInt(failure.module)];
     var rendered: std.Io.Writer.Allocating = .init(allocator);
     defer rendered.deinit();
-    const count = try diagnostic_report.writeErrors(&rendered.writer, mod.path, mod.source, &failure.doc);
+    const count = try diagnostic_report.writeErrors(&rendered.writer, allocator, mod.path, mod.source, failure.diagnostics);
     reporter.err("{s}Build failed: {d} error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", mod.path });
 }
 
@@ -217,7 +217,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
 
     // Perform Kahn's Topological Sort to execute dependencies from bottom to top
     session.evaluateWorkspace() catch |err| {
-        if (err == error.ParseError) if (session.failure) |*failure| {
+        if (err == error.ParseError or err == error.CompileError) if (session.failure) |*failure| {
             try reportErrors(allocator, session, failure, reporter);
             return .failure;
         };

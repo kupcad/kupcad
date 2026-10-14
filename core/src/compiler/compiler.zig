@@ -4,6 +4,7 @@ const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const limits = @import("../core/limits.zig");
+const common_errors = @import("../core/errors.zig");
 const resolver = @import("../core/resolver.zig");
 const verifier = @import("../vm/verifier.zig");
 const VM = @import("../vm/vm.zig").VM;
@@ -37,6 +38,40 @@ pub const CompileError = error{
     TooManyInlineCaches,
 };
 
+/// Room for a compile error message such as "'cube' is a built-in and can't be assigned".
+const MAX_FAILURE_MESSAGE_LEN = 192;
+
+/// The first error of a failed compile: where it happened and what went wrong, for callers
+/// to report like a syntax error (Compiler.errorDiagnostic). Before, they could only print
+/// the error name, such as "error.ProtectedSymbol".
+pub const CompileFailure = struct {
+    /// Byte offset of the node being compiled.
+    offset: u32,
+    buf: [MAX_FAILURE_MESSAGE_LEN]u8 = undefined,
+    len: usize = 0,
+
+    pub fn message(self: *const CompileFailure) []const u8 {
+        return self.buf[0..self.len];
+    }
+};
+
+/// What a compile error means to the script's author, when its raise site didn't say more.
+fn describeError(err: CompileError) []const u8 {
+    return switch (err) {
+        error.OutOfMemory => "out of memory while compiling",
+        error.TooManyConstants => "this function has too many constants (literals and names); split it up",
+        error.TooManyLocals => std.fmt.comptimePrint("too many variables in one function (at most {d}, and {d} captured from outside)", .{ limits.MAX_LOCALS, limits.MAX_UPVALUES }),
+        error.TooManyArguments => std.fmt.comptimePrint("a call takes at most {d} arguments", .{limits.MAX_ARGS}),
+        error.TooManyParameters => std.fmt.comptimePrint("a function takes at most {d} parameters", .{limits.MAX_ARGS}),
+        error.TooManyInlineCaches => std.fmt.comptimePrint("too many method calls in one script (at most {d})", .{limits.MAX_INLINE_CACHES}),
+        error.AstTooDeep => "the code is nested too deeply",
+        error.UnexpectedBlock => "a call takes one block: a &block argument or a do/{ } block, not both",
+        error.ProtectedSymbol => "a built-in name can't be redefined",
+        error.VariableAlreadyDeclared => "this name is already defined",
+        error.UnknownNode, error.UnsupportedScope, error.CorruptedBytecode => "internal compiler error",
+    };
+}
+
 /// How many values a call pushed for its arguments, and how (see chunk.CallFlags).
 const CallArgs = struct {
     count: usize,
@@ -61,6 +96,9 @@ pub const Compiler = struct {
     current_source_offset: u32, // Implictly passed to Chunk
     current_chunk: *chunk.Chunk,
     vm: *VM,
+
+    /// Set on the root compiler when compiling fails (see CompileFailure).
+    failure: ?CompileFailure = null,
 
     // Lexical Scope Tracking
     enclosing: ?*Compiler = null,
@@ -189,6 +227,32 @@ pub const Compiler = struct {
     // --- Compilation Engine ---
 
     pub fn compile(self: *Compiler, root: ast.NodeIndex) CompileError!void {
+        self.compileRoot(root) catch |err| return self.fail(err, "{s}", .{describeError(err)});
+    }
+
+    /// The first compile error as a diagnostic (its message lives as long as the compiler).
+    pub fn errorDiagnostic(self: *const Compiler) ?common_errors.Diagnostic {
+        const failure = if (self.failure) |*f| f else return null;
+        return .{ .loc = .{ .offset = failure.offset, .length = 1, .file_id = 0 }, .message = failure.message() };
+    }
+
+    /// Records the first compile error (on the root compiler, which the caller holds) and
+    /// returns `err`. Later ones are fallout of the first as it propagates.
+    fn fail(self: *Compiler, err: CompileError, comptime fmt: []const u8, args: anytype) CompileError {
+        var root = self;
+        while (root.enclosing) |outer| root = outer;
+        if (root.failure == null) {
+            var failure: CompileFailure = .{ .offset = self.current_source_offset };
+            // A message too long for the buffer (a huge name) falls back to the generic one.
+            const msg = std.fmt.bufPrint(&failure.buf, fmt, args) catch
+                std.fmt.bufPrint(&failure.buf, "{s}", .{describeError(err)}) catch unreachable;
+            failure.len = msg.len;
+            root.failure = failure;
+        }
+        return err;
+    }
+
+    fn compileRoot(self: *Compiler, root: ast.NodeIndex) CompileError!void {
         if (root == .none) {
             try self.emitOp(.op_nil);
         } else {
@@ -204,8 +268,21 @@ pub const Compiler = struct {
         };
     }
 
-    // --- The Lean Routing Table ---
+    /// Compiles one node; an error is recorded at the innermost node it came from (at that
+    /// node's own position, even if it was raised after compiling its children).
     fn compileNode(self: *Compiler, node_idx: ast.NodeIndex) CompileError!void {
+        const node_offset = if (self.tree.getNode(node_idx)) |node|
+            (if (node.main_token < self.token_starts.len) self.token_starts[node.main_token] else self.current_source_offset)
+        else
+            self.current_source_offset;
+        self.compileNodeAt(node_idx) catch |err| {
+            self.current_source_offset = node_offset;
+            return self.fail(err, "{s}", .{describeError(err)});
+        };
+    }
+
+    // --- The Lean Routing Table ---
+    fn compileNodeAt(self: *Compiler, node_idx: ast.NodeIndex) CompileError!void {
         if (node_idx == .none) return;
 
         // AST Depth Breaker. The parser bounds tree depth already, but trees can be
@@ -466,7 +543,7 @@ pub const Compiler = struct {
         const name_str = self.tree.getString(name_id);
 
         if (manifest.compiler_intrinsics.has(name_str)) {
-            return error.ProtectedSymbol;
+            return self.fail(error.ProtectedSymbol, "'{s}' is a built-in and can't be assigned", .{name_str});
         }
 
         // Intercept Instance Variables (@x) securely
@@ -650,8 +727,7 @@ pub const Compiler = struct {
 
             if (self.enclosing != null) {
                 if (self.resolveLocal(pair.alias) != null or (try self.resolveUpvalue(pair.alias)) != null or self.writesScriptGlobal(pair.alias)) {
-                    // Reject collision natively to satisfy tests and prevent bad state
-                    return error.VariableAlreadyDeclared;
+                    return self.fail(error.VariableAlreadyDeclared, "import '{s}' collides with a variable of the same name", .{alias_str});
                 }
 
                 const slot = self.getNextLocalSlot();
@@ -660,8 +736,7 @@ pub const Compiler = struct {
                 try self.emitVariableStore(pair.alias, dummy_sym);
             } else {
                 if (self.isScriptGlobal(pair.alias) or self.imported_symbols.contains(alias_str)) {
-                    // Reject collision natively to satisfy tests and prevent bad state
-                    return error.VariableAlreadyDeclared;
+                    return self.fail(error.VariableAlreadyDeclared, "import '{s}' collides with a variable of the same name", .{alias_str});
                 }
 
                 try self.emitOp(.op_dup);
@@ -731,7 +806,7 @@ pub const Compiler = struct {
             if (self.enclosing == null or sym.kind == .global) {
                 const def_name_str = self.tree.getString(def_name_id);
                 if (manifest.compiler_intrinsics.has(def_name_str)) {
-                    return error.ProtectedSymbol;
+                    return self.fail(error.ProtectedSymbol, "'{s}' is a built-in and can't be redefined", .{def_name_str});
                 }
 
                 const name_idx = try self.makeStringConstant(self.tree.getString(def_name_id));
@@ -1518,7 +1593,7 @@ pub const Compiler = struct {
         const name_str = self.tree.getString(name_id);
 
         if (manifest.compiler_intrinsics.has(name_str)) {
-            return error.ProtectedSymbol;
+            return self.fail(error.ProtectedSymbol, "'{s}' is a built-in and can't be redefined", .{name_str});
         }
 
         try self.namespace_stack.append(self.allocator, name_id);

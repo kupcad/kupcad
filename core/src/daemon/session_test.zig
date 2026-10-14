@@ -305,8 +305,8 @@ test "ScriptSession: keeps the failing parse, with resolver errors, until the ne
     try testing.expectError(error.ParseError, session.evaluateWorkspace());
     const failure = session.failure orelse return error.MissingFailure;
     try testing.expectEqual(a_id, failure.module);
-    try testing.expectEqual(@as(usize, 1), failure.doc.diagnostics.len);
-    try testing.expectEqualStrings("Cannot use 'break' outside of a loop", failure.doc.diagnostics[0].message);
+    try testing.expectEqual(@as(usize, 1), failure.diagnostics.len);
+    try testing.expectEqualStrings("Cannot use 'break' outside of a loop", failure.diagnostics[0].message);
 
     const good = "cube(1)";
     try mem_vfs.vfs().writeFile("./a.kup", good);
@@ -314,4 +314,26 @@ test "ScriptSession: keeps the failing parse, with resolver errors, until the ne
     try session.markFileEdited("./a.kup");
     try session.evaluateWorkspace();
     try testing.expect(session.failure == null);
+}
+
+test "ScriptSession: a compile error is kept as the failure, with its location" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    session.vm.vfs = mem_vfs.vfs();
+
+    const bad = "w = 1\ncube = 5";
+    try mem_vfs.vfs().writeFile("./a.kup", bad);
+    const a_id = try session.workspace.addModule("./a.kup", bad);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+
+    try testing.expectError(error.CompileError, session.evaluateWorkspace());
+    const failure = session.failure orelse return error.MissingFailure;
+    try testing.expectEqual(a_id, failure.module);
+    try testing.expectEqual(@as(usize, 1), failure.diagnostics.len);
+    try testing.expectEqualStrings("'cube' is a built-in and can't be assigned", failure.diagnostics[0].message);
+    try testing.expectEqual(@as(u32, 6), failure.diagnostics[0].loc.offset); // start of line 2
 }

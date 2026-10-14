@@ -57,7 +57,7 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
         compile_allocator = limit_alloc.?.allocator();
     }
 
-    const diags = api.checkCode(compile_allocator, source, totals.config) catch |err| {
+    const diags = api.checkCode(compile_allocator, io, source, totals.config) catch |err| {
         if (err == error.OutOfMemory) {
             log_helpers.printStderr(io, "{s}Sandbox Error: '{s}' exceeded memory limit during AST parsing.{s}\n", .{ Color.red, file_path, Color.reset });
         } else {

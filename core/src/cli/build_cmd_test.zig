@@ -287,6 +287,23 @@ test "build_cmd: resolver errors are reported like syntax errors" {
     }
 }
 
+test "build_cmd: compile errors are reported like syntax errors" {
+    // `cube = 5` used to print only "Build failed: error.ProtectedSymbol".
+    var fx = try Fixture.init("w = 10\ncube = 5\n");
+    defer fx.deinit();
+    var res = try fx.build();
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+
+    const text = res.text();
+    const location = try std.fmt.allocPrint(testing.allocator, "{s}:2:1:", .{fx.input});
+    defer testing.allocator.free(location);
+    for ([_][]const u8{ location, "'cube' is a built-in and can't be assigned\ncube = 5\n", "Build failed: 1 error in" }) |needle| {
+        errdefer std.debug.print("missing {s} in:\n{s}\n", .{ needle, text });
+        try testing.expect(std.mem.indexOf(u8, text, needle) != null);
+    }
+}
+
 test "build_cmd: unknown options, a missing -o value and extra inputs are rejected" {
     // Each used to be ignored silently: a typo like `--fromat stl` built with defaults.
     const cases = [_]struct { args: []const []const u8, message: []const u8 }{

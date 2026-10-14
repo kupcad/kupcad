@@ -1111,7 +1111,7 @@ test "VM: op_import of a module that fails to compile does not leak its chunk" {
     // testing.allocator reports the heap chunk as leaked if it is not freed
     try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
     const msg = vm.globals.get("result") orelse return error.MissingGlobal;
-    try testing.expect(std.mem.startsWith(u8, msg.asString().chars, "Compilation failed"));
+    try testing.expect(std.mem.startsWith(u8, msg.asString().chars, "could not compile './bad.kup': "));
 }
 
 // --- Module isolation: each imported module has its own top-level scope ---
@@ -1223,4 +1223,37 @@ test "VM: module namespace values survive GC" {
     defer out_chunk.free(testing.allocator);
     try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, "import { get } from \"./lib.kup\"\nx = [1, 2, 3].map { |i| i.to_s }\nr = get()"));
     try expectGlobalString(&vm, "r", "string!");
+}
+
+test "VM: importing a module that fails to compile names where and why" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try mem_vfs.vfs().writeFile("./bad.kup", "x = 1\ncube = 5\nexport x");
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+    vm.mute_errors = true;
+    try registry.registerStandardLibrary(&vm);
+
+    const main_source =
+        \\r = begin
+        \\  import { x } from "./bad.kup"
+        \\  "imported"
+        \\rescue ImportError => e
+        \\  e.message
+        \\end
+    ;
+    var doc = try Document.parse(testing.allocator, main_source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+
+    // It used to say only "Compilation failed for './bad.kup'".
+    const r = vm.globals.get("r") orelse return error.MissingResult;
+    try testing.expectEqualStrings("could not compile './bad.kup': 2:1: 'cube' is a built-in and can't be assigned", r.asString().chars);
 }

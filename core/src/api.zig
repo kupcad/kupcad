@@ -40,20 +40,48 @@ pub fn formatCode(allocator: std.mem.Allocator, source: []const u8, config: Form
     return formatDocument(allocator, &doc, config);
 }
 
-/// Lints an already parsed Document. Caller owns the returned array of diagnostics.
-pub fn checkDocument(allocator: std.mem.Allocator, doc: *const Document, config: LinterConfig) ![]LinterDiagnostic {
+/// Lints an already parsed Document and, when it parsed cleanly, compiles it, so a compile
+/// error (such as assigning to `cube`) is reported by `kupcad check` and the editor just as
+/// `kupcad build` would. Caller owns the returned array of diagnostics.
+pub fn checkDocument(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, config: LinterConfig) ![]LinterDiagnostic {
     var linter = Linter.init(allocator, config);
     defer linter.deinit();
     try linter.registerDefaultRules();
     try linter.check(&doc.tree, doc.tokens.starts, doc.tokens.lengths, doc.tree.root, doc.diagnostics);
+    if (doc.diagnostics.len == 0) {
+        if (try compileError(allocator, io, doc)) |compile_error| {
+            errdefer allocator.free(compile_error.message);
+            try linter.diagnostics.append(allocator, .{ .loc = compile_error.loc, .severity = .@"error", .message = compile_error.message });
+        }
+    }
     return linter.diagnostics.toOwnedSlice(allocator);
 }
 
+/// Compiles `doc` (without running it) and returns its compile error, if any, with a
+/// message the caller owns.
+fn compileError(allocator: std.mem.Allocator, io: std.Io, doc: *const Document) !?Diagnostic {
+    var vm = try VM.init(allocator, io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+    try registry.registerStandardLibrary(&vm);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(allocator);
+    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    comp.compile(doc.tree.root) catch |err| {
+        if (err == error.OutOfMemory) return err;
+        const found = comp.errorDiagnostic() orelse return null;
+        return .{ .loc = found.loc, .message = try allocator.dupe(u8, found.message) };
+    };
+    return null;
+}
+
 /// Lints raw KupCAD source code (Convenience wrapper).
-pub fn checkCode(allocator: std.mem.Allocator, source: []const u8, config: LinterConfig) ![]LinterDiagnostic {
+pub fn checkCode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, config: LinterConfig) ![]LinterDiagnostic {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
-    return checkDocument(allocator, &doc, config);
+    return checkDocument(allocator, io, &doc, config);
 }
 
 pub fn benchmarkScript(allocator: std.mem.Allocator, source: []const u8, io: std.Io, writer: anytype) !void {
@@ -227,9 +255,7 @@ pub const BuildDiagnostic = struct {
 /// Renders a parse diagnostic as "line:col: message" with the 1-based line and UTF-8 byte
 /// column that `kupcad check` prints. Caller owns the returned slice.
 pub fn formatDiagnostic(allocator: std.mem.Allocator, line_index: *const LineIndex, diagnostic: Diagnostic) ![]u8 {
-    const line = line_index.getLine(diagnostic.loc.offset) + 1;
-    const col = line_index.getUtf8Column(diagnostic.loc.offset) + 1;
-    return allocator.print("{d}:{d}: {s}", .{ line, col, diagnostic.message });
+    return diagnostic.formatLine(allocator, line_index);
 }
 
 /// Runs `source` and exports the resulting geometry as `format`. Caller owns the bytes.
@@ -290,7 +316,13 @@ pub fn buildModelWithDiagnostic(
 
     var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
     defer comp.deinit();
-    try comp.compile(doc.tree.root);
+    comp.compile(doc.tree.root) catch |err| {
+        // Reported like a syntax error: `cube = 5` used to give only "error.ProtectedSymbol".
+        if (diagnostic) |d| if (comp.errorDiagnostic()) |compile_error| {
+            d.message = formatDiagnostic(allocator, &doc.line_index, compile_error) catch null;
+        };
+        return err;
+    };
 
     const result = vm.interpret(&out_chunk);
     if (result != .ok) {

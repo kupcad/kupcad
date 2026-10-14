@@ -34,11 +34,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     // Perform initial cold-boot evaluation
     session.evaluateWorkspace() catch |err| {
-        if (err == error.ParseError) if (session.failure) |*failure| {
+        if (err == error.ParseError or err == error.CompileError) if (session.failure) |*failure| {
             const mod = &session.workspace.modules.items[@backingInt(failure.module)];
             var rendered: std.Io.Writer.Allocating = .init(allocator);
             defer rendered.deinit();
-            _ = try diagnostic_report.writeErrors(&rendered.writer, mod.path, mod.source, &failure.doc);
+            _ = try diagnostic_report.writeErrors(&rendered.writer, allocator, mod.path, mod.source, failure.diagnostics);
             log_helpers.printStderr(init.io, "{s}", .{rendered.written()});
             return .failure;
         };

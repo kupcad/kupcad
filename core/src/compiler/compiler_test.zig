@@ -2137,3 +2137,39 @@ test "Compiler: `case` picks the `when ... then` branch for constants and names"
         try expectRunsTo(case.src, case.expected);
     }
 }
+
+fn expectCompileError(source: []const u8, expected: anyerror, line: u32, col: u32, message: []const u8) !void {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try testing.expectError(expected, comp.compile(doc.tree.root));
+    const diagnostic = comp.errorDiagnostic() orelse return error.MissingDiagnostic;
+    try testing.expectEqualStrings(message, diagnostic.message);
+    try testing.expectEqual(line, doc.line_index.getLine(diagnostic.loc.offset) + 1);
+    try testing.expectEqual(col, doc.line_index.getUtf8Column(diagnostic.loc.offset) + 1);
+}
+
+test "Compiler: a failed compile reports where and why" {
+    // Callers could only print the error name, such as "error.ProtectedSymbol".
+    try expectCompileError("w = 1\ncube = 5", error.ProtectedSymbol, 2, 1, "'cube' is a built-in and can't be assigned");
+    try expectCompileError("def puts(x)\n  x\nend", error.ProtectedSymbol, 1, 1, "'puts' is a built-in and can't be redefined");
+    // Inside a def (a child compiler), the error still reaches the caller's compiler.
+    try expectCompileError("def f\n  x = 1\n  sphere = 2\nend", error.ProtectedSymbol, 3, 3, "'sphere' is a built-in and can't be assigned");
+    try expectCompileError("class Math\nend", error.ProtectedSymbol, 1, 1, "'Math' is a built-in and can't be redefined");
+
+    const many_args = comptime blk: {
+        var src: []const u8 = "f(";
+        for (0..limits.MAX_ARGS) |_| src = src ++ "1, ";
+        break :blk src ++ "1)";
+    };
+    try expectCompileError(many_args, error.TooManyArguments, 1, 1, "a call takes at most 255 arguments");
+}

@@ -1,5 +1,6 @@
 const std = @import("std");
 const token = @import("token.zig");
+const LineIndex = @import("line_index.zig").LineIndex;
 
 pub const ParseError = error{
     AstTooDeep,
@@ -11,6 +12,13 @@ pub const ParseError = error{
 pub const Diagnostic = struct {
     loc: token.Location,
     message: []const u8,
+
+    /// "line:col: message", the one-line form for where there is no room for a caret.
+    pub fn formatLine(self: Diagnostic, allocator: std.mem.Allocator, line_index: *const LineIndex) ![]u8 {
+        const line = line_index.getLine(self.loc.offset) + 1;
+        const col = line_index.getUtf8Column(self.loc.offset) + 1;
+        return allocator.print("{d}:{d}: {s}", .{ line, col, self.message });
+    }
 };
 
 pub const Diagnostics = struct {

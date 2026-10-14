@@ -273,8 +273,10 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
 
     comp.seedLocals(caller_locals, 1);
     comp.compile(doc.tree.root) catch |err| {
-        var err_buf: [128]u8 = undefined;
-        const err_str = std.fmt.bufPrint(&err_buf, "Compile error: {}\n", .{err}) catch "Compile error.\n";
+        const where = if (comp.errorDiagnostic()) |d| d.formatLine(vm.allocator, &doc.line_index) catch null else null;
+        defer if (where) |w| vm.allocator.free(w);
+        var err_buf: [256]u8 = undefined;
+        const err_str = std.fmt.bufPrint(&err_buf, "Compile error: {s}\n", .{where orelse @errorName(err)}) catch "Compile error.\n";
         stdout.writeStreamingAll(vm.io, err_str) catch return;
         return;
     };

@@ -1,6 +1,7 @@
 const std = @import("std");
 const workspace = @import("../core/workspace.zig");
 const api = @import("../api.zig");
+const common_errors = @import("../core/errors.zig");
 const chunk = @import("../vm/chunk.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
@@ -30,12 +31,13 @@ pub const SessionNode = struct {
     }
 };
 
-/// A module whose source has errors: syntax errors, or ones the resolver finds (such as
-/// `break` outside a loop). `doc` is the parse that reported them (the workspace's own
-/// copy of a module is parsed without the resolver, so it lacks the latter).
+/// A module whose source has errors: syntax errors, ones the resolver finds (such as
+/// `break` outside a loop) or a compile error (such as assigning to `cube`). The session
+/// owns `diagnostics` and their messages; the workspace's own parse of a module skips the
+/// resolver, so it can't report these itself.
 pub const Failure = struct {
     module: ModuleId,
-    doc: api.Document,
+    diagnostics: []common_errors.Diagnostic,
 };
 
 pub const ScriptSession = struct {
@@ -50,7 +52,8 @@ pub const ScriptSession = struct {
     // Reverse Adjacency List: ModuleId -> Parent ModuleIds
     reverse_deps: std.AutoHashMapUnmanaged(ModuleId, std.ArrayListUnmanaged(ModuleId)) = .empty,
 
-    /// What stopped the last evaluation with error.ParseError, so callers can show it.
+    /// What stopped the last evaluation with error.ParseError or error.CompileError, so
+    /// callers can show it.
     failure: ?Failure = null,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !ScriptSession {
@@ -75,8 +78,27 @@ pub const ScriptSession = struct {
     }
 
     fn clearFailure(self: *ScriptSession) void {
-        if (self.failure) |*f| f.doc.deinit();
+        const failure = self.failure orelse return;
+        for (failure.diagnostics) |d| self.allocator.free(d.message);
+        self.allocator.free(failure.diagnostics);
         self.failure = null;
+    }
+
+    /// Replaces the failure with copies of `diagnostics` (which belong to a Document or a
+    /// Compiler about to go away).
+    fn setFailure(self: *ScriptSession, module: ModuleId, diagnostics: []const common_errors.Diagnostic) !void {
+        self.clearFailure();
+        const copies = try self.allocator.alloc(common_errors.Diagnostic, diagnostics.len);
+        var copied: usize = 0;
+        errdefer {
+            for (copies[0..copied]) |d| self.allocator.free(d.message);
+            self.allocator.free(copies);
+        }
+        for (diagnostics, copies) |d, *copy| {
+            copy.* = .{ .loc = d.loc, .message = try self.allocator.dupe(u8, d.message) };
+            copied += 1;
+        }
+        self.failure = .{ .module = module, .diagnostics = copies };
     }
 
     /// Step 1: Import Graph Construction
@@ -173,12 +195,11 @@ pub const ScriptSession = struct {
             log.err("Parse failed for module '{s}': {}", .{ mod.path, err });
             return err;
         };
+        defer doc.deinit();
         if (doc.diagnostics.len > 0) {
-            self.clearFailure();
-            self.failure = .{ .module = mod_id, .doc = doc }; // the session owns it now
+            try self.setFailure(mod_id, doc.diagnostics);
             return error.ParseError;
         }
-        defer doc.deinit();
 
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(self.allocator);
@@ -189,7 +210,11 @@ pub const ScriptSession = struct {
         var comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &self.vm);
         defer comp.deinit();
 
-        try comp.compile(doc.tree.root);
+        comp.compile(doc.tree.root) catch |err| {
+            const diagnostic = comp.errorDiagnostic() orelse return err;
+            try self.setFailure(mod_id, &.{diagnostic});
+            return error.CompileError;
+        };
 
         const result = self.vm.interpret(&out_chunk);
         if (result != .ok) return error.RuntimeError;

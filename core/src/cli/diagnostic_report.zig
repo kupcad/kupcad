@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const LineIndex = @import("../core/line_index.zig").LineIndex;
-const Document = @import("../core/document.zig").Document;
+const Diagnostic = @import("../core/errors.zig").Diagnostic;
 pub const Severity = @import("../tools/lint/linter.zig").LinterSeverity;
 
 pub const Color = struct {
@@ -38,21 +38,23 @@ pub fn write(w: *std.Io.Writer, r: Report) std.Io.Writer.Error!void {
     try w.print("{s}\n\n", .{Color.reset});
 }
 
-/// Writes every diagnostic of `doc` (syntax and resolver errors) as an error and returns
-/// how many there were.
-pub fn writeErrors(w: *std.Io.Writer, file_path: []const u8, source: []const u8, doc: *const Document) std.Io.Writer.Error!usize {
-    for (doc.diagnostics) |d| {
+/// Writes `diagnostics` (syntax, resolver or compile errors in `source`) as errors and
+/// returns how many there were.
+pub fn writeErrors(w: *std.Io.Writer, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, diagnostics: []const Diagnostic) !usize {
+    const line_index = try LineIndex.init(allocator, source);
+    defer line_index.deinit(allocator);
+    for (diagnostics) |d| {
         try write(w, .{
             .file_path = file_path,
             .source = source,
-            .line_index = &doc.line_index,
+            .line_index = &line_index,
             .offset = d.loc.offset,
             .length = d.loc.length,
             .severity = .@"error",
             .message = d.message,
         });
     }
-    return doc.diagnostics.len;
+    return diagnostics.len;
 }
 
 /// The 1-based `target_line` of `source`, without its line ending ("" past the end).

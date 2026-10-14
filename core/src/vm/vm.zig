@@ -913,8 +913,10 @@ pub const VM = struct {
                     defer comp.deinit();
                     comp.module_namespace = namespace;
 
-                    comp.compile(doc.tree.root) catch {
-                        if (self.raiseError(.ImportError, "Compilation failed for '{s}'", .{path_str}) != .ok) return .runtime_error;
+                    comp.compile(doc.tree.root) catch |err| {
+                        const where = if (comp.errorDiagnostic()) |d| d.formatLine(self.allocator, &doc.line_index) catch null else null;
+                        defer if (where) |w| self.allocator.free(w);
+                        if (self.raiseError(.ImportError, "could not compile '{s}': {s}", .{ path_str, where orelse @errorName(err) }) != .ok) return .runtime_error;
                         continue;
                     };
 

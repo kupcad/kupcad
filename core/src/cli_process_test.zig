@@ -36,8 +36,8 @@ fn kupcad(cwd: []const u8, args: []const []const u8) !Run {
     return .{ .code = code, .stdout = res.stdout, .stderr = res.stderr };
 }
 
-/// A temp dir holding `valid.kup`, `semantic_error.kup` and `syntax_error.kup`; tests
-/// run kupcad inside it.
+/// A temp dir holding `valid.kup` and one script per kind of error; tests run kupcad
+/// inside it.
 const Sandbox = struct {
     tmp: testing.TmpDir,
     path: [:0]u8,
@@ -48,6 +48,7 @@ const Sandbox = struct {
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "valid.kup", .data = VALID_SCRIPT });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "semantic_error.kup", .data = "f = ->(x) { break x }\ncube(1)\n" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "syntax_error.kup", .data = "x = )\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "compile_error.kup", .data = "cube = 5\n" });
         const path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
         return .{ .tmp = tmp, .path = path };
     }
@@ -127,6 +128,9 @@ test "kupcad: errors found in a file fail the command and are counted" {
         .{ .args = &.{ "check", "syntax_error.kup" }, .code = 1, .contains = "Invalid expression starting with ')'" },
         .{ .args = &.{ "fmt", "syntax_error.kup" }, .code = 1 },
         .{ .args = &.{ "build", "semantic_error.kup", "-o", "out.stl" }, .code = 1, .contains = "Cannot use 'break' outside of a loop" },
+        // A compile error is found by check too, not only when building.
+        .{ .args = &.{ "check", "compile_error.kup" }, .code = 1, .contains = "'cube' is a built-in and can't be assigned" },
+        .{ .args = &.{ "build", "compile_error.kup", "-o", "out.stl" }, .code = 1, .contains = "compile_error.kup:1:1:" },
     });
 }
 

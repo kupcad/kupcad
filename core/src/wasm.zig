@@ -96,7 +96,7 @@ fn inner_format(source: []const u8) ![]const u8 {
 
 fn inner_check(source: []const u8) ![]const u8 {
     // Note: checkCode safely returns syntax errors as part of the diagnostics array.
-    const diags = try api.checkCode(allocator, source, .{});
+    const diags = try api.checkCode(allocator, wasmIo(), source, .{});
     defer api.freeDiagnostics(allocator, diags);
 
     var line_index = try api.LineIndex.init(allocator, source);

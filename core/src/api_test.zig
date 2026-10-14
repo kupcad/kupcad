@@ -17,7 +17,7 @@ test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
     const bad_code = @embedFile("fixtures/linter_bad.kup");
     const allocator = testing.allocator;
 
-    const diags = try api.checkCode(allocator, bad_code, .{});
+    const diags = try api.checkCode(allocator, testing.io, bad_code, .{});
     defer api.freeDiagnostics(allocator, diags);
 
     // Unused 'unused_var', unused 'check_flow', self-subtraction, unreachable code.
@@ -114,6 +114,28 @@ test "API: buildModelWithDiagnostic reports the first syntax error as line:col: 
         api.buildModelWithDiagnostic(testing.allocator, testing.io, syntax_broken_source, "stl", false, null, null, &diag),
     );
     try testing.expectEqualStrings("2:5: Invalid expression starting with ')'", diag.message.?);
+}
+
+test "API: buildModelWithDiagnostic reports a compile error as line:col: message" {
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(testing.allocator);
+
+    try testing.expectError(
+        error.ProtectedSymbol,
+        api.buildModelWithDiagnostic(testing.allocator, testing.io, "w = 1\ncube = 5", "stl", false, null, null, &diag),
+    );
+    try testing.expectEqualStrings("2:1: 'cube' is a built-in and can't be assigned", diag.message.?);
+}
+
+test "API: checkCode reports compile errors as well as syntax errors and lints" {
+    // It used to only parse and lint, so `cube = 5` passed check but failed to build.
+    const diags = try api.checkCode(testing.allocator, testing.io, "cube = 5", .{});
+    defer api.freeDiagnostics(testing.allocator, diags);
+    var found = false;
+    for (diags) |d| {
+        if (d.severity == .@"error" and std.mem.eql(u8, d.message, "'cube' is a built-in and can't be assigned")) found = true;
+    }
+    try testing.expect(found);
 }
 
 test "API: buildModelWithDiagnostic returns model bytes and no message for a valid script" {

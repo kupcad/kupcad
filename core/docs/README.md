@@ -177,6 +177,8 @@ end
 
 ### Errors
 
+Mistakes found before a script runs (a syntax error, `break` outside a loop, assigning to a built-in such as `cube = 5`) are reported by `kupcad check`, `kupcad build` and the editor with the file, line and column. Everything else is raised at run time.
+
 `raise` and `begin … rescue … ensure … end` work as in Ruby. Errors raised by the language and the standard library are instances of specific classes, all subclasses of `StandardError`, so they can be rescued by kind; `e.message` holds just the message:
 
 | Class | Raised for |

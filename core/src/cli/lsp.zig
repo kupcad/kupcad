@@ -767,7 +767,7 @@ pub const Handler = struct {
     }
 
     fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, source: []const u8) !void {
-        const diags = api.checkCode(self.allocator, source, .{}) catch |err| {
+        const diags = api.checkCode(self.allocator, self.io, source, .{}) catch |err| {
             self.log("Linter crashed: {}", .{err});
             return;
         };

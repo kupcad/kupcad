@@ -105,7 +105,7 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
 
     var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &session.vm);
     compiler.compile(doc.tree.root) catch |err| {
-        log_helpers.printStderr(init.io, "Compilation failed: {}\n", .{err});
+        reportCompileError(init.io, allocator, &compiler, &doc, err);
         return .failure;
     };
 
@@ -215,7 +215,7 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
 
     var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &session.vm);
     compiler.compile(doc.tree.root) catch |err| {
-        log_helpers.printStderr(init.io, "Compilation failed: {}\n", .{err});
+        reportCompileError(init.io, allocator, &compiler, &doc, err);
         return .failure;
     };
 
@@ -274,4 +274,11 @@ fn printUsage(io: std.Io) void {
         \\  bench <file>     Profile Parse, Compile, and VM Execution times
         \\
     , .{});
+}
+
+/// "Compilation failed: line:col: message", or the error name when the compiler kept none.
+fn reportCompileError(io: std.Io, allocator: std.mem.Allocator, compiler: *const Compiler, doc: *const api.Document, err: anyerror) void {
+    const where = if (compiler.errorDiagnostic()) |d| d.formatLine(allocator, &doc.line_index) catch null else null;
+    defer if (where) |w| allocator.free(w);
+    log_helpers.printStderr(io, "Compilation failed: {s}\n", .{where orelse @errorName(err)});
 }
