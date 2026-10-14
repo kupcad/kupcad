@@ -19,8 +19,12 @@ const Run = struct {
     }
 };
 
-/// Runs `kupcad args...` with `cwd` as its working directory.
+/// Runs `kupcad args...` with `cwd` as its working directory, in `env` if given.
 fn kupcad(cwd: []const u8, args: []const []const u8) !Run {
+    return kupcadIn(cwd, args, null);
+}
+
+fn kupcadIn(cwd: []const u8, args: []const []const u8, env: ?*const std.process.Environ.Map) !Run {
     // The build hands us a path relative to the build root; the child runs elsewhere.
     const exe = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, options.kupcad_exe, testing.allocator);
     defer testing.allocator.free(exe);
@@ -28,7 +32,7 @@ fn kupcad(cwd: []const u8, args: []const []const u8) !Run {
     defer argv.deinit(testing.allocator);
     try argv.append(testing.allocator, exe);
     try argv.appendSlice(testing.allocator, args);
-    const res = try std.process.run(testing.allocator, testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd } });
+    const res = try std.process.run(testing.allocator, testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .environ_map = env });
     const code: u8 = switch (res.term) {
         .exited => |c| c,
         else => 255,
@@ -125,7 +129,7 @@ test "kupcad: errors found in a file fail the command and are counted" {
     // exited 0 on a file it could not format: each command's walk overwrote the count
     // its per-file callback had kept. build printed "Build failed: 0 syntax errors".
     try expectRuns(&.{
-        .{ .args = &.{ "check", "semantic_error.kup" }, .code = 1, .contains = "1 file(s) inspected, \x1b[31m1 errors" },
+        .{ .args = &.{ "check", "semantic_error.kup" }, .code = 1, .contains = "1 file(s) inspected, 1 errors" },
         .{ .args = &.{ "check", "syntax_error.kup" }, .code = 1, .contains = "Invalid expression starting with ')'" },
         .{ .args = &.{ "fmt", "syntax_error.kup" }, .code = 1 },
         .{ .args = &.{ "build", "semantic_error.kup", "-o", "out.stl" }, .code = 1, .contains = "Cannot use 'break' outside of a loop" },
@@ -145,4 +149,29 @@ test "kupcad: commands succeed with exit 0 on valid input" {
         .{ .args = &.{ "check", "valid.kup" }, .code = 0, .contains = "Success" },
         .{ .args = &.{ "build", "valid.kup", "-o", "out.stl" }, .code = 0, .contains = "Successfully built out.stl" },
     });
+}
+
+test "kupcad: piped output has no colour codes unless CLICOLOR_FORCE asks for them" {
+    // check and build wrote ANSI escape codes into pipes and log files.
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const commands = [_][]const []const u8{
+        &.{ "check", "semantic_error.kup" },
+        &.{ "check", "valid.kup" },
+        &.{ "build", "syntax_error.kup", "-o", "out.stl" },
+    };
+    for (commands) |args| {
+        errdefer std.debug.print("$ kupcad {s}\n", .{args[0]});
+        const plain = try kupcad(sb.path, args);
+        defer plain.deinit();
+        try testing.expect(std.mem.indexOfScalar(u8, plain.stdout, 0x1b) == null);
+        try testing.expect(std.mem.indexOfScalar(u8, plain.stderr, 0x1b) == null);
+    }
+
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("CLICOLOR_FORCE", "1");
+    const forced = try kupcadIn(sb.path, &.{ "check", "semantic_error.kup" }, &env);
+    defer forced.deinit();
+    try testing.expect(std.mem.indexOf(u8, forced.stderr, "\x1b[31m1 errors") != null);
 }

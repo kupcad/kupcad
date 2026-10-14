@@ -391,3 +391,5 @@ KupCAD ships as a monolithic executable containing a complete developer toolchai
 * `kupcad build`: Multi-Target Exporter (`STEP`, `STL`, `GLB`/`GLTF`, `--draco`; a `.gltf` file is glTF JSON with its buffer embedded as a base64 data URI, a `.glb` file is binary glTF, and so is `export_gltf("part.glb")` while `export_gltf("part.gltf")` writes JSON) with CLI parameter injection (`--param key=value`, or `-p`, repeatable: the value is what `param(:key, ...)` returns, so it goes through the same validation; it must be a finite number and the name can't be empty). Exits non-zero on any failure, so it is safe to use as a CI step.
 * `kupcad watch`: Real-time incremental rebuilding utilizing the persistent `SessionManager`.
 * `kupcad dev`: VM development toolkit offering `ast-dump`, `disasm`, and `bench`.
+
+Output is coloured only on a terminal: piped or redirected output is plain text. `NO_COLOR=1` turns colours off everywhere and `CLICOLOR_FORCE=1` keeps them when redirected ([no-color.org](https://no-color.org)).

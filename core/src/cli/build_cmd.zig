@@ -1,7 +1,6 @@
 const std = @import("std");
 const api = @import("../api.zig");
 const fs = @import("fs.zig");
-const log_helpers = @import("../log.zig");
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const diagnostic_report = @import("diagnostic_report.zig");
@@ -79,19 +78,7 @@ fn parseParam(pair: []const u8) error{ MissingEquals, EmptyName, NotANumber }!st
 
 pub const Outcome = @import("outcome.zig").Outcome;
 
-/// Where `run` reports. By default it prints to the process streams; tests set `capture`.
-pub const Reporter = struct {
-    io: std.Io,
-    capture: ?*std.Io.Writer = null,
-
-    fn err(self: Reporter, comptime fmt: []const u8, args: anytype) void {
-        if (self.capture) |w| w.print(fmt, args) catch {} else log_helpers.printStderr(self.io, fmt, args);
-    }
-
-    fn out(self: Reporter, comptime fmt: []const u8, args: anytype) void {
-        if (self.capture) |w| w.print(fmt, args) catch {} else log_helpers.printStdout(self.io, fmt, args);
-    }
-};
+pub const Reporter = @import("reporter.zig").Reporter;
 
 /// Prints a module's errors the way `kupcad check` does (file:line:col, the source line
 /// and a caret), then a one-line summary.
@@ -99,12 +86,12 @@ fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, fai
     const mod = &session.workspace.modules.items[@backingInt(failure.module)];
     var rendered: std.Io.Writer.Allocating = .init(allocator);
     defer rendered.deinit();
-    const count = try diagnostic_report.writeErrors(&rendered.writer, allocator, mod.path, mod.source, failure.diagnostics);
+    const count = try diagnostic_report.writeErrors(&rendered.writer, allocator, mod.path, mod.source, failure.diagnostics, reporter.err_style);
     reporter.err("{s}Build failed: {d} error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", mod.path });
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *std.process.Args.Iterator) !Outcome {
-    return run(allocator, args_iter, .{ .io = init.io });
+    return run(allocator, args_iter, .forProcess(init));
 }
 
 /// Runs `kupcad build` with the remaining CLI arguments (`args_iter` needs `next() ?[]const u8`).

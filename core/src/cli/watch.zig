@@ -38,7 +38,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             const mod = &session.workspace.modules.items[@backingInt(failure.module)];
             var rendered: std.Io.Writer.Allocating = .init(allocator);
             defer rendered.deinit();
-            _ = try diagnostic_report.writeErrors(&rendered.writer, allocator, mod.path, mod.source, failure.diagnostics);
+            const style = diagnostic_report.Style.detect(init.io, std.Io.File.stderr(), init.environ_map);
+            _ = try diagnostic_report.writeErrors(&rendered.writer, allocator, mod.path, mod.source, failure.diagnostics, style);
             log_helpers.printStderr(init.io, "{s}", .{rendered.written()});
             return .failure;
         };

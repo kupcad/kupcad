@@ -20,13 +20,6 @@ pub const LinterSeverity = enum {
     pub fn toString(self: LinterSeverity) []const u8 {
         return @tagName(self);
     }
-    pub fn toColor(self: LinterSeverity) []const u8 {
-        return switch (self) {
-            .@"error" => "\x1b[31m",
-            .warning => "\x1b[33m",
-            .info => "\x1b[36m",
-        };
-    }
     pub fn toChar(self: LinterSeverity) []const u8 {
         return switch (self) {
             .@"error" => "E",
