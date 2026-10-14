@@ -56,7 +56,7 @@ pub fn rangeLast(vm: *VM, r: *value.ObjRange) !value.Value {
 /// Range#step(n): a new range with the same bounds and step `n`.
 pub fn rangeStep(vm: *VM, r: *value.ObjRange, step: f64) !value.Value {
     if (!std.math.isFinite(step) or step == 0) {
-        _ = vm.throwDynamicError("ValueError: Range#step requires a finite, non-zero step, got {d}", .{step});
+        _ = vm.throwDynamicError("ValueError: Range#step requires a finite, non-zero step, got {f}", .{value.fmtNumber(step)});
         return error.RuntimeError;
     }
     const out = try vm.gc.allocateRange(vm, r.start, r.end, step, r.is_exclusive);
@@ -72,7 +72,7 @@ pub fn rangeExclusive(vm: *VM, r: *value.ObjRange) !value.Value {
 /// Range#to_s: same text as `puts` prints.
 pub fn rangeToS(vm: *VM, r: *value.ObjRange) !value.Value {
     var buf: [128]u8 = undefined;
-    const str = try std.fmt.bufPrint(&buf, "{d}{s}{d}", .{ r.start, if (r.is_exclusive) "..." else "..", r.end });
+    const str = try std.fmt.bufPrint(&buf, "{f}{s}{f}", .{ value.fmtNumber(r.start), if (r.is_exclusive) "..." else "..", value.fmtNumber(r.end) });
     return try vm.allocateString(str);
 }
 

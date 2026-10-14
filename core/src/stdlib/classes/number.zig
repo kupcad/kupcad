@@ -44,7 +44,7 @@ pub fn numberToF(vm: *VM, receiver: value.Value) !value.Value {
 
 pub fn numberToS(vm: *VM, receiver: value.Value) !value.Value {
     var buf: [64]u8 = undefined;
-    const str = try std.fmt.bufPrint(&buf, "{d}", .{receiver.asNumber()});
+    const str = try std.fmt.bufPrint(&buf, "{f}", .{value.fmtNumber(receiver.asNumber())});
     return try vm.allocateString(str);
 }
 

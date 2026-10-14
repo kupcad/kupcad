@@ -51,7 +51,7 @@ const MAX_EXACT_COUNT: u64 = 1 << std.math.floatMantissaBits(f64) + 1;
 /// value count as an f64, or raises a rescuable ValueError.
 pub fn validatedCount(vm: *VM, span: Span, method: []const u8) !f64 {
     if (!std.math.isFinite(span.start) or !std.math.isFinite(span.end) or !std.math.isFinite(span.step)) {
-        _ = vm.throwDynamicError("ValueError: {s} requires finite bounds and step, got {d}..{d} step {d}", .{ method, span.start, span.end, span.step });
+        _ = vm.throwDynamicError("ValueError: {s} requires finite bounds and step, got {f}..{f} step {f}", .{ method, value.fmtNumber(span.start), value.fmtNumber(span.end), value.fmtNumber(span.step) });
         return error.RuntimeError;
     }
     if (span.step == 0) {
@@ -86,7 +86,7 @@ fn materializeCount(vm: *VM, span: Span, method: []const u8) !usize {
 /// Integral receiver/argument check for Number#times/upto/downto.
 pub fn requireInteger(vm: *VM, n: f64, method: []const u8) !void {
     if (!std.math.isFinite(n) or @trunc(n) != n) {
-        _ = vm.throwDynamicError("ValueError: {s} requires an integer, got {d}", .{ method, n });
+        _ = vm.throwDynamicError("ValueError: {s} requires an integer, got {f}", .{ method, value.fmtNumber(n) });
         return error.RuntimeError;
     }
 }

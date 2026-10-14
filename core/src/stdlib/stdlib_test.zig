@@ -904,18 +904,18 @@ test "Stdlib: lazily formatted element errors keep their exact wording" {
         .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,\"a\"],[0,2,3],[1,3,2]])"), .expected = .{ .str = "TypeError: polyhedron expects a number for a point index (face 1, entry 2), got String" } },
         .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],5,[0,2,3],[1,3,2]])"), .expected = .{ .str = "TypeError: polyhedron expects an Array for face 1, got Number" } },
         .{ .src = rescued("polygon([[0,0],[1,0],5])"), .expected = .{ .str = "TypeError: polygon expects an Array for point 2, got Number" } },
-        .{ .src = rescued("polygon([[0,0],[1,0],[0,1e400]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 1), got inf" } },
+        .{ .src = rescued("polygon([[0,0],[1,0],[0,1e400]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 1), got Infinity" } },
         .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,2], 7])"), .expected = .{ .str = "TypeError: polygon expects an Array for path 1, got Number" } },
         .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1]])"), .expected = .{ .str = "ValueError: polygon needs at least 3 point indices in path 0, got 2" } },
-        .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,1e400]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a point index (path 0, entry 2), got inf" } },
-        .{ .src = rescued("cube(1).transform([1,0,0, 0,1,0, 0,0,1e400, 0,0,0])"), .expected = .{ .str = "ValueError: transform expects a finite number for a matrix entry (index 8), got inf" } },
+        .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,1e400]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a point index (path 0, entry 2), got Infinity" } },
+        .{ .src = rescued("cube(1).transform([1,0,0, 0,1,0, 0,0,1e400, 0,0,0])"), .expected = .{ .str = "ValueError: transform expects a finite number for a matrix entry (index 8), got Infinity" } },
     });
 }
 
 test "Stdlib: rescued argument errors name the method, the position and the bad type" {
     try expectGlobalR(&.{
         .{ .src = rescued("polygon([[0,0],[10,\"x\"],[10,10]]).extrude(1).volume"), .expected = .{ .str = "TypeError: polygon expects a number for a coordinate (point 1, component 1), got String" } },
-        .{ .src = rescued("polygon([[0,0],[10,0],[1e400 - 1e400,10]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 0), got nan" } },
+        .{ .src = rescued("polygon([[0,0],[10,0],[1e400 - 1e400,10]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 0), got NaN" } },
         .{ .src = rescued("polygon([[0,0],[10],[10,10]])"), .expected = .{ .str = "ValueError: polygon expects point 1 to have 2 numbers, got 1" } },
         .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,[2]]])"), .expected = .{ .str = "TypeError: polygon expects a number for a point index (path 0, entry 2), got Array" } },
         .{ .src = rescued("polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,nil,1]], " ++ TETRA_FACES ++ ")"), .expected = .{ .str = "TypeError: polyhedron expects a number for a coordinate (point 3, component 1), got nil" } },
@@ -928,12 +928,12 @@ test "Stdlib: rescued argument errors name the method, the position and the bad 
         .{ .src = rescued("cube(1).contains?([0, 0, [1]])"), .expected = .{ .str = "TypeError: contains? expects a number for a coordinate (component 2), got Array" } },
         .{ .src = rescued("cube(x: true)"), .expected = .{ .str = "TypeError: cube expects a number for x, got Boolean" } },
         .{ .src = rescued("text(\"A\", halign: 5)"), .expected = .{ .str = "TypeError: text expects a String or Symbol for halign, got Number" } },
-        .{ .src = rescued("cube(1).translate(1e400)"), .expected = .{ .str = "ValueError: translate expects a finite number for x, got inf" } },
+        .{ .src = rescued("cube(1).translate(1e400)"), .expected = .{ .str = "ValueError: translate expects a finite number for x, got Infinity" } },
         .{ .src = rescued("cube(1).mirror(0, 0, 0)"), .expected = .{ .str = "ValueError: mirror expects a non-zero plane normal, got [0, 0, 0]" } },
         .{ .src = rescued("cube(1).scale(1, 0, 1)"), .expected = .{ .str = "ValueError: scale factors must be non-zero, got [1, 0, 1]" } },
         // Errors that used to surface as the generic "Native Execution Error" when rescued.
         .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1],[0,2,3],[4,2,3]])"), .expected = .{ .str = "ValueError: polyhedron face index 4 is out of range (0..4)" } },
-        .{ .src = rescued("cube(1e400 - 1e400)"), .expected = .{ .str = "ValueError: cube expects a finite number for x, got nan" } },
+        .{ .src = rescued("cube(1e400 - 1e400)"), .expected = .{ .str = "ValueError: cube expects a finite number for x, got NaN" } },
         .{ .src = rescued("cube(-1)"), .expected = .{ .str = "ValueError: cube expects x to be a finite number greater than zero, got -1" } },
     });
 }
@@ -1077,4 +1077,17 @@ test "Stdlib: split_by_plane keeps both halves alive across GC" {
     try testing.expectEqual(@as(usize, 2), items.len);
     try testing.expectEqual(@as(f64, 600), items[0].asNumber());
     try testing.expectEqual(@as(f64, 400), items[1].asNumber());
+}
+
+test "Stdlib: non-finite numbers print the same on every platform" {
+    // `inf - inf` is a NaN with the sign bit set on x86 (printed "-nan" by {d}) but not on
+    // ARM ("nan"), so output and error messages used to differ between machines.
+    try expectGlobalR(&.{
+        .{ .src = "r = (1e400 - 1e400).to_s", .expected = .{ .str = "NaN" } },
+        .{ .src = "r = 1e400.to_s", .expected = .{ .str = "Infinity" } },
+        .{ .src = "r = (-1e400).to_s", .expected = .{ .str = "-Infinity" } },
+        .{ .src = "r = \"#{1e400 - 1e400} #{-1e400}\"", .expected = .{ .str = "NaN -Infinity" } },
+        .{ .src = "r = (0..1e400).to_s", .expected = .{ .str = "0..Infinity" } },
+        .{ .src = "r = 2.5.to_s", .expected = .{ .str = "2.5" } },
+    });
 }

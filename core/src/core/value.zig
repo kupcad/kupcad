@@ -173,6 +173,24 @@ pub const ObjBoundMethod = struct {
     method: Value,
 };
 
+/// Formats a script number for anything a user reads (puts, to_s, interpolation, error
+/// messages): `NaN`, `Infinity` and `-Infinity` for non-finite values, as Ruby spells them,
+/// otherwise `{d}`. Plain `{d}` prints the NaN's sign bit, which is platform-dependent
+/// (`inf - inf` is `nan` on ARM but `-nan` on x86), so output differed between machines.
+pub fn fmtNumber(n: f64) NumberFormat {
+    return .{ .n = n };
+}
+
+pub const NumberFormat = struct {
+    n: f64,
+
+    pub fn format(self: NumberFormat, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (std.math.isNan(self.n)) return w.writeAll("NaN");
+        if (std.math.isInf(self.n)) return w.writeAll(if (self.n > 0) "Infinity" else "-Infinity");
+        return w.print("{d}", .{self.n});
+    }
+};
+
 pub const ObjRange = struct {
     obj: Obj,
     start: f64,
@@ -502,7 +520,7 @@ pub const Value = packed struct {
 
     pub fn stringify(self: Value, is_inspect: bool, writer: *std.Io.Writer) !void {
         if (self.isNumber()) {
-            try writer.print("{d}", .{self.asNumber()});
+            try writer.print("{f}", .{fmtNumber(self.asNumber())});
         } else if (self.isBool()) {
             try writer.writeAll(if (self.asBool()) "true" else "false");
         } else if (self.isNil()) {
@@ -558,7 +576,7 @@ pub const Value = packed struct {
                 .range => {
                     const r: *ObjRange = @alignCast(@fieldParentPtr("obj", obj));
                     const op_str = if (r.is_exclusive) "..." else "..";
-                    try writer.print("{d}{s}{d}", .{ r.start, op_str, r.end });
+                    try writer.print("{f}{s}{f}", .{ fmtNumber(r.start), op_str, fmtNumber(r.end) });
                 },
                 .geometry => try writer.print("<Geometry DAG:{d}>", .{@as(*ObjGeometry, @alignCast(@fieldParentPtr("obj", obj))).dag_idx}),
                 .cross_section => {
@@ -568,7 +586,8 @@ pub const Value = packed struct {
                 .workplane => try writer.writeAll("<Workplane>"),
                 .bbox => {
                     const bx: *ObjBBox = @alignCast(@fieldParentPtr("obj", obj));
-                    try writer.print("BoundingBox(min: [{d}, {d}, {d}], max: [{d}, {d}, {d}])", .{ bx.min[0], bx.min[1], bx.min[2], bx.max[0], bx.max[1], bx.max[2] });
+                    const f = fmtNumber;
+                    try writer.print("BoundingBox(min: [{f}, {f}, {f}], max: [{f}, {f}, {f}])", .{ f(bx.min[0]), f(bx.min[1]), f(bx.min[2]), f(bx.max[0]), f(bx.max[1]), f(bx.max[2]) });
                 },
                 else => try writer.writeAll("<Object>"),
             }

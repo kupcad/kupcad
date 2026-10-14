@@ -42,7 +42,7 @@ pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     const checked_axes: usize = if (receiver.isCrossSection()) 2 else 3;
     for (vec[0..checked_axes]) |f| {
         if (!(@abs(f) >= std.math.floatMin(f64))) {
-            _ = vm.throwDynamicError("ValueError: scale factors must be non-zero, got [{d}, {d}, {d}]", .{ vec[0], vec[1], vec[2] });
+            _ = vm.throwDynamicError("ValueError: scale factors must be non-zero, got [{f}, {f}, {f}]", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]), value.fmtNumber(vec[2]) });
             return error.RuntimeError;
         }
     }
@@ -232,7 +232,7 @@ fn requireInvertible(vm: *VM, det: f64) !void {
     // `!(>=)` also catches a NaN determinant (inf - inf from huge entries) and a
     // subnormal one, which flattens the shape as surely as an exact 0.
     if (!(@abs(det) >= std.math.floatMin(f64))) {
-        _ = vm.throwDynamicError("ValueError: transform matrix is singular (determinant {d}), which flattens the shape", .{det});
+        _ = vm.throwDynamicError("ValueError: transform matrix is singular (determinant {f}), which flattens the shape", .{value.fmtNumber(det)});
         return error.RuntimeError;
     }
 }
@@ -253,7 +253,7 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     }, 1, 0.0);
     for (target, 0..) |t, i| {
         if (t < 0.0) {
-            _ = vm.throwDynamicError("ValueError: resize dimensions must be >= 0 (0 keeps that axis), got {d} at component {d}", .{ t, i });
+            _ = vm.throwDynamicError("ValueError: resize dimensions must be >= 0 (0 keeps that axis), got {f} at component {d}", .{ value.fmtNumber(t), i });
             return error.RuntimeError;
         }
     }
@@ -299,7 +299,7 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 /// but NaN/inf/huge values would hit @intFromFloat UB or build millions of DAG nodes.
 fn checkedCount(vm: *VM, raw: f64, what: []const u8) !usize {
     if (!std.math.isFinite(raw) or raw > @as(f64, @floatFromInt(limits.MAX_PATTERN_COUNT))) {
-        _ = vm.throwDynamicError("ValueError: {s} 'count' must be a finite number <= {d}, got {d}", .{ what, limits.MAX_PATTERN_COUNT, raw });
+        _ = vm.throwDynamicError("ValueError: {s} 'count' must be a finite number <= {d}, got {f}", .{ what, limits.MAX_PATTERN_COUNT, value.fmtNumber(raw) });
         return error.RuntimeError;
     }
     if (raw < 1.0) return 0;

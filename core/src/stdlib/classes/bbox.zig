@@ -126,10 +126,11 @@ pub fn bboxToS(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyer
     const sy = @max(0.0, bbox.max[1] - bbox.min[1]);
     const sz = @max(0.0, bbox.max[2] - bbox.min[2]);
 
-    const str = try vm.fmtScratch("BoundingBox(min: [{d}, {d}, {d}], max: [{d}, {d}, {d}], size: [{d}, {d}, {d}])", .{
-        bbox.min[0], bbox.min[1], bbox.min[2],
-        bbox.max[0], bbox.max[1], bbox.max[2],
-        sx,          sy,          sz,
+    const f = value.fmtNumber;
+    const str = try vm.fmtScratch("BoundingBox(min: [{f}, {f}, {f}], max: [{f}, {f}, {f}], size: [{f}, {f}, {f}])", .{
+        f(bbox.min[0]), f(bbox.min[1]), f(bbox.min[2]),
+        f(bbox.max[0]), f(bbox.max[1]), f(bbox.max[2]),
+        f(sx),          f(sy),          f(sz),
     });
 
     return try vm.allocateString(str);

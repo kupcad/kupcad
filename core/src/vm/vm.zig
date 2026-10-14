@@ -1976,9 +1976,9 @@ pub const VM = struct {
             // @intFromFloat is illegal for NaN/inf/out-of-range operands, so bitwise
             // operands must be checked first; fractions still truncate toward zero.
             const a_int = bitwiseOperand(a_num) orelse
-                return self.throwDynamicError("RangeError: Bitwise operand {d} is not a finite 64-bit integer.", .{a_num});
+                return self.throwDynamicError("RangeError: Bitwise operand {f} is not a finite 64-bit integer.", .{value.fmtNumber(a_num)});
             const b_int = bitwiseOperand(b_num) orelse
-                return self.throwDynamicError("RangeError: Bitwise operand {d} is not a finite 64-bit integer.", .{b_num});
+                return self.throwDynamicError("RangeError: Bitwise operand {f} is not a finite 64-bit integer.", .{value.fmtNumber(b_num)});
 
             const res: i64 = switch (op) {
                 .op_bitwise_and => a_int & b_int,

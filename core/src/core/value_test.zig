@@ -108,3 +108,23 @@ test "Value: ValueContext hash diffuses bits and correctly hashes edge cases" {
     try testing.expect(hash_zero != hash_one);
     try testing.expect(hash_one != hash_two);
 }
+
+test "Value: fmtNumber spells non-finite numbers the same on every platform" {
+    var buf: [64]u8 = undefined;
+    const Case = struct { n: f64, text: []const u8 };
+    const cases = [_]Case{
+        .{ .n = std.math.nan(f64), .text = "NaN" },
+        // x86 produces this sign-bit-set NaN for `inf - inf`; {d} prints it as "-nan".
+        .{ .n = -std.math.nan(f64), .text = "NaN" },
+        .{ .n = std.math.inf(f64), .text = "Infinity" },
+        .{ .n = -std.math.inf(f64), .text = "-Infinity" },
+        .{ .n = 1.5, .text = "1.5" },
+        .{ .n = -2, .text = "-2" },
+    };
+    for (cases) |case| {
+        try testing.expectEqualStrings(case.text, try std.fmt.bufPrint(&buf, "{f}", .{value.fmtNumber(case.n)}));
+        var w: std.Io.Writer = .fixed(&buf);
+        try value.Value.initNumber(case.n).stringify(false, &w);
+        try testing.expectEqualStrings(case.text, w.buffered());
+    }
+}

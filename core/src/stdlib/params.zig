@@ -124,8 +124,8 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
 
             number_param.validate(num, min_val, max_val) catch |err| {
                 switch (err) {
-                    error.BelowMin => return reportValidationFail(vm, loc_prefix, "Parameter ':{s}' value {d} is below minimum ({d}).", .{ sym_chars, num, min_val }),
-                    error.AboveMax => return reportValidationFail(vm, loc_prefix, "Parameter ':{s}' value {d} exceeds maximum ({d}).", .{ sym_chars, num, max_val }),
+                    error.BelowMin => return reportValidationFail(vm, loc_prefix, "Parameter ':{s}' value {f} is below minimum ({f}).", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(min_val) }),
+                    error.AboveMax => return reportValidationFail(vm, loc_prefix, "Parameter ':{s}' value {f} exceeds maximum ({f}).", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(max_val) }),
                     else => unreachable,
                 }
             };

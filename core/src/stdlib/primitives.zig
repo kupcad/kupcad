@@ -63,7 +63,7 @@ fn extractGeomOptions(vm: *VM, parsed: ArgParseCtx, method: []const u8) !GeomOpt
 /// Validates a user-supplied index into an array of length `len`.
 fn checkedIndex(vm: *VM, raw: f64, len: usize, what: []const u8) !usize {
     if (!std.math.isFinite(raw) or raw < 0.0 or @trunc(raw) != raw or raw >= @as(f64, @floatFromInt(len)) or raw > std.math.maxInt(u32)) {
-        _ = vm.throwDynamicError("ValueError: {s} index {d} is out of range (0..{d})", .{ what, raw, len });
+        _ = vm.throwDynamicError("ValueError: {s} index {f} is out of range (0..{d})", .{ what, value.fmtNumber(raw), len });
         return error.RuntimeError;
     }
     return @intFromFloat(raw);
@@ -517,7 +517,7 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     // point count grows ~sqrt(size / tolerance) per curve; a vanishing tolerance
     // (e.g. 1e-300, whose square underflows to 0) never terminates in practice.
     if (tolerance < size * MIN_TEXT_TOLERANCE_RATIO) {
-        _ = vm.throwDynamicError("ValueError: 'tolerance' must be at least size * {d} ({d}), got {d}", .{ MIN_TEXT_TOLERANCE_RATIO, size * MIN_TEXT_TOLERANCE_RATIO, tolerance });
+        _ = vm.throwDynamicError("ValueError: 'tolerance' must be at least size * {d} ({d}), got {f}", .{ MIN_TEXT_TOLERANCE_RATIO, size * MIN_TEXT_TOLERANCE_RATIO, value.fmtNumber(tolerance) });
         return error.RuntimeError;
     }
 

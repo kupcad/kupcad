@@ -37,7 +37,7 @@ fn typeError(vm: *VM, method: []const u8, expected: []const u8, what: []const u8
 /// Rejects NaN and infinities, which no kernel can place or tessellate.
 pub fn requireFinite(vm: *VM, n: f64, method: []const u8, what: []const u8) !void {
     if (!std.math.isFinite(n)) {
-        _ = vm.throwDynamicError("ValueError: {s} expects a finite number for {s}, got {d}", .{ method, what, n });
+        _ = vm.throwDynamicError("ValueError: {s} expects a finite number for {s}, got {f}", .{ method, what, value.fmtNumber(n) });
         return error.RuntimeError;
     }
 }
@@ -54,7 +54,7 @@ pub fn requireNumber(vm: *VM, val: value.Value, method: []const u8, what: []cons
 /// infinities are rejected too since no kernel can tessellate them.
 pub fn requirePositive(vm: *VM, n: f64, method: []const u8, what: []const u8) !void {
     if (!std.math.isFinite(n) or n <= 0.0) {
-        _ = vm.throwDynamicError("ValueError: {s} expects {s} to be a finite number greater than zero, got {d}", .{ method, what, n });
+        _ = vm.throwDynamicError("ValueError: {s} expects {s} to be a finite number greater than zero, got {f}", .{ method, what, value.fmtNumber(n) });
         return error.RuntimeError;
     }
 }
@@ -112,7 +112,7 @@ fn elementError(vm: *VM, arg: NumberArray, i: usize, item: value.Value) error{Ru
     else
         std.fmt.bufPrint(&buf, "{s} ({s} {d})", .{ arg.elem, arg.index_label, i }) catch arg.elem;
     if (!item.isNumber()) return typeError(vm, arg.method, "a number", what, item);
-    _ = vm.throwDynamicError("ValueError: {s} expects a finite number for {s}, got {d}", .{ arg.method, what, item.asNumber() });
+    _ = vm.throwDynamicError("ValueError: {s} expects a finite number for {s}, got {f}", .{ arg.method, what, value.fmtNumber(item.asNumber()) });
     return error.RuntimeError;
 }
 
@@ -163,7 +163,7 @@ const MAX_PLAIN_MAGNITUDE = 1e21;
 fn readableNumber(buf: []u8, n: f64) []const u8 {
     const mag = @abs(n);
     const plain = n == 0.0 or (mag >= MIN_PLAIN_MAGNITUDE and mag < MAX_PLAIN_MAGNITUDE) or !std.math.isFinite(n);
-    return (if (plain) std.fmt.bufPrint(buf, "{d}", .{n}) else std.fmt.bufPrint(buf, "{e}", .{n})) catch "?";
+    return (if (plain) std.fmt.bufPrint(buf, "{f}", .{value.fmtNumber(n)}) else std.fmt.bufPrint(buf, "{e}", .{n})) catch "?";
 }
 
 /// Rejects a plane normal or direction with no usable orientation. The squared
@@ -191,7 +191,7 @@ pub fn checkedInt(comptime I: type, vm: *VM, val: f64, name: []const u8) !I {
     const lo: f64 = @floatFromInt(std.math.minInt(I));
     const hi: f64 = @floatFromInt(std.math.maxInt(I));
     if (!std.math.isFinite(val) or t < lo or t > hi) {
-        _ = vm.throwDynamicError("ValueError: '{s}' must be a finite integer in [{d}, {d}], got {d}", .{ name, std.math.minInt(I), std.math.maxInt(I), val });
+        _ = vm.throwDynamicError("ValueError: '{s}' must be a finite integer in [{d}, {d}], got {f}", .{ name, std.math.minInt(I), std.math.maxInt(I), value.fmtNumber(val) });
         return error.RuntimeError;
     }
     return @intFromFloat(t);
