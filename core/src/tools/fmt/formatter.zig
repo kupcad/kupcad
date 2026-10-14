@@ -5,6 +5,7 @@ const LineIndex = @import("../../core/line_index.zig").LineIndex;
 const Config = @import("config.zig").Config;
 const parser = @import("../../frontend/kupcad/parser.zig");
 const Precedence = parser.Precedence;
+const visitor = @import("../../core/visitor.zig");
 const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
 
@@ -59,6 +60,36 @@ pub const Formatter = struct {
         return self.line_index.getLine(self.token_starts[node.main_token]);
     }
 
+    /// The line of a statement's last token, so comments trailing any of its lines stay
+    /// with it, even after it is laid out over a different number of lines.
+    fn lastLine(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) u32 {
+        var last: LastToken = .{};
+        visitor.walk(LastToken, &last, tree, node_idx) catch {};
+        if (last.token >= self.token_starts.len) return 0;
+        return self.line_index.getLine(self.token_starts[last.token]);
+    }
+
+    /// The largest token a subtree mentions: every node's main token, and the closing
+    /// token of the nodes that record one (`)`, `]`, `end`, `}`).
+    const LastToken = struct {
+        token: u32 = 0,
+
+        pub fn enterNode(self: *LastToken, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
+            const node = tree.getNode(node_idx).?;
+            const end: u32 = switch (node.tag) {
+                .method_call => tree.methodCall(node).end_token,
+                .if_stmt => tree.ifStmt(node).end_token,
+                .def_stmt => tree.defStmt(node).end_token,
+                .class_stmt => tree.classStmt(node).end_token,
+                .module_stmt => tree.moduleStmt(node).end_token,
+                .block => tree.block(node).end_token,
+                .array_literal => tree.arrayLiteral(node).end_token,
+                else => 0,
+            };
+            self.token = @max(self.token, node.main_token, end);
+        }
+    };
+
     inline fn getCommentLine(self: *Formatter, comment: token.Comment) u32 {
         return self.line_index.getLine(comment.loc.offset);
     }
@@ -107,24 +138,58 @@ pub const Formatter = struct {
         try self.out.appendSlice(self.allocator, "end");
     }
 
+    /// Writes the comments above `up_to_line`, each on its own line.
     fn flushLeadingComments(self: *Formatter, up_to_line: u32) Error!void {
         while (self.comment_idx < self.comments.len) {
             const c = self.comments[self.comment_idx];
-            const c_line = self.getCommentLine(c);
-            if (c_line < up_to_line) {
-                if (self.isAtLineStartOrEmpty()) try self.writeIndent();
-                try self.out.appendSlice(self.allocator, c.lexeme);
-                try self.out.append(self.allocator, '\n');
-                self.comment_idx += 1;
-            } else break;
+            if (self.getCommentLine(c) >= up_to_line) break;
+            try self.writeOwnLineComment(c);
         }
     }
 
-    fn flushInlineComments(self: *Formatter, exact_line: u32) Error!void {
+    /// Writes the comments above the statement on `stmt_line`, keeping each gap of blank
+    /// lines in the source as one blank line, so a script keeps its sections (it used to
+    /// lose them all). `prev_line` is the previous statement's last line; without one (the
+    /// first statement of a block) no blank line is added before the first comment.
+    fn flushCommentsBeforeStatement(self: *Formatter, stmt_line: u32, prev_line: ?u32) Error!void {
+        try self.flushCommentsBefore(stmt_line, prev_line, true);
+    }
+
+    /// The comments above `line`, keeping gaps between them; `gap_before_line` also keeps
+    /// one between the last comment and `line` (not wanted right before `end`).
+    fn flushCommentsBefore(self: *Formatter, line: u32, prev_line: ?u32, comptime gap_before_line: bool) Error!void {
+        var above = prev_line;
         while (self.comment_idx < self.comments.len) {
             const c = self.comments[self.comment_idx];
             const c_line = self.getCommentLine(c);
-            if (c_line == exact_line) {
+            if (c_line >= line) break;
+            if (above) |a| if (c_line > a + 1) try self.ensureBlankLine();
+            try self.writeOwnLineComment(c);
+            above = c_line;
+        }
+        if (gap_before_line) {
+            if (above) |a| if (line > a + 1) try self.ensureBlankLine();
+        }
+    }
+
+    fn writeOwnLineComment(self: *Formatter, c: token.Comment) Error!void {
+        if (self.isAtLineStartOrEmpty()) try self.writeIndent();
+        try self.out.appendSlice(self.allocator, c.lexeme);
+        try self.out.append(self.allocator, '\n');
+        self.comment_idx += 1;
+    }
+
+    fn flushInlineComments(self: *Formatter, exact_line: u32) Error!void {
+        try self.flushTrailingComments(exact_line, exact_line);
+    }
+
+    /// Writes the comments on lines `first_line` through `last_line` after what was just
+    /// printed: the first on the same line, any others below it.
+    fn flushTrailingComments(self: *Formatter, first_line: u32, last_line: u32) Error!void {
+        while (self.comment_idx < self.comments.len) {
+            const c = self.comments[self.comment_idx];
+            const c_line = self.getCommentLine(c);
+            if (c_line >= first_line and c_line <= last_line) {
                 if (!self.isAtLineStartOrEmpty()) {
                     try self.out.append(self.allocator, ' ');
                 } else {
@@ -142,15 +207,17 @@ pub const Formatter = struct {
     fn formatNode(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) Error!void {
         if (node_idx == .none) return;
         const node = tree.getNode(node_idx) orelse return;
+        // Comments are placed by blocks only: a statement takes those up to its last line,
+        // and a block those before its closing keyword. Written here, before any
+        // sub-expression, they landed mid-expression: `.rotate(z: # note` + newline + `5)`.
         const node_line = self.getNodeLine(node);
-
-        try self.flushLeadingComments(node_line);
 
         switch (node.tag) {
             .invalid => return error.SyntaxError,
             .block => {
                 const b = tree.block(node);
-                try self.formatBlockStmts(tree, tree.getNodes(b.stmts));
+                const end_line = if (b.end_token < self.token_starts.len) self.line_index.getLine(self.token_starts[b.end_token]) else std.math.maxInt(u32);
+                try self.formatBlockStmts(tree, tree.getNodes(b.stmts), end_line);
             },
             .number => {
                 const n = tree.number(node);
@@ -254,7 +321,9 @@ pub const Formatter = struct {
 
     // --- Isolated Node Formatters ---
 
-    fn formatBlockStmts(self: *Formatter, tree: *const ast.Tree, stmts: []const ast.NodeIndex) Error!void {
+    /// `end_line` is the line of the keyword that closes the block (`end`, `else`, `when`,
+    /// ...); comments above it stay inside the block.
+    fn formatBlockStmts(self: *Formatter, tree: *const ast.Tree, stmts: []const ast.NodeIndex, end_line: u32) Error!void {
         var temp_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer temp_arena.deinit();
 
@@ -263,15 +332,15 @@ pub const Formatter = struct {
             print_stmts = rule.processBlockStmts(temp_arena.allocator(), tree, print_stmts);
         }
 
+        var prev_last_line: u32 = 0;
         for (print_stmts, 0..) |stmt_idx, idx| {
             const stmt = tree.getNode(stmt_idx).?;
             const stmt_line = self.getNodeLine(stmt);
 
             if (idx > 0) {
                 const prev_stmt = tree.getNode(print_stmts[idx - 1]).?;
-                const prev_line = self.getNodeLine(prev_stmt);
 
-                if (stmt_line == prev_line) {
+                if (stmt_line == prev_last_line and !self.isAtLineStartOrEmpty()) {
                     // Same line in original source! Emit a single semicolon.
                     try self.out.appendSlice(self.allocator, "; ");
                 } else {
@@ -281,19 +350,28 @@ pub const Formatter = struct {
                     } else {
                         try self.ensureNewline();
                     }
-                    try self.flushLeadingComments(stmt_line);
+                    try self.flushCommentsBeforeStatement(stmt_line, prev_last_line);
                     if (self.isAtLineStartOrEmpty()) try self.writeIndent();
                 }
             } else {
-                try self.flushLeadingComments(stmt_line);
+                try self.flushCommentsBeforeStatement(stmt_line, null);
                 if (self.isAtLineStartOrEmpty()) try self.writeIndent();
             }
 
             try self.formatNode(tree, stmt_idx);
 
-            // Inline comments inherently force a newline, which is correct
-            // because a comment goes to the end of the line.
-            try self.flushInlineComments(stmt_line);
+            // A comment ends its line, so it forces a newline. Every comment trailing a line
+            // of the statement belongs to it: one after `.translate(...)` on the second line
+            // of a chain used to move below it on each run.
+            prev_last_line = self.lastLine(tree, stmt_idx);
+            try self.flushTrailingComments(stmt_line, prev_last_line);
+        }
+
+        // Comments after the last statement belong to this block, not to whatever follows
+        // it: one above `end` used to move below it, one above `else` into the else branch.
+        if (self.comment_idx < self.comments.len and self.getCommentLine(self.comments[self.comment_idx]) < end_line) {
+            try self.ensureNewline();
+            try self.flushCommentsBefore(end_line, if (print_stmts.len > 0) prev_last_line else null, false);
         }
     }
 

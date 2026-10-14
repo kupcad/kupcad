@@ -492,3 +492,113 @@ test "Formatter: keeps the parentheses an expression needs, and only those" {
     // Formatting what it printed changes nothing: the output parses back to the same tree.
     try expectFormat(expected, expected);
 }
+
+/// Formats `source` to `expected`, and formatting `expected` changes nothing.
+fn expectStableFormat(source: []const u8, expected: []const u8) !void {
+    try expectFormat(source, expected);
+    try expectFormat(expected, expected);
+}
+
+test "Formatter: keeps one blank line where the source had any, never at the start of a block" {
+    // Every blank line used to be dropped, merging a script's sections.
+    try expectStableFormat(
+        \\# header
+        \\
+        \\# section 1
+        \\a = 1
+        \\
+        \\
+        \\b = 2
+        \\# about c
+        \\c = 3
+        \\def f
+        \\
+        \\  x = 1
+        \\
+        \\  y = 2
+        \\end
+    ,
+        \\# header
+        \\
+        \\# section 1
+        \\a = 1
+        \\
+        \\b = 2
+        \\# about c
+        \\c = 3
+        \\
+        \\def f
+        \\  x = 1
+        \\
+        \\  y = 2
+        \\end
+        \\
+    );
+}
+
+test "Formatter: a comment trailing any line of a statement stays with it" {
+    // A chain is laid out over new lines, and the comment used to move below it on the
+    // next run; one inside the chain was written mid-call: `.rotate(z: # note` / `5)`.
+    try expectStableFormat(
+        \\hole = circle(d: 12).translate(22, 17.5) # moved
+        \\chain = cube(1)
+        \\  .translate(1, 2, 3) # on line two
+        \\  .rotate(z: 5)
+        \\last = 1 # same line
+    ,
+        \\hole = circle(d: 12)
+        \\  .translate(22, 17.5) # moved
+        \\chain = cube(1)
+        \\  .translate(1, 2, 3)
+        \\  .rotate(z: 5) # on line two
+        \\last = 1 # same line
+        \\
+    );
+}
+
+test "Formatter: comments above end or else stay inside their block" {
+    // They used to move below `end` and into the else branch.
+    try expectStableFormat(
+        \\def f
+        \\  x = 1
+        \\  # closing note
+        \\end
+        \\if ok
+        \\  a = 1
+        \\  # before else
+        \\else
+        \\  b = 2
+        \\end
+    ,
+        \\def f
+        \\  x = 1
+        \\  # closing note
+        \\end
+        \\
+        \\if ok
+        \\  a = 1
+        \\  # before else
+        \\else
+        \\  b = 2
+        \\end
+        \\
+    );
+}
+
+test "Formatter: comments inside an expression move after it, never into it" {
+    try expectStableFormat(
+        \\pts = [
+        \\  1, # first
+        \\  # own line
+        \\  2
+        \\]
+        \\total = 1 +
+        \\  # why two
+        \\  2
+    ,
+        \\pts = [1, 2] # first
+        \\# own line
+        \\total = 1 + 2 # why two
+        \\
+    );
+}
