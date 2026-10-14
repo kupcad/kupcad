@@ -11,6 +11,9 @@ const GLTF_COMPONENT_TYPE_UNSIGNED_INT = 5125;
 const GLTF_TARGET_ARRAY_BUFFER = 34962;
 const GLTF_TARGET_ELEMENT_ARRAY_BUFFER = 34963;
 const DRACO_POSITION_QUANTIZATION_BITS = 14;
+/// Material slot 0: parts without a `material(...)` (neutral grey, half rough).
+const DEFAULT_BASE_COLOR = [4]f64{ 0.8, 0.8, 0.8, 1.0 };
+const DEFAULT_ROUGHNESS = 0.5;
 
 // --- GLTF Struct Definitions for std.json ---
 const Pbr = struct {
@@ -121,9 +124,9 @@ pub fn buildGltfBuffer(
         var i: usize = 0;
         while (i < mesh.tri_verts.len) : (i += 3) {
             const v_idx = mesh.tri_verts[i] * mesh.num_prop;
-            const mat_id: u32 = if (mesh.num_prop >= 4) @intFromFloat(mesh.vert_props[v_idx + 3]) else 0;
+            const slot: u32 = if (mesh.num_prop >= 4) @intFromFloat(mesh.vert_props[v_idx + 3]) else kernel.DEFAULT_MATERIAL_SLOT;
 
-            const gop = try mat_indices.getOrPut(mat_id);
+            const gop = try mat_indices.getOrPut(slot);
             if (!gop.found_existing) gop.value_ptr.* = .empty;
 
             try gop.value_ptr.appendSlice(allocator, &.{
@@ -231,56 +234,20 @@ pub fn buildGltfBuffer(
             });
         }
     } else {
-        // --- ZERO-COPY GLTF PACKING ---
-        for (handles) |handle| {
-            const mesh = kernel.getMesh(allocator, handle) orelse continue;
-            defer allocator.free(mesh.vert_props);
-            defer allocator.free(mesh.tri_verts);
+        // Uncompressed: one buffer view of tightly packed positions for every part (accessor 0
+        // above), then one index buffer per (part, material) primitive. The same layout as the
+        // draco branch, so both export every part with its own material.
+        try bin_buf.appendSlice(allocator, vertex_buf.items);
+        try bufferViews.append(allocator, .{
+            .buffer = 0,
+            .byteOffset = 0,
+            .byteLength = @intCast(vertex_buf.items.len),
+            .target = GLTF_TARGET_ARRAY_BUFFER,
+        });
 
-            const vertex_count: u32 = @intCast(mesh.vert_props.len / mesh.num_prop);
-            if (vertex_count == 0) continue;
-
-            // 1. SLICE-CAST VERTICES DIRECTLY (Zero-Copy)
-            const pos_byte_offset: u32 = @intCast(bin_buf.items.len);
-            const raw_vertices = std.mem.sliceAsBytes(mesh.vert_props);
-            try bin_buf.appendSlice(allocator, raw_vertices);
-
-            const pos_bv_idx: u32 = @intCast(bufferViews.items.len);
-            try bufferViews.append(allocator, .{
-                .buffer = 0,
-                .byteOffset = pos_byte_offset,
-                .byteLength = @intCast(raw_vertices.len),
-                .byteStride = @intCast(mesh.num_prop * @sizeOf(f32)), // Tell WebGL how to jump over Material IDs
-                .target = GLTF_TARGET_ARRAY_BUFFER,
-            });
-
-            // Fast min/max calculation for GLTF bounds without allocating
-            var local_min = [3]f64{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
-            var local_max = [3]f64{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
-            var v: usize = 0;
-            while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
-                if (mesh.vert_props[v + 0] < local_min[0]) local_min[0] = mesh.vert_props[v + 0];
-                if (mesh.vert_props[v + 0] > local_max[0]) local_max[0] = mesh.vert_props[v + 0];
-                if (mesh.vert_props[v + 1] < local_min[1]) local_min[1] = mesh.vert_props[v + 1];
-                if (mesh.vert_props[v + 1] > local_max[1]) local_max[1] = mesh.vert_props[v + 1];
-                if (mesh.vert_props[v + 2] < local_min[2]) local_min[2] = mesh.vert_props[v + 2];
-                if (mesh.vert_props[v + 2] > local_max[2]) local_max[2] = mesh.vert_props[v + 2];
-            }
-
-            const pos_accessor_idx: u32 = @intCast(accessors.items.len);
-            try accessors.append(allocator, .{
-                .bufferView = pos_bv_idx,
-                .byteOffset = 0,
-                .componentType = GLTF_COMPONENT_TYPE_FLOAT,
-                .count = vertex_count,
-                .type = "VEC3",
-                .min = local_min,
-                .max = local_max,
-            });
-
-            // 2. SLICE-CAST INDICES DIRECTLY (Zero-Copy)
+        for (primitives_data.items) |prim| {
             const idx_byte_offset: u32 = @intCast(bin_buf.items.len);
-            const raw_indices = std.mem.sliceAsBytes(mesh.tri_verts);
+            const raw_indices = std.mem.sliceAsBytes(prim.indices.items);
             try bin_buf.appendSlice(allocator, raw_indices);
 
             const idx_bv_idx: u32 = @intCast(bufferViews.items.len);
@@ -296,15 +263,14 @@ pub fn buildGltfBuffer(
                 .bufferView = idx_bv_idx,
                 .byteOffset = 0,
                 .componentType = GLTF_COMPONENT_TYPE_UNSIGNED_INT,
-                .count = @intCast(mesh.tri_verts.len),
+                .count = @intCast(prim.indices.items.len),
                 .type = "SCALAR",
             });
 
-            // 3. Register the primitive
             try primitives.append(allocator, .{
-                .attributes = .{ .POSITION = pos_accessor_idx },
+                .attributes = .{ .POSITION = 0 },
                 .indices = idx_accessor_idx,
-                .material = 0, // Fallback to default material for fast-streaming
+                .material = prim.material,
             });
         }
     }
@@ -314,12 +280,13 @@ pub fn buildGltfBuffer(
 
     var has_transmission = false;
 
-    if (vm.materials.items.len == 0) {
-        try gltf_materials.append(allocator, .{
-            .pbrMetallicRoughness = .{ .baseColorFactor = .{ 0.8, 0.8, 0.8, 1.0 }, .metallicFactor = 0.0, .roughnessFactor = 0.5 },
-            .alphaMode = "OPAQUE",
-        });
-    } else {
+    // glTF material index == material slot: the default material first, then one per
+    // user material (kernel.materialSlot).
+    try gltf_materials.append(allocator, .{
+        .pbrMetallicRoughness = .{ .baseColorFactor = DEFAULT_BASE_COLOR, .metallicFactor = 0.0, .roughnessFactor = DEFAULT_ROUGHNESS },
+        .alphaMode = "OPAQUE",
+    });
+    {
         for (vm.materials.items) |mat| {
             const color = parseHexColor(mat.color_hex, mat.alpha);
             var ext: ?MaterialExt = null;

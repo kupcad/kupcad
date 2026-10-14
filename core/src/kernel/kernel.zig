@@ -16,6 +16,15 @@ const geom = @import("geometry_handle.zig");
 const manifold_driver = @import("engines/manifold/driver.zig");
 const brep_driver = @import("engines/brep/driver.zig");
 
+/// Material slots carried on solids (the Manifold engine stores them as a vertex property).
+/// Slot 0 is the default material and user material `id` (an index into VM.materials) is
+/// slot `id + 1`, so parts without a material never alias the first user material.
+pub const DEFAULT_MATERIAL_SLOT: u32 = 0;
+
+pub fn materialSlot(material_id: u32) u32 {
+    return material_id + 1;
+}
+
 pub const BooleanOp = enum {
     union_op,
     difference_op,

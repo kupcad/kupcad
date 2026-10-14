@@ -7073,8 +7073,8 @@ test "VM: Material DSL registers properties and injects ID into mesh property ch
     try testing.expect(mesh.num_prop >= 4);
 
     // Check first vertex: channel 4 must equal Material ID 0
-    const mat_id: u32 = @intFromFloat(mesh.vert_props[3]);
-    try testing.expectEqual(@as(u32, 0), mat_id);
+    const slot: u32 = @intFromFloat(mesh.vert_props[3]);
+    try testing.expectEqual(kernel.materialSlot(0), slot);
 }
 
 test "VM: CSG Booleans preserve face material IDs across cuts" {
@@ -7111,9 +7111,9 @@ test "VM: CSG Booleans preserve face material IDs across cuts" {
 
     var v: usize = 0;
     while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
-        const id: u32 = @intFromFloat(mesh.vert_props[v + 3]);
-        if (id == 0) found_mat0 = true;
-        if (id == 1) found_mat1 = true;
+        const slot: u32 = @intFromFloat(mesh.vert_props[v + 3]);
+        if (slot == kernel.materialSlot(0)) found_mat0 = true;
+        if (slot == kernel.materialSlot(1)) found_mat1 = true;
     }
 
     try testing.expect(found_mat0);

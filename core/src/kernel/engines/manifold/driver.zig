@@ -629,8 +629,8 @@ fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandl
     std.debug.assert(a.engine == .manifold);
     if (@intFromPtr(a.ptr) == 0) return null;
 
-    // Pass the integer ID cleanly through the C-FFI opaque pointer
-    const ctx: ?*anyopaque = @ptrFromInt(@as(usize, material_id));
+    // Pass the material slot through the C-FFI opaque pointer (0 would mean "default").
+    const ctx: ?*anyopaque = @ptrFromInt(@as(usize, kernel.materialSlot(material_id)));
     const ptr = manifold.setProperties(@ptrCast(@alignCast(a.ptr)), 1, materialPropFunc, ctx) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
