@@ -757,6 +757,42 @@ test "Stdlib: every value answers class and inspect" {
     });
 }
 
+test "Stdlib: an implicit super spreads the method's *rest back into arguments" {
+    // `super` with no arguments used to pass `*xs` as one Array argument.
+    const classes =
+        \\class A
+        \\  def m(*xs)
+        \\    xs
+        \\  end
+        \\  def n(a, *xs, k: 0)
+        \\    [a, xs.length, k]
+        \\  end
+        \\  def o(*xs)
+        \\    yield(xs.length)
+        \\  end
+        \\end
+        \\class B < A
+        \\  def m(*xs)
+        \\    super
+        \\  end
+        \\  def n(a, *xs, k: 0)
+        \\    super
+        \\  end
+        \\  def o(*xs)
+        \\    super
+        \\  end
+        \\end
+        \\
+    ;
+    try expectGlobalR(&.{
+        .{ .src = classes ++ "r = B.new.m(1, 2, 3)", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = classes ++ "r = B.new.m.length", .expected = .{ .num = 0 } },
+        .{ .src = classes ++ "r = B.new.n(1, 2, 3, k: 9)", .expected = .{ .nums = &.{ 1, 2, 9 } } },
+        .{ .src = classes ++ "r = B.new.n(1)", .expected = .{ .nums = &.{ 1, 0, 0 } } },
+        .{ .src = classes ++ "r = B.new.o(1, 2) { |c| c * 100 }", .expected = .{ .num = 200 } },
+    });
+}
+
 test "Stdlib: block_given? works with or without parentheses" {
     // The bare form used to be looked up as a variable: NameError.
     const m = "def m(&b)\n  [block_given?, block_given?()]\nend\n";

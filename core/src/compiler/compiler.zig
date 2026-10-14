@@ -1597,9 +1597,21 @@ pub const Compiler = struct {
             const func = self.function orelse return error.UnknownNode;
             const arity = func.arity;
 
-            // Push positional arguments AND the kwarg map (located inside the standard arity length)
-            for (0..arity) |i| {
-                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
+            // Forward the method's own parameters, the kwarg map included (it is the last of
+            // the arity slots). A `*rest` parameter holds an Array, so it is spread back into
+            // separate arguments: the positionals are packed into one Array, like `f(*xs)`.
+            if (func.splat_pos) |splat_pos| {
+                try self.emitOp(.op_build_array);
+                try self.emitByte(0);
+                self.simulatePush(1);
+                for (0..arity) |i| {
+                    try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
+                    try self.emitOp(if (i == splat_pos) .op_array_spread else .op_array_push);
+                }
+            } else {
+                for (0..arity) |i| {
+                    try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, @intCast(i + 1));
+                }
             }
             if (sc.block == .none) {
                 // Forward the parent's block (nil when it got none)
@@ -1608,7 +1620,10 @@ pub const Compiler = struct {
                 // An explicitly passed block overrides the implicit one
                 try self.compileBlockLiteral(sc.block);
             }
-            call = .{ .count = @as(usize, arity) + 1, .flags = .{ .has_block = true } };
+            call = if (func.splat_pos != null)
+                .{ .count = 2, .flags = .{ .has_block = true, .spread = true } }
+            else
+                .{ .count = @as(usize, arity) + 1, .flags = .{ .has_block = true } };
         } else {
             call = try self.compileCallArguments(self.tree.getNamedArgs(sc.args), sc.block);
         }
