@@ -147,6 +147,8 @@ pub const VM = struct {
 
     // DOD Memory Fields
     scratch_arena: std.heap.ArenaAllocator,
+    /// How many runUntil calls are active (more than one while a native runs a block).
+    run_depth: u32 = 0,
     static_true: ?*value.ObjString = null,
     static_false: ?*value.ObjString = null,
     static_nil: ?*value.ObjString = null,
@@ -410,8 +412,14 @@ pub const VM = struct {
     }
 
     pub fn runUntil(self: *VM, target_depth: usize) InterpretResult {
-        // Guarantee ephemeral memory is recycled even during catastrophic exception unwinds
-        defer _ = self.scratch_arena.reset(.retain_capacity);
+        // The scratch arena is recycled when the outermost run ends, even after an unwind.
+        // A nested run (a native calling a block through callClosureSync) must not reset
+        // it: the native that called it may still be using scratch memory.
+        self.run_depth += 1;
+        defer {
+            self.run_depth -= 1;
+            if (self.run_depth == 0) _ = self.scratch_arena.reset(.retain_capacity);
+        }
 
         var previous_line: ?u32 = null; // Track line boundary
 
@@ -3220,13 +3228,13 @@ pub const VM = struct {
             const source_offset = exec_chunk.getOffset(instruction_ip);
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
 
-            if (self.formatTraceLine(self.scratch_arena.allocator(), source_offset, func_name)) |trace_str| {
+            if (self.formatTraceLine(self.allocator, source_offset, func_name)) |trace_str| {
+                defer self.allocator.free(trace_str);
                 self.reportError("{s}\n", .{trace_str});
             } else |_| {
                 self.reportError("    from unknown\n", .{});
             }
         }
-        _ = self.scratch_arena.reset(.retain_capacity);
     }
 
     // --- First-Class Error Backtraces ---
@@ -3245,17 +3253,13 @@ pub const VM = struct {
             const source_offset = exec_chunk.getOffset(instruction_ip);
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
 
-            var trace_str: []const u8 = "";
-            if (self.formatTraceLine(self.scratch_arena.allocator(), source_offset, func_name)) |formatted| {
-                trace_str = formatted;
-            } else |_| {
-                trace_str = "    from unknown";
-            }
+            // Not the scratch arena: a native raising an error may still be using it.
+            const formatted = self.formatTraceLine(self.allocator, source_offset, func_name) catch null;
+            defer if (formatted) |f| self.allocator.free(f);
 
-            const str_val = try self.allocateString(trace_str);
+            const str_val = try self.allocateString(formatted orelse "    from unknown");
             try arr_obj.items.append(self.gc.trackingAllocator(), str_val);
         }
-        _ = self.scratch_arena.reset(.retain_capacity);
 
         return arr_obj;
     }

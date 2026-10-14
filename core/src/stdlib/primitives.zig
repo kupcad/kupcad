@@ -275,8 +275,6 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     if (parsed.positional.len > 1) paths_val = args[1];
     if (parsed.opts.paths) |v| paths_val = v;
 
-    // Not the scratch arena: a validation error below raises through
-    // raiseError, whose backtrace capture resets that arena under us.
     const alloc = vm.allocator;
 
     // Every point is validated, including ones no path references.
@@ -411,8 +409,6 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     try requireMinCount(vm, pts_val.len, MIN_POLYHEDRON_POINTS, "polyhedron", "points");
     try requireMinCount(vm, faces_val.len, MIN_POLYHEDRON_FACES, "polyhedron", "faces");
 
-    // Not the scratch arena: a validation error below raises through
-    // raiseError, whose backtrace capture resets that arena under us.
     const alloc = vm.allocator;
 
     const pts = try alloc.alloc([3]f64, pts_val.len);

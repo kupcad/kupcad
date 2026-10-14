@@ -11409,3 +11409,34 @@ test "VM: rescuing one error class does not catch another" {
     try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
     try expectGlobalString(&vm, "r", "outer ValueError handler");
 }
+
+/// A native that keeps scratch memory across a backtrace and a nested run of its block,
+/// then reports whether the memory still holds what it wrote.
+fn holdScratch(vm_opaque: *anyopaque, args: value.NativeArgs) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const held = try vm.fmtScratch("{s}", .{"held by the native"});
+    _ = try vm.buildBacktrace();
+    if (args.block()) |block| _ = try vm.callClosureSync(block, &.{});
+    // Fresh scratch allocations would reuse `held` if the arena had been reset under it.
+    _ = try vm.fmtScratch("{s}", .{"overwrites a reset arena"});
+    return value.Value.initBool(std.mem.eql(u8, held, "held by the native"));
+}
+
+test "VM: a native's scratch memory survives a backtrace and a nested run of its block" {
+    // Both used to reset the shared scratch arena while the native was still using it.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    try vm.defineNative("hold_scratch", holdScratch);
+
+    var doc = try Document.parse(testing.allocator, "hold_scratch { [1, 2].map { |x| \"#{x}\" } }");
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.asBool());
+}

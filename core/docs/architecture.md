@@ -154,7 +154,7 @@ pub const InlineCache = struct {
 ### Dictionary Interning & The Scratch Arena
 
 * **Strict Value Dictionaries:** All object dictionaries (`methods`, `class_fields`, `instance_fields`, `map`) strictly require GC-tracked `Value` types (Interned Strings or Symbols) as keys rather than raw `[]const u8` slices. This guarantees that dynamically generated dictionary keys are safely traced during the GC Mark phase.
-* **Scratch Arena Lifecycle:** The VM utilizes a secondary `scratch_arena` (an `ArenaAllocator`) for ephemeral string formatting, interpolation, and method resolution. To prevent unbounded memory bloat, this arena is seamlessly reset (`.reset(.retain_capacity)`) at the end of localized opcodes (`op_interpolate`, `op_add`) and at the bottom of the main execution loop, recycling the memory block without triggering OS-level thrashing.
+* **Scratch Arena Lifecycle:** The VM utilizes a secondary `scratch_arena` (an `ArenaAllocator`) for ephemeral string formatting, interpolation, and method resolution. It is reset (`.reset(.retain_capacity)`) when the outermost `runUntil` returns, even after an unwind, recycling the memory without OS-level thrashing. A nested run (a native calling a block through `callClosureSync`) and error backtraces never reset it, because the native that started them may still be holding scratch memory.
 
 ---
 
