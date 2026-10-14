@@ -2751,12 +2751,12 @@ pub const VM = struct {
                     if (err_val.isObject() and err_val.asObj().obj_type == .string) {
                         str_val = err_val;
                     } else {
-                        // Otherwise, stringify the primitive (number, boolean, etc.)
-                        var fba_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
-                        var fba = std.heap.FixedBufferAllocator.init(&fba_buf);
-                        var out: std.Io.Writer.Allocating = .init(fba.allocator());
+                        // Otherwise, stringify the value (a number, an Array, ...). On the heap:
+                        // a fixed stack buffer used to truncate a large one.
+                        var out: std.Io.Writer.Allocating = .init(self.allocator);
+                        defer out.deinit();
                         err_val.stringify(false, &out.writer) catch |err| {
-                            std.log.err("Error stringifying primitive exception: {}", .{err});
+                            self.reportError("Error stringifying a raised value: {}\n", .{err});
                         };
                         str_val = self.allocateString(out.written()) catch null;
                     }
@@ -2765,7 +2765,7 @@ pub const VM = struct {
                         self.push(s_val); // Protect until the instance holds it
                         const msg_key = self.allocateString("message") catch return .runtime_error;
                         self.setInstanceField(inst, msg_key, s_val, null) catch |err| {
-                            std.log.err("Error setting exception message: {}", .{err});
+                            self.reportError("Error setting exception message: {}\n", .{err});
                         };
                         _ = self.pop();
 
@@ -2774,7 +2774,7 @@ pub const VM = struct {
                             self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
                             const bt_key = self.allocateString("backtrace") catch return .runtime_error;
                             self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
-                                std.log.err("Error setting exception backtrace: {}", .{err});
+                                self.reportError("Error setting exception backtrace: {}\n", .{err});
                             };
                             _ = self.pop();
                         }
@@ -3169,7 +3169,7 @@ pub const VM = struct {
                     self.push(str_val); // Protect until the instance holds it
                     const msg_key = self.allocateString("message") catch return .runtime_error;
                     self.setInstanceField(inst, msg_key, str_val, null) catch |err| {
-                        std.log.err("Error setting dynamic exception message: {}", .{err});
+                        self.reportError("Error setting exception message: {}\n", .{err});
                     };
                     _ = self.pop();
 
@@ -3178,7 +3178,7 @@ pub const VM = struct {
                         self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
                         const bt_key = self.allocateString("backtrace") catch return .runtime_error;
                         self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
-                            std.log.err("Error setting dynamic exception backtrace: {}", .{err});
+                            self.reportError("Error setting exception backtrace: {}\n", .{err});
                         };
                         _ = self.pop();
                     }

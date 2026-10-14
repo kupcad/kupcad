@@ -867,6 +867,14 @@ test "Stdlib: a deep backtrace lists its innermost and outermost frames only" {
     });
 }
 
+test "Stdlib: raising a value that isn't an exception keeps all of it as the message" {
+    // A non-String value was stringified into a 1 KB stack buffer, cutting the message.
+    try expectGlobalR(&.{
+        .{ .src = "big = (1..500).to_a\nr = begin\n  raise big\nrescue => e\n  e.message == big.inspect\nend", .expected = .{ .boolean = true } },
+        .{ .src = "r = begin\n  raise 42\nrescue RuntimeError => e\n  e.message\nend", .expected = .{ .str = "42" } },
+    });
+}
+
 test "Stdlib: block_given? works with or without parentheses" {
     // The bare form used to be looked up as a variable: NameError.
     const m = "def m(&b)\n  [block_given?, block_given?()]\nend\n";
