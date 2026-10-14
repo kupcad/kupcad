@@ -49,6 +49,7 @@ const Sandbox = struct {
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "semantic_error.kup", .data = "f = ->(x) { break x }\ncube(1)\n" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "syntax_error.kup", .data = "x = )\n" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "compile_error.kup", .data = "cube = 5\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "class.kup", .data = "class Foo\n  BAR = 7\nend\n" });
         const path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
         return .{ .tmp = tmp, .path = path };
     }
@@ -136,6 +137,9 @@ test "kupcad: errors found in a file fail the command and are counted" {
 
 test "kupcad: commands succeed with exit 0 on valid input" {
     try expectRuns(&.{
+        // dev never freed its compiler, so a script with a class reported a leak.
+        .{ .args = &.{ "dev", "disasm", "class.kup" }, .code = 0, .absent = "leaked" },
+        .{ .args = &.{ "dev", "bench", "class.kup" }, .code = 0, .absent = "leaked" },
         .{ .args = &.{ "fmt", "valid.kup" }, .code = 0, .contains = "cube(10)" },
         .{ .args = &.{ "doc", "valid.kup" }, .code = 0 },
         .{ .args = &.{ "check", "valid.kup" }, .code = 0, .contains = "Success" },

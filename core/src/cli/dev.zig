@@ -104,6 +104,7 @@ fn executeDisasm(init: std.process.Init, allocator: std.mem.Allocator, args_iter
     defer main_chunk.free(allocator);
 
     var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &session.vm);
+    defer compiler.deinit();
     compiler.compile(doc.tree.root) catch |err| {
         reportCompileError(init.io, allocator, &compiler, &doc, err);
         return .failure;
@@ -214,6 +215,7 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     const start_compile = std.Io.Clock.now(.awake, init.io);
 
     var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &session.vm);
+    defer compiler.deinit();
     compiler.compile(doc.tree.root) catch |err| {
         reportCompileError(init.io, allocator, &compiler, &doc, err);
         return .failure;
