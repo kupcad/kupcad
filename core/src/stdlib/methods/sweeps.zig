@@ -42,6 +42,10 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
+/// The profile's distance from the axis is not known before evaluation, so revolve
+/// resolves its segment count (when the config has no fixed count) for a typical radius.
+const REVOLVE_BASELINE_RADIUS = 10.0;
+
 pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return error.RuntimeError;
     var degrees: f64 = 360.0;
@@ -54,12 +58,7 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 
     if (pos_count > 0) degrees = try util.requireNumber(vm, args[0], "revolve", "deg");
 
-    // Pull the active configuration and calculate segments
-    const config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
-    // For a 2D cross-section, if fixed_segments isn't set, we use a safe baseline radius
-    // (e.g., 10.0mm) to generate a smooth default resolution via the new getSegments solver.
-    const segments: i32 = util.clampSegments(config.manifold.getSegments(10.0));
+    const segments = util.autoSegments(vm, REVOLVE_BASELINE_RADIUS);
 
     const new_idx = try vm.dag_builder.addRevolve(receiver.asCrossSection().dag_idx, segments, degrees);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });

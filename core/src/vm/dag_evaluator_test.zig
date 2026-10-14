@@ -186,7 +186,7 @@ test "DAG Builder: Batch operations deduplicate securely based on array contents
     defer vm.deinit();
 
     const c1 = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
-    const c2 = try vm.dag_builder.addSphere(5.0);
+    const c2 = try vm.dag_builder.addSphere(5.0, 0);
     const c3 = try vm.dag_builder.addCylinder(2.0, 2.0, 10.0, true, 16);
 
     const batch1 = try vm.dag_builder.addBatchUnion(&.{ c1, c2, c3 });
@@ -381,7 +381,7 @@ test "DAG Evaluator: RAM budgeting traps complex meshes" {
     vm.config_stack.items[vm.config_stack.items.len - 1].max_vertices = 10;
 
     // A high-segment sphere will easily exceed 10 vertices
-    const sphere_idx = try vm.dag_builder.addSphere(10.0);
+    const sphere_idx = try vm.dag_builder.addSphere(10.0, 0);
 
     const result = dag_evaluator.evaluateDAG(&vm, sphere_idx);
 
@@ -394,7 +394,7 @@ test "DAG Evaluator: evaluation error keeps cache-owned operands alive" {
     defer vm.deinit(); // the cached cube used to be freed twice here
 
     const cube_idx = try vm.dag_builder.addCube(1, 1, 1, false);
-    const sphere_idx = try vm.dag_builder.addSphere(5);
+    const sphere_idx = try vm.dag_builder.addSphere(5, 0);
     const union_idx = try vm.dag_builder.addBinary(.union_op, cube_idx, sphere_idx);
 
     // Cache the cube, then make the sphere blow the vertex budget.

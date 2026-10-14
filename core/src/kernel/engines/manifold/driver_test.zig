@@ -79,7 +79,7 @@ test "Manifold Driver: cylinder generates valid geometry" {
 }
 
 test "Manifold Driver: sphere generates valid geometry" {
-    const handle = driver.driver.sphereFn(5.0) orelse return error.SphereFailed;
+    const handle = driver.driver.sphereFn(5.0, 0) orelse return error.SphereFailed;
     defer driver.driver.destructFn(handle);
 
     const vol = driver.driver.volumeFn(handle);
@@ -335,10 +335,10 @@ test "Manifold Driver: trimByPlane cuts solid exactly in half" {
 }
 
 test "Manifold Driver: hull wraps disjoint geometry securely" {
-    const s1 = driver.driver.sphereFn(5.0) orelse return error.SphereFailed;
+    const s1 = driver.driver.sphereFn(5.0, 0) orelse return error.SphereFailed;
     defer driver.driver.destructFn(s1);
 
-    const s2_base = driver.driver.sphereFn(5.0) orelse return error.SphereFailed;
+    const s2_base = driver.driver.sphereFn(5.0, 0) orelse return error.SphereFailed;
     defer driver.driver.destructFn(s2_base);
 
     const s2 = driver.driver.translateFn(s2_base, 20.0, 0.0, 0.0) orelse return error.TransFailed;

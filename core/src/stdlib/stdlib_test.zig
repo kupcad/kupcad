@@ -1204,3 +1204,14 @@ test "Stdlib: degenerate solids are rejected or repaired instead of exported wro
         .{ .src = "r = square(4).loft(square(4), 10).bbox.max[2]", .expected = .{ .num = 10 } },
     });
 }
+
+test "Stdlib: sphere resolution follows segments and the active config" {
+    const with_8_segments = "v = nil\nCAD.with_config(manifold: { fixed_segments: 8 }) do\n  v = ";
+    try expectGlobalR(&.{
+        // Both used to be Manifold's built-in default, whatever was asked for.
+        .{ .src = "r = sphere(r: 1, segments: 8).volume < sphere(r: 1, segments: 64).volume", .expected = .{ .boolean = true } },
+        .{ .src = with_8_segments ++ "sphere(r: 1).volume\nend\nr = v == sphere(r: 1, segments: 8).volume && v < sphere(r: 1, segments: 64).volume", .expected = .{ .boolean = true } },
+        // fillet_edges rounds with a sphere, so its corners follow the config too.
+        .{ .src = with_8_segments ++ "cube(1).fillet_edges(r: 0.5).volume\nend\nr = v == cube(1).minkowski(sphere(r: 0.5, segments: 8)).volume && v < cube(1).minkowski(sphere(r: 0.5, segments: 64)).volume", .expected = .{ .boolean = true } },
+    });
+}

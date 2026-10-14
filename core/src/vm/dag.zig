@@ -238,9 +238,9 @@ pub const DAGBuilder = struct {
         return try self.appendNodeWithRollback(.{ .tag = .cylinder, .flags = if (center) 1 else 0, .data = num_idx }, snap);
     }
 
-    pub fn addSphere(self: *DAGBuilder, radius: f64) !DAGNodeIndex {
+    pub fn addSphere(self: *DAGBuilder, radius: f64, segments: i32) !DAGNodeIndex {
         const snap = self.snapshot();
-        const num_idx = try self.appendNumbers(&.{radius});
+        const num_idx = try self.appendNumbers(&.{ radius, @floatFromInt(segments) });
         return try self.appendNodeWithRollback(.{ .tag = .sphere, .flags = 0, .data = num_idx }, snap);
     }
 
@@ -457,8 +457,11 @@ pub const DAGBuilder = struct {
         };
     }
 
-    pub inline fn getSpherePayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64 } {
-        return .{ .radius = self.numbers.items[node.data] };
+    pub inline fn getSpherePayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64, segments: i32 } {
+        return .{
+            .radius = self.numbers.items[node.data],
+            .segments = @intFromFloat(self.numbers.items[node.data + 1]),
+        };
     }
 
     pub inline fn getSquarePayload(self: *const DAGBuilder, node: DAGNode) struct { x: f64, y: f64, center: bool } {
@@ -622,6 +625,7 @@ pub const DAGBuilder = struct {
             .sphere => {
                 const p = self.getSpherePayload(node);
                 hasher.update(std.mem.asBytes(&p.radius));
+                hasher.update(std.mem.asBytes(&p.segments));
             },
             .square => {
                 const p = self.getSquarePayload(node);
@@ -770,8 +774,7 @@ pub const DAGBuilder = struct {
         return switch (a.tag) {
             .cube => self.numbersEql(a.data, b.data, 3),
             .cylinder => self.numbersEql(a.data, b.data, 4),
-            .sphere => self.numbersEql(a.data, b.data, 1),
-            .square, .circle => self.numbersEql(a.data, b.data, 2),
+            .sphere, .square, .circle => self.numbersEql(a.data, b.data, 2),
             .polygon => blk: {
                 const count = ex[a.data + 1];
                 if (count != ex[b.data + 1]) break :blk false;

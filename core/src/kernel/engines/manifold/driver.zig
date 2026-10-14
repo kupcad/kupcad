@@ -58,8 +58,8 @@ fn cylinderImpl(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geo
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
-fn sphereImpl(radius: f64) ?geom.GeometryHandle {
-    const ptr = manifold.sphere(radius) orelse return null;
+fn sphereImpl(radius: f64, segments: i32) ?geom.GeometryHandle {
+    const ptr = manifold.sphere(radius, segments) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 

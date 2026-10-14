@@ -196,7 +196,7 @@ end
 
 ```
 
-Global CAD engine overrides can be dynamically applied using the `CAD` module:
+Global CAD engine overrides can be dynamically applied using the `CAD` module. Curved shapes (`sphere`, `cylinder`, `circle`, `torus`, `fillet_edges`) take their segment count from the active config; the primitives also accept `segments:` to override it per call:
 
 ```ruby
 # Force specific tessellation resolutions for the enclosed block

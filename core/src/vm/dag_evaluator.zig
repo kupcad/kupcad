@@ -305,7 +305,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 },
                 .sphere => {
                     const p = vm.dag_builder.getSpherePayload(node);
-                    const handle = kernel.sphere(engine, p.radius) orelse return kernelFailed(vm, node.tag);
+                    const handle = kernel.sphere(engine, p.radius, p.segments) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
                 .polyhedron_op => {

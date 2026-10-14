@@ -206,9 +206,11 @@ pub fn requireSegmentCount(vm: *VM, segs: i32, name: []const u8) !void {
     }
 }
 
-/// Clamps an auto-computed segment count (from ManifoldConfig.getSegments) to
-/// MAX_SEGMENTS; auto counts are not the user's fault, so we clamp rather than error.
-pub fn clampSegments(segs: u32) i32 {
+/// The segment count the active config gives a circle of `radius` (what `segments: 0`
+/// means), clamped to MAX_SEGMENTS: auto counts are not the user's fault, so we clamp
+/// rather than error.
+pub fn autoSegments(vm: *VM, radius: f64) i32 {
+    const segs = vm.config_stack.items[vm.config_stack.items.len - 1].manifold.getSegments(radius);
     return @intCast(@min(segs, @as(u32, @intCast(limits.MAX_SEGMENTS))));
 }
 

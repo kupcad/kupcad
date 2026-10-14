@@ -11,7 +11,7 @@ test "Driver: End-to-End API Calls" {
     const cyl_handle = driver.driver.cylinderFn(5, 5, 15, true, 32) orelse return error.CylinderFailed;
     defer driver.driver.destructFn(cyl_handle);
 
-    const sphere_handle = driver.driver.sphereFn(5) orelse return error.SphereFailed;
+    const sphere_handle = driver.driver.sphereFn(5, 0) orelse return error.SphereFailed;
     defer driver.driver.destructFn(sphere_handle);
 
     // Ensure translation succeeds on a valid B-Rep handle

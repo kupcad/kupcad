@@ -109,12 +109,10 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
     const cx = if (center) 0.0 else hw;
     const cy = if (center) 0.0 else hh;
 
-    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
     if (round_r) |r| {
         const safe_r = @min(r, @min(hw, hh));
         // Calculate segments per 90-degree arc (minimum 4, or inherited from user's global segments)
-        const total_segs: i32 = if (segs > 0) segs else util.clampSegments(active_config.manifold.getSegments(safe_r));
+        const total_segs: i32 = if (segs > 0) segs else util.autoSegments(vm, safe_r);
         const arc_segs = @max(1, @as(usize, @intCast(total_segs)) / 4);
         // Build corners Counter-Clockwise
         try pushArc(alloc, &pts, cx + hw - safe_r, cy - hh + safe_r, safe_r, -std.math.pi / 2.0, 0.0, arc_segs); // Bottom-Right
@@ -208,11 +206,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     try util.requirePositive(vm, r2, "cylinder", "radius 2");
     try util.requirePositive(vm, opts.h, "cylinder", "height");
 
-    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
-    if (opts.segments == 0) {
-        opts.segments = util.clampSegments(active_config.manifold.getSegments(@max(r1, r2)));
-    }
+    if (opts.segments == 0) opts.segments = util.autoSegments(vm, @max(r1, r2));
 
     var dag_idx: u32 = 0;
     if (opts.round_r != null or opts.chamfer != null) {
@@ -231,7 +225,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
             const safe_r1 = @min(rr, @min(r1, opts.h / 2.0));
             const safe_r2 = @min(rr, @min(r2, opts.h / 2.0));
 
-            const corner_segs: i32 = util.clampSegments(active_config.manifold.getSegments(@max(safe_r1, safe_r2)));
+            const corner_segs: i32 = util.autoSegments(vm, @max(safe_r1, safe_r2));
             const arc_segs = @max(1, @as(usize, @intCast(corner_segs)) / 4);
             // Bottom Right Corner (sweep from -90 deg to 0)
             try pushArc(alloc, &pts, r1 - safe_r1, y_min + safe_r1, safe_r1, -std.math.pi / 2.0, 0.0, arc_segs);
@@ -264,7 +258,8 @@ pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
     var opts = try extractGeomOptions(vm, parsed, "sphere");
     if (parsed.pos_count > 0) opts.r = try util.requireNumber(vm, args[0], "sphere", "r");
     try util.requirePositive(vm, opts.r, "sphere", "radius");
-    const dag_idx = try vm.dag_builder.addSphere(opts.r);
+    if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
+    const dag_idx = try vm.dag_builder.addSphere(opts.r, opts.segments);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
@@ -275,10 +270,7 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
     if (parsed.pos_count > 0) opts.r = try util.requireNumber(vm, args[0], "circle", "r");
     try util.requirePositive(vm, opts.r, "circle", "radius");
 
-    if (opts.segments == 0) {
-        const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-        opts.segments = util.clampSegments(active_config.manifold.getSegments(opts.r));
-    }
+    if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
 
     const dag_idx = try vm.dag_builder.addCircle(opts.r, opts.segments);
     return try vm.allocateCrossSection(dag_idx);
@@ -419,10 +411,8 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
         return error.RuntimeError;
     }
 
-    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
     // Create a 2D circle using the minor radius
-    const circ_segs = if (opts.segments > 0) opts.segments else util.clampSegments(active_config.manifold.getSegments(minor_r));
+    const circ_segs = if (opts.segments > 0) opts.segments else util.autoSegments(vm, minor_r);
     const circ_idx = try vm.dag_builder.addCircle(minor_r, circ_segs);
 
     // Translate the circle outward by the major radius
@@ -430,7 +420,7 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
     const trans_idx = try vm.dag_builder.addCrossSectionTransform(circ_idx, trans_mat);
 
     // Revolve the translated circle 360 degrees around the origin
-    const rev_segs = if (opts.segments > 0) opts.segments else util.clampSegments(active_config.manifold.getSegments(major_r));
+    const rev_segs = if (opts.segments > 0) opts.segments else util.autoSegments(vm, major_r);
     const dag_idx = try vm.dag_builder.addRevolve(trans_idx, rev_segs, 360.0);
 
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });

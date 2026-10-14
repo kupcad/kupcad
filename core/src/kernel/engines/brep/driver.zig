@@ -192,7 +192,8 @@ fn cylinderImpl(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geo
     return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
 }
 
-fn sphereImpl(radius: f64) ?geom.GeometryHandle {
+fn sphereImpl(radius: f64, segments: i32) ?geom.GeometryHandle {
+    _ = segments;
     const solid = BrepSolid.create(backend_allocator) catch return null;
     solid.solid_id = locus_gen.generateSphere(backend_allocator, &solid.t_arena, &solid.g_arena, radius) catch {
         solid.destroy();

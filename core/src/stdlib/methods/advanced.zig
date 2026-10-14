@@ -262,7 +262,7 @@ pub fn meshFilletEdges(vm: *VM, receiver: *value.ObjGeometry, args: []const valu
     try util.requirePositive(vm, radius, "fillet_edges", "r");
 
     // Generate tool and sum
-    const sphere_idx = try vm.dag_builder.addSphere(radius);
+    const sphere_idx = try vm.dag_builder.addSphere(radius, util.autoSegments(vm, radius));
     const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.dag_idx, sphere_idx);
 
     return try vm.allocateGeometry(.{ .symbolic = new_idx });

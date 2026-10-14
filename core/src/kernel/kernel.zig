@@ -65,10 +65,10 @@ pub inline fn cylinder(engine: geom.EngineType, r1: f64, r2: f64, height: f64, c
     }
 }
 
-pub inline fn sphere(engine: geom.EngineType, radius: f64) ?geom.GeometryHandle {
+pub inline fn sphere(engine: geom.EngineType, radius: f64, segments: i32) ?geom.GeometryHandle {
     switch (engine) {
-        .manifold => return manifold_driver.driver.sphereFn(radius),
-        .brep_native => return brep_driver.driver.sphereFn(radius),
+        .manifold => return manifold_driver.driver.sphereFn(radius, segments),
+        .brep_native => return brep_driver.driver.sphereFn(radius, segments),
     }
 }
 

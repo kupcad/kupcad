@@ -182,8 +182,8 @@ pub fn cylinder(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?*Ma
     return manifold_cylinder(manifold_alloc_manifold(), height, r1, r2, @intCast(segments), if (center) 1 else 0);
 }
 
-pub fn sphere(radius: f64) ?*ManifoldObj {
-    return manifold_sphere(manifold_alloc_manifold(), radius, 0);
+pub fn sphere(radius: f64, segments: i32) ?*ManifoldObj {
+    return manifold_sphere(manifold_alloc_manifold(), radius, @intCast(segments));
 }
 
 pub fn boolean(a: ?*ManifoldObj, b: ?*ManifoldObj, op: OpType) ?*ManifoldObj {
