@@ -584,28 +584,8 @@ pub const VM = struct {
                     }
                 },
                 .op_get_index => {
-                    const index = self.pop();
-                    const target = self.pop();
-
-                    if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
-                        const arr = target.asArray();
-                        if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
-                            self.push(arr.items.items[idx]);
-                        } else |_| {
-                            if (self.raiseError(.IndexError, "Array index out of bounds.", .{}) != .ok) return .runtime_error;
-                            continue;
-                        }
-                    } else if (target.isObject() and target.asObj().obj_type == .map) {
-                        const map = target.asMap();
-                        if (map.map.get(index)) |val| {
-                            self.push(val);
-                        } else {
-                            self.push(value.Value.initNil());
-                        }
-                    } else {
-                        if (self.raiseError(.TypeError, "Cannot index target.", .{}) != .ok) return .runtime_error;
-                        continue;
-                    }
+                    const res = self.executeGetIndex();
+                    if (res != .ok) return res;
                 },
                 .op_set_index => {
                     // Peek instead of Pop to keep everything rooted during potential reallocation
@@ -620,7 +600,7 @@ pub const VM = struct {
                             self.stack_top -= 3; // Safely pop all three
                             self.push(val);
                         } else |_| {
-                            if (self.raiseError(.IndexError, "Array index out of bounds.", .{}) != .ok) return .runtime_error;
+                            if (self.indexError("Array", index, arr.items.items.len) != .ok) return .runtime_error;
                             continue;
                         }
                     } else if (target.isObject() and target.asObj().obj_type == .map) {
@@ -629,7 +609,7 @@ pub const VM = struct {
                         self.stack_top -= 3; // Safely pop all three
                         self.push(val);
                     } else {
-                        if (self.raiseError(.TypeError, "Cannot assign to index on target.", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "{s} doesn't support index assignment ([]=)", .{self.typeName(target)}) != .ok) return .runtime_error;
                         continue;
                     }
                 },
@@ -2023,7 +2003,9 @@ pub const VM = struct {
             const a_num = a_val.asNumber();
             const b_num = b_val.asNumber();
             if (op == .op_add or op == .op_subtract) {
-                self.push(value.Value.initNumber(if (op == .op_add) a_num + b_num else a_num - b_num));
+                const res = if (op == .op_add) a_num + b_num else a_num - b_num;
+                if (overflowed(a_num, b_num, res)) return self.overflowError(op, a_num, b_num);
+                self.push(value.Value.initNumber(res));
                 return .ok;
             }
 
@@ -2116,12 +2098,14 @@ pub const VM = struct {
             .op_multiply => {
                 const res = nums[0] * nums[1];
                 if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
+                if (overflowed(nums[0], nums[1], res)) return self.overflowError(op, nums[0], nums[1]);
                 self.push(value.Value.initNumber(res));
             },
             .op_divide => {
                 if (nums[1] == 0.0) return self.raiseError(.ZeroDivisionError, "Division by zero.", .{});
                 const res = nums[0] / nums[1];
                 if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
+                if (overflowed(nums[0], nums[1], res)) return self.overflowError(op, nums[0], nums[1]);
                 self.push(value.Value.initNumber(res));
             },
             .op_modulo => {
@@ -2133,6 +2117,7 @@ pub const VM = struct {
             .op_exponent => {
                 const res = std.math.pow(f64, nums[0], nums[1]);
                 if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
+                if (overflowed(nums[0], nums[1], res)) return self.overflowError(op, nums[0], nums[1]);
                 self.push(value.Value.initNumber(res));
             },
             .op_less => self.push(value.Value.initBool(nums[0] < nums[1])),
@@ -2419,6 +2404,91 @@ pub const VM = struct {
             return self.raiseError(.TypeError, "a range needs numbers or single characters, got {s}..{s}", .{ self.typeName(start_val), self.typeName(end_val) });
         }
         return .ok;
+    }
+
+    /// target[index], with both on the stack: an element of an Array or a character of a
+    /// String (negative indexes count from the end), a Range of them (like Array#slice:
+    /// nil when it starts past the end, clamped at the end), or a Map's value (nil when
+    /// absent). Strings are indexed by character, as `length` counts them.
+    fn executeGetIndex(self: *VM) InterpretResult {
+        const index = self.stack[self.stack_top - 1];
+        const target = self.stack[self.stack_top - 2];
+
+        if (target.isMap()) {
+            const found = target.asMap().map.get(index) orelse value.Value.initNil();
+            self.stack_top -= 2;
+            self.push(found);
+            return .ok;
+        }
+        if (!target.isArray() and !target.isString()) {
+            return self.raiseError(.TypeError, "{s} can't be indexed with []", .{self.typeName(target)});
+        }
+
+        const is_string = target.isString();
+        const kind = if (is_string) "String" else "Array";
+        const chars = if (is_string) target.asString().chars else "";
+        const len = if (is_string) std.unicode.utf8CountCodepoints(chars) catch chars.len else target.asArray().items.items.len;
+
+        const result: value.Value = if (index.isNumber()) blk: {
+            const i = self.resolveArrayIndex(len, index) catch return self.indexError(kind, index, len);
+            if (!is_string) break :blk target.asArray().items.items[i];
+            const span = charSpan(chars, i, 1);
+            break :blk self.allocateString(chars[span.start..span.end]) catch return .runtime_error;
+        } else if (index.isObject() and index.asObj().obj_type == .range) blk: {
+            const range = index.asRange();
+            if (range.step != 1.0) return self.raiseError(.ArgumentError, "a stepped Range can't index {s} {s}", .{ if (is_string) "a" else "an", kind });
+            const span = rangeSpan(range, len) orelse break :blk value.Value.initNil();
+            if (is_string) {
+                const bytes = charSpan(chars, span.start, span.end - span.start);
+                break :blk self.allocateString(chars[bytes.start..bytes.end]) catch return .runtime_error;
+            }
+            // `index` stays on the stack, keeping the Range rooted while the Array is built
+            const slice = self.gc.allocateArray(self) catch return .runtime_error;
+            slice.items.appendSlice(self.gc.trackingAllocator(), target.asArray().items.items[span.start..span.end]) catch return .runtime_error;
+            break :blk value.Value.initObj(&slice.obj);
+        } else {
+            return self.raiseError(.TypeError, "{s} index must be an integer or a Range, got {s}", .{ kind, self.typeName(index) });
+        };
+
+        self.stack_top -= 2;
+        self.push(result);
+        return .ok;
+    }
+
+    fn indexError(self: *VM, kind: []const u8, index: value.Value, len: usize) InterpretResult {
+        const n = index.asNumber();
+        if (std.math.trunc(n) != n) return self.raiseError(.TypeError, "{s} index must be an integer, got {f}", .{ kind, value.fmtNumber(n) });
+        return self.raiseError(.IndexError, "{s} index {f} is out of bounds (size {d})", .{ kind, value.fmtNumber(n), len });
+    }
+
+    const Span = struct { start: usize, end: usize };
+
+    /// The elements a Range selects from `len` (negative bounds count from the end), or
+    /// null when it starts outside 0..len, as Array#slice.
+    fn rangeSpan(range: *const value.ObjRange, len: usize) ?Span {
+        const size: f64 = @floatFromInt(len);
+        var first = @trunc(range.start);
+        var last = @trunc(range.end);
+        if (first < 0) first += size;
+        if (last < 0) last += size;
+        if (!std.math.isFinite(first) or first < 0 or first > size) return null;
+        const stop = std.math.clamp(if (range.is_exclusive) last else last + 1, first, size);
+        return .{ .start = @intFromFloat(first), .end = @intFromFloat(stop) };
+    }
+
+    /// Byte offsets of `count` characters of UTF-8 `chars` starting at character `first`
+    /// (byte offsets themselves for invalid UTF-8, as `length` then counts bytes).
+    fn charSpan(chars: []const u8, first: usize, count: usize) Span {
+        const view = std.unicode.Utf8View.init(chars) catch return .{ .start = first, .end = first + count };
+        var it = view.iterator();
+        var start: usize = chars.len;
+        var i: usize = 0;
+        while (i <= first + count) : (i += 1) {
+            if (i == first) start = it.i;
+            if (i == first + count) return .{ .start = start, .end = it.i };
+            _ = it.nextCodepointSlice() orelse return .{ .start = start, .end = chars.len };
+        }
+        unreachable;
     }
 
     inline fn resolveArrayIndex(self: *VM, arr_len: usize, index_val: value.Value) !usize {
@@ -2984,6 +3054,17 @@ pub const VM = struct {
         }
 
         instance.fields.items[idx] = val;
+    }
+
+    /// Numbers are 64-bit floats, so a result too large for one (beyond ~1.8e308) would be
+    /// Infinity. Like Crystal's OverflowError, that is an error when the operands were
+    /// finite: an infinite length is never a usable value in a model.
+    fn overflowed(a: f64, b: f64, res: f64) bool {
+        return std.math.isInf(res) and std.math.isFinite(a) and std.math.isFinite(b);
+    }
+
+    fn overflowError(self: *VM, op: chunk.OpCode, a: f64, b: f64) InterpretResult {
+        return self.raiseError(.RangeError, "{f} {s} {f} overflows: the result is beyond the largest number ({e:.1})", .{ value.fmtNumber(a), operatorSymbol(op), value.fmtNumber(b), std.math.floatMax(f64) });
     }
 
     /// The TypeError for an operator applied to values it doesn't support.

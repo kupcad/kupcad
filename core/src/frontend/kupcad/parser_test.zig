@@ -4177,3 +4177,22 @@ test "Parser: a call takes one block, and yield none" {
         try testing.expectEqualStrings(case.message, pt.parser.diagnostics.list.items[0].message);
     }
 }
+
+test "Parser: a number literal that doesn't fit is an error, not 0 or Infinity" {
+    const bad = [_][]const u8{ "1e400", "-1e400", "0xFFFFFFFFFFFFFFFFFF", "0b1111111111111111111111111111111111111111111111111111111111111111111111", "100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" }; // beyond i64; longer than any literal
+    for (bad) |src| {
+        errdefer std.debug.print("source: {s}\n", .{src});
+        var pt = try KTest.init(src);
+        defer pt.deinit();
+        _ = try pt.parser.parseStatement();
+        try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
+        try testing.expect(std.mem.startsWith(u8, pt.parser.diagnostics.list.items[0].message, "Invalid number '"));
+    }
+    for ([_][]const u8{ "1_000_000", "2.5e3", "0xff", "0b101", "0o17", "1.7e308" }) |src| {
+        errdefer std.debug.print("source: {s}\n", .{src});
+        var pt = try KTest.init(src);
+        defer pt.deinit();
+        _ = try pt.parser.parseStatement();
+        try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
+    }
+}

@@ -164,20 +164,6 @@ pub fn parsePoint(comptime N: usize, vm: *VM, val: value.Value, method: []const 
     return parseNumberArray(N, vm, val, .{ .method = method, .name = "point", .row = index }, N, 0.0);
 }
 
-/// Room for a formatted f64 in scientific notation.
-const MAX_NUMBER_LEN = 32;
-/// Below this magnitude `{d}` prints hundreds of zeros, so use scientific notation.
-const MIN_PLAIN_MAGNITUDE = 1e-6;
-/// At and above this magnitude `{d}` prints a long digit string.
-const MAX_PLAIN_MAGNITUDE = 1e21;
-
-/// Formats `n` like `{d}`, but as `1e-320` rather than 320 digits for tiny or huge values.
-fn readableNumber(buf: []u8, n: f64) []const u8 {
-    const mag = @abs(n);
-    const plain = n == 0.0 or (mag >= MIN_PLAIN_MAGNITUDE and mag < MAX_PLAIN_MAGNITUDE) or !std.math.isFinite(n);
-    return (if (plain) std.fmt.bufPrint(buf, "{f}", .{value.fmtNumber(n)}) else std.fmt.bufPrint(buf, "{e}", .{n})) catch "?";
-}
-
 /// Rejects a plane normal or direction with no usable orientation. The squared
 /// length is checked, not each component: a vector like [1e-320, 0, 0] is not
 /// exactly zero, but normalizing it underflows and the kernels silently return
@@ -185,11 +171,8 @@ fn readableNumber(buf: []u8, n: f64) []const u8 {
 pub fn requireNonZeroVector(vm: *VM, v: [3]f64, method: []const u8, what: []const u8) !void {
     const len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
     if (!(len2 >= std.math.floatMin(f64))) {
-        var bufs: [3][MAX_NUMBER_LEN]u8 = undefined;
-        const x = readableNumber(&bufs[0], v[0]);
-        const y = readableNumber(&bufs[1], v[1]);
-        const z = readableNumber(&bufs[2], v[2]);
-        _ = vm.raiseError(.ValueError, "{s} expects a non-zero {s}, got [{s}, {s}, {s}]", .{ method, what, x, y, z });
+        const f = value.fmtNumber;
+        _ = vm.raiseError(.ValueError, "{s} expects a non-zero {s}, got [{f}, {f}, {f}]", .{ method, what, f(v[0]), f(v[1]), f(v[2]) });
         return error.RuntimeError;
     }
 }

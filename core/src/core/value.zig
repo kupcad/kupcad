@@ -183,12 +183,20 @@ pub fn fmtNumber(n: f64) NumberFormat {
     return .{ .n = n };
 }
 
+/// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
+/// print in scientific notation instead (1e-7), as in JavaScript.
+const MIN_PLAIN_MAGNITUDE = 1e-6;
+/// From this magnitude plain notation prints a long digit string (1e300 had 301 digits).
+const MAX_PLAIN_MAGNITUDE = 1e21;
+
 pub const NumberFormat = struct {
     n: f64,
 
     pub fn format(self: NumberFormat, w: *std.Io.Writer) std.Io.Writer.Error!void {
         if (std.math.isNan(self.n)) return w.writeAll("NaN");
         if (std.math.isInf(self.n)) return w.writeAll(if (self.n > 0) "Infinity" else "-Infinity");
+        const mag = @abs(self.n);
+        if (mag != 0.0 and (mag < MIN_PLAIN_MAGNITUDE or mag >= MAX_PLAIN_MAGNITUDE)) return w.print("{e}", .{self.n});
         return w.print("{d}", .{self.n});
     }
 };

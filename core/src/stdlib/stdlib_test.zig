@@ -228,7 +228,7 @@ test "Stdlib: meshHull dynamically gathers direct arguments and arrays into batc
 // error before they reach @intFromFloat (UB in ReleaseFast) or a kernel.
 // These scripts only build DAG nodes (geometry is evaluated lazily), so a runtime
 // error can only come from argument validation, not from a kernel.
-// `1e400` is +inf and `1e400 - 1e400` is NaN (the VM traps `0.0 / 0.0` itself).
+// `Number::INFINITY` is +inf and `Number::NAN` is NaN (the VM traps `0.0 / 0.0` itself).
 
 fn initVm() !VM {
     var vm = try VM.init(testing.allocator, testing.io);
@@ -270,12 +270,12 @@ fn expectAll(expected: InterpretResult, sources: []const []const u8) !void {
 test "Stdlib: integer kwargs reject NaN, inf and out-of-i32 values" {
     try expectAll(.runtime_error, &.{
         "cylinder(r: 1, h: 1, segments: 1e12)",
-        "cylinder(r: 1, h: 1, segments: 1e400)",
-        "cylinder(r: 1, h: 1, segments: 1e400 - 1e400)",
+        "cylinder(r: 1, h: 1, segments: Number::INFINITY)",
+        "cylinder(r: 1, h: 1, segments: Number::NAN)",
         "square(10).extrude(5, slices: -1e12)",
-        "square(10).helix(slices: 1e400 - 1e400)",
+        "square(10).helix(slices: Number::NAN)",
         "regular_polygon(sides: 1e12, r: 5)",
-        "regular_polygon(1e400, 5)",
+        "regular_polygon(Number::INFINITY, 5)",
     });
 }
 
@@ -316,8 +316,8 @@ test "Stdlib: CAD.config fixed_segments is clamped instead of UB" {
     const Case = struct { src: []const u8, expected: u32 };
     const cases = [_]Case{
         .{ .src = "CAD.config(manifold: { fixed_segments: 1e12 })", .expected = @intCast(MAX_SEGS) },
-        .{ .src = "CAD.config(manifold: { fixed_segments: 1e400 })", .expected = @intCast(MAX_SEGS) },
-        .{ .src = "CAD.config(manifold: { fixed_segments: 1e400 - 1e400 })", .expected = 0 },
+        .{ .src = "CAD.config(manifold: { fixed_segments: Number::INFINITY })", .expected = @intCast(MAX_SEGS) },
+        .{ .src = "CAD.config(manifold: { fixed_segments: Number::NAN })", .expected = 0 },
         .{ .src = "CAD.config(manifold: { fixed_segments: -5 })", .expected = 0 },
     };
     for (cases) |case| {
@@ -334,17 +334,17 @@ test "Stdlib: CAD.config brep counts are clamped instead of UB" {
     const Case = struct { src: []const u8, field: Field, expected: u32 };
     const cases = [_]Case{
         .{ .src = "CAD.config(brep: { min_circle_segments: 1e12 })", .field = .min_circle_segments, .expected = @intCast(MAX_SEGS) },
-        .{ .src = "CAD.config(brep: { min_circle_segments: 1e400 })", .field = .min_circle_segments, .expected = @intCast(MAX_SEGS) },
+        .{ .src = "CAD.config(brep: { min_circle_segments: Number::INFINITY })", .field = .min_circle_segments, .expected = @intCast(MAX_SEGS) },
         .{ .src = "CAD.config(brep: { min_circle_segments: -5 })", .field = .min_circle_segments, .expected = 0 },
         .{ .src = "CAD.config(brep: { min_circle_segments: 32.7 })", .field = .min_circle_segments, .expected = 32 },
         // NaN keeps the current value (0 is not an "auto" sentinel for these fields).
-        .{ .src = "CAD.config(brep: { min_circle_segments: 1e400 - 1e400 })", .field = .min_circle_segments, .expected = defaults.min_circle_segments },
+        .{ .src = "CAD.config(brep: { min_circle_segments: Number::NAN })", .field = .min_circle_segments, .expected = defaults.min_circle_segments },
         .{ .src = "CAD.config(brep: { max_newton_trials: 1e12 })", .field = .max_newton_trials, .expected = limits.MAX_NEWTON_TRIALS },
-        .{ .src = "CAD.config(brep: { max_newton_trials: 1e400 - 1e400 })", .field = .max_newton_trials, .expected = defaults.max_newton_trials },
+        .{ .src = "CAD.config(brep: { max_newton_trials: Number::NAN })", .field = .max_newton_trials, .expected = defaults.max_newton_trials },
         .{ .src = "CAD.config(brep: { max_newton_trials: 20 })", .field = .max_newton_trials, .expected = 20 },
-        .{ .src = "CAD.config(brep: { max_marching_steps: 1e400 })", .field = .max_marching_steps, .expected = limits.MAX_MARCHING_STEPS },
-        .{ .src = "CAD.config(brep: { max_marching_steps: -1e400 })", .field = .max_marching_steps, .expected = 0 },
-        .{ .src = "CAD.config(brep: { max_marching_steps: 1e400 - 1e400 })", .field = .max_marching_steps, .expected = defaults.max_marching_steps },
+        .{ .src = "CAD.config(brep: { max_marching_steps: Number::INFINITY })", .field = .max_marching_steps, .expected = limits.MAX_MARCHING_STEPS },
+        .{ .src = "CAD.config(brep: { max_marching_steps: -Number::INFINITY })", .field = .max_marching_steps, .expected = 0 },
+        .{ .src = "CAD.config(brep: { max_marching_steps: Number::NAN })", .field = .max_marching_steps, .expected = defaults.max_marching_steps },
         // CAD.with_config shares the same parsing path.
         .{ .src = "CAD.with_config({ brep: { max_marching_steps: 1e12 } }) do\n  1\nend", .field = .max_marching_steps, .expected = defaults.max_marching_steps },
     };
@@ -372,15 +372,15 @@ test "Stdlib: Array#slice follows Ruby arr[start, len] semantics" {
         .{ .args = "-1, 2", .expected = &.{3} },
         .{ .args = "-3, 2", .expected = &.{ 1, 2 } },
         .{ .args = "-4, 1", .expected = nil },
-        .{ .args = "-1e400, 1", .expected = nil },
+        .{ .args = "-Number::INFINITY, 1", .expected = nil },
         // Lengths are clamped to what is available (1e12 used to over-allocate).
         .{ .args = "1, 1e12", .expected = &.{ 2, 3 } },
-        .{ .args = "1, 1e400", .expected = &.{ 2, 3 } },
+        .{ .args = "1, Number::INFINITY", .expected = &.{ 2, 3 } },
         // start == size is an empty slice; past the end is nil.
         .{ .args = "3, 1", .expected = &.{} },
         .{ .args = "4, 1", .expected = nil },
         .{ .args = "1e12, 1", .expected = nil },
-        .{ .args = "1e400, 1", .expected = nil },
+        .{ .args = "Number::INFINITY, 1", .expected = nil },
         .{ .args = "0, -1", .expected = nil },
         .{ .args = "0, 0", .expected = &.{} },
         .{ .args = "1.9, 1.9", .expected = &.{2} },
@@ -403,23 +403,23 @@ test "Stdlib: Array#slice follows Ruby arr[start, len] semantics" {
         for (expected, items) |e, item| try testing.expectEqual(e, item.asNumber());
     }
     try expectAll(.runtime_error, &.{
-        "[1, 2, 3].slice(1e400 - 1e400, 1)",
-        "[1, 2, 3].slice(0, 1e400 - 1e400)",
+        "[1, 2, 3].slice(Number::NAN, 1)",
+        "[1, 2, 3].slice(0, Number::NAN)",
     });
 }
 
 test "Stdlib: dimensions and sweep parameters reject NaN and inf" {
     try expectAll(.runtime_error, &.{
-        "cube(1e400 - 1e400)",
-        "sphere(1e400)",
+        "cube(Number::INFINITY - Number::INFINITY)",
+        "sphere(Number::INFINITY)",
         "cylinder(r: Math.sqrt(-1), h: 1)",
-        "square(10).extrude(1e400 - 1e400)",
-        "square(10).extrude(5, twist: 1e400)",
-        "square(10).extrude(5, scale: 1e400 - 1e400)",
-        "square(10).helix(1e400)",
-        "square(10).helix(5, 1e400 - 1e400)",
-        "square(10).translate(x: 20).revolve(1e400 - 1e400)",
-        "square(10).loft(circle(r: 5), 1e400)",
+        "square(10).extrude(Number::INFINITY - Number::INFINITY)",
+        "square(10).extrude(5, twist: Number::INFINITY)",
+        "square(10).extrude(5, scale: Number::NAN)",
+        "square(10).helix(Number::INFINITY)",
+        "square(10).helix(5, Number::NAN)",
+        "square(10).translate(x: 20).revolve(Number::INFINITY - Number::INFINITY)",
+        "square(10).loft(circle(r: 5), Number::INFINITY)",
     });
 }
 
@@ -436,7 +436,7 @@ test "Stdlib: polyhedron and polygon path indices are bounds-checked" {
     try expectAll(.runtime_error, &.{
         "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[-1,2,3]])",
         "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[4,2,3]])",
-        "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[1e400 - 1e400,2,3]])",
+        "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[Number::NAN,2,3]])",
         "polygon([[0,0],[1,0],[0,1]], paths: [[0,1,-1]])",
         "polygon([[0,0],[1,0],[0,1]], paths: [[0,1,1.5]])",
         // An error in a later path used to free the uninitialised contour slots.
@@ -447,9 +447,9 @@ test "Stdlib: polyhedron and polygon path indices are bounds-checked" {
 test "Stdlib: repeat counts reject NaN and values above MAX_PATTERN_COUNT" {
     try expectAll(.runtime_error, &.{
         print("cube(1).repeat_linear({d}, [2, 0, 0])", .{MAX_COUNT + 1}),
-        "cube(1).repeat_linear(1e400, [2, 0, 0])",
+        "cube(1).repeat_linear(Number::INFINITY, [2, 0, 0])",
         print("cube(1).repeat_polar({d})", .{MAX_COUNT + 1}),
-        "cube(1).repeat_polar(1e400 - 1e400)",
+        "cube(1).repeat_polar(Number::INFINITY - Number::INFINITY)",
     });
     // Negative counts are a no-op (they used to panic in @intFromFloat to usize).
     try expectAll(.ok, &.{
@@ -582,14 +582,14 @@ test "Stdlib: range and times errors are rescuable with their class and real mes
     const max_mat = std.fmt.comptimePrint("{d}", .{MAX_MATERIALIZE});
     const cases = [_]struct { src: []const u8, prefix: []const u8 }{
         .{ .src = "2.5.times { }", .prefix = "ValueError: times requires an integer" },
-        .{ .src = "(1e400 - 1e400).times { }", .prefix = "ValueError: times requires an integer" },
+        .{ .src = "(Number::INFINITY - Number::INFINITY).times { }", .prefix = "ValueError: times requires an integer" },
         .{ .src = "3.times", .prefix = "ArgumentError: times requires a block" },
         .{ .src = "(0..3).each", .prefix = "ArgumentError: Range#each requires a block" },
         .{ .src = "(0..3).map", .prefix = "ArgumentError: Range#map requires a block" },
         .{ .src = "(0..3).step(0)", .prefix = "ValueError: Range#step requires a finite, non-zero step" },
-        .{ .src = "(0..3).step(1e400)", .prefix = "ValueError: Range#step requires a finite, non-zero step" },
-        .{ .src = "(0..1e400).to_a", .prefix = "ValueError: Range#to_a requires finite bounds" },
-        .{ .src = "(0..(1e400 - 1e400)).size", .prefix = "ValueError: Range#size requires finite bounds" },
+        .{ .src = "(0..3).step(Number::INFINITY)", .prefix = "ValueError: Range#step requires a finite, non-zero step" },
+        .{ .src = "(0..Number::INFINITY).to_a", .prefix = "ValueError: Range#to_a requires finite bounds" },
+        .{ .src = "(0..(Number::INFINITY - Number::INFINITY)).size", .prefix = "ValueError: Range#size requires finite bounds" },
         .{ .src = "1.upto(2.5) { }", .prefix = "ValueError: upto requires an integer" },
         .{ .src = "1.5.downto(0) { }", .prefix = "ValueError: downto requires an integer" },
         // Building an array one past the cap is rejected before anything is allocated.
@@ -875,6 +875,50 @@ test "Stdlib: raising a value that isn't an exception keeps all of it as the mes
     });
 }
 
+test "Stdlib: Strings index by character and Arrays and Strings by Range, as in Ruby" {
+    try expectGlobalR(&.{
+        // `"abc"[0]` used to be "TypeError: Cannot index target."
+        .{ .src = "r = \"abc\"[0]", .expected = .{ .str = "a" } },
+        .{ .src = "r = \"abc\"[-1]", .expected = .{ .str = "c" } },
+        .{ .src = "r = \"h\u{e9}llo\"[1]", .expected = .{ .str = "\u{e9}" } }, // by character, not byte
+        .{ .src = "r = \"h\u{e9}llo\"[1..3]", .expected = .{ .str = "\u{e9}ll" } },
+        .{ .src = "r = \"hello\"[1...3]", .expected = .{ .str = "el" } },
+        .{ .src = "r = \"hello\"[-3..-1]", .expected = .{ .str = "llo" } },
+        .{ .src = "r = \"abc\"[1..10]", .expected = .{ .str = "bc" } }, // clamped at the end
+        .{ .src = "r = \"abc\"[3..5]", .expected = .{ .str = "" } },
+        .{ .src = "r = \"abc\"[4..5].nil?", .expected = .{ .boolean = true } }, // starts past the end
+        .{ .src = "r = [1, 2, 3, 4][1..2]", .expected = .{ .nums = &.{ 2, 3 } } },
+        .{ .src = "r = [1, 2, 3][1..-1]", .expected = .{ .nums = &.{ 2, 3 } } },
+        .{ .src = "r = [1, 2, 3][0...0].length", .expected = .{ .num = 0 } },
+        // Like Arrays, an index past the end is an IndexError (Crystal's choice; Ruby gives nil).
+        .{ .src = comptime rescued("\"abc\"[5]"), .expected = .{ .str = "IndexError: String index 5 is out of bounds (size 3)" } },
+        .{ .src = comptime rescued("\"abc\"[1.5]"), .expected = .{ .str = "TypeError: String index must be an integer, got 1.5" } },
+        .{ .src = comptime rescued("\"abc\"[\"x\"]"), .expected = .{ .str = "TypeError: String index must be an integer or a Range, got String" } },
+        .{ .src = comptime rescued("[1, 2][(0..1).step(2)]"), .expected = .{ .str = "ArgumentError: a stepped Range can't index an Array" } },
+        .{ .src = comptime rescued("\"abc\"[0] = \"x\""), .expected = .{ .str = "TypeError: String doesn't support index assignment ([]=)" } },
+    });
+}
+
+test "Stdlib: arithmetic that overflows is a RangeError, not Infinity" {
+    // Numbers are 64-bit floats; `2 ** 1024` used to become Infinity silently.
+    try expectGlobalR(&.{
+        .{ .src = comptime rescued("2 ** 1024"), .expected = .{ .str = "RangeError: 2 ** 1024 overflows: the result is beyond the largest number (1.8e308)" } },
+        .{ .src = comptime rescued("x = 2\n  x ** 1024"), .expected = .{ .str = "RangeError: 2 ** 1024 overflows: the result is beyond the largest number (1.8e308)" } },
+        .{ .src = comptime rescued("x = 1e308\n  x + x"), .expected = .{ .str = "RangeError: 1e308 + 1e308 overflows: the result is beyond the largest number (1.8e308)" } },
+        .{ .src = comptime rescued("x = 1e300\n  x * x"), .expected = .{ .str = "RangeError: 1e300 * 1e300 overflows: the result is beyond the largest number (1.8e308)" } },
+        // Huge and tiny numbers print in scientific notation (1e300 used to print 301 digits).
+        .{ .src = "r = \"#{1e300} #{1e-7} #{123456.5}\"", .expected = .{ .str = "1e300 1e-7 123456.5" } },
+        .{ .src = "r = 2 ** 1023 > 0", .expected = .{ .boolean = true } },
+        // Math functions don't return NaN either.
+        .{ .src = comptime rescued("Math.sqrt(-1)"), .expected = .{ .str = "MathError: Math.sqrt(-1) has no real result" } },
+        .{ .src = comptime rescued("Math.asin(2)"), .expected = .{ .str = "MathError: Math.asin(2) has no real result" } },
+        .{ .src = "r = Math.sqrt(16)", .expected = .{ .num = 4 } },
+        // A script that needs a non-finite value says so, as with Ruby's Float::INFINITY.
+        .{ .src = "r = \"#{Number::INFINITY} #{-Number::INFINITY} #{Number::NAN}\"", .expected = .{ .str = "Infinity -Infinity NaN" } },
+        .{ .src = "r = Number::INFINITY > 1e308", .expected = .{ .boolean = true } },
+    });
+}
+
 test "Stdlib: block_given? works with or without parentheses" {
     // The bare form used to be looked up as a variable: NameError.
     const m = "def m(&b)\n  [block_given?, block_given?()]\nend\n";
@@ -1080,36 +1124,36 @@ test "Stdlib: geometry arguments reject non-number coordinates" {
 
 test "Stdlib: geometry coordinates reject NaN and inf" {
     try expectAll(.runtime_error, &.{
-        "polygon([[0,0],[10,1e400 - 1e400],[10,10]])",
-        "polygon([[0,0],[1e400,0],[10,10]])",
-        "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,-1e400]], " ++ TETRA_FACES ++ ")",
-        "cube(1).translate(1e400, 0, 0)",
-        "cube(1).translate(z: 1e400 - 1e400)",
-        "cube(1).rotate(x: 1e400)",
-        "square(1).rotate(1e400 - 1e400)",
-        "cube(1).scale(1e400, 1, 1)",
-        "cube(1).mirror(1e400 - 1e400, 0, 0)",
-        "cube(1).transform([1,0,0, 0,1,0, 0,0,1, 0,0,1e400])",
-        "square(1).transform([1,0, 0,1, 1e400 - 1e400,0])",
-        "cube(1).resize([1e400, 0, 0])",
-        "cube(1).align(cube(2), \"z\", \"min\", \"max\", 1e400)",
-        "cube(1).align(cube(2), \"z\", \"min\", 1e400 - 1e400)",
-        "cube(1).repeat_linear(3, [1e400, 0, 0])",
-        "cube(1).repeat_linear(3, 0, 0, 1e400 - 1e400)",
-        "cube(1).repeat_polar(3, 1e400 - 1e400)",
-        "square(1).offset(1e400)",
-        "cube(1).trim_by_plane(0, 0, 1, 1e400)",
-        "cube(1).slice(1e400 - 1e400)",
-        "cube(1).on_face([0, 0, 1e400])",
-        "cube(1).split_by_plane(0, 0, 1, 1e400 - 1e400)",
-        "cube(1).fillet_edges(1e400)",
-        "cube(1).simplify(1e400 - 1e400)",
-        "cube(1).contains?([0, 1e400, 0])",
-        "cube(1).ray_cast([0, 0, 1e400 - 1e400], [0, 0, -5])",
-        "cube(1).min_gap(cube(1), 1e400)",
-        "cube(size: 1e400 - 1e400)",
-        "torus(major_r: 1e400)",
-        "text(\"A\", size: 1e400 - 1e400)",
+        "polygon([[0,0],[10,Number::NAN],[10,10]])",
+        "polygon([[0,0],[Number::INFINITY,0],[10,10]])",
+        "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,-Number::INFINITY]], " ++ TETRA_FACES ++ ")",
+        "cube(1).translate(Number::INFINITY, 0, 0)",
+        "cube(1).translate(z: Number::NAN)",
+        "cube(1).rotate(x: Number::INFINITY)",
+        "square(1).rotate(Number::INFINITY - Number::INFINITY)",
+        "cube(1).scale(Number::INFINITY, 1, 1)",
+        "cube(1).mirror(Number::NAN, 0, 0)",
+        "cube(1).transform([1,0,0, 0,1,0, 0,0,1, 0,0,Number::INFINITY])",
+        "square(1).transform([1,0, 0,1, Number::NAN,0])",
+        "cube(1).resize([Number::INFINITY, 0, 0])",
+        "cube(1).align(cube(2), \"z\", \"min\", \"max\", Number::INFINITY)",
+        "cube(1).align(cube(2), \"z\", \"min\", Number::NAN)",
+        "cube(1).repeat_linear(3, [Number::INFINITY, 0, 0])",
+        "cube(1).repeat_linear(3, 0, 0, Number::NAN)",
+        "cube(1).repeat_polar(3, Number::NAN)",
+        "square(1).offset(Number::INFINITY)",
+        "cube(1).trim_by_plane(0, 0, 1, Number::INFINITY)",
+        "cube(1).slice(Number::INFINITY - Number::INFINITY)",
+        "cube(1).on_face([0, 0, Number::INFINITY])",
+        "cube(1).split_by_plane(0, 0, 1, Number::NAN)",
+        "cube(1).fillet_edges(Number::INFINITY)",
+        "cube(1).simplify(Number::INFINITY - Number::INFINITY)",
+        "cube(1).contains?([0, Number::INFINITY, 0])",
+        "cube(1).ray_cast([0, 0, Number::NAN], [0, 0, -5])",
+        "cube(1).min_gap(cube(1), Number::INFINITY)",
+        "cube(size: Number::NAN)",
+        "torus(major_r: Number::INFINITY)",
+        "text(\"A\", size: Number::NAN)",
     });
 }
 
@@ -1178,18 +1222,18 @@ test "Stdlib: lazily formatted element errors keep their exact wording" {
         .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,\"a\"],[0,2,3],[1,3,2]])"), .expected = .{ .str = "TypeError: polyhedron expects a number for a point index (face 1, entry 2), got String" } },
         .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],5,[0,2,3],[1,3,2]])"), .expected = .{ .str = "TypeError: polyhedron expects an Array for face 1, got Number" } },
         .{ .src = rescued("polygon([[0,0],[1,0],5])"), .expected = .{ .str = "TypeError: polygon expects an Array for point 2, got Number" } },
-        .{ .src = rescued("polygon([[0,0],[1,0],[0,1e400]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 1), got Infinity" } },
+        .{ .src = rescued("polygon([[0,0],[1,0],[0,Number::INFINITY]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 1), got Infinity" } },
         .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,2], 7])"), .expected = .{ .str = "TypeError: polygon expects an Array for path 1, got Number" } },
         .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1]])"), .expected = .{ .str = "ValueError: polygon needs at least 3 point indices in path 0, got 2" } },
-        .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,1e400]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a point index (path 0, entry 2), got Infinity" } },
-        .{ .src = rescued("cube(1).transform([1,0,0, 0,1,0, 0,0,1e400, 0,0,0])"), .expected = .{ .str = "ValueError: transform expects a finite number for a matrix entry (index 8), got Infinity" } },
+        .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,Number::INFINITY]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a point index (path 0, entry 2), got Infinity" } },
+        .{ .src = rescued("cube(1).transform([1,0,0, 0,1,0, 0,0,Number::INFINITY, 0,0,0])"), .expected = .{ .str = "ValueError: transform expects a finite number for a matrix entry (index 8), got Infinity" } },
     });
 }
 
 test "Stdlib: rescued argument errors name the method, the position and the bad type" {
     try expectGlobalR(&.{
         .{ .src = rescued("polygon([[0,0],[10,\"x\"],[10,10]]).extrude(1).volume"), .expected = .{ .str = "TypeError: polygon expects a number for a coordinate (point 1, component 1), got String" } },
-        .{ .src = rescued("polygon([[0,0],[10,0],[1e400 - 1e400,10]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 0), got NaN" } },
+        .{ .src = rescued("polygon([[0,0],[10,0],[Number::NAN,10]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 0), got NaN" } },
         .{ .src = rescued("polygon([[0,0],[10],[10,10]])"), .expected = .{ .str = "ValueError: polygon expects point 1 to have 2 numbers, got 1" } },
         .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,[2]]])"), .expected = .{ .str = "TypeError: polygon expects a number for a point index (path 0, entry 2), got Array" } },
         .{ .src = rescued("polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,nil,1]], " ++ TETRA_FACES ++ ")"), .expected = .{ .str = "TypeError: polyhedron expects a number for a coordinate (point 3, component 1), got nil" } },
@@ -1202,12 +1246,12 @@ test "Stdlib: rescued argument errors name the method, the position and the bad 
         .{ .src = rescued("cube(1).contains?([0, 0, [1]])"), .expected = .{ .str = "TypeError: contains? expects a number for a coordinate (component 2), got Array" } },
         .{ .src = rescued("cube(x: true)"), .expected = .{ .str = "TypeError: cube expects a number for x, got Boolean" } },
         .{ .src = rescued("text(\"A\", halign: 5)"), .expected = .{ .str = "TypeError: text expects a String or Symbol for halign, got Number" } },
-        .{ .src = rescued("cube(1).translate(1e400)"), .expected = .{ .str = "ValueError: translate expects a finite number for x, got Infinity" } },
+        .{ .src = rescued("cube(1).translate(Number::INFINITY)"), .expected = .{ .str = "ValueError: translate expects a finite number for x, got Infinity" } },
         .{ .src = rescued("cube(1).mirror(0, 0, 0)"), .expected = .{ .str = "ValueError: mirror expects a non-zero plane normal, got [0, 0, 0]" } },
         .{ .src = rescued("cube(1).scale(1, 0, 1)"), .expected = .{ .str = "ValueError: scale factors must be non-zero, got [1, 0, 1]" } },
         // Errors that used to surface as the generic "Native Execution Error" when rescued.
         .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1],[0,2,3],[4,2,3]])"), .expected = .{ .str = "ValueError: polyhedron face index 4 is out of range (0..4)" } },
-        .{ .src = rescued("cube(1e400 - 1e400)"), .expected = .{ .str = "ValueError: cube expects a finite number for x, got NaN" } },
+        .{ .src = rescued("cube(Number::INFINITY - Number::INFINITY)"), .expected = .{ .str = "ValueError: cube expects a finite number for x, got NaN" } },
         .{ .src = rescued("cube(-1)"), .expected = .{ .str = "ValueError: cube expects x to be a finite number greater than zero, got -1" } },
     });
 }
@@ -1357,11 +1401,11 @@ test "Stdlib: non-finite numbers print the same on every platform" {
     // `inf - inf` is a NaN with the sign bit set on x86 (printed "-nan" by {d}) but not on
     // ARM ("nan"), so output and error messages used to differ between machines.
     try expectGlobalR(&.{
-        .{ .src = "r = (1e400 - 1e400).to_s", .expected = .{ .str = "NaN" } },
-        .{ .src = "r = 1e400.to_s", .expected = .{ .str = "Infinity" } },
-        .{ .src = "r = (-1e400).to_s", .expected = .{ .str = "-Infinity" } },
-        .{ .src = "r = \"#{1e400 - 1e400} #{-1e400}\"", .expected = .{ .str = "NaN -Infinity" } },
-        .{ .src = "r = (0..1e400).to_s", .expected = .{ .str = "0..Infinity" } },
+        .{ .src = "r = (Number::INFINITY - Number::INFINITY).to_s", .expected = .{ .str = "NaN" } },
+        .{ .src = "r = Number::INFINITY.to_s", .expected = .{ .str = "Infinity" } },
+        .{ .src = "r = (-Number::INFINITY).to_s", .expected = .{ .str = "-Infinity" } },
+        .{ .src = "r = \"#{Number::NAN} #{-Number::INFINITY}\"", .expected = .{ .str = "NaN -Infinity" } },
+        .{ .src = "r = (0..Number::INFINITY).to_s", .expected = .{ .str = "0..Infinity" } },
         .{ .src = "r = 2.5.to_s", .expected = .{ .str = "2.5" } },
     });
 }

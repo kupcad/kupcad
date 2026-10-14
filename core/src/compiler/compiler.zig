@@ -876,15 +876,17 @@ pub const Compiler = struct {
             const left = self.tryConstantFold(bin.left) orelse return null;
             const right = self.tryConstantFold(bin.right) orelse return null;
 
-            return switch (bin.op) {
+            const folded: f64 = switch (bin.op) {
                 .add => left + right,
                 .subtract => left - right,
                 .multiply => left * right,
-                .divide => if (right != 0.0) left / right else null,
-                .modulo => if (right != 0.0) @mod(left, right) else null,
+                .divide => if (right != 0.0) left / right else return null,
+                .modulo => if (right != 0.0) @mod(left, right) else return null,
                 .exponent => std.math.pow(f64, left, right),
-                else => null,
+                else => return null,
             };
+            // An overflow or a NaN is the VM's to report (RangeError / MathError), at run time.
+            return if (std.math.isFinite(folded)) folded else null;
         }
         return null;
     }

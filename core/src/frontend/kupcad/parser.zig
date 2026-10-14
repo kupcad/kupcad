@@ -1355,8 +1355,12 @@ pub const Parser = struct {
 
         switch (start_tag) {
             .number => {
+                const literal = self.tokens.lexeme(self.source, start_tok);
+                if (ast.parseNumberLiteral(literal) == null) {
+                    self.reportError(self.getLoc(start_tok), "Invalid number '{s}': malformed, or beyond the largest number (1.8e308)", .{literal});
+                }
                 self.advance();
-                left = try self.b.number(self.tokens.lexeme(self.source, start_tok), start_tok);
+                left = try self.b.number(literal, start_tok);
             },
             .string => {
                 const str_tok = self.tok_idx;

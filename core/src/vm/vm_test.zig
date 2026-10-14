@@ -3276,7 +3276,7 @@ test "VM: Unified Exception hierarchy with native methods" {
     // Prove `e.message()` evaluates successfully to the VM's formatted array bounds error
     const msg_val = arr_obj.items.items[2];
     const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", msg_val.asObj()));
-    try testing.expectEqualStrings("Array index out of bounds.", str_obj.chars);
+    try testing.expectEqualStrings("Array index 5 is out of bounds (size 2)", str_obj.chars);
 }
 
 test "VM: Custom exceptions inherit properly and rescue block ordering is respected" {
@@ -11173,6 +11173,9 @@ test "VM: bitwise operands and array indexes reject non-integral numbers" {
         defer vm.deinit();
         try registry.registerStandardLibrary(&vm);
         vm.mute_errors = true;
+        // Scripts can't make Infinity (arithmetic raises RangeError), but a host can pass
+        // one in, as `--param x=inf` does.
+        try vm.globals.put(vm.allocator, "inf_v", value.Value.initNumber(std.math.inf(f64)));
 
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(testing.allocator);
@@ -11180,7 +11183,6 @@ test "VM: bitwise operands and array indexes reject non-integral numbers" {
         // Operands come from variables so the compiler cannot constant-fold them
         const source = try std.fmt.allocPrint(testing.allocator,
             \\huge = 1e300
-            \\inf_v = huge * huge
             \\result = begin
             \\  {s}
             \\rescue RangeError => e
@@ -11349,13 +11351,13 @@ test "VM: runtime errors have their own class and a message without a class pref
     // ("ValueError: ...", "Runtime Error: ..."), often with a trailing newline, so
     // `rescue ValueError` caught nothing and uncaught errors printed two prefixes.
     const cases = [_]struct { expr: []const u8, kind: []const u8, message: []const u8 }{
-        .{ .expr = "[1, 2][5]", .kind = "IndexError", .message = "Array index out of bounds." },
+        .{ .expr = "[1, 2][5]", .kind = "IndexError", .message = "Array index 5 is out of bounds (size 2)" },
         .{ .expr = "nope_undefined", .kind = "NameError", .message = "Undefined variable 'nope_undefined'" },
-        .{ .expr = "5[0]", .kind = "TypeError", .message = "Cannot index target." },
+        .{ .expr = "5[0]", .kind = "TypeError", .message = "Number can't be indexed with []" },
         .{ .expr = "1 / 0", .kind = "ZeroDivisionError", .message = "Division by zero." },
-        .{ .expr = "1 | 1e400", .kind = "RangeError", .message = "Bitwise operand Infinity is not a finite 64-bit integer." },
+        .{ .expr = "1 | Number::INFINITY", .kind = "RangeError", .message = "Bitwise operand Infinity is not a finite 64-bit integer." },
         .{ .expr = "polygon([[0, 0], [1, \"x\"], [0, 1]])", .kind = "TypeError", .message = "polygon expects a number for a coordinate (point 1, component 1), got String" },
-        .{ .expr = "cube(1e400 - 1e400)", .kind = "ValueError", .message = "cube expects a finite number for x, got NaN" },
+        .{ .expr = "cube(Number::INFINITY - Number::INFINITY)", .kind = "ValueError", .message = "cube expects a finite number for x, got NaN" },
         .{ .expr = "3.times", .kind = "ArgumentError", .message = "times requires a block" },
     };
     for (cases) |case| {
@@ -11391,7 +11393,7 @@ test "VM: an uncaught runtime error is reported with one class prefix" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
     try testing.expectEqual(.runtime_error, try compileAndRun(&vm, &out_chunk, "x = [1, 2][5]"));
-    try testing.expectEqualStrings("IndexError: Array index out of bounds.", vm.last_error orelse return error.MissingError);
+    try testing.expectEqualStrings("IndexError: Array index 5 is out of bounds (size 2)", vm.last_error orelse return error.MissingError);
 }
 
 test "VM: rescuing one error class does not catch another" {

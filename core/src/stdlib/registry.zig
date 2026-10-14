@@ -62,6 +62,10 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.string_class = try defineBuiltinClass(vm, "String", vm.object_class);
     vm.map_class = try defineBuiltinClass(vm, "Map", vm.object_class);
     vm.number_class = try defineBuiltinClass(vm, "Number", vm.object_class);
+    // Ruby's Float::INFINITY and Float::NAN. Arithmetic never produces them (it raises
+    // RangeError or MathError), so a script reaching for one has to say so.
+    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.allocateString("INFINITY"), value.Value.initNumber(std.math.inf(f64)));
+    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.allocateString("NAN"), value.Value.initNumber(std.math.nan(f64)));
     vm.range_class = try defineBuiltinClass(vm, "Range", vm.object_class);
     vm.symbol_class = try defineBuiltinClass(vm, "Symbol", vm.object_class);
     vm.boolean_class = try defineBuiltinClass(vm, "Boolean", vm.object_class);

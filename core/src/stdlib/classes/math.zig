@@ -7,36 +7,50 @@ const util = @import("../methods/util.zig");
 // Math functions are methods of the Math object; the receiver carries nothing.
 
 /// A one-number Math function such as Math.sin.
-fn math1(comptime f: anytype) value.NativeFn {
+fn math1(comptime f: anytype, comptime name: []const u8) value.NativeFn {
     return common.wrapMethod(struct {
         fn call(vm: *VM, receiver: value.Value, x: f64) !value.Value {
-            _ = vm;
             _ = receiver;
-            return value.Value.initNumber(f(x));
+            return result(vm, name, &.{x}, f(x));
         }
     }.call);
 }
 
 /// A two-number Math function such as Math.atan2.
-fn math2(comptime f: anytype) value.NativeFn {
+fn math2(comptime f: anytype, comptime name: []const u8) value.NativeFn {
     return common.wrapMethod(struct {
         fn call(vm: *VM, receiver: value.Value, x: f64, y: f64) !value.Value {
-            _ = vm;
             _ = receiver;
-            return value.Value.initNumber(f(x, y));
+            return result(vm, name, &.{ x, y }, f(x, y));
         }
     }.call);
 }
 
 /// A three-number Math function such as Math.clamp.
-fn math3(comptime f: anytype) value.NativeFn {
+fn math3(comptime f: anytype, comptime name: []const u8) value.NativeFn {
     return common.wrapMethod(struct {
         fn call(vm: *VM, receiver: value.Value, a: f64, b: f64, c: f64) !value.Value {
-            _ = vm;
             _ = receiver;
-            return value.Value.initNumber(f(a, b, c));
+            return result(vm, name, &.{ a, b, c }, f(a, b, c));
         }
     }.call);
+}
+
+/// Like arithmetic, a Math function given finite numbers raises rather than return NaN
+/// (`Math.sqrt(-1)`, `Math.asin(2)` used to) or Infinity.
+fn result(vm: *VM, comptime name: []const u8, args: []const f64, res: f64) !value.Value {
+    for (args) |a| {
+        if (!std.math.isFinite(a)) return value.Value.initNumber(res);
+    }
+    if (std.math.isNan(res)) {
+        _ = vm.raiseError(.MathError, name ++ "({f}) has no real result", .{value.fmtNumber(args[0])});
+        return error.RuntimeError;
+    }
+    if (std.math.isInf(res)) {
+        _ = vm.raiseError(.RangeError, name ++ " overflows: the result is beyond the largest number", .{});
+        return error.RuntimeError;
+    }
+    return value.Value.initNumber(res);
 }
 
 /// Math.min / Math.max over any number of numbers (nil for none).
@@ -98,23 +112,23 @@ fn max(a: f64, b: f64) f64 {
 }
 
 pub const methods = [_]common.MethodDef{
-    .{ .name = "sin", .func = math1(std.math.sin) },
-    .{ .name = "cos", .func = math1(std.math.cos) },
-    .{ .name = "tan", .func = math1(std.math.tan) },
-    .{ .name = "asin", .func = math1(std.math.asin) },
-    .{ .name = "acos", .func = math1(std.math.acos) },
-    .{ .name = "atan2", .func = math2(atan2) },
-    .{ .name = "sqrt", .func = math1(std.math.sqrt) },
-    .{ .name = "abs", .func = math1(abs) },
-    .{ .name = "round", .func = math1(round) },
-    .{ .name = "ceil", .func = math1(ceil) },
-    .{ .name = "floor", .func = math1(floor) },
-    .{ .name = "deg2rad", .func = math1(deg2rad) },
-    .{ .name = "rad2deg", .func = math1(rad2deg) },
+    .{ .name = "sin", .func = math1(std.math.sin, "Math.sin") },
+    .{ .name = "cos", .func = math1(std.math.cos, "Math.cos") },
+    .{ .name = "tan", .func = math1(std.math.tan, "Math.tan") },
+    .{ .name = "asin", .func = math1(std.math.asin, "Math.asin") },
+    .{ .name = "acos", .func = math1(std.math.acos, "Math.acos") },
+    .{ .name = "atan2", .func = math2(atan2, "Math.atan2") },
+    .{ .name = "sqrt", .func = math1(std.math.sqrt, "Math.sqrt") },
+    .{ .name = "abs", .func = math1(abs, "Math.abs") },
+    .{ .name = "round", .func = math1(round, "Math.round") },
+    .{ .name = "ceil", .func = math1(ceil, "Math.ceil") },
+    .{ .name = "floor", .func = math1(floor, "Math.floor") },
+    .{ .name = "deg2rad", .func = math1(deg2rad, "Math.deg2rad") },
+    .{ .name = "rad2deg", .func = math1(rad2deg, "Math.rad2deg") },
     .{ .name = "min", .func = mathExtremum(min, "Math.min") },
     .{ .name = "max", .func = mathExtremum(max, "Math.max") },
-    .{ .name = "clamp", .func = math3(clamp) },
-    .{ .name = "lerp", .func = math3(lerp) },
-    .{ .name = "hypot", .func = math2(hypot) },
-    .{ .name = "sign", .func = math1(sign) },
+    .{ .name = "clamp", .func = math3(clamp, "Math.clamp") },
+    .{ .name = "lerp", .func = math3(lerp, "Math.lerp") },
+    .{ .name = "hypot", .func = math2(hypot, "Math.hypot") },
+    .{ .name = "sign", .func = math1(sign, "Math.sign") },
 };

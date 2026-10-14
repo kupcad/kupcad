@@ -708,6 +708,37 @@ pub const Tree = struct {
 };
 
 // --- AST Builder ---
+/// Longest number literal accepted (underscores excluded): longer ones are errors, not
+/// silently cut short.
+pub const MAX_NUMBER_LITERAL_LEN = 128;
+
+/// The value of a number literal (`1_000`, `2.5e3`, `0xff`, `0b101`, `0o17`), or null when
+/// it is malformed, too long, or out of range (an integer beyond i64, or a value beyond
+/// ±1.8e308). Each used to become 0 or Infinity silently.
+pub fn parseNumberLiteral(lexeme: []const u8) ?f64 {
+    var buf: [MAX_NUMBER_LITERAL_LEN]u8 = undefined;
+    var len: usize = 0;
+    for (lexeme) |c| {
+        if (c == '_') continue;
+        if (len == buf.len) return null;
+        buf[len] = c;
+        len += 1;
+    }
+    const digits = buf[0..len];
+
+    const radix: ?u8 = if (digits.len > 2 and digits[0] == '0') switch (digits[1]) {
+        'x', 'X' => 16,
+        'b', 'B' => 2,
+        'o', 'O' => 8,
+        else => null,
+    } else null;
+    const val: f64 = if (radix) |r|
+        @floatFromInt(std.fmt.parseInt(i64, digits[2..], r) catch return null)
+    else
+        std.fmt.parseFloat(f64, digits) catch return null;
+    return if (std.math.isFinite(val)) val else null;
+}
+
 pub const Builder = struct {
     allocator: std.mem.Allocator,
     tree: Tree,
@@ -935,28 +966,8 @@ pub const Builder = struct {
     }
 
     pub fn number(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
-        var clean_buf: [128]u8 = undefined;
-        var clean_len: usize = 0;
-        for (lexeme_str) |c| {
-            if (c != '_') {
-                if (clean_len < clean_buf.len) {
-                    clean_buf[clean_len] = c;
-                    clean_len += 1;
-                }
-            }
-        }
-        const cleaned = clean_buf[0..clean_len];
-
-        var val: f64 = 0.0;
-        if (std.mem.startsWith(u8, cleaned, "0x") or std.mem.startsWith(u8, cleaned, "0X")) {
-            val = @as(f64, @floatFromInt(std.fmt.parseInt(i64, cleaned[2..], 16) catch 0));
-        } else if (std.mem.startsWith(u8, cleaned, "0b") or std.mem.startsWith(u8, cleaned, "0B")) {
-            val = @as(f64, @floatFromInt(std.fmt.parseInt(i64, cleaned[2..], 2) catch 0));
-        } else if (std.mem.startsWith(u8, cleaned, "0o") or std.mem.startsWith(u8, cleaned, "0O")) {
-            val = @as(f64, @floatFromInt(std.fmt.parseInt(i64, cleaned[2..], 8) catch 0));
-        } else {
-            val = std.fmt.parseFloat(f64, cleaned) catch 0.0;
-        }
+        // The parser reports a literal that doesn't parse; 0 keeps the tree well-formed.
+        const val = parseNumberLiteral(lexeme_str) orelse 0.0;
 
         // --- Float Deduplication Logic ---
         const bits: u64 = @bitCast(val);
