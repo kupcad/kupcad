@@ -914,8 +914,6 @@ test "Stdlib: arithmetic that overflows is a RangeError, not Infinity" {
         .{ .src = comptime rescued("x = 2\n  x ** 1024"), .expected = .{ .str = "RangeError: 2 ** 1024 overflows: the result is beyond the largest number (1.8e308)" } },
         .{ .src = comptime rescued("x = 1e308\n  x + x"), .expected = .{ .str = "RangeError: 1e308 + 1e308 overflows: the result is beyond the largest number (1.8e308)" } },
         .{ .src = comptime rescued("x = 1e300\n  x * x"), .expected = .{ .str = "RangeError: 1e300 * 1e300 overflows: the result is beyond the largest number (1.8e308)" } },
-        // Huge and tiny numbers print in scientific notation (1e300 used to print 301 digits).
-        .{ .src = "r = \"#{1e300} #{1e-7} #{123456.5}\"", .expected = .{ .str = "1e300 1e-7 123456.5" } },
         .{ .src = "r = 2 ** 1023 > 0", .expected = .{ .boolean = true } },
         // Math functions don't return NaN either.
         .{ .src = comptime rescued("Math.sqrt(-1)"), .expected = .{ .str = "MathError: Math.sqrt(-1) has no real result" } },
@@ -924,6 +922,16 @@ test "Stdlib: arithmetic that overflows is a RangeError, not Infinity" {
         // A script that needs a non-finite value says so, as with Ruby's Float::INFINITY.
         .{ .src = "r = \"#{Number::INFINITY} #{-Number::INFINITY} #{Number::NAN}\"", .expected = .{ .str = "Infinity -Infinity NaN" } },
         .{ .src = "r = Number::INFINITY > 1e308", .expected = .{ .boolean = true } },
+    });
+}
+
+test "Stdlib: numbers print plainly only while their digits are exact" {
+    try expectGlobalR(&.{
+        // Huge and tiny numbers print in scientific notation (1e300 used to print 301 digits).
+        .{ .src = "r = \"#{1e300} #{1e-7} #{123456.5}\"", .expected = .{ .str = "1e300 1e-7 123456.5" } },
+        // Integers stay plain up to 2^53; from 1e16 the digits would claim a precision f64 lacks.
+        .{ .src = "r = \"#{2 ** 53} #{9999999999999998} #{-(2 ** 53)}\"", .expected = .{ .str = "9007199254740992 9999999999999998 -9007199254740992" } },
+        .{ .src = "r = \"#{1e16} #{2 ** 60} #{-1.5e20} #{123456789012345678901}\"", .expected = .{ .str = "1e16 1.152921504606847e18 -1.5e20 1.2345678901234568e20" } },
     });
 }
 

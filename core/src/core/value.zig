@@ -192,7 +192,10 @@ pub fn fmtNumber(n: f64) NumberFormat {
 /// print in scientific notation instead (1e-7), as in JavaScript.
 const MIN_PLAIN_MAGNITUDE = 1e-6;
 /// From this magnitude plain notation prints a long digit string (1e300 had 301 digits).
-const MAX_PLAIN_MAGNITUDE = 1e21;
+/// It is the first power of ten past 2^53, where f64 stops holding every integer exactly:
+/// plain digits above it look exact but aren't (2^60 printed as 1152921504606846976).
+/// Ruby and Crystal switch at the same point.
+const MAX_PLAIN_MAGNITUDE = 1e16;
 
 pub const NumberFormat = struct {
     n: f64,
