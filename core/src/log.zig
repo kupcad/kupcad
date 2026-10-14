@@ -2,13 +2,19 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub const std_options = std.Options{
-    .log_level = switch (builtin.mode) {
-        .debug => .debug,
-        .safe => .info,
-        .fast, .small => .err,
-    },
+    .log_level = levelFor(builtin.mode),
     .logFn = logFn,
 };
+
+/// Debug builds log everything. Release builds show warnings and errors (e.g. an
+/// unsupported lockfile, a skipped package entry) but not the per-run `info` chatter
+/// such as "Initialized new session", which would otherwise print on every build.
+pub fn levelFor(mode: std.builtin.OptimizeMode) std.log.Level {
+    return switch (mode) {
+        .debug => .debug,
+        .safe, .fast, .small => .warn,
+    };
+}
 
 pub fn logFn(
     comptime message_level: std.log.Level,

@@ -18,6 +18,7 @@ pub const LineIndex = api.LineIndex;
 test {
     _ = @import("api_test.zig");
     _ = @import("gen_grammar_test.zig");
+    _ = @import("log_test.zig");
 
     // Compiler
     _ = @import("compiler/compiler_test.zig");
