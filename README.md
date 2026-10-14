@@ -32,6 +32,8 @@ pnpm test:wasm                           # WASM tests via wasmtime
 cd core && zig build test -Dtest-filter="Compiler Guardrail"   # a subset
 ```
 
+A passing run prints nothing but the summary. A test that provokes a warning on purpose calls `test_support.expectWarnings()` first, so any warning that does appear is a real one.
+
 ## Usage
 
 ```sh

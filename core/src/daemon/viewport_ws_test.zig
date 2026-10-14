@@ -1,4 +1,5 @@
 const std = @import("std");
+const test_support = @import("../test_support.zig");
 const testing = std.testing;
 const ws = @import("viewport_ws.zig");
 const ViewportWsServer = ws.ViewportWsServer;
@@ -265,6 +266,7 @@ test "ViewportWs: live upgrade completes for a browser-sized request and frames 
 }
 
 test "ViewportWs: foreign Origin is refused with 403 and the connection is dropped" {
+    test_support.expectWarnings();
     var server = try ViewportWsServer.init(testing.allocator, testing.io, 0);
     defer server.deinit();
     try server.start();
@@ -278,6 +280,7 @@ test "ViewportWs: foreign Origin is refused with 403 and the connection is dropp
 }
 
 test "ViewportWs: connections are capped, slots are freed on close, deinit wakes stalled handshakes" {
+    test_support.expectWarnings();
     var server = try ViewportWsServer.init(testing.allocator, testing.io, 0);
     var server_live = true;
     defer if (server_live) server.deinit();
@@ -344,6 +347,7 @@ test "ViewportWs: broadcast never blocks on a client that stopped reading" {
 }
 
 test "ViewportWs: a second viewport server falls back instead of sharing the port" {
+    test_support.expectWarnings();
     // Two LSPs (e.g. two VS Code windows) both prefer the same port. The second used to bind
     // it too (SO_REUSEPORT via `reuse_address`), so a viewer could reach the wrong window.
     var first = try ViewportWsServer.init(testing.allocator, testing.io, 0);

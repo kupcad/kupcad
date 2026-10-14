@@ -45,7 +45,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     // A path that can't be read is an error, not "0 files, no issues". The count is added
     // after the walk: processFile updates `totals` itself, and `totals.errors += walk()`
     // would read the old count first and overwrite those updates.
-    const unreadable = try walker.walkPaths(init.io, allocator, setup.options.paths.items, &totals, processFile);
+    const unreadable = try walker.walkPaths(reporter, allocator, setup.options.paths.items, &totals, processFile);
     totals.errors += unreadable;
 
     if (totals.errors == 0 and totals.warnings == 0 and totals.infos == 0) {

@@ -16,15 +16,14 @@ pub fn levelFor(mode: std.builtin.OptimizeMode) std.log.Level {
     };
 }
 
+/// The executable's log output. Test binaries never use it: their root is Zig's test
+/// runner, which logs by `std.testing.log_level` (see test_support.expectWarnings).
 pub fn logFn(
     comptime message_level: std.log.Level,
     comptime scope: @TypeOf(.EnumLiteral),
     comptime format: []const u8,
     args: anytype,
 ) void {
-    // Silence ALL log output (including .err) during unit test runs
-    if (builtin.is_test) return;
-
     std.log.defaultLog(message_level, scope, format, args);
 }
 

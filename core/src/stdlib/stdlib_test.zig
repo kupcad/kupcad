@@ -236,6 +236,8 @@ fn initVm() !VM {
     // Errors are muted because the test runner treats logged errors as failures.
     vm.mute_errors = true;
     try registry.registerStandardLibrary(&vm);
+    // Script output (puts, benchmark timings) would print into the test log.
+    vm.host.print_handler = null;
     return vm;
 }
 

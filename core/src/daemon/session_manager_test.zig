@@ -1,4 +1,5 @@
 const std = @import("std");
+const test_support = @import("../test_support.zig");
 const testing = std.testing;
 const SessionManager = @import("session_manager.zig").SessionManager;
 const ScriptSession = @import("session.zig").ScriptSession;
@@ -107,6 +108,7 @@ test "SessionManager: markUsed reorders the LRU queue and evictLRU drops its hea
 }
 
 test "SessionManager: evictLRU never frees a session that is still leased" {
+    test_support.expectWarnings();
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const dir = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);

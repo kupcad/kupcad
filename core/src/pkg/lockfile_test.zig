@@ -1,4 +1,5 @@
 const std = @import("std");
+const test_support = @import("../test_support.zig");
 const testing = std.testing;
 const Lockfile = @import("lockfile.zig").Lockfile;
 const LockedPackage = @import("lockfile.zig").LockedPackage;
@@ -72,6 +73,7 @@ fn loadVersion(mem_vfs: *MemoryVfs, version: []const u8) !Lockfile {
 }
 
 test "Lockfile: integrity scheme follows the major version; unknown majors are rejected" {
+    test_support.expectWarnings();
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 

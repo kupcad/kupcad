@@ -30,7 +30,7 @@ test "Walker: recursively finds only .kup files and accepts direct file paths" {
     defer testing.allocator.free(direct);
 
     var ctx = WalkerContext{};
-    try testing.expectEqual(@as(usize, 0), try walker.walkPaths(testing.io, testing.allocator, &.{ root, direct }, &ctx, testProcessFn));
+    try testing.expectEqual(@as(usize, 0), try walker.walkPaths(.{ .io = testing.io }, testing.allocator, &.{ root, direct }, &ctx, testProcessFn));
 
     // 3 from the directory walk + the directly named file
     try testing.expectEqual(@as(usize, 4), ctx.kup_files_found);
@@ -51,6 +51,12 @@ test "Walker: paths that can't be read are counted, and the rest are still walke
     defer testing.allocator.free(missing);
 
     var ctx = WalkerContext{};
-    try testing.expectEqual(@as(usize, 2), try walker.walkPaths(testing.io, testing.allocator, &.{ missing, ok, "/nonexistent/kupcad/dir" }, &ctx, testProcessFn));
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    try testing.expectEqual(@as(usize, 2), try walker.walkPaths(.{ .io = testing.io, .capture = &out.writer }, testing.allocator, &.{ missing, ok, "/nonexistent/kupcad/dir" }, &ctx, testProcessFn));
     try testing.expectEqual(@as(usize, 1), ctx.kup_files_found);
+    // Each one is reported through the command's reporter (it used to go straight to stderr).
+    const expected = try std.fmt.allocPrint(testing.allocator, "Error: Could not read '{s}': FileNotFound\nError: Could not read '/nonexistent/kupcad/dir': FileNotFound\n", .{missing});
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, out.written());
 }

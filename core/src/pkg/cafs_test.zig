@@ -1,4 +1,5 @@
 const std = @import("std");
+const test_support = @import("../test_support.zig");
 const testing = std.testing;
 const cafs_mod = @import("cafs.zig");
 const Cafs = cafs_mod.Cafs;
@@ -99,6 +100,7 @@ test "Cafs: linkBlob copies when the VFS cannot hard-link" {
 
 // A symlink entry followed by a file "through" it used to write outside the package.
 test "Cafs: extractTarball does not let a symlink entry plant files outside the package" {
+    test_support.expectWarnings();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();

@@ -1,4 +1,5 @@
 const std = @import("std");
+const test_support = @import("../test_support.zig");
 const testing = std.testing;
 const Resolver = @import("resolver.zig").Resolver;
 const Manifest = @import("manifest.zig").Manifest;
@@ -188,6 +189,7 @@ test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {
 
 // Audit fix: install errors were swallowed and the install reported success.
 test "Resolver: resolve propagates install errors instead of reporting success" {
+    test_support.expectWarnings();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();
@@ -197,6 +199,7 @@ test "Resolver: resolve propagates install errors instead of reporting success" 
 }
 
 test "Resolver: resolve verifies cached content against the locked integrity" {
+    test_support.expectWarnings();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();
@@ -216,6 +219,7 @@ test "Resolver: resolve verifies cached content against the locked integrity" {
 }
 
 test "Resolver: downloads honor the locked commit and integrity" {
+    test_support.expectWarnings();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();
@@ -240,6 +244,7 @@ test "Resolver: downloads honor the locked commit and integrity" {
 }
 
 test "Resolver: lock entries without integrity are refused" {
+    test_support.expectWarnings();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();
@@ -283,6 +288,7 @@ test "Resolver: a pin for a different ref is re-resolved, stale entries dropped"
 }
 
 test "Resolver: 1.x lockfiles verify with the legacy hash and are rewritten as current" {
+    test_support.expectWarnings();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();
@@ -326,6 +332,7 @@ test "Resolver: 1.x lockfiles verify with the legacy hash and are rewritten as c
 }
 
 test "Resolver: forbidden or malformed transitive deps fail the install" {
+    test_support.expectWarnings();
     const cases = [_]struct { manifest: []const u8, err: anyerror }{
         .{ .manifest =
         \\{"dependencies":{"x":"file:/etc/passwd"}}

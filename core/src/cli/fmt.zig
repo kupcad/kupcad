@@ -59,7 +59,7 @@ const Run = struct {
 pub fn run(allocator: std.mem.Allocator, paths: []const []const u8, config: FmtConfig, mode: Mode, reporter: Reporter) !Outcome {
     var state: Run = .{ .config = config, .mode = mode, .reporter = reporter };
     // Added after the walk: processFile updates `state.failed` itself (see check.zig).
-    const unreadable = try walker.walkPaths(reporter.io, allocator, paths, &state, processFile);
+    const unreadable = try walker.walkPaths(reporter, allocator, paths, &state, processFile);
     state.failed += unreadable;
     if (mode == .check and state.unformatted > 0) {
         reporter.err("{d} file(s) need formatting; run kupcad fmt --write to fix them.\n", .{state.unformatted});
