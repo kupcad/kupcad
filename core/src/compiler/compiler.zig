@@ -2266,6 +2266,7 @@ pub const Compiler = struct {
     }
 
     // Helper function to handle nested array destructuring
+    /// Unpacks a destructured block parameter (`|(x, (y, z))|`) into block locals.
     fn compileDestructureNode(self: *Compiler, target_node_idx: ast.NodeIndex) CompileError!void {
         // Save simulator state to prevent stack corruption on TooManyConstants aborts
         const saved_depth = self.current_stack_depth;
@@ -2274,9 +2275,15 @@ pub const Compiler = struct {
         const node = self.tree.getNode(target_node_idx) orelse return error.UnknownNode;
 
         if (node.tag == .identifier) {
+            // A destructured name is a parameter like a plain `|x|`: it always shadows an
+            // outer variable of the same name instead of writing through it.
             const name_id = self.tree.stringId(node);
-            const dummy_sym = resolver.ResolvedSymbol{ .kind = .local, .index = 0 };
-            try self.emitVariableStore(name_id, dummy_sym);
+            const slot = self.resolveLocal(name_id) orelse blk: {
+                const new_slot = self.getNextLocalSlot();
+                try self.addLocal(name_id, new_slot);
+                break :blk new_slot;
+            };
+            try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
             try self.emitOp(.op_pop);
         } else if (node.tag == .array_literal) {
             // Recursive Spatial Destructuring!

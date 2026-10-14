@@ -2105,6 +2105,25 @@ test "Compiler: assignment inside a def makes a method local, never a top-level 
     }
 }
 
+test "Compiler: destructured block parameters shadow outer variables like plain ones" {
+    // `|(x, y)|` used to write through to an outer `x` (as an upvalue) instead of binding a
+    // block-local parameter, so the outer variable changed after the loop.
+    const cases = [_]struct { src: []const u8, expected: f64 }{
+        .{ .src = "x = 5\n[[1, 2]].each { |(x, y)| x }\nx", .expected = 5 },
+        .{ .src = "def f\n  x = 5\n  [[1, 2]].each { |(x, y)| x }\n  x\nend\nf()", .expected = 5 },
+        .{ .src = "x = 7\ny = 8\n[[1, [2, 3]]].each { |(x, (y, z))| x }\nx * 10 + y", .expected = 78 },
+        // The parameters themselves are bound inside the block.
+        .{ .src = "s = 0\n[[1, [2, 3]], [4, [5, 6]]].each { |(a, (b, c))| s = s + a * 100 + b * 10 + c }\ns", .expected = 579 },
+        .{ .src = "[[1, 2]].map { |(x, y)| x * 10 + y }[0]", .expected = 12 },
+        // Unchanged reference behaviour of a plain parameter.
+        .{ .src = "x = 5\n[1].each { |x| x }\nx", .expected = 5 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script:\n{s}\n", .{case.src});
+        try expectRunsTo(case.src, case.expected);
+    }
+}
+
 test "Compiler: `case` picks the `when ... then` branch for constants and names" {
     const cases = [_]struct { src: []const u8, expected: f64 }{
         .{ .src = "case (1..2)\nwhen Range then 1\nelse 2\nend", .expected = 1 },
