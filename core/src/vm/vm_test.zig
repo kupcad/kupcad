@@ -1081,7 +1081,7 @@ test "VM: Explicit block capturing (&block) and first-class invocation" {
 
     const source =
         \\def run_block(&b)
-        \\  b(42)
+        \\  b.call(42)
         \\end
         \\run_block { |x| x * 2 }
     ;
@@ -3767,7 +3767,7 @@ test "VM: Closure block executes local return back to caller frame" {
 
     const source =
         \\def run_block(&b)
-        \\  b(42)
+        \\  b.call(42)
         \\end
         \\run_block do |x|
         \\  return x * 2
@@ -3836,7 +3836,7 @@ test "VM: Block closures support splat (*args) parameters natively" {
 
     const source =
         \\def yield_splat(&b)
-        \\  b(10, 20, 30, 40)
+        \\  b.call(10, 20, 30, 40)
         \\end
         \\yield_splat do |first, *rest|
         \\  [first, rest]
@@ -3872,7 +3872,7 @@ test "VM: Block closures support array destructuring |(x, y)| natively" {
 
     const source =
         \\def yield_array(&b)
-        \\  b([100, 200])
+        \\  b.call([100, 200])
         \\end
         \\yield_array do |(x, y)|
         \\  x + y
@@ -3900,7 +3900,7 @@ test "VM: Block closures support keyword arguments (**kwargs) cleanly" {
 
     const source =
         \\def yield_kwargs(&b)
-        \\  b(50, width: 10, height: 20)
+        \\  b.call(50, width: 10, height: 20)
         \\end
         \\yield_kwargs do |val, **opts|
         \\  [val, opts[:width], opts[:height]]
@@ -3933,7 +3933,7 @@ test "VM: Block closures handle extreme complex arguments |(x, y), *args, **kw|"
 
     const source =
         \\def yield_complex(&b)
-        \\  b([10, 20], 30, 40, a: 1, c: 2)
+        \\  b.call([10, 20], 30, 40, a: 1, c: 2)
         \\end
         \\yield_complex do |(x, y), *args, **kw|
         \\  [x, y, args, kw[:a]]
@@ -3974,7 +3974,7 @@ test "VM: Block closures support default parameter assignments" {
     // Yields multiple times with varying arguments to test default fallbacks
     const source =
         \\def yield_defaults(&b)
-        \\  [b(), b(5), b(5, 50)]
+        \\  [b.call, b.call(5), b.call(5, 50)]
         \\end
         \\yield_defaults do |x = 10, y = 20|
         \\  x + y
@@ -4045,7 +4045,7 @@ test "VM: Block arguments gracefully pad with nil when missing" {
     // Yields 0 arguments, but block expects 2.
     const source =
         \\def call_empty(&b)
-        \\  b()
+        \\  b.call
         \\end
         \\call_empty do |x, y|
         \\  [x.nil?, y.nil?]
@@ -4077,7 +4077,7 @@ test "VM: Keyword arguments extract correctly regardless of passing order" {
     // Block expects |a:, b:|, caller provides (b: 20, a: 10)
     const source =
         \\def test_kw(&block)
-        \\  block(b: 20, a: 10)
+        \\  block.call(b: 20, a: 10)
         \\end
         \\test_kw do |a:, b:|
         \\  [a, b]
@@ -4109,7 +4109,7 @@ test "VM: Block array destructuring safely pads missing elements with nil" {
     // Yields an array with only 1 element, but the block destructs 3!
     const source =
         \\def yield_short(&b)
-        \\  b([42])
+        \\  b.call([42])
         \\end
         \\yield_short do |(x, y, z)|
         \\  [x, y.nil?, z.nil?]
@@ -4142,7 +4142,7 @@ test "VM: Block silently trims extraneous yielded arguments" {
     // Yields 5 arguments, but the block only takes 1
     const source =
         \\def yield_many(&b)
-        \\  b(99, 2, 3, 4, 5)
+        \\  b.call(99, 2, 3, 4, 5)
         \\end
         \\yield_many do |first|
         \\  first
@@ -4292,7 +4292,7 @@ test "VM: Repeated block yields in loops maintain frame and stack equilibrium" {
         \\  i = 0
         \\  acc = 0
         \\  while i < count
-        \\    acc += b(i)
+        \\    acc += b.call(i)
         \\    i += 1
         \\  end
         \\  acc
@@ -4410,7 +4410,7 @@ test "VM: Stabby lambdas compile and execute with default and keyword parameters
 
     const source =
         \\calc = ->(x, y = 10, scale: 2) { (x + y) * scale }
-        \\[calc(5), calc(5, 20), calc(5, scale: 3)]
+        \\[calc.call(5), calc.call(5, 20), calc.call(5, scale: 3)]
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -5729,7 +5729,7 @@ test "VM Syntax: super call accurately forwards keyword arguments and blocks" {
     const source =
         \\class BaseShape
         \\  def render(scale:, &block)
-        \\    block(scale * 10)
+        \\    block.call(scale * 10)
         \\  end
         \\end
         \\
@@ -6035,7 +6035,7 @@ test "VM: Implicit bare super forwards blocks and keyword arguments natively" {
     const source =
         \\class BaseShape
         \\  def run(scale:, &block)
-        \\    block(scale * 10)
+        \\    block.call(scale * 10)
         \\  end
         \\end
         \\
@@ -8263,7 +8263,7 @@ test "VM: Evaluates nested spatial tuple destructuring inside blocks" {
     // Sends an array containing `[[10, 20], 30]` into the block
     const source =
         \\def call_it(&b)
-        \\  b([[10, 20], 30])
+        \\  b.call([[10, 20], 30])
         \\end
         \\call_it do |((x, y), z)|
         \\  x + y + z
@@ -8605,7 +8605,7 @@ test "VM: Method dispatch fails gracefully on unknown class methods" {
     try testing.expectEqual(.runtime_error, result);
 }
 
-test "VM: Bound methods evaluate direct calls and .call() natively" {
+test "VM: Bound methods are called with .call()" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -8618,7 +8618,7 @@ test "VM: Bound methods evaluate direct calls and .call() natively" {
         \\end
         \\calc = Calculator.new
         \\m = calc.method(:add)
-        \\[m(10, 20), m.call(15, 25)]
+        \\[m.call(10, 20), m.call(15, 25)]
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -8644,7 +8644,7 @@ test "VM: Bound CAD methods retain ARC geometry correctly" {
     const source =
         \\c = cube(10)
         \\trans = c.method(:translate)
-        \\shifted = trans(5, 0, 0)
+        \\shifted = trans.call(5, 0, 0)
         \\shifted.volume
     ;
 
@@ -8713,8 +8713,8 @@ test "VM: Bound methods retain receiver instance state" {
         \\c = Counter.new
         \\c.set(10)
         \\m = c.method(:inc)
-        \\m(5)
-        \\m(5)
+        \\m.call(5)
+        \\m.call(5)
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -9751,7 +9751,7 @@ test "VM: Open upvalues do not dangle after stack reallocation" {
         \\x = 42
         \\closure = ->() { x }
         \\force_realloc() # BOOM: Stack moves, closure's upvalue pointer is now dangling!
-        \\closure()       # Read from freed memory
+        \\closure.call    # Read from freed memory
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -9904,7 +9904,7 @@ test "VM: Sequential rescued exceptions do not accumulate un-swept memory" {
         \\    nil
         \\  end
         \\end
-        \\f()
+        \\f.call
         \\f = nil
     ;
 

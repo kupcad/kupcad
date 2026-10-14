@@ -2178,18 +2178,9 @@ pub const VM = struct {
             }
         }
 
-        // --- Bound Method `.call()` Interceptor ---
-        if (receiver.isBoundMethod() and std.mem.eql(u8, method_name_str, "call")) {
-            const bound = receiver.asBoundMethod();
-            self.stack.ptr[base_slot] = bound.receiver;
-
-            if (bound.method.isClosure()) {
-                self.dispatchClosure(bound.method.asClosure(), arg_count, base_slot, false) catch return .runtime_error;
-                return .ok;
-            } else if (bound.method.isNative()) {
-                // Same error protocol as any native call (a block raising inside it must unwind)
-                return self.executeNative(bound.method.asNative(), arg_count, args_ptr, method_name_str);
-            }
+        // --- `.call()` on a callable value (lambda, block, bound method) ---
+        if (std.mem.eql(u8, method_name_str, "call") and (receiver.isClosure() or receiver.isBoundMethod())) {
+            return self.callValue(receiver, arg_count, base_slot);
         }
 
         // --- 3. FALLBACK: NATIVE C++ KERNEL METHODS (Geometry) ---
@@ -2481,6 +2472,21 @@ pub const VM = struct {
         const base_slot = self.stack_top - 1 - arg_count;
         const callee = self.stack[base_slot];
 
+        // `f(x)` calls a function by name. A lambda, block or bound method is a value
+        // (a bare `f` never calls it), so it is called like any method: `f.call(x)`.
+        const value_kind: ?[]const u8 = if (callee.isBoundMethod())
+            "a bound method"
+        else if (callee.isClosure() and callee.asClosure().function.is_lambda)
+            "a lambda"
+        else
+            null;
+        if (value_kind) |kind| return self.raiseError(.TypeError, "{s} is called with .call(...), not like a function", .{kind});
+        return self.callValue(callee, arg_count, base_slot);
+    }
+
+    /// Calls `callee` (a function, lambda, bound method or class) with the `arg_count`
+    /// arguments above it on the stack.
+    fn callValue(self: *VM, callee: value.Value, arg_count: u8, base_slot: usize) InterpretResult {
         if (callee.isBoundMethod()) {
             const bound = callee.asBoundMethod();
             self.stack.ptr[base_slot] = bound.receiver; // Load the actual receiver into the base slot

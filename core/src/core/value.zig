@@ -97,6 +97,8 @@ pub const ObjFunction = struct {
     chunk: ?*anyopaque, // Pointer to chunk.Chunk (avoids circular dependency)
     name: ?*ObjString,
     owns_chunk: bool,
+    /// A lambda or block: a value, called with `.call(...)`. A `def` is called by name.
+    is_lambda: bool,
     /// Top-level scope this function's global reads/writes go to: null for the main
     /// script (VM.globals), otherwise the namespace of the imported module it came from.
     namespace: ?*Namespace,

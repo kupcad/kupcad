@@ -254,6 +254,7 @@ pub const GC = struct {
         ptr.splat_pos = null;
         ptr.chunk = null;
         ptr.owns_chunk = true;
+        ptr.is_lambda = false;
         ptr.namespace = null;
         return ptr;
     }

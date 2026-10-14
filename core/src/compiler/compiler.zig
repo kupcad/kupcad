@@ -301,16 +301,19 @@ pub const Compiler = struct {
         const is_upvalue = (try self.resolveUpvalue(name_id)) != null;
         const is_script_global = self.isScriptGlobal(name_id);
 
-        // Check the VM's active runtime memory fir REPL
-        const is_vm_global = self.vm.globals.contains(name_str);
+        // Check the VM's active runtime memory for REPL
+        const vm_global = self.vm.globals.get(name_str);
 
         const is_special_or_const = name_str.len == 0 or
             std.mem.startsWith(u8, name_str, "@") or
             std.mem.startsWith(u8, name_str, "$") or
             std.ascii.isUpper(name_str[0]);
 
-        // If it exists in the VM already, treat it as a variable, not a function call
-        const is_variable = is_local or is_upvalue or is_script_global or is_special_or_const or is_vm_global;
+        // A built-in function is called by name like a def, so a bare `cube` is `cube()`
+        // (unless a script variable shadows it). Other VM globals are variables.
+        const is_script_variable = is_local or is_upvalue or is_script_global;
+        const is_builtin_function = !is_script_variable and !is_special_or_const and vm_global != null and vm_global.?.isNative();
+        const is_variable = !is_builtin_function and (is_script_variable or is_special_or_const or vm_global != null);
 
         if (!is_variable) {
             // Bare identifier that is not a known variable or constant:
@@ -2326,6 +2329,7 @@ pub const Compiler = struct {
     fn compileClosureBlock(self: *Compiler, params: []const ast.Param, body_node: ast.NodeIndex, func_name: ?[]const u8, is_method: bool) CompileError!void {
         const func = try self.vm.gc.allocateFunction(self.vm);
         func.namespace = self.rootModuleNamespace();
+        func.is_lambda = !is_method;
 
         // Root the function immediately: it is reachable from nothing else until
         // it lands in our constant pool, and every allocation below (its name,

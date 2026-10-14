@@ -656,25 +656,52 @@ test "Stdlib: the docs (0...3).each example builds three pegs" {
     }});
 }
 
-test "Stdlib: lambdas are called like methods and behave like blocks" {
+test "Stdlib: named functions are called by name, callable values with .call" {
+    const not_by_name = "TypeError: a lambda is called with .call(...), not like a function";
     try expectGlobalR(&.{
         // The README's Lambdas example.
-        .{ .src = "double = ->(x) { x * 2 }\ndef apply(f, v)\n  f(v)\nend\nr = [double(4), apply(double, 5)]", .expected = .{ .nums = &.{ 8, 10 } } },
-        .{ .src = "plate = ->(w, h = 10, thickness: 2) do\n  cube(x: w, y: h, z: thickness)\nend\nr = plate(30, thickness: 3).volume", .expected = .{ .num = 900 } },
-        .{ .src = "def m(&blk)\n  blk(2)\nend\nr = m { |x| x * 3 }", .expected = .{ .num = 6 } },
-        // Lambdas are the only callables, and `.call` is not how they are called.
+        .{ .src = "double = ->(x) { x * 2 }\ndef apply(f, v)\n  f.call(v)\nend\nr = [double.call(4), apply(double, 5)]", .expected = .{ .nums = &.{ 8, 10 } } },
+        .{ .src = "plate = ->(w, h = 10, thickness: 2) do\n  cube(x: w, y: h, z: thickness)\nend\nr = plate.call(30, thickness: 3).volume", .expected = .{ .num = 900 } },
+        // Like any method call, `.call` needs no parentheses; a bare name is the lambda itself.
+        .{ .src = "f = -> { 2 }\nr = f.call", .expected = .{ .num = 2 } },
+        .{ .src = "f = -> { 2 }\ng = f\nr = g.call + 1", .expected = .{ .num = 3 } },
+        .{ .src = "f = -> { 2 }\nr = \"#{f}\"", .expected = .{ .str = "<Function>" } },
+        // Calling a lambda like a function used to work, so `f` and `f()` meant different things.
+        .{ .src = comptime rescued("f = ->(x) { x }\n  f(3)"), .expected = .{ .str = not_by_name } },
+        .{ .src = comptime rescued("f = ->(x) { x }\n  f 3"), .expected = .{ .str = not_by_name } },
+        .{ .src = comptime rescued("f = -> { 1 }\n  f()"), .expected = .{ .str = not_by_name } },
+        // A captured block is a lambda too; `yield` still calls it implicitly.
+        .{ .src = "def m(&blk)\n  blk.call(2)\nend\nr = m { |x| x * 3 }", .expected = .{ .num = 6 } },
+        .{ .src = comptime rescued("def m(&blk)\n    blk(2)\n  end\n  m { |x| x }"), .expected = .{ .str = not_by_name } },
+        .{ .src = "def m\n  yield 2\nend\nr = m { |x| x * 3 }", .expected = .{ .num = 6 } },
+        // So is a bound method.
+        .{ .src = "class C\n  def g(n)\n    n + 1\n  end\nend\nm = C.new.method(:g)\nr = m.call(4)", .expected = .{ .num = 5 } },
+        .{ .src = comptime rescued("class C\n    def g\n      1\n    end\n  end\n  m = C.new.method(:g)\n  m(1)"), .expected = .{ .str = "TypeError: a bound method is called with .call(...), not like a function" } },
+        // Named functions (defs and built-ins) are called by name, with or without parentheses.
+        .{ .src = "def foo\n  2\nend\nr = [foo, foo()]", .expected = .{ .nums = &.{ 2, 2 } } },
+        .{ .src = "def twice(n)\n  n * 2\nend\nr = twice 4", .expected = .{ .num = 8 } },
+        // A bare `cube` used to be the function value itself rather than a cube.
+        .{ .src = "r = cube.volume", .expected = .{ .num = 1 } },
+        .{ .src = "def f(cube)\n  cube\nend\nr = f(5)", .expected = .{ .num = 5 } },
+        // Lambdas are the only callables.
         .{ .src = comptime rescued("proc { |x| x }"), .expected = .{ .str = "NameError: Undefined variable 'proc'" } },
         .{ .src = comptime rescued("Proc.new { |x| x }"), .expected = .{ .str = "NameError: Undefined variable 'Proc'" } },
         .{ .src = comptime rescued("lambda { |x| x }"), .expected = .{ .str = "NameError: Undefined variable 'lambda'" } },
-        .{ .src = "f = ->(x) { x }\nr = begin\n  f.call(1)\n  false\nrescue => e\n  true\nend", .expected = .{ .boolean = true } },
+    });
+}
+
+test "Stdlib: lambdas behave like blocks" {
+    try expectGlobalR(&.{
         // `return` and `next` leave just the lambda or block, never the enclosing def.
-        .{ .src = "f = ->(x) do\n  return 10 if x > 0\n  20\nend\nr = [f(1), f(-1)]", .expected = .{ .nums = &.{ 10, 20 } } },
-        .{ .src = "f = ->() do\n  next 7\n  8\nend\nr = f()", .expected = .{ .num = 7 } },
-        .{ .src = "def m\n  f = ->() { return 5 }\n  f()\n  1\nend\nr = m", .expected = .{ .num = 1 } },
+        .{ .src = "f = ->(x) do\n  return 10 if x > 0\n  20\nend\nr = [f.call(1), f.call(-1)]", .expected = .{ .nums = &.{ 10, 20 } } },
+        .{ .src = "f = -> do\n  next 7\n  8\nend\nr = f.call", .expected = .{ .num = 7 } },
+        .{ .src = "def m\n  f = -> { return 5 }\n  f.call\n  1\nend\nr = m", .expected = .{ .num = 1 } },
         .{ .src = "def m\n  [1, 2, 3].each { |v| return v if v == 2 }\n  1\nend\nr = m", .expected = .{ .num = 1 } },
         // Both are lenient about arguments, unlike a Ruby lambda.
-        .{ .src = "f = ->(x, y) { [x, y] }\nr = \"#{f(1)}\"", .expected = .{ .str = "[1, nil]" } },
-        .{ .src = "f = ->(x) { x }\nr = f(1, 2)", .expected = .{ .num = 1 } },
+        .{ .src = "f = ->(x, y) { [x, y] }\nr = \"#{f.call(1)}\"", .expected = .{ .str = "[1, nil]" } },
+        .{ .src = "f = ->(x) { x }\nr = f.call(1, 2)", .expected = .{ .num = 1 } },
+        // Closures capture and update their enclosing variables.
+        .{ .src = "n = 1\nbump = -> { n += 1 }\nbump.call\nbump.call\nr = n", .expected = .{ .num = 3 } },
         // Block parameters don't unpack arrays; `|(a, b)|` does, and a Map passes key and value.
         .{ .src = "r = \"#{[[1, 2]].map { |a, b| [a, b] }}\"", .expected = .{ .str = "[[[1, 2], nil]]" } },
         .{ .src = "r = [[1, 2]].map { |(a, b)| a + b }", .expected = .{ .nums = &.{3} } },

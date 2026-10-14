@@ -2095,7 +2095,7 @@ test "Compiler: assignment inside a def makes a method local, never a top-level 
         // blocks updating their def's own locals, and $globals.
         .{ .src = "w = 5\ndef area\n  w * 2\nend\narea()", .expected = 10 },
         .{ .src = "total = 0\n[1, 2, 3].each { |i| total = total + i }\ntotal", .expected = 6 },
-        .{ .src = "total = 1\nadd = ->(n) { total = total + n }\nadd(10)\ntotal", .expected = 11 },
+        .{ .src = "total = 1\nadd = ->(n) { total = total + n }\nadd.call(10)\ntotal", .expected = 11 },
         .{ .src = "def acc\n  sum = 0\n  [1, 2, 3].each { |i| sum = sum + i }\n  sum\nend\nacc()", .expected = 6 },
         .{ .src = "$g = 1\ndef setg\n  $g = 2\nend\nsetg()\n$g", .expected = 2 },
     };

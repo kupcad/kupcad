@@ -95,7 +95,7 @@ end
 
 ### Lambdas
 
-A lambda is a block stored in a variable. Call it like a method:
+A lambda is a block stored in a variable. It is a value, so it is called with `.call`:
 
 ```ruby
 double = ->(x) { x * 2 }
@@ -103,22 +103,25 @@ plate = ->(w, h = 10, thickness: 2) do
   cube(x: w, y: h, z: thickness)
 end
 
-double(4)                   # 8
-plate(30, thickness: 3)     # defaults and keyword parameters work as in a def
+double.call(4)               # 8
+plate.call(30, thickness: 3) # defaults and keyword parameters work as in a def
 
 def apply(f, v)
-  f(v)                      # a lambda passed as an argument is called the same way
+  f.call(v)                  # a lambda passed as an argument is called the same way
 end
-apply(double, 5)            # 10
+apply(double, 5)             # 10
 ```
 
-Written without parentheses, `double` is the lambda itself (to store or pass along); `double()` calls it. A method's `&blk` parameter is called the same way (`blk(2)`), or with `yield`.
+The rule is the same everywhere:
+
+* **Named functions** (a `def`, or a built-in such as `cube`) are called by name, with or without parentheses: `plate_width`, `twice(4)`, `twice 4`, `cube` (the same as `cube()`).
+* **Callable values** (a lambda, a block captured with `&blk`, a bound method from `obj.method(:name)`) are called with `.call`, which, like any method, needs no parentheses: `f.call`, `f.call(3)`. A bare `f` is always the value itself, so it can be stored or passed along; `f(3)` is a `TypeError`. A block can also be called implicitly with `yield`.
 
 ### Differences from Ruby
 
 KupCAD borrows Ruby's syntax but deliberately keeps a simpler model; these are design choices, not missing features:
 
-* **Lambdas are the only callable objects.** Write `->(x) { ... }` or `-> do ... end`; there is no `proc`, `Proc.new` or `lambda { }`. A lambda is called like a method, `f(3)` or `f()`, not with `.call`, `.()` or `f[3]`.
+* **Lambdas are the only callable objects.** Write `->(x) { ... }` or `-> do ... end`; there is no `proc`, `Proc.new` or `lambda { }`. Call one with `f.call(3)` (or `f.call` with no arguments); `f.()` and `f[3]` don't exist.
 * **A lambda behaves exactly like a block.**
   * `return value` and `next value` leave just the block or lambda with that value; neither returns from the enclosing `def`. Use `break value` to stop an iteration and hand back a result (`break` is only valid in a block given to an iterating method, not in a lambda).
   * Both are lenient about arguments: missing ones are `nil` and extra ones are dropped, where a Ruby lambda would raise an `ArgumentError`.
@@ -199,7 +202,7 @@ An uncaught error stops the script and is printed once with its class, e.g. `Val
 ### Base Object Introspection
 
 * All objects and geometry nodes support introspection methods like `.is_a?`, `.responds_to?`, and `.nil?`.
-* You can duplicate instances using `.dup` or `.clone`, extract bound functions using `.method`, or yield to blocks contextually via `.tap` and `.into`.
+* You can duplicate instances using `.dup` or `.clone`, extract bound methods with `.method(:name)` (called with `.call`), or yield to blocks contextually via `.tap` and `.into`.
 
 ---
 
