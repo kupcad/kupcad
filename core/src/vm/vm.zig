@@ -2159,6 +2159,9 @@ pub const VM = struct {
             const resolved = self.findMethodWithPrivacy(c, method_name_val, ic);
             method_val = resolved.method;
             is_private_call = resolved.is_private;
+        } else if (self.object_class) |object_class| {
+            // Every value is an Object: nil or a lambda still answer `inspect`, `class`, ...
+            method_val = self.findMethod(object_class, method_name_val);
         }
 
         // --- ENFORCE VISIBILITY ---

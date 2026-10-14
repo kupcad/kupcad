@@ -937,3 +937,15 @@ test "Lexer: String interpolation limits" {
     }
     try std.testing.expect(hit_error);
 }
+
+test "KupCAD Lexer: a word after `.`, `&.` or `def` names a method, even a keyword" {
+    // `x.class` and `def end` used to lex the keyword, a syntax error. `self` stays a
+    // keyword after `def`, for `def self.name`.
+    try expectTokens("x.class\nr&.end\ndef end\ndef self.class\nclass", &.{
+        t(.ident, "x"),             t(.dot, "."),            t(.ident, "class"), t(.newline, "\n"),
+        t(.ident, "r"),             t(.ampersand_dot, "&."), t(.ident, "end"),   t(.newline, "\n"),
+        t(.keyword_def, "def"),     t(.ident, "end"),        t(.newline, "\n"),  t(.keyword_def, "def"),
+        t(.keyword_self, "self"),   t(.dot, "."),            t(.ident, "class"), t(.newline, "\n"),
+        t(.keyword_class, "class"), t(.eof, ""),
+    });
+}

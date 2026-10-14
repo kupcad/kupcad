@@ -11199,7 +11199,7 @@ test "VM: raise of a non-exception payload wraps it in a RuntimeError that survi
         .{ .payload = "42", .message = "42" },
         .{ .payload = "1.5", .message = "1.5" },
         .{ .payload = "[1]", .message = "[1]" },
-        .{ .payload = "{a: 1}", .message = "{:a: 1}" }, // Value.stringify's map format
+        .{ .payload = "{a: 1}", .message = "{a: 1}" }, // Value.stringify's map format
         .{ .payload = "true", .message = "true" },
         .{ .payload = "false", .message = "false" },
         .{ .payload = "nil", .message = "nil" },

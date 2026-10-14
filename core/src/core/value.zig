@@ -558,19 +558,24 @@ pub const Value = packed struct {
                     const values = map.map.values();
                     for (keys, 0..) |key, i| {
                         if (i > 0) try writer.writeAll(", ");
-                        try key.stringify(true, writer);
-                        try writer.writeAll(": ");
+                        // As written in a script: `{x: 1}` for a Symbol key, `{"x" => 1}` otherwise.
+                        if (key.isSymbol()) {
+                            try writer.print("{s}: ", .{key.asSymbol().chars});
+                        } else {
+                            try key.stringify(true, writer);
+                            try writer.writeAll(" => ");
+                        }
                         try values[i].stringify(true, writer);
                     }
                     try writer.writeAll("}");
                 },
                 .class => {
                     const cls: *ObjClass = @alignCast(@fieldParentPtr("obj", obj));
-                    try writer.print("<Class {s}>", .{cls.name.chars});
+                    try writer.writeAll(cls.name.chars); // `puts 5.class` prints Number, as in Ruby
                 },
                 .instance => {
                     const inst: *ObjInstance = @alignCast(@fieldParentPtr("obj", obj));
-                    try writer.print("<Instance of {s}>", .{inst.class.name.chars});
+                    try writer.print("#<{s}>", .{inst.class.name.chars});
                 },
                 .closure, .function => try writer.writeAll("<Function>"),
                 .native => try writer.writeAll("<Native Function>"),

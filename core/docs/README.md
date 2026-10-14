@@ -220,6 +220,7 @@ An uncaught error stops the script and is printed once with its class, e.g. `Val
 ### Base Object Introspection
 
 * All objects and geometry nodes support introspection methods like `.is_a?`, `.responds_to?`, and `.nil?`.
+* Every value answers `.class` (its class, such as `Number` or a class you defined; `nil` for `nil` and lambdas) and `.inspect` (how it would be written in a script: `"a".inspect` is `"\"a\""`, `{ x: 1 }.inspect` is `{x: 1}`). Define `inspect` in a class to customise it.
 * You can duplicate instances using `.dup` or `.clone`, extract bound methods with `.method(:name)` (called with `.call`), or yield to blocks contextually via `.tap` and `.into`.
 
 ---

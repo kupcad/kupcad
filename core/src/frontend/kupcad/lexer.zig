@@ -182,6 +182,9 @@ pub const Lexer = struct {
     brace_depth: u32 = 0,
     interp_stack: [64]InterpState,
     interp_depth: usize = 0,
+    /// The last token was `.`, `&.` or `def`: a word now names a method, so `x.class`,
+    /// `r.end` and `def end` lex an identifier, not a keyword (as in Ruby).
+    expect_method_name: bool = false,
 
     pub fn init(buffer: []const u8, file_id: u32) Lexer {
         return .{
@@ -194,6 +197,15 @@ pub const Lexer = struct {
     }
 
     pub fn next(self: *Lexer) Token {
+        const tok = self.scan();
+        self.expect_method_name = switch (tok.tag) {
+            .dot, .ampersand_dot, .keyword_def => true,
+            else => false,
+        };
+        return tok;
+    }
+
+    fn scan(self: *Lexer) Token {
         self.skipWhitespace();
         if (self.index >= self.buffer.len) return self.makeToken(.eof);
 
@@ -552,7 +564,10 @@ pub const Lexer = struct {
         const is_constant = std.ascii.isUpper(self.peek());
         const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index, false);
         var tag = if (is_constant) Tag.constant else Tag.ident;
-        if (keywords.get(lexeme)) |kw_tag| tag = kw_tag;
+        if (keywords.get(lexeme)) |kw_tag| {
+            // `self` stays a keyword after `def`, for `def self.name`.
+            if (!self.expect_method_name or kw_tag == .keyword_self) tag = kw_tag;
+        }
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }
 

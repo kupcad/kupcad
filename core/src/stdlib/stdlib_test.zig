@@ -739,6 +739,26 @@ test "Stdlib: *splat, **hash and &blk spread into any call" {
     try testing.expectError(error.UnexpectedBlock, runScript("def g\n  yield\nend\nf = -> { 1 }\ng(&f) { 2 }"));
 }
 
+test "Stdlib: every value answers class and inspect" {
+    try expectGlobalR(&.{
+        // `x.class` was a syntax error (`class` lexed as the keyword) and `inspect` didn't exist.
+        .{ .src = "r = 5.class == Number", .expected = .{ .boolean = true } },
+        .{ .src = "r = \"#{[1].class} #{\"s\".class}\"", .expected = .{ .str = "Array String" } },
+        .{ .src = "class Foo\nend\nr = Foo.new.class == Foo", .expected = .{ .boolean = true } },
+        .{ .src = "r = \"a\".inspect", .expected = .{ .str = "\"a\"" } },
+        .{ .src = "r = [1, \"a\", :b, nil, 2.5].inspect", .expected = .{ .str = "[1, \"a\", :b, nil, 2.5]" } },
+        .{ .src = "r = { x: 1, \"y\" => [2] }.inspect", .expected = .{ .str = "{x: 1, \"y\" => [2]}" } },
+        .{ .src = "class Foo\nend\nr = Foo.new.inspect", .expected = .{ .str = "#<Foo>" } },
+        .{ .src = "class Foo\n  def inspect\n    \"custom\"\n  end\nend\nr = Foo.new.inspect", .expected = .{ .str = "custom" } },
+        // Values without a class of their own still get Object's methods.
+        .{ .src = "r = nil.inspect", .expected = .{ .str = "nil" } },
+        .{ .src = "r = nil.class.nil?", .expected = .{ .boolean = true } },
+        .{ .src = "f = -> { 1 }\nr = f.inspect", .expected = .{ .str = "<Function>" } },
+        // Any keyword names a method after a dot.
+        .{ .src = "class R\n  def end\n    7\n  end\nend\nr = R.new.end", .expected = .{ .num = 7 } },
+    });
+}
+
 test "Stdlib: lambdas behave like blocks" {
     try expectGlobalR(&.{
         // `return` and `next` leave just the lambda or block, never the enclosing def.

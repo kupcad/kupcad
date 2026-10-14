@@ -218,7 +218,24 @@ pub fn nativeDup(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) any
     return receiver;
 }
 
+/// Object#class -> the receiver's class, or nil for a value that has none (nil, a lambda)
+fn objectClass(vm: *VM, receiver: value.Value) !value.Value {
+    const class = vm.getClass(receiver) orelse return value.Value.initNil();
+    return value.Value.initObj(&class.obj);
+}
+
+/// Object#inspect -> the receiver as it would be written in a script: Strings quoted,
+/// Symbols with their colon (`puts` and interpolation print Strings bare).
+fn objectInspect(vm: *VM, receiver: value.Value) !value.Value {
+    var out: std.Io.Writer.Allocating = .init(vm.allocator);
+    defer out.deinit();
+    try receiver.stringify(true, &out.writer);
+    return vm.allocateString(out.written());
+}
+
 pub const methods = [_]common.MethodDef{
+    .{ .name = "class", .func = common.wrapMethod(objectClass) },
+    .{ .name = "inspect", .func = common.wrapMethod(objectInspect) },
     .{ .name = "is_a?", .func = nativeIsA },
     .{ .name = "responds_to?", .func = nativeRespondsTo },
     .{ .name = "nil?", .func = nativeNilQ },
