@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const lsp = @import("lsp");
 const api = @import("../api.zig");
+const lsp_actions = @import("lsp_actions.zig");
 const ast = @import("../core/ast.zig");
 const manifest = @import("../stdlib/manifest.zig");
 const VM = @import("../vm/vm.zig").VM;
@@ -369,6 +370,7 @@ pub const Handler = struct {
                 .triggerCharacters = &.{ ".", ":" },
             },
             .documentSymbolProvider = .{ .bool = true },
+            .codeActionProvider = .{ .bool = true },
         };
     }
 
@@ -777,6 +779,39 @@ pub const Handler = struct {
         }
 
         return .{ .document_symbols = symbols.items };
+    }
+
+    /// Quick fixes for the lint findings on the asked lines (cli/lsp_actions.zig): each
+    /// finding's fix, and an action that disables its rule for the line.
+    pub fn @"textDocument/codeAction"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.CodeAction.Params,
+    ) !lsp.ResultType("textDocument/codeAction") {
+        const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
+        const encoding: lsp_actions.Encoding = if (self.useUtf8()) .utf8 else .utf16;
+        const found = try lsp_actions.actionsFor(arena, self.io, doc_buf.source, params.range.start.line, params.range.end.line, encoding);
+
+        const results = try arena.alloc(lsp.types.CodeAction.Result, found.len);
+        for (found, results) |action, *result| {
+            const edits = try arena.alloc(lsp.types.TextEdit, action.edits.len);
+            for (action.edits, edits) |e, *out| out.* = .{
+                .range = .{
+                    .start = .{ .line = e.start.line, .character = e.start.character },
+                    .end = .{ .line = e.end.line, .character = e.end.character },
+                },
+                .newText = e.text,
+            };
+            var changes: std.json.ArrayHashMap([]const lsp.types.TextEdit) = .{};
+            try changes.map.put(arena, params.textDocument.uri, edits);
+            result.* = .{ .code_action = .{
+                .title = action.title,
+                .kind = .quickfix,
+                .isPreferred = action.preferred,
+                .edit = .{ .changes = changes },
+            } };
+        }
+        return results;
     }
 
     pub fn @"kupcad/setParam"(self: *Handler, arena: std.mem.Allocator, params: std.json.Value) !void {
