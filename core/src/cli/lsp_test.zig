@@ -7,6 +7,7 @@ const lsp = @import("lsp");
 const Handler = @import("lsp.zig").Handler;
 const documentPath = @import("lsp.zig").documentPath;
 const FILE_NAME = @import("config.zig").FILE_NAME;
+const limits = @import("../core/limits.zig");
 const ScriptSession = @import("../daemon/session.zig").ScriptSession;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
@@ -151,4 +152,18 @@ test "LSP: diagnostics follow the .kupcad.json nearest the document, not the cwd
     // LSP severity 1 is an error: the project's level, where the default is a warning.
     try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"severity\":1,") != null);
     try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "unused-variable") != null);
+}
+
+test "LSP: a script that never ends doesn't hang the server" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try testing.expectEqual(limits.INTERACTIVE_INSTRUCTION_LIMIT, server.session.vm.instruction_limit);
+
+    // The same stop, sooner, so the test is quick.
+    server.session.vm.instruction_limit = 10_000;
+    server.session.vm.mute_errors = true;
+    try server.open(URI, "n = 0\nwhile true\n  n += 1\nend\n");
+    // Diagnostics were still published after the evaluation gave up.
+    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "publishDiagnostics") != null);
 }

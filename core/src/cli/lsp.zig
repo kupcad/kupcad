@@ -20,6 +20,7 @@ const Vfs = @import("../vfs/vfs.zig").Vfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
 const project_config = @import("config.zig");
 const ProjectConfig = project_config.ProjectConfig;
+const limits = @import("../core/limits.zig");
 
 const logger = std.log.scoped(.lsp);
 
@@ -284,6 +285,7 @@ pub const Handler = struct {
         mem_vfs: *MemoryVfs,
         sandbox: *ReadOnlyVfs,
     ) Handler {
+        session.vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
         return .{
             .allocator = allocator,
             .io = io,
