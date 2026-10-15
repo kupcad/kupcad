@@ -4,4 +4,3 @@
 4:24 E [unknown-keyword] translate doesn't take 'X'; did you mean 'x'?
 6:16 E [unknown-keyword] extrude doesn't take 'hieght' (it takes: h, slices, twist, scale_x, scale_y, scale, center)
 7:28 E [unknown-keyword] volume doesn't take 'precise' (it takes no keywords)
-9:3 W [unused-variable] Unused variable 'translate'. Prefix with '_' if intentional.

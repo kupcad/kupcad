@@ -7,6 +7,10 @@ pub const UnusedVarsRule = struct {
     pub const id = "unused-variable";
     pub const description = "A variable assigned and never read";
 
+    /// The `def`s of class, module and singleton bodies: the methods others call through
+    /// the class's objects (`Gear.new.teeth`), so they are never unused here.
+    members: std.AutoHashMapUnmanaged(ast.NodeIndex, void) = .empty,
+
     pub fn rule(self: *@This()) LintRule {
         return .{
             .id = id,
@@ -15,15 +19,25 @@ pub const UnusedVarsRule = struct {
                 .checkNode = checkNode,
                 .enterScope = enterScope,
                 .exitScope = exitScope,
+                .checkEOF = checkEOF,
             },
         };
     }
 
+    fn checkEOF(ptr: *anyopaque, engine: *linter.Linter) !void {
+        const self: *UnusedVarsRule = @ptrCast(@alignCast(ptr));
+        self.members.deinit(engine.allocator);
+        self.* = .{};
+    }
+
     fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
-        _ = ptr;
+        const self: *UnusedVarsRule = @ptrCast(@alignCast(ptr));
         const node = tree.getNode(node_idx) orelse return;
 
         switch (node.tag) {
+            .class_stmt => try self.addMembers(engine, tree, tree.classStmt(node).body),
+            .module_stmt => try self.addMembers(engine, tree, tree.moduleStmt(node).body),
+            .singleton_class => try self.addMembers(engine, tree, tree.singletonClassPayload(node).body),
             .assignment => {
                 const a = tree.assignment(node);
                 const var_name = tree.getString(a.name);
@@ -52,7 +66,7 @@ pub const UnusedVarsRule = struct {
             .def_stmt => {
                 const ds = tree.defStmt(node);
                 // Function names belong to the scope they are declared in
-                try engine.declareVar(tree.getString(ds.name), engine.getLoc(node.main_token), false);
+                if (!self.members.contains(node_idx)) try engine.declareVar(tree.getString(ds.name), engine.getLoc(node.main_token), false);
                 try markResultUsed(engine, tree, ds.body);
             },
             .lambda_expr => try markResultUsed(engine, tree, tree.lambdaExpr(node).body),
@@ -68,6 +82,14 @@ pub const UnusedVarsRule = struct {
                 try engine.markUsed(tree.getString(mc.method_name));
             },
             else => {},
+        }
+    }
+
+    fn addMembers(self: *UnusedVarsRule, engine: *linter.Linter, tree: *const ast.Tree, body_idx: ast.NodeIndex) !void {
+        const body = tree.getNode(body_idx) orelse return;
+        if (body.tag != .block) return;
+        for (tree.getNodes(tree.block(body).stmts)) |stmt| {
+            if (tree.getNode(stmt).?.tag == .def_stmt) try self.members.put(engine.allocator, stmt, {});
         }
     }
 

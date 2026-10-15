@@ -99,3 +99,29 @@ test "Linter Rule: UnusedVarsRule follows the language's scopes and what counts 
         try testing.expectEqualStrings(expected, engine.diagnostics.items[0].message);
     }
 }
+
+test "Linter Rule: UnusedVarsRule leaves a class's and a module's methods alone" {
+    // They are called through the class's objects (`G.new.teeth`), outside the class's
+    // scope, so every method of a class was reported unused.
+    const source =
+        \\class Gear
+        \\  def teeth(n)
+        \\    n * 2
+        \\  end
+        \\  class << self
+        \\    def standard = new
+        \\  end
+        \\end
+        \\module Parts
+        \\  def self.bolt = 1
+        \\end
+        \\def helper = 1
+        \\Gear.standard.teeth(3)
+    ;
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
+
+    // A script's own top-level method is still reported when nothing calls it.
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("Unused variable 'helper'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
+}
