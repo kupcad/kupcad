@@ -31,6 +31,21 @@ pub fn requireInteger(vm: *VM, n: f64, method: []const u8) !void {
     }
 }
 
+/// What a block gave an iterating method: its value, or the value of a `break` in it.
+pub const BlockResult = union(enum) { value: value.Value, broke: value.Value };
+
+/// Calls `block` with `args` the way an iterating method does. A `break` in the block ends
+/// the iteration with `.broke`, its value taken off the stack: natives that read it there
+/// and returned left it pushed, so everything after the call was off by one slot
+/// (`show(1, xs.each { break 2 })` then called a Number). Other errors propagate.
+pub fn callBlock(vm: *VM, block: *value.ObjClosure, args: []const value.Value) !BlockResult {
+    const result = vm.callClosureSync(block, args) catch |err| switch (err) {
+        error.BlockBreak => return .{ .broke = vm.pop() },
+        else => return err,
+    };
+    return .{ .value = result };
+}
+
 pub fn requireBlock(vm: *VM, block: ?*value.ObjClosure, method: []const u8) !*value.ObjClosure {
     return block orelse {
         _ = vm.raiseError(.ArgumentError, "{s} requires a block", .{method});
@@ -45,10 +60,10 @@ pub fn each(vm: *VM, span: Span, receiver: value.Value, block: *value.ObjClosure
     // u64, not usize: on wasm32 usize would truncate counts above 4G.
     var i: u64 = 0;
     while (i < n) : (i += 1) {
-        _ = vm.callClosureSync(block, &.{value.Value.initNumber(span.at(i))}) catch |err| {
-            if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
-            return err;
-        };
+        switch (try callBlock(vm, block, &.{value.Value.initNumber(span.at(i))})) {
+            .broke => |v| return v,
+            .value => {},
+        }
     }
     return receiver;
 }
@@ -64,9 +79,9 @@ pub fn collect(vm: *VM, span: Span, block: ?*value.ObjClosure, method: []const u
     try arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), n);
     for (0..n) |i| {
         const item = value.Value.initNumber(span.at(i));
-        const out = if (block) |b| vm.callClosureSync(b, &.{item}) catch |err| {
-            if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
-            return err;
+        const out = if (block) |b| switch (try callBlock(vm, b, &.{item})) {
+            .broke => |v| return v,
+            .value => |v| v,
         } else item;
         arr.items.appendAssumeCapacity(out);
     }

@@ -4,6 +4,7 @@ const limits = @import("../../core/limits.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
+const callBlock = @import("iteration.zig").callBlock;
 
 /// Array#length / Array#size
 pub fn arrayLength(vm: *VM, arr: *value.ObjArray) !value.Value {
@@ -110,13 +111,18 @@ pub fn arrayJoin(vm: *VM, arr: *value.ObjArray, delim_obj: *value.ObjString) !va
     return try vm.allocateStringTakeOwnership(merged_bytes);
 }
 
+// The iterators index the receiver afresh on every step and stop at its current length:
+// a block that pushes to the array it iterates (as Ruby allows) reallocates its items,
+// and a slice taken once read the freed buffer.
+
 /// Array#each { |x| ... }
 pub fn arrayEach(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !value.Value {
-    for (arr.items.items) |item| {
-        _ = vm.callClosureSync(closure, &.{item}) catch |err| {
-            if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
-            return err;
-        };
+    var i: usize = 0;
+    while (i < arr.items.items.len) : (i += 1) {
+        switch (try callBlock(vm, closure, &.{arr.items.items[i]})) {
+            .broke => |v| return v,
+            .value => {},
+        }
     }
     return value.Value.initObj(&arr.obj);
 }
@@ -128,12 +134,13 @@ pub fn arrayMap(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !valu
     const new_arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&new_arr.obj));
     try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), arr.items.items.len);
-    for (arr.items.items) |item| {
-        const mapped_val = vm.callClosureSync(closure, &.{item}) catch |err| {
-            if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
-            return err;
+    var i: usize = 0;
+    while (i < arr.items.items.len) : (i += 1) {
+        const mapped_val = switch (try callBlock(vm, closure, &.{arr.items.items[i]})) {
+            .broke => |v| return v,
+            .value => |v| v,
         };
-        new_arr.items.appendAssumeCapacity(mapped_val);
+        try new_arr.items.append(vm.gc.trackingAllocator(), mapped_val);
     }
     return value.Value.initObj(&new_arr.obj);
 }
@@ -157,8 +164,12 @@ pub fn arrayReduce(vm: *VM, arr: *value.ObjArray, initial_val: ?value.Value, blo
         start_idx = 1;
     }
 
-    for (arr.items.items[start_idx..]) |item| {
-        acc_val = try vm.callClosureSync(block.?, &.{ acc_val, item });
+    var i = start_idx;
+    while (i < arr.items.items.len) : (i += 1) {
+        acc_val = switch (try callBlock(vm, block.?, &.{ acc_val, arr.items.items[i] })) {
+            .broke => |v| return v,
+            .value => |v| v,
+        };
     }
     return acc_val;
 }
@@ -181,8 +192,13 @@ fn keepWhere(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure, truthy: 
     const new_arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&new_arr.obj));
 
-    for (arr.items.items) |item| {
-        const res = try vm.callClosureSync(closure, &.{item});
+    var i: usize = 0;
+    while (i < arr.items.items.len) : (i += 1) {
+        const item = arr.items.items[i];
+        const res = switch (try callBlock(vm, closure, &.{item})) {
+            .broke => |v| return v,
+            .value => |v| v,
+        };
         if (res.isFalsey() != truthy) {
             try new_arr.items.append(vm.gc.trackingAllocator(), item);
         }

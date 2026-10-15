@@ -3,6 +3,7 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 const util = @import("../methods/util.zig");
+const iteration = @import("iteration.zig");
 const engine_config = @import("../../core/engine_config.zig");
 const EngineConfig = engine_config.EngineConfig;
 const EngineType = @import("../../kernel/geometry_handle.zig").EngineType;
@@ -93,18 +94,12 @@ fn cadWithConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap, block:
     // Inherit the current config, then apply overrides
     const new_config = try applySettings(vm, settings, vm.config());
 
-    // Push the new scope
+    // The block runs under the new settings; they come off again whatever it does.
     try vm.pushConfig(new_config);
+    defer vm.popConfig();
 
-    // Evaluate the block
-    const result = vm.callClosureSync(body, &.{});
-
-    // Pop the scope (Guarantees no state leakage!)
-    vm.popConfig();
-
-    return result catch |err| {
-        if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
-        return err;
+    return switch (try iteration.callBlock(vm, body, &.{})) {
+        .value, .broke => |v| v,
     };
 }
 

@@ -125,6 +125,7 @@ test {
     _ = @import("vm/dag_evaluator_test.zig");
     _ = @import("vm/memory_test.zig");
     _ = @import("vm/import_test.zig");
+    _ = @import("vm/language_test.zig");
     _ = @import("vm/host_test.zig");
     _ = @import("vm/profiler_test.zig");
     _ = @import("vm/validation_test.zig");

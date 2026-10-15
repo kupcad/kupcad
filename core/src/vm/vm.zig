@@ -1346,8 +1346,10 @@ pub const VM = struct {
                     const result = self.callClosureSync(block_closure, yield_args) catch |err| {
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
                         if (err == error.BlockBreak) {
-                            self.popAndRelease(yield_arg_count);
+                            // The break value is on top, above the yielded arguments (it used
+                            // to be dropped with them, and the first argument returned instead).
                             const break_val = self.pop();
+                            self.popAndRelease(yield_arg_count);
                             self.closeUpvalues(&self.stack[frame.base_slot]);
                             self.shrinkStack(frame.base_slot);
                             std.debug.assert(self.frames.items.len > 0);
@@ -2896,6 +2898,12 @@ pub const VM = struct {
                 return .ok;
             }
             if (err == error.FatalError) return .runtime_error;
+            if (err == error.BlockBreak) {
+                // A `break` in a block the native didn't iterate (highlight { }, benchmark { }):
+                // its value is on the stack, where it would have shifted every later value.
+                _ = self.pop();
+                return self.raiseError(.ArgumentError, "break can only stop a block given to an iterating method, not {s}'s", .{native_obj.name});
+            }
             if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
             return self.nativeFailed(native_obj.name, err);
         };
