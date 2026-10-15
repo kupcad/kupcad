@@ -73,6 +73,72 @@ fn countTo(vm: *VM, receiver: value.Value, limit: f64, step: f64, block: ?*value
     return iteration.each(vm, .{ .start = receiver.asNumber(), .end = limit, .step = step, .is_exclusive = false }, receiver, b, method);
 }
 
+/// Number#odd? and #even?, of whole numbers: `2.5.odd?` is a ValueError, as the number
+/// has no parity (Ruby's floats have no such methods at all).
+fn parity(comptime want_odd: bool, comptime name: []const u8) value.NativeFn {
+    return common.wrapMethod(struct {
+        fn call(vm: *VM, receiver: value.Value) !value.Value {
+            const n = receiver.asNumber();
+            try iteration.requireInteger(vm, n, name);
+            return value.Value.initBool((@mod(n, 2) == 1) == want_odd);
+        }
+    }.call);
+}
+
+/// A yes/no question about the number: zero?, positive?, finite?, ...
+fn predicate(comptime test_fn: fn (f64) bool) value.NativeFn {
+    return common.wrapMethod(struct {
+        fn call(vm: *VM, receiver: value.Value) !value.Value {
+            _ = vm;
+            return value.Value.initBool(test_fn(receiver.asNumber()));
+        }
+    }.call);
+}
+
+fn isZero(n: f64) bool {
+    return n == 0;
+}
+fn isPositive(n: f64) bool {
+    return n > 0;
+}
+fn isNegative(n: f64) bool {
+    return n < 0;
+}
+/// A whole number, as `5` or `5.0` (KupCAD has one number type).
+fn isInteger(n: f64) bool {
+    return std.math.isFinite(n) and @trunc(n) == n;
+}
+fn isFinite(n: f64) bool {
+    return std.math.isFinite(n);
+}
+fn isNan(n: f64) bool {
+    return std.math.isNan(n);
+}
+/// True for Number::INFINITY and its negative (Ruby returns 1 or -1, which are as truthy).
+fn isInfinite(n: f64) bool {
+    return std.math.isInf(n);
+}
+
+/// Number#clamp(lo, hi): the number kept within lo..hi.
+pub fn numberClamp(vm: *VM, receiver: value.Value, lo: f64, hi: f64) !value.Value {
+    try requireOrdered(vm, "clamp", lo, hi);
+    return value.Value.initNumber(std.math.clamp(receiver.asNumber(), lo, hi));
+}
+
+/// Number#between?(lo, hi): whether lo <= number <= hi.
+pub fn numberBetween(vm: *VM, receiver: value.Value, lo: f64, hi: f64) !value.Value {
+    try requireOrdered(vm, "between?", lo, hi);
+    const n = receiver.asNumber();
+    return value.Value.initBool(lo <= n and n <= hi);
+}
+
+fn requireOrdered(vm: *VM, comptime name: []const u8, lo: f64, hi: f64) !void {
+    if (!(lo <= hi)) {
+        _ = vm.raiseError(.ArgumentError, name ++ " needs its low bound first, got {f} and {f}", .{ value.fmtNumber(lo), value.fmtNumber(hi) });
+        return error.RuntimeError;
+    }
+}
+
 pub const methods = [_]common.MethodDef{
     .{ .name = "times", .func = common.wrapMethod(numberTimes) },
     .{ .name = "upto", .func = common.wrapMethod(numberUpto) },
@@ -84,4 +150,15 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "ceil", .func = common.wrapMethod(numberCeil) },
     .{ .name = "floor", .func = common.wrapMethod(numberFloor) },
     .{ .name = "abs", .func = common.wrapMethod(numberAbs) },
+    .{ .name = "odd?", .func = parity(true, "odd?") },
+    .{ .name = "even?", .func = parity(false, "even?") },
+    .{ .name = "zero?", .func = predicate(isZero) },
+    .{ .name = "positive?", .func = predicate(isPositive) },
+    .{ .name = "negative?", .func = predicate(isNegative) },
+    .{ .name = "integer?", .func = predicate(isInteger) },
+    .{ .name = "finite?", .func = predicate(isFinite) },
+    .{ .name = "nan?", .func = predicate(isNan) },
+    .{ .name = "infinite?", .func = predicate(isInfinite) },
+    .{ .name = "clamp", .func = common.wrapMethod(numberClamp) },
+    .{ .name = "between?", .func = common.wrapMethod(numberBetween) },
 };

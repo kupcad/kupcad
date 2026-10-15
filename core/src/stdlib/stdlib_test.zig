@@ -889,6 +889,62 @@ test "Stdlib: calling a value that isn't callable names what it is" {
     });
 }
 
+test "Stdlib: Number answers parity, sign and range questions" {
+    try expectGlobalR(&.{
+        .{ .src = "r = [3.odd?, 4.odd?, 4.even?, -3.odd?, 0.even?].inspect", .expected = .{ .str = "[true, false, true, true, true]" } },
+        .{ .src = "r = [0.zero?, 2.zero?, 2.positive?, -2.positive?, -2.negative?, 0.negative?].inspect", .expected = .{ .str = "[true, false, true, false, true, false]" } },
+        .{ .src = "r = [5.integer?, 5.0.integer?, 2.5.integer?, Number::INFINITY.integer?].inspect", .expected = .{ .str = "[true, true, false, false]" } },
+        .{ .src = "r = [1.finite?, Number::INFINITY.finite?, Number::NAN.nan?, 1.nan?, (-Number::INFINITY).infinite?].inspect", .expected = .{ .str = "[true, false, true, false, true]" } },
+        .{ .src = "r = [7.clamp(0, 5), -1.clamp(0, 5), 3.clamp(0, 5), 3.between?(1, 5), 6.between?(1, 5), 5.between?(1, 5)].inspect", .expected = .{ .str = "[5, 0, 3, true, false, true]" } },
+        .{ .src = comptime rescued("2.5.odd?"), .expected = .{ .str = "ValueError: odd? requires an integer, got 2.5" } },
+        .{ .src = comptime rescued("1.clamp(5, 0)"), .expected = .{ .str = "ArgumentError: clamp needs its low bound first, got 5 and 0" } },
+        .{ .src = "r = Number::EPSILON < 1e-15 && 1 + Number::EPSILON > 1", .expected = .{ .boolean = true } },
+    });
+}
+
+test "Stdlib: Math has degree trigonometry, exact at the angles CAD uses most" {
+    // In radians, cos(90 degrees) is 6.1e-17, enough to leave a sliver between two parts.
+    try expectGlobalR(&.{
+        .{ .src = "r = [Math.sind(0), Math.sind(30), Math.sind(90), Math.sind(150), Math.sind(180), Math.sind(270), Math.sind(-90), Math.sind(450)].inspect", .expected = .{ .str = "[0, 0.5, 1, 0.5, 0, -1, -1, 1]" } },
+        .{ .src = "r = [Math.cosd(0), Math.cosd(60), Math.cosd(90), Math.cosd(180), Math.cosd(-90)].inspect", .expected = .{ .str = "[1, 0.5, 0, -1, 0]" } },
+        .{ .src = "r = [Math.tand(0), Math.tand(45), Math.tand(135), Math.tand(-45)].inspect", .expected = .{ .str = "[0, 1, -1, -1]" } },
+        .{ .src = "r = [Math.asind(0.5), Math.asind(1), Math.acosd(0), Math.acosd(-1), Math.atand(1), Math.atand(-1)].inspect", .expected = .{ .str = "[30, 90, 90, 180, 45, -45]" } },
+        .{ .src = "r = [Math.atan2d(1, 1), Math.atan2d(1, -1), Math.atan2d(0, -3), Math.atan2d(-2, 0), Math.atan2d(0, 0)].inspect", .expected = .{ .str = "[45, 135, 180, -90, 0]" } },
+        // Away from those angles they agree with the radian functions.
+        .{ .src = "r = Math.close?(Math.sind(20), Math.sin(Math.deg2rad(20)), 1e-15) && Math.close?(Math.atand(0.3), Math.rad2deg(Math.atan(0.3)), 1e-12)", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("Math.tand(90)"), .expected = .{ .str = "MathError: Math.tand(90) has no real result" } },
+        .{ .src = comptime rescued("Math.asind(2)"), .expected = .{ .str = "MathError: Math.asind(2) has no real result" } },
+    });
+}
+
+test "Stdlib: Math has the logarithms, roots and constants a CAD script needs" {
+    try expectGlobalR(&.{
+        .{ .src = "r = [Math.log(8, 2), Math.log10(1000), Math.log2(8), Math.exp(0), Math.cbrt(27), Math.cbrt(-8)].inspect", .expected = .{ .str = "[3, 3, 3, 1, 3, -2]" } },
+        .{ .src = "r = Math.close?(Math.log(Math::E), 1) && Math.close?(Math.atan(1) * 4, Math::PI) && Math::TAU == 2 * Math::PI", .expected = .{ .boolean = true } },
+        // hypot takes any number of components: a 3D distance.
+        .{ .src = "r = [Math.hypot(3, 4), Math.hypot(1, 2, 2), Math.hypot(-5), Math.hypot].inspect", .expected = .{ .str = "[5, 3, 5, 0]" } },
+        .{ .src = comptime rescued("Math.log(0)"), .expected = .{ .str = "RangeError: Math.log(0) is infinite" } },
+        .{ .src = comptime rescued("Math.log(-1)"), .expected = .{ .str = "MathError: Math.log(-1) has no real result" } },
+        .{ .src = comptime rescued("Math.log(8, 1)"), .expected = .{ .str = "RangeError: Math.log(8, 1) is infinite" } },
+        .{ .src = comptime rescued("Math.exp(1000)"), .expected = .{ .str = "RangeError: Math.exp(1000) is infinite" } },
+        .{ .src = comptime rescued("Math.hypot(3, \"4\")"), .expected = .{ .str = "TypeError: Math.hypot expects a number for argument 2, got String" } },
+    });
+}
+
+test "Stdlib: Math has modelling helpers: snap, remap, smoothstep, close? and gcd/lcm" {
+    try expectGlobalR(&.{
+        .{ .src = "r = [Math.snap(12.3, 0.5), Math.snap(12.2, 0.5), Math.snap(-7, 5), Math.snap(7.5, 5)].inspect", .expected = .{ .str = "[12.5, 12, -5, 10]" } },
+        .{ .src = "r = [Math.remap(5, 0, 10, 100, 200), Math.remap(15, 0, 10, 0, 1), Math.remap(2, 0, 4, 10, 0)].inspect", .expected = .{ .str = "[150, 1.5, 5]" } },
+        .{ .src = "r = [Math.smoothstep(0, 10, -1), Math.smoothstep(0, 10, 5), Math.smoothstep(0, 10, 11), Math.smoothstep(0, 10, 2.5)].inspect", .expected = .{ .str = "[0, 0.5, 1, 0.15625]" } },
+        .{ .src = "r = [Math.close?(0.1 + 0.2, 0.3), 0.1 + 0.2 == 0.3, Math.close?(1, 1.01), Math.close?(1, 1.01, 0.05)].inspect", .expected = .{ .str = "[true, false, false, true]" } },
+        .{ .src = "r = [Math.gcd(48, 18), Math.gcd(-12, 8), Math.gcd(0, 5), Math.lcm(4, 6), Math.lcm(0, 6)].inspect", .expected = .{ .str = "[6, 4, 5, 12, 0]" } },
+        .{ .src = comptime rescued("Math.snap(3, 0)"), .expected = .{ .str = "ValueError: Math.snap step must be a finite number greater than zero, got 0" } },
+        .{ .src = comptime rescued("Math.remap(1, 2, 2, 0, 1)"), .expected = .{ .str = "ValueError: Math.remap needs a range of two different numbers, got 2 and 2" } },
+        .{ .src = comptime rescued("Math.close?(1, 2, -1)"), .expected = .{ .str = "ValueError: Math.close? tolerance must be zero or more, got -1" } },
+        .{ .src = comptime rescued("Math.gcd(2.5, 5)"), .expected = .{ .str = "ValueError: Math.gcd requires an integer, got 2.5" } },
+    });
+}
+
 test "Stdlib: respond_to? has Ruby's name" {
     // It was spelled `responds_to?`.
     try expectGlobalR(&.{

@@ -79,6 +79,8 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // RangeError or MathError), so a script reaching for one has to say so.
     try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.allocateString("INFINITY"), value.Value.initNumber(std.math.inf(f64)));
     try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.allocateString("NAN"), value.Value.initNumber(std.math.nan(f64)));
+    // The gap between 1 and the next number, Ruby's Float::EPSILON: a scale for tolerances.
+    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.allocateString("EPSILON"), value.Value.initNumber(std.math.floatEps(f64)));
     vm.range_class = try defineValueClass(vm, "Range");
     vm.symbol_class = try defineValueClass(vm, "Symbol");
     vm.boolean_class = try defineValueClass(vm, "Boolean");
@@ -145,8 +147,8 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // Set up Math module (as an instance of a pseudo-class to support property access)
     const math_class = try defineBuiltinClass(vm, "Math", vm.object_class);
     const math_inst = try vm.gc.allocateInstance(vm, math_class);
-    const pi_name = try vm.allocateString("PI");
-    try vm.setInstanceField(math_inst, pi_name, value.Value.initNumber(std.math.pi), null);
+    const math_constants = [_]struct { []const u8, f64 }{ .{ "PI", std.math.pi }, .{ "TAU", std.math.tau }, .{ "E", std.math.e } };
+    for (math_constants) |c| try vm.setInstanceField(math_inst, try vm.allocateString(c[0]), value.Value.initNumber(c[1]), null);
     try vm.globals.put(vm.allocator, "Math", value.Value.initObj(&math_inst.obj));
 
     // Set up CAD settings module (as a pseudo-class)
