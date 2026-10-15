@@ -482,6 +482,29 @@ test "Stdlib: text tolerance cannot be vanishingly small" {
     });
 }
 
+test "Stdlib: text is drawn as finely as the resolution draws circles" {
+    // How many outline points a letter gets under `prefix`: its default tolerance used to
+    // be 0.1 whatever the size and the resolution.
+    const pointsOf = struct {
+        fn count(comptime prefix: []const u8, comptime call: []const u8) !usize {
+            var vm = try initVm();
+            defer vm.deinit();
+            try testing.expectEqual(InterpretResult.ok, try runOn(&vm, prefix ++ "t = " ++ call));
+            return kernel.crossSectionNumVerts(try vm.ensureConcreteCrossSection(vm.globals.get("t").?));
+        }
+    }.count;
+    const default = try pointsOf("", "text(\"o\")");
+    try testing.expect(try pointsOf("CAD.config(resolution: { min_angle: 2, min_length: 0.1 })\n", "text(\"o\")") > default);
+    try testing.expect(try pointsOf("CAD.config(resolution: { segments: 5 })\n", "text(\"o\")") < default);
+    // An explicit tolerance still wins over the resolution.
+    try testing.expectEqual(
+        try pointsOf("", "text(\"o\", tolerance: 0.05)"),
+        try pointsOf("CAD.config(resolution: { segments: 5 })\n", "text(\"o\", tolerance: 0.05)"),
+    );
+    // A resolution finer than the flattening floor uses the floor instead of failing.
+    _ = try pointsOf("CAD.config(resolution: { segments: 2048 })\n", "text(\"o\", size: 1000)");
+}
+
 test "Stdlib: polyhedron and polygon path indices are bounds-checked" {
     try expectAll(.runtime_error, &.{
         "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[-1,2,3]])",

@@ -61,3 +61,10 @@ test "EngineConfig: resultHash changes with every setting that changes a result"
     // The vertex budget decides whether an operation may run, not what it builds.
     try testing.expectEqual(base, (EngineConfig{ .max_vertices = 10 }).resultHash());
 }
+
+test "EngineConfig: chordError is how far a circle at this resolution strays from round" {
+    // 16 segments for a radius-5 circle at the default resolution (by length: 2π·5 / 2).
+    try testing.expectApproxEqAbs(5.0 * (1.0 - @cos(std.math.pi / 16.0)), (EngineConfig{}).chordError(5), 1e-12);
+    // A square's corners stray 1 - cos 45° of the radius.
+    try testing.expectApproxEqAbs(1.0 - @sqrt(0.5), (EngineConfig{ .resolution = .{ .segments = 4 } }).chordError(1), 1e-12);
+}

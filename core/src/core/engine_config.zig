@@ -60,6 +60,14 @@ pub const EngineConfig = struct {
         return @min(self.resolution.segmentsFor(radius), MAX_SEGMENTS);
     }
 
+    /// How far a circle of `radius` drawn at this resolution strays from the true curve
+    /// (the sagitta of one of its segments): the chord tolerance that draws other curves,
+    /// such as a font's, as finely as a circle of that size.
+    pub fn chordError(self: EngineConfig, radius: f64) f64 {
+        const n: f64 = @floatFromInt(self.segmentsFor(radius));
+        return radius * (1.0 - @cos(std.math.pi / n));
+    }
+
     /// A hash of the settings that change what an operation builds (not `max_vertices`,
     /// which only decides whether it may), so cached results are reused only under the
     /// settings they were built with.

@@ -522,7 +522,7 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
 pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = try util.parseKwargs(struct {
         size: ?f64 = null,
-        tolerance: f64 = 0.1,
+        tolerance: ?f64 = null,
         font: []const u8 = "sans",
         halign: text_mod.HAlign = .left,
         valign: text_mod.VAlign = .baseline,
@@ -536,10 +536,12 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     var size: f64 = 10.0;
     if (parsed.positional.len > 1) size = try util.requireNumber(vm, args[1], "text", "size");
     if (opts.size) |n| size = n;
-    const tolerance = opts.tolerance;
     const font_name = opts.font;
 
     try util.requirePositive(vm, size, "text", "size");
+    // By default the glyphs are drawn as finely as a circle the size of a letter's bowl
+    // (half the text size) at the active resolution, never finer than the floor below.
+    const tolerance = opts.tolerance orelse @max(vm.config().chordError(size / 2.0), size * MIN_TEXT_TOLERANCE_RATIO);
     try util.requirePositive(vm, tolerance, "text", "tolerance");
     // Bezier flattening recurses until the chord error is below `tolerance`, so the
     // point count grows ~sqrt(size / tolerance) per curve; a vanishing tolerance
