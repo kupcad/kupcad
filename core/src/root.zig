@@ -107,6 +107,7 @@ test {
     _ = @import("tools/lint/rules/unreachable_code_test.zig");
     _ = @import("tools/lint/rules/self_subtraction_test.zig");
     _ = @import("tools/lint/rules/param_order_test.zig");
+    _ = @import("tools/lint/rules/cad_rules_test.zig");
 
     // VFS
     _ = @import("vfs/memory_test.zig");

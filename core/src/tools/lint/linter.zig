@@ -12,6 +12,10 @@ const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;
 const UnreachableCodeRule = @import("rules/unreachable_code.zig").UnreachableCodeRule;
 const SelfSubtractionRule = @import("rules/self_subtraction.zig").SelfSubtractionRule;
 const ParamOrderRule = @import("rules/param_order.zig").ParamOrderRule;
+const UnknownKeywordRule = @import("rules/unknown_keyword.zig").UnknownKeywordRule;
+const SegmentsAsSidesRule = @import("rules/segments_as_sides.zig").SegmentsAsSidesRule;
+const BrepUnsupportedRule = @import("rules/brep_unsupported.zig").BrepUnsupportedRule;
+const UnusedParamRule = @import("rules/unused_param.zig").UnusedParamRule;
 
 pub const LinterSeverity = enum {
     @"error",
@@ -77,6 +81,10 @@ pub const RuleSet = struct {
     @"unreachable-code": UnreachableCodeRule = .{},
     @"self-subtraction": SelfSubtractionRule = .{},
     @"param-order": ParamOrderRule = .{},
+    @"unused-param": UnusedParamRule = .{},
+    @"unknown-keyword": UnknownKeywordRule = .{},
+    @"segments-as-sides": SegmentsAsSidesRule = .{},
+    @"brep-unsupported": BrepUnsupportedRule = .{},
 
     pub const ids = std.meta.fieldNames(RuleSet);
 

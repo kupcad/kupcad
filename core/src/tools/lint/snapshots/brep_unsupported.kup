@@ -1,0 +1,15 @@
+plate = cube(10).translate(5, 0, 0) # Manifold: fine
+
+CAD.with_config(engine: :brep) do
+  tile = cube(4)
+  tile.volume                       # B-Rep inside the block
+  CAD.with_config(engine: :manifold) do
+    cube(2).rotate(0, 0, 45)        # Manifold again inside
+  end
+end
+
+CAD.config(engine: :brep)
+peg = cylinder(r: 2, h: 10)         # B-Rep has cylinders
+cone = cylinder(h: 5, r1: 3, r2: 1)
+ball = sphere(r: 3)
+[plate, peg.translate(1, 0, 0), cone, ball]

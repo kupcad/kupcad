@@ -93,6 +93,36 @@ pub const Feature = enum {
             .materials => "keep materials",
         };
     }
+
+    /// The script methods that need the feature, for `kupcad check` to warn before a
+    /// B-Rep script runs. Features that depend on the values (a cone, a curved hull) or
+    /// come from operators (`a - b`) have none.
+    pub fn methods(self: Feature) []const []const u8 {
+        return switch (self) {
+            .transform => &.{ "translate", "rotate", "scale", "mirror", "transform", "align", "center", "resize" },
+            .boolean => &.{ "union", "difference", "intersection" },
+            .extrude => &.{ "extrude", "helix" },
+            .revolve => &.{ "revolve", "torus" },
+            .loft => &.{"loft"},
+            .sphere => &.{"sphere"},
+            .offset => &.{"offset"},
+            .minkowski => &.{ "minkowski", "fillet_edges" },
+            .trim_by_plane => &.{ "trim_by_plane", "split_by_plane" },
+            .slice => &.{"slice"},
+            .project => &.{"project"},
+            .decompose => &.{"decompose"},
+            .volume => &.{ "volume", "empty?" },
+            .surface_area => &.{"surface_area"},
+            .genus => &.{"genus"},
+            .bounding_box => &.{"bbox"},
+            .contains_point => &.{"contains?"},
+            .ray_cast => &.{"ray_cast"},
+            .min_gap => &.{"min_gap"},
+            .faces => &.{"on_face"},
+            .mesh => &.{ "export_stl", "export_gltf" },
+            .sketch_boolean, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials => &.{},
+        };
+    }
 };
 
 /// Whether the solid has faces that aren't flat. A mesh has none; a B-Rep sphere or cylinder

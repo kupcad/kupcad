@@ -467,6 +467,10 @@ Every finding names the rule that made it: `part.kup:3:1: W: Unused variable 'x'
 | `unreachable-code` | Statements after one that always leaves: a `return`, `break`, `next` or `raise`, an `if` whose branches all do, a `case` with an `else` whose branches all do, or a `begin` whose body and rescues all do. A `return` inside a block leaves only the block, so it never ends the method around it. Reported once, at the first dead statement. |
 | `self-subtraction` | `part - part`, which leaves nothing. |
 | `param-order` | A `param` read before it is defined, or defined inside a body, where the UI can't find it. |
+| `unused-param` | A `param(:x, default: ...)` on a line of its own, its value dropped, and never read with `param(:x)` or `params[:x]`: a slider that changes nothing. One assigned to a variable is `unused-variable`'s. |
+| `unknown-keyword` | A keyword a primitive doesn't take (`cube(sise: 3)`), with the nearest one it does when that is clear. An **error** by default: it fails when the script runs. The keywords come from each primitive's `Signature`; methods such as `translate` aren't checked yet. |
+| `segments-as-sides` | `segments: 3` to `8` on a `cylinder` or `circle`, which is a polygon only on the mesh engine (B-Rep keeps the shape round): `sides:` makes it on both. |
+| `brep-unsupported` | After `CAD.config(engine: :brep)`, or inside `CAD.with_config(engine: :brep) do ... end`, a call the B-Rep engine can't do yet (`translate`, `volume`, `sphere`, a cone, ...), which fails when the script runs. It reads the script in order, so a method defined before the switch and called after it isn't followed. |
 
 Each rule's level is set in `.kupcad.json` (or the file given with `--config`), by its id: `off`, `info`, `warning` (the default) or `error`. Errors fail `kupcad check`, so a rule set to `error` can gate CI.
 
@@ -485,6 +489,6 @@ holes = cube(1) # kupcad:disable-line unused-variable
 # kupcad:disable param-order          (the whole file)
 ```
 
-`kupcad check --fix` applies the fixes that keep the model the same and rewrites the files, then reports what is left. Today that renames an unused variable `x` to `_x`, everywhere it is assigned; it doesn't when a rename would change more than the variable (a method's parameter, a `for` target, a multiple assignment) or when `_x` is already used. Other fixes are only suggestions, which the editor offers but `--fix` never applies: deleting unreachable code, for one, since it is often half-finished work. A pass that would add a syntax or compile error is refused, and passes repeat until nothing more applies.
+`kupcad check --fix` applies the fixes that keep the model the same and rewrites the files, then reports what is left. Today that renames an unused variable `x` to `_x`, everywhere it is assigned; it doesn't when a rename would change more than the variable (a method's parameter, a `for` target, a multiple assignment) or when `_x` is already used. Other fixes are only suggestions, which the editor offers but `--fix` never applies: deleting unreachable code (often half-finished work), the nearest keyword for a misspelt one, or `sides:` for `segments:` (it changes the B-Rep model). A pass that would add a syntax or compile error is refused, and passes repeat until nothing more applies.
 
 Only lint findings can be hidden; a syntax or compile error can't. A directive that hides nothing, or names a rule or directive that doesn't exist, is reported itself (`[suppression]`), so stale ones don't pile up.

@@ -14,16 +14,20 @@ const update = @import("lint_snapshot_options").update;
 
 const SNAPSHOT_DIR = "src/tools/lint/snapshots";
 const CASES = [_][]const u8{
+    "brep_unsupported",
     "clean_model",
     "compile_error",
     "fixes",
     "nonpositive_size",
     "param_order",
+    "segments_as_sides",
     "self_subtraction",
     "suppressed_error",
     "suppressions",
     "syntax_error",
+    "unknown_keyword",
     "unreachable_code",
+    "unused_param",
     "unused_variable",
 };
 

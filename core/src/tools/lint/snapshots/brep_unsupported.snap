@@ -1,0 +1,4 @@
+5:3 W [brep-unsupported] the brep engine can't measure volume yet, so this fails when the script runs
+13:8 W [brep-unsupported] the brep engine can't make cones (a cylinder with r1 different from r2) yet, so this fails when the script runs
+14:8 W [brep-unsupported] the brep engine can't make exact spheres yet, so this fails when the script runs
+15:9 W [brep-unsupported] the brep engine can't move, turn, scale or mirror shapes (translate, rotate, scale, mirror, transform) yet, so this fails when the script runs

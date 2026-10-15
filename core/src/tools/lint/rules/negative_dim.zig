@@ -5,6 +5,7 @@ const manifest = @import("../../../stdlib/manifest.zig");
 const Signature = @import("../../../stdlib/primitives.zig").Signature;
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
+const literals = @import("literals.zig");
 
 /// Flags a primitive's size given as a literal zero or negative number, such as
 /// `cube(-5)` or `cylinder(h: 0)`, which the primitive rejects when the script runs.
@@ -39,7 +40,7 @@ pub const NegativeDimRule = struct {
             if (arg.modifier != null) return;
             const param = if (arg.name != .none) tree.getString(arg.name) else nextPositional(signature, &position) orelse continue;
             if (!isSize(signature, param)) continue;
-            const n = literalNumber(tree, arg.value) orelse continue;
+            const n = literals.number(tree, arg.value) orelse continue;
             if (n > 0) continue;
             const at = tree.getNode(arg.value).?.main_token;
             try engine.report(id, engine.getLoc(at), "{s} expects {s} to be greater than zero, got {f}", .{ method, param, value.fmtNumber(n) });
@@ -57,15 +58,5 @@ pub const NegativeDimRule = struct {
             if (std.mem.eql(u8, size, param)) return true;
         }
         return false;
-    }
-
-    /// The value of a number literal, negated or not (`5`, `-5`).
-    fn literalNumber(tree: *const ast.Tree, idx: ast.NodeIndex) ?f64 {
-        const node = tree.getNode(idx) orelse return null;
-        if (node.tag == .number) return tree.number(node);
-        if (node.tag == .unary_op and tree.unaryExpr(node).op == .negate) {
-            if (literalNumber(tree, tree.unaryExpr(node).operand)) |n| return -n;
-        }
-        return null;
     }
 };

@@ -15,4 +15,9 @@ pub const Config = struct {
     @"unreachable-code": Level = .warning,
     @"self-subtraction": Level = .warning,
     @"param-order": Level = .warning,
+    @"unused-param": Level = .warning,
+    /// A certain ArgumentError when the script runs, so an error before it does.
+    @"unknown-keyword": Level = .@"error",
+    @"segments-as-sides": Level = .warning,
+    @"brep-unsupported": Level = .warning,
 };
