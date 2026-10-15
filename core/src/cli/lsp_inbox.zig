@@ -3,7 +3,9 @@
 //!
 //! * the slow work (evaluating the preview) runs once the client has been quiet for
 //!   `quiet_period`, not on every keystroke;
-//! * an edit that arrives while that work runs cancels it, since its result is already stale;
+//! * an edit or a request that arrives while that work runs cancels it: the edit makes its
+//!   result stale, and the request shouldn't wait for it. The work is still pending, so it
+//!   runs again once the client is quiet;
 //! * `$/cancelRequest` drops a request that is still waiting, answering it RequestCancelled.
 //!
 //! The server reads through `transport` as from the client's own (lsp_kit's basic_server
@@ -17,7 +19,7 @@ const Id = lsp.JsonRPCMessage.ID;
 /// How long the client must be quiet before the slow work runs: a pause in typing.
 pub const QUIET_PERIOD_MS: i64 = 200;
 
-/// The methods whose arrival makes running work stale.
+/// The notifications whose arrival makes running work stale (any request also cancels it).
 const EDIT_METHODS = [_][]const u8{ "textDocument/didChange", "textDocument/didClose" };
 const CANCEL_METHOD = "$/cancelRequest";
 
@@ -27,7 +29,8 @@ pub const Work = struct {
     /// Whether there is work waiting for the client to be quiet.
     pending: *const fn (context: *anyopaque) bool,
     run: *const fn (context: *anyopaque) void,
-    /// What `run` checks to stop early. Cleared before each run, set when an edit arrives.
+    /// What `run` checks to stop early. Cleared before each run, set when an edit or a
+    /// request arrives; work stopped this way must report itself `pending` again.
     cancel: *std.atomic.Value(bool),
 };
 
@@ -116,16 +119,21 @@ pub const Inbox = struct {
             self.arrived.signal(self.io);
             return;
         }
-        if (self.working) for (EDIT_METHODS) |edit| {
-            if (std.mem.eql(u8, method, edit)) self.work.cancel.store(true, .release);
-        };
         // A response from the client has an id but no method: only requests can be cancelled.
         const id = if (envelope.method != null) envelope.id else null;
+        if (self.working and (id != null or isEdit(method))) self.work.cancel.store(true, .release);
         const owned = if (id) |i| try self.dupeId(i) else null;
         errdefer if (owned) |i| self.freeId(i);
         try self.queue.append(self.allocator, .{ .json = json, .id = owned });
         queued = true;
         self.arrived.signal(self.io);
+    }
+
+    fn isEdit(method: []const u8) bool {
+        for (EDIT_METHODS) |edit| {
+            if (std.mem.eql(u8, method, edit)) return true;
+        }
+        return false;
     }
 
     /// Takes the request `id` out of the queue, to be answered RequestCancelled. One that

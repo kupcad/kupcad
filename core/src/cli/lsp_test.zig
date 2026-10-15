@@ -267,3 +267,21 @@ test "LSP: a model that takes long to run still gets its hovers" {
     try server.open(URI, "n = 0\nwhile n < 200000\n  n += 1\nend\na = cube(2)\n");
     try testing.expect(std.mem.indexOf(u8, server.hover(URI, 4, 0).?, "**Volume:** `8.00`") != null);
 }
+
+test "LSP: a preview a message stopped runs again once the editor is quiet" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "cube(2)\n");
+
+    // As the inbox does when a request arrives during the run.
+    server.session.vm.cancel_token.store(true, .release);
+    server.handler.evaluatePreview();
+    try testing.expect(server.handler.preview_pending);
+    try testing.expect(server.session.nodes.items[0].cached_handle == null);
+
+    server.session.vm.cancel_token.store(false, .release);
+    server.settle();
+    try testing.expect(!server.handler.preview_pending);
+    try testing.expectApproxEqAbs(@as(f64, 8), kernel.volume(server.session.nodes.items[0].cached_handle.?), 1e-9);
+}

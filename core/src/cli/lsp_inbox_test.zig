@@ -175,8 +175,8 @@ test "LSP inbox: $/cancelRequest drops a waiting request and answers it RequestC
     try testing.expectEqualStrings("{\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32800,\"message\":\"RequestCancelled\"}}", client.written.items[1]);
 }
 
-test "LSP inbox: an edit cancels the running work; other messages don't" {
-    var client: Client = .{ .messages = &.{ SAVED, EDIT } };
+test "LSP inbox: an edit or a request cancels the running work; other notifications don't" {
+    var client: Client = .{ .messages = &.{ SAVED, EDIT, HOVER_7 } };
     defer client.deinit();
     var preview: Preview = .{ .pending = true, .client = &client, .allow_on_run = 1, .wait_for_cancel_ms = 50 };
     var inbox = Inbox.init(testing.allocator, testing.io, &client.transport, preview.work());
@@ -194,6 +194,12 @@ test "LSP inbox: an edit cancels the running work; other messages don't" {
     preview.wait_for_cancel_ms = WAIT_TIMEOUT_MS;
     try expectNext(&inbox, EDIT);
     try testing.expectEqual(@as(usize, 2), preview.runs);
+    try testing.expect(preview.cancelled);
+
+    // A request doesn't wait for it either (it used to, up to the instruction limit).
+    preview.pending = true;
+    try expectNext(&inbox, HOVER_7);
+    try testing.expectEqual(@as(usize, 3), preview.runs);
     try testing.expect(preview.cancelled);
 }
 

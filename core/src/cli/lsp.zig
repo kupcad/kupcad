@@ -363,6 +363,11 @@ pub const Handler = struct {
     pub fn evaluatePreview(self: *Handler) void {
         self.preview_pending = false;
         const uri = self.preview_module orelse return;
+        // Stopped by a message (the inbox's cancel): run again once the editor is quiet. The
+        // modules it finished stay evaluated, so the next run picks up where it stopped.
+        defer if (self.session.vm.cancel_token.load(.acquire)) {
+            self.preview_pending = true;
+        };
         // A script that doesn't parse, compile or run is the user's to fix, not a server fault.
         self.session.evaluateUntilCancelled() catch |err| switch (err) {
             error.ParseError, error.CompileError, error.RuntimeError, error.Cancelled => {
