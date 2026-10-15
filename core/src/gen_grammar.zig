@@ -164,6 +164,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             .{ .include = "#global_vars" },
             .{ .include = "#constants" },
             .{ .include = "#method_calls" },
+            .{ .include = "#for_in" },
             .{ .include = "#keywords" },
             .{ .include = "#builtins" },
             .{ .include = "#core_methods" },
@@ -240,6 +241,15 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
                     .@"1" = .{ .name = "entity.name.function.kupcad" },
                 },
             },
+            // `in` is a keyword only in `for x in xs` (the lexer reads it as a name, so `in:`
+            // stays a label), so it is highlighted there and nowhere else.
+            .for_in = .{
+                .match = FOR_IN_MATCH,
+                .captures = .{
+                    .@"1" = .{ .name = "keyword.control.kupcad" },
+                    .@"3" = .{ .name = "keyword.control.kupcad" },
+                },
+            },
             .keywords = .{
                 .match = kw_match,
                 .name = "keyword.control.kupcad",
@@ -313,6 +323,9 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     try out.writer.print("{f}", .{std.json.fmt(grammar, .{ .whitespace = .indent_2 })});
     return try allocator.dupe(u8, out.written());
 }
+
+/// `for`, the loop variables (up to a comment), then the first standalone `in`.
+pub const FOR_IN_MATCH = "\\b(for)\\b([^#\\n]*?)\\b(in)\\b";
 
 /// CLI Entry Point
 pub fn main(init: std.process.Init) !void {

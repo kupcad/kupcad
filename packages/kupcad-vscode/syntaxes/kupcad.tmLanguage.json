@@ -36,6 +36,9 @@
       "include": "#method_calls"
     },
     {
+      "include": "#for_in"
+    },
+    {
       "include": "#keywords"
     },
     {
@@ -159,6 +162,17 @@
       "captures": {
         "1": {
           "name": "entity.name.function.kupcad"
+        }
+      }
+    },
+    "for_in": {
+      "match": "\\b(for)\\b([^#\\n]*?)\\b(in)\\b",
+      "captures": {
+        "1": {
+          "name": "keyword.control.kupcad"
+        },
+        "3": {
+          "name": "keyword.control.kupcad"
         }
       }
     },
