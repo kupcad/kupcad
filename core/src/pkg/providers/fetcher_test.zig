@@ -52,3 +52,61 @@ test "Fetcher: parseCommitShaResponse validates the response shape" {
         };
     }
 }
+
+const semver = @import("../../core/semver.zig");
+const Release = @import("fetcher.zig").Release;
+const SHA_A: [40]u8 = @splat('a');
+const SHA_B: [40]u8 = @splat('b');
+const SHA_C: [40]u8 = @splat('c');
+
+test "Fetcher: tagsApiUrl lists each host's tags with their commits, by page" {
+    const cases = [_]struct { spec: []const u8, url: []const u8 }{
+        .{ .spec = "github.com/u/r@^1.0", .url = "https://api.github.com/repos/u/r/tags?per_page=100&page=2" },
+        .{ .spec = "gitlab.com/u/r@^1.0", .url = "https://gitlab.com/api/v4/projects/u%2Fr/repository/tags?per_page=100&page=2" },
+        .{ .spec = "codeberg.org/u/r@^1.0", .url = "https://codeberg.org/api/v1/repos/u/r/tags?limit=50&page=2" },
+    };
+    for (cases) |c| {
+        const url = try Fetcher.tagsApiUrl(testing.allocator, try ParsedPackage.parse(c.spec), 2);
+        defer testing.allocator.free(url);
+        try testing.expectEqualStrings(c.url, url);
+    }
+}
+
+test "Fetcher: pickRelease keeps the highest tag a range accepts, across pages" {
+    // `pkg add x@^1.0` failed (the ref was rejected), and a bare version was used as a ref.
+    const constraint = try semver.Constraint.parse("^1.2");
+    var best: ?Release = null;
+    defer if (best) |*b| b.deinit(testing.allocator);
+
+    const page1 = "[{\"name\":\"v2.0.0\",\"commit\":{\"sha\":\"" ++ SHA_A ++ "\"}}," ++
+        "{\"name\":\"v1.4.0\",\"commit\":{\"sha\":\"" ++ SHA_B ++ "\"}}," ++
+        "{\"name\":\"nightly\",\"commit\":{\"sha\":\"" ++ SHA_A ++ "\"}}," ++
+        "{\"name\":\"v1.9.0-rc1\",\"commit\":{\"sha\":\"" ++ SHA_A ++ "\"}}]";
+    try testing.expectEqual(@as(usize, 4), try Fetcher.pickRelease(testing.allocator, page1, constraint, &best));
+    try testing.expectEqualStrings("v1.4.0", best.?.tag);
+
+    // GitLab's commits have an `id`; a higher match on a later page wins, a lower one doesn't.
+    const page2 = "[{\"name\":\"1.5.1\",\"commit\":{\"id\":\"" ++ SHA_C ++ "\"}},{\"name\":\"v1.2.0\",\"commit\":{\"sha\":\"" ++ SHA_A ++ "\"}}]";
+    _ = try Fetcher.pickRelease(testing.allocator, page2, constraint, &best);
+    try testing.expectEqualStrings("1.5.1", best.?.tag);
+    try testing.expectEqualStrings(&SHA_C, best.?.commit);
+
+    const rejected = [_][]const u8{
+        "{}", "[5]", "[{\"name\":\"v1.3.0\"}]", "[{\"name\":\"v1.3.0\",\"commit\":{\"sha\":\"../x\"}}]",
+    };
+    for (rejected) |body| try testing.expectError(error.InvalidApiResponse, Fetcher.pickRelease(testing.allocator, body, constraint, &best));
+}
+
+test "Fetcher: a ref is a version range only when it starts with an operator" {
+    const range = try ParsedPackage.parse("github.com/u/r@^1.2");
+    try testing.expectEqual(semver.ConstraintOp.caret, range.constraint.?.op);
+    try testing.expectEqualStrings("^1.2", range.ref);
+    try testing.expect((try ParsedPackage.parse("github.com/u/r@>=2.0")).constraint != null);
+    // A bare version (a tag) or a branch named like one stays a ref.
+    try testing.expect((try ParsedPackage.parse("github.com/u/r@v1.2.3")).constraint == null);
+    try testing.expect((try ParsedPackage.parse("github.com/u/r@v2")).constraint == null);
+    // A range has a strict charset and must parse.
+    try testing.expectError(error.InvalidRef, ParsedPackage.parse("github.com/u/r@^1.x"));
+    try testing.expectError(error.InvalidRef, ParsedPackage.parse("github.com/u/r@^1.0/../x"));
+    try testing.expectError(error.InvalidRef, ParsedPackage.parse("github.com/u/r@^"));
+}

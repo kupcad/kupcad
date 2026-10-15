@@ -6,6 +6,9 @@ const ArchiveLayout = @import("../cafs.zig").ArchiveLayout;
 /// Length of the hex digest prefix used to derive ids for URL/path based packages.
 const URL_ID_HEX_LEN = 16;
 
+/// The first character of a ref that is a version range rather than a branch, tag or commit.
+const RANGE_OPERATORS = "^~>=";
+
 /// The public git hosts a bare `host/user/repo` may name, and the API each speaks.
 const KNOWN_HOSTS = [_]struct { []const u8, ProviderType }{
     .{ "github.com", .github },
@@ -47,8 +50,10 @@ pub const ParsedPackage = struct {
     domain: []const u8,
     user: []const u8,
     repo: []const u8,
-    ref: []const u8, // branch, tag, or SHA (default: "main"); empty for http/local
-    constraint: ?semver.Constraint = null, // Extracted SemVer criteria
+    ref: []const u8, // branch, tag, SHA or version range (default: "main"); empty for http/local
+    /// A ref that is a version range (`^1.2`, `~1.4`, `>=2.0`, `=1.2.3`): resolved to the
+    /// highest tag that satisfies it. A bare version such as `v1.2.3` is the tag itself.
+    constraint: ?semver.Constraint = null,
 
     /// Parses and validates a dependency specifier. Every component is checked
     /// against a strict charset because specifiers may come from untrusted,
@@ -82,10 +87,11 @@ pub const ParsedPackage = struct {
             base_url = spec[0..idx];
             ref = spec[idx + 1 ..];
 
-            // Attempt to parse the reference as a strict SemVer constraint
-            if (semver.Constraint.parse(ref)) |parsed| {
-                constraint = parsed;
-            } else |_| {} // Fall back to treating it as a raw branch/SHA
+            // Only an operator makes it a range: `v2` may be a branch, and was always a ref.
+            if (ref.len > 0 and std.mem.indexOfScalar(u8, RANGE_OPERATORS, ref[0]) != null) {
+                try validate.validateRange(ref);
+                constraint = semver.Constraint.parse(ref) catch return error.InvalidRef;
+            }
         }
 
         var iter = std.mem.splitScalar(u8, base_url, '/');
@@ -98,8 +104,8 @@ pub const ParsedPackage = struct {
         try validate.validateRepoSegment(user);
         try validate.validateRepoSegment(repo);
         // Refs are interpolated into API URLs; never allow them to carry a scheme,
-        // query string or path traversal.
-        try validate.validateRef(ref);
+        // query string or path traversal. (A range never reaches a URL: its tags are listed.)
+        if (constraint == null) try validate.validateRef(ref);
 
         const provider_type = try providerFor(domain, declared);
 

@@ -16,6 +16,9 @@ pub const MAX_EXTRACTED_FILE_COUNT: usize = 50_000;
 /// Max size of a JSON API response (commit lookup). Real responses are a few KiB.
 pub const MAX_API_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
+/// Most pages of tags a version range is matched against (1000 tags on GitHub and GitLab).
+pub const MAX_TAG_PAGES: usize = 10;
+
 /// Max size of a package manifest (kupcad.json) or lockfile parsed from disk/CAFS.
 pub const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 

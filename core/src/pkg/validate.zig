@@ -57,6 +57,16 @@ pub fn validateRef(ref: []const u8) ValidationError!void {
     }
 }
 
+/// A version range after `@` (`^1.2`, `>=2.0.0`): an operator, then a version of digits and
+/// dots, with an optional `v`. It is parsed, never put in a URL, but it is kept in
+/// kupcad.lock and shown, so it gets a charset too.
+pub fn validateRange(range: []const u8) ValidationError!void {
+    if (range.len == 0 or range.len > limits.MAX_REF_LEN) return error.InvalidRef;
+    for (range) |c| {
+        if (!(std.ascii.isDigit(c) or std.mem.indexOfScalar(u8, ".v^~>=", c) != null)) return error.InvalidRef;
+    }
+}
+
 /// DNS hostname: [A-Za-z0-9.-], no ports, no userinfo, no IPv6 brackets.
 pub fn validateHost(host: []const u8) ValidationError!void {
     if (host.len == 0 or host.len > limits.MAX_HOST_LEN) return error.InvalidHost;

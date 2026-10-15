@@ -5,6 +5,7 @@ const Cafs = cafs_mod.Cafs;
 const http_client = @import("../http_client.zig");
 const limits = @import("../limits.zig");
 const validate = @import("../validate.zig");
+const semver = @import("../../core/semver.zig");
 const GithubProvider = @import("github.zig").GithubProvider;
 const GitlabProvider = @import("gitlab.zig").GitlabProvider;
 const GiteaProvider = @import("gitea.zig").GiteaProvider;
@@ -44,7 +45,50 @@ pub const Fetcher = struct {
     pub fn fetchCommitSha(self: *Fetcher, pkg: provider.ParsedPackage) ![]const u8 {
         const url_str = try commitApiUrl(self.allocator, pkg);
         defer self.allocator.free(url_str);
+        const body_bytes = try self.fetchApiBody(url_str);
+        defer self.allocator.free(body_bytes);
+        return parseCommitShaResponse(self.allocator, body_bytes);
+    }
 
+    /// The highest tag that satisfies the package's version range, from the host's tag
+    /// list (at most MAX_TAG_PAGES pages). error.NoMatchingVersion if none does.
+    pub fn resolveRange(self: *Fetcher, pkg: provider.ParsedPackage) !Release {
+        const constraint = pkg.constraint.?;
+        var best: ?Release = null;
+        errdefer if (best) |*b| b.deinit(self.allocator);
+        var page: usize = 1;
+        while (page <= limits.MAX_TAG_PAGES) : (page += 1) {
+            const url_str = try tagsApiUrl(self.allocator, pkg, page);
+            defer self.allocator.free(url_str);
+            const body_bytes = try self.fetchApiBody(url_str);
+            defer self.allocator.free(body_bytes);
+            // A page that isn't full is the last one.
+            if (try pickRelease(self.allocator, body_bytes, constraint, &best) < tagsPageSize(pkg.provider)) break;
+        }
+        return best orelse error.NoMatchingVersion;
+    }
+
+    /// The tag list URL for git hosts (error.NotApplicable otherwise).
+    pub fn tagsApiUrl(allocator: std.mem.Allocator, pkg: provider.ParsedPackage, page: usize) ![]const u8 {
+        return switch (pkg.provider) {
+            .github => GithubProvider.formatTagsUrl(allocator, pkg, page),
+            .gitlab => GitlabProvider.formatTagsUrl(allocator, pkg, page),
+            .gitea => GiteaProvider.formatTagsUrl(allocator, pkg, page),
+            .http, .local => error.NotApplicable,
+        };
+    }
+
+    fn tagsPageSize(provider_type: provider.ProviderType) usize {
+        return switch (provider_type) {
+            .github => GithubProvider.TAGS_PAGE_SIZE,
+            .gitlab => GitlabProvider.TAGS_PAGE_SIZE,
+            .gitea => GiteaProvider.TAGS_PAGE_SIZE,
+            .http, .local => unreachable, // no tags API (tagsApiUrl refuses them)
+        };
+    }
+
+    /// GETs a provider API URL and returns its (bounded) body; caller frees.
+    fn fetchApiBody(self: *Fetcher, url_str: []const u8) ![]u8 {
         const get = try self.allocator.create(http_client.Get);
         defer self.allocator.destroy(get);
         var response = try get.send(&self.client, url_str);
@@ -52,13 +96,41 @@ pub const Fetcher = struct {
         try checkStatus(response.head.status);
 
         // Bounded: a hostile host could otherwise stream an endless body into memory.
-        const body_bytes = response.reader(&.{}).allocRemaining(self.allocator, .limited(limits.MAX_API_RESPONSE_BYTES)) catch |err| switch (err) {
-            error.StreamTooLong => return error.ApiResponseTooLarge,
-            else => return err,
+        return response.reader(&.{}).allocRemaining(self.allocator, .limited(limits.MAX_API_RESPONSE_BYTES)) catch |err| switch (err) {
+            error.StreamTooLong => error.ApiResponseTooLarge,
+            else => err,
         };
-        defer self.allocator.free(body_bytes);
+    }
 
-        return parseCommitShaResponse(self.allocator, body_bytes);
+    /// Scans one page of a tag list (`[{"name": ..., "commit": {"sha" | "id": ...}}]`),
+    /// keeping in `best` the highest tag whose version satisfies `constraint`; tags that
+    /// aren't versions (`nightly`, `v2.0.0-rc1`) are skipped. Returns how many tags the page
+    /// had. The body is the host's, so its shape and commits are validated, not trusted.
+    pub fn pickRelease(allocator: std.mem.Allocator, body: []const u8, constraint: semver.Constraint, best: *?Release) !usize {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch return error.InvalidApiResponse;
+        defer parsed.deinit();
+        if (parsed.value != .array) return error.InvalidApiResponse;
+        const tags = parsed.value.array.items;
+        for (tags) |tag| {
+            if (tag != .object) return error.InvalidApiResponse;
+            const name = tag.object.get("name") orelse return error.InvalidApiResponse;
+            const commit = tag.object.get("commit") orelse return error.InvalidApiResponse;
+            if (name != .string or commit != .object) return error.InvalidApiResponse;
+            const sha = commit.object.get("sha") orelse commit.object.get("id") orelse return error.InvalidApiResponse;
+            if (sha != .string) return error.InvalidApiResponse;
+            validate.validateCommitSha(sha.string) catch return error.InvalidApiResponse;
+
+            const version = semver.Version.parse(name.string) catch continue;
+            if (!constraint.satisfies(version)) continue;
+            if (best.*) |b| if (version.compare(b.version) != .gt) continue;
+
+            const tag_name = try allocator.dupe(u8, name.string);
+            errdefer allocator.free(tag_name);
+            const commit_sha = try allocator.dupe(u8, sha.string);
+            if (best.*) |*b| b.deinit(allocator);
+            best.* = .{ .version = version, .tag = tag_name, .commit = commit_sha };
+        }
+        return tags.len;
     }
 
     /// Extracts the commit id from a provider API response. Accepts an object with
@@ -100,6 +172,20 @@ pub const Fetcher = struct {
         var buf: [8192]u8 = undefined;
         var file_reader = file.reader(self.io, &buf);
         return extractLimited(self.allocator, &file_reader.interface, cafs, .flat);
+    }
+};
+
+/// The tag a version range resolved to.
+pub const Release = struct {
+    version: semver.Version,
+    /// The tag's name as the host has it (`v1.4.2`), owned.
+    tag: []const u8,
+    /// The tag's commit, owned.
+    commit: []const u8,
+
+    pub fn deinit(self: *Release, allocator: std.mem.Allocator) void {
+        allocator.free(self.tag);
+        allocator.free(self.commit);
     }
 };
 

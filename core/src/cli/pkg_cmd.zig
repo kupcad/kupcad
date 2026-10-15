@@ -133,8 +133,8 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
         // Saved only once the install succeeds, so a failed `add` leaves kupcad.json as it was.
         try manifest.setDependency(alias, url);
 
-        if (parsed.constraint) |c| {
-            log_helpers.printStdout(init.io, "Added {s} with constraint {s}{d}.{d}.{d}. Running concurrent install...\n", .{ alias, @tagName(c.op), c.version.major, c.version.minor, c.version.patch });
+        if (parsed.constraint != null) {
+            log_helpers.printStdout(init.io, "Added {s} at the highest tag matching {s}. Running concurrent install...\n", .{ alias, parsed.ref });
         } else {
             log_helpers.printStdout(init.io, "Added {s} at reference '{s}'. Running concurrent install...\n", .{ alias, parsed.ref });
         }

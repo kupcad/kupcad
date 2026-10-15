@@ -203,6 +203,11 @@ pub const Resolver = struct {
         defer if (commit_sha) |c| self.allocator.free(c);
         if (pinned_commit) |c| {
             commit_sha = try self.allocator.dupe(u8, c);
+        } else if (parsed.constraint != null) {
+            var release = try fetcher.resolveRange(parsed);
+            defer release.deinit(self.allocator);
+            log.info("{s}@{s} resolved to tag {s}", .{ pkg_id, parsed.ref, release.tag });
+            commit_sha = try self.allocator.dupe(u8, release.commit);
         } else if (parsed.provider.isGitHost()) {
             commit_sha = try fetcher.fetchCommitSha(parsed);
         }
