@@ -2207,3 +2207,49 @@ test "Stdlib: highlight { } and ghost { } need their block to give a Solid" {
         .{ .src = "r = highlight { cube(2) }.volume", .expected = .{ .num = 8 } },
     });
 }
+
+test "Stdlib: each method gives back what the manifest says it does" {
+    // The editor's type hints and the lint's shape tracking read `result`; it must be what
+    // the method really returns. `c` is a Solid, `s` a Sketch.
+    const manifest = @import("manifest.zig");
+    const calls = [_]struct { []const u8, []const u8 }{
+        .{ "union", "c.union(cube(1))" },                        .{ "difference", "c.difference(cube(1))" },
+        .{ "intersection", "c.intersection(cube(1))" },          .{ "translate", "c.translate(1, 0, 0)" },
+        .{ "rotate", "c.rotate(0, 0, 90)" },                     .{ "scale", "c.scale(2)" },
+        .{ "resize", "c.resize([4, 4, 4])" },                    .{ "project", "c.project" },
+        .{ "slice", "c.slice(1)" },                              .{ "center", "c.center" },
+        .{ "align", "c.align(cube(1), \"x\", \"min\")" },        .{ "mirror", "c.mirror(1, 0, 0)" },
+        .{ "on_face", "c.on_face(:top)" },                       .{ "split_by_plane", "c.split_by_plane(0, 0, 1, 1)" },
+        .{ "decompose", "c.decompose" },                         .{ "genus", "c.genus" },
+        .{ "simplify", "c.simplify" },                           .{ "bbox", "c.bbox" },
+        .{ "volume", "c.volume" },                               .{ "surface_area", "c.surface_area" },
+        .{ "extrude", "s.extrude(1)" },                          .{ "revolve", "s.translate(5, 0).revolve(90)" },
+        .{ "hull", "c.hull(cube(1).translate(3, 0, 0))" },       .{ "helix", "s.helix(5, 90)" },
+        .{ "loft", "s.loft(square(1), 5)" },                     .{ "fillet_edges", "c.fillet_edges(0.5)" },
+        .{ "trim_by_plane", "c.trim_by_plane(0, 0, 1)" },        .{ "minkowski", "c.minkowski(sphere(0.5))" },
+        .{ "offset", "s.offset(1)" },                            .{ "transform", "c.transform([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])" },
+        .{ "min_gap", "c.min_gap(cube(1).translate(5, 0, 0))" }, .{ "contains?", "c.contains?([1, 1, 1])" },
+        .{ "ray_cast", "c.ray_cast([-5, 1, 1], [5, 1, 1])" },    .{ "repeat_linear", "c.repeat_linear(2, 5, 0, 0)" },
+        .{ "repeat_polar", "c.repeat_polar(3)" },                .{ "material", "c.material(color: \"#ff0000\")" },
+        .{ "highlight", "c.highlight" },                         .{ "ghost", "c.ghost" },
+    };
+    // They write files; each returns its receiver.
+    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf" };
+    @setEvalBranchQuota(20_000); // matching each method to its sample call at comptime
+    var checked: usize = 0;
+    inline for (manifest.mesh_methods) |m| {
+        const call: ?[]const u8 = comptime for (calls) |c| {
+            if (std.mem.eql(u8, c[0], m.name)) break c[1];
+        } else null;
+        if (call) |src| {
+            const sketch_receiver = comptime std.mem.startsWith(u8, src, "s.");
+            const expected = comptime if (m.result == .receiver) (if (sketch_receiver) "CrossSection" else "Geometry") else m.result.className().?;
+            try expectGlobalR(&.{.{ .src = "c = cube(2)\ns = square(2)\nr = \"#{(" ++ src ++ ").class}\"", .expected = .{ .str = expected } }});
+            checked += 1;
+        } else {
+            comptime if (!isOneOf(m.name, &writes_files)) @compileError("no sample call for " ++ m.name);
+            try testing.expectEqual(manifest.Result.receiver, m.result);
+        }
+    }
+    try testing.expectEqual(calls.len, checked);
+}

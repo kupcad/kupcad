@@ -6,12 +6,6 @@ const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const manifest = @import("../../stdlib/manifest.zig");
 
-/// Methods that turn a sketch into a solid, or a solid into a sketch; measurements give
-/// something else. Every other method of a shape keeps its kind.
-const MAKES_SOLID = [_][]const u8{ "extrude", "revolve", "loft", "helix" };
-const MAKES_SKETCH = [_][]const u8{ "slice", "project", "offset" };
-const MEASURES = [_][]const u8{ "volume", "surface_area", "genus", "bbox", "contains?", "ray_cast", "min_gap", "empty?", "on_face", "decompose", "export_stl", "export_gltf" };
-
 pub const Shape = enum { solid, sketch };
 
 pub const Shapes = struct {
@@ -45,27 +39,24 @@ pub const Shapes = struct {
                 };
             },
             .method_call => blk: {
+                // What each built-in gives back comes from the manifest (it was three lists
+                // kept here by hand); a method of a shape that isn't a built-in is unknown.
                 const call = tree.methodCall(node);
                 const name = tree.getString(call.method_name);
-                if (call.receiver == .none) break :blk switch (manifest.categoryOf(name) orelse break :blk null) {
-                    .primitive_3d => .solid,
-                    .primitive_2d => .sketch,
-                    else => null,
-                };
+                if (call.receiver == .none) break :blk shapeOf(manifest.resultOf(name) orelse break :blk null, null);
                 const receiver = self.of(tree, call.receiver) orelse break :blk null;
-                if (isOneOf(name, &MAKES_SOLID)) break :blk .solid;
-                if (isOneOf(name, &MAKES_SKETCH)) break :blk .sketch;
-                if (isOneOf(name, &MEASURES)) break :blk null;
-                break :blk receiver;
+                break :blk shapeOf(manifest.methodResultOf(name) orelse break :blk null, receiver);
             },
             else => null,
         };
     }
 
-    fn isOneOf(name: []const u8, names: []const []const u8) bool {
-        for (names) |n| {
-            if (std.mem.eql(u8, n, name)) return true;
-        }
-        return false;
+    fn shapeOf(result: manifest.Result, receiver: ?Shape) ?Shape {
+        return switch (result) {
+            .receiver => receiver,
+            .solid => .solid,
+            .sketch => .sketch,
+            else => null,
+        };
     }
 };

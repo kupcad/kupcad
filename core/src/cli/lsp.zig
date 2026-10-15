@@ -67,35 +67,6 @@ const ScopeContext = struct {
     class_name: ?[]const u8 = null,
 };
 
-fn getReturnTypeHint(method_name: []const u8) ?[]const u8 {
-    // Check Global Functions
-    for (manifest.global_functions) |g| {
-        if (std.mem.eql(u8, g.name, method_name)) {
-            return switch (g.category) {
-                .primitive_3d, .csg_operator, .brep_op => "Geometry",
-                .primitive_2d => "CrossSection",
-                .transform => if (std.mem.eql(u8, method_name, "ghost") or std.mem.eql(u8, method_name, "highlight")) "Geometry" else "CrossSection",
-                .file_io => "Geometry",
-                else => null,
-            };
-        }
-    }
-
-    // Check Mesh Methods
-    for (manifest.mesh_methods) |m| {
-        if (std.mem.eql(u8, m.name, method_name)) {
-            return switch (m.category) {
-                .csg_operator, .transform => "Geometry",
-                .workplane_method => "Workplane",
-                .inspection_method => "Number",
-                else => null,
-            };
-        }
-    }
-
-    return null;
-}
-
 /// `sandbox` must be a non-writing VFS (see ReadOnlyVfs): the document is untrusted.
 pub fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, module_path: []const u8, target_node: ast.NodeIndex, writer: anytype) !void {
     var vm = try VM.init(allocator, io);
@@ -668,41 +639,17 @@ pub const Handler = struct {
         var hints = std.ArrayListUnmanaged(lsp.types.InlayHint).empty;
         var line_index = try api.LineIndex.init(arena, buf.source);
 
-        for (doc.tree.nodes.items) |*node| {
-            if (node.tag == .assignment) {
-                const assign = doc.tree.assignment(node);
-                const rhs_node = doc.tree.getNode(assign.value) orelse continue;
-
-                if (rhs_node.tag == .method_call) {
-                    const mc = doc.tree.methodCall(rhs_node);
-                    const m_name = doc.tree.getString(mc.method_name);
-
-                    if (getReturnTypeHint(m_name)) |type_hint| {
-                        const lhs_tok = node.main_token;
-                        const end_offset = doc.tokens.starts[lhs_tok] + doc.tokens.lengths[lhs_tok];
-
-                        const line = line_index.getLine(end_offset);
-                        const char = self.getColumn(&line_index, end_offset);
-
-                        try hints.append(arena, .{
-                            .position = .{ .line = line, .character = char },
-                            .label = .{ .string = try arena.print(": {s}", .{type_hint}) },
-                            .kind = .Type,
-                            .paddingLeft = false,
-                            .paddingRight = false,
-                        });
-                    }
-                }
-            }
-        }
-
-        for (try lsp_hints.parameterHints(arena, &doc)) |hint| {
+        for (try lsp_hints.hints(arena, &doc)) |hint| {
+            const label = switch (hint.kind) {
+                .parameter => try arena.print("{s}:", .{hint.name}),
+                .type => try arena.print(": {s}", .{hint.name}),
+            };
             try hints.append(arena, .{
                 .position = .{ .line = line_index.getLine(hint.offset), .character = self.getColumn(&line_index, hint.offset) },
-                .label = .{ .string = try arena.print("{s}:", .{hint.name}) },
-                .kind = .Parameter,
+                .label = .{ .string = label },
+                .kind = if (hint.kind == .parameter) .Parameter else .Type,
                 .paddingLeft = false,
-                .paddingRight = true,
+                .paddingRight = hint.kind == .parameter,
             });
         }
 
