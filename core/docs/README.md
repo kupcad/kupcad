@@ -402,15 +402,17 @@ KupCAD uses a Content Addressable File System (CAFS) paired with an SQLite cache
 ### Packages (`kupcad pkg`)
 
 * The global store (`~/.kupcad`, or `KUPCAD_HOME`) is shared by every project and every `kupcad` process: a write to its index waits up to 5 seconds for another process's lock rather than failing with "database is locked".
+* A package is imported by its alias in `kupcad.json`: `import { Screw } from "hardware"` runs the package's `main.kup`, and `"hardware/screws.kup"` another of its files.
 * A dependency is `<host>/<user>/<repo>[@ref]` on github.com, gitlab.com, codeberg.org or gitea.com. A self-hosted server is written with the API it speaks, `gitlab:git.example.com/team/parts` or `gitea:git.example.com/team/parts`, since its name doesn't tell; an unknown host without one is an error (it used to be taken for Gitea). `file:<path>` and an `http(s)://` URL of a `.tar.gz` name an archive directly.
 * Downloads follow at most 5 redirects, each connected with the same 10-second timeout and never to a less trusted place: not from `https` to `http`, and not from a public host to a private one (loopback, an IP address, an intranet name).
 * `kupcad pkg prune` removes from the store what no project uses: a file stays while a project hard-links it, or while it, or a package an install used, is less than 7 days old (`--force` drops the age rule). An install prunes this way on its own at most once a week. Where the store is on another device the project gets copies, so only the index can tell a package is in use.
-* A package's files are those of its repository: the top folder a git host wraps its archives in (`repo-<sha>/`) is stripped, so `import { Screw } from "github.com/kupcad-libs/hardware"` finds the repository's files. A `file:` or `http(s)` archive is the package as it is, so make it from inside the package's folder (`tar czf part.tar.gz -C part .`). A `kupcad.lock` from before 3.0.0 is still verified, against a fresh download, and rewritten.
+* A package's files are those of its repository: the top folder a git host wraps its archives in (`repo-<sha>/`) is stripped, so the repository's files are the package's. A `file:` or `http(s)` archive is the package as it is, so make it from inside the package's folder (`tar czf part.tar.gz -C part .`). A `kupcad.lock` from before 3.0.0 is still verified, against a fresh download, and rewritten.
 * `kupcad pkg add <alias>=<url>` writes the dependency to `kupcad.json` only once it has installed and linked: a failed `add` leaves the project as it was.
 
 ```ruby
 # 1. Importing native KupCAD modules via isolated lexical scope
-import { Screw } from "github.com/kupcad-libs/hardware"
+#    (a package, by its alias: `kupcad pkg add hardware=github.com/kupcad-libs/hardware`)
+import { Screw } from "hardware"
 
 # 2. Importing external 3D CAD assets directly into the CSG tree
 bearing = import_step("assets/608_bearing.step")
