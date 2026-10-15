@@ -189,12 +189,25 @@ pub fn requireNonZeroVector(vm: *VM, v: [3]f64, method: []const u8, what: []cons
 /// historical @intFromFloat semantics). @intFromFloat on NaN/inf/out-of-range
 /// input panics in Debug and is UB in ReleaseFast, so every user-supplied
 /// count must go through this instead.
+///
+/// It only checks that the number fits `I`; callers check the range that makes sense
+/// (`requireSegmentCount`, `EngineConfig.problem`), so the messages here don't quote the
+/// type's limits (they read "[0, 4294967295]").
 pub fn checkedInt(comptime I: type, vm: *VM, val: f64, name: []const u8) !I {
     const t = @trunc(val);
-    const lo: f64 = @floatFromInt(std.math.minInt(I));
-    const hi: f64 = @floatFromInt(std.math.maxInt(I));
-    if (!std.math.isFinite(val) or t < lo or t > hi) {
-        _ = vm.raiseError(.ValueError, "'{s}' must be a finite integer in [{d}, {d}], got {f}", .{ name, std.math.minInt(I), std.math.maxInt(I), value.fmtNumber(val) });
+    const shown = value.fmtNumber(val);
+    if (!std.math.isFinite(val)) {
+        _ = vm.raiseError(.ValueError, "'{s}' must be a finite number, got {f}", .{ name, shown });
+        return error.RuntimeError;
+    }
+    if (t < @as(f64, @floatFromInt(std.math.minInt(I)))) {
+        if (std.math.minInt(I) == 0) {
+            _ = vm.raiseError(.ValueError, "'{s}' can't be negative, got {f}", .{ name, shown });
+        } else _ = vm.raiseError(.ValueError, "'{s}' is too small, got {f}", .{ name, shown });
+        return error.RuntimeError;
+    }
+    if (t > @as(f64, @floatFromInt(std.math.maxInt(I)))) {
+        _ = vm.raiseError(.ValueError, "'{s}' is too large, got {f}", .{ name, shown });
         return error.RuntimeError;
     }
     return @intFromFloat(t);

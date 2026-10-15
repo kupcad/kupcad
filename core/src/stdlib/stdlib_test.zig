@@ -376,6 +376,17 @@ test "Stdlib: CAD.config applies each setting and current_config reads it back" 
     try testing.expectEqual(@as(usize, 1000), config.max_vertices);
 }
 
+test "Stdlib: a count that no integer holds says what is wrong, not the integer type's limits" {
+    // These read "'segments' must be a finite integer in [-2147483648, 2147483647]".
+    try expectGlobalR(&.{
+        .{ .src = comptime rescued("cylinder(r: 1, h: 1, segments: 1e12)"), .expected = .{ .str = "ValueError: 'segments' is too large, got 1000000000000" } },
+        .{ .src = comptime rescued("regular_polygon(-1e12, r: 1)"), .expected = .{ .str = "ValueError: 'sides' is too small, got -1000000000000" } },
+        .{ .src = comptime rescued("circle(r: 1, segments: Number::NAN)"), .expected = .{ .str = "ValueError: 'segments' must be a finite number, got NaN" } },
+        // Within the type, the real range is checked and named.
+        .{ .src = comptime rescued("cylinder(r: 1, h: 1, segments: 5000)"), .expected = .{ .str = "ValueError: 'segments' must be between 0 and 2048, got 5000" } },
+    });
+}
+
 test "Stdlib: geometry keeps the settings it was made under, wherever it is evaluated" {
     // Geometry is evaluated lazily; it used to be built under the settings in force then,
     // so CAD.with_config was lost on anything measured or exported after the block.
@@ -408,7 +419,9 @@ test "Stdlib: CAD.config rejects settings it doesn't have or can't use" {
         .{ .src = comptime rescued("CAD.config(tolerance: Number::NAN)"), .expected = "ValueError: CAD.config expects a finite number for tolerance, got NaN" },
         .{ .src = comptime rescued("CAD.config(resolution: { segments: 2 })"), .expected = "ValueError: CAD.config: resolution segments must be 0 (automatic) or 3 to 2048" },
         .{ .src = comptime rescued("CAD.config(resolution: { segments: 2049 })"), .expected = "ValueError: CAD.config: resolution segments must be 0 (automatic) or 3 to 2048" },
-        .{ .src = comptime rescued("CAD.config(resolution: { segments: -5 })"), .expected = "ValueError: 'segments' must be a finite integer in [0, 4294967295], got -5" },
+        .{ .src = comptime rescued("CAD.config(resolution: { segments: -5 })"), .expected = "ValueError: 'segments' can't be negative, got -5" },
+        .{ .src = comptime rescued("CAD.config(resolution: { segments: 1e12 })"), .expected = "ValueError: 'segments' is too large, got 1000000000000" },
+        .{ .src = comptime rescued("CAD.config(max_vertices: Number::INFINITY)"), .expected = "ValueError: 'max_vertices' must be a finite number, got Infinity" },
         .{ .src = comptime rescued("CAD.config(resolution: { min_angle: 0 })"), .expected = "ValueError: CAD.config: resolution min_angle must be above 0 and at most 180 degrees" },
         .{ .src = comptime rescued("CAD.config(resolution: { min_length: -1 })"), .expected = "ValueError: CAD.config: resolution min_length must be a positive number" },
         .{ .src = comptime rescued("CAD.config(max_vertices: 0)"), .expected = "ValueError: CAD.config: max_vertices must be at least 1" },
