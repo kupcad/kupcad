@@ -68,6 +68,12 @@ const Server = struct {
             .{ "302 Found", "/loop" }
         else
             .{ "200 OK", "" };
+        // Bodies are read uncompressed, so nothing else is accepted.
+        while (true) {
+            const line = try reader.interface.takeDelimiterInclusive('\n');
+            if (std.mem.eql(u8, line, "\r\n")) break;
+            if (std.ascii.startsWithIgnoreCase(line, "accept-encoding:") and std.mem.indexOf(u8, line, "identity") == null) return error.CompressionRequested;
+        }
         var w_buf: [512]u8 = undefined;
         var writer = stream.writer(testing.io, &w_buf);
         const body = if (location.len == 0) "ok" else "";
@@ -112,4 +118,15 @@ test "HTTP client: Get stops after MAX_REDIRECTS" {
     try testing.expectError(error.TooManyHttpRedirects, get.send(&client, try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/loop", .{server.port})));
     server.stop(); // joins the server, so `served` is final
     try testing.expectEqual(http_client.MAX_REDIRECTS + 1, server.served);
+}
+
+test "HTTP client: HTTPS requests load the system's root certificates first" {
+    // Opening the connection ourselves (for the timeout) skipped std's own loading, so
+    // every HTTPS download panicked on the missing certificate time.
+    var client = std.http.Client{ .allocator = testing.allocator, .io = testing.io };
+    defer client.deinit();
+    try testing.expect(client.now == null);
+    try http_client.loadRootCertificates(&client);
+    try testing.expect(client.now != null);
+    try http_client.loadRootCertificates(&client); // once
 }
