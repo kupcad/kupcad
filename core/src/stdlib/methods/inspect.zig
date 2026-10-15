@@ -73,6 +73,7 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     try util.requirePositive(vm, search_length, "min_gap", "search_length");
     const handle = try vm.ensureConcrete(receiver);
     const other_handle = try vm.ensureConcrete(args[0]);
+    try vm.requireSameEngine(handle.engine, other_handle.engine); // the kernel answered 0
     try vm.requireFeature(handle.engine, .min_gap);
     return value.Value.initNumber(kernel.minGap(handle, other_handle, search_length));
 }

@@ -386,6 +386,8 @@ test "Stdlib: geometry keeps the settings it was made under, wherever it is eval
         .{ .src = "CAD.with_config(engine: :brep) do\n  cube(1)\nend\nr = cube(10).volume", .expected = .{ .num = 1000 } },
         // CAD.config changes the settings for what comes after it, not for what came before.
         .{ .src = "a = cube(10)\nCAD.config(engine: :brep)\nr = a.volume", .expected = .{ .num = 1000 } },
+        // Parts of two engines don't mix: min_gap answered 0.
+        .{ .src = "m = cube(1)\nb = nil\nCAD.with_config(engine: :brep) do\n  b = cube(1)\nend\n" ++ comptime rescued("m.min_gap(b)"), .expected = .{ .str = "GeometryError: can't combine manifold and brep geometry in one operation" } },
     });
 }
 
