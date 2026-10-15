@@ -110,8 +110,12 @@ pub fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs,
     defer main_chunk.free(allocator);
 
     var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
     comp.compile(doc.tree.root) catch |err| {
-        std.log.err("LSP Hover Compilation Error: {}", .{err});
+        // A chunk that didn't compile is incomplete, and running it broke the VM's
+        // invariants; the error is the document's diagnostic.
+        logger.debug("Hover: the document doesn't compile: {}", .{err});
+        return error.NoValue;
     };
 
     _ = vm.interpret(&main_chunk);
@@ -580,7 +584,7 @@ pub const Handler = struct {
         // LIVE SPATIAL EVALUATION
         // Silently execute and append live Markdown traits
         writeSpatialHover(arena, self.io, self.sandbox.vfs(), &doc, found_node_idx, &out.writer) catch |err| {
-            std.log.err("LSP Hover Evaluation Error: {}", .{err});
+            logger.debug("Hover: no value to show: {}", .{err});
         };
 
         // Add scope footer

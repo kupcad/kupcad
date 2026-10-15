@@ -195,3 +195,17 @@ test "LSP: edits are evaluated once, when the editor goes quiet" {
     try testing.expect(!server.handler.preview_pending);
     try testing.expectApproxEqAbs(@as(f64, 27.0), kernel.volume(server.session.nodes.items[0].cached_handle.?), 1e-9);
 }
+
+test "LSP: hovering a document that doesn't compile neither runs it nor logs an error" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+
+    // Assigning to a built-in is a compile error. The hover logged it as an error, then ran
+    // the half-compiled chunk, which crashed the VM (an assertion; undefined in release).
+    try server.open(URI, "cube = 5\nx = 1\n");
+    _ = server.handler.@"textDocument/hover"(server.arena.allocator(), .{
+        .textDocument = .{ .uri = URI },
+        .position = .{ .line = 1, .character = 0 },
+    });
+}
