@@ -14,6 +14,9 @@ pub const DEFAULT_PORT: u16 = 9001;
 pub const MAX_HANDSHAKE_BYTES: usize = 8 * 1024;
 /// Hard cap on simultaneous connections (handshaking + upgraded). Each costs two OS threads.
 pub const MAX_CLIENTS: usize = 8;
+/// How long a connection may take to finish its upgrade request before it is closed, so a
+/// socket that connects and sends nothing can't hold one of the MAX_CLIENTS slots for good.
+pub const HANDSHAKE_TIMEOUT_MS: i64 = 5000;
 /// Largest client->server frame we accept. The viewport only sends tiny control messages.
 pub const MAX_INCOMING_FRAME_BYTES: u64 = 64 * 1024;
 /// Port of the Vite dev server serving the webview in development (webview/vite.config.js).
@@ -233,6 +236,25 @@ const Client = struct {
         if (!was_closed) self.stream.shutdown(io, .both) catch {};
     }
 
+    /// Waits for the upgrade to complete. False if the connection closed first or the peer
+    /// took longer than the server's `handshake_timeout`, in which case it is closed here.
+    fn awaitUpgrade(self: *Client) bool {
+        const io = self.server.io;
+        const timeout: std.Io.Timeout = .{ .duration = .{ .raw = self.server.handshake_timeout, .clock = .awake } };
+        const deadline = timeout.toDeadline(io);
+        self.mutex.lockUncancelable(io);
+        while (!self.upgraded and !self.closed) {
+            self.cond.waitTimeout(io, &self.mutex, deadline) catch break;
+        }
+        const upgraded = self.upgraded and !self.closed;
+        self.mutex.unlock(io);
+        if (!upgraded and !self.closed) {
+            log.warn("Viewport connection closed: no upgrade request within {d} ms", .{self.server.handshake_timeout.toMilliseconds()});
+            self.markClosed();
+        }
+        return upgraded;
+    }
+
     fn post(self: *Client, frame: *SharedFrame) void {
         const io = self.server.io;
         self.mutex.lockUncancelable(io);
@@ -254,6 +276,8 @@ pub const ViewportWsServer = struct {
     mutex: std.Io.Mutex = .init,
     running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     listen_thread: ?std.Thread = null,
+    /// See HANDSHAKE_TIMEOUT_MS; tests shorten it.
+    handshake_timeout: std.Io.Duration = .fromMilliseconds(HANDSHAKE_TIMEOUT_MS),
 
     /// Binds 127.0.0.1:`port`. Pass 0 for an OS-assigned port; read `.port` for the result.
     pub fn init(allocator: std.mem.Allocator, io: std.Io, port: u16) !ViewportWsServer {
@@ -382,6 +406,15 @@ pub const ViewportWsServer = struct {
     }
 
     fn serveConnection(self: *ViewportWsServer, client: *Client) !void {
+        // The writer thread starts now and first waits for the upgrade, which also times out a
+        // handshake that never comes (this thread is blocked reading it).
+        client.retain();
+        const writer_thread = std.Thread.spawn(.{}, writerThread, .{client}) catch |err| {
+            client.release();
+            return err;
+        };
+        writer_thread.detach();
+
         var r_buf: [MAX_HANDSHAKE_BYTES]u8 = undefined;
         var reader_wrapper = client.stream.reader(self.io, &r_buf);
         const reader = &reader_wrapper.interface;
@@ -408,15 +441,9 @@ pub const ViewportWsServer = struct {
         try writer.flush();
 
         // The writer thread drains the mailbox; this thread keeps reading so we notice closes.
-        client.retain();
-        const writer_thread = std.Thread.spawn(.{}, writerThread, .{client}) catch |err| {
-            client.release();
-            return err;
-        };
-        writer_thread.detach();
-
         client.mutex.lockUncancelable(self.io);
         client.upgraded = true;
+        client.cond.broadcast(self.io);
         client.mutex.unlock(self.io);
         log.info("Viewport connected. Total active: {d}", .{self.clientCount()});
 
@@ -432,6 +459,7 @@ pub const ViewportWsServer = struct {
         defer client.release();
         defer client.markClosed();
         const io = client.server.io;
+        if (!client.awaitUpgrade()) return;
 
         var w_buf: [SOCKET_BUF_BYTES]u8 = undefined;
         var writer_wrapper = client.stream.writer(io, &w_buf);

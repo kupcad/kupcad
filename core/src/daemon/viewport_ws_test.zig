@@ -318,6 +318,33 @@ test "ViewportWs: connections are capped, slots are freed on close, deinit wakes
     server.deinit();
 }
 
+test "ViewportWs: a connection that never sends its upgrade request is closed" {
+    test_support.expectWarnings();
+    var server = try ViewportWsServer.init(testing.allocator, testing.io, 0);
+    defer server.deinit();
+    server.handshake_timeout = .fromMilliseconds(50);
+    try server.start();
+
+    // It used to hold its slot (one of MAX_CLIENTS, two threads) until it hung up.
+    var silent: TestClient = undefined;
+    try silent.open(server.port);
+    defer silent.close();
+    var dog = Watchdog{ .stream = silent.stream };
+    try dog.arm();
+    try testing.expectError(error.EndOfStream, silent.reader.interface.takeByte());
+    try dog.disarm();
+    try waitForClients(&server, 0);
+
+    // One that does upgrade in time stays open past the timeout.
+    var client: TestClient = undefined;
+    try client.open(server.port);
+    defer client.close();
+    _ = try client.handshake(browser_upgrade_request);
+    sleepMs(100);
+    var got: [1]u8 = undefined;
+    try receiveBroadcast(&server, &client, "!", &got);
+}
+
 test "ViewportWs: broadcast never blocks on a client that stopped reading" {
     const payload_bytes = 4 * 1024 * 1024; // far beyond kernel socket buffers
     const broadcasts = 8;
