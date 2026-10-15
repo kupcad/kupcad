@@ -8,6 +8,7 @@ const Handler = @import("lsp.zig").Handler;
 const documentPath = @import("lsp.zig").documentPath;
 const FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
+const kernel = @import("../kernel/kernel.zig");
 const ScriptSession = @import("../daemon/session.zig").ScriptSession;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
@@ -24,7 +25,7 @@ const Outbox = struct {
     }
 
     fn write(transport: *lsp.Transport, _: std.Io, json: []const u8) lsp.Transport.WriteError!void {
-        const self: *Outbox = @fieldParentPtr("transport", transport);
+        const self: *Outbox = @alignCast(@fieldParentPtr("transport", transport));
         const copy = testing.allocator.dupe(u8, json) catch @panic("OOM");
         self.messages.append(testing.allocator, copy) catch @panic("OOM");
     }
@@ -83,6 +84,11 @@ const Server = struct {
         });
     }
 
+    /// What the inbox does once the editor goes quiet.
+    fn settle(self: *Server) void {
+        if (self.handler.preview_pending) self.handler.evaluatePreview();
+    }
+
     fn close(self: *Server, uri: []const u8) !void {
         try self.handler.@"textDocument/didClose"(self.arena.allocator(), .{ .textDocument = .{ .uri = uri } });
     }
@@ -96,9 +102,14 @@ test "LSP: editing a document logs nothing above debug" {
     defer server.deinit();
 
     try server.open(URI, "cube(10)\n");
+    server.settle();
     try server.change(URI, "cube(\n"); // doesn't parse
+    server.settle();
     try server.change(URI, "undefined_thing(1)\n"); // doesn't run
+    server.session.vm.mute_errors = true; // its runtime error would print to the test log
+    server.settle();
     try server.change(URI, "cube(20)\n");
+    server.settle();
     try server.close(URI);
 }
 
@@ -164,6 +175,23 @@ test "LSP: a script that never ends doesn't hang the server" {
     server.session.vm.instruction_limit = 10_000;
     server.session.vm.mute_errors = true;
     try server.open(URI, "n = 0\nwhile true\n  n += 1\nend\n");
-    // Diagnostics were still published after the evaluation gave up.
-    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "publishDiagnostics") != null);
+    server.settle(); // returns: the evaluation gave up
+    try testing.expect(server.session.nodes.items[0].is_stale);
+}
+
+test "LSP: edits are evaluated once, when the editor goes quiet" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+
+    try server.open(URI, "cube(1)\n");
+    try server.change(URI, "cube(2)\n");
+    try server.change(URI, "cube(3)\n");
+    // Each keystroke used to evaluate the whole model before the next one was read.
+    try testing.expect(server.handler.preview_pending);
+    try testing.expect(server.session.nodes.items[0].cached_handle == null);
+
+    server.settle();
+    try testing.expect(!server.handler.preview_pending);
+    try testing.expectApproxEqAbs(@as(f64, 27.0), kernel.volume(server.session.nodes.items[0].cached_handle.?), 1e-9);
 }

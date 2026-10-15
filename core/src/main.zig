@@ -110,4 +110,5 @@ test {
     _ = @import("main_test.zig");
     _ = @import("cli/lsp.zig");
     _ = @import("cli/lsp_test.zig");
+    _ = @import("cli/lsp_inbox_test.zig");
 }

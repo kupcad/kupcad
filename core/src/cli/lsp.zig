@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const lsp = @import("lsp");
 const api = @import("../api.zig");
 const lsp_actions = @import("lsp_actions.zig");
+const lsp_inbox = @import("lsp_inbox.zig");
 const ast = @import("../core/ast.zig");
 const manifest = @import("../stdlib/manifest.zig");
 const VM = @import("../vm/vm.zig").VM;
@@ -275,6 +276,10 @@ pub const Handler = struct {
     mem_vfs: *MemoryVfs,
     /// Read-only VFS every LSP-run VM uses (session + hover).
     sandbox: *ReadOnlyVfs,
+    /// The document last edited, whose mesh the viewport shows (owned).
+    preview_uri: ?[]u8 = null,
+    /// An edit hasn't been evaluated yet.
+    preview_pending: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -299,7 +304,8 @@ pub const Handler = struct {
         };
     }
 
-    /// Replaces the module source in the session and re-evaluates, then streams the mesh.
+    /// Replaces the module source in the session; the preview of `uri` is evaluated once the
+    /// editor goes quiet (`evaluatePreview`, run by the inbox), not on every keystroke.
     /// Uses upsertModule: addModule returns error.DuplicateModule for known paths, and the old
     /// "catch -> patch source" path never ran, so the viewport kept rendering stale code.
     fn syncSession(self: *Handler, uri: []const u8, source: []const u8) !void {
@@ -310,17 +316,50 @@ pub const Handler = struct {
         try self.session.buildReverseGraph();
         try self.session.markFileEdited(uri);
 
+        const previewed = try self.allocator.dupe(u8, uri);
+        if (self.preview_uri) |old| self.allocator.free(old);
+        self.preview_uri = previewed;
+        self.preview_pending = true;
+    }
+
+    /// Evaluates the session and streams the edited document's mesh to the viewport. An edit
+    /// that arrives meanwhile cancels it (the inbox sets the VM's cancel token).
+    pub fn evaluatePreview(self: *Handler) void {
+        self.preview_pending = false;
+        const uri = self.preview_uri orelse return;
         // A script that doesn't parse, compile or run is the user's to fix, not a server fault.
-        self.session.evaluateWorkspace() catch |err| switch (err) {
-            error.ParseError, error.CompileError, error.RuntimeError => logger.debug("{s} did not evaluate: {}", .{ uri, err }),
-            else => logger.warn("Session evaluation failed: {}", .{err}),
+        self.session.evaluateUntilCancelled() catch |err| switch (err) {
+            error.ParseError, error.CompileError, error.RuntimeError, error.Cancelled => {
+                logger.debug("{s} did not evaluate: {}", .{ uri, err });
+                return;
+            },
+            else => {
+                logger.warn("Session evaluation failed: {}", .{err});
+                return;
+            },
         };
         if (self.ws_server) |ws| {
             ws.broadcastSessionMesh(self.session, uri) catch |err| logger.warn("Viewport broadcast failed: {}", .{err});
         }
     }
 
+    /// The preview as the inbox's slow work.
+    pub fn previewWork(self: *Handler) lsp_inbox.Work {
+        const Hooks = struct {
+            fn pending(context: *anyopaque) bool {
+                const handler: *Handler = @ptrCast(@alignCast(context));
+                return handler.preview_pending;
+            }
+            fn run(context: *anyopaque) void {
+                const handler: *Handler = @ptrCast(@alignCast(context));
+                handler.evaluatePreview();
+            }
+        };
+        return .{ .context = self, .pending = Hooks.pending, .run = Hooks.run, .cancel = &self.session.vm.cancel_token };
+    }
+
     pub fn deinit(self: *Handler) void {
+        if (self.preview_uri) |uri| self.allocator.free(uri);
         var it = self.files.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.deinit(self.allocator);
@@ -971,13 +1010,13 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !@import("o
     var handler = Handler.init(allocator, init.io, transport, &session, ws_server, &mem_vfs, &sandbox);
     defer handler.deinit();
 
-    try lsp.basic_server.run(
-        init.io,
-        allocator,
-        transport,
-        &handler,
-        logger.err,
-    );
+    // Messages come through the inbox, which evaluates the preview when the editor goes
+    // quiet, cancels a stale evaluation and drops cancelled requests (cli/lsp_inbox.zig).
+    var inbox = lsp_inbox.Inbox.init(allocator, init.io, transport, handler.previewWork());
+    try inbox.start();
+    defer inbox.deinit();
+
+    try lsp.basic_server.run(init.io, allocator, &inbox.transport, &handler, logger.err);
     return .success;
 }
 

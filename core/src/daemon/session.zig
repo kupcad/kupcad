@@ -185,8 +185,15 @@ pub const ScriptSession = struct {
 
     /// Step 3: Lazy Re-evaluation & Early Cutoff (Pull Phase)
     pub fn evaluateWorkspace(self: *ScriptSession) !void {
-        // Reset cancellation token at the start of a fresh evaluation
+        // A `cancel` from before this evaluation doesn't stop it.
         self.vm.cancel_token.store(false, .release);
+        return self.evaluateUntilCancelled();
+    }
+
+    /// `evaluateWorkspace` without clearing an earlier `cancel` first, for a host that clears
+    /// it itself under the lock it cancels under, so a cancel can't fall in between and be
+    /// lost (the LSP's inbox). A cancelled evaluation leaves the rest of the modules stale.
+    pub fn evaluateUntilCancelled(self: *ScriptSession) !void {
         self.clearFailure();
 
         const sorted = try self.workspace.sortModules();
