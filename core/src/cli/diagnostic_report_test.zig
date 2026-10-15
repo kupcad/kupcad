@@ -38,12 +38,14 @@ test "diagnostic_report: a zero-length span still gets one caret" {
     try testing.expect(std.mem.endsWith(u8, out.written(), "x = )\n    " ++ ansi.yellow ++ "^" ++ ansi.reset ++ "\n\n"));
 }
 
-test "diagnostic_report: sourceLine strips CR and handles out-of-range lines" {
+test "LineIndex: lineText strips CR and handles out-of-range lines" {
     const source = "one\r\ntwo\nthree";
-    try testing.expectEqualStrings("one", report.sourceLine(source, 1));
-    try testing.expectEqualStrings("two", report.sourceLine(source, 2));
-    try testing.expectEqualStrings("three", report.sourceLine(source, 3));
-    try testing.expectEqualStrings("", report.sourceLine(source, 9));
+    const line_index = try LineIndex.init(testing.allocator, source);
+    defer line_index.deinit(testing.allocator);
+    try testing.expectEqualStrings("one", line_index.lineText(source, 0));
+    try testing.expectEqualStrings("two", line_index.lineText(source, 1));
+    try testing.expectEqualStrings("three", line_index.lineText(source, 2));
+    try testing.expectEqualStrings("", line_index.lineText(source, 9));
 }
 
 test "diagnostic_report: the plain style writes no escape codes" {

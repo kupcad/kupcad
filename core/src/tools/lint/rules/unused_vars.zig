@@ -169,7 +169,7 @@ pub const UnusedVarsRule = struct {
         const allocator = engine.allocator;
         const new_name = try std.fmt.allocPrint(allocator, "_{s}", .{name});
         defer allocator.free(new_name);
-        if (containsIdentifier(engine.sourceText(), new_name)) return null;
+        if (try engine.sourceHasWord(new_name)) return null;
 
         const edits = try allocator.alloc(linter.Edit, binding.sites.items.len);
         var made: usize = 0;
@@ -182,20 +182,5 @@ pub const UnusedVarsRule = struct {
             made += 1;
         }
         return .{ .title = try std.fmt.allocPrint(allocator, "Rename '{s}' to '{s}'", .{ name, new_name }), .edits = edits, .safe = true };
-    }
-
-    /// Whether `name` occurs in `source` as a whole word.
-    fn containsIdentifier(source: []const u8, name: []const u8) bool {
-        var from: usize = 0;
-        while (std.mem.indexOfPos(u8, source, from, name)) |at| : (from = at + 1) {
-            const before_ok = at == 0 or !isWordByte(source[at - 1]);
-            const after = at + name.len;
-            if (before_ok and (after == source.len or !isWordByte(source[after]))) return true;
-        }
-        return false;
-    }
-
-    fn isWordByte(c: u8) bool {
-        return std.ascii.isAlphanumeric(c) or c == '_' or c >= 0x80;
     }
 };

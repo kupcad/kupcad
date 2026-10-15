@@ -187,6 +187,8 @@ pub const Linter = struct {
 
     // Token location lookup
     source: []const u8 = "",
+    /// Every word in `source`, built the first time a rule asks (sourceHasWord).
+    words: ?std.StringHashMapUnmanaged(void) = null,
     token_starts: []const u32 = &.{},
     token_lengths: []const u32 = &.{},
     file_id: u32 = 0,
@@ -204,6 +206,7 @@ pub const Linter = struct {
         for (self.scopes.items) |*s| s.deinit(self.allocator);
         self.scopes.deinit(self.allocator);
         self.closure_blocks.deinit(self.allocator);
+        if (self.words) |*w| w.deinit(self.allocator);
         self.rules.deinit(self.allocator);
         for (self.diagnostics.items) |d| d.deinit(self.allocator);
         self.diagnostics.deinit(self.allocator);
@@ -257,6 +260,28 @@ pub const Linter = struct {
     /// The source being checked, for rules whose fixes edit whole lines.
     pub fn sourceText(self: *const Linter) []const u8 {
         return self.source;
+    }
+
+    /// Whether `word` occurs in the source as a whole word (an identifier, or the same
+    /// letters anywhere else: a comment or a string counts, which errs on the safe side).
+    /// The words are collected once, so asking per finding stays linear in the file.
+    pub fn sourceHasWord(self: *Linter, word: []const u8) !bool {
+        if (self.words == null) {
+            var words: std.StringHashMapUnmanaged(void) = .empty;
+            errdefer words.deinit(self.allocator);
+            var start: ?usize = null;
+            for (self.source, 0..) |c, i| {
+                const in_word = std.ascii.isAlphanumeric(c) or c == '_' or c >= 0x80;
+                if (in_word and start == null) start = i;
+                if (!in_word) if (start) |s| {
+                    try words.put(self.allocator, self.source[s..i], {});
+                    start = null;
+                };
+            }
+            if (start) |s| try words.put(self.allocator, self.source[s..], {});
+            self.words = words;
+        }
+        return self.words.?.contains(word);
     }
 
     /// The bytes from token `first` to token `last`, widened to whole lines when nothing

@@ -61,7 +61,7 @@ pub fn write(w: *std.Io.Writer, r: Report, style: Style) std.Io.Writer.Error!voi
     try w.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}", .{ style.cyan, r.file_path, line, col, style.reset, sev_color, r.severity.toChar(), style.reset, r.message });
     if (r.rule) |rule| try w.print(" [{s}]", .{rule});
     try w.writeAll("\n");
-    try w.print("{s}\n", .{sourceLine(r.source, line)});
+    try w.print("{s}\n", .{r.line_index.lineText(r.source, line - 1)});
     try w.splatByteAll(' ', col - 1);
     try w.writeAll(sev_color);
     try w.splatByteAll('^', if (r.length > 0) r.length else 1);
@@ -85,14 +85,4 @@ pub fn writeErrors(w: *std.Io.Writer, allocator: std.mem.Allocator, file_path: [
         }, style);
     }
     return diagnostics.len;
-}
-
-/// The 1-based `target_line` of `source`, without its line ending ("" past the end).
-pub fn sourceLine(source: []const u8, target_line: u32) []const u8 {
-    var line_num: u32 = 1;
-    var iter = std.mem.splitScalar(u8, source, '\n');
-    while (iter.next()) |line| : (line_num += 1) {
-        if (line_num == target_line) return std.mem.trimEnd(u8, line, "\r");
-    }
-    return "";
 }

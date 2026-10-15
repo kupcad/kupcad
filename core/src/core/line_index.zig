@@ -47,21 +47,14 @@ pub const LineIndex = struct {
         return @intCast(left - 1);
     }
 
-    /// Extracts a specific line of text from the source code (1-based index)
-    pub fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
-        var line_num: u32 = 1;
-        var iter = std.mem.splitScalar(u8, source, '\n');
-        while (iter.next()) |line| {
-            if (line_num == target_line) {
-                var trimmed = line;
-                if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '\r') {
-                    trimmed = trimmed[0 .. trimmed.len - 1];
-                }
-                return trimmed;
-            }
-            line_num += 1;
-        }
-        return "";
+    /// The text of 0-based `line` of `source` (the text this index was built from), without
+    /// its line ending; "" past the end. Constant time: a report quotes one line per
+    /// finding, and scanning from the top each time made big reports quadratic.
+    pub fn lineText(self: *const LineIndex, source: []const u8, line: u32) []const u8 {
+        if (line >= self.line_starts.len) return "";
+        const start = self.line_starts[line];
+        const end = if (line + 1 < self.line_starts.len) self.line_starts[line + 1] else source.len;
+        return std.mem.trimEnd(u8, source[start..end], "\r\n");
     }
 
     /// Returns the 0-indexed UTF-8 byte column.
