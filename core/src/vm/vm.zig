@@ -1044,6 +1044,9 @@ pub const VM = struct {
 
                     // Push the closure to the stack BEFORE capturing upvalues to ensure GC safety
                     self.push(closure_val);
+                    closure.home = homeMethod(frame);
+                    closure.home_self = self.frameSelf(frame);
+                    closure.home_block = self.frameBlock(frame);
 
                     // Iterate over the operands to wire up the captured variables
                     for (0..func_obj.upvalue_count) |i| {
@@ -1154,6 +1157,7 @@ pub const VM = struct {
 
                     if (receiver_val.isClass()) {
                         receiver_val.asClass().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
+                        if (method.isClosure()) method.asClosure().home_class = receiver_val.asClass();
                     } else if (receiver_val.isModule()) {
                         receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
                     } else return .runtime_error;
@@ -1290,14 +1294,20 @@ pub const VM = struct {
                     };
                     const arg_count = call.count;
 
-                    const method_name_str = if (frame.closure.function.name) |n| n.chars else "";
-                    const method_name_val = if (frame.closure.function.name) |n| value.Value.initObj(&n.obj) else self.allocateString("") catch return .runtime_error;
+                    // The method this code belongs to, through blocks (the compiler rejects super
+                    // outside a def, so it exists).
+                    const home = homeMethod(frame) orelse return self.raiseError(.TypeError, "super can only be called inside a method", .{});
+                    const method_name_str = if (home.function.name) |n| n.chars else "";
+                    const method_name_val = if (home.function.name) |n| value.Value.initObj(&n.obj) else self.allocateString("") catch return .runtime_error;
 
                     const receiver = self.stack[base_slot];
 
                     if (receiver.isInstance()) {
                         const instance = receiver.asInstance();
-                        const superclass = instance.class.superclass orelse {
+                        // From above the class that defines the running method, not the receiver's
+                        // class: with C < B < A, B#foo's super on a C found B#foo again, forever.
+                        const defining = home.home_class orelse instance.class;
+                        const superclass = defining.superclass orelse {
                             return self.raiseError(.RuntimeError, "No superclass exists for receiver.", .{});
                         };
 
@@ -1336,9 +1346,7 @@ pub const VM = struct {
                     };
                     const yield_arg_count = yield_call.count;
 
-                    const expected_args = frame.closure.function.arity;
-                    const block_val = self.stack[frame.base_slot + expected_args + 1];
-
+                    const block_val = self.frameBlock(frame);
                     if (!block_val.isClosure()) {
                         if (self.raiseError(.ArgumentError, "No block given to yield.", .{}) != .ok) return .runtime_error;
                         continue;
@@ -1380,9 +1388,7 @@ pub const VM = struct {
                     self.push(result);
                 },
                 .op_block_given => {
-                    const expected_args = frame.closure.function.arity;
-                    const block_val = self.stack[frame.base_slot + expected_args + 1];
-                    self.push(value.Value.initBool(block_val.isClosure()));
+                    self.push(value.Value.initBool(self.frameBlock(frame).isClosure()));
                 },
                 .op_class_method, .op_class_method_wide => {
                     const name_val = self.readValueOperand(exec_chunk, frame, op == .op_class_method_wide);
@@ -1452,13 +1458,10 @@ pub const VM = struct {
                             current = cls.superclass;
                         }
 
-                        // If it's a new variable, bind it to the highest root class to ensure it is shared!
+                        // A new variable belongs to the class whose code assigns it (binding it to
+                        // the root class leaked it into every unrelated class).
                         if (!found) {
-                            var root = c;
-                            while (root.superclass) |sup| {
-                                root = sup;
-                            }
-                            target_class = root;
+                            target_class = if (homeMethod(frame)) |home| (home.home_class orelse c) else c;
                         }
 
                         target_class.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
@@ -2304,11 +2307,8 @@ pub const VM = struct {
         }
 
         // --- ENFORCE VISIBILITY ---
-        if (is_private_call) {
-            const current_self = self.stack[frame.base_slot];
-            if (!self.valuesEqual(receiver, current_self)) {
-                return self.raiseError(.NoMethodError, "private method '{s}' called.", .{method_name_str});
-            }
+        if (is_private_call and !self.privateCallAllowed(frame, receiver)) {
+            return self.raiseError(.NoMethodError, "private method '{s}' called.", .{method_name_str});
         }
 
         // Dispatch Method if Found
@@ -3299,6 +3299,39 @@ pub const VM = struct {
 
     pub fn findClassMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: value.Value) MethodLookupResult {
         return self.findMethodInternal(class, name, null, .class);
+    }
+
+    /// The method a frame's code is part of: the frame's own closure in a method, the
+    /// method a block or lambda was written in, null for top-level code.
+    fn homeMethod(frame: *const CallFrame) ?*value.ObjClosure {
+        const closure = frame.closure;
+        if (closure.function.is_method) return closure;
+        if (closure.function.is_lambda) return closure.home;
+        return null;
+    }
+
+    /// `self` as the code in `frame` sees it: a method's receiver, also from a block in it.
+    fn frameSelf(self: *const VM, frame: *const CallFrame) value.Value {
+        if (frame.closure.function.is_lambda) return frame.closure.home_self;
+        return self.stack[frame.base_slot];
+    }
+
+    /// The block a `yield` in `frame` calls: the method's own, also from a block in it.
+    fn frameBlock(self: *const VM, frame: *const CallFrame) value.Value {
+        const closure = frame.closure;
+        if (closure.function.is_method) return self.stack[frame.base_slot + closure.function.arity + 1];
+        if (closure.function.is_lambda) return closure.home_block;
+        return value.Value.initNil();
+    }
+
+    /// A private method may be called on `self`, or on any instance of the class the
+    /// running method was defined in (or a subclass), through blocks as well.
+    fn privateCallAllowed(self: *VM, frame: *const CallFrame, receiver: value.Value) bool {
+        if (self.valuesEqual(receiver, self.frameSelf(frame))) return true;
+        const home = homeMethod(frame) orelse return false;
+        const home_class = home.home_class orelse return false;
+        const receiver_class = self.getClass(receiver) orelse return false;
+        return isSubclassOf(receiver_class, home_class);
     }
 
     pub fn isSubclassOf(class: *value.ObjClass, superclass: *value.ObjClass) bool {

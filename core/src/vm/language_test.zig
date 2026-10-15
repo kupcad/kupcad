@@ -122,3 +122,45 @@ test "Language: split on an empty String and clamp with reversed bounds don't tr
         .{ .src = rescued("Math.clamp(5, Number::NAN, 0)"), .expected = .{ .str = "ArgumentError: Math.clamp needs its low bound first, got NaN and 0" } },
     });
 }
+
+test "Language: a block inside a method sees the method's block, self and class" {
+    // yield, block_given?, super and private calls in a block read the block's own frame,
+    // where slot 0 is the block and there is no block slot: "No block given", "super can
+    // only be called on instances", "private method called".
+    try expectScripts(&.{
+        .{ .src = "def each_doubled(xs)\n  xs.each { |x| yield x * 2 }\nend\nr = []\neach_doubled([1, 2]) { |v| r.push(v) }", .expected = .{ .nums = &.{ 2, 4 } } },
+        .{ .src = "def given\n  [1].map { block_given? }.first\nend\nr = \"#{given} #{given { }}\"", .expected = .{ .str = "false true" } },
+        .{ .src = "def g\n  f = ->() { yield 1 }\n  f.call\nend\nr = g { |v| v + 1 }", .expected = .{ .num = 2 } },
+        .{ .src = "class A\n  def foo(x)\n    x * 2\n  end\nend\nclass B < A\n  def foo(x)\n    [x].map { |y| super(y) }.first\n  end\nend\nr = B.new.foo(5)", .expected = .{ .num = 10 } },
+        .{ .src = "class K\n  private def helper\n    7\n  end\n  def run\n    [1].map { self.helper }.first\n  end\n  def other(o)\n    o.helper\n  end\nend\nr = K.new.run + K.new.other(K.new)", .expected = .{ .num = 14 } },
+        .{ .src = rescued("class K\n  private def helper\n    7\n  end\nend\nK.new.helper"), .expected = .{ .str = "NoMethodError: private method 'helper' called." } },
+    });
+}
+
+test "Language: super starts above the class that defines the running method" {
+    // It started above the receiver's class: with C < B < A, B#foo's super on a C found
+    // B#foo again, until the call stack overflowed.
+    try expectScripts(&.{
+        .{ .src = "class A\n  def foo\n    \"A\"\n  end\nend\nclass B < A\n  def foo\n    \"B\" + super\n  end\nend\nclass C < B\nend\nr = C.new.foo", .expected = .{ .str = "BA" } },
+        .{ .src = "class A\n  def foo\n    \"A\"\n  end\nend\nclass B < A\n  def foo\n    \"B\" + super\n  end\nend\nclass C < B\n  def foo\n    \"C\" + super\n  end\nend\nr = C.new.foo", .expected = .{ .str = "CBA" } },
+    });
+}
+
+test "Language: a new class variable belongs to the class that assigns it" {
+    // It was bound to the root class, so A's @@x was visible from an unrelated B.
+    try expectScripts(&.{
+        .{ .src = rescued("class A\n  def self.set\n    @@x = 1\n  end\nend\nclass B\n  def self.get\n    @@x\n  end\nend\nA.set\nB.get"), .expected = .{ .str = "NameError: Undefined class variable '@@x'." } },
+        .{ .src = "class A\n  def set\n    @@x = 1\n  end\n  def self.get\n    @@x\n  end\nend\nclass B < A\nend\nB.new.set\nr = A.get + B.get", .expected = .{ .num = 2 } },
+    });
+}
+
+test "Language: yield, block_given? and super outside a method are compile errors" {
+    // A top-level yield read a stale stack slot above the frame and called whatever the
+    // previous statement had left there.
+    const support_mod = @import("../test_support.zig");
+    for ([_][]const u8{ "yield", "r = block_given?", "super", "f = ->() { yield 1 }\nf.call", "def m\n  [1].each { super }\nend" }) |src| {
+        var vm = try support_mod.initVm();
+        defer vm.deinit();
+        try testing.expectError(error.OutsideMethod, support_mod.runOn(&vm, src));
+    }
+}

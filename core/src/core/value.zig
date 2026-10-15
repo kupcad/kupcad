@@ -124,6 +124,8 @@ pub const ObjFunction = struct {
     owns_chunk: bool,
     /// A lambda or block: a value, called with `.call(...)`. A `def` is called by name.
     is_lambda: bool,
+    /// A `def`. Neither this nor `is_lambda`: a script's or module's top-level code.
+    is_method: bool,
     /// Top-level scope this function's global reads/writes go to: null for the main
     /// script (VM.globals), otherwise the namespace of the imported module it came from.
     namespace: ?*Namespace,
@@ -169,6 +171,16 @@ pub const ObjClosure = struct {
     obj: Obj,
     function: *ObjFunction,
     upvalues: [*]?*ObjUpvalue,
+    /// A method's: the class it was defined in (set when `def` binds it), so `super`
+    /// starts above that class and a private call is allowed from inside it.
+    home_class: ?*ObjClass,
+    /// A block's or lambda's: the method it was written in (null at top level), and that
+    /// method's receiver and block, so `yield`, `super`, `self` and a private call inside
+    /// the block mean what they mean in the method. They used to read the block's own
+    /// frame, where slot 0 is the block and the block slot is empty.
+    home: ?*ObjClosure,
+    home_self: Value,
+    home_block: Value,
 };
 
 pub const ObjClass = struct {

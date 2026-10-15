@@ -787,6 +787,7 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     parent_func.chunk = parent_chunk;
     parent_func.owns_chunk = false;
     parent_func.arity = 0; // Expects 0 positional args
+    parent_func.is_method = true; // a def: yield reads its own block slot
 
     // 3. Main script: do_yield() { |x| x * 2 }
     var main_chunk = chunk.Chunk.init();
@@ -839,6 +840,7 @@ test "Compiler: compiles block_given? and yield intrinsics natively" {
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
+    comp.is_method = true; // both intrinsics are only valid inside a def
     try comp.compile(bg_call);
     try comp.compile(yield_call);
 
@@ -6266,15 +6268,17 @@ test "VM: attr_accessor, attr_reader, attr_writer macro expansion" {
     try testing.expectEqualStrings("shh", @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()))).chars);
 }
 
-test "VM: Private method called on different instance of same class fails" {
+test "VM: Private method called on another instance of the same class is allowed" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
+    // Inside the class, a private method may be called on any instance of it (it used to
+    // require the receiver to be `self`, which the docs never promised).
     const source =
         \\class Account
         \\  def initialize(bal) @bal = bal end
         \\  def compare(other)
-        \\    other.balance # Calling private method on another instance!
+        \\    other.balance
         \\  end
         \\  private def balance() @bal end
         \\end
@@ -6294,7 +6298,7 @@ test "VM: Private method called on different instance of same class fails" {
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.runtime_error, result);
+    try testing.expectEqual(.ok, result);
 }
 
 test "VM: Private class methods encapsulated on class object" {

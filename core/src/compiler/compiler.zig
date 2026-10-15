@@ -38,6 +38,8 @@ pub const CompileError = error{
     AstTooDeep,
     TooManyParameters,
     TooManyInlineCaches,
+    /// `yield`, `block_given?` or `super` where there is no method to refer to.
+    OutsideMethod,
 };
 
 /// The first error of a failed compile: where it happened and what went wrong, for callers
@@ -67,6 +69,7 @@ fn describeError(err: CompileError) []const u8 {
         error.UnexpectedBlock => "a call takes one block: a &block argument or a do/{ } block, not both",
         error.ProtectedSymbol => "a built-in name can't be redefined",
         error.VariableAlreadyDeclared => "this name is already defined",
+        error.OutsideMethod => "yield, block_given? and super are only valid inside a def",
         error.UnknownNode, error.UnsupportedScope, error.CorruptedBytecode => "internal compiler error",
     };
 }
@@ -400,10 +403,7 @@ pub const Compiler = struct {
         // `block_given?` without parentheses is the intrinsic too (it used to be looked up
         // as a variable: NameError). The other intrinsics need arguments, or (`yield`)
         // parse as a statement.
-        if (manifest.compiler_intrinsics.get(name_str) == .block_given_chk) {
-            try self.emitOp(.op_block_given);
-            return;
-        }
+        if (manifest.compiler_intrinsics.get(name_str) == .block_given_chk) return self.emitBlockGiven();
 
         const is_local = (self.resolveLocal(name_id) != null) or
             (sym.kind == .local);
@@ -1421,11 +1421,10 @@ pub const Compiler = struct {
                     self.simulatePush(1); // Dead code equilibrium
                     return;
                 },
-                .block_given_chk => {
-                    try self.emitOp(.op_block_given);
-                    return;
-                },
+                .block_given_chk => return self.emitBlockGiven(),
                 .yield_call => {
+                    // At top level it read a stale stack slot above the frame.
+                    if (!self.insideDef()) return self.fail(error.OutsideMethod, "yield can only be used inside a def", .{});
                     const call = try self.compileCallArguments(self.tree.getNamedArgs(mc.args), mc.block);
                     // yield calls the method's own block; it cannot hand that block one.
                     if (call.flags.has_block) return error.UnexpectedBlock;
@@ -1673,14 +1672,23 @@ pub const Compiler = struct {
         }
     }
 
+    /// `block_given?`, with or without parentheses: whether the enclosing method got a block.
+    fn emitBlockGiven(self: *Compiler) CompileError!void {
+        if (!self.insideDef()) return self.fail(error.OutsideMethod, "block_given? can only be used inside a def", .{});
+        try self.emitOp(.op_block_given);
+    }
+
     fn compileSuperCall(self: *Compiler, node: *const ast.Node) CompileError!void {
         const sc = self.tree.superCall(node);
-        try self.emitOp(.op_get_local);
-        try self.emitByte(0); // push `self`
+        if (!self.insideDef()) return self.fail(error.OutsideMethod, "super can only be used inside a def", .{});
+        // The method's receiver: in a block, through its self upvalue (slot 0 there is the block).
+        try self.emitPushSelf();
 
         var call: CallArgs = .{ .count = 0 };
 
         if (sc.implicit_args) {
+            // Only a method knows its own parameters; a block's would be forwarded instead.
+            if (!self.is_method) return self.fail(error.OutsideMethod, "super without arguments can't forward a block's; write super(...) with the arguments", .{});
             const func = self.function orelse return error.UnknownNode;
             const arity = func.arity;
 
@@ -2535,6 +2543,7 @@ pub const Compiler = struct {
         const func = try self.vm.gc.allocateFunction(self.vm);
         func.namespace = self.rootModuleNamespace();
         func.is_lambda = !is_method;
+        func.is_method = is_method;
 
         // Root the function immediately: it is reachable from nothing else until
         // it lands in our constant pool, and every allocation below (its name,

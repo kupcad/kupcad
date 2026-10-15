@@ -256,6 +256,7 @@ pub const GC = struct {
         ptr.chunk = null;
         ptr.owns_chunk = true;
         ptr.is_lambda = false;
+        ptr.is_method = false;
         ptr.namespace = null;
         return ptr;
     }
@@ -321,6 +322,10 @@ pub const GC = struct {
 
         ptr.function = function;
         ptr.upvalues = upvalues.ptr;
+        ptr.home_class = null;
+        ptr.home = null;
+        ptr.home_self = value.Value.initNil();
+        ptr.home_block = value.Value.initNil();
         return ptr;
     }
 
@@ -516,6 +521,10 @@ pub const GC = struct {
                 for (0..closure_obj.function.upvalue_count) |i| {
                     if (closure_obj.upvalues[i]) |u| self.markObject(&u.obj);
                 }
+                if (closure_obj.home_class) |c| self.markObject(&c.obj);
+                if (closure_obj.home) |h| self.markObject(&h.obj);
+                self.markValue(closure_obj.home_self);
+                self.markValue(closure_obj.home_block);
             },
             .upvalue => {
                 const upval: *value.ObjUpvalue = @alignCast(@fieldParentPtr("obj", obj));
