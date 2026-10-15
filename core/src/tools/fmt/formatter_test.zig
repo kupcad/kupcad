@@ -440,7 +440,7 @@ test "Formatter: a call without parentheses gets them, keeping what -1, *xs and 
     try expectFormat(source, expected);
 }
 
-test "Formatter: keeps the parentheses an expression needs, and only those" {
+test "Formatter: adds the parentheses the meaning needs, and keeps the author's" {
     // The AST keeps no grouping, and these used to print without it: `(1 + 2) * 3` as
     // `1 + 2 * 3`, `-(a + b)` as `-a + b`, `2 ** (1 + 1)` as `2 ** 1 + 1`.
     const source =
@@ -465,7 +465,14 @@ test "Formatter: keeps the parentheses an expression needs, and only those" {
         \\puts (1 + 2) * 3
         \\k = (a * b) + (c << 1)
     ;
-    const expected =
+    // Every parenthesis written stays; only a call's own (`puts (x)`) becomes the call's.
+    const kept = try std.mem.replaceOwned(u8, testing.allocator, source ++ "\n", "puts (1 + 2) * 3", "puts((1 + 2) * 3)");
+    defer testing.allocator.free(kept);
+    try expectFormat(source, kept);
+    try expectFormat(kept, kept);
+
+    // Without the redundant ones, it adds only what the meaning needs.
+    const minimal =
         \\x = (1 + 2) * 3
         \\y = -(a + b)
         \\z = a - b - (c - d)
@@ -488,9 +495,7 @@ test "Formatter: keeps the parentheses an expression needs, and only those" {
         \\k = a * b + (c << 1)
         \\
     ;
-    try expectFormat(source, expected);
-    // Formatting what it printed changes nothing: the output parses back to the same tree.
-    try expectFormat(expected, expected);
+    try expectFormat(minimal, minimal);
 }
 
 /// Formats `source` to `expected`, and formatting `expected` changes nothing.
@@ -624,4 +629,24 @@ test "Formatter: for loops print as KupCAD" {
 test "Formatter: number literals keep their spelling" {
     // `20.0` used to print as `20`, losing the author's choice; the value is the same.
     try expectFormat("w = 20.0\nn = 1_000\ne = 1e3\nm = -2.50\nh = 0.5 * w\n", "w = 20.0\nn = 1_000\ne = 1e3\nm = -2.50\nh = 0.5 * w\n");
+}
+
+test "Formatter: keeps the parentheses the author wrote, and adds the ones the meaning needs" {
+    try expectFormat(
+        \\a = d + (w * 2.0)
+        \\b = (x)
+        \\c = (1 + 2) * 3
+        \\e = -(a + b)
+        \\f = (a * b) + c
+        \\g = cube((10))
+        \\
+    ,
+        \\a = d + (w * 2.0)
+        \\b = (x)
+        \\c = (1 + 2) * 3
+        \\e = -(a + b)
+        \\f = (a * b) + c
+        \\g = cube(10)
+        \\
+    );
 }

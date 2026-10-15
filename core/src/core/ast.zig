@@ -349,6 +349,11 @@ pub const Tree = struct {
     rescue_clauses: std.ArrayListUnmanaged(RescueClause) = .empty,
     alias_pairs: std.ArrayListUnmanaged(AliasPair) = .empty,
 
+    /// The expressions written in parentheses, `(a + b)`. Nothing else is kept about
+    /// grouping (the nodes say what it means); the formatter uses this to print the
+    /// parentheses the author wrote.
+    grouped: std.AutoHashMapUnmanaged(NodeIndex, void) = .empty,
+
     pub fn init(allocator: std.mem.Allocator) Tree {
         _ = allocator;
         return .{};
@@ -371,6 +376,11 @@ pub const Tree = struct {
         self.lhs_exprs.deinit(allocator);
         self.rescue_clauses.deinit(allocator);
         self.alias_pairs.deinit(allocator);
+        self.grouped.deinit(allocator);
+    }
+
+    pub fn isGrouped(self: *const Tree, idx: NodeIndex) bool {
+        return self.grouped.contains(idx);
     }
 
     /// Safely extracts the StringId payload from a node
@@ -1004,6 +1014,11 @@ pub const Builder = struct {
 
     pub fn booleanNode(self: *Builder, val: bool, main_token: u24) !NodeIndex {
         return self.createNode(.boolean, main_token, if (val) 1 else 0);
+    }
+
+    /// Records that `idx` was written in parentheses (see Tree.grouped).
+    pub fn markGrouped(self: *Builder, idx: NodeIndex) !void {
+        try self.tree.grouped.put(self.allocator, idx, {});
     }
 
     pub fn nilNode(self: *Builder, main_token: u24) !NodeIndex {

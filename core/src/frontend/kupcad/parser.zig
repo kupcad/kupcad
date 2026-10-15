@@ -1797,6 +1797,7 @@ pub const Parser = struct {
             return ParseError.UnexpectedToken;
         }
         _ = try self.expect(.r_paren);
+        self.b.markGrouped(expr) catch return ParseError.OutOfMemory;
         return expr;
     }
 

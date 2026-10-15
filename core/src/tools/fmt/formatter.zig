@@ -192,7 +192,16 @@ pub const Formatter = struct {
 
     // --- Core Master Traversal ---
 
+    /// Prints a node, in the parentheses the author put around it (they used to be dropped
+    /// unless the meaning needed them: `d + (w * 2)` became `d + w * 2`).
     fn formatNode(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) Error!void {
+        if (!tree.isGrouped(node_idx)) return self.formatUngrouped(tree, node_idx);
+        try self.out.append(self.allocator, '(');
+        try self.formatUngrouped(tree, node_idx);
+        try self.out.append(self.allocator, ')');
+    }
+
+    fn formatUngrouped(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) Error!void {
         if (node_idx == .none) return;
         const node = tree.getNode(node_idx) orelse return;
         // Comments are placed by blocks only: a statement takes those up to its last line,
@@ -651,9 +660,10 @@ pub const Formatter = struct {
         };
     }
 
-    /// Prints an operand, in parentheses when it binds looser than `min`, its position needs.
+    /// Prints an operand, in parentheses when it binds looser than `min`, its position needs
+    /// (unless the author's own are there already).
     fn formatOperand(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex, min: Precedence) Error!void {
-        const wrap = @backingInt(bindingPower(tree, node_idx)) < @backingInt(min);
+        const wrap = @backingInt(bindingPower(tree, node_idx)) < @backingInt(min) and !tree.isGrouped(node_idx);
         if (wrap) try self.out.append(self.allocator, '(');
         try self.formatNode(tree, node_idx);
         if (wrap) try self.out.append(self.allocator, ')');
@@ -772,7 +782,8 @@ pub const Formatter = struct {
                     try self.out.appendSlice(self.allocator, arg_name);
                     try self.out.appendSlice(self.allocator, ": ");
                 }
-                try self.formatNode(tree, arg.value);
+                // The call's parentheses already hold it: `f((x))` is `f(x)`.
+                try self.formatUngrouped(tree, arg.value);
             }
             try self.out.append(self.allocator, ')');
         } else if (mc.receiver == .none and mc.block == .none) {
@@ -816,7 +827,8 @@ pub const Formatter = struct {
                     try self.out.appendSlice(self.allocator, arg_name);
                     try self.out.appendSlice(self.allocator, ": ");
                 }
-                try self.formatNode(tree, arg.value);
+                // The call's parentheses already hold it: `f((x))` is `f(x)`.
+                try self.formatUngrouped(tree, arg.value);
             }
             try self.out.append(self.allocator, ')');
         }
@@ -861,7 +873,8 @@ pub const Formatter = struct {
                     try self.out.appendSlice(self.allocator, arg_name);
                     try self.out.appendSlice(self.allocator, ": ");
                 }
-                try self.formatNode(tree, arg.value);
+                // The call's parentheses already hold it: `f((x))` is `f(x)`.
+                try self.formatUngrouped(tree, arg.value);
             }
             try self.out.append(self.allocator, ')');
         }
