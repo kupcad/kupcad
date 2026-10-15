@@ -1755,9 +1755,9 @@ pub const Compiler = struct {
                 try self.compileBlockLiteral(sc.block);
             }
             call = if (func.splat_pos != null)
-                .{ .count = 2, .flags = .{ .has_block = true, .spread = true } }
+                .{ .count = 2, .flags = .{ .has_block = true, .spread = true, .has_kwargs = func.has_kwargs } }
             else
-                .{ .count = @as(usize, arity) + 1, .flags = .{ .has_block = true } };
+                .{ .count = @as(usize, arity) + 1, .flags = .{ .has_block = true, .has_kwargs = func.has_kwargs } };
         } else {
             call = try self.compileCallArguments(self.tree.getNamedArgs(sc.args), sc.block);
         }
@@ -2354,7 +2354,10 @@ pub const Compiler = struct {
             }
         }
 
-        if (try self.compileKeywordArguments(args)) call.count += 1;
+        if (try self.compileKeywordArguments(args)) {
+            call.count += 1;
+            call.flags.has_kwargs = true;
+        }
 
         var block_arg: ast.NodeIndex = .none;
         for (args) |arg| {
@@ -2656,6 +2659,12 @@ pub const Compiler = struct {
         // Include the implicit block slot in the arity so the VM pads it with nil when omitted
         func.arity = @intCast(positional_count);
         func.splat_pos = splat_pos;
+        func.has_kwargs = has_kwargs;
+        var min_args: u8 = 0;
+        for (params) |p| {
+            if (p.modifier == null and !p.is_keyword and p.default_value == .none) min_args += 1;
+        }
+        func.min_args = min_args;
 
         const child_chunk = try self.allocator.create(chunk.Chunk);
         child_chunk.* = chunk.Chunk.init();

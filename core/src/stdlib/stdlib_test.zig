@@ -802,7 +802,9 @@ test "Stdlib: a *rest parameter that gets no arguments is empty" {
     try expectGlobalR(&.{
         .{ .src = "def g(*rest)\n  rest\nend\nr = g().length", .expected = .{ .num = 0 } },
         .{ .src = "def g(a, *rest)\n  rest\nend\nr = g(1).length", .expected = .{ .num = 0 } },
-        .{ .src = "def g(a, *rest)\n  [a.nil?, rest.length]\nend\nr = \"#{g()}\"", .expected = .{ .str = "[true, 0]" } },
+        // A def's required parameter stays required (a block's would be nil).
+        .{ .src = comptime rescued("def g(a, *rest)\n  [a.nil?, rest.length]\nend\ng()"), .expected = .{ .str = "ArgumentError: g takes at least 1 argument, got 0" } },
+        .{ .src = "f = ->(a, *rest) { [a.nil?, rest.length] }\nr = \"#{f.call}\"", .expected = .{ .str = "[true, 0]" } },
         .{ .src = "def g(*rest, last)\n  [rest.length, last]\nend\nr = g(1)", .expected = .{ .nums = &.{ 0, 1 } } },
         .{ .src = "def g(*rest, o: 1)\n  [rest.length, o]\nend\nr = g(o: 5)", .expected = .{ .nums = &.{ 0, 5 } } },
         .{ .src = "f = ->(*xs) { xs.length }\nr = f.call", .expected = .{ .num = 0 } },

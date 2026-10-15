@@ -1308,7 +1308,8 @@ pub const VM = struct {
 
                         if (resolved.method) |m_val| {
                             if (m_val.isClosure()) {
-                                self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false, call.has_block) catch return .runtime_error;
+                                const res = self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false, call.has_block, call.has_kwargs);
+                                if (res != .ok) return res;
                                 continue;
                             } else if (m_val.isNative()) {
                                 const args_ptr = self.stack.ptr + base_slot + 1;
@@ -1350,7 +1351,7 @@ pub const VM = struct {
 
                     // Safely propagate limits through native yields
                     const yield_depth = self.frames.items.len;
-                    const result = self.callClosureSync(block_closure, yield_args) catch |err| {
+                    const result = self.callClosureWith(block_closure, yield_args, yield_call.has_kwargs) catch |err| {
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
                         if (err == error.BlockBreak) {
                             self.popAndRelease(yield_arg_count);
@@ -1860,9 +1861,14 @@ pub const VM = struct {
         return null;
     }
 
-    inline fn padClosureFrame(self: *VM, closure: *value.ObjClosure, provided_args_in: usize, base_slot: usize, block_val_opt: ?value.Value) !void {
+    /// Lays out the frame of `closure` over the `provided_args_in` positional arguments
+    /// above `base_slot`: pads or trims them to the positional parameters (packing a splat),
+    /// then adds the keyword Map slot (when the function declares keywords; `kwargs_opt` is
+    /// the call's Map) and the block slot. The Map used to be found by looking at the last
+    /// argument, so a Map passed positionally landed in a later parameter's slot.
+    inline fn padClosureFrame(self: *VM, closure: *value.ObjClosure, provided_args_in: usize, base_slot: usize, kwargs_opt: ?value.Value, block_val_opt: ?value.Value) !void {
         var provided_args = provided_args_in;
-        const expected_args = closure.function.arity;
+        const expected_args = closure.function.arity - @intFromBool(closure.function.has_kwargs);
         // A splat parameter takes whatever is left, possibly nothing, so its slot is never
         // padded: `def g(*rest)` called with no arguments gets `[]`, not `[nil]`.
         const padded_args = if (closure.function.splat_pos != null) expected_args - 1 else expected_args;
@@ -1871,21 +1877,7 @@ pub const VM = struct {
         if (provided_args < padded_args) {
             const missing = padded_args - provided_args;
             try self.ensureStackCapacity(self.stack_top + missing);
-
-            // Trailing Map Heuristic for skipped Positional Defaults
-            if (provided_args > 0) {
-                const last_arg = self.stack[self.stack_top - 1];
-                if (last_arg.isMap()) {
-                    const map_val = self.pop();
-                    for (0..missing) |_| self.push(value.Value.initNil());
-                    self.push(map_val); // Shift the kwargs map to the end
-                } else {
-                    for (0..missing) |_| self.push(value.Value.initNil());
-                }
-            } else {
-                for (0..missing) |_| self.push(value.Value.initNil());
-            }
-
+            for (0..missing) |_| self.push(value.Value.initNil());
             provided_args = padded_args;
         } else if (provided_args > expected_args and closure.function.splat_pos == null) {
             const excess = provided_args - expected_args;
@@ -1899,11 +1891,13 @@ pub const VM = struct {
             const trailing_arity = expected_args - fixed_arity - 1;
             const splat_size = provided_args - fixed_arity - trailing_arity;
             // An empty splat still takes a slot, shifting the trailing arguments up by one.
-            try self.ensureStackCapacity(base_slot + 1 + fixed_arity + 1 + trailing_arity + 2);
+            try self.ensureStackCapacity(base_slot + 1 + fixed_arity + 1 + trailing_arity + 3);
 
-            // The caller popped the block into a Zig local, which the collector can't see:
-            // it is rooted here while the Array is allocated, then the Array is rooted
-            // while its storage is (the GC swept the block, and `yield` found none).
+            // The caller popped the keyword Map and the block into Zig locals, which the
+            // collector can't see: they are rooted here while the Array is allocated, then
+            // the Array is rooted while its storage is (the GC swept the block, and `yield`
+            // found none).
+            if (kwargs_opt) |kwargs| self.push(kwargs);
             if (block_val_opt) |block_val| self.push(block_val);
             const arr_obj = try self.gc.allocateArray(self);
             const arr_val = value.Value.initObj(&arr_obj.obj);
@@ -1911,6 +1905,7 @@ pub const VM = struct {
             try arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size);
             _ = self.pop();
             if (block_val_opt != null) _ = self.pop();
+            if (kwargs_opt != null) _ = self.pop();
 
             const start_idx = base_slot + 1 + fixed_arity;
             for (0..splat_size) |i| {
@@ -1935,11 +1930,12 @@ pub const VM = struct {
             self.stack_top = start_idx + 1 + trailing_arity;
         }
 
-        // Restore the implicit block slot
+        // The keyword Map slot, then the implicit block slot
+        try self.ensureStackCapacity(self.stack_top + 2);
+        if (closure.function.has_kwargs) self.push(kwargs_opt orelse value.Value.initNil());
         if (block_val_opt) |block_val| {
             self.push(block_val);
         } else {
-            try self.ensureStackCapacity(self.stack_top + 1);
             self.push(value.Value.initNil());
         }
 
@@ -1965,40 +1961,60 @@ pub const VM = struct {
 
     /// `has_block`: the last of the `arg_count` arguments is the call's block (see
     /// chunk.CallFlags); a trailing lambda without it is an ordinary argument.
-    pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize, is_constructor: bool, has_block: bool) !void {
+    /// `has_kwargs`: the argument before the block is the call's keyword Map.
+    pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize, is_constructor: bool, has_block: bool, has_kwargs: bool) InterpretResult {
         if (self.frames.items.len >= self.max_call_frames) {
             self.runtimeError("Runtime Error: Call stack overflow (exceeded max frame depth of {d}).\n", .{self.max_call_frames});
-            return error.RuntimeError;
+            return .runtime_error;
         }
-        try self.frames.ensureUnusedCapacity(self.allocator, 1);
+        self.frames.ensureUnusedCapacity(self.allocator, 1) catch return .runtime_error;
 
         var provided_args = arg_count;
         var block_val: ?value.Value = null;
+        var kwargs: ?value.Value = null;
 
         if (has_block) {
             block_val = self.pop();
             provided_args -= 1;
         }
+        if (has_kwargs) {
+            kwargs = self.pop();
+            provided_args -= 1;
+        }
+
+        const func = closure.function;
+        if (kwargs != null and !func.has_kwargs) {
+            return self.raiseError(.ArgumentError, "{s} takes no keyword arguments", .{self.closureName(closure)});
+        }
+        // A def takes the arguments it declares; a block or lambda is lenient (missing
+        // ones are nil, extra ones dropped), as documented.
+        if (func.is_method) if (self.arityError(closure, provided_args)) |res| return res;
 
         // Execute unified padding logic
-        try self.padClosureFrame(closure, provided_args, base_slot, block_val);
+        self.padClosureFrame(closure, provided_args, base_slot, kwargs, block_val) catch return .runtime_error;
 
         if (self.profiler) |p| {
-            const func_name = if (closure.function.name) |n| n.chars else "block";
-            p.enterFrame(func_name) catch |err| {
+            p.enterFrame(self.closureName(closure)) catch |err| {
                 std.log.err("Profiler error: {}", .{err});
             };
         }
 
-        try self.frames.append(self.allocator, .{
+        self.frames.appendAssumeCapacity(.{
             .closure = closure,
             .ip = 0,
             .base_slot = base_slot,
             .is_constructor = is_constructor,
         });
+        return .ok;
     }
 
     pub fn callClosureSync(self: *VM, closure: *value.ObjClosure, args: []const value.Value) !value.Value {
+        return self.callClosureWith(closure, args, false);
+    }
+
+    /// callClosureSync where `has_kwargs` says the last of `args` is the call's keyword
+    /// Map (a `yield x, key: v`), which goes to the block's keyword slot.
+    fn callClosureWith(self: *VM, closure: *value.ObjClosure, args: []const value.Value, has_kwargs: bool) !value.Value {
         if (self.frames.items.len >= self.max_call_frames) {
             self.runtimeError("Runtime Error: Call stack overflow (exceeded max frame depth of {d}).\n", .{self.max_call_frames});
             return error.RuntimeError;
@@ -2007,21 +2023,22 @@ pub const VM = struct {
 
         const target_depth = self.frames.items.len;
         const throw_seq = self.throw_seq;
-        const provided_args = args.len;
+        const positional = if (has_kwargs) args[0 .. args.len - 1] else args;
+        const kwargs: ?value.Value = if (has_kwargs) args[args.len - 1] else null;
         const expected_args = closure.function.arity;
 
-        // Ensure stack capacity for closure, args, padded nils, and the implicit null block
-        const total_pushes = 1 + @max(provided_args, expected_args) + 1;
+        // Ensure stack capacity for closure, args, padded nils, the keyword Map and the implicit null block
+        const total_pushes = 1 + @max(positional.len, expected_args) + 2;
         try self.ensureStackCapacity(self.stack_top + total_pushes);
 
         const base_slot = self.stack_top; // Record where the closure lands exactly
 
         self.push(value.Value.initObj(&closure.obj)); // closure itself
 
-        for (args) |arg| self.push(arg);
+        for (positional) |arg| self.push(arg);
 
-        // Native/C++ sync calls don't explicitly push block values, so pass null
-        try self.padClosureFrame(closure, provided_args, base_slot, null);
+        // A sync call passes no block; the keyword Map stays rooted in the caller's args
+        try self.padClosureFrame(closure, positional.len, base_slot, kwargs, null);
 
         if (self.profiler) |p| {
             const func_name = if (closure.function.name) |n| n.chars else "block";
@@ -2262,7 +2279,7 @@ pub const VM = struct {
         if (receiver.isClass()) {
             // A class's own `new` (such as Array.new) comes first; otherwise instantiate it.
             if (std.mem.eql(u8, method_name_str, "new") and receiver.asClass().class_methods.get(method_name_val) == null) {
-                return self.constructInstance(receiver.asClass(), arg_count, base_slot, call.has_block);
+                return self.constructInstance(receiver.asClass(), arg_count, base_slot, call.has_block, call.has_kwargs);
             }
 
             const resolved = self.findClassMethodWithPrivacy(receiver.asClass(), method_name_val);
@@ -2309,8 +2326,7 @@ pub const VM = struct {
             if (m_val.isNative()) {
                 return self.executeNative(m_val.asNative(), arg_count, args_ptr, call.has_block);
             } else if (m_val.isClosure()) {
-                self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false, call.has_block) catch return .runtime_error;
-                return .ok;
+                return self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false, call.has_block, call.has_kwargs);
             }
         }
 
@@ -2332,7 +2348,7 @@ pub const VM = struct {
 
         // --- `.call()` on a callable value (lambda, block, bound method) ---
         if (std.mem.eql(u8, method_name_str, "call") and (receiver.isClosure() or receiver.isBoundMethod())) {
-            return self.callValue(receiver, arg_count, base_slot, call.has_block);
+            return self.callValue(receiver, arg_count, base_slot, call.has_block, call.has_kwargs);
         }
 
         // --- 3. FALLBACK: NATIVE C++ KERNEL METHODS (Geometry) ---
@@ -2759,10 +2775,10 @@ pub const VM = struct {
         else
             null;
         if (value_kind) |kind| return self.raiseError(.TypeError, "{s} is called with .call(...), not like a function", .{kind});
-        return self.callValue(callee, call.count, base_slot, call.has_block);
+        return self.callValue(callee, call.count, base_slot, call.has_block, call.has_kwargs);
     }
 
-    const PreparedCall = struct { count: u8, has_block: bool };
+    const PreparedCall = struct { count: u8, has_block: bool, has_kwargs: bool };
     const CallArgsError = error{ InvalidBlock, TooManyArguments, OutOfMemory };
 
     /// Applies a call site's CallFlags to the `arg_count` values above `base_slot`: spreads
@@ -2782,7 +2798,7 @@ pub const VM = struct {
             }
         }
         if (flags.spread) count = try self.spreadPositionals(base_slot, count);
-        return .{ .count = @intCast(count), .has_block = has_block };
+        return .{ .count = @intCast(count), .has_block = has_block, .has_kwargs = flags.has_kwargs };
     }
 
     /// Replaces the positional Array at `base_slot + 1` with its elements, keeping the
@@ -2814,13 +2830,13 @@ pub const VM = struct {
 
     /// Calls `callee` (a function, lambda, bound method or class) with the `arg_count`
     /// arguments above it on the stack; `has_block`: the last of them is the call's block.
-    fn callValue(self: *VM, callee: value.Value, arg_count: u8, base_slot: usize, has_block: bool) InterpretResult {
+    fn callValue(self: *VM, callee: value.Value, arg_count: u8, base_slot: usize, has_block: bool, has_kwargs: bool) InterpretResult {
         if (callee.isBoundMethod()) {
             const bound = callee.asBoundMethod();
             self.stack.ptr[base_slot] = bound.receiver; // Load the actual receiver into the base slot
 
             if (bound.method.isClosure()) {
-                self.dispatchClosure(bound.method.asClosure(), arg_count, base_slot, false, has_block) catch return .runtime_error;
+                return self.dispatchClosure(bound.method.asClosure(), arg_count, base_slot, false, has_block, has_kwargs);
             } else if (bound.method.isNative()) {
                 // Same error protocol as any native call (a block raising inside it must unwind)
                 const args_ptr = self.stack.ptr + base_slot + 1;
@@ -2830,10 +2846,10 @@ pub const VM = struct {
             const args_ptr = self.stack.ptr + base_slot + 1;
             return self.executeNative(callee.asNative(), arg_count, args_ptr, has_block);
         } else if (callee.isClosure()) {
-            self.dispatchClosure(callee.asClosure(), arg_count, base_slot, false, has_block) catch return .runtime_error;
+            return self.dispatchClosure(callee.asClosure(), arg_count, base_slot, false, has_block, has_kwargs);
         } else if (callee.isClass()) {
             // `Klass(args)` is sugar for `Klass.new(args)`
-            return self.constructInstance(callee.asClass(), arg_count, base_slot, has_block);
+            return self.constructInstance(callee.asClass(), arg_count, base_slot, has_block, has_kwargs);
         } else if (arg_count == 0) {
             // Bare identifier evaluation of a non-callable value: leave value on stack
             return .ok;
@@ -2847,7 +2863,7 @@ pub const VM = struct {
     /// Instantiates `class_obj` for a call whose receiver sits at `base_slot` with
     /// `arg_count` arguments above it, running `initialize` (a closure or a native,
     /// e.g. Exception's) if the class has one. Leaves the instance at `base_slot`.
-    fn constructInstance(self: *VM, class_obj: *value.ObjClass, arg_count: u8, base_slot: usize, has_block: bool) InterpretResult {
+    fn constructInstance(self: *VM, class_obj: *value.ObjClass, arg_count: u8, base_slot: usize, has_block: bool, has_kwargs: bool) InterpretResult {
         if (class_obj.is_value_class) {
             const hint = if (class_obj == self.proc_class) "; KupCAD makes them with lambdas: ->(x) { ... }" else "";
             return self.raiseError(.NoMethodError, "undefined method 'new' for {s}{s}", .{ class_obj.name.chars, hint });
@@ -2863,8 +2879,7 @@ pub const VM = struct {
 
         if (init_method.isClosure()) {
             // is_constructor: op_return yields the instance, not initialize's last value
-            self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, true, has_block) catch return .runtime_error;
-            return .ok;
+            return self.dispatchClosure(init_method.asClosure(), arg_count, base_slot, true, has_block, has_kwargs);
         }
         if (!init_method.isNative()) return self.raiseError(.TypeError, "'{s}#initialize' is not callable.", .{class_obj.name.chars});
 
@@ -3057,7 +3072,7 @@ pub const VM = struct {
         if (err_val.isClass()) {
             const throw_seq = self.throw_seq;
             const depth = self.frames.items.len;
-            const res = self.constructInstance(err_val.asClass(), 0, self.stack_top - 1, false);
+            const res = self.constructInstance(err_val.asClass(), 0, self.stack_top - 1, false, false);
             if (res != .ok) return res;
             if (self.frames.items.len > depth) {
                 const init_res = self.runUntil(depth);
@@ -3393,6 +3408,29 @@ pub const VM = struct {
 
     pub fn findClassMethodWithPrivacy(self: *VM, class: *value.ObjClass, name: value.Value) MethodLookupResult {
         return self.findMethodInternal(class, name, null, .class);
+    }
+
+    /// What a closure is called in messages and the profiler.
+    fn closureName(self: *const VM, closure: *const value.ObjClosure) []const u8 {
+        _ = self;
+        return if (closure.function.name) |n| n.chars else "block";
+    }
+
+    /// A def called with the wrong number of positional arguments: the ArgumentError, or
+    /// null when the count fits. `def f(a, b = 1, *rest)` takes at least 1.
+    fn arityError(self: *VM, closure: *const value.ObjClosure, provided: usize) ?InterpretResult {
+        const func = closure.function;
+        const max: usize = func.arity - @intFromBool(func.has_kwargs);
+        const min: usize = func.min_args;
+        if (provided >= min and (func.splat_pos != null or provided <= max)) return null;
+        const name = self.closureName(closure);
+        if (func.splat_pos != null) return self.raiseError(.ArgumentError, "{s} takes at least {d} argument{s}, got {d}", .{ name, min, plural(min), provided });
+        if (min == max) return self.raiseError(.ArgumentError, "{s} takes {d} argument{s}, got {d}", .{ name, min, plural(min), provided });
+        return self.raiseError(.ArgumentError, "{s} takes {d} to {d} arguments, got {d}", .{ name, min, max, provided });
+    }
+
+    fn plural(count: usize) []const u8 {
+        return if (count == 1) "" else "s";
     }
 
     /// The method a frame's code is part of: the frame's own closure in a method, the

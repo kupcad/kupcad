@@ -273,3 +273,27 @@ test "Language: self in a class or module body is the namespace being defined" {
         .{ .src = "class A\n  def self.hello\n    \"hello\"\n  end\nend\nclass A\n  GREETING = self.hello\nend\nr = A::GREETING", .expected = .{ .str = "hello" } },
     });
 }
+
+test "Language: a def takes the arguments it declares" {
+    // Missing arguments were nil and extra ones dropped, as for a block; a Map that was
+    // the last argument was taken for keyword arguments and moved into the slot of a
+    // skipped parameter.
+    try expectScripts(&.{
+        .{ .src = rescued("def f(a, b)\n  a + b\nend\nf(1)"), .expected = .{ .str = "ArgumentError: f takes 2 arguments, got 1" } },
+        .{ .src = rescued("def f(a, b)\n  a + b\nend\nf(1, 2, 3)"), .expected = .{ .str = "ArgumentError: f takes 2 arguments, got 3" } },
+        .{ .src = "def g(a, b = 2)\n  a + b\nend\nr = [g(1), g(1, 5)]", .expected = .{ .nums = &.{ 3, 6 } } },
+        .{ .src = rescued("def g(a, b = 2)\n  a + b\nend\ng"), .expected = .{ .str = "ArgumentError: g takes 1 to 2 arguments, got 0" } },
+        .{ .src = "def h(a, *rest)\n  rest.length\nend\nr = h(1, 2, 3)", .expected = .{ .num = 2 } },
+        .{ .src = rescued("def h(a, *rest)\n  rest.length\nend\nh"), .expected = .{ .str = "ArgumentError: h takes at least 1 argument, got 0" } },
+        .{ .src = "def k(a, b: 2)\n  a + b\nend\nr = [k(1), k(1, b: 5)]", .expected = .{ .nums = &.{ 3, 6 } } },
+        .{ .src = rescued("def k(a, b: 2)\n  a + b\nend\nk(1, 2)"), .expected = .{ .str = "ArgumentError: k takes 1 argument, got 2" } },
+        .{ .src = rescued("def p(a)\n  a\nend\np(1, x: 2)"), .expected = .{ .str = "ArgumentError: p takes no keyword arguments" } },
+        .{ .src = "def q(m, n = 0)\n  m\nend\nr = q({ x: 1 })[:x]", .expected = .{ .num = 1 } },
+        .{ .src = "class P\n  def initialize(x)\n    @x = x\n  end\nend\n" ++ "r = begin\n  P.new\nrescue ArgumentError => e\n  e.message\nend", .expected = .{ .str = "initialize takes 1 argument, got 0" } },
+        // super forwards the keyword Map as keywords
+        .{ .src = "class A\n  def f(a, b: 2)\n    a + b\n  end\nend\nclass B < A\n  def f(a, b: 2)\n    super * 10\n  end\nend\nr = B.new.f(1, b: 5)", .expected = .{ .num = 60 } },
+        // Blocks and lambdas stay lenient, and get keywords through .call and yield.
+        .{ .src = "f = ->(a, b: 2) { a + b }\nr = [f.call(1), f.call(1, b: 5), f.call(1, 9, b: 5)]", .expected = .{ .nums = &.{ 3, 6, 6 } } },
+        .{ .src = "def y\n  yield 1, b: 5\nend\nr = y { |a, b: 2| a + b }", .expected = .{ .num = 6 } },
+    });
+}

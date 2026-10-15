@@ -126,6 +126,11 @@ pub const ObjFunction = struct {
     is_lambda: bool,
     /// A `def`. Neither this nor `is_lambda`: a script's or module's top-level code.
     is_method: bool,
+    /// Positional parameters without a default: the fewest arguments a def accepts.
+    min_args: u8,
+    /// Declares keyword parameters or `**opts`: the slot after the positionals (the last
+    /// of `arity`) holds the call's keyword Map.
+    has_kwargs: bool,
     /// Top-level scope this function's global reads/writes go to: null for the main
     /// script (VM.globals), otherwise the namespace of the imported module it came from.
     namespace: ?*Namespace,

@@ -257,6 +257,8 @@ pub const GC = struct {
         ptr.owns_chunk = true;
         ptr.is_lambda = false;
         ptr.is_method = false;
+        ptr.min_args = 0;
+        ptr.has_kwargs = false;
         ptr.namespace = null;
         return ptr;
     }

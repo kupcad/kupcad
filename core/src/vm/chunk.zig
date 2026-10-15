@@ -10,7 +10,10 @@ pub const CallFlags = packed struct(u8) {
     /// The positional arguments arrive packed in one Array (the call used `*splat`) and
     /// are spread onto the stack before dispatch.
     spread: bool = false,
-    _: u6 = 0,
+    /// The last argument before the block is the call's keyword Map (`f(x, key: 1)`).
+    /// Without it a trailing Map is an ordinary argument, never mistaken for keywords.
+    has_kwargs: bool = false,
+    _: u5 = 0,
 };
 
 /// The Virtual Machine Instruction Set
