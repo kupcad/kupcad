@@ -309,106 +309,62 @@ pub fn arraySum(vm: *VM, arr: *value.ObjArray) !value.Value {
     return value.Value.initNumber(sum);
 }
 
+/// How Array#sort orders two values: natively for Numbers or Strings, else by the block,
+/// which must give a Number (its sign). The block can raise or `break`, which a sort's
+/// comparator can't report, so the first such outcome is kept here and the sort finishes
+/// in whatever order; the native then raises (or returns the break value).
+const SortOrder = struct {
+    vm: *VM,
+    block: ?*value.ObjClosure,
+    failed: ?anyerror = null,
+    broke: ?value.Value = null,
+
+    fn lessThan(self: *SortOrder, a: value.Value, b: value.Value) bool {
+        if (self.failed != null or self.broke != null) return false;
+        return self.compare(a, b) catch |err| {
+            self.failed = err;
+            return false;
+        };
+    }
+
+    fn compare(self: *SortOrder, a: value.Value, b: value.Value) !bool {
+        if (self.block) |block| {
+            const res = switch (try callBlock(self.vm, block, &.{ a, b })) {
+                .broke => |v| {
+                    self.broke = v;
+                    return false;
+                },
+                .value => |v| v,
+            };
+            if (!res.isNumber()) {
+                _ = self.vm.raiseError(.TypeError, "sort block must return a Number (-1, 0, 1).", .{});
+                return error.RuntimeError;
+            }
+            return res.asNumber() < 0;
+        }
+        if (a.isNumber() and b.isNumber()) return a.asNumber() < b.asNumber();
+        if (a.isString() and b.isString()) return std.mem.order(u8, a.asString().chars, b.asString().chars) == .lt;
+        _ = self.vm.raiseError(.ArgumentError, "sort can't compare {s} with {s}; give it a block", .{ self.vm.typeName(a), self.vm.typeName(b) });
+        return error.RuntimeError;
+    }
+};
+
 /// Array#sort
-/// Sorts natively for Strings/Numbers, or uses a custom block
+/// A sorted copy: Numbers or Strings natively, anything with a block. (A hand-written
+/// quicksort kept its partitions in a 64-entry buffer and overran it on a few hundred
+/// already-sorted numbers; std.sort.pdq is bounded whatever the input.)
 pub fn arraySort(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !value.Value {
-    const items = arr.items.items;
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
 
-    // Allocate a NEW array to prevent in-place mutation
     const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj)); // Protect from GC
-    try new_arr.items.appendSlice(vm.gc.trackingAllocator(), items);
+    vm.push(value.Value.initObj(&new_arr.obj)); // Rooted while the block runs
+    try new_arr.items.appendSlice(vm.gc.trackingAllocator(), arr.items.items);
 
-    const new_items = new_arr.items.items;
-
-    if (new_items.len <= 1) {
-        _ = vm.pop();
-        return value.Value.initObj(&new_arr.obj);
-    }
-
-    // Iterative QuickSort
-    var stack: [64]usize = undefined;
-    var top: usize = 0;
-
-    stack[top] = 0;
-    top += 1;
-    stack[top] = new_items.len - 1;
-    top += 1;
-
-    while (top > 0) {
-        top -= 1;
-        const high = stack[top];
-        top -= 1;
-        const low = stack[top];
-
-        // Partitioning phase
-        const pivot = new_items[high];
-        var i = low;
-
-        var j = low;
-        while (j < high) : (j += 1) {
-            var cmp_val: f64 = 0;
-
-            if (block) |b| {
-                const res = try vm.callClosureSync(b, &.{ new_items[j], pivot });
-                if (!res.isNumber()) {
-                    _ = vm.raiseError(.TypeError, "sort block must return a Number (-1, 0, 1).", .{});
-                    return error.RuntimeError;
-                }
-                cmp_val = res.asNumber();
-            } else {
-                const a_val = new_items[j];
-                if (a_val.isNumber() and pivot.isNumber()) {
-                    const an = a_val.asNumber();
-                    const pn = pivot.asNumber();
-                    cmp_val = if (an < pn) -1.0 else if (an > pn) 1.0 else 0.0;
-                } else if (a_val.isString() and pivot.isString()) {
-                    const order = std.mem.order(u8, a_val.asString().chars, pivot.asString().chars);
-                    cmp_val = switch (order) {
-                        .lt => -1.0,
-                        .gt => 1.0,
-                        .eq => 0.0,
-                    };
-                } else {
-                    _ = vm.raiseError(.ArgumentError, "Cannot natively sort disparate types. Provide a block.", .{});
-                    return error.RuntimeError;
-                }
-            }
-
-            // If current element is smaller than or equal to pivot
-            if (cmp_val <= 0) {
-                const temp = new_items[i];
-                new_items[i] = new_items[j];
-                new_items[j] = temp;
-                i += 1;
-            }
-        }
-
-        // Swap pivot to its final correct position
-        const temp = new_items[i];
-        new_items[i] = new_items[high];
-        new_items[high] = temp;
-
-        const p = i;
-
-        // Push left side to stack
-        if (p > 0 and p - 1 > low) {
-            stack[top] = low;
-            top += 1;
-            stack[top] = p - 1;
-            top += 1;
-        }
-
-        // Push right side to stack
-        if (p + 1 < high) {
-            stack[top] = p + 1;
-            top += 1;
-            stack[top] = high;
-            top += 1;
-        }
-    }
-
-    _ = vm.pop(); // Pop new_arr
+    var order = SortOrder{ .vm = vm, .block = block };
+    std.sort.pdq(value.Value, new_arr.items.items, &order, SortOrder.lessThan);
+    if (order.failed) |err| return err;
+    if (order.broke) |v| return v;
     return value.Value.initObj(&new_arr.obj);
 }
 

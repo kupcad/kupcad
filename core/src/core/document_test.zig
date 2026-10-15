@@ -101,3 +101,22 @@ test "Diagnostics: a diagnostic that can't be stored is flagged, not lost silent
         try testing.expectEqual(@as(usize, 0), diags.list.items.len);
     }
 }
+
+test "Document: a source that isn't valid UTF-8 is one diagnostic, not a program" {
+    // Everything after the lexer assumed UTF-8: a string range or text() over a stray
+    // 0xFF did byte arithmetic on it and panicked.
+    var doc = try Document.parse(testing.allocator, "x = 1\ny = \"\xFF\"\n");
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 1), doc.diagnostics.len);
+    try testing.expectEqualStrings("the source isn't valid UTF-8 (byte 0xFF)", doc.diagnostics[0].message);
+    try testing.expectEqual(@as(u32, 11), doc.diagnostics[0].loc.offset);
+    try testing.expectEqual(@as(usize, 1), doc.tree.nodes.items.len); // the empty program
+
+    // A truncated sequence at the end, and valid multi-byte text.
+    var cut = try Document.parse(testing.allocator, "s = \"\xE2\x82");
+    defer cut.deinit();
+    try testing.expectEqual(@as(usize, 1), cut.diagnostics.len);
+    var fine = try Document.parse(testing.allocator, "s = \"héllo → ∞\"\n");
+    defer fine.deinit();
+    try testing.expectEqual(@as(usize, 0), fine.diagnostics.len);
+}

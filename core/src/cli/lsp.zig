@@ -184,7 +184,9 @@ pub const HoverRun = struct {
                 }
             } else |_| {}
         } else if (val.isString()) {
-            try writer.print("\n---\n*(String)* `\"{s}\"`\n", .{val.asString().chars});
+            try writer.writeAll("\n---\n*(String)* `");
+            try val.stringify(true, writer);
+            try writer.writeAll("`\n");
         } else if (val.isBool()) {
             try writer.print("\n---\n*(Boolean)* `{}`\n", .{val.asBool()});
         }

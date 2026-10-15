@@ -120,3 +120,8 @@ test "Text Engine: running out of memory fails the extraction instead of truncat
         break;
     }
 }
+
+test "Text: a String that isn't valid UTF-8 is an error, not an assertion" {
+    const face = try text.getFaceByName("sans");
+    try testing.expectError(error.InvalidUtf8, text.extractText(testing.allocator, &face, "A\xFFB", 10.0, 0.1, .left, .baseline));
+}

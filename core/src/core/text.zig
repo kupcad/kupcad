@@ -194,7 +194,9 @@ pub fn extractText(
     const GpaType = @typeInfo(@TypeOf(tatfi.Face.glyph_hor_advance)).@"fn".param_types[1].?;
     const gpa_val: GpaType = if (GpaType == void) {} else allocator;
 
-    var iter = std.unicode.Utf8Iterator{ .bytes = text_str, .i = 0 };
+    // Checked, not assumed: the iterator asserts on a malformed sequence.
+    const view = std.unicode.Utf8View.init(text_str) catch return error.InvalidUtf8;
+    var iter = view.iterator();
     while (iter.nextCodepoint()) |cp| {
         if (face.glyph_index(cp)) |glyph_id| {
             // Extract outlines and route to flattener

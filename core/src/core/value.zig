@@ -12,6 +12,9 @@ const MIN_PLAIN_MAGNITUDE = 1e-6;
 /// Ruby and Crystal switch at the same point.
 const MAX_PLAIN_MAGNITUDE = 1e16;
 
+/// Containers nested deeper than this print as `[...]`; see Printing.
+const MAX_STRINGIFY_DEPTH = 256;
+
 // --- NaN Tagging Constants ---
 const QNAN: u64 = 0x7FFC000000000000;
 const SIGN_BIT: u64 = 0x8000000000000000;
@@ -563,6 +566,10 @@ pub const Value = packed struct {
     }
 
     pub fn stringify(self: Value, is_inspect: bool, writer: *std.Io.Writer) !void {
+        return self.stringifyNested(is_inspect, writer, null);
+    }
+
+    fn stringifyNested(self: Value, is_inspect: bool, writer: *std.Io.Writer, up: ?*const Printing) !void {
         if (self.isNumber()) {
             try writer.print("{f}", .{fmtNumber(self.asNumber())});
         } else if (self.isBool()) {
@@ -575,7 +582,7 @@ pub const Value = packed struct {
                 .string => {
                     const str_obj: *ObjString = @alignCast(@fieldParentPtr("obj", obj));
                     if (is_inspect) {
-                        try writer.print("\"{s}\"", .{str_obj.chars});
+                        try writeQuoted(writer, str_obj.chars);
                     } else {
                         try writer.writeAll(str_obj.chars);
                     }
@@ -589,15 +596,17 @@ pub const Value = packed struct {
                 },
                 .array => {
                     const arr: *ObjArray = @alignCast(@fieldParentPtr("obj", obj));
+                    const here = Printing.enter(up, obj) orelse return writer.writeAll("[...]");
                     try writer.writeAll("[");
                     for (arr.items.items, 0..) |item, i| {
                         if (i > 0) try writer.writeAll(", ");
-                        try item.stringify(true, writer); // Force inspect mode for nested items
+                        try item.stringifyNested(true, writer, &here); // Force inspect mode for nested items
                     }
                     try writer.writeAll("]");
                 },
                 .map => {
                     const map: *ObjMap = @alignCast(@fieldParentPtr("obj", obj));
+                    const here = Printing.enter(up, obj) orelse return writer.writeAll("{...}");
                     try writer.writeAll("{");
                     const keys = map.map.keys();
                     const values = map.map.values();
@@ -607,10 +616,10 @@ pub const Value = packed struct {
                         if (key.isSymbol()) {
                             try writer.print("{s}: ", .{key.asSymbol().chars});
                         } else {
-                            try key.stringify(true, writer);
+                            try key.stringifyNested(true, writer, &here);
                             try writer.writeAll(" => ");
                         }
-                        try values[i].stringify(true, writer);
+                        try values[i].stringifyNested(true, writer, &here);
                     }
                     try writer.writeAll("}");
                 },
@@ -646,6 +655,51 @@ pub const Value = packed struct {
         }
     }
 };
+
+/// The containers being printed, outermost first, so one that holds itself (directly or
+/// through others) prints as `[...]` / `{...}`, as in Ruby: it recursed off the native
+/// stack. Nesting past MAX_STRINGIFY_DEPTH prints the same, for the same reason.
+const Printing = struct {
+    obj: *const Obj,
+    up: ?*const Printing,
+    depth: u32,
+
+    /// Null when `obj` is already being printed, or the nesting is too deep.
+    fn enter(up: ?*const Printing, obj: *const Obj) ?Printing {
+        const depth = if (up) |u| u.depth + 1 else 1;
+        if (depth > MAX_STRINGIFY_DEPTH) return null;
+        var cur = up;
+        while (cur) |p| : (cur = p.up) {
+            if (p.obj == obj) return null;
+        }
+        return .{ .obj = obj, .up = up, .depth = depth };
+    }
+};
+
+/// `s` as a script writes it: quoted, with the lexer's escapes for `"`, `\`, `#{` and
+/// control characters (`inspect` wrote the bytes raw, so `"say \"hi\""` came out as
+/// `"say "hi""`). A control character the lexer has no escape for is shown as `\xHH`.
+pub fn writeQuoted(writer: *std.Io.Writer, s: []const u8) !void {
+    try writer.writeByte('"');
+    for (s, 0..) |c, i| {
+        switch (c) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\t' => try writer.writeAll("\\t"),
+            '\r' => try writer.writeAll("\\r"),
+            0x0c => try writer.writeAll("\\f"),
+            0x0b => try writer.writeAll("\\v"),
+            0x08 => try writer.writeAll("\\b"),
+            0x07 => try writer.writeAll("\\a"),
+            0x1b => try writer.writeAll("\\e"),
+            0 => try writer.writeAll("\\0"),
+            '#' => try writer.writeAll(if (i + 1 < s.len and s[i + 1] == '{') "\\#" else "#"),
+            else => if (c < 0x20 or c == 0x7f) try writer.print("\\x{X:0>2}", .{c}) else try writer.writeByte(c),
+        }
+    }
+    try writer.writeByte('"');
+}
 
 /// A dynamic array of Values (used for the VM Stack and constants arrays).
 pub const ValueArray = std.ArrayListUnmanaged(Value);

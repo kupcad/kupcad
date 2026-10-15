@@ -48,6 +48,20 @@ pub fn stringSplit(vm: *VM, str: *value.ObjString, delim_obj: *value.ObjString) 
     const arr_obj = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&arr_obj.obj));
 
+    if (delim_str.len == 0) {
+        // Into its characters, as in Ruby (an empty delimiter tripped an assertion).
+        const view = std.unicode.Utf8View.init(str.chars) catch {
+            _ = vm.raiseError(.ValueError, "split: the String isn't valid UTF-8", .{});
+            return error.RuntimeError;
+        };
+        var chars = view.iterator();
+        while (chars.nextCodepointSlice()) |ch| {
+            const ch_val = try vm.allocateString(ch);
+            try arr_obj.items.append(vm.gc.trackingAllocator(), ch_val);
+        }
+        return value.Value.initObj(&arr_obj.obj);
+    }
+
     var iter = std.mem.splitSequence(u8, str.chars, delim_str);
     while (iter.next()) |part| {
         const part_val = try vm.allocateString(part);

@@ -4,6 +4,7 @@ const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 const util = @import("../methods/util.zig");
 const iteration = @import("iteration.zig");
+const number = @import("number.zig");
 
 const Exact = struct { at: f64, value: f64 };
 
@@ -279,8 +280,12 @@ fn log2(x: f64) f64 {
 fn log10(x: f64) f64 {
     return @log10(x);
 }
-fn clamp(v: f64, lo: f64, hi: f64) f64 {
-    return std.math.clamp(v, lo, hi);
+/// Math.clamp(v, lo, hi). The bounds are checked first: std.math.clamp asserts lo <= hi,
+/// which a script could trip (`Math.clamp(5, 10, 0)`, or a NaN bound).
+fn mathClamp(vm: *VM, receiver: value.Value, v: f64, lo: f64, hi: f64) !value.Value {
+    _ = receiver;
+    try number.requireOrdered(vm, "Math.clamp", lo, hi);
+    return result(vm, "Math.clamp", &.{ v, lo, hi }, std.math.clamp(v, lo, hi));
 }
 /// a + (b - a) * t
 fn lerp(a: f64, b: f64, t: f64) f64 {
@@ -322,7 +327,7 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "rad2deg", .func = math1(rad2deg, "Math.rad2deg") },
     .{ .name = "min", .func = mathExtremum(min, "Math.min") },
     .{ .name = "max", .func = mathExtremum(max, "Math.max") },
-    .{ .name = "clamp", .func = math3(clamp, "Math.clamp") },
+    .{ .name = "clamp", .func = common.wrapMethod(mathClamp) },
     .{ .name = "lerp", .func = math3(lerp, "Math.lerp") },
     .{ .name = "hypot", .func = common.wrapMethod(mathHypot) },
     .{ .name = "sign", .func = math1(sign, "Math.sign") },

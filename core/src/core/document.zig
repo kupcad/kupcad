@@ -34,14 +34,23 @@ pub const Document = struct {
         errdefer arena.deinit();
         const arena_alloc = arena.allocator();
 
-        var lexer = lexer_mod.Lexer.init(source, 0);
+        // Everything after the lexer takes the source for UTF-8 (string ranges and text()
+        // did byte arithmetic on it and tripped on a stray 0xFF), so a source that isn't
+        // is one diagnostic and no program.
+        const invalid_byte = firstInvalidUtf8(source);
+        const lexed = if (invalid_byte == null) source else source[0..0];
+
+        var lexer = lexer_mod.Lexer.init(lexed, 0);
         const tokens = try lexer.lexAll(arena_alloc);
 
-        var parser = try parser_mod.Parser.init(tokens, source, arena_alloc);
+        var parser = try parser_mod.Parser.init(tokens, lexed, arena_alloc);
         const root_index = parser.parseProgram() catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => .none,
         };
+        if (invalid_byte) |offset| {
+            parser.diagnostics.add(.{ .offset = @intCast(offset), .length = 1, .file_id = 0 }, "the source isn't valid UTF-8 (byte 0x{X:0>2})", .{source[offset]});
+        }
 
         var tree = parser.b.tree;
         tree.root = root_index;
@@ -81,6 +90,18 @@ pub const Document = struct {
 
     pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Document {
         return parseInternal(allocator, source, true);
+    }
+
+    /// The offset of the first byte that isn't part of a well-formed UTF-8 sequence, if any.
+    fn firstInvalidUtf8(source: []const u8) ?usize {
+        var i: usize = 0;
+        while (i < source.len) {
+            const len = std.unicode.utf8ByteSequenceLength(source[i]) catch return i;
+            if (i + len > source.len) return i;
+            _ = std.unicode.utf8Decode(source[i..][0..len]) catch return i;
+            i += len;
+        }
+        return null;
     }
 
     /// Only runs the Lexer and Parser. Does NOT run semantic resolution.

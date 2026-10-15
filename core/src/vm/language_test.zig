@@ -81,3 +81,44 @@ test "Language: a field read through a call site stays a field read" {
         .{ .src = "class P\n  def initialize\n    @x = 1\n  end\n  def set(v)\n    @x = v\n  end\nend\np = P.new\nq = P.new\nq.set(5)\nr = [p.x, q.x]", .expected = .{ .nums = &.{ 1, 5 } } },
     });
 }
+
+test "Language: sort is bounded whatever the input, and reports what it can't compare" {
+    // The hand-written quicksort overran its 64-entry partition buffer on a few hundred
+    // sorted numbers (index out of bounds; a buffer overrun in release).
+    try expectScripts(&.{
+        .{ .src = "s = (1..300).to_a.sort\nr = [s.first, s.last, s.size, s[149]]", .expected = .{ .nums = &.{ 1, 300, 300, 150 } } },
+        .{ .src = "s = (1..300).to_a.sort { |a, b| b <=> a }\nr = [s.first, s.last]", .expected = .{ .nums = &.{ 300, 1 } } },
+        .{ .src = "r = [3, 1, 2].sort", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = "r = [\"pear\", \"apple\", \"fig\"].sort.join(\",\")", .expected = .{ .str = "apple,fig,pear" } },
+        .{ .src = rescued("[1, \"a\"].sort"), .expected = .{ .str = "ArgumentError: sort can't compare String with Number; give it a block" } },
+        .{ .src = rescued("[2, 1].sort { |a, b| \"x\" }"), .expected = .{ .str = "TypeError: sort block must return a Number (-1, 0, 1)." } },
+        .{ .src = rescued("[2, 1].sort { |a, b| raise \"no\" }"), .expected = .{ .str = "RuntimeError: no" } },
+        .{ .src = "r = [2, 1, 3].sort { |a, b| break 7 }", .expected = .{ .num = 7 } },
+        // The receiver is left alone.
+        .{ .src = "a = [3, 1, 2]\na.sort\nr = a", .expected = .{ .nums = &.{ 3, 1, 2 } } },
+    });
+}
+
+test "Language: inspect prints a container that holds itself as [...], and escapes strings" {
+    try expectScripts(&.{
+        .{ .src = "a = [1]\na.push(a)\nr = a.inspect", .expected = .{ .str = "[1, [...]]" } },
+        .{ .src = "m = { a: 1 }\nm[:me] = m\nr = m.inspect", .expected = .{ .str = "{a: 1, me: {...}}" } },
+        .{ .src = "a = [1]\nb = [a]\na.push(b)\nr = \"#{a}\"", .expected = .{ .str = "[1, [[...]]]" } },
+        // 301 levels deep: the print stops at 256, as a cycle would.
+        .{ .src = "a = []\n300.times { a = [a] }\nr = a.inspect.length", .expected = .{ .num = 517 } },
+        .{ .src = "r = (\"say \\\"hi\\\"\" + \"\\n\\t\\\\\").inspect", .expected = .{ .str = "\"say \\\"hi\\\"\\n\\t\\\\\"" } },
+        .{ .src = "r = (\"a#\" + \"{b}\").inspect", .expected = .{ .str = "\"a\\#{b}\"" } },
+        .{ .src = "r = [\"x\\\"y\"].inspect", .expected = .{ .str = "[\"x\\\"y\"]" } },
+    });
+}
+
+test "Language: split on an empty String and clamp with reversed bounds don't trip asserts" {
+    try expectScripts(&.{
+        .{ .src = "r = \"abc\".split(\"\").join(\"|\")", .expected = .{ .str = "a|b|c" } },
+        .{ .src = "r = \"héllo\".split(\"\").length", .expected = .{ .num = 5 } },
+        .{ .src = "r = \"\".split(\"\").length", .expected = .{ .num = 0 } },
+        .{ .src = "r = Math.clamp(5, 0, 10) + Math.clamp(-1, 0, 10) + Math.clamp(99, 0, 10)", .expected = .{ .num = 15 } },
+        .{ .src = rescued("Math.clamp(5, 10, 0)"), .expected = .{ .str = "ArgumentError: Math.clamp needs its low bound first, got 10 and 0" } },
+        .{ .src = rescued("Math.clamp(5, Number::NAN, 0)"), .expected = .{ .str = "ArgumentError: Math.clamp needs its low bound first, got NaN and 0" } },
+    });
+}

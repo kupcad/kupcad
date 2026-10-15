@@ -2499,11 +2499,12 @@ pub const VM = struct {
                 const arr_val = value.Value.initObj(&arr_obj.obj);
                 self.push(arr_val); // Protect from GC while building
 
-                var curr = s_str[0];
-                const limit = if (is_exclusive) e_str[0] else e_str[0] + 1;
+                // Wider than a byte: `"\xFF"` as an end would overflow `+ 1`.
+                var curr: u16 = s_str[0];
+                const limit: u16 = if (is_exclusive) e_str[0] else @as(u16, e_str[0]) + 1;
 
                 while (curr < limit) : (curr += 1) {
-                    const char_slice = &[_]u8{curr};
+                    const char_slice = &[_]u8{@intCast(curr)};
                     const char_str = self.allocateString(char_slice) catch return .runtime_error;
                     arr_obj.items.append(self.gc.trackingAllocator(), char_str) catch return .runtime_error;
                 }

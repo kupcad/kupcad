@@ -559,9 +559,15 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
         _ = vm.raiseError(.RuntimeError, "Failed to load font '{s}'", .{font_name});
         return error.RuntimeError;
     };
-    var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, opts.halign, opts.valign) catch {
-        _ = vm.raiseError(.RuntimeError, "Failed to extract text contours", .{});
-        return error.RuntimeError;
+    var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, opts.halign, opts.valign) catch |err| switch (err) {
+        error.InvalidUtf8 => {
+            _ = vm.raiseError(.ValueError, "text: the String isn't valid UTF-8", .{});
+            return error.RuntimeError;
+        },
+        else => {
+            _ = vm.raiseError(.RuntimeError, "Failed to extract text contours", .{});
+            return error.RuntimeError;
+        },
     };
     defer polygons.deinit(alloc);
 

@@ -132,7 +132,8 @@ pub fn numberBetween(vm: *VM, receiver: value.Value, lo: f64, hi: f64) !value.Va
     return value.Value.initBool(lo <= n and n <= hi);
 }
 
-fn requireOrdered(vm: *VM, comptime name: []const u8, lo: f64, hi: f64) !void {
+/// `lo <= hi`, else an ArgumentError naming `name` (a NaN bound fails it too).
+pub fn requireOrdered(vm: *VM, comptime name: []const u8, lo: f64, hi: f64) !void {
     if (!(lo <= hi)) {
         _ = vm.raiseError(.ArgumentError, name ++ " needs its low bound first, got {f} and {f}", .{ value.fmtNumber(lo), value.fmtNumber(hi) });
         return error.RuntimeError;
