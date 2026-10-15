@@ -262,7 +262,11 @@ pub const ScriptSession = struct {
         errdefer if (new_handle) |h| kernel.destruct(h);
 
         var hasher = std.hash.Wyhash.init(0);
-        if (new_handle) |h| {
+        // An engine that can't measure the result answers zeros, which would hide every
+        // change, so its output is fingerprinted by the source instead.
+        const measurable = if (new_handle) |h| kernel.supports(h.engine, .bounding_box) and kernel.supports(h.engine, .volume) else false;
+        if (new_handle != null and measurable) {
+            const h = new_handle.?;
             if (kernel.boundingBox(h)) |bbox| {
                 hasher.update(std.mem.asBytes(&bbox.min));
                 hasher.update(std.mem.asBytes(&bbox.max));

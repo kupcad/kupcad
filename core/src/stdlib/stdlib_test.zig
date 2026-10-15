@@ -10,6 +10,7 @@ const kernel = @import("../kernel/kernel.zig");
 const limits = @import("../core/limits.zig");
 const ErrorKind = @import("../vm/error_kind.zig").ErrorKind;
 const engine_config = @import("../core/engine_config.zig");
+const test_support = @import("../test_support.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 
 const print = std.fmt.comptimePrint;
@@ -1278,6 +1279,69 @@ fn rescued(comptime src: []const u8) []const u8 {
     return "r = begin\n  " ++ src ++ "\n  \"no error\"\n" ++ RESCUE_BY_KIND ++ "end";
 }
 
+/// The error a B-Rep script gets for a feature the engine lacks.
+fn brepLacks(comptime feature: kernel.Feature) []const u8 {
+    return comptime "NotImplementedError: the brep engine can't " ++ feature.describe() ++ " yet; build this part with engine: :manifold";
+}
+
+test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a stand-in result" {
+    // Each of these used to answer 0, an empty or untouched solid, or a generic failure.
+    const cases = [_]struct { src: []const u8, expected: []const u8 }{
+        .{ .src = comptime rescued("cylinder(h: 10, r1: 5, r2: 2).simplify"), .expected = brepLacks(.cone) }, // was a plain cylinder
+        .{ .src = comptime rescued("square(10).extrude(5, twist: 90).simplify"), .expected = brepLacks(.extrude_twist) }, // was untwisted
+        .{ .src = comptime rescued("square(4).translate(5, 0).helix(h: 10).simplify"), .expected = brepLacks(.extrude_twist) },
+        .{ .src = comptime rescued("square(10).extrude(5, scale: 0.5).simplify"), .expected = brepLacks(.extrude_scale) }, // was untapered
+        .{ .src = comptime rescued("square(10).offset(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
+        .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
+        .{ .src = comptime rescued("cube(10).fillet_edges(1).simplify"), .expected = brepLacks(.minkowski) },
+        .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },
+        .{ .src = comptime rescued("cube(10).slice(5).extrude(1).simplify"), .expected = brepLacks(.slice) },
+        .{ .src = comptime rescued("cube(10).project.extrude(1).simplify"), .expected = brepLacks(.project) },
+        .{ .src = comptime rescued("cube(10).decompose"), .expected = brepLacks(.decompose) }, // was the whole solid as one part
+        .{ .src = comptime rescued("cube(10).volume"), .expected = brepLacks(.volume) }, // was 0
+        .{ .src = comptime rescued("cube(10).empty?"), .expected = brepLacks(.volume) }, // was true
+        .{ .src = comptime rescued("cube(10).surface_area"), .expected = brepLacks(.surface_area) },
+        .{ .src = comptime rescued("cube(10).genus"), .expected = brepLacks(.genus) },
+        .{ .src = comptime rescued("cube(10).bbox"), .expected = brepLacks(.bounding_box) }, // was all zeros
+        .{ .src = comptime rescued("cube(10).center"), .expected = brepLacks(.bounding_box) },
+        .{ .src = comptime rescued("square(10).bbox"), .expected = brepLacks(.sketch_measure) },
+        .{ .src = comptime rescued("cube(10).contains?([1, 1, 1])"), .expected = brepLacks(.contains_point) },
+        .{ .src = comptime rescued("square(10).contains?([5, 5])"), .expected = brepLacks(.contains_point) },
+        .{ .src = comptime rescued("cube(10).ray_cast([5, 5, -5], [5, 5, 15])"), .expected = brepLacks(.ray_cast) },
+        .{ .src = comptime rescued("cube(1).min_gap(cube(1).translate(5, 0, 0))"), .expected = brepLacks(.min_gap) },
+        .{ .src = comptime rescued("cube(10).on_face(:top)"), .expected = brepLacks(.faces) },
+        .{ .src = comptime rescued("square(4).translate(5, 0).revolve.simplify"), .expected = "NotImplementedError: the brep engine can't measure the profile to choose revolve's segments yet; pass segments:" },
+        // What it has keeps working.
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10).simplify"), .expected = "no error" },
+        .{ .src = comptime rescued("square(10).extrude(5).simplify"), .expected = "no error" },
+        .{ .src = comptime rescued("square(4).translate(5, 0).revolve(segments: 16).simplify"), .expected = "no error" },
+        .{ .src = comptime rescued("(cube(10) - cube(5)).simplify"), .expected = "no error" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "CAD.config(engine: :brep)"));
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        try testing.expectEqualStrings(case.expected, vm.globals.get("r").?.asString().chars);
+    }
+}
+
+test "Stdlib: a material on a B-Rep part is a warning, given once, not dropped silently" {
+    test_support.expectWarnings();
+    var vm = try initVm();
+    defer vm.deinit();
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "cube(10).material(color: \"#FF0000\").simplify"));
+    try testing.expect(!vm.warned_features.contains(.materials)); // Manifold keeps materials
+
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm,
+        \\CAD.config(engine: :brep)
+        \\a = cube(10).material(color: "#FF0000").simplify
+        \\b = cube(5).material(color: "#00FF00").simplify
+    ));
+    try testing.expect(vm.warned_features.contains(.materials));
+}
+
 test "Stdlib: geometry arguments reject non-number coordinates" {
     try expectAll(.runtime_error, &.{
         // The reported case, and every way a polygon point can be malformed.
@@ -1719,7 +1783,7 @@ test "Stdlib: Sketch#contains? tests the closed 2D region" {
     try expectGlobalR(&.{
         .{ .src = rescued("square(10).contains?([5])"), .expected = .{ .str = "ValueError: contains? expects the point to have 2 to 3 numbers, got 1" } },
         .{ .src = rescued("cube(10).contains?([5, 5])"), .expected = .{ .str = "ValueError: contains? expects the point to have 3 numbers, got 2" } },
-        .{ .src = "CAD.config(engine: :brep)\n" ++ comptime rescued("square(10).contains?([5, 5])"), .expected = .{ .str = "NotImplementedError: contains? is not supported for B-Rep sketches yet; build the sketch with the default Manifold engine" } },
+        .{ .src = "CAD.config(engine: :brep)\n" ++ comptime rescued("square(10).contains?([5, 5])"), .expected = .{ .str = "NotImplementedError: the brep engine can't test whether a point is inside (contains?) yet; build this part with engine: :manifold" } },
     });
 }
 
@@ -1730,7 +1794,7 @@ test "Stdlib: kernel failures and invalid meshes raise GeometryError instead of 
         .{ .src = tetra ++ comptime rescued("polyhedron(pts, [[0,1,2],[0,3,1],[0,2,3],[1,2,3]]).volume"), .expected = .{ .str = "GeometryError: polyhedron produced invalid geometry: the mesh is not a closed manifold (every edge must join exactly two faces, with consistent winding)" } },
         .{ .src = tetra ++ comptime rescued("polyhedron(pts, [[0,1,2],[0,3,1],[0,2,3],[0,1,2]]).volume"), .expected = .{ .str = "GeometryError: polyhedron produced invalid geometry: the mesh is not a closed manifold (every edge must join exactly two faces, with consistent winding)" } },
         // B-Rep offset is unimplemented; it used to return the unchanged sketch.
-        .{ .src = "CAD.config(engine: :brep)\n" ++ comptime rescued("square(10).offset(1).extrude(1).volume"), .expected = .{ .str = "GeometryError: offset failed: the geometry kernel could not compute a result" } },
+        .{ .src = "CAD.config(engine: :brep)\n" ++ comptime rescued("square(10).offset(1).extrude(1).simplify"), .expected = .{ .str = "NotImplementedError: the brep engine can't offset sketches yet; build this part with engine: :manifold" } },
         // An empty result is valid geometry, not a failure.
         .{ .src = "r = (cube(1) - cube(5, center: true)).volume", .expected = .{ .num = 0 } },
         .{ .src = "r = (cube(1) & cube(1).translate(x: 5)).volume", .expected = .{ .num = 0 } },

@@ -705,6 +705,12 @@ fn problemImpl(a: geom.GeometryHandle) ?[]const u8 {
     };
 }
 
+/// Manifold has every feature (kernel.Feature lists what an engine may lack).
+pub fn supports(feature: kernel.Feature) bool {
+    _ = feature;
+    return true;
+}
+
 pub const driver = struct {
     pub const problemFn = problemImpl;
     pub const cubeFn = cubeImpl;

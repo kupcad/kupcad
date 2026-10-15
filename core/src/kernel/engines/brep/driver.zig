@@ -703,8 +703,8 @@ fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
     return locus_bool.isPointInsideSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, pt, env);
 }
 
+/// Capped at `sl`, the search length, as Manifold's is: beyond it the gap is not looked for.
 fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
-    _ = sl;
     if (a.engine != .brep_native or b.engine != .brep_native) return 0.0;
     if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return 0.0;
 
@@ -712,7 +712,7 @@ fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
     const env = solid_a.env;
     const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
 
-    return locus_query.minGap(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id, env);
+    return @min(sl, locus_query.minGap(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id, env));
 }
 
 fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
@@ -797,6 +797,34 @@ fn cloneCrossSectionImpl(cs: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
 fn problemImpl(a: geom.GeometryHandle) ?[]const u8 {
     if (@intFromPtr(a.ptr) == 0) return "the kernel returned no solid";
     return null;
+}
+
+/// What Locus implements so far. Its other operations are still stubs that would answer
+/// 0, null or an empty solid, so callers turn these into errors (kernel.Feature).
+pub fn supports(feature: kernel.Feature) bool {
+    return switch (feature) {
+        .cone,
+        .extrude_twist,
+        .extrude_scale,
+        .offset,
+        .minkowski,
+        .trim_by_plane,
+        .slice,
+        .project,
+        .decompose,
+        .volume,
+        .surface_area,
+        .genus,
+        .bounding_box,
+        .sketch_measure,
+        .contains_point,
+        .ray_cast,
+        .min_gap,
+        .faces,
+        .mesh,
+        .materials,
+        => false,
+    };
 }
 
 pub const driver = struct {

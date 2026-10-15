@@ -6,6 +6,8 @@
 /// `{s}` is the operation's script name (dag.scriptName or the method name).
 pub const KERNEL_FAILED_FMT = "{s} failed: the geometry kernel could not compute a result";
 pub const INVALID_RESULT_FMT = "{s} produced invalid geometry: {s}";
+/// The engine's script name and what it can't do (kernel.Feature.describe).
+pub const UNSUPPORTED_FMT = "the {s} engine can't {s} yet; build this part with engine: :manifold";
 
 pub const ErrorKind = enum {
     RuntimeError,

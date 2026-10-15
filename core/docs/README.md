@@ -305,9 +305,19 @@ end
 ```
 
 * `resolution` is OpenSCAD's `$fn`, `$fa` and `$fs`. Curved shapes (`sphere`, `cylinder`, `circle`, `torus`, `fillet_edges`, `revolve`) take their segment count from it; `segments:` on a call overrides it for that call. Automatic counts are capped at 2048.
-* `tolerance` is the one distance tolerance: the B-Rep kernel welds points and sews faces within it, `manifold: { simplify_coplanar: true }` merges coplanar faces within it, and measurements such as `contains?` and `faces` use it.
+* `tolerance` is the one distance tolerance: the B-Rep kernel welds points and sews faces within it, `manifold: { simplify_coplanar: true }` merges coplanar faces within it, and measurements such as `contains?` and `on_face` use it.
 * A setting CAD.config doesn't have is an `ArgumentError` naming the ones it has, a value of the wrong type a `TypeError`, and a value the kernels can't use (a tolerance of 0, a 2-edge circle) a `ValueError`; nothing is applied then.
 * Results are cached per node *and* per setting that changes them, so the same part built under two tolerances or resolutions is built twice, not reused.
+
+### The B-Rep engine today
+
+`engine: :brep` (and every STEP export, which needs exact geometry) runs on Locus, KupCAD's own B-Rep kernel, which is still being written. It builds cubes, cylinders, spheres, polygons and polyhedra, straight extrusions, revolutions, booleans, hulls, lofts and transforms. Anything else is a `NotImplementedError` that names what is missing and suggests `engine: :manifold`, rather than a stand-in answer:
+
+* shapes: cones (`r1` different from `r2`), twisted or tapered extrusions (`twist:`, `scale:`, `helix`), `offset`, `minkowski` and `fillet_edges`, `trim_by_plane` and `split_by_plane`, `slice`, `project`, `decompose`;
+* measurements: `volume`, `surface_area`, `genus`, `empty?`, `bbox` and what uses it (`align`, `center`, `resize`), `contains?`, `ray_cast`, `min_gap`, `on_face`, and `revolve` without `segments:` (it measures the profile);
+* meshes: STL and glTF export, and the viewport.
+
+Materials are the exception: a B-Rep model is built without them, with one warning.
 
 ## 5. Geometry Modifiers & Sweeps
 

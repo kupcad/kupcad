@@ -120,7 +120,9 @@ pub fn buildGltfBuffer(
     var total_vertices: u32 = 0;
 
     for (handles) |handle| {
-        const mesh = kernel.getMesh(allocator, handle) orelse continue;
+        // A part the kernel can't mesh is an error: skipping it exported a model without it.
+        if (!kernel.supports(handle.engine, .mesh)) return error.EngineCannotTessellate;
+        const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
         defer allocator.free(mesh.vert_props);
         defer allocator.free(mesh.tri_verts);
 

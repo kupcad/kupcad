@@ -314,6 +314,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 },
                 .cylinder => {
                     const p = vm.dag_builder.getCylinderPayload(node);
+                    if (p.r1 != p.r2) try vm.requireFeature(config.engine, .cone);
                     const handle = kernel.cylinder(&config, p.r1, p.r2, p.height, p.center, p.segments) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
@@ -344,6 +345,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const right_handle = try geometryOf(right);
                     try checkSameEngine(vm, left_handle.engine, right_handle.engine);
                     if (node.tag == .minkowski) {
+                        try vm.requireFeature(left_handle.engine, .minkowski);
                         try checkEstimatedVertices(vm, node.tag, &.{ kernel.numVerts(left_handle), kernel.numVerts(right_handle) }, config.max_vertices);
                     }
 
@@ -415,7 +417,9 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getTrimByPlanePayload(node);
-                    const result = kernel.trimByPlane(try geometryOf(target), p.nx, p.ny, p.nz, p.offset) orelse return kernelFailed(vm, node.tag);
+                    const solid = try geometryOf(target);
+                    try vm.requireFeature(solid.engine, .trim_by_plane);
+                    const result = kernel.trimByPlane(solid, p.nx, p.ny, p.nz, p.offset) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
                 .hull => {
@@ -428,7 +432,9 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getMaterialPayload(node);
-                    const result = kernel.setMaterial(try geometryOf(target), p.material_id) orelse return kernelFailed(vm, node.tag);
+                    const solid = try geometryOf(target);
+                    vm.warnUnsupported(solid.engine, .materials);
+                    const result = kernel.setMaterial(solid, p.material_id) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
 
@@ -438,6 +444,8 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getExtrudePayload(node);
                     const profile = try crossSectionOf(target);
+                    if (p.twist_degrees != 0) try vm.requireFeature(profile.engine, .extrude_twist);
+                    if (p.scale_x != 1 or p.scale_y != 1) try vm.requireFeature(profile.engine, .extrude_scale);
                     // A copy of the profile at the bottom, the top and each slice between.
                     try checkEstimatedVertices(vm, node.tag, &.{ kernel.crossSectionNumVerts(profile), @as(usize, @intCast(@max(p.slices, 0))) + 2 }, config.max_vertices);
                     const result = kernel.extrude(profile, p.height, p.slices, p.twist_degrees, p.scale_x, p.scale_y) orelse return kernelFailed(vm, node.tag);
@@ -527,13 +535,17 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getSlicePayload(node);
-                    const handle = kernel.slice(try geometryOf(target), p.height) orelse return kernelFailed(vm, node.tag);
+                    const solid = try geometryOf(target);
+                    try vm.requireFeature(solid.engine, .slice);
+                    const handle = kernel.slice(solid, p.height) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .project_op => {
                     const target = v_stack.pop();
                     defer v_stack.release(target);
-                    const handle = kernel.project(try geometryOf(target)) orelse return kernelFailed(vm, node.tag);
+                    const solid = try geometryOf(target);
+                    try vm.requireFeature(solid.engine, .project);
+                    const handle = kernel.project(solid) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
 
@@ -542,7 +554,9 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getOffsetPayload(node);
-                    const handle = kernel.offset(try crossSectionOf(target), p.delta, p.join_type) orelse return kernelFailed(vm, node.tag);
+                    const sketch = try crossSectionOf(target);
+                    try vm.requireFeature(sketch.engine, .offset);
+                    const handle = kernel.offset(sketch, p.delta, p.join_type) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .cs_transform => {

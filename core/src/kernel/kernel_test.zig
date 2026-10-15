@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const kernel = @import("kernel.zig");
+const test_support = @import("../test_support.zig");
 const geom = @import("geometry_handle.zig");
 const VM = @import("../vm/vm.zig").VM;
 const InterpretResult = @import("../vm/vm.zig").InterpretResult;
@@ -66,22 +67,19 @@ test "Kernel Dispatcher: rejects mixed-engine operands at runtime" {
 
 // --- Handle ownership (single-owner rule) ---
 
-test "Kernel: B-Rep scripts using material/decompose/simplify do not double free" {
+test "Kernel: B-Rep scripts using material/simplify do not double free" {
     // B-Rep drivers used to return their input handle, so both owners freed it.
+    // (`simplify` evaluates its receiver, which the B-Rep engine can do.)
+    test_support.expectWarnings(); // B-Rep drops the material, and says so
     try testing.expectEqual(InterpretResult.ok, try runScript(
         \\CAD.config(engine: :brep)
         \\part = cube(10).material(color: "#FF0000")
-        \\part.volume
-    ));
-    try testing.expectEqual(InterpretResult.ok, try runScript(
-        \\CAD.config(engine: :brep)
-        \\part = cube(10).decompose[0]
-        \\part.volume
+        \\part.simplify
     ));
     try testing.expectEqual(InterpretResult.ok, try runScript(
         \\CAD.config(engine: :brep)
         \\part = cube(10).simplify
-        \\part.volume
+        \\part.simplify
     ));
 }
 

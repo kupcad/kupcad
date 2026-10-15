@@ -55,3 +55,10 @@ test "STL: ASCII files are read too" {
     try testing.expectEqual(@as(usize, 3), mesh.points.len);
     try testing.expectEqual([3]u32{ 0, 1, 2 }, mesh.faces[0]);
 }
+
+test "STL: an engine that can't tessellate yet is an error, not an empty file" {
+    const kernel = @import("../../kernel/kernel.zig");
+    const part = kernel.cube(&.{ .engine = .brep_native }, 10, 10, 10, false) orelse return error.KernelFailed;
+    defer kernel.destruct(part);
+    try testing.expectError(error.EngineCannotTessellate, stl.buildStlBuffer(testing.allocator, part));
+}

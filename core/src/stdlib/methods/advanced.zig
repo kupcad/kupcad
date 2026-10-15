@@ -87,6 +87,7 @@ pub fn meshProject(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Va
 
 pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !value.Value {
     const handle = try vm.ensureConcrete(value.Value.initGeometry(receiver));
+    try vm.requireFeature(handle.engine, .faces);
 
     var direction = [3]f64{ 0, 0, 1 };
 
@@ -194,6 +195,7 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
 pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "decompose", receiver);
     const handle = try vm.ensureConcrete(receiver); // Eager!
+    try vm.requireFeature(handle.engine, .decompose);
     // `handle` is borrowed from the DAG cache; `parts` are new handles we own.
     const parts = kernel.decompose(vm.allocator, handle) orelse {
         _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"decompose"});

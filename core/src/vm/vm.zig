@@ -3,7 +3,8 @@ const builtin = @import("builtin");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
 const dag = @import("dag.zig");
-pub const ErrorKind = @import("error_kind.zig").ErrorKind;
+const error_kind = @import("error_kind.zig");
+pub const ErrorKind = error_kind.ErrorKind;
 const verifier = @import("verifier.zig");
 const limits = @import("../core/limits.zig");
 const value = @import("../core/value.zig");
@@ -180,6 +181,8 @@ pub const VM = struct {
     // frame_count of the rescuing frame for the latest throw, null if it was uncaught.
     last_throw_target: ?usize = null,
 
+    /// Features already warned about (warnUnsupported), so each is reported once per run.
+    warned_features: std.EnumSet(kernel.Feature) = .empty,
     /// CAD.with_config pushes, CAD.config changes the top; never empty. Read it via `config`.
     config_stack: std.ArrayListUnmanaged(EngineConfig) = .empty,
 
@@ -1699,6 +1702,21 @@ pub const VM = struct {
         var it = self.dag_cache.valueIterator();
         while (it.next()) |cached| kernel.destruct(cached.handle);
         self.dag_cache.clearRetainingCapacity();
+    }
+
+    /// Raises NotImplementedError unless `engine` has `feature` (see kernel.Feature).
+    pub fn requireFeature(self: *VM, engine: geom.EngineType, feature: kernel.Feature) error{RuntimeError}!void {
+        if (kernel.supports(engine, feature)) return;
+        _ = self.raiseError(.NotImplementedError, error_kind.UNSUPPORTED_FMT, .{ engine.scriptName(), feature.describe() });
+        return error.RuntimeError;
+    }
+
+    /// For a feature the result can do without (materials): warns, once per run, that
+    /// `engine` lacks it, instead of dropping it silently.
+    pub fn warnUnsupported(self: *VM, engine: geom.EngineType, feature: kernel.Feature) void {
+        if (kernel.supports(engine, feature) or self.warned_features.contains(feature)) return;
+        self.warned_features.insert(feature);
+        log.warn("the {s} engine can't {s} yet, so this model is built without them; use engine: :manifold to keep them", .{ engine.scriptName(), feature.describe() });
     }
 
     /// The settings in force (CAD.config / CAD.with_config).

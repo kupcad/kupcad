@@ -26,6 +26,66 @@ pub fn materialSlot(material_id: u32) u32 {
     return material_id + 1;
 }
 
+/// What an engine may not have yet. Callers check `supports` before the kernel call, so a
+/// script that needs a missing one gets an error naming it, never a generic failure or a
+/// stand-in answer (a volume of 0, an untwisted extrusion, an empty mesh).
+pub const Feature = enum {
+    cone,
+    extrude_twist,
+    extrude_scale,
+    offset,
+    minkowski,
+    trim_by_plane,
+    slice,
+    project,
+    decompose,
+    volume,
+    surface_area,
+    genus,
+    bounding_box,
+    sketch_measure,
+    contains_point,
+    ray_cast,
+    min_gap,
+    faces,
+    mesh,
+    materials,
+
+    /// What the engine can't do, as it reads after "can't": "the brep engine can't
+    /// measure volume yet".
+    pub fn describe(self: Feature) []const u8 {
+        return switch (self) {
+            .cone => "make cones (a cylinder with r1 different from r2)",
+            .extrude_twist => "twist an extrusion (extrude twist:, helix)",
+            .extrude_scale => "taper an extrusion (extrude scale:)",
+            .offset => "offset sketches",
+            .minkowski => "take Minkowski sums (minkowski, fillet_edges)",
+            .trim_by_plane => "cut solids by a plane (trim_by_plane, split_by_plane)",
+            .slice => "slice solids",
+            .project => "project solids",
+            .decompose => "decompose solids into parts",
+            .volume => "measure volume",
+            .surface_area => "measure surface area",
+            .genus => "count holes (genus)",
+            .bounding_box => "measure bounding boxes (bbox, align, center, resize)",
+            .sketch_measure => "measure sketches (bbox, align, center)",
+            .contains_point => "test whether a point is inside (contains?)",
+            .ray_cast => "cast rays",
+            .min_gap => "measure gaps (min_gap)",
+            .faces => "select faces (on_face)",
+            .mesh => "tessellate solids (STL and glTF export, the viewport)",
+            .materials => "keep materials",
+        };
+    }
+};
+
+pub fn supports(engine: geom.EngineType, feature: Feature) bool {
+    return switch (engine) {
+        .manifold => manifold_driver.supports(feature),
+        .brep_native => brep_driver.supports(feature),
+    };
+}
+
 pub const BooleanOp = enum {
     union_op,
     difference_op,

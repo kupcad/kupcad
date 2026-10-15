@@ -169,39 +169,42 @@ pub fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs,
         try writer.print("\n---\n### 🧊 3D Solid\n", .{});
 
         if (vm.ensureConcrete(val)) |handle| {
-            const vol = kernel.volume(handle);
-            const sa = kernel.surfaceArea(handle);
-            const gen = kernel.genus(handle);
-
-            if (kernel.boundingBox(handle)) |bx| {
+            // Only what the engine can measure: a B-Rep part would otherwise show zeros.
+            const engine = handle.engine;
+            if (kernel.supports(engine, .bounding_box)) if (kernel.boundingBox(handle)) |bx| {
                 const dx = bx.max[0] - bx.min[0];
                 const dy = bx.max[1] - bx.min[1];
                 const dz = bx.max[2] - bx.min[2];
                 try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ dx, dy, dz });
+            };
+
+            if (kernel.supports(engine, .volume)) try writer.print("- **Volume:** `{d:.2}` mm³\n", .{kernel.volume(handle)});
+            if (kernel.supports(engine, .surface_area)) try writer.print("- **Surface Area:** `{d:.2}` mm²\n", .{kernel.surfaceArea(handle)});
+            if (kernel.supports(engine, .genus)) {
+                const gen = kernel.genus(handle);
+                if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
             }
 
-            try writer.print("- **Volume:** `{d:.2}` mm³\n", .{vol});
-            try writer.print("- **Surface Area:** `{d:.2}` mm²\n", .{sa});
-            if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
-
-            if (kernel.getMesh(allocator, handle)) |mesh| {
+            if (kernel.supports(engine, .mesh)) if (kernel.getMesh(allocator, handle)) |mesh| {
                 defer allocator.free(mesh.vert_props);
                 defer allocator.free(mesh.tri_verts);
                 try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ mesh.vert_props.len / mesh.num_prop, mesh.tri_verts.len / 3 });
-            }
+            };
         } else |_| {}
     } else if (val.isCrossSection()) { //2D SAFE RESOLUTION
         try writer.print("\n---\n### 📐 2D Profile\n", .{});
 
         if (vm.ensureConcreteCrossSection(val)) |cs_handle| {
-            const area = kernel.crossSectionArea(cs_handle);
-            const rect = kernel.crossSectionBounds(cs_handle);
+            if (kernel.supports(cs_handle.engine, .sketch_measure)) {
+                const area = kernel.crossSectionArea(cs_handle);
+                const rect = kernel.crossSectionBounds(cs_handle);
 
-            const w = rect.max[0] - rect.min[0];
-            const l = rect.max[1] - rect.min[1];
+                const w = rect.max[0] - rect.min[0];
+                const l = rect.max[1] - rect.min[1];
 
-            try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
-            try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
+                try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
+                try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
+            }
         } else |_| {}
     } else if (val.isString()) {
         try writer.print("\n---\n*(String)* `\"{s}\"`\n", .{val.asString().chars});

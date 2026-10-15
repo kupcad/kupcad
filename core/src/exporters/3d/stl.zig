@@ -141,6 +141,7 @@ fn parseAsciiStl(allocator: std.mem.Allocator, data: []const u8) !StlMesh {
 /// Binary STL of `handle`, little-endian as the format requires on any host (bytes used
 /// to be copied in native order). Normals are left zero; readers recompute them.
 pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ![]const u8 {
+    if (!kernel.supports(handle.engine, .mesh)) return error.EngineCannotTessellate;
     const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
     defer allocator.free(mesh.vert_props);
     defer allocator.free(mesh.tri_verts);

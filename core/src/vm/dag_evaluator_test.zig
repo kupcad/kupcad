@@ -473,13 +473,13 @@ test "DAG Evaluator: GC keeps the B-Rep cache entry of live geometry" {
     try testing.expectEqual(InterpretResult.ok, try runOn(&vm,
         \\CAD.config(engine: :brep)
         \\a = cube(10)
-        \\a.volume
+        \\a.simplify
     ));
     const cached = vm.dag_cache.count();
     try testing.expect(cached > 0);
 
-    // Eviction must strip the engine salt from the key before the liveness
-    // check, or every B-Rep entry looks dead and is freed.
+    // Eviction must check the entry's node hash, not its key (which mixes in the
+    // settings), or every B-Rep entry looks dead and is freed.
     vm.resetStack();
     vm.gc.collectGarbage(&vm, false);
     try testing.expectEqual(cached, vm.dag_cache.count());

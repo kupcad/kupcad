@@ -40,11 +40,15 @@ pub fn notDefinedFor(vm: *VM, method: []const u8, receiver: value.Value) error{R
 /// The bounding box of a Solid, or of a Sketch (flat, at z = 0).
 pub fn boundsOf(vm: *VM, receiver: value.Value, method: []const u8) !geom.BoundingBox {
     if (receiver.isCrossSection()) {
-        const rect = kernel.crossSectionBounds(try vm.ensureConcreteCrossSection(receiver));
+        const sketch = try vm.ensureConcreteCrossSection(receiver);
+        try vm.requireFeature(sketch.engine, .sketch_measure);
+        const rect = kernel.crossSectionBounds(sketch);
         return .{ .min = .{ rect.min[0], rect.min[1], 0.0 }, .max = .{ rect.max[0], rect.max[1], 0.0 } };
     }
     if (!receiver.isGeometry()) return notDefinedFor(vm, method, receiver);
-    return kernel.boundingBox(try vm.ensureConcrete(receiver)) orelse {
+    const solid = try vm.ensureConcrete(receiver);
+    try vm.requireFeature(solid.engine, .bounding_box);
+    return kernel.boundingBox(solid) orelse {
         _ = vm.raiseError(.GeometryError, "{s} could not compute the bounding box of this shape", .{method});
         return error.RuntimeError;
     };

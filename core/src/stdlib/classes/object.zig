@@ -52,7 +52,11 @@ fn objectEmptyQ(vm: *VM, receiver: value.Value) !value.Value {
     if (receiver.isString()) return value.Value.initBool(receiver.asString().chars.len == 0);
     if (receiver.isArray()) return value.Value.initBool(receiver.asArray().items.items.len == 0);
     if (receiver.isMap()) return value.Value.initBool(receiver.asMap().map.count() == 0);
-    if (receiver.isGeometry()) return value.Value.initBool(kernel.volume(try vm.ensureConcrete(receiver)) == 0.0);
+    if (receiver.isGeometry()) {
+        const solid = try vm.ensureConcrete(receiver);
+        try vm.requireFeature(solid.engine, .volume);
+        return value.Value.initBool(kernel.volume(solid) == 0.0);
+    }
     return value.Value.initBool(false);
 }
 

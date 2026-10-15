@@ -49,7 +49,12 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     // The profile spins about the Y axis, so its radius is its farthest x. It used to be
     // assumed 10 mm, whatever the profile's size. Resolved now, under the active config.
     const segments = if (opts.segments > 0) opts.segments else blk: {
-        const bounds = kernel.crossSectionBounds(try vm.ensureConcreteCrossSection(receiver));
+        const profile = try vm.ensureConcreteCrossSection(receiver);
+        if (!kernel.supports(profile.engine, .sketch_measure)) {
+            _ = vm.raiseError(.NotImplementedError, "the {s} engine can't measure the profile to choose revolve's segments yet; pass segments:", .{profile.engine.scriptName()});
+            return error.RuntimeError;
+        }
+        const bounds = kernel.crossSectionBounds(profile);
         break :blk util.autoSegments(vm, @max(@abs(bounds.min[0]), @abs(bounds.max[0])));
     };
 
