@@ -1,3 +1,4 @@
+const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const material = @import("../../core/material.zig");
@@ -67,8 +68,7 @@ fn appendToDisplayList(vm: *VM, ghost_geom: value.Value) !void {
 
 // --- Chained Methods ---
 
-pub fn meshHighlight(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    _ = args;
+pub fn meshHighlight(vm: *VM, receiver: value.Value) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "highlight", receiver);
 
     const material_id: u32 = @intCast(vm.materials.items.len);
@@ -79,8 +79,7 @@ pub fn meshHighlight(vm: *VM, receiver: value.Value, args: []const value.Value) 
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-pub fn meshGhost(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    _ = args;
+pub fn meshGhost(vm: *VM, receiver: value.Value) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "ghost", receiver);
 
     const material_id: u32 = @intCast(vm.materials.items.len);
@@ -102,7 +101,7 @@ pub fn meshGhost(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 /// highlight { ... } -> the block's Solid, tagged for the viewer to show in high contrast
 pub fn globalHighlight(vm: *VM, block: ?*value.ObjClosure) !value.Value {
     const result = try vm.callClosureSync(try requireBlock(vm, block, "highlight"), &.{});
-    if (!result.isGeometry()) return result;
+    try requireSolidResult(vm, result, "highlight");
 
     const material_id: u32 = @intCast(vm.materials.items.len);
     try vm.materials.append(vm.allocator, .{ .role = .highlight });
@@ -111,10 +110,18 @@ pub fn globalHighlight(vm: *VM, block: ?*value.ObjClosure) !value.Value {
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
+/// The block of `highlight { }` or `ghost { }` must give the Solid to show: anything else
+/// used to be passed through (or dropped) without being shown.
+fn requireSolidResult(vm: *VM, result: value.Value, method: []const u8) !void {
+    if (result.isGeometry()) return;
+    _ = vm.raiseError(.TypeError, "{s}'s block must give a Solid, got {s}", .{ method, util.typeName(vm, result) });
+    return error.RuntimeError;
+}
+
 /// ghost { ... } -> shows the block's Solid as a translucent reference, outside the model
 pub fn globalGhost(vm: *VM, block: ?*value.ObjClosure) !value.Value {
     const result = try vm.callClosureSync(try requireBlock(vm, block, "ghost"), &.{});
-    if (!result.isGeometry()) return value.Value.initNil();
+    try requireSolidResult(vm, result, "ghost");
 
     const material_id: u32 = @intCast(vm.materials.items.len);
     try vm.materials.append(vm.allocator, .{ .role = .ghost });

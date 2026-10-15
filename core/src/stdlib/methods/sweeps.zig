@@ -71,6 +71,7 @@ pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     var base = HelixOpts{};
     if (pos.len > 0) base.h = try util.requireNumber(vm, pos[0], "helix", "h");
     if (pos.len > 1) base.twist = try util.requireNumber(vm, pos[1], "helix", "twist");
+    if (pos.len > 2) base.slices = try util.checkedInt(i32, vm, try util.requireNumber(vm, pos[2], "helix", "slices"), "slices");
     const opts = (try util.parseKwargsOver(HelixOpts, base, sig.HELIX.keywords, vm, args, "helix")).opts;
 
     try util.requireSegmentCount(vm, opts.slices, "slices");

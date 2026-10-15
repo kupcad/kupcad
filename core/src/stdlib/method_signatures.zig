@@ -9,7 +9,7 @@ const util = @import("methods/util.zig");
 pub const NONE = Signature{};
 
 // --- Booleans: any number of shapes or arrays of them ---
-pub const SHAPES = Signature{};
+pub const SHAPES = Signature{ .rest = "shapes" };
 
 // --- Transforms ---
 pub const TRANSLATE = Signature{ .positional = &util.VEC3_NAMES, .keywords = &util.VEC3_NAMES };
@@ -26,7 +26,7 @@ pub const REPEAT_POLAR = Signature{ .positional = &.{ "count", "angle" }, .keywo
 // --- Sweeps (of a sketch) ---
 pub const EXTRUDE = Signature{ .positional = &.{"h"}, .keywords = &.{ "h", "slices", "twist", "scale_x", "scale_y", "scale", "center" } };
 pub const REVOLVE = Signature{ .positional = &.{"deg"}, .keywords = &.{ "deg", "segments" } };
-pub const HELIX = Signature{ .positional = &.{ "h", "twist" }, .keywords = &.{ "h", "twist", "slices" } };
+pub const HELIX = Signature{ .positional = &.{ "h", "twist", "slices" }, .keywords = &.{ "h", "twist", "slices" } };
 pub const LOFT = Signature{ .positional = &.{ "target", "height" } };
 
 // --- Advanced ---

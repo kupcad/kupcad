@@ -4,6 +4,7 @@ const VM = @import("../../vm/vm.zig").VM;
 const geom = @import("../../kernel/geometry_handle.zig");
 const util = @import("../methods/util.zig");
 const ErrorKind = @import("../../vm/error_kind.zig").ErrorKind;
+const Signature = @import("../signature.zig").Signature;
 
 /// Defines a native class method mapping
 pub const MethodDef = struct {
@@ -80,7 +81,7 @@ fn expectedName(comptime T: type) []const u8 {
 /// A wrong number of arguments is an ArgumentError and a wrong type a TypeError, each
 /// naming the native and the argument: they used to be a generic "Native Execution Error",
 /// and extra arguments were dropped silently.
-fn wrap(comptime func: anytype, comptime has_receiver: bool) value.NativeFn {
+fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Signature) value.NativeFn {
     const param_types = @typeInfo(@TypeOf(func)).@"fn".param_types;
     const first_arg: usize = 1 + @as(usize, @intFromBool(has_receiver));
     if (param_types.len < first_arg) @compileError("A wrapped native takes (vm: *VM" ++ (if (has_receiver) ", receiver" else "") ++ ", ...)");
@@ -116,6 +117,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool) value.NativeFn {
             }
 
             const given = args.positional();
+            if (sig) |s| try checkArguments(vm, args.name, s, given);
             if (given.len < arity.required or (arity.max != null and given.len > arity.max.?)) {
                 return arityError(vm, args.name, arity.required, arity.max, given.len);
             }
@@ -150,12 +152,42 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool) value.NativeFn {
 
 /// Wraps `fn(vm: *VM, receiver: ReceiverType, args...) !value.Value` (see `wrap`).
 pub fn wrapMethod(comptime func: anytype) value.NativeFn {
-    return wrap(func, true);
+    return wrap(func, true, null);
 }
 
 /// Wraps `fn(vm: *VM, args...) !value.Value` (see `wrap`).
 pub fn wrapGlobal(comptime func: anytype) value.NativeFn {
-    return wrap(func, false);
+    return wrap(func, false, null);
+}
+
+/// wrapMethod for a method `sig` describes: see `checkArguments`.
+pub fn wrapMethodWith(comptime func: anytype, comptime sig: Signature) value.NativeFn {
+    return wrap(func, true, sig);
+}
+
+/// wrapGlobal for a function `sig` describes: see `checkArguments`.
+pub fn wrapGlobalWith(comptime func: anytype, comptime sig: Signature) value.NativeFn {
+    return wrap(func, false, sig);
+}
+
+/// A call with more positional arguments than `sig` names, or with keywords when it takes
+/// none, is an ArgumentError before the native runs: natives that read their arguments
+/// by hand used to drop the rest (`extrude(10, 5)` was `extrude(10)`). The keywords
+/// themselves are checked by the native, which parses `sig.keywords`.
+fn checkArguments(vm: *VM, name: []const u8, comptime sig: Signature, given: []const value.Value) error{RuntimeError}!void {
+    const has_keywords = util.trailingKwargs(given) != null;
+    const positional = given.len - @intFromBool(has_keywords);
+    if (sig.rest == null and positional > sig.positional.len) {
+        if (sig.positional.len == 0) return raise(vm, .ArgumentError, "{s} takes no positional arguments, got {d}", .{ name, positional });
+        const names = comptime blk: {
+            var list: []const u8 = "";
+            for (sig.positional, 0..) |p, i| list = list ++ (if (i == 0) "" else ", ") ++ p;
+            break :blk list;
+        };
+        const noun = if (sig.positional.len == 1) "argument" else "arguments";
+        return raise(vm, .ArgumentError, "{s} takes at most {d} positional {s} ({s}), got {d}", .{ name, sig.positional.len, noun, names, positional });
+    }
+    if (has_keywords and sig.keywords.len == 0) return raise(vm, .ArgumentError, "{s} takes no keywords", .{name});
 }
 
 fn raise(vm: *VM, comptime kind: ErrorKind, comptime fmt: []const u8, args: anytype) error{RuntimeError} {

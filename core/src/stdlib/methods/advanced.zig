@@ -5,6 +5,7 @@ const util = @import("util.zig");
 const sig = @import("../method_signatures.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const error_kind = @import("../../vm/error_kind.zig");
+const booleans = @import("booleans.zig");
 
 // --- Utilizing Strongly Typed Receivers ---
 
@@ -16,19 +17,7 @@ pub fn meshHull(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value
     const alloc = vm.scratch_arena.allocator();
 
     try scratch.append(alloc, receiver.dag_idx);
-
-    // Flatten any passed targets or arrays of targets into a single chain
-    for (args) |arg| {
-        if (arg.isGeometry()) {
-            try scratch.append(alloc, arg.asGeometry().dag_idx);
-        } else if (arg.isArray()) {
-            for (arg.asArray().items.items) |item| {
-                if (item.isGeometry()) {
-                    try scratch.append(alloc, item.asGeometry().dag_idx);
-                }
-            }
-        }
-    }
+    try booleans.appendOperands(vm, alloc, &scratch, args, true, "hull");
 
     const hull_idx = try vm.dag_builder.addBalancedChain(.hull, scratch.items);
     return try vm.allocateGeometry(.{ .symbolic = hull_idx });

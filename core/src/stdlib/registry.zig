@@ -108,29 +108,16 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     solid_class.is_value_class = true;
     sketch2d_class.is_value_class = true;
 
-    // I/O & Debugging
-    try bindNativeClassMethod(vm, kernel_class, "puts", common.wrapGlobal(io_mod.nativePuts));
-    try bindNativeClassMethod(vm, kernel_class, "print", common.wrapGlobal(io_mod.nativePrint));
-    try bindNativeClassMethod(vm, kernel_class, "inspect", common.wrapGlobal(io_mod.nativeInspect));
-    try bindNativeClassMethod(vm, kernel_class, "debugger", common.wrapGlobal(debug_mod.nativeDebugger));
-    try bindNativeClassMethod(vm, kernel_class, "warn", common.wrapGlobal(diagnostics_mod.nativeWarn));
-    try bindNativeClassMethod(vm, kernel_class, "assert", common.wrapGlobal(diagnostics_mod.nativeAssert));
-    try bindNativeClassMethod(vm, kernel_class, "benchmark", common.wrapGlobal(diagnostics_mod.nativeBenchmark));
-    try bindNativeClassMethod(vm, kernel_class, "param", common.wrapGlobal(params_mod.nativeParam));
-
-    // Bind 3D Static Primitive Constructors to Solid
-    try bindNativeClassMethod(vm, solid_class, "cube", common.wrapGlobal(primitives.nativeCube));
-    try bindNativeClassMethod(vm, solid_class, "cylinder", common.wrapGlobal(primitives.nativeCylinder));
-    try bindNativeClassMethod(vm, solid_class, "sphere", common.wrapGlobal(primitives.nativeSphere));
-    try bindNativeClassMethod(vm, solid_class, "torus", common.wrapGlobal(primitives.nativeTorus));
-    try bindNativeClassMethod(vm, solid_class, "polyhedron", common.wrapGlobal(primitives.nativePolyhedron));
-
-    // Bind 2D Static Primitive Constructors to Sketch2D
-    try bindNativeClassMethod(vm, sketch2d_class, "square", common.wrapGlobal(primitives.nativeSquare));
-    try bindNativeClassMethod(vm, sketch2d_class, "circle", common.wrapGlobal(primitives.nativeCircle));
-    try bindNativeClassMethod(vm, sketch2d_class, "polygon", common.wrapGlobal(primitives.nativePolygon));
-    try bindNativeClassMethod(vm, sketch2d_class, "regular_polygon", common.wrapGlobal(primitives.nativeRegularPolygon));
-    try bindNativeClassMethod(vm, sketch2d_class, "text", common.wrapGlobal(primitives.nativeText));
+    // Kernel.puts, Solid.cube, Sketch2D.square: the global functions, as class methods too.
+    for (manifest.global_functions) |def| {
+        const class = switch (def.category) {
+            .io => kernel_class,
+            .primitive_3d => solid_class,
+            .primitive_2d => sketch2d_class,
+            else => continue,
+        };
+        try bindNativeClassMethod(vm, class, def.name, def.func);
+    }
 
     // Bind CAD methods natively to the classes
     for (manifest.mesh_methods) |def| {

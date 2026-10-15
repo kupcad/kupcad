@@ -44,7 +44,12 @@ pins = [cylinder(r: 2, h: 10), cylinder(r: 2, h: 10).translate(x: 20)]
 casing = union(pins)
 convex_wrap = batch_hull(pins)
 
+# Optional parts: leave the nils out with .compact
+boss = with_boss ? cylinder(r: 4, h: 6) : nil
+part = cube(20).union([boss, rib].compact)
 ```
+
+`a.union(b, c)`, `.difference`, `.intersection` and `.hull` take shapes of the receiver's kind, or Arrays of them; anything else, `nil` included, is a `TypeError` that says where it is. An empty list leaves the receiver as it is.
 
 ---
 
@@ -217,7 +222,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 
 | Class | Raised for |
 |---|---|
-| `ArgumentError` | Wrong number of arguments, a missing block, a keyword the method doesn't take (`revolve(angle: 90)`; the message lists the accepted ones) |
+| `ArgumentError` | Wrong number of arguments, a missing block, a keyword the method doesn't take (`revolve(angle: 90)`; the message lists the accepted ones), more positional arguments than it takes (`extrude(10, 5)`: `extrude takes at most 1 positional argument (h), got 2`) |
 | `TypeError` | A value of the wrong type (`polygon([[0, 0], [1, "x"], [0, 1]])`, `5[0]`) |
 | `ValueError` | A value of the right type that is out of range or not finite (`cube(-1)`, `segments: 1e9`) |
 | `IndexError` | An Array or String index out of bounds (`[1, 2][5]`, `"abc"[9]`; Ruby gives `nil`) |
@@ -238,6 +243,8 @@ rescue ValueError => e
   plate = cube(10)
 end
 ```
+
+A built-in never ignores what it is given: an extra argument, a keyword to a method that takes none, a `nil` or a Sketch in a Solid's `union` is an error, not dropped. `nil` for an optional parameter (`slice(nil)`, `center(nil)`, `segments: nil`) leaves it unset, as if it weren't passed.
 
 An uncaught error stops the script and is printed once with its class, e.g. `ValueError: cube expects x to be a finite number greater than zero, got -1`.
 
@@ -325,7 +332,7 @@ Materials are the exception: a B-Rep model is built without them, with one warni
 
 KupCAD exposes an exhaustive list of native mesh manipulation methods attached to all evaluated solid and 2D nodes:
 
-* **Transforms**: `.translate`, `.rotate`, `.scale`, `.mirror`, `.align`, `.center`, `.transform` (Matrix), `.resize`. A Sketch stays in its XY plane: `rotate(a)`, `rotate(z: a)` and `rotate(0, 0, a)` turn it about z, and `mirror(x, y)` reflects it across the line with that normal; a component that would leave the plane (`translate(z: 5)`, `rotate(x: 45)`) is a `ValueError`, so extrude first to lift or tilt it.
+* **Transforms**: `.translate`, `.rotate`, `.scale`, `.mirror`, `.align`, `.center` (the axes to center on, `"xyz"` by default, as a String or Symbol: `center(:xy)`; a Sketch only on x and y), `.transform` (Matrix), `.resize`. A Sketch stays in its XY plane: `rotate(a)`, `rotate(z: a)` and `rotate(0, 0, a)` turn it about z, and `mirror(x, y)` reflects it across the line with that normal; a component that would leave the plane (`translate(z: 5)`, `rotate(x: 45)`) is a `ValueError`, so extrude first to lift or tilt it.
 * **Arrays**: `.repeat_linear`, `.repeat_polar`.
 * **Sweeps**: `.extrude`, `.revolve` (`deg:`, `segments:`; without `segments:` the count follows the profile's distance from the axis and the active config), `.helix`, `.loft`. `loft` currently joins two *convex* profiles (it is the exact convex hull of their outlines, the base at z = 0 and the top at the height); a concave profile or one with holes raises `NotImplementedError` rather than being filled in.
 * **Advanced**: `.hull`, `.minkowski`, `.trim_by_plane`, `.split_by_plane`, `.offset`, `.slice`, `.project`, `.fillet_edges`, `.simplify`, `.decompose`, `.on_face`.

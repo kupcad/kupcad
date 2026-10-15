@@ -83,11 +83,21 @@ pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     return util.notDefinedFor(vm, "scale", receiver);
 }
 
-pub fn meshCenter(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    // Signature: center(axes: String = "xyz")
-    var axes_str: []const u8 = "xyz";
-    if (args.len > 0 and args[0].isString()) {
-        axes_str = args[0].asString().chars;
+/// center(axes = "xyz"): moves the bounds' center to the origin on the axes named, a
+/// String or Symbol of x, y and z (`center(:xy)`).
+pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value.Value {
+    const axes_str = if (axes_arg) |a| try util.requireName(vm, a, "center", "axes") else "xyz";
+    // Any other letter used to be skipped, so `center("xq")` centered x alone.
+    const valid = axes_str.len > 0 and for (axes_str) |c| {
+        if (std.mem.indexOfScalar(u8, "xyzXYZ", c) == null) break false;
+    } else true;
+    if (!valid) {
+        _ = vm.raiseError(.ValueError, "center axes are some of x, y and z, got \"{s}\"", .{axes_str});
+        return error.RuntimeError;
+    }
+    if (axes_arg != null and receiver.isCrossSection() and std.mem.indexOfAny(u8, axes_str, "zZ") != null) {
+        _ = vm.raiseError(.ValueError, "a Sketch lies in the XY plane: center it on x and y, got \"{s}\"", .{axes_str});
+        return error.RuntimeError;
     }
 
     const bbox = try util.boundsOf(vm, receiver, "center");
@@ -348,6 +358,11 @@ pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Valu
     // The step is an [x, y, z] Array or positional/kwarg x, y, z (missing axes are 0).
     // It is validated even for a no-op count so a bad step never passes silently.
     // A nil step (e.g. a forwarded optional parameter) means no offset, as it did before.
+    if (args.len > 2 and args[1].isArray()) {
+        // They were ignored: `repeat_linear(3, [10, 0, 0], z: 5)` stepped 10 in x only.
+        _ = vm.raiseError(.ArgumentError, "repeat_linear takes the step as an Array or as x, y, z, not both", .{});
+        return error.RuntimeError;
+    }
     const step: [3]f64 = if (args.len > 1 and args[1].isNil())
         @splat(0.0)
     else if (args.len > 1 and args[1].isArray())

@@ -11,4 +11,7 @@ pub const Signature = struct {
     /// What a lone positional argument means when it sets more than the first parameter
     /// (`cube(5)` is a 5 mm cube, not one 5 mm in x): the name hints show for it.
     single: ?[]const u8 = null,
+    /// What any number of positional arguments after `positional` are, for a built-in that
+    /// takes a list (`a.union(b, c, d)`); null when it takes no more than it names.
+    rest: ?[]const u8 = null,
 };

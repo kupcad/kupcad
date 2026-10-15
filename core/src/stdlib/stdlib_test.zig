@@ -895,7 +895,7 @@ test "Stdlib: each primitive's Signature lists exactly the keywords it accepts" 
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 8), checked);
+    try std.testing.expectEqual(@as(usize, 10), checked);
 }
 
 test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
@@ -2129,5 +2129,81 @@ test "Stdlib: Array#compact drops the nils, Array#reject the items its block acc
         .{ .src = "r = [1, 2, 3].reject { |x| x == 2 ? true : (x == 1 ? nil : false) }", .expected = .{ .nums = &.{ 1, 3 } } },
         .{ .src = comptime rescued("[1].reject"), .expected = .{ .str = "ArgumentError: Array#reject requires a block" } },
         .{ .src = comptime rescued("[1].compact(2)"), .expected = .{ .str = "ArgumentError: Array#compact expects 0 arguments, got 1" } },
+    });
+}
+
+test "Stdlib: a built-in call with more arguments than its Signature names is an error" {
+    // Natives that read their arguments by hand dropped the rest: `extrude(10, 5)` was
+    // `extrude(10)`, `cube(1).union(x: 1)` was `cube(1)`.
+    const cases = [_]struct { []const u8, []const u8 }{
+        .{ "square(4).extrude(10, 5)", "ArgumentError: extrude takes at most 1 positional argument (h), got 2" },
+        .{ "cube(1, 2, 3, true, 9)", "ArgumentError: cube takes at most 4 positional arguments (x, y, z, center), got 5" },
+        .{ "Solid.cube(1, 2, 3, true, 9)", "ArgumentError: cube takes at most 4 positional arguments (x, y, z, center), got 5" },
+        .{ "polygon([[0, 0], [1, 0], [0, 1]], nil, 5)", "ArgumentError: polygon takes at most 2 positional arguments (points, paths), got 3" },
+        .{ "square(2).helix(10, 90, 8, 1)", "ArgumentError: helix takes at most 3 positional arguments (h, twist, slices), got 4" },
+        .{ "cube(1).min_gap(cube(1), 1, 2)", "ArgumentError: min_gap takes at most 2 positional arguments (other, search_length), got 3" },
+        .{ "cube(1).project(1)", "ArgumentError: project takes no positional arguments, got 1" },
+        .{ "cube(1).material(\"red\")", "ArgumentError: material takes no positional arguments, got 1" },
+        .{ "cube(1).highlight(1)", "ArgumentError: highlight takes no positional arguments, got 1" },
+        .{ "cube(1).ghost(color: \"red\")", "ArgumentError: ghost takes no keywords" },
+        .{ "cube(1).union(x: 1)", "ArgumentError: union takes no keywords" },
+        .{ "cube(1).volume(precise: true)", "ArgumentError: volume takes no keywords" },
+        .{ "cube(1).repeat_linear(3, [10, 0, 0], z: 5)", "ArgumentError: repeat_linear takes the step as an Array or as x, y, z, not both" },
+    };
+    inline for (cases) |case| {
+        try expectGlobalR(&.{.{ .src = comptime rescued(case[0]), .expected = .{ .str = case[1] } }});
+    }
+    // What they do take still works: helix's third positional is its slices.
+    try expectGlobalR(&.{
+        .{ .src = comptime rescued("square(2).helix(10, 90, 8)\ncube(1).highlight\ncube(1).project"), .expected = .{ .str = "no error" } },
+    });
+}
+
+test "Stdlib: booleans and hull take only shapes of the receiver's kind, nil included" {
+    // Anything else was skipped, so a nil optional part or a Sketch in a Solid's union
+    // silently gave the receiver back.
+    const cases = [_]struct { []const u8, []const u8 }{
+        .{ "cube(1).union(nil)", "TypeError: union expects a Solid or an Array of them for argument 1, got nil" },
+        .{ "cube(1).union([cube(2), nil])", "TypeError: union expects a Solid at index 1 of argument 1, got nil; leave out the nils with .compact" },
+        .{ "cube(1).difference(cube(2), square(1))", "TypeError: difference expects a Solid or an Array of them for argument 2, got CrossSection" },
+        .{ "square(2).intersection(5)", "TypeError: intersection expects a Sketch or an Array of them for argument 1, got Number" },
+        .{ "cube(1).hull([cube(2), [cube(3)]])", "TypeError: hull expects a Solid at index 1 of argument 1, got Array" },
+        .{ "union([cube(1), nil])", "TypeError: union expects only Solids, got nil at index 1; leave out the nils with .compact" },
+    };
+    inline for (cases) |case| {
+        try expectGlobalR(&.{.{ .src = comptime rescued(case[0]), .expected = .{ .str = case[1] } }});
+    }
+    try expectGlobalR(&.{
+        // The way to pass optional parts, and an empty list leaves the receiver as it is.
+        .{ .src = "boss = nil\nr = cube(2).union([boss, cube(1).translate(5, 0, 0)].compact).volume", .expected = .{ .num = 9 } },
+        .{ .src = "r = cube(2).union([]).volume", .expected = .{ .num = 8 } },
+        .{ .src = "r = square(2).union(square(1).translate(5, 0)).extrude(1).volume", .expected = .{ .num = 5 } },
+    });
+}
+
+test "Stdlib: center takes axes of x, y and z, and a Sketch only x and y" {
+    const cases = [_]struct { []const u8, []const u8 }{
+        // Other letters were skipped: `center("xq")` centered x alone.
+        .{ "cube(2).center(\"xq\")", "ValueError: center axes are some of x, y and z, got \"xq\"" },
+        .{ "cube(2).center(\"\")", "ValueError: center axes are some of x, y and z, got \"\"" },
+        .{ "cube(2).center(5)", "TypeError: center expects a String or Symbol for axes, got Number" },
+        .{ "square(2).center(:xz)", "ValueError: a Sketch lies in the XY plane: center it on x and y, got \"xz\"" },
+    };
+    inline for (cases) |case| {
+        try expectGlobalR(&.{.{ .src = comptime rescued(case[0]), .expected = .{ .str = case[1] } }});
+    }
+    try expectGlobalR(&.{
+        .{ .src = "r = cube(2).center(:xy).volume + square(2).center.extrude(1).volume", .expected = .{ .num = 12 } },
+        // nil leaves an optional parameter unset, as it does for every built-in.
+        .{ .src = "r = cube(2).center(nil).volume", .expected = .{ .num = 8 } },
+    });
+}
+
+test "Stdlib: highlight { } and ghost { } need their block to give a Solid" {
+    // Anything else was passed through (highlight) or dropped (ghost) without being shown.
+    try expectGlobalR(&.{
+        .{ .src = comptime rescued("highlight { 5 }"), .expected = .{ .str = "TypeError: highlight's block must give a Solid, got Number" } },
+        .{ .src = comptime rescued("ghost { nil }"), .expected = .{ .str = "TypeError: ghost's block must give a Solid, got nil" } },
+        .{ .src = "r = highlight { cube(2) }.volume", .expected = .{ .num = 8 } },
     });
 }

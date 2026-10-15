@@ -36,7 +36,8 @@ fn batchOp(comptime tag: dag.DAGTag, comptime name: []const u8) fn (*VM, *value.
             defer scratch_indices.deinit(vm.allocator);
             for (parts.items.items, 0..) |part, i| {
                 if (!part.isGeometry()) {
-                    _ = vm.raiseError(.TypeError, name ++ " expects only Solids, got {s} at index {d}", .{ util.typeName(vm, part), i });
+                    const hint = if (part.isNil()) "; leave out the nils with .compact" else "";
+                    _ = vm.raiseError(.TypeError, name ++ " expects only Solids, got {s} at index {d}{s}", .{ util.typeName(vm, part), i, hint });
                     return error.RuntimeError;
                 }
                 try scratch_indices.append(vm.allocator, part.asGeometry().dag_idx);

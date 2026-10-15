@@ -48,6 +48,14 @@ pub const TORUS = Signature{
     .keywords = &.{ "major_r", "minor_r", "segments" },
     .sizes = &.{ "major_r", "minor_r" },
 };
+pub const POLYGON = Signature{
+    .positional = &.{ "points", "paths" },
+    .keywords = &.{"paths"},
+};
+pub const POLYHEDRON = Signature{
+    .positional = &.{ "points", "faces" },
+    .keywords = &.{ "points", "faces" },
+};
 pub const TEXT = Signature{
     .positional = &.{ "content", "size" },
     .keywords = &.{ "size", "tolerance", "font", "halign", "valign" },
@@ -357,7 +365,7 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = try util.parseKwargs(struct { paths: ?value.Value = null }, vm, args, "polygon");
+    const parsed = try util.parseKwargsSubset(struct { paths: ?value.Value = null }, POLYGON.keywords, vm, args, "polygon");
     if (parsed.positional.len < 1) {
         _ = vm.raiseError(.ArgumentError, "polygon expects an Array of [x, y] points", .{});
         return error.RuntimeError;
@@ -434,7 +442,7 @@ pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = try util.parseKwargs(struct { major_r: ?f64 = null, minor_r: ?f64 = null, segments: i32 = 0 }, vm, args, "torus");
+    const parsed = try util.parseKwargsSubset(struct { major_r: ?f64 = null, minor_r: ?f64 = null, segments: i32 = 0 }, TORUS.keywords, vm, args, "torus");
     const opts = parsed.opts;
     try util.requireSegmentCount(vm, opts.segments, "segments");
 
@@ -471,7 +479,7 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     // `points` and `faces` are positional or kwargs (which win), like polygon's `paths`.
-    const parsed = try util.parseKwargs(struct { points: ?value.Value = null, faces: ?value.Value = null }, vm, args, "polyhedron");
+    const parsed = try util.parseKwargsSubset(struct { points: ?value.Value = null, faces: ?value.Value = null }, POLYHEDRON.keywords, vm, args, "polyhedron");
     const pos = parsed.positional;
     const points_arg = parsed.opts.points orelse if (pos.len > 0) pos[0] else null;
     const faces_arg = parsed.opts.faces orelse if (pos.len > 1) pos[1] else null;
@@ -514,13 +522,13 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = try util.parseKwargs(struct {
+    const parsed = try util.parseKwargsSubset(struct {
         size: ?f64 = null,
         tolerance: ?f64 = null,
         font: []const u8 = "sans",
         halign: text_mod.HAlign = .left,
         valign: text_mod.VAlign = .baseline,
-    }, vm, args, "text");
+    }, TEXT.keywords, vm, args, "text");
     if (parsed.positional.len == 0 or !args[0].isString()) {
         _ = vm.raiseError(.ArgumentError, "text() expects a String as its first argument", .{});
         return error.RuntimeError;
