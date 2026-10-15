@@ -154,13 +154,18 @@ pub const Formatter = struct {
     }
 
     fn formatBodyWithEnd(self: *Formatter, tree: *const ast.Tree, body: ast.NodeIndex) Error!void {
+        return self.formatBodyClosedBy(tree, body, "end");
+    }
+
+    /// An indented body on lines of its own, then `closer` (`end`, or `}` of a block).
+    fn formatBodyClosedBy(self: *Formatter, tree: *const ast.Tree, body: ast.NodeIndex, closer: []const u8) Error!void {
         try self.ensureNewline();
         self.indent_level += 1;
         try self.formatNode(tree, body);
         self.indent_level -= 1;
-        try self.ensureNewline(); // Force a newline before 'end'
+        try self.ensureNewline(); // Force a newline before the closer
         try self.writeIndent();
-        try self.out.appendSlice(self.allocator, "end");
+        try self.out.appendSlice(self.allocator, closer);
     }
 
     /// Writes the comments above `up_to_line`, each on its own line.
@@ -802,7 +807,8 @@ pub const Formatter = struct {
         const body_node = tree.getNode(l.body).?;
         if (body_node.tag == .block) {
             try self.out.appendSlice(self.allocator, " ");
-            try self.formatBlockClosure(tree, l.body, start_line);
+            // The body is parsed from the token after its `{` or `do`.
+            try self.formatBlockOpenedAt(tree, l.body, start_line, body_node.main_token -| 1);
         } else {
             try self.out.appendSlice(self.allocator, " { ");
             try self.formatNode(tree, l.body);
@@ -1039,23 +1045,64 @@ pub const Formatter = struct {
     }
 
     fn formatBlockClosure(self: *Formatter, tree: *const ast.Tree, block_idx: ast.NodeIndex, start_line: u32) Error!void {
-        if (block_idx == .none) return;
-        const block_node = tree.getNode(block_idx).?;
+        const block_node = tree.getNode(block_idx) orelse return;
+        // A call's block starts at its `{` or `do`.
+        return self.formatBlockOpenedAt(tree, block_idx, start_line, block_node.main_token);
+    }
+
+    /// A block opened by token `opener` (`{` or `do`).
+    fn formatBlockOpenedAt(self: *Formatter, tree: *const ast.Tree, block_idx: ast.NodeIndex, start_line: u32, opener: u32) Error!void {
+        const block_node = tree.getNode(block_idx) orelse return;
         if (block_node.tag != .block) return;
         const b = tree.block(block_node);
 
-        try self.out.appendSlice(self.allocator, "do");
-        const params = tree.getNodes(b.params);
-        if (params.len > 0) {
-            try self.out.appendSlice(self.allocator, " |");
-            for (params, 0..) |p_idx, idx| {
-                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                try self.formatNode(tree, p_idx);
-            }
-            try self.out.append(self.allocator, '|');
+        // The author's delimiter stays: a `{ }` block used to become `do ... end` over three
+        // lines, and `do` can't replace `{` everywhere (in a `for` header it starts the body).
+        if (std.mem.eql(u8, self.tokenText(opener), "{")) {
+            const Braces = struct {
+                tree: *const ast.Tree,
+                block_idx: ast.NodeIndex,
+                start_line: u32,
+
+                fn flat(l: @This(), f: *Formatter) Error!void {
+                    const blk = l.tree.block(l.tree.getNode(l.block_idx).?);
+                    try f.out.append(f.allocator, '{');
+                    try f.formatBlockParams(l.tree, blk);
+                    for (l.tree.getNodes(blk.stmts), 0..) |stmt, i| {
+                        try f.out.appendSlice(f.allocator, if (i == 0) " " else "; ");
+                        try f.formatNode(l.tree, stmt);
+                    }
+                    try f.out.appendSlice(f.allocator, " }");
+                }
+
+                fn broken(l: @This(), f: *Formatter) Error!void {
+                    try f.out.append(f.allocator, '{');
+                    try f.formatBlockParams(l.tree, l.tree.block(l.tree.getNode(l.block_idx).?));
+                    try f.flushInlineComments(l.start_line);
+                    try f.formatBodyClosedBy(l.tree, l.block_idx, "}");
+                }
+            };
+            // Broken by the author when it doesn't end on the `{` line.
+            const broke = self.lineOf(b.end_token) != self.lineOf(opener);
+            return self.layOut(broke, Braces{ .tree = tree, .block_idx = block_idx, .start_line = start_line });
         }
+
+        try self.out.appendSlice(self.allocator, "do");
+        try self.formatBlockParams(tree, b);
         try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(tree, block_idx);
+    }
+
+    /// ` |a, b|` after a block's opener, when it has parameters.
+    fn formatBlockParams(self: *Formatter, tree: *const ast.Tree, b: ast.Block) Error!void {
+        const params = tree.getNodes(b.params);
+        if (params.len == 0) return;
+        try self.out.appendSlice(self.allocator, " |");
+        for (params, 0..) |p_idx, idx| {
+            if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+            try self.formatNode(tree, p_idx);
+        }
+        try self.out.append(self.allocator, '|');
     }
 
     fn formatSuperCall(self: *Formatter, tree: *const ast.Tree, sc: ast.SuperCall, start_line: u32) Error!void {

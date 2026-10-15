@@ -801,3 +801,38 @@ test "Formatter: elsif stays elsif, and an if inside an else stays inside it" {
         \\
     );
 }
+
+test "Formatter: a brace block stays a brace block, on one line when it fits" {
+    // `{ |x| x * 2 }` used to become `do |x|` / `x * 2` / `end` over three lines.
+    try expectStableFormat(
+        \\a = [1, 2].map { |x| x * 2 }
+        \\b = [1].map { |x| puts(x); x }
+        \\c = ->(x) { x + 1 }
+        \\d = items.select { |i| i > 2 } # keep
+        \\e = [1].each { |x|
+        \\  puts(x)
+        \\}
+        \\f = ->(x) do
+        \\  x
+        \\end
+        \\[1].each do |x|
+        \\  puts(x)
+        \\end
+        \\
+    ,
+        \\a = [1, 2].map { |x| x * 2 }
+        \\b = [1].map { |x| puts(x); x }
+        \\c = ->(x) { x + 1 }
+        \\d = items.select { |i| i > 2 } # keep
+        \\e = [1].each { |x|
+        \\  puts(x)
+        \\}
+        \\f = ->(x) do
+        \\  x
+        \\end
+        \\[1].each do |x|
+        \\  puts(x)
+        \\end
+        \\
+    );
+}
