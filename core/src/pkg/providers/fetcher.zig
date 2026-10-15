@@ -44,14 +44,10 @@ pub const Fetcher = struct {
         const url_str = try commitApiUrl(self.allocator, pkg);
         defer self.allocator.free(url_str);
 
-        const uri = try std.Uri.parse(url_str);
-        var req = try http_client.request(&self.client, .GET, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-
-        var redirect_buf: [1024]u8 = undefined;
-        var response = try req.receiveHead(&redirect_buf);
+        const get = try self.allocator.create(http_client.Get);
+        defer self.allocator.destroy(get);
+        var response = try get.send(&self.client, url_str);
+        defer get.deinit();
         try checkStatus(response.head.status);
 
         // Bounded: a hostile host could otherwise stream an endless body into memory.
@@ -87,14 +83,10 @@ pub const Fetcher = struct {
     }
 
     pub fn downloadArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs) !std.StringHashMap([]const u8) {
-        const uri = try std.Uri.parse(url_str);
-        var req = try http_client.request(&self.client, .GET, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-
-        var redirect_buf: [1024]u8 = undefined;
-        var response = try req.receiveHead(&redirect_buf);
+        const get = try self.allocator.create(http_client.Get);
+        defer self.allocator.destroy(get);
+        var response = try get.send(&self.client, url_str);
+        defer get.deinit();
         try checkStatus(response.head.status);
 
         return extractLimited(self.allocator, response.reader(&.{}), cafs);

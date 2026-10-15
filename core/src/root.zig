@@ -84,6 +84,7 @@ test {
     _ = @import("pkg/store_test.zig");
     _ = @import("pkg/providers/fetcher_test.zig");
     _ = @import("pkg/validate_test.zig");
+    _ = @import("pkg/http_client_test.zig");
 
     // Stdlib
     _ = @import("stdlib/stdlib_test.zig");
