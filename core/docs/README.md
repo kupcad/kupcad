@@ -475,3 +475,14 @@ Each rule's level is set in `.kupcad.json` (or the file given with `--config`), 
 ```
 
 A setting `.kupcad.json` doesn't have is an error that gives its line and column, so a mistyped rule is never ignored.
+
+A comment can hide findings where they are deliberate. It names the rules it hides, and may say why after ` -- `:
+
+```ruby
+# kupcad:disable-next-line unused-variable -- read by the next revision
+spare = cube(5)
+holes = cube(1) # kupcad:disable-line unused-variable
+# kupcad:disable param-order          (the whole file)
+```
+
+Only lint findings can be hidden; a syntax or compile error can't. A directive that hides nothing, or names a rule or directive that doesn't exist, is reported itself (`[suppression]`), so stale ones don't pile up.

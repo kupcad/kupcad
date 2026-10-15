@@ -1,0 +1,5 @@
+12:1 W [unused-variable] Unused variable 'loose'. Prefix with '_' if intentional.
+15:1 W [suppression] kupcad:disable-next-line self-subtraction hides nothing here; remove it
+17:1 W [suppression] kupcad:disable-next-line names no rule 'unused-varable' (`kupcad check --help` lists them)
+18:1 W [suppression] unknown directive 'kupcad:disable-nextline' (use disable-next-line, disable-line or disable)
+19:1 W [suppression] kupcad:disable-line must name the rules it hides

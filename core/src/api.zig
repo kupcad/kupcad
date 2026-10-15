@@ -22,6 +22,7 @@ pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
 pub const Document = @import("core/document.zig").Document;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
+const suppressions = @import("tools/lint/suppressions.zig");
 pub const LinterDiagnostic = @import("tools/lint/linter.zig").LinterDiagnostic;
 pub const Diagnostic = @import("core/errors.zig").Diagnostic;
 
@@ -68,6 +69,7 @@ pub fn checkDocument(allocator: std.mem.Allocator, io: std.Io, doc: *const Docum
     defer linter.deinit();
     try linter.registerDefaultRules();
     try linter.check(&doc.tree, doc.tokens.starts, doc.tokens.lengths, doc.tree.root, doc.diagnostics);
+    try suppressions.apply(allocator, &linter.diagnostics, doc.comments, &doc.line_index, config);
     if (doc.diagnostics.len == 0) {
         if (try compileError(allocator, io, doc)) |compile_error| {
             errdefer allocator.free(compile_error.message);

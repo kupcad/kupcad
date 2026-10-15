@@ -18,6 +18,8 @@ const CASES = [_][]const u8{
     "nonpositive_size",
     "param_order",
     "self_subtraction",
+    "suppressed_error",
+    "suppressions",
     "syntax_error",
     "unreachable_code",
     "unused_variable",
