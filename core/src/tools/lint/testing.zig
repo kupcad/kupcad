@@ -19,7 +19,7 @@ pub fn lint(allocator: std.mem.Allocator, source: []const u8, config: Config) !l
     const tokens = try lexer.lexAll(arena.allocator());
     var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const root = try parser.parseProgram();
-    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
+    try engine.check(&parser.b.tree, source, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
     return engine;
 }
 

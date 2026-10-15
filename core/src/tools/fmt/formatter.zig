@@ -5,7 +5,7 @@ const LineIndex = @import("../../core/line_index.zig").LineIndex;
 const Config = @import("config.zig").Config;
 const parser = @import("../../frontend/kupcad/parser.zig");
 const Precedence = parser.Precedence;
-const visitor = @import("../../core/visitor.zig");
+const token_span = @import("../../core/token_span.zig");
 const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
 
@@ -63,32 +63,10 @@ pub const Formatter = struct {
     /// The line of a statement's last token, so comments trailing any of its lines stay
     /// with it, even after it is laid out over a different number of lines.
     fn lastLine(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) u32 {
-        var last: LastToken = .{};
-        visitor.walk(LastToken, &last, tree, node_idx) catch {};
-        if (last.token >= self.token_starts.len) return 0;
-        return self.line_index.getLine(self.token_starts[last.token]);
+        const last = token_span.last(tree, node_idx);
+        if (last >= self.token_starts.len) return 0;
+        return self.line_index.getLine(self.token_starts[last]);
     }
-
-    /// The largest token a subtree mentions: every node's main token, and the closing
-    /// token of the nodes that record one (`)`, `]`, `end`, `}`).
-    const LastToken = struct {
-        token: u32 = 0,
-
-        pub fn enterNode(self: *LastToken, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
-            const node = tree.getNode(node_idx).?;
-            const end: u32 = switch (node.tag) {
-                .method_call => tree.methodCall(node).end_token,
-                .if_stmt => tree.ifStmt(node).end_token,
-                .def_stmt => tree.defStmt(node).end_token,
-                .class_stmt => tree.classStmt(node).end_token,
-                .module_stmt => tree.moduleStmt(node).end_token,
-                .block => tree.block(node).end_token,
-                .array_literal => tree.arrayLiteral(node).end_token,
-                else => 0,
-            };
-            self.token = @max(self.token, node.main_token, end);
-        }
-    };
 
     inline fn getCommentLine(self: *Formatter, comment: token.Comment) u32 {
         return self.line_index.getLine(comment.loc.offset);

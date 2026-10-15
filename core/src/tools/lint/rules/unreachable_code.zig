@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
+const token_span = @import("../../../core/token_span.zig");
 
 /// Flags the first statement of a body that can't run because a statement before it always
 /// leaves: it returns, breaks, nexts or raises on every path through it, an `if` whose
@@ -28,10 +29,23 @@ pub const UnreachableCodeRule = struct {
         const stmts = tree.getNodes(tree.block(node).stmts);
         for (stmts, 0..) |stmt, i| {
             if (!alwaysLeaves(tree, stmt) or i + 1 == stmts.len) continue;
-            const first_dead = tree.getNode(stmts[i + 1]).?;
-            try engine.report(id, engine.getLoc(first_dead.main_token), "Unreachable: the statement before this always returns, breaks, nexts or raises", .{});
+            const dead = stmts[i + 1 ..];
+            const first_dead = tree.getNode(dead[0]).?;
+            try engine.reportFix(id, engine.getLoc(first_dead.main_token), try deleteFix(engine, tree, dead), "Unreachable: the statement before this always returns, breaks, nexts or raises", .{});
             return; // the rest of the body is dead too; one finding says so
         }
+    }
+
+    /// Deletes the dead statements. Only offered: dead code is often a half-finished edit
+    /// the author still wants to read, so `check --fix` never removes it.
+    fn deleteFix(engine: *linter.Linter, tree: *const ast.Tree, dead: []const ast.NodeIndex) !linter.Fix {
+        const allocator = engine.allocator;
+        const range = engine.deletionRange(token_span.first(tree, dead[0]), token_span.last(tree, dead[dead.len - 1]));
+        const edits = try allocator.alloc(linter.Edit, 1);
+        errdefer allocator.free(edits);
+        edits[0] = .{ .offset = range.offset, .length = range.length, .replacement = try allocator.dupe(u8, "") };
+        errdefer allocator.free(edits[0].replacement);
+        return .{ .title = try allocator.dupe(u8, "Remove the unreachable code"), .edits = edits, .safe = false };
     }
 
     /// Whether control never passes `idx`. A `return` inside a block leaves only the block

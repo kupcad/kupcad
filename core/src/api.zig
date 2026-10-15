@@ -23,12 +23,17 @@ pub const Document = @import("core/document.zig").Document;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 const suppressions = @import("tools/lint/suppressions.zig");
+const fixer = @import("tools/lint/fixer.zig");
 pub const LinterDiagnostic = @import("tools/lint/linter.zig").LinterDiagnostic;
 pub const Diagnostic = @import("core/errors.zig").Diagnostic;
 
-/// Formats an already parsed Document. Caller owns the returned slice.
-/// Formats a parsed Document. The result is checked before it is returned: it must parse,
-/// mean the same program (tools/fmt/equivalence.zig) and keep every comment in order.
+/// How many times fixCode re-checks and applies before it stops (as ESLint does): fixes
+/// that keep making room for each other must still end.
+const MAX_FIX_PASSES = 10;
+
+/// Formats a parsed Document; the caller owns the result. It is checked before it is
+/// returned: it must parse, mean the same program (tools/fmt/equivalence.zig) and keep
+/// every comment in order.
 /// Otherwise the formatter has a bug, reported as error.FormatChangedProgram, and the
 /// caller keeps the source as it was rather than overwrite it.
 pub fn formatDocument(allocator: std.mem.Allocator, doc: *const Document, config: FormatterConfig) ![]const u8 {
@@ -64,11 +69,12 @@ pub fn formatCode(allocator: std.mem.Allocator, source: []const u8, config: Form
 /// Lints an already parsed Document and, when it parsed cleanly, compiles it, so a compile
 /// error (such as assigning to `cube`) is reported by `kupcad check` and the editor just as
 /// `kupcad build` would. Caller owns the returned array of diagnostics.
-pub fn checkDocument(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, config: LinterConfig) ![]LinterDiagnostic {
+/// `source` is the text `doc` was parsed from (fixes edit it).
+pub fn checkDocument(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, source: []const u8, config: LinterConfig) ![]LinterDiagnostic {
     var linter = Linter.init(allocator, config);
     defer linter.deinit();
     try linter.registerDefaultRules();
-    try linter.check(&doc.tree, doc.tokens.starts, doc.tokens.lengths, doc.tree.root, doc.diagnostics);
+    try linter.check(&doc.tree, source, doc.tokens.starts, doc.tokens.lengths, doc.tree.root, doc.diagnostics);
     try suppressions.apply(allocator, &linter.diagnostics, doc.comments, &doc.line_index, config);
     if (doc.diagnostics.len == 0) {
         if (try compileError(allocator, io, doc)) |compile_error| {
@@ -99,11 +105,55 @@ fn compileError(allocator: std.mem.Allocator, io: std.Io, doc: *const Document) 
     return null;
 }
 
+/// `source` with every safe lint fix applied (`kupcad check --fix`). It repeats until
+/// nothing more applies (one fix can make room for another) and keeps a pass only if the
+/// result has no more syntax or compile errors than before, so a fix can never break the
+/// model. Caller owns `source`; `fixes` counts the findings resolved.
+pub fn fixCode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, config: LinterConfig) !FixResult {
+    var current = try allocator.dupe(u8, source);
+    errdefer allocator.free(current);
+    var fixes: usize = 0;
+    var pass: usize = 0;
+    while (pass < MAX_FIX_PASSES) : (pass += 1) {
+        const diags = try checkCode(allocator, io, current, config);
+        defer freeDiagnostics(allocator, diags);
+        const applied = try fixer.applySafeFixes(allocator, current, diags) orelse break;
+        errdefer allocator.free(applied.source);
+
+        const after = try checkCode(allocator, io, applied.source, config);
+        defer freeDiagnostics(allocator, after);
+        if (errorCount(after) > errorCount(diags)) {
+            allocator.free(applied.source);
+            return .{ .source = current, .fixes = fixes, .refused = true };
+        }
+        allocator.free(current);
+        current = applied.source;
+        fixes += applied.fixes;
+    }
+    return .{ .source = current, .fixes = fixes, .refused = false };
+}
+
+pub const FixResult = struct {
+    source: []u8,
+    fixes: usize,
+    /// A pass was dropped because it would have added errors (a bug in a rule's fix).
+    refused: bool,
+};
+
+/// Syntax and compile errors: the findings no rule made.
+fn errorCount(diags: []const LinterDiagnostic) usize {
+    var n: usize = 0;
+    for (diags) |d| {
+        if (d.rule == null) n += 1;
+    }
+    return n;
+}
+
 /// Lints raw KupCAD source code (Convenience wrapper).
 pub fn checkCode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, config: LinterConfig) ![]LinterDiagnostic {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
-    return checkDocument(allocator, io, &doc, config);
+    return checkDocument(allocator, io, &doc, source, config);
 }
 
 pub fn benchmarkScript(allocator: std.mem.Allocator, source: []const u8, io: std.Io, writer: anytype) !void {
@@ -344,6 +394,6 @@ fn dupeVmError(allocator: std.mem.Allocator, vm: *const VM) ?[]u8 {
 
 /// Safely frees an array of LinterDiagnostics and their inner allocated strings.
 pub fn freeDiagnostics(allocator: std.mem.Allocator, diags: []LinterDiagnostic) void {
-    for (diags) |d| allocator.free(d.message);
+    for (diags) |d| d.deinit(allocator);
     allocator.free(diags);
 }

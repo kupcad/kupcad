@@ -1,2 +1,7 @@
 3:1 W [unused-variable] Unused variable 'empty'. Prefix with '_' if intentional.
 3:9 W [self-subtraction] 'plate - plate' subtracts a shape from itself, which leaves nothing
+--- after --fix (1 fixed) ---
+plate = cube(10)
+hole = cylinder(r: 2, h: 20)
+_empty = plate - plate
+part = plate - hole

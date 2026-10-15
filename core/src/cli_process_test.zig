@@ -55,6 +55,7 @@ const Sandbox = struct {
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "compile_error.kup", .data = "cube = 5\n" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "class.kup", .data = "class Foo\n  BAR = 7\nend\n" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "unused.kup", .data = "x = 1\ncube(1)\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "fixme.kup", .data = "spare = 1\ncube(1)\n" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "strict.json", .data = "{ \"lint\": { \"unused-variable\": \"error\" } }" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "quiet.json", .data = "{ \"lint\": { \"unused-variable\": \"off\" } }" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "typo.json", .data = "{\n  \"lint\": {\n    \"unused-variabel\": \"off\"\n  }\n}" });
@@ -207,5 +208,15 @@ test "kupcad: check names each finding's rule, at the level .kupcad.json gives i
         // A mistyped rule used to be ignored, leaving it on.
         .{ .args = &.{ "check", "--config", "typo.json", "unused.kup" }, .code = 1, .contains = "Error: typo.json:3:" },
         .{ .args = &.{ "check", "--help" }, .code = 0, .contains = "  unused-variable    A variable assigned and never read" },
+    });
+}
+
+test "kupcad: check --fix rewrites what it can fix and reports the rest" {
+    try expectRuns(&.{
+        .{ .args = &.{ "check", "--fix", "fixme.kup" }, .code = 0, .contains = "Fixed 1 problem in fixme.kup" },
+        // The file now says the variable is unused on purpose.
+        .{ .args = &.{ "check", "fixme.kup" }, .code = 0, .contains = "Success" },
+        .{ .args = &.{ "check", "--fix", "fixme.kup" }, .code = 0, .absent = "Fixed" },
+        .{ .args = &.{ "check", "--help" }, .code = 0, .contains = "--fix" },
     });
 }

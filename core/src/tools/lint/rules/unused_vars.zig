@@ -1,3 +1,4 @@
+const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
@@ -27,20 +28,20 @@ pub const UnusedVarsRule = struct {
                 const a = tree.assignment(node);
                 const var_name = tree.getString(a.name);
                 // `n += 1` reads n as well as writing it.
-                if (a.op != null) try engine.markUsed(var_name) else try engine.declareAssigned(var_name, engine.getLoc(node.main_token));
+                if (a.op != null) try engine.markUsed(var_name) else try engine.declareAssigned(var_name, engine.getLoc(node.main_token), true);
             },
             .multiple_assignment => {
                 const ma = tree.multipleAssignment(node);
                 for (tree.getLhsExprs(ma.lhs)) |lhs| {
                     const var_name = tree.getString(lhs.name);
-                    if (ma.op != null) try engine.markUsed(var_name) else try engine.declareAssigned(var_name, engine.getLoc(node.main_token));
+                    if (ma.op != null) try engine.markUsed(var_name) else try engine.declareAssigned(var_name, engine.getLoc(node.main_token), false);
                 }
             },
             .for_stmt => {
                 // The loop opens no scope: its variables belong to the enclosing one.
                 const fs = tree.forStmt(node);
                 for (tree.getLhsExprs(fs.targets)) |t| {
-                    try engine.declareAssigned(tree.getString(t.name), engine.getLoc(node.main_token));
+                    try engine.declareAssigned(tree.getString(t.name), engine.getLoc(node.main_token), false);
                 }
             },
             .export_stmt => {
@@ -51,7 +52,7 @@ pub const UnusedVarsRule = struct {
             .def_stmt => {
                 const ds = tree.defStmt(node);
                 // Function names belong to the scope they are declared in
-                try engine.declareVar(tree.getString(ds.name), engine.getLoc(node.main_token));
+                try engine.declareVar(tree.getString(ds.name), engine.getLoc(node.main_token), false);
                 try markResultUsed(engine, tree, ds.body);
             },
             .lambda_expr => try markResultUsed(engine, tree, tree.lambdaExpr(node).body),
@@ -81,7 +82,7 @@ pub const UnusedVarsRule = struct {
         const last = tree.getNode(stmts[stmts.len - 1]).?;
         if (last.tag != .assignment) return;
         const var_name = tree.getString(tree.assignment(last).name);
-        try engine.declareAssigned(var_name, engine.getLoc(last.main_token));
+        try engine.declareAssigned(var_name, engine.getLoc(last.main_token), true);
         try engine.markUsed(var_name);
     }
 
@@ -91,7 +92,7 @@ pub const UnusedVarsRule = struct {
 
         switch (node.tag) {
             .identifier => {
-                try engine.declareVar(tree.getString(@as(ast.StringId, @fromBackingInt(node.data))), engine.getLoc(node.main_token));
+                try engine.declareVar(tree.getString(@as(ast.StringId, @fromBackingInt(node.data))), engine.getLoc(node.main_token), true);
             },
             .array_literal => {
                 const span = tree.nodeSpan(node);
@@ -126,13 +127,13 @@ pub const UnusedVarsRule = struct {
             .def_stmt => {
                 const ds = tree.defStmt(node);
                 for (tree.getParams(ds.params)) |p| {
-                    try engine.declareVar(tree.getString(p.name), engine.getLoc(node.main_token));
+                    try engine.declareVar(tree.getString(p.name), engine.getLoc(node.main_token), false);
                 }
             },
             .lambda_expr => {
                 const le = tree.lambdaExpr(node);
                 for (tree.getParams(le.params)) |p| {
-                    try engine.declareVar(tree.getString(p.name), engine.getLoc(node.main_token));
+                    try engine.declareVar(tree.getString(p.name), engine.getLoc(node.main_token), false);
                 }
             },
             .block => {
@@ -151,12 +152,50 @@ pub const UnusedVarsRule = struct {
 
         while (iter.next()) |entry| {
             const var_name = entry.key_ptr.*;
-            const loc = entry.value_ptr.*;
+            const binding = entry.value_ptr;
 
             // Flag if not used and doesn't start with an underscore (which marks intentional disuse)
             if (!scope.used_vars.contains(var_name) and (var_name.len == 0 or var_name[0] != '_')) {
-                try engine.report(id, loc, "Unused variable '{s}'. Prefix with '_' if intentional.", .{var_name});
+                try engine.reportFix(id, binding.loc, try renameFix(engine, var_name, binding), "Unused variable '{s}'. Prefix with '_' if intentional.", .{var_name});
             }
         }
+    }
+
+    /// Renames every binding of the variable to `_name`, which says it is unused on purpose.
+    /// None when a binding can't be renamed alone, or `_name` is already in the file (the
+    /// rename would merge two variables).
+    fn renameFix(engine: *linter.Linter, name: []const u8, binding: *const linter.Binding) !?linter.Fix {
+        if (!binding.renamable or binding.sites.items.len == 0) return null;
+        const allocator = engine.allocator;
+        const new_name = try std.fmt.allocPrint(allocator, "_{s}", .{name});
+        defer allocator.free(new_name);
+        if (containsIdentifier(engine.sourceText(), new_name)) return null;
+
+        const edits = try allocator.alloc(linter.Edit, binding.sites.items.len);
+        var made: usize = 0;
+        errdefer {
+            for (edits[0..made]) |e| allocator.free(e.replacement);
+            allocator.free(edits);
+        }
+        for (binding.sites.items, edits) |site, *edit| {
+            edit.* = .{ .offset = site.offset, .length = site.length, .replacement = try allocator.dupe(u8, new_name) };
+            made += 1;
+        }
+        return .{ .title = try std.fmt.allocPrint(allocator, "Rename '{s}' to '{s}'", .{ name, new_name }), .edits = edits, .safe = true };
+    }
+
+    /// Whether `name` occurs in `source` as a whole word.
+    fn containsIdentifier(source: []const u8, name: []const u8) bool {
+        var from: usize = 0;
+        while (std.mem.indexOfPos(u8, source, from, name)) |at| : (from = at + 1) {
+            const before_ok = at == 0 or !isWordByte(source[at - 1]);
+            const after = at + name.len;
+            if (before_ok and (after == source.len or !isWordByte(source[after]))) return true;
+        }
+        return false;
+    }
+
+    fn isWordByte(c: u8) bool {
+        return std.ascii.isAlphanumeric(c) or c == '_' or c >= 0x80;
     }
 };

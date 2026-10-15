@@ -66,7 +66,7 @@ pub fn apply(
     defer entries.deinit(allocator);
     var problems: std.ArrayListUnmanaged(linter.LinterDiagnostic) = .empty;
     defer {
-        for (problems.items) |p| allocator.free(p.message);
+        for (problems.items) |p| p.deinit(allocator);
         problems.deinit(allocator);
     }
     for (comments) |comment| try parseComment(allocator, comment, line_index, &entries, &problems);
@@ -75,7 +75,7 @@ pub fn apply(
     var kept: usize = 0;
     for (diagnostics.items) |d| {
         if (hide(entries.items, d, line_index)) {
-            allocator.free(d.message);
+            d.deinit(allocator);
             continue;
         }
         diagnostics.items[kept] = d;

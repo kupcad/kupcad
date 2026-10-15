@@ -30,12 +30,43 @@ pub const LinterSeverity = enum {
     }
 };
 
+/// One change to the source: `length` bytes at `offset` become `replacement`.
+pub const Edit = struct {
+    offset: u32,
+    length: u32,
+    replacement: []const u8,
+};
+
+/// How to resolve a finding: every edit at once (renaming `x` renames each place it is
+/// bound).
+pub const Fix = struct {
+    /// What it does, as an editor offers it ("Rename 'x' to '_x'").
+    title: []const u8,
+    edits: []Edit,
+    /// Whether it keeps the model's meaning, so `check --fix` may apply it unasked; a fix
+    /// that isn't (deleting unreachable code) is only offered, in the editor.
+    safe: bool,
+
+    pub fn deinit(self: Fix, allocator: std.mem.Allocator) void {
+        allocator.free(self.title);
+        for (self.edits) |e| allocator.free(e.replacement);
+        allocator.free(self.edits);
+    }
+};
+
 pub const LinterDiagnostic = struct {
     loc: token.Location,
     severity: LinterSeverity,
     message: []const u8,
     /// The id of the rule that reported it; null for syntax and compile errors.
     rule: ?[]const u8 = null,
+    fix: ?Fix = null,
+
+    /// Frees what the finding owns: its message and fix.
+    pub fn deinit(self: LinterDiagnostic, allocator: std.mem.Allocator) void {
+        allocator.free(self.message);
+        if (self.fix) |f| f.deinit(allocator);
+    }
 };
 
 /// Every rule, each field named by its id; `.kupcad.json` sets each one's level by the same
@@ -68,11 +99,26 @@ pub const RuleSet = struct {
     }
 };
 
+/// A variable a scope binds.
+pub const Binding = struct {
+    /// Where it is first bound; findings about it point there.
+    loc: token.Location,
+    /// Each place it is bound by its name alone (`x = ...`, a block parameter): what a
+    /// rename has to change.
+    sites: std.ArrayListUnmanaged(token.Location) = .empty,
+    /// False once it is also bound where a rename would change more than the variable
+    /// (a method's parameter or name, which callers use) or where no token holds its name
+    /// alone (a `for` target, a multiple assignment).
+    renamable: bool = true,
+};
+
 pub const Scope = struct {
-    declared_vars: std.StringHashMapUnmanaged(token.Location) = .empty,
+    declared_vars: std.StringHashMapUnmanaged(Binding) = .empty,
     used_vars: std.StringHashMapUnmanaged(void) = .empty,
 
     pub fn deinit(self: *Scope, allocator: std.mem.Allocator) void {
+        var it = self.declared_vars.valueIterator();
+        while (it.next()) |binding| binding.sites.deinit(allocator);
         self.declared_vars.deinit(allocator);
         self.used_vars.deinit(allocator);
     }
@@ -132,6 +178,7 @@ pub const Linter = struct {
     root: ast.NodeIndex = .none,
 
     // Token location lookup
+    source: []const u8 = "",
     token_starts: []const u32 = &.{},
     token_lengths: []const u32 = &.{},
     file_id: u32 = 0,
@@ -150,7 +197,7 @@ pub const Linter = struct {
         self.scopes.deinit(self.allocator);
         self.closure_blocks.deinit(self.allocator);
         self.rules.deinit(self.allocator);
-        for (self.diagnostics.items) |d| self.allocator.free(d.message);
+        for (self.diagnostics.items) |d| d.deinit(self.allocator);
         self.diagnostics.deinit(self.allocator);
     }
 
@@ -172,8 +219,18 @@ pub const Linter = struct {
 
     /// Reports a finding of rule `rule_id`, at the level the config gives that rule.
     pub fn report(self: *Linter, comptime rule_id: []const u8, loc: token.Location, comptime fmt: []const u8, args: anytype) !void {
+        return self.reportFix(rule_id, loc, null, fmt, args);
+    }
+
+    /// `report` with a way to resolve the finding, which the linter then owns (freed even
+    /// if reporting fails).
+    pub fn reportFix(self: *Linter, comptime rule_id: []const u8, loc: token.Location, fix: ?Fix, comptime fmt: []const u8, args: anytype) !void {
+        errdefer if (fix) |f| f.deinit(self.allocator);
         const severity: LinterSeverity = switch (@field(self.config, rule_id)) {
-            .off => return,
+            .off => {
+                if (fix) |f| f.deinit(self.allocator);
+                return;
+            },
             .info => .info,
             .warning => .warning,
             .@"error" => .@"error",
@@ -185,7 +242,34 @@ pub const Linter = struct {
             .severity = severity,
             .message = msg,
             .rule = rule_id,
+            .fix = fix,
         });
+    }
+
+    /// The source being checked, for rules whose fixes edit whole lines.
+    pub fn sourceText(self: *const Linter) []const u8 {
+        return self.source;
+    }
+
+    /// The bytes from token `first` to token `last`, widened to whole lines when nothing
+    /// else shares them (the indentation before, the line break after), so deleting the
+    /// range leaves no blank line behind.
+    pub fn deletionRange(self: *const Linter, first: u32, last: u32) struct { offset: u32, length: u32 } {
+        const src = self.source;
+        var start: usize = self.getLoc(@intCast(first)).offset;
+        const last_loc = self.getLoc(@intCast(last));
+        var end: usize = last_loc.offset + last_loc.length;
+        // A statement's last token can be the line break that ends it.
+        while (end > start and std.ascii.isWhitespace(src[end - 1])) end -= 1;
+        const line_start = if (std.mem.lastIndexOfScalar(u8, src[0..start], '\n')) |nl| nl + 1 else 0;
+        const line_end = std.mem.indexOfScalarPos(u8, src, end, '\n') orelse src.len;
+        const alone_before = std.mem.trim(u8, src[line_start..start], " \t").len == 0;
+        const alone_after = std.mem.trim(u8, src[end..line_end], " \t\r").len == 0;
+        if (alone_before and alone_after) {
+            start = line_start;
+            end = @min(line_end + 1, src.len);
+        }
+        return .{ .offset = @intCast(start), .length = @intCast(end - start) };
     }
 
     pub fn pushScope(self: *Linter) !void {
@@ -217,21 +301,33 @@ pub const Linter = struct {
         };
     }
 
-    /// Declares a variable an assignment binds, unless an enclosing scope already has it:
-    /// then the assignment writes that one (`n = 0; while ... n = n + 1`).
-    pub fn declareAssigned(self: *Linter, name: []const u8, loc: token.Location) !void {
-        for (self.scopes.items) |*scope| {
-            if (scope.declared_vars.contains(name)) return;
+    /// Declares a variable an assignment binds, unless a scope it can see already has it:
+    /// then the assignment writes that one (`n = 0; while ... n = n + 1`). `renamable`
+    /// says whether `loc` is the name alone (see Binding).
+    pub fn declareAssigned(self: *Linter, name: []const u8, loc: token.Location, renamable: bool) !void {
+        var i: usize = self.scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.scopes.items[i].declared_vars.getPtr(name)) |binding| return self.addSite(binding, loc, renamable);
         }
-        try self.declareVar(name, loc);
+        try self.declareVar(name, loc, renamable);
     }
 
-    /// Declares a new binding in the innermost scope (a parameter, a method name).
-    pub fn declareVar(self: *Linter, name: []const u8, loc: token.Location) !void {
-        if (self.scopes.items.len > 0) {
-            const scope = &self.scopes.items[self.scopes.items.len - 1];
-            try scope.declared_vars.put(self.allocator, name, loc);
+    /// Declares a binding in the innermost scope (a parameter, a method name).
+    pub fn declareVar(self: *Linter, name: []const u8, loc: token.Location, renamable: bool) !void {
+        if (self.scopes.items.len == 0) return;
+        const scope = &self.scopes.items[self.scopes.items.len - 1];
+        const entry = try scope.declared_vars.getOrPut(self.allocator, name);
+        if (!entry.found_existing) entry.value_ptr.* = .{ .loc = loc };
+        try self.addSite(entry.value_ptr, loc, renamable);
+    }
+
+    fn addSite(self: *Linter, binding: *Binding, loc: token.Location, renamable: bool) !void {
+        if (!renamable) {
+            binding.renamable = false;
+            return;
         }
+        try binding.sites.append(self.allocator, loc);
     }
 
     pub fn markUsed(self: *Linter, name: []const u8) !void {
@@ -246,7 +342,8 @@ pub const Linter = struct {
         }
     }
 
-    pub fn check(self: *Linter, tree: *const ast.Tree, token_starts: []const u32, token_lengths: []const u32, root: ast.NodeIndex, parser_diagnostics: []const common_errors.Diagnostic) !void {
+    pub fn check(self: *Linter, tree: *const ast.Tree, source: []const u8, token_starts: []const u32, token_lengths: []const u32, root: ast.NodeIndex, parser_diagnostics: []const common_errors.Diagnostic) !void {
+        self.source = source;
         self.token_starts = token_starts;
         self.token_lengths = token_lengths;
 

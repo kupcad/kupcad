@@ -485,4 +485,6 @@ holes = cube(1) # kupcad:disable-line unused-variable
 # kupcad:disable param-order          (the whole file)
 ```
 
+`kupcad check --fix` applies the fixes that keep the model the same and rewrites the files, then reports what is left. Today that renames an unused variable `x` to `_x`, everywhere it is assigned; it doesn't when a rename would change more than the variable (a method's parameter, a `for` target, a multiple assignment) or when `_x` is already used. Other fixes are only suggestions, which the editor offers but `--fix` never applies: deleting unreachable code, for one, since it is often half-finished work. A pass that would add a syntax or compile error is refused, and passes repeat until nothing more applies.
+
 Only lint findings can be hidden; a syntax or compile error can't. A directive that hides nothing, or names a rule or directive that doesn't exist, is reported itself (`[suppression]`), so stale ones don't pile up.

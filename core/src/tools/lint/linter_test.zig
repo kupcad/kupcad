@@ -60,7 +60,7 @@ test "Linter: Scope shadowing inside blocks (do ... end)" {
     var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const root = try parser.parseProgram();
 
-    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
+    try engine.check(&parser.b.tree, source, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
 
     // We expect exactly two warnings here: one for the global `a` and one for the shadowed block param `a`
     try testing.expectEqual(@as(usize, 2), engine.diagnostics.items.len);
@@ -94,5 +94,5 @@ test "Linter: Iterative traversal prevents stack overflow on deeply nested AST" 
 
     // The parser must accept the whole tree, or the linter would see a shallow one
     try testing.expectEqual(@as(usize, 0), parser.diagnostics.list.items.len);
-    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
+    try engine.check(&parser.b.tree, source_buf.items, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
 }

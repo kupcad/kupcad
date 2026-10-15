@@ -1,6 +1,7 @@
 //! End-to-end lint tests: each `snapshots/<case>.kup` is checked as `kupcad check` checks
 //! it (syntax, compile errors and every rule at its default level), and the findings must
-//! match `<case>.snap`. `zig build test -Dupdate-snapshots` rewrites the .snap files from
+//! match `<case>.snap`, followed by the file `kupcad check --fix` would write when it
+//! changes anything. `zig build test -Dupdate-snapshots` rewrites the .snap files from
 //! the current output; review the diff before committing it.
 //!
 //! Both files are embedded, so the build reruns the test when either changes. To add a case,
@@ -15,6 +16,7 @@ const SNAPSHOT_DIR = "src/tools/lint/snapshots";
 const CASES = [_][]const u8{
     "clean_model",
     "compile_error",
+    "fixes",
     "nonpositive_size",
     "param_order",
     "self_subtraction",
@@ -91,5 +93,12 @@ fn render(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         try out.writer.print("{s}\n", .{d.message});
     }
     if (diags.len == 0) try out.writer.writeAll("(no findings)\n");
+
+    const fixed = try api.fixCode(allocator, testing.io, source, .{});
+    defer allocator.free(fixed.source);
+    try testing.expect(!fixed.refused); // a rule's fix must never add an error
+    if (!std.mem.eql(u8, fixed.source, source)) {
+        try out.writer.print("--- after --fix ({d} fixed) ---\n{s}", .{ fixed.fixes, fixed.source });
+    }
     return out.toOwnedSlice();
 }
