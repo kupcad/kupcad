@@ -3,6 +3,7 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const util = @import("util.zig");
+const sig = @import("../method_signatures.zig");
 const limits = @import("../../core/limits.zig");
 
 // A Sketch lies in the XY plane, so its transforms stay in that plane. A component that
@@ -272,7 +273,7 @@ fn requireInvertible(vm: *VM, det: f64) !void {
 
 pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "resize", receiver);
-    const parsed = try util.parseKwargs(struct { auto: bool = false }, vm, args, "resize");
+    const parsed = try util.parseKwargsSubset(struct { auto: bool = false }, sig.RESIZE.keywords, vm, args, "resize");
     const auto = parsed.opts.auto;
 
     if (parsed.positional.len < 1) {
@@ -377,7 +378,7 @@ pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value
 
     const count = try checkedCount(vm, args[0].asNumber(), "repeat_polar");
 
-    const parsed = try util.parseKwargs(struct { angle: ?f64 = null }, vm, args[1..], "repeat_polar");
+    const parsed = try util.parseKwargsSubset(struct { angle: ?f64 = null }, sig.REPEAT_POLAR.keywords, vm, args[1..], "repeat_polar");
     var total_angle: f64 = 360.0;
     if (parsed.positional.len > 0) total_angle = try util.requireNumber(vm, parsed.positional[0], "repeat_polar", "angle");
     if (parsed.opts.angle) |angle| total_angle = angle;

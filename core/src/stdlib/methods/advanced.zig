@@ -2,13 +2,14 @@ const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const util = @import("util.zig");
+const sig = @import("../method_signatures.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const error_kind = @import("../../vm/error_kind.zig");
 
 // --- Utilizing Strongly Typed Receivers ---
 
 /// split_by_plane's arguments, positionally or as kwargs.
-const PLANE_ARGS = [_][]const u8{ "nx", "ny", "nz", "offset" };
+const PLANE_ARGS = sig.SPLIT_BY_PLANE.positional;
 
 pub fn meshHull(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
     var scratch = std.ArrayListUnmanaged(u32).empty;
@@ -59,7 +60,7 @@ pub fn meshOffset(vm: *VM, receiver: *value.ObjCrossSection, args: []const value
     const pos = util.positionalArgs(args);
     var base = OffsetOpts{};
     if (pos.len > 0) base.delta = try util.requireNumber(vm, pos[0], "offset", "delta");
-    const opts = (try util.parseKwargsOnto(OffsetOpts, base, vm, args, "offset")).opts;
+    const opts = (try util.parseKwargsOver(OffsetOpts, base, sig.OFFSET.keywords, vm, args, "offset")).opts;
 
     const new_idx = try vm.dag_builder.addOffset(receiver.dag_idx, opts.delta, @backingInt(opts.join));
     return try vm.allocateCrossSection(new_idx);
@@ -72,7 +73,7 @@ pub fn meshSlice(vm: *VM, receiver: *value.ObjGeometry, height: ?value.Value) !v
 }
 
 pub fn meshProject(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
-    const parsed = try util.parseKwargs(struct { cut: bool = false }, vm, args, "project");
+    const parsed = try util.parseKwargsSubset(struct { cut: bool = false }, sig.PROJECT.keywords, vm, args, "project");
 
     if (parsed.opts.cut) {
         // project(cut: true) is a 2D slice exactly at Z=0
@@ -144,7 +145,7 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
 pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "split_by_plane", receiver);
 
-    const parsed = try util.parseKwargs(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null }, vm, args, "split_by_plane");
+    const parsed = try util.parseKwargsSubset(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null }, sig.SPLIT_BY_PLANE.keywords, vm, args, "split_by_plane");
     const positional = parsed.positional;
     if (positional.len != 0 and positional.len != PLANE_ARGS.len - 1 and positional.len != PLANE_ARGS.len) {
         _ = vm.raiseError(.ArgumentError, "split_by_plane expects (nx, ny, nz[, offset]), got {d} positional arguments", .{positional.len});
@@ -228,7 +229,7 @@ pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
 }
 
 pub fn meshFilletEdges(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
-    const parsed = try util.parseKwargs(struct { r: ?f64 = null }, vm, args, "fillet_edges");
+    const parsed = try util.parseKwargsSubset(struct { r: ?f64 = null }, sig.FILLET_EDGES.keywords, vm, args, "fillet_edges");
     var radius: f64 = 1.0;
     if (parsed.positional.len > 0) radius = try util.requireNumber(vm, args[0], "fillet_edges", "r");
     if (parsed.opts.r) |r| radius = r;

@@ -898,6 +898,36 @@ test "Stdlib: each primitive's Signature lists exactly the keywords it accepts" 
     try std.testing.expectEqual(@as(usize, 8), checked);
 }
 
+test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
+    // The editor's hints and `kupcad check` read the Signature, so it must be what the
+    // method parses. Sketch methods are called on a square, the rest on a cube.
+    const manifest = @import("manifest.zig");
+    const sketch_methods = [_][]const u8{ "extrude", "revolve", "helix", "offset" };
+    const counted = [_][]const u8{ "repeat_linear", "repeat_polar" }; // a count comes first
+    var checked: usize = 0;
+    inline for (manifest.mesh_methods) |m| {
+        if (m.signature.keywords.len > 0) {
+            const receiver = comptime if (isOneOf(m.name, &sketch_methods)) "square(1)" else "cube(1)";
+            const leading = comptime if (isOneOf(m.name, &counted)) "2, " else "";
+            comptime var accepted: []const u8 = "";
+            inline for (m.signature.keywords, 0..) |k, i| accepted = accepted ++ (if (i == 0) "" else ", ") ++ k;
+            try expectGlobalR(&.{.{
+                .src = comptime rescued(receiver ++ "." ++ m.name ++ "(" ++ leading ++ "zz_unknown: 1)"),
+                .expected = .{ .str = "ArgumentError: " ++ m.name ++ " does not take a keyword 'zz_unknown' (it accepts: " ++ accepted ++ ")" },
+            }});
+            checked += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 15), checked);
+}
+
+fn isOneOf(comptime name: []const u8, comptime names: []const []const u8) bool {
+    for (names) |n| {
+        if (std.mem.eql(u8, n, name)) return true;
+    }
+    return false;
+}
+
 test "Stdlib: for walks an Array, a Range or a Map, as Ruby's does" {
     // `for` was a syntax error.
     try expectGlobalR(&.{

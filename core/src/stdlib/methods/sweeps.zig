@@ -1,4 +1,5 @@
 const util = @import("util.zig");
+const sig = @import("../method_signatures.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
@@ -21,7 +22,7 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     const pos = util.positionalArgs(args);
     var base = ExtrudeOpts{};
     if (pos.len > 0) base.h = try util.requireNumber(vm, pos[0], "extrude", "h");
-    var opts = (try util.parseKwargsOnto(ExtrudeOpts, base, vm, args, "extrude")).opts;
+    var opts = (try util.parseKwargsOver(ExtrudeOpts, base, sig.EXTRUDE.keywords, vm, args, "extrude")).opts;
     if (opts.scale) |s| {
         opts.scale_x = s;
         opts.scale_y = s;
@@ -43,7 +44,7 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     const pos = util.positionalArgs(args);
     var base = RevolveOpts{};
     if (pos.len > 0) base.deg = try util.requireNumber(vm, pos[0], "revolve", "deg");
-    const opts = (try util.parseKwargsOnto(RevolveOpts, base, vm, args, "revolve")).opts;
+    const opts = (try util.parseKwargsOver(RevolveOpts, base, sig.REVOLVE.keywords, vm, args, "revolve")).opts;
     try util.requireSegmentCount(vm, opts.segments, "segments");
 
     // The profile spins about the Y axis, so its radius is its farthest x. It used to be
@@ -70,7 +71,7 @@ pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     var base = HelixOpts{};
     if (pos.len > 0) base.h = try util.requireNumber(vm, pos[0], "helix", "h");
     if (pos.len > 1) base.twist = try util.requireNumber(vm, pos[1], "helix", "twist");
-    const opts = (try util.parseKwargsOnto(HelixOpts, base, vm, args, "helix")).opts;
+    const opts = (try util.parseKwargsOver(HelixOpts, base, sig.HELIX.keywords, vm, args, "helix")).opts;
 
     try util.requireSegmentCount(vm, opts.slices, "slices");
 

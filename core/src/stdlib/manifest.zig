@@ -4,6 +4,8 @@ const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const util = @import("methods/util.zig");
 const primitives = @import("primitives.zig");
+const Signature = @import("signature.zig").Signature;
+const sig = @import("method_signatures.zig");
 const step = @import("../exporters/3d/step.zig");
 const stl = @import("../exporters/3d/stl.zig");
 const gltf = @import("../exporters/3d/gltf.zig");
@@ -41,13 +43,15 @@ pub const GlobalFunction = struct {
     func: value.NativeFn,
     category: Category,
     /// A primitive's parameters, for tools that read calls before they run.
-    signature: ?*const primitives.Signature = null,
+    signature: ?*const Signature = null,
 };
 
 pub const MeshMethod = struct {
     name: []const u8,
     category: Category,
     func: value.NativeFn,
+    /// What it takes (stdlib/method_signatures.zig), for its parameter hints and lint.
+    signature: *const Signature,
 };
 
 pub const core_namespaces = [_][]const u8{
@@ -95,50 +99,49 @@ pub const global_functions = [_]GlobalFunction{
 };
 
 pub const mesh_methods = [_]MeshMethod{
-    .{ .name = "union", .category = .csg_operator, .func = common.wrapMethod(methods.meshUnion) },
-    .{ .name = "difference", .category = .csg_operator, .func = common.wrapMethod(methods.meshDifference) },
-    .{ .name = "intersection", .category = .csg_operator, .func = common.wrapMethod(methods.meshIntersection) },
-    .{ .name = "translate", .category = .transform, .func = common.wrapMethod(methods.meshTranslate) },
-    .{ .name = "rotate", .category = .transform, .func = common.wrapMethod(methods.meshRotate) },
-    .{ .name = "scale", .category = .transform, .func = common.wrapMethod(methods.meshScale) },
-    .{ .name = "resize", .category = .transform, .func = common.wrapMethod(methods.meshResize) },
-    .{ .name = "project", .category = .transform, .func = common.wrapMethod(methods.meshProject) },
-    .{ .name = "slice", .category = .transform, .func = common.wrapMethod(methods.meshSlice) },
-    .{ .name = "center", .category = .transform, .func = common.wrapMethod(methods.meshCenter) },
-    .{ .name = "align", .category = .transform, .func = common.wrapMethod(methods.meshAlign) },
-    .{ .name = "mirror", .category = .transform, .func = common.wrapMethod(methods.meshMirror) },
-    .{ .name = "on_face", .category = .workplane_method, .func = common.wrapMethod(methods.meshOnFace) },
-    .{ .name = "split_by_plane", .category = .transform, .func = common.wrapMethod(methods.meshSplitByPlane) },
-    .{ .name = "decompose", .category = .transform, .func = common.wrapMethod(methods.meshDecompose) },
-    .{ .name = "genus", .category = .inspection_method, .func = common.wrapMethod(methods.meshGenus) },
-    .{ .name = "simplify", .category = .transform, .func = common.wrapMethod(methods.meshSimplify) },
-    .{ .name = "bbox", .category = .inspection_method, .func = common.wrapMethod(methods.meshBBox) },
-    .{ .name = "volume", .category = .inspection_method, .func = common.wrapMethod(methods.meshVolume) },
-    .{ .name = "surface_area", .category = .inspection_method, .func = common.wrapMethod(methods.meshSurfaceArea) },
-    .{ .name = "extrude", .category = .transform, .func = common.wrapMethod(methods.meshExtrude) },
-    .{ .name = "revolve", .category = .transform, .func = common.wrapMethod(methods.meshRevolve) },
-    .{ .name = "hull", .category = .transform, .func = common.wrapMethod(methods.meshHull) },
-    .{ .name = "helix", .category = .transform, .func = common.wrapMethod(methods.meshHelix) },
-    .{ .name = "loft", .category = .transform, .func = common.wrapMethod(methods.meshLoft) },
-    .{ .name = "fillet_edges", .category = .transform, .func = common.wrapMethod(methods.meshFilletEdges) },
-    .{ .name = "trim_by_plane", .category = .transform, .func = common.wrapMethod(methods.meshTrimByPlane) },
-    .{ .name = "minkowski", .category = .transform, .func = common.wrapMethod(methods.meshMinkowski) },
-    .{ .name = "offset", .category = .transform, .func = common.wrapMethod(methods.meshOffset) },
-    .{ .name = "transform", .category = .transform, .func = common.wrapMethod(methods.meshTransform) },
-    .{ .name = "min_gap", .category = .inspection_method, .func = common.wrapMethod(methods.meshMinGap) },
-    .{ .name = "contains?", .category = .inspection_method, .func = common.wrapMethod(methods.meshContains) },
-    .{ .name = "ray_cast", .category = .inspection_method, .func = common.wrapMethod(methods.meshRayCast) },
-    .{ .name = "repeat_linear", .category = .transform, .func = common.wrapMethod(methods.meshRepeatLinear) },
-    .{ .name = "repeat_polar", .category = .transform, .func = common.wrapMethod(methods.meshRepeatPolar) },
-    .{ .name = "material", .category = .transform, .func = common.wrapMethod(methods.meshMaterial) },
-    .{ .name = "highlight", .category = .transform, .func = common.wrapMethod(methods.meshHighlight) },
-    .{ .name = "ghost", .category = .transform, .func = common.wrapMethod(methods.meshGhost) },
-    .{ .name = "export_stl", .category = .file_io, .func = common.wrapMethod(stl.meshExportStl) },
-    .{ .name = "export_step", .category = .file_io, .func = common.wrapMethod(step.meshExportStep) },
-    .{ .name = "export_gltf", .category = .file_io, .func = common.wrapMethod(gltf.meshExportGltf) },
+    .{ .name = "union", .category = .csg_operator, .func = common.wrapMethod(methods.meshUnion), .signature = &sig.SHAPES },
+    .{ .name = "difference", .category = .csg_operator, .func = common.wrapMethod(methods.meshDifference), .signature = &sig.SHAPES },
+    .{ .name = "intersection", .category = .csg_operator, .func = common.wrapMethod(methods.meshIntersection), .signature = &sig.SHAPES },
+    .{ .name = "translate", .category = .transform, .func = common.wrapMethod(methods.meshTranslate), .signature = &sig.TRANSLATE },
+    .{ .name = "rotate", .category = .transform, .func = common.wrapMethod(methods.meshRotate), .signature = &sig.ROTATE },
+    .{ .name = "scale", .category = .transform, .func = common.wrapMethod(methods.meshScale), .signature = &sig.SCALE },
+    .{ .name = "resize", .category = .transform, .func = common.wrapMethod(methods.meshResize), .signature = &sig.RESIZE },
+    .{ .name = "project", .category = .transform, .func = common.wrapMethod(methods.meshProject), .signature = &sig.PROJECT },
+    .{ .name = "slice", .category = .transform, .func = common.wrapMethod(methods.meshSlice), .signature = &sig.SLICE },
+    .{ .name = "center", .category = .transform, .func = common.wrapMethod(methods.meshCenter), .signature = &sig.CENTER },
+    .{ .name = "align", .category = .transform, .func = common.wrapMethod(methods.meshAlign), .signature = &sig.ALIGN },
+    .{ .name = "mirror", .category = .transform, .func = common.wrapMethod(methods.meshMirror), .signature = &sig.MIRROR },
+    .{ .name = "on_face", .category = .workplane_method, .func = common.wrapMethod(methods.meshOnFace), .signature = &sig.ON_FACE },
+    .{ .name = "split_by_plane", .category = .transform, .func = common.wrapMethod(methods.meshSplitByPlane), .signature = &sig.SPLIT_BY_PLANE },
+    .{ .name = "decompose", .category = .transform, .func = common.wrapMethod(methods.meshDecompose), .signature = &sig.NONE },
+    .{ .name = "genus", .category = .inspection_method, .func = common.wrapMethod(methods.meshGenus), .signature = &sig.NONE },
+    .{ .name = "simplify", .category = .transform, .func = common.wrapMethod(methods.meshSimplify), .signature = &sig.SIMPLIFY },
+    .{ .name = "bbox", .category = .inspection_method, .func = common.wrapMethod(methods.meshBBox), .signature = &sig.NONE },
+    .{ .name = "volume", .category = .inspection_method, .func = common.wrapMethod(methods.meshVolume), .signature = &sig.NONE },
+    .{ .name = "surface_area", .category = .inspection_method, .func = common.wrapMethod(methods.meshSurfaceArea), .signature = &sig.NONE },
+    .{ .name = "extrude", .category = .transform, .func = common.wrapMethod(methods.meshExtrude), .signature = &sig.EXTRUDE },
+    .{ .name = "revolve", .category = .transform, .func = common.wrapMethod(methods.meshRevolve), .signature = &sig.REVOLVE },
+    .{ .name = "hull", .category = .transform, .func = common.wrapMethod(methods.meshHull), .signature = &sig.SHAPES },
+    .{ .name = "helix", .category = .transform, .func = common.wrapMethod(methods.meshHelix), .signature = &sig.HELIX },
+    .{ .name = "loft", .category = .transform, .func = common.wrapMethod(methods.meshLoft), .signature = &sig.LOFT },
+    .{ .name = "fillet_edges", .category = .transform, .func = common.wrapMethod(methods.meshFilletEdges), .signature = &sig.FILLET_EDGES },
+    .{ .name = "trim_by_plane", .category = .transform, .func = common.wrapMethod(methods.meshTrimByPlane), .signature = &sig.TRIM_BY_PLANE },
+    .{ .name = "minkowski", .category = .transform, .func = common.wrapMethod(methods.meshMinkowski), .signature = &sig.MINKOWSKI },
+    .{ .name = "offset", .category = .transform, .func = common.wrapMethod(methods.meshOffset), .signature = &sig.OFFSET },
+    .{ .name = "transform", .category = .transform, .func = common.wrapMethod(methods.meshTransform), .signature = &sig.TRANSFORM },
+    .{ .name = "min_gap", .category = .inspection_method, .func = common.wrapMethod(methods.meshMinGap), .signature = &sig.MIN_GAP },
+    .{ .name = "contains?", .category = .inspection_method, .func = common.wrapMethod(methods.meshContains), .signature = &sig.CONTAINS },
+    .{ .name = "ray_cast", .category = .inspection_method, .func = common.wrapMethod(methods.meshRayCast), .signature = &sig.RAY_CAST },
+    .{ .name = "repeat_linear", .category = .transform, .func = common.wrapMethod(methods.meshRepeatLinear), .signature = &sig.REPEAT_LINEAR },
+    .{ .name = "repeat_polar", .category = .transform, .func = common.wrapMethod(methods.meshRepeatPolar), .signature = &sig.REPEAT_POLAR },
+    .{ .name = "material", .category = .transform, .func = common.wrapMethod(methods.meshMaterial), .signature = &sig.MATERIAL },
+    .{ .name = "highlight", .category = .transform, .func = common.wrapMethod(methods.meshHighlight), .signature = &sig.NONE },
+    .{ .name = "ghost", .category = .transform, .func = common.wrapMethod(methods.meshGhost), .signature = &sig.NONE },
+    .{ .name = "export_stl", .category = .file_io, .func = common.wrapMethod(stl.meshExportStl), .signature = &sig.EXPORT },
+    .{ .name = "export_step", .category = .file_io, .func = common.wrapMethod(step.meshExportStep), .signature = &sig.EXPORT },
+    .{ .name = "export_gltf", .category = .file_io, .func = common.wrapMethod(gltf.meshExportGltf), .signature = &sig.EXPORT_GLTF },
 };
 
-/// The signature of the global function `name`, if it is a primitive that declares one.
 /// The category of the global function `name` (whether it makes a solid or a sketch, for
 /// tools that read a script before it runs).
 pub fn categoryOf(name: []const u8) ?Category {
@@ -148,9 +151,18 @@ pub fn categoryOf(name: []const u8) ?Category {
     return null;
 }
 
-pub fn signatureOf(name: []const u8) ?*const primitives.Signature {
+/// The signature of the global function `name`, if it is a primitive that declares one.
+pub fn signatureOf(name: []const u8) ?*const Signature {
     for (global_functions) |f| {
         if (std.mem.eql(u8, f.name, name)) return f.signature;
+    }
+    return null;
+}
+
+/// The signature of the method `name` of a solid or a sketch.
+pub fn methodSignatureOf(name: []const u8) ?*const Signature {
+    for (mesh_methods) |m| {
+        if (std.mem.eql(u8, m.name, name)) return m.signature;
     }
     return null;
 }

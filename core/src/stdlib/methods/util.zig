@@ -18,7 +18,8 @@ const MAX_DESCRIPTION_LEN = 128;
 
 /// Maximum positional components of a vector argument (x, y, z).
 const VEC3_LEN = 3;
-const VEC3_NAMES = [VEC3_LEN][]const u8{ "x", "y", "z" };
+/// The keywords (and positional names) of a 3D vector: translate, scale and the rest.
+pub const VEC3_NAMES = [VEC3_LEN][]const u8{ "x", "y", "z" };
 
 /// The script-facing name of a value's type, for TypeError messages.
 pub fn typeName(vm: *VM, val: value.Value) []const u8 {
@@ -251,7 +252,7 @@ fn keyName(k: value.Value) ?[]const u8 {
 /// Unset components are `default_val`; kwargs override positionals.
 pub fn parseVec3(vm: *VM, args: []const value.Value, default_val: f64, method: []const u8) ![VEC3_LEN]f64 {
     // Raw values, so a nil coordinate is a TypeError rather than an unset axis.
-    const parsed = try parseKwargs(struct { x: ?value.Value = null, y: ?value.Value = null, z: ?value.Value = null }, vm, args, method);
+    const parsed = try parseKwargsSubset(struct { x: ?value.Value = null, y: ?value.Value = null, z: ?value.Value = null }, &VEC3_NAMES, vm, args, method);
     if (parsed.positional.len > VEC3_LEN) {
         _ = vm.raiseError(.ArgumentError, "{s} expects at most {d} numbers (x, y, z), got {d}", .{ method, VEC3_LEN, parsed.positional.len });
         return error.RuntimeError;

@@ -4,18 +4,19 @@ const material = @import("../../core/material.zig");
 const MaterialDef = material.MaterialDef;
 const kernel = @import("../../kernel/kernel.zig");
 const util = @import("util.zig");
+const sig = @import("../method_signatures.zig");
 const error_kind = @import("../../vm/error_kind.zig");
 
 pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "material", receiver);
 
-    const parsed = try util.parseKwargs(struct {
+    const parsed = try util.parseKwargsSubset(struct {
         color: ?[]const u8 = null,
         alpha: ?f64 = null,
         roughness: ?f64 = null,
         metallic: ?f64 = null,
         transmission: ?f64 = null,
-    }, vm, args, "material");
+    }, sig.MATERIAL.keywords, vm, args, "material");
     if (parsed.positional.len == args.len) {
         _ = vm.raiseError(.ArgumentError, "material requires keyword arguments (e.g. color: \"#FF0000\")", .{});
         return error.RuntimeError;

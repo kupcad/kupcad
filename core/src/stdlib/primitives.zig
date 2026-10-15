@@ -1,6 +1,7 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
 const util = @import("methods/util.zig");
+const Signature = @import("signature.zig").Signature;
 const VM = @import("../vm/vm.zig").VM;
 const text_mod = @import("../core/text.zig");
 const limits = @import("../core/limits.zig");
@@ -8,24 +9,17 @@ const limits = @import("../core/limits.zig");
 /// Smallest allowed text() flattening tolerance relative to the glyph size.
 const MIN_TEXT_TOLERANCE_RATIO: f64 = 1e-4;
 
-/// What a primitive takes. The runtime parses its keywords from it, and `kupcad check`
-/// reads its sizes to flag `cube(-5)` before the script runs.
-pub const Signature = struct {
-    /// Positional parameters, in order.
-    positional: []const []const u8,
-    /// Every keyword it accepts, in the order its errors list them.
-    keywords: []const []const u8,
-    /// Parameters, by position or keyword, that must be greater than zero.
-    sizes: []const []const u8,
-};
-
+// What each primitive takes (see signature.zig). The runtime parses its keywords from it,
+// and `kupcad check` reads its sizes to flag `cube(-5)` before the script runs.
 pub const CUBE = Signature{
     .positional = &.{ "x", "y", "z", "center" },
+    .single = "size",
     .keywords = &.{ "x", "y", "z", "size", "center", "round_r", "chamfer", "segments" },
     .sizes = &.{ "x", "y", "z", "size" },
 };
 pub const SQUARE = Signature{
     .positional = &.{ "x", "y", "center" },
+    .single = "size",
     .keywords = &.{ "x", "y", "size", "center", "round_r", "chamfer", "segments" },
     .sizes = &.{ "x", "y", "size" },
 };
