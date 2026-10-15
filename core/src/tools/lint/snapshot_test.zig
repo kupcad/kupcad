@@ -80,11 +80,6 @@ fn checkCase(comptime case: []const u8, source: []const u8, expected: []const u8
 fn render(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     const diags = try api.checkCode(allocator, testing.io, source, .{});
     defer api.freeDiagnostics(allocator, diags);
-    std.mem.sort(api.LinterDiagnostic, diags, {}, struct {
-        fn before(_: void, a: api.LinterDiagnostic, b: api.LinterDiagnostic) bool {
-            return a.loc.offset < b.loc.offset;
-        }
-    }.before);
 
     const line_index = try api.LineIndex.init(allocator, source);
     defer line_index.deinit(allocator);

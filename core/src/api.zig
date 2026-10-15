@@ -82,6 +82,12 @@ pub fn checkDocument(allocator: std.mem.Allocator, io: std.Io, doc: *const Docum
             try linter.diagnostics.append(allocator, .{ .loc = compile_error.loc, .severity = .@"error", .message = compile_error.message });
         }
     }
+    // In source order, whichever rule or stage found them.
+    std.mem.sort(LinterDiagnostic, linter.diagnostics.items, {}, struct {
+        fn before(_: void, x: LinterDiagnostic, y: LinterDiagnostic) bool {
+            return x.loc.offset < y.loc.offset;
+        }
+    }.before);
     return linter.diagnostics.toOwnedSlice(allocator);
 }
 

@@ -220,3 +220,28 @@ test "kupcad: check --fix rewrites what it can fix and reports the rest" {
         .{ .args = &.{ "check", "--help" }, .code = 0, .contains = "--fix" },
     });
 }
+
+test "kupcad: check --format json and sarif write one document to stdout" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    inline for (.{ "json", "sarif" }) |format| {
+        const run = try kupcad(sb.path, &.{ "check", "--format", format, "unused.kup" });
+        defer run.deinit();
+        try testing.expectEqual(@as(u8, 0), run.code);
+        // stdout is the document alone: it parses, and names the finding's rule.
+        const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, run.stdout, .{});
+        defer parsed.deinit();
+        try testing.expect(std.mem.indexOf(u8, run.stdout, "\"unused-variable\"") != null);
+    }
+}
+
+test "kupcad: check --max-warnings fails a run with more warnings than that" {
+    try expectRuns(&.{
+        .{ .args = &.{ "check", "--max-warnings", "0", "unused.kup" }, .code = 1, .contains = "Failed: 1 warning, more than --max-warnings 0." },
+        .{ .args = &.{ "check", "--max-warnings", "1", "unused.kup" }, .code = 0 },
+        .{ .args = &.{ "check", "--format", "json", "--max-warnings", "0", "unused.kup" }, .code = 1, .contains = "1 warning, more than --max-warnings 0" },
+        .{ .args = &.{ "check", "--format", "xml", "unused.kup" }, .code = 1, .contains = "--format is text, json or sarif, not 'xml'" },
+        .{ .args = &.{ "check", "--max-warnings", "many", "unused.kup" }, .code = 1, .contains = "--max-warnings takes a whole number" },
+        .{ .args = &.{ "check", "unused.kup", "--format" }, .code = 1, .contains = "Missing value after '--format'" },
+    });
+}

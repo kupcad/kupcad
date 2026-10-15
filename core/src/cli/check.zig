@@ -9,17 +9,27 @@ const Reporter = @import("reporter.zig").Reporter;
 const plural = @import("reporter.zig").plural;
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
-const CommandSetup = @import("options.zig").CommandSetup(struct { fix: bool = false });
+const CommandSetup = @import("options.zig").CommandSetup(struct {
+    fix: bool = false,
+    format: ?[]const u8 = null,
+    @"max-warnings": ?[]const u8 = null,
+});
+const output = @import("check_output.zig");
 const fs = @import("fs.zig");
 
 pub const USAGE =
-    \\Usage: kupcad check [--fix] [--config <file>] <file|dir>...
+    \\Usage: kupcad check [--fix] [--format text|json|sarif] [--max-warnings <n>]
+    \\                    [--config <file>] <file|dir>...
     \\
     \\Reports syntax errors, mistakes the compiler finds and lint warnings in .kup files.
     \\
     \\Options:
     \\  --fix            Apply the fixes that keep the model the same (renaming an unused
     \\                   `x` to `_x`) and rewrite the files, then report what is left
+    \\  --format <kind>  text (the default), json, or sarif for code scanning (GitHub);
+    \\                   json and sarif write one document to stdout
+    \\  --max-warnings <n>
+    \\                   Fail when there are more than <n> warnings (0 fails on any)
     \\  --config <file>  Read lint settings from <file> instead of .kupcad.json
     \\  -h, --help       Show this help
     \\
@@ -42,6 +52,9 @@ const Totals = struct {
     infos: usize = 0,
     config: LintConfig,
     fix: bool = false,
+    format: output.Format = .text,
+    /// Findings for the json and sarif formats, written once the run ends.
+    collected: ?*output.Collector = null,
     compiler_memory_limit: ?usize = null,
     reporter: Reporter,
 };
@@ -52,9 +65,23 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer setup.deinit(allocator);
 
     const reporter: Reporter = .forProcess(init);
+    const flags = setup.options.flags;
+    const format = if (flags.format) |name| std.meta.stringToEnum(output.Format, name) orelse {
+        reporter.err("Error: --format is text, json or sarif, not '{s}'\n", .{name});
+        return .failure;
+    } else .text;
+    const max_warnings: ?usize = if (flags.@"max-warnings") |n| std.fmt.parseInt(usize, n, 10) catch {
+        reporter.err("Error: --max-warnings takes a whole number, not '{s}'\n", .{n});
+        return .failure;
+    } else null;
+    var collector = output.Collector.init(allocator);
+    defer collector.deinit();
+
     var totals = Totals{
         .config = setup.config.lint,
-        .fix = setup.options.flags.fix,
+        .fix = flags.fix,
+        .format = format,
+        .collected = if (format == .text) null else &collector,
         .compiler_memory_limit = setup.config.compiler_memory_limit, // Hook it up
         .reporter = reporter,
     };
@@ -64,6 +91,21 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     // would read the old count first and overwrite those updates.
     const unreadable = try walker.walkPaths(reporter, allocator, setup.options.paths.items, &totals, processFile);
     totals.errors += unreadable;
+
+    const too_many_warnings = if (max_warnings) |max| totals.warnings > max else false;
+    const outcome: Outcome = if (totals.errors > 0 or too_many_warnings) .failure else .success;
+    if (format != .text) {
+        var buffer: std.Io.Writer.Allocating = .init(allocator);
+        defer buffer.deinit();
+        switch (format) {
+            .json => try collector.writeJson(&buffer.writer, .{ .files = totals.files, .errors = totals.errors, .warnings = totals.warnings, .infos = totals.infos }),
+            .sarif => try collector.writeSarif(&buffer.writer),
+            .text => unreachable,
+        }
+        reporter.out("{s}", .{buffer.written()});
+        if (too_many_warnings) reporter.err("{d} {s}, more than --max-warnings {d}\n", .{ totals.warnings, plural(totals.warnings, "warning", "warnings"), max_warnings.? });
+        return outcome;
+    }
 
     if (totals.errors == 0 and totals.warnings == 0 and totals.infos == 0) {
         const c = reporter.out_style;
@@ -80,7 +122,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             c.reset,
         });
     }
-    return if (totals.errors > 0) .failure else .success;
+    if (too_many_warnings) reporter.err("{s}Failed: {d} {s}, more than --max-warnings {d}.{s}\n", .{ reporter.err_style.red, totals.warnings, plural(totals.warnings, "warning", "warnings"), max_warnings.?, reporter.err_style.reset });
+    return outcome;
 }
 
 fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, source: []const u8, context: ?*anyopaque) anyerror!void {
@@ -117,6 +160,10 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
     };
     defer api.freeDiagnostics(compile_allocator, diags);
 
+    if (totals.collected) |collector| {
+        for (diags) |d| countFinding(totals, d);
+        return collector.add(file_path, checked, diags);
+    }
     if (diags.len > 0) {
         const line_index = try api.LineIndex.init(compile_allocator, checked);
         defer line_index.deinit(compile_allocator);
@@ -124,11 +171,7 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
         var rendered: std.Io.Writer.Allocating = .init(allocator);
         defer rendered.deinit();
         for (diags) |d| {
-            switch (d.severity) {
-                .@"error" => totals.errors += 1,
-                .warning => totals.warnings += 1,
-                .info => totals.infos += 1,
-            }
+            countFinding(totals, d);
             try report.write(&rendered.writer, .{
                 .file_path = file_path,
                 .source = checked,
@@ -160,4 +203,12 @@ fn fixFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, sour
     try fs.replaceFileAtomic(io, file_path, result.source);
     totals.reporter.err("{s}Fixed {d} {s} in {s}{s}\n", .{ c.green, result.fixes, plural(result.fixes, "problem", "problems"), file_path, c.reset });
     return result.source;
+}
+
+fn countFinding(totals: *Totals, d: api.LinterDiagnostic) void {
+    switch (d.severity) {
+        .@"error" => totals.errors += 1,
+        .warning => totals.warnings += 1,
+        .info => totals.infos += 1,
+    }
 }

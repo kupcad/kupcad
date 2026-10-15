@@ -3,9 +3,9 @@ const ProjectConfig = @import("config.zig").ProjectConfig;
 const log_helpers = @import("../log.zig");
 
 /// The arguments of a command that takes files or directories, `--config <file>` and the
-/// switches in `Flags`, a struct of bools where field `check` is `--check`. Anything else
-/// starting with `-` is an error, not a path: `fmt --check` used to read a file named
-/// "--check".
+/// options in `Flags`: a bool field `check` is the switch `--check`, a `?[]const u8` field
+/// `format` the option `--format <value>`. Anything else starting with `-` is an error, not
+/// a path: `fmt --check` used to read a file named "--check".
 pub fn CommandOptions(comptime Flags: type) type {
     return struct {
         const Self = @This();
@@ -14,9 +14,9 @@ pub fn CommandOptions(comptime Flags: type) type {
         flags: Flags = .{},
         paths: std.ArrayListUnmanaged([]const u8) = .empty,
 
-        pub const Error = error{ MissingConfigValue, MissingFilePath, UnknownOption, OutOfMemory };
+        pub const Error = error{ MissingConfigValue, MissingOptionValue, MissingFilePath, UnknownOption, OutOfMemory };
 
-        /// On error.UnknownOption, `unknown` is set to the argument.
+        /// On error.UnknownOption or error.MissingOptionValue, `unknown` is set to the option.
         pub fn parse(allocator: std.mem.Allocator, args_iter: anytype, unknown: *[]const u8) Error!Self {
             var self: Self = .{};
             errdefer self.paths.deinit(allocator);
@@ -24,10 +24,8 @@ pub fn CommandOptions(comptime Flags: type) type {
                 if (std.mem.eql(u8, arg, "--config")) {
                     self.config_path = args_iter.next() orelse return error.MissingConfigValue;
                 } else if (std.mem.startsWith(u8, arg, "-")) {
-                    if (!self.setFlag(arg)) {
-                        unknown.* = arg;
-                        return error.UnknownOption;
-                    }
+                    unknown.* = arg;
+                    try self.setOption(arg, args_iter);
                 } else {
                     try self.paths.append(allocator, arg);
                 }
@@ -36,14 +34,18 @@ pub fn CommandOptions(comptime Flags: type) type {
             return self;
         }
 
-        fn setFlag(self: *Self, arg: []const u8) bool {
+        fn setOption(self: *Self, arg: []const u8, args_iter: anytype) Error!void {
             inline for (comptime std.meta.fieldNames(Flags)) |name| {
                 if (std.mem.eql(u8, arg, "--" ++ name)) {
-                    @field(self.flags, name) = true;
-                    return true;
+                    switch (@FieldType(Flags, name)) {
+                        bool => @field(self.flags, name) = true,
+                        ?[]const u8 => @field(self.flags, name) = args_iter.next() orelse return error.MissingOptionValue,
+                        else => @compileError("CommandOptions: option --" ++ name ++ " is neither a bool nor a ?[]const u8"),
+                    }
+                    return;
                 }
             }
-            return false;
+            return error.UnknownOption;
         }
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
@@ -68,6 +70,7 @@ pub fn CommandSetup(comptime Flags: type) type {
                     error.MissingConfigValue => log_helpers.printStderr(io, "Error: Missing file after --config\n\n" ++ usage, .{}),
                     error.MissingFilePath => log_helpers.printStderr(io, "Error: Missing file path\n\n" ++ usage, .{}),
                     error.UnknownOption => log_helpers.printStderr(io, "Error: Unknown option '{s}'\n\n" ++ usage, .{unknown}),
+                    error.MissingOptionValue => log_helpers.printStderr(io, "Error: Missing value after '{s}'\n\n" ++ usage, .{unknown}),
                     error.OutOfMemory => {},
                 }
                 return err;

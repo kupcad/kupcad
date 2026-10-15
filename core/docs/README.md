@@ -480,6 +480,8 @@ Each rule's level is set in `.kupcad.json` (or the file given with `--config`), 
 
 A setting `.kupcad.json` doesn't have is an error that gives its line and column, so a mistyped rule is never ignored.
 
+For CI, `--max-warnings <n>` fails the run when there are more than `n` warnings (`0` fails on any), and `--format json` or `--format sarif` writes one document to stdout instead of the report: JSON lists each finding with its path, line, column, end, severity, rule, message and fix; SARIF 2.1.0 is what code-scanning services read (GitHub shows the findings on a pull request with `github/codeql-action/upload-sarif`).
+
 A comment can hide findings where they are deliberate. It names the rules it hides, and may say why after ` -- `:
 
 ```ruby
