@@ -207,18 +207,24 @@ pub const Resolver = struct {
             commit_sha = try fetcher.fetchCommitSha(parsed);
         }
 
+        // A pin taken before lockfile 3.0.0 hashed a git host archive with its top folder,
+        // which only the archive itself still has: it is checked against a fresh download.
+        const format = try self.lockfile.format();
+        const pinned_wrapped = pinned_commit != null and format.wrapped_git_archives and parsed.provider.archiveLayout() == .wrapped;
+
         // 2. Content: offline cache first, network/disk otherwise
         var cached: ?std.StringHashMap([]const u8) = null;
-        if (commit_sha) |c| {
+        if (commit_sha) |c| if (!pinned_wrapped) {
             try self.mutex.lock(self.io);
             defer self.mutex.unlock(self.io);
             cached = try self.store.getPackageFiles(self.allocator, pkg_id, c);
-        }
-        var files = cached orelse try self.downloadPackage(&fetcher, parsed, commit_sha);
-        defer Store.freeFileMap(self.allocator, &files);
+        };
+        var archive: cafs_mod.Archive = if (cached) |files| .{ .files = files, .root = &.{} } else try self.downloadPackage(&fetcher, parsed, commit_sha);
+        defer archive.deinit(self.allocator);
+        const files = &archive.files;
 
         // 3. Integrity: must match the lockfile for both cached and fresh content
-        const integrity_hash = try Store.computeIntegrity(self.allocator, &files);
+        const integrity_hash = try Store.computeIntegrity(self.allocator, files);
         var integrity_owned = true;
         defer if (integrity_owned) self.allocator.free(integrity_hash);
 
@@ -228,8 +234,11 @@ pub const Resolver = struct {
                 log.warn("kupcad.lock entry for {s} has no integrity; refusing to install unverified content", .{pkg_id});
                 return error.LockfileMissingIntegrity;
             }
-            const algo: Store.IntegrityAlgo = if (try self.lockfile.usesLegacyIntegrity()) .legacy else .current;
-            Store.verifyIntegrity(self.allocator, &files, expected, algo) catch |err| {
+            const scheme: Store.IntegrityScheme = .{
+                .algo = if (format.legacy_hash) .legacy else .current,
+                .root = if (pinned_wrapped) archive.root else "",
+            };
+            Store.verifyIntegrity(self.allocator, files, expected, scheme) catch |err| {
                 log.warn("Integrity mismatch for {s}@{s}: kupcad.lock expects {s}, got {s}", .{ pkg_id, pinned_commit.?, expected, integrity_hash });
                 return err;
             };
@@ -248,7 +257,7 @@ pub const Resolver = struct {
             try self.mutex.lock(self.io);
             defer self.mutex.unlock(self.io);
 
-            try self.store.registerPackage(pkg_id, commit_sha.?, @tagName(parsed.provider), integrity_hash, &files);
+            try self.store.registerPackage(pkg_id, commit_sha.?, @tagName(parsed.provider), integrity_hash, files);
 
             const ref_dupe = try self.allocator.dupe(u8, parsed.ref);
             errdefer self.allocator.free(ref_dupe);
@@ -276,7 +285,7 @@ pub const Resolver = struct {
         if (manifest_hash) |h| try self.spawnTransitiveDependencies(pkg_id, h);
     }
 
-    fn downloadPackage(self: *Resolver, fetcher: *Fetcher, parsed: provider.ParsedPackage, commit_sha: ?[]const u8) !std.StringHashMap([]const u8) {
+    fn downloadPackage(self: *Resolver, fetcher: *Fetcher, parsed: provider.ParsedPackage, commit_sha: ?[]const u8) !cafs_mod.Archive {
         switch (parsed.provider) {
             .github, .gitlab, .gitea => {
                 const archive_url = switch (parsed.provider) {
@@ -285,12 +294,12 @@ pub const Resolver = struct {
                     else => try GiteaProvider.formatArchiveUrl(self.allocator, parsed, commit_sha.?),
                 };
                 defer self.allocator.free(archive_url);
-                return fetcher.downloadArchive(archive_url, self.cafs);
+                return fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout());
             },
             .http => {
                 const archive_url = try HttpProvider.formatArchiveUrl(self.allocator, parsed, "");
                 defer self.allocator.free(archive_url);
-                return fetcher.downloadArchive(archive_url, self.cafs);
+                return fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout());
             },
             .local => {
                 const path = try LocalProvider.formatArchiveUrl(self.allocator, self.io, parsed, "");

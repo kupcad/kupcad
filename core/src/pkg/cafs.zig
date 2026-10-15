@@ -9,6 +9,44 @@ const log = std.log.scoped(.pkg);
 /// Extra decompressed bytes allowed beyond file contents for tar headers/padding.
 const TAR_METADATA_SLACK_BYTES: u64 = 64 * 1024 * 1024;
 
+/// How an archive's entries map onto the package's files.
+pub const ArchiveLayout = enum {
+    /// Every entry sits in one top folder the host adds (`repo-<sha>/` from GitHub and
+    /// GitLab, `repo/` from Gitea), which is not part of the package. It was kept, so no
+    /// import of an installed package could find its files.
+    wrapped,
+    /// The archive's root is the package's root (a `file:` or http archive).
+    flat,
+};
+
+/// An extracted package: its files and, for a `wrapped` archive, the top folder stripped.
+pub const Archive = struct {
+    /// Package-relative path -> blob hash, both owned.
+    files: std.StringHashMap([]const u8),
+    /// The top folder of a `wrapped` archive (owned); empty for `flat`.
+    root: []const u8,
+
+    pub fn deinit(self: *Archive, allocator: std.mem.Allocator) void {
+        var it = self.files.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            allocator.free(entry.value_ptr.*);
+        }
+        self.files.deinit();
+        allocator.free(self.root);
+    }
+
+    /// `path` without the top folder, which the first file sets and every other must share.
+    fn unwrap(self: *Archive, allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+        const slash = std.mem.indexOfScalar(u8, path, '/') orelse return error.UnexpectedArchiveLayout;
+        const folder = path[0..slash];
+        if (self.root.len == 0) {
+            self.root = try allocator.dupe(u8, folder);
+        } else if (!std.mem.eql(u8, self.root, folder)) return error.UnexpectedArchiveLayout;
+        return path[slash + 1 ..];
+    }
+};
+
 pub const ExtractLimits = struct {
     max_total_bytes: u64 = limits.MAX_EXTRACTED_TOTAL_BYTES,
     max_file_count: usize = limits.MAX_EXTRACTED_FILE_COUNT,
@@ -109,11 +147,13 @@ pub const Cafs = struct {
     /// - symlink entries are skipped (never created), so a later entry can't write
     ///   through a planted link to a location outside the package;
     /// - entry paths are sanitized (no absolute paths, `..`, `\\`, `:` or NUL);
-    /// - total decompressed bytes and file count are capped (gzip / tar bombs).
+    /// - total decompressed bytes and file count are capped (gzip / tar bombs);
+    /// - a `wrapped` archive's top folder is stripped, and must be the same for every file.
     pub fn extractTarball(
         self: *Cafs,
         reader: *std.Io.Reader,
-    ) !std.StringHashMap([]const u8) {
+        layout: ArchiveLayout,
+    ) !Archive {
         var window_buffer: [std.compress.flate.max_window_len]u8 = undefined;
         var decompress: std.compress.flate.Decompress = .init(reader, .gzip, &window_buffer);
 
@@ -131,15 +171,9 @@ pub const Cafs = struct {
             .link_name_buffer = &link_name_buffer,
         });
 
-        var file_map = std.StringHashMap([]const u8).init(self.allocator);
-        errdefer {
-            var map_it = file_map.iterator();
-            while (map_it.next()) |entry| {
-                self.allocator.free(entry.key_ptr.*);
-                self.allocator.free(entry.value_ptr.*);
-            }
-            file_map.deinit();
-        }
+        var archive: Archive = .{ .files = .init(self.allocator), .root = &.{} };
+        errdefer archive.deinit(self.allocator);
+        const file_map = &archive.files;
 
         var total_bytes: u64 = 0;
         while (true) {
@@ -158,7 +192,11 @@ pub const Cafs = struct {
                 .file => {},
             }
 
-            const rel_path = try sanitizeEntryPath(&sanitize_buffer, entry.name);
+            const entry_path = try sanitizeEntryPath(&sanitize_buffer, entry.name);
+            const rel_path = switch (layout) {
+                .flat => entry_path,
+                .wrapped => try archive.unwrap(self.allocator, entry_path),
+            };
 
             if (file_map.count() >= self.extract_limits.max_file_count) return error.ArchiveTooManyFiles;
             if (entry.size > max_total - total_bytes) return error.ArchiveTooLarge;
@@ -180,7 +218,7 @@ pub const Cafs = struct {
             try file_map.put(map_key, hash_hex);
         }
 
-        return file_map;
+        return archive;
     }
 
     /// Streams exactly `size` bytes into a temporary file, hashes it, applies 0444, and atomically commits it to CAFS

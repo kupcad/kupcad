@@ -6,12 +6,15 @@ const log = std.log.scoped(.pkg);
 
 pub const StringMap = std.StringHashMap([]const u8);
 
+/// 3.0.0: a git host package's files are recorded without its archive's top folder.
 /// 2.0.0: integrity uses length-prefixed hashing (see Store.computeIntegrity).
-pub const LOCKFILE_VERSION = "2.0.0";
+pub const LOCKFILE_VERSION = "3.0.0";
 /// 1.x: integrity uses the ambiguous v1 hashing (Store.IntegrityAlgo.legacy).
-const LEGACY_LOCKFILE_MAJOR = 1;
-/// Must match LOCKFILE_VERSION's major; any 2.x is hashed with the current scheme.
-const CURRENT_LOCKFILE_MAJOR = 2;
+const LEGACY_HASH_MAJOR = 1;
+/// The last major that recorded git host archives under their top folder.
+const WRAPPED_ARCHIVES_MAJOR = 2;
+/// Must match LOCKFILE_VERSION's major.
+const CURRENT_LOCKFILE_MAJOR = 3;
 
 /// JSON-escaped, quoted string formatter.
 fn jsonStr(s: []const u8) std.json.Formatter([]const u8) {
@@ -93,8 +96,8 @@ pub const Lockfile = struct {
         }
         // Reject unknown formats up front: verifying a newer lockfile with our hash
         // scheme would only surface later as a misleading IntegrityMismatch.
-        _ = lockfile.usesLegacyIntegrity() catch |err| {
-            log.warn("kupcad.lock version \"{s}\" is not supported (this kupcad reads {d}.x and {d}.x lockfiles); upgrade kupcad or delete kupcad.lock to re-resolve", .{ lockfile.version, LEGACY_LOCKFILE_MAJOR, CURRENT_LOCKFILE_MAJOR });
+        _ = lockfile.format() catch |err| {
+            log.warn("kupcad.lock version \"{s}\" is not supported (this kupcad reads {d}.x to {d}.x lockfiles); upgrade kupcad or delete kupcad.lock to re-resolve", .{ lockfile.version, LEGACY_HASH_MAJOR, CURRENT_LOCKFILE_MAJOR });
             return err;
         };
 
@@ -152,13 +155,21 @@ pub const Lockfile = struct {
         return lockfile;
     }
 
-    /// 1.x lockfiles hash integrity with the ambiguous v1 scheme, 2.x with the current one.
+    /// How a lockfile's version took its integrities, so older ones can still be checked.
+    pub const Format = struct {
+        /// 1.x: the ambiguous v1 path hashing (Store.IntegrityAlgo.legacy).
+        legacy_hash: bool,
+        /// Before 3.0.0: a git host package's files kept its archive's top folder.
+        wrapped_git_archives: bool,
+    };
+
     /// Any other (or unparseable) version is a format this build cannot verify.
-    pub fn usesLegacyIntegrity(self: *const Lockfile) error{UnsupportedLockfileVersion}!bool {
+    pub fn format(self: *const Lockfile) error{UnsupportedLockfileVersion}!Format {
         const v = semver.Version.parse(self.version) catch return error.UnsupportedLockfileVersion;
         return switch (v.major) {
-            LEGACY_LOCKFILE_MAJOR => true,
-            CURRENT_LOCKFILE_MAJOR => false,
+            LEGACY_HASH_MAJOR => .{ .legacy_hash = true, .wrapped_git_archives = true },
+            WRAPPED_ARCHIVES_MAJOR => .{ .legacy_hash = false, .wrapped_git_archives = true },
+            CURRENT_LOCKFILE_MAJOR => .{ .legacy_hash = false, .wrapped_git_archives = false },
             else => error.UnsupportedLockfileVersion,
         };
     }

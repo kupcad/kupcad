@@ -198,7 +198,10 @@ test "Store: migrates v2 databases to the composite package key" {
             "CREATE TABLE files (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, created_at INTEGER NOT NULL)",
             "CREATE TABLE package_files (package_id TEXT NOT NULL, commit_sha TEXT NOT NULL, file_path TEXT NOT NULL, file_hash TEXT NOT NULL, PRIMARY KEY (package_id, commit_sha, file_path), FOREIGN KEY (file_hash) REFERENCES files(hash))",
             "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-            "INSERT INTO packages VALUES ('pkg', 'old', 'github', 7, 'sha256-old')",
+            "INSERT INTO packages VALUES ('pkg', 'old', 'http', 7, 'sha256-old')",
+            // Indexed under its archive's top folder, which v5 no longer keeps.
+            "INSERT INTO packages VALUES ('gh', 'c1', 'github', 7, 'sha256-gh')",
+            "INSERT INTO package_files VALUES ('gh', 'c1', 'r-c1/main.kup', 'h1')",
             "INSERT INTO files VALUES ('h1', 3, 7)",
             "INSERT INTO package_files VALUES ('pkg', 'old', 'main.kup', 'h1')",
             // Mapping of a commit the v2 schema silently dropped from `packages`
@@ -220,7 +223,7 @@ test "Store: migrates v2 databases to the composite package key" {
         const stmt = try store.db.prepare("SELECT provider, integrity, created_at FROM packages WHERE id = 'pkg' AND commit_sha = 'old'");
         defer stmt.deinit();
         const row = (try stmt.one(struct { provider: []const u8, integrity: []const u8, created_at: i64 }, .{}, .{})) orelse return error.TestMissingRow;
-        try testing.expectEqualStrings("github", row.provider);
+        try testing.expectEqualStrings("http", row.provider);
         try testing.expectEqualStrings("sha256-old", row.integrity);
         try testing.expectEqual(@as(i64, 7), row.created_at);
     }
@@ -231,6 +234,9 @@ test "Store: migrates v2 databases to the composite package key" {
     try testing.expectEqual(@as(i64, 1), try countRows(&store, "SELECT COUNT(*) FROM meta"));
     // Unreachable mappings are cleaned up.
     try testing.expectEqual(@as(i64, 0), try countRows(&store, "SELECT COUNT(*) FROM package_files WHERE commit_sha = 'lost'"));
+    // v5: a git host package is fetched again rather than linked with its top folder.
+    try testing.expect(!try store.hasPackage("gh", "c1"));
+    try testing.expectEqual(@as(i64, 0), try countRows(&store, "SELECT COUNT(*) FROM package_files WHERE package_id = 'gh'"));
 
     // A second commit of the same package can now be recorded alongside the first.
     var new_files = std.StringHashMap([]const u8).init(testing.allocator);
@@ -255,13 +261,13 @@ test "Store: computeIntegrity input is unambiguous" {
     const h2 = try Store.computeIntegrity(testing.allocator, &m2);
     defer testing.allocator.free(h2);
     try testing.expect(!std.mem.eql(u8, h1, h2));
-    try Store.verifyIntegrity(testing.allocator, &m1, h1, .current);
-    try testing.expectError(error.IntegrityMismatch, Store.verifyIntegrity(testing.allocator, &m2, h1, .current));
+    try Store.verifyIntegrity(testing.allocator, &m1, h1, .{});
+    try testing.expectError(error.IntegrityMismatch, Store.verifyIntegrity(testing.allocator, &m2, h1, .{}));
 
     // The legacy (lockfile 1.x) algorithm is kept, ambiguity included, to verify old lockfiles.
-    const legacy = try Store.computeIntegrityAlgo(testing.allocator, &m1, .legacy);
+    const legacy = try Store.computeIntegrityWith(testing.allocator, &m1, .{ .algo = .legacy });
     defer testing.allocator.free(legacy);
-    try Store.verifyIntegrity(testing.allocator, &m2, legacy, .legacy);
+    try Store.verifyIntegrity(testing.allocator, &m2, legacy, .{ .algo = .legacy });
 }
 
 test "Store: a write waits for another connection's lock instead of failing" {
@@ -294,4 +300,24 @@ test "Store: a write waits for another connection's lock instead of failing" {
     try files.put("kupcad.json", "hash_json");
     try writer.registerPackage("github.com-u-r", "commit-a", "github", "sha256-x", &files);
     try testing.expect(try writer.hasPackage("github.com-u-r", "commit-a"));
+}
+
+test "Store: an integrity under a root folder is that of the paths with it" {
+    // Lockfiles before 3.0.0 hashed a git host archive's files with its top folder; they
+    // are checked by hashing the stripped files under that folder.
+    var stripped = std.StringHashMap([]const u8).init(testing.allocator);
+    defer stripped.deinit();
+    try stripped.put("main.kup", "h1");
+    try stripped.put("lib/bolt.kup", "h2");
+    var prefixed = std.StringHashMap([]const u8).init(testing.allocator);
+    defer prefixed.deinit();
+    try prefixed.put("r-c1/main.kup", "h1");
+    try prefixed.put("r-c1/lib/bolt.kup", "h2");
+
+    inline for (.{ Store.IntegrityAlgo.current, Store.IntegrityAlgo.legacy }) |algo| {
+        const old = try Store.computeIntegrityWith(testing.allocator, &prefixed, .{ .algo = algo });
+        defer testing.allocator.free(old);
+        try Store.verifyIntegrity(testing.allocator, &stripped, old, .{ .algo = algo, .root = "r-c1" });
+        try testing.expectError(error.IntegrityMismatch, Store.verifyIntegrity(testing.allocator, &stripped, old, .{ .algo = algo }));
+    }
 }

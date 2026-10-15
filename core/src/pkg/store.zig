@@ -9,7 +9,8 @@ const log = std.log.scoped(.pkg);
 pub const BUSY_TIMEOUT_MS: c_int = 5000;
 /// The index's schema (`PRAGMA user_version`); runMigrations brings older ones up to it.
 /// v4: packages.last_used, when an install last used the package (see GarbageCollector).
-pub const SCHEMA_VERSION: i32 = 4;
+/// v5: git host packages are indexed without their archive's top folder (see Cafs.ArchiveLayout).
+pub const SCHEMA_VERSION: i32 = 5;
 
 /// Deletes package_files rows whose (package_id, commit_sha) has no packages row.
 const ORPHAN_PACKAGE_FILES_SQL =
@@ -270,6 +271,12 @@ pub const Store = struct {
                 try self.db.exec("ALTER TABLE packages ADD COLUMN last_used INTEGER NOT NULL DEFAULT 0", .{}, .{});
                 try self.db.exec("UPDATE packages SET last_used = created_at", .{}, .{});
             }
+            if (current_version < 5) {
+                // Their files were indexed under the archive's top folder (`repo-<sha>/main.kup`),
+                // which no import could reach; forget them so the next install fetches them again.
+                try self.db.exec("DELETE FROM packages WHERE provider IN ('github', 'gitlab', 'gitea')", .{}, .{});
+                try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{}, .{});
+            }
             const update_pragma = try std.fmt.allocPrint(std.heap.page_allocator, "PRAGMA user_version = {d}", .{SCHEMA_VERSION});
             defer std.heap.page_allocator.free(update_pragma);
             try self.db.exec(update_pragma, .{}, .{});
@@ -285,14 +292,22 @@ pub const Store = struct {
         legacy,
     };
 
+    /// How an integrity was taken, so an old lockfile's can still be checked.
+    pub const IntegrityScheme = struct {
+        algo: IntegrityAlgo = .current,
+        /// The folder every path was hashed under: before lockfile 3.0.0, a git host
+        /// archive's files kept its top folder (`repo-<sha>/main.kup`). Empty: none.
+        root: []const u8 = "",
+    };
+
     /// Computes a deterministic Merkle-style checksum of extracted package files.
     /// Each path and hash is length-prefixed (u64 LE) so distinct file maps can
     /// never produce the same hash input.
     pub fn computeIntegrity(allocator: std.mem.Allocator, files_map: *const std.StringHashMap([]const u8)) ![]const u8 {
-        return computeIntegrityAlgo(allocator, files_map, .current);
+        return computeIntegrityWith(allocator, files_map, .{});
     }
 
-    pub fn computeIntegrityAlgo(allocator: std.mem.Allocator, files_map: *const std.StringHashMap([]const u8), algo: IntegrityAlgo) ![]const u8 {
+    pub fn computeIntegrityWith(allocator: std.mem.Allocator, files_map: *const std.StringHashMap([]const u8), scheme: IntegrityScheme) ![]const u8 {
         var paths = std.ArrayListUnmanaged([]const u8).empty;
         defer paths.deinit(allocator);
 
@@ -306,15 +321,18 @@ pub const Store = struct {
             }
         }.lessThan);
 
+        // A common folder doesn't change the order, so it is only added while hashing.
+        const folder: []const []const u8 = if (scheme.root.len > 0) &.{ scheme.root, "/" } else &.{};
         var hasher = std.crypto.hash.sha2.Sha256.init(.{});
         for (paths.items) |path| {
             const hash = files_map.get(path).?;
-            switch (algo) {
+            switch (scheme.algo) {
                 .current => {
-                    hashLenPrefixed(&hasher, path);
-                    hashLenPrefixed(&hasher, hash);
+                    hashLenPrefixed(&hasher, folder, path);
+                    hashLenPrefixed(&hasher, &.{}, hash);
                 },
                 .legacy => {
+                    for (folder) |part| hasher.update(part);
                     hasher.update(path);
                     hasher.update(hash);
                 },
@@ -328,10 +346,14 @@ pub const Store = struct {
         return allocator.print("sha256-{s}", .{hex});
     }
 
-    fn hashLenPrefixed(hasher: *std.crypto.hash.sha2.Sha256, bytes: []const u8) void {
+    /// Hashes `prefix ++ bytes` after its length.
+    fn hashLenPrefixed(hasher: *std.crypto.hash.sha2.Sha256, prefix: []const []const u8, bytes: []const u8) void {
+        var len: u64 = bytes.len;
+        for (prefix) |part| len += part.len;
         var len_buf: [8]u8 = undefined;
-        std.mem.writeInt(u64, &len_buf, bytes.len, .little);
+        std.mem.writeInt(u64, &len_buf, len, .little);
         hasher.update(&len_buf);
+        for (prefix) |part| hasher.update(part);
         hasher.update(bytes);
     }
 
@@ -340,9 +362,9 @@ pub const Store = struct {
         allocator: std.mem.Allocator,
         files_map: *const std.StringHashMap([]const u8),
         expected: []const u8,
-        algo: IntegrityAlgo,
+        scheme: IntegrityScheme,
     ) !void {
-        const actual = try computeIntegrityAlgo(allocator, files_map, algo);
+        const actual = try computeIntegrityWith(allocator, files_map, scheme);
         defer allocator.free(actual);
         if (!std.mem.eql(u8, actual, expected)) return error.IntegrityMismatch;
     }

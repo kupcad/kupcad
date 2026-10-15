@@ -1,6 +1,7 @@
 const std = @import("std");
 const provider = @import("provider.zig");
-const Cafs = @import("../cafs.zig").Cafs;
+const cafs_mod = @import("../cafs.zig");
+const Cafs = cafs_mod.Cafs;
 const http_client = @import("../http_client.zig");
 const limits = @import("../limits.zig");
 const validate = @import("../validate.zig");
@@ -82,23 +83,23 @@ pub const Fetcher = struct {
         return allocator.dupe(u8, sha_val.string);
     }
 
-    pub fn downloadArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs) !std.StringHashMap([]const u8) {
+    pub fn downloadArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs, layout: cafs_mod.ArchiveLayout) !cafs_mod.Archive {
         const get = try self.allocator.create(http_client.Get);
         defer self.allocator.destroy(get);
         var response = try get.send(&self.client, url_str);
         defer get.deinit();
         try checkStatus(response.head.status);
 
-        return extractLimited(self.allocator, response.reader(&.{}), cafs);
+        return extractLimited(self.allocator, response.reader(&.{}), cafs, layout);
     }
 
     /// Extracts a `file:` archive from the local filesystem (top-level deps only).
-    pub fn openLocalArchive(self: *Fetcher, abs_path: []const u8, cafs: *Cafs) !std.StringHashMap([]const u8) {
+    pub fn openLocalArchive(self: *Fetcher, abs_path: []const u8, cafs: *Cafs) !cafs_mod.Archive {
         var file = try std.Io.Dir.cwd().openFile(self.io, abs_path, .{});
         defer file.close(self.io);
         var buf: [8192]u8 = undefined;
         var file_reader = file.reader(self.io, &buf);
-        return extractLimited(self.allocator, &file_reader.interface, cafs);
+        return extractLimited(self.allocator, &file_reader.interface, cafs, .flat);
     }
 };
 
@@ -109,11 +110,11 @@ fn checkStatus(status: std.http.Status) !void {
 
 /// Caps the number of *compressed* bytes read before handing the stream to the
 /// extractor (which separately caps decompressed bytes).
-fn extractLimited(allocator: std.mem.Allocator, reader: *std.Io.Reader, cafs: *Cafs) !std.StringHashMap([]const u8) {
+fn extractLimited(allocator: std.mem.Allocator, reader: *std.Io.Reader, cafs: *Cafs, layout: cafs_mod.ArchiveLayout) !cafs_mod.Archive {
     const buf = try allocator.alloc(u8, ARCHIVE_READ_BUFFER_LEN);
     defer allocator.free(buf);
     var limited: std.Io.Reader.Limited = .init(reader, .limited(limits.MAX_ARCHIVE_DOWNLOAD_BYTES), buf);
-    return cafs.extractTarball(&limited.interface) catch |err| {
+    return cafs.extractTarball(&limited.interface, layout) catch |err| {
         if (limited.remaining == .nothing) return error.ArchiveTooLarge;
         return err;
     };

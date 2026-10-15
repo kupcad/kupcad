@@ -1,6 +1,7 @@
 const std = @import("std");
 const semver = @import("../../core/semver.zig");
 const validate = @import("../validate.zig");
+const ArchiveLayout = @import("../cafs.zig").ArchiveLayout;
 
 /// Length of the hex digest prefix used to derive ids for URL/path based packages.
 const URL_ID_HEX_LEN = 16;
@@ -33,6 +34,11 @@ pub const ProviderType = enum {
             .github, .gitlab, .gitea => true,
             .http, .local => false,
         };
+    }
+
+    /// Git hosts wrap their archives in a top folder; an archive named directly is the package.
+    pub fn archiveLayout(self: ProviderType) ArchiveLayout {
+        return if (self.isGitHost()) .wrapped else .flat;
     }
 };
 

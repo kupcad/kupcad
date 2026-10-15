@@ -301,13 +301,13 @@ test "Resolver: 1.x lockfiles verify with the legacy hash and are rewritten as c
     const legacy = blk: {
         var files = (try fx.store.getPackageFiles(testing.allocator, pkg_id, (try fx.entry(pkg_id)).resolved)).?;
         defer helpers.freeMap(&files);
-        break :blk try Store.computeIntegrityAlgo(testing.allocator, &files, .legacy);
+        break :blk try Store.computeIntegrityWith(testing.allocator, &files, .{ .algo = .legacy });
     };
     defer testing.allocator.free(legacy);
     try testing.expect(!std.mem.eql(u8, current, legacy));
 
     try setOwned(&fx.lockfile.version, "1.0.0");
-    try testing.expect(try fx.lockfile.usesLegacyIntegrity());
+    try testing.expect((try fx.lockfile.format()).legacy_hash);
 
     // A 1.x lockfile is checked with the 1.x algorithm, not the current one.
     try testing.expectError(error.IntegrityMismatch, fx.resolve());
@@ -322,7 +322,7 @@ test "Resolver: 1.x lockfiles verify with the legacy hash and are rewritten as c
     var reloaded = try Lockfile.load(testing.allocator, fs);
     defer reloaded.deinit();
     try testing.expectEqualStrings(lockfile_mod.LOCKFILE_VERSION, reloaded.version);
-    try testing.expect(!try reloaded.usesLegacyIntegrity());
+    try testing.expect(!(try reloaded.format()).legacy_hash);
     try testing.expectEqualStrings(current, reloaded.packages.get(pkg_id).?.integrity);
 
     // The in-memory lockfile now holds current hashes, so reusing it (without reloading)

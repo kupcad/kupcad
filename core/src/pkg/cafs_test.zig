@@ -42,15 +42,25 @@ const Fixture = struct {
     }
 
     fn extract(self: *Fixture, entries: []const TarEntry) !std.StringHashMap([]const u8) {
+        const archive = try self.extractAs(entries, .flat);
+        testing.allocator.free(archive.root);
+        return archive.files;
+    }
+
+    fn extractAs(self: *Fixture, entries: []const TarEntry, layout: cafs_mod.ArchiveLayout) !cafs_mod.Archive {
         const gz = try helpers.buildTarGz(testing.allocator, entries);
         defer testing.allocator.free(gz);
         var reader: std.Io.Reader = .fixed(gz);
-        return self.cafs.extractTarball(&reader);
+        return self.cafs.extractTarball(&reader, layout);
     }
 
     fn expectExtractError(self: *Fixture, expected: anyerror, entries: []const TarEntry) !void {
-        var map = self.extract(entries) catch |err| return testing.expectEqual(expected, err);
-        freeMap(&map);
+        return self.expectExtractErrorAs(expected, entries, .flat);
+    }
+
+    fn expectExtractErrorAs(self: *Fixture, expected: anyerror, entries: []const TarEntry, layout: cafs_mod.ArchiveLayout) !void {
+        var archive = self.extractAs(entries, layout) catch |err| return testing.expectEqual(expected, err);
+        archive.deinit(testing.allocator);
         return error.TestExpectedError;
     }
 };
@@ -198,9 +208,9 @@ test "Cafs: failed extraction leaves no partial blobs or temp files" {
 
     // Cut the stream in the middle of the file body.
     var reader: std.Io.Reader = .fixed(gz[0 .. gz.len / 2]);
-    if (fx.cafs.extractTarball(&reader)) |m| {
-        var map = m;
-        freeMap(&map);
+    if (fx.cafs.extractTarball(&reader, .flat)) |a| {
+        var archive = a;
+        archive.deinit(testing.allocator);
         return error.TestExpectedError;
     } else |_| {}
 
@@ -252,4 +262,40 @@ test "Cafs: linkBlob hard-links blobs into a NativeVfs sandbox" {
     try testing.expectError(error.AccessDenied, fs.hardLinkTrusted(blob, "/tmp/escape"));
     // linkBlob must not fall back to copying when the sandbox rejects the destination.
     try testing.expectError(error.AccessDenied, cafs.linkBlob("cafe", "../escape"));
+}
+
+test "Cafs: a wrapped archive's top folder is not part of the package" {
+    // GitHub, GitLab and Gitea wrap the repository in `repo-<sha>/`; it was kept, so
+    // `import "github.com/u/r"` never found the package's files.
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+
+    var archive = try fx.extractAs(&.{
+        .{ .name = "parts-0123abc/", .kind = .dir },
+        .{ .name = "parts-0123abc/kupcad.json", .data = "{}" },
+        .{ .name = "parts-0123abc/lib/bolt.kup", .data = "def bolt() 1 end" },
+    }, .wrapped);
+    defer archive.deinit(testing.allocator);
+    try testing.expectEqualStrings("parts-0123abc", archive.root);
+    try testing.expectEqual(@as(u32, 2), archive.files.count());
+    try testing.expect(archive.files.contains("kupcad.json"));
+    try testing.expect(archive.files.contains("lib/bolt.kup"));
+
+    // An archive named directly is the package as it is.
+    var flat = try fx.extractAs(&.{.{ .name = "parts/kupcad.json", .data = "{}" }}, .flat);
+    defer flat.deinit(testing.allocator);
+    try testing.expect(flat.files.contains("parts/kupcad.json"));
+    try testing.expectEqualStrings("", flat.root);
+}
+
+test "Cafs: a wrapped archive must have exactly one top folder" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    try fx.expectExtractErrorAs(error.UnexpectedArchiveLayout, &.{.{ .name = "README.md", .data = "x" }}, .wrapped);
+    try fx.expectExtractErrorAs(error.UnexpectedArchiveLayout, &.{
+        .{ .name = "a/kupcad.json", .data = "{}" },
+        .{ .name = "b/main.kup", .data = "x" },
+    }, .wrapped);
 }
